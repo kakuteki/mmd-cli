@@ -20,6 +20,10 @@ class SummarizeTest(unittest.TestCase):
         self.assertEqual(s["wave"], {"enabled": True, "path": "C:\\work\\t1.wav"})
         self.assertEqual(s["last_frame"], 30)
 
+    def test_playback_settings_use_the_names_of_the_mmd_panel(self):
+        self.assertEqual(summary()["play"], {"repeat": False, "range": None, "from_current_frame": False,
+                                             "stay_at_stop_frame": False})
+
     def test_model_overview(self):
         m = summary()["models"][0]
         self.assertEqual(m["index"], 0)
@@ -29,12 +33,13 @@ class SummarizeTest(unittest.TestCase):
         self.assertTrue(m["visible"])
         self.assertEqual(m["key_counts"], {"bones": 3, "morphs": 2})
 
-    def test_bone_keys_are_named_and_use_degrees(self):
+    def test_bone_keys_are_named_and_use_the_angles_of_the_mmd_window(self):
+        # the fixture keys are quaternions about +Z (30 and 45 degrees); MMD displays those as negative Z
         keys = summary()["models"][0]["keys"]["bones"]
         self.assertEqual(keys, [
             {"bone": "センター", "frame": 10, "pos": [0.0, 5.0, 0.0], "rot": [0.0, 0.0, 0.0]},
-            {"bone": "センター", "frame": 30, "pos": [1.0, 2.0, 3.0], "rot": [0.0, 0.0, 30.0]},
-            {"bone": "右腕", "frame": 10, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 45.0]},
+            {"bone": "センター", "frame": 30, "pos": [1.0, 2.0, 3.0], "rot": [0.0, 0.0, -30.0]},
+            {"bone": "右腕", "frame": 10, "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, -45.0]},
         ])
 
     def test_morph_keys_are_named(self):
@@ -48,7 +53,7 @@ class SummarizeTest(unittest.TestCase):
         cur = summary()["models"][0]["current"]
         self.assertEqual(cur["bones"], {
             "センター": {"pos": [0.0, 5.0, 0.0], "rot": [0.0, 0.0, 0.0]},
-            "右腕": {"pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 45.0]},
+            "右腕": {"pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, -45.0]},
         })
         self.assertEqual(cur["morphs"], {"まばたき": 1.0, "あ": 0.3333})
 

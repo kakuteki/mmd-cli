@@ -76,5 +76,25 @@ class QuatToEulerTest(unittest.TestCase):
                 self.assertAlmostEqual(g, w, places=4)
 
 
+class MmdWindowConventionTest(unittest.TestCase):
+    """The angle boxes of the MMD window show Y and Z with the opposite sign (measured on v9.32:
+    a key written as euler (10, 20, 30) is displayed as 10.0 / -20.0 / -30.0)."""
+
+    def test_ui_angles_flip_y_and_z(self):
+        got = mathutil.ui_to_quat(10, -20, -30)
+        want = mathutil.euler_to_quat(10, 20, 30)
+        for g, w in zip(got, want):
+            self.assertAlmostEqual(g, w, places=9)
+
+    def test_ui_roundtrip(self):
+        for e in ((10, -20, -30), (-40, 15, 5), (25, -70, 110), (0, 0, 0)):
+            got = mathutil.quat_to_ui(mathutil.ui_to_quat(*e))
+            for g, w in zip(got, e):
+                self.assertAlmostEqual(g, w, places=4)
+
+    def test_no_negative_zero(self):
+        self.assertEqual([repr(v) for v in mathutil.quat_to_ui((0.0, 0.0, 0.0, 1.0))], ["0.0", "0.0", "0.0"])
+
+
 if __name__ == "__main__":
     unittest.main()

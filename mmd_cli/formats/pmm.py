@@ -274,8 +274,8 @@ def loads(data):
     p["frame"], p["hscroll"], p["hscroll_scale"], p["bone_operation"] = r.unpack("<4i")
     p["looking_at"] = r.u8()
     p["repeat"] = r.flag()
-    p["play_from_frame_enabled"] = r.flag()
-    p["play_to_frame_enabled"] = r.flag()
+    p["play_from_current_frame"] = r.flag()     # the "frame start" check box
+    p["play_stay_at_stop_frame"] = r.flag()     # the "frame stop" check box
     p["play_start_frame"], p["play_end_frame"] = r.unpack("<2i")
     p["wave"] = {"enabled": r.flag(), "path": r.fixed_string(256)}
     p["background_avi"] = _background(r, True)

@@ -2,6 +2,9 @@
 
 MMD composes a bone rotation as yaw (Y), pitch (X), roll (Z): the Z rotation is applied
 first, then X, then Y.  Angles are in degrees, quaternions are (x, y, z, w).
+
+euler_to_quat / quat_to_euler are the plain mathematics.  ui_to_quat / quat_to_ui use the
+numbers of the angle boxes in the MMD window, which show Y and Z with the opposite sign.
 """
 import math
 
@@ -37,3 +40,12 @@ def quat_to_euler(quat):
     return (math.degrees(math.asin(sin_x)),
             math.degrees(math.atan2(2.0 * (x * z + w * y), 1.0 - 2.0 * (x * x + y * y))),
             math.degrees(math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z))))
+
+
+def ui_to_quat(x_deg, y_deg, z_deg):
+    return euler_to_quat(x_deg, -y_deg, -z_deg)
+
+
+def quat_to_ui(quat):
+    x, y, z = quat_to_euler(quat)
+    return (x + 0.0, -y + 0.0, -z + 0.0)

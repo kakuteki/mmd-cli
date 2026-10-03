@@ -1,0 +1,183 @@
+"""Control and menu identifiers of MikuMikuDance v9.32 (x64).
+
+All 168 controls are direct children of the main window; the numbers were read from the
+running program with GetDlgCtrlID / GetMenuItemID and do not change between runs.
+"""
+
+MAIN_WINDOW_CLASS = "Polygon Movie Maker"
+CONTROL_COUNT = 168
+
+
+class Ctl:
+    UNDO = 400
+    REDO = 401
+    VIEW_FRONT = 402
+    VIEW_BACK = 403
+    VIEW_TOP = 404
+    VIEW_LEFT = 405
+    VIEW_RIGHT = 406
+    VIEW_BOTTOM = 407               # labelled "camera" while a model is selected
+    PLAY = 408
+    PLAY_FROM = 409
+    PLAY_TO = 410
+    PLAY_REPEAT = 411
+    VIEW_FOLLOW_MODEL = 412
+    PLAY_STAY_AT_STOP = 413         # "frame stop": stay where playback ended instead of jumping back
+    PLAY_FROM_CURRENT = 414         # "frame start": start at the current frame instead of the range start
+    RANGE_SELECT = 415
+    COLUMN_SELECT = 416
+    FRAME = 417
+    FRAME_PREV = 418
+    FRAME_NEXT = 419
+    KEY_COPY = 420
+    KEY_PASTE = 421
+    KEY_PASTE_REVERSED = 422
+    KEY_DELETE = 423
+    KEY_SCALE = 424
+    RANGE_FROM = 425
+    RANGE_TO = 426
+    TIMELINE_VSCROLL = 427
+    TIMELINE_HSCROLL = 428
+    GOTO_CURRENT = 429
+    CURVE_COPY = 430
+    CURVE_PASTE = 431
+    CURVE_LINEAR = 432
+    CURVE_TARGET = 433
+    RANGE_TARGET = 434
+    MODEL_LOAD = 435
+    MODEL_LIST = 436
+    MODEL_DELETE = 437
+    MODEL_REGISTER = 438
+    MODEL_VISIBLE = 439
+    MODEL_SELF_SHADOW = 440
+    MODEL_ADD_BLEND = 441
+    MODEL_OUTSIDE_PARENT = 442
+    MODEL_IK_LIST = 443
+    MODEL_IK_ON = 444
+    MODEL_IK_OFF = 445
+    CAMERA_PERSPECTIVE = 446
+    CAMERA_FOV_SLIDER = 447
+    CAMERA_FOV = 448
+    CAMERA_FOLLOW_MODEL = 449
+    CAMERA_FOLLOW_BONE = 450
+    CAMERA_RESET = 451
+    CAMERA_REGISTER = 452
+    LIGHT_R_SLIDER = 455
+    LIGHT_G_SLIDER = 456
+    LIGHT_B_SLIDER = 457
+    LIGHT_X_SLIDER = 458
+    LIGHT_Y_SLIDER = 459
+    LIGHT_Z_SLIDER = 460
+    LIGHT_R = 461
+    LIGHT_G = 462
+    LIGHT_B = 463
+    LIGHT_X = 464
+    LIGHT_Y = 465
+    LIGHT_Z = 466
+    LIGHT_RESET = 467
+    LIGHT_REGISTER = 468
+    ACC_LIST = 471
+    ACC_LOAD = 472
+    ACC_DELETE = 473
+    ACC_PARENT_MODEL = 474
+    ACC_PARENT_BONE = 475
+    ACC_VISIBLE = 476
+    ACC_ADD_BLEND = 477
+    ACC_X = 478
+    ACC_Y = 479
+    ACC_Z = 480
+    ACC_RX = 481
+    ACC_RY = 482
+    ACC_RZ = 483
+    ACC_SIZE = 484
+    ACC_TR = 485
+    ACC_SHADOW = 486
+    ACC_REGISTER = 487
+    BONE_SELECT = 490
+    BONE_BOX_SELECT = 491
+    BONE_MOVE = 492
+    BONE_ROTATE = 493
+    BONE_SELECT_ALL = 494
+    BONE_RESET = 495
+    BONE_COPY = 496
+    BONE_PASTE = 497
+    BONE_PASTE_REVERSED = 498
+    BONE_PHYSICS = 499
+    BONE_REGISTER = 500
+    BONE_SELECT_UNREGISTERED = 501
+    MORPH_BROW_LIST = 504
+    MORPH_BROW_SLIDER = 505
+    MORPH_BROW_VALUE = 506
+    MORPH_EYE_LIST = 509
+    MORPH_EYE_SLIDER = 510
+    MORPH_EYE_VALUE = 511
+    MORPH_LIP_LIST = 514
+    MORPH_LIP_SLIDER = 515
+    MORPH_LIP_VALUE = 516
+    MORPH_OTHER_LIST = 519
+    MORPH_OTHER_SLIDER = 520
+    MORPH_OTHER_VALUE = 521
+    MORPH_EYE_REGISTER = 524
+    MORPH_BROW_REGISTER = 525
+    MORPH_OTHER_REGISTER = 526
+    MORPH_LIP_REGISTER = 527
+    CURVE_AUTO = 530
+    VIEW_FOLLOW_BONE = 531
+    KEY_NEXT = 532
+    KEY_PREV = 533
+    VOLUME = 534
+    VIEW_TRACK = 535
+    MODE_TOGGLE = 536
+    VALUE_X = 544                   # camera centre in camera mode, bone position in model mode
+    VALUE_Y = 545
+    VALUE_Z = 546
+    VALUE_RX = 547
+    VALUE_RY = 548
+    VALUE_RZ = 549
+    VALUE_DISTANCE = 550
+    SHOW_INFO = 551
+    ECO_MODE = 552
+    BOOKMARK_GO = 553
+    BOOKMARK = 554
+    BOOKMARK_SET = 555
+    NICE_SHADOW = 556
+    SHOW_AXIS = 557
+    FRAME_FIRST = 558
+    FRAME_LAST = 559
+    SHADOW_DISTANCE_SLIDER = 560
+    SHADOW_DISTANCE = 561
+    SHADOW_OFF = 562
+    SHADOW_MODE1 = 563
+    SHADOW_MODE2 = 564
+    SHADOW_REGISTER = 565
+
+
+class Menu:
+    EXIT = 200
+    ABOUT = 201
+    POSE_LOAD = 202
+    POSE_SAVE = 203
+    NEW = 204
+    OPEN = 205
+    WAV_LOAD = 206
+    SAVE = 207
+    SAVE_AS = 208
+    MOTION_LOAD = 209
+    MOTION_SAVE = 210
+    OUTPUT_SIZE = 212
+    AVI_OUT = 223
+    IMAGE_OUT = 276
+
+
+class AviDialog:
+    FRAME_FROM = 609
+    FRAME_TO = 610
+    FPS = 611
+    WIDTH = 612
+    HEIGHT = 613
+    CODEC = 628
+
+
+class OutputSizeDialog:
+    WIDTH = 621
+    HEIGHT = 622

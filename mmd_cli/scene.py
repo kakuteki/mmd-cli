@@ -20,7 +20,7 @@ def _degrees(radians):
 
 
 def _bone_rot(quat):
-    return _vec(mathutil.quat_to_euler(quat))
+    return _vec(mathutil.quat_to_ui(quat))
 
 
 def _is_rest(position, rotation):
@@ -145,8 +145,10 @@ def summarize(project, keys=True):
         "background": {"avi": dict(project["background_avi"]), "image": dict(project["background_image"]),
                        "black": project["black_background"]},
         "play": {"repeat": project["repeat"],
-                 "from": project["play_start_frame"] if project["play_from_frame_enabled"] else None,
-                 "to": project["play_end_frame"] if project["play_to_frame_enabled"] else None},
+                 "range": ([project["play_start_frame"], project["play_end_frame"]]
+                           if project["play_start_frame"] or project["play_end_frame"] else None),
+                 "from_current_frame": project["play_from_current_frame"],
+                 "stay_at_stop_frame": project["play_stay_at_stop_frame"]},
         "display": {"information": project["show_information"], "axis": project["show_axis"],
                     "ground_shadow": project["show_ground_shadow"], "self_shadow": project["self_shadow"]["visible"],
                     "fps_limit": _r(project["fps_limit"])},

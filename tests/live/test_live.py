@@ -1,0 +1,544 @@
+"""Tests against a real MikuMikuDance.
+
+Run with:
+    set MMD_CLI_LIVE=1
+    set MMD_EXE=C:/path/to/MikuMikuDance.exe
+    python -m unittest tests.live.test_live -v
+
+A dedicated MMD instance is started minimized and closed at the end.  Only files that ship with
+MMD (UserFile/Model, Accessory, Pose) are used.  While the tests run, a watcher checks that no
+window of that MMD ever becomes the foreground window and that its main window stays minimized.
+"""
+import json
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import wave
+
+LIVE = os.environ.get("MMD_CLI_LIVE") == "1"
+EXE = os.environ.get("MMD_EXE", "")
+ATTACH = os.environ.get("MMD_CLI_LIVE_ATTACH", "")
+
+MMD = None
+WATCH = None
+WORK = None
+
+
+def bundled(*parts):
+    return os.path.join(os.path.dirname(EXE), "UserFile", *parts)
+
+
+class FocusWatch(threading.Thread):
+    def __init__(self, win32, pid, hwnd):
+        super().__init__(daemon=True)
+        self.win32, self.pid, self.hwnd = win32, pid, hwnd
+        self.foreground_hits = []
+        self.restored_hits = []
+        self.samples = 0
+        self.previous = None
+        self.current_test = ""
+        self._stop_flag = threading.Event()
+
+    def run(self):
+        while not self._stop_flag.is_set():
+            fg = self.win32.foreground_window()
+            if fg and self.win32.window_pid(fg) == self.pid:
+                if not self.foreground_hits or self.foreground_hits[-1]["window"] != fg:
+                    self.foreground_hits.append({"window": fg, "class": self.win32.class_name(fg),
+                                                 "title": self.win32.get_text(fg, timeout_ms=200),
+                                                 "during": self.current_test, "before": self.previous})
+            elif fg:
+                self.previous = "%s (pid %d)" % (self.win32.class_name(fg), self.win32.window_pid(fg))
+            else:
+                self.previous = "no foreground window"
+            if self.win32.is_window(self.hwnd) and not self.win32.is_iconic(self.hwnd):
+                self.restored_hits.append(time.time())
+            self.samples += 1
+            time.sleep(0.01)
+
+    def stop(self):
+        self._stop_flag.set()
+
+
+def setUpModule():
+    global MMD, WATCH, WORK
+    if not LIVE or not EXE:
+        raise unittest.SkipTest("set MMD_CLI_LIVE=1 and MMD_EXE to run the live tests")
+    from mmd_cli import app, win32
+    WORK = tempfile.mkdtemp(prefix="mmdcli-live-")
+    os.environ["MMD_CLI_HOME"] = os.path.join(WORK, "home")
+    MMD = app.Mmd.attach(int(ATTACH)) if ATTACH else app.launch(EXE)
+    WATCH = FocusWatch(win32, MMD.pid, MMD.hwnd)
+    WATCH.start()
+
+
+def tearDownModule():
+    if WATCH is not None:
+        WATCH.stop()
+    if MMD is not None and not ATTACH:
+        MMD.quit(force=True)
+    if WORK:
+        shutil.rmtree(WORK, ignore_errors=True)
+
+
+def out(name):
+    return os.path.join(WORK, name)
+
+
+def read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+class Base(unittest.TestCase):
+    with_model = False
+
+    def setUp(self):
+        WATCH.current_test = self.id()
+        for _ in MMD.dialogs():
+            MMD.dialog_close()
+        MMD.stop()
+        MMD.new_project()
+        if self.with_model:
+            MMD.load_model(bundled("Model", "初音ミク.pmd"))
+
+
+class LaunchTest(Base):
+    def test_main_window_is_minimized(self):
+        self.assertTrue(MMD.state()["minimized"])
+
+    def test_state_of_an_empty_project(self):
+        s = MMD.state()
+        self.assertEqual(s["models"], [])
+        self.assertEqual(s["mode"], "camera")
+        self.assertIsNone(s["selected_model"])
+        self.assertEqual(s["frame"], 0)
+        self.assertIsNone(s["project_path"])
+        self.assertEqual(s["dialogs"], [])
+        self.assertEqual(s["pid"], MMD.pid)
+
+
+class ModelTest(Base):
+    def test_load_reports_name_and_comment_and_selects_the_model(self):
+        r = MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        self.assertEqual(r["name"], "初音ミク")
+        self.assertEqual(r["index"], 0)
+        self.assertIn("あにまさ", r["comment"])
+        s = MMD.state()
+        self.assertEqual(s["models"], ["初音ミク"])
+        self.assertEqual((s["mode"], s["selected_model"]), ("model", "初音ミク"))
+
+    def test_dialogs_answered_on_the_way_are_recorded(self):
+        MMD.take_events()
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        events = MMD.take_events()
+        self.assertEqual([(e["kind"], e["title"], e["action"]) for e in events], [("model_info", "モデル情報", "ok")])
+        self.assertEqual(MMD.take_events(), [])
+
+    def test_select_camera_mode_and_back(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.select_model(None)
+        self.assertEqual(MMD.state()["mode"], "camera")
+        MMD.select_model("初音ミク")
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")
+        MMD.select_model(None)
+        MMD.select_model(0)
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")
+
+    def test_the_same_model_can_be_loaded_twice(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        r = MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        self.assertEqual(r["index"], 1)
+        self.assertEqual(len(MMD.models()), 2)
+
+    def test_delete(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.load_model(bundled("Model", "鏡音リン.pmd"))
+        MMD.delete_model("初音ミク")
+        self.assertEqual(MMD.models(), ["鏡音リン"])
+
+    def test_unknown_model_name_is_an_error(self):
+        from mmd_cli import app
+        with self.assertRaises(app.MmdError):
+            MMD.select_model("そんなモデルは無い")
+
+    def test_missing_file_is_rejected_before_mmd_is_touched(self):
+        with self.assertRaises(FileNotFoundError):
+            MMD.load_model(out("nothing.pmx"))
+
+    def test_visibility(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.set_model_visible(False)
+        self.assertFalse(MMD.dump(in_place=False)["models"][0]["visible"])
+        MMD.set_model_visible(True)
+        self.assertTrue(MMD.dump()["models"][0]["visible"])
+
+
+class FrameTest(Base):
+    def test_set_and_step(self):
+        self.assertEqual(MMD.set_frame(25), 25)
+        self.assertEqual(MMD.step_frame(1), 26)
+        self.assertEqual(MMD.step_frame(-1), 25)
+        self.assertEqual(MMD.frame(), 25)
+        self.assertEqual(MMD.dump()["frame"], 25)
+
+    def test_negative_frame_is_rejected(self):
+        with self.assertRaises(ValueError):
+            MMD.set_frame(-1)
+
+
+class CameraLightTest(Base):
+    WANT = {"pos": [1.5, 12.0, -3.25], "rot": [10.0, 20.0, 5.0], "distance": 30.0, "fov": 45, "perspective": True}
+
+    def test_camera_set_and_register(self):
+        r = MMD.set_camera(pos=(1.5, 12, -3.25), rot=(10, 20, 5), distance=30, fov=45, register=True)
+        self.assertEqual(r, self.WANT)
+        self.assertEqual(MMD.camera(), self.WANT)
+        d = MMD.dump()
+        self.assertEqual(d["camera"]["current"], self.WANT)
+        self.assertEqual(d["camera"]["keys"], [dict(self.WANT, frame=0)])
+
+    def test_camera_key_at_another_frame(self):
+        MMD.set_frame(30)
+        MMD.set_camera(distance=20, register=True)
+        keys = MMD.dump()["camera"]["keys"]
+        self.assertEqual([(k["frame"], k["distance"]) for k in keys], [(0, 45.0), (30, 20.0)])
+
+    def test_registered_camera_values_survive_while_a_model_is_selected(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        r = MMD.set_camera(distance=33, register=True)
+        self.assertEqual(r["distance"], 33.0)
+        self.assertEqual(MMD.camera()["distance"], 33.0)
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")
+
+    def test_unregistered_values_are_refused_while_a_model_is_selected(self):
+        # MMD throws unregistered camera and light values away as soon as a model is selected again
+        from mmd_cli import app
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        with self.assertRaises(app.MmdError):
+            MMD.set_camera(distance=33)
+        with self.assertRaises(app.MmdError):
+            MMD.set_light(rgb=(1, 2, 3))
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")
+
+    def test_unregistered_camera_values_hold_in_camera_mode(self):
+        MMD.set_camera(distance=20)
+        self.assertEqual(MMD.camera()["distance"], 20.0)
+        self.assertEqual(MMD.dump()["camera"]["keys"][0]["distance"], 45.0)   # no key was written
+
+    def test_perspective_off(self):
+        r = MMD.set_camera(perspective=False, register=True)
+        self.assertFalse(r["perspective"])
+        self.assertFalse(MMD.dump()["camera"]["keys"][0]["perspective"])
+
+    def test_light(self):
+        want = {"rgb": [200, 100, 50], "dir": [-0.2, -0.8, 0.3]}
+        self.assertEqual(MMD.set_light(rgb=(200, 100, 50), direction=(-0.2, -0.8, 0.3), register=True), want)
+        self.assertEqual(MMD.light(), want)
+        d = MMD.dump()
+        self.assertEqual(d["light"]["current"], want)
+        self.assertEqual(d["light"]["keys"], [dict(want, frame=0)])
+
+
+class MotionTest(Base):
+    with_model = True
+
+    def write_motion(self, model_name="初音ミク"):
+        from mmd_cli.formats import vmd
+        path = out("motion.vmd")
+        vmd.dump(vmd.Motion(
+            model_name=model_name,
+            bones=[vmd.BoneKey("センター", 0, (0.0, 5.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+                   vmd.BoneKey("センター", 20, (1.0, 2.0, 3.0), (0.0, 0.0, 0.2588190451, 0.9659258263)),
+                   vmd.BoneKey("右腕", 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.3826834324, 0.9238795325))],
+            morphs=[vmd.MorphKey("まばたき", 0, 1.0), vmd.MorphKey("あ", 5, 0.5)]), path)
+        return path
+
+    def test_load_motion_inserts_keys_at_the_given_frame(self):
+        r = MMD.load_motion(self.write_motion(), frame=10)
+        self.assertEqual(r["frame"], 10)
+        self.assertEqual(r["confirmed"], False)
+        keys = MMD.dump()["models"][0]["keys"]
+        self.assertEqual([(k["bone"], k["frame"]) for k in keys["bones"]],
+                         [("センター", 10), ("センター", 30), ("右腕", 10)])
+        self.assertEqual(keys["bones"][1]["pos"], [1.0, 2.0, 3.0])
+        self.assertEqual(keys["bones"][1]["rot"], [0.0, 0.0, -30.0])   # +Z quaternion, shown by MMD as -30
+        self.assertEqual(keys["morphs"], [{"morph": "まばたき", "frame": 10, "value": 1.0},
+                                          {"morph": "あ", "frame": 15, "value": 0.5}])
+
+    def test_motion_made_for_another_model_is_confirmed_automatically(self):
+        r = MMD.load_motion(self.write_motion(model_name="別のモデル"))
+        self.assertEqual(r["confirmed"], True)
+        self.assertEqual(MMD.dump()["models"][0]["key_counts"], {"bones": 3, "morphs": 2})
+
+    def test_set_bone_registers_a_key_and_moves_to_the_frame(self):
+        r = MMD.set_bone("センター", pos=(0, 5, 0), rot=(0, 0, 30), frame=12)
+        self.assertEqual(r, {"bone": "センター", "frame": 12, "pos": [0.0, 5.0, 0.0], "rot": [0.0, 0.0, 30.0]})
+        d = MMD.dump()
+        self.assertEqual(d["frame"], 12)
+        self.assertEqual(d["models"][0]["keys"]["bones"], [r])
+        self.assertEqual(d["models"][0]["current"]["bones"], {"センター": {"pos": [0.0, 5.0, 0.0], "rot": [0.0, 0.0, 30.0]}})
+
+    def test_bone_angles_are_the_ones_the_mmd_window_shows(self):
+        for rot in ((10.0, -20.0, -30.0), (25.0, -70.0, 110.0), (-40.0, 15.0, 5.0)):
+            r = MMD.set_bone("センター", pos=(1, 2, 3), rot=rot)
+            self.assertEqual(r["rot"], list(rot))
+            MMD.set_frame(r["frame"])     # MMD refreshes its number boxes on the next frame move
+            shown = [float(MMD.control_get(cid)["text"]) for cid in (547, 548, 549)]   # センター is the selected bone
+            self.assertEqual(shown, list(rot))
+            self.assertEqual([float(MMD.control_get(cid)["text"]) for cid in (544, 545, 546)], [1.0, 2.0, 3.0])
+
+    def test_set_bone_keeps_the_part_that_is_not_given(self):
+        MMD.set_bone("センター", pos=(1, 2, 3), rot=(0, 40, 0))
+        r = MMD.set_bone("センター", rot=(0, 0, 10))
+        self.assertEqual(r["pos"], [1.0, 2.0, 3.0])
+        self.assertEqual(r["rot"], [0.0, 0.0, 10.0])
+
+    def test_set_bone_with_an_unknown_name_is_an_error(self):
+        from mmd_cli import app
+        with self.assertRaises(app.MmdError):
+            MMD.set_bone("無い骨", pos=(0, 1, 0))
+
+    def test_bone_list_and_get(self):
+        bones = MMD.bones()
+        self.assertEqual(len(bones), 122)
+        self.assertEqual(bones[0], "センター")
+        MMD.set_bone("右腕", rot=(0, 0, 45))
+        self.assertEqual(MMD.bone("右腕"), {"bone": "右腕", "pos": [0.0, 0.0, 0.0], "rot": [0.0, 0.0, 45.0]})
+
+    def test_set_morph_registers_a_key(self):
+        r = MMD.set_morph("まばたき", 0.75, frame=8)
+        self.assertEqual(r, {"morph": "まばたき", "frame": 8, "value": 0.75})
+        d = MMD.dump()
+        self.assertEqual(d["models"][0]["keys"]["morphs"], [r])
+        self.assertEqual(MMD.morph("まばたき"), {"morph": "まばたき", "value": 0.75})
+        self.assertIn("あ", MMD.morphs())
+
+    def test_pose_load_and_register(self):
+        r = MMD.load_pose(bundled("Pose", "右手グー.vpd"), register=True)
+        self.assertEqual(r["bones"], 14)
+        self.assertTrue(r["registered"])
+        d = MMD.dump()
+        self.assertIn("右親指１", d["models"][0]["current"]["bones"])
+        self.assertEqual(d["models"][0]["key_counts"]["bones"], 14)
+
+    def test_pose_load_without_register_changes_the_pose_only(self):
+        MMD.load_pose(bundled("Pose", "右手グー.vpd"))
+        d = MMD.dump()
+        self.assertIn("右親指１", d["models"][0]["current"]["bones"])
+        self.assertEqual(d["models"][0]["key_counts"]["bones"], 0)
+
+
+class AssetTest(Base):
+    def test_wav(self):
+        path = out("silence.wav")
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(44100)
+            f.writeframes(bytes(2 * 44100))
+        MMD.load_wav(path)
+        w = MMD.dump()["wave"]
+        self.assertTrue(w["enabled"])
+        self.assertEqual(os.path.normcase(w["path"]), os.path.normcase(path))
+
+    def test_accessory_load_set_and_delete(self):
+        r = MMD.load_accessory(bundled("Accessory", "negi.x"))
+        self.assertEqual(r, {"name": "negi.x", "index": 0})
+        self.assertEqual(MMD.accessories(), ["negi.x"])
+        MMD.set_frame(10)
+        got = MMD.set_accessory("negi.x", pos=(1, 2, 3), rot=(10, 20, 30), scale=2, alpha=0.5)
+        want = {"pos": [1.0, 2.0, 3.0], "rot": [10.0, 20.0, 30.0], "scale": 2.0, "alpha": 0.5}
+        self.assertEqual({k: got[k] for k in want}, want)
+        acc = MMD.dump()["accessories"][0]
+        self.assertEqual({k: acc["current"][k] for k in want}, want)
+        self.assertEqual([k["frame"] for k in acc["keys"]], [0, 10])
+        MMD.delete_accessory("negi.x")
+        self.assertEqual(MMD.accessories(), [])
+
+
+class ProjectTest(Base):
+    def test_dump_of_a_fresh_project_uses_a_working_copy(self):
+        d = MMD.dump()
+        self.assertEqual(d["models"], [])
+        work = MMD.state()["project_path"]
+        self.assertTrue(os.path.normcase(work).startswith(os.path.normcase(os.environ["MMD_CLI_HOME"])))
+
+    def test_save_then_open_restores_the_scene_and_leaves_the_file_alone_on_dump(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.set_bone("センター", pos=(0, 5, 0), frame=10)
+        target = out("scene.pmm")
+        r = MMD.save(target)
+        self.assertEqual(os.path.normcase(r["path"]), os.path.normcase(target))
+        self.assertTrue(os.path.exists(target))
+        before = read_bytes(target)
+        MMD.new_project()
+        self.assertEqual(MMD.models(), [])
+        MMD.open_project(target)
+        self.assertEqual(MMD.models(), ["初音ミク"])
+        MMD.set_frame(3)
+        d = MMD.dump()
+        self.assertEqual(d["models"][0]["key_counts"]["bones"], 1)
+        self.assertEqual(read_bytes(target), before)   # dump saved the working copy, not the file
+        MMD.save()                                            # save without a path goes back to where it was opened
+        self.assertNotEqual(read_bytes(target), before)
+
+    def test_dump_refuses_a_project_the_cli_did_not_open(self):
+        from mmd_cli import app
+        MMD.dump()
+        MMD.forget_project()
+        with self.assertRaises(app.MmdError):
+            MMD.dump()
+        self.assertEqual(MMD.dump(in_place=True)["models"], [])
+
+
+class RenderTest(Base):
+    with_model = True
+
+    def test_image(self):
+        path = out("shot.png")
+        r = MMD.render_image(path, size=(320, 180))
+        self.assertEqual(r["size"], [320, 180])
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")   # rendered through the camera, then restored
+        with open(path, "rb") as f:
+            head = f.read(24)
+        self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(struct.unpack(">II", head[16:24]), (320, 180))
+
+    def test_avi(self):
+        path = out("clip.avi")
+        r = MMD.render_avi(path, start=0, end=4, size=(160, 90), fps=30)
+        self.assertEqual(r["frames"], 5)
+        with open(path, "rb") as f:
+            head = f.read(64)
+        self.assertEqual((head[:4], head[8:12]), (b"RIFF", b"AVI "))
+        self.assertEqual(struct.unpack_from("<I", head, 48)[0], 5)   # avih dwTotalFrames
+
+
+class PlayTest(Base):
+    with_model = True
+
+    def test_play_a_range_and_wait_returns_to_the_frame_it_started_from(self):
+        MMD.set_bone("センター", pos=(0, 1, 0), frame=20)
+        MMD.set_frame(5)
+        r = MMD.play(start=0, end=20, wait=True)
+        self.assertEqual(r, {"playing": False, "frame": 5})
+        self.assertFalse(MMD.state()["playing"])
+
+    def test_stay_keeps_the_frame_where_playback_ended(self):
+        MMD.set_bone("センター", pos=(0, 1, 0), frame=20)
+        MMD.set_frame(5)
+        r = MMD.play(start=0, end=20, wait=True, stay=True)
+        self.assertEqual(r, {"playing": False, "frame": 20})
+
+    def test_stop_and_commands_are_refused_while_playing(self):
+        from mmd_cli import app
+        MMD.set_bone("センター", pos=(0, 1, 0), frame=600)
+        MMD.set_frame(0)
+        r = MMD.play(start=0, end=600)
+        self.assertTrue(r["playing"])
+        self.assertTrue(MMD.state()["playing"])
+        with self.assertRaises(app.MmdError):
+            MMD.set_frame(3)
+        MMD.stop()
+        self.assertFalse(MMD.state()["playing"])
+        self.assertEqual(MMD.set_frame(3), 3)
+
+
+class DialogTest(Base):
+    def test_an_unexpected_dialog_is_reported_and_blocks_later_commands_until_answered(self):
+        from mmd_cli import guard, win32
+        with self.assertRaises(guard.DialogPending) as ctx:
+            MMD.menu_click(201)   # version information
+        self.assertEqual(ctx.exception.dialogs[0].title, "About")
+        self.assertEqual([d["title"] for d in MMD.dialogs()], ["About"])
+        hwnd = MMD.dialogs()[0]["hwnd"]
+        self.assertTrue(win32.is_hidden(hwnd))                                   # transparent and off-screen
+        self.assertTrue(win32.ex_style(hwnd) & win32.WS_EX_NOACTIVATE)           # Windows will not hand it the focus
+        with self.assertRaises(guard.DialogPending):
+            MMD.set_frame(5)
+        MMD.dialog_click("OK")
+        self.assertEqual(MMD.dialogs(), [])
+        self.assertEqual(MMD.set_frame(5), 5)
+
+
+class GenericTest(Base):
+    def test_menu_list_has_ids_and_check_marks(self):
+        items = {i["id"]: i for i in MMD.menu_items()}
+        self.assertEqual(items[204]["path"], ["ファイル(&F)", "新規(&N)"])
+        self.assertTrue(items[215]["checked"])     # 座標軸表示 is on by default
+
+    def test_menu_click_toggles_a_display_option(self):
+        MMD.menu_click(215)
+        self.assertFalse({i["id"]: i for i in MMD.menu_items()}[215]["checked"])
+        MMD.menu_click(215)
+
+    def test_control_get_set_and_click(self):
+        self.assertEqual(MMD.control_get(417)["text"], "0")
+        MMD.control_click(419)                      # the '>' button
+        self.assertEqual(MMD.control_get(417)["text"], "1")
+        MMD.control_set(554, "7")                   # the frame bookmark box
+        self.assertEqual(MMD.control_get(554)["text"], "7")
+        self.assertEqual(len(MMD.controls()), 168)
+
+
+class CliTest(Base):
+    def run_cli(self, *args):
+        env = dict(os.environ)
+        cmd = [sys.executable, "-m", "mmd_cli", "--pid", str(MMD.pid)] + list(args)
+        p = subprocess.run(cmd, capture_output=True, env=env,
+                           cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        return p.returncode, p.stdout.decode("ascii"), p.stderr.decode("utf-8", "replace")
+
+    def test_state_is_ascii_json(self):
+        code, stdout, stderr = self.run_cli("state")
+        self.assertEqual(code, 0, stderr)
+        data = json.loads(stdout)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["pid"], MMD.pid)
+
+    def test_model_load_and_out_file(self):
+        target = out("result.json")
+        code, stdout, stderr = self.run_cli("--out", target, "model", "load", bundled("Model", "初音ミク.pmd"))
+        self.assertEqual(code, 0, stderr)
+        raw = read_bytes(target).decode("utf-8")
+        data = json.loads(raw)
+        self.assertEqual(data["name"], "初音ミク")
+        self.assertIn("初音ミク", raw)                                        # not escaped in the file
+        self.assertEqual([d["kind"] for d in data["answered_dialogs"]], ["model_info"])
+        self.assertEqual(json.loads(stdout)["ok"], True)
+
+    def test_errors_are_json_with_a_nonzero_exit_code(self):
+        code, stdout, stderr = self.run_cli("model", "select", "nobody")
+        self.assertEqual(code, 1)
+        data = json.loads(stdout)
+        self.assertFalse(data["ok"])
+        self.assertIn("nobody", data["error"]["message"])
+
+    def test_pending_dialog_exit_code(self):
+        code, stdout, _ = self.run_cli("menu", "click", "201")
+        self.assertEqual(code, 3)
+        self.assertEqual(json.loads(stdout)["error"]["dialogs"][0]["title"], "About")
+        code, stdout, _ = self.run_cli("dialog", "click", "OK")
+        self.assertEqual(code, 0)
+
+
+class ZzFocusTest(unittest.TestCase):
+    """Runs last (alphabetical order): nothing above may have shown or focused an MMD window."""
+
+    def test_mmd_never_became_the_foreground_window(self):
+        self.assertGreater(WATCH.samples, 100)
+        self.assertEqual(WATCH.foreground_hits, [])
+
+    def test_main_window_stayed_minimized(self):
+        self.assertEqual(WATCH.restored_hits, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
