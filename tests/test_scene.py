@@ -74,6 +74,7 @@ class SummarizeTest(unittest.TestCase):
     def test_light_uses_the_numbers_shown_in_the_mmd_window(self):
         light = summary()["light"]
         self.assertEqual(light["current"], {"rgb": [200, 100, 50], "dir": [-0.2, -0.8, 0.3]})
+        self.assertEqual(light["current_is"], "scene light")   # saved in camera mode
         self.assertEqual(light["keys"], [{"frame": 0, "rgb": [200, 100, 50], "dir": [-0.2, -0.8, 0.3]}])
 
     def test_accessory(self):

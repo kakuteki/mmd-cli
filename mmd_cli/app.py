@@ -201,14 +201,21 @@ class Mmd:
         try:
             events = self.guard.run(trigger, handlers, timeout or self.timeout, done)
         except DialogPending as exc:
-            self.events.extend(e for e in exc.events if e.get("action") != "left open")
+            self._keep(exc.events)
             raise
-        self.events.extend(events)
+        self._keep(events)
         return events
+
+    def _keep(self, events):
+        self.events.extend(e for e in events if e.get("action") != "left open")
 
     def take_events(self):
         events, self.events = self.events, []
         return events
+
+    def shield(self):
+        """context manager: keep the user's foreground while this instance is driven (guard.FocusShield)"""
+        return guard.FocusShield(self.pid)
 
     def wait_quiet(self, timeout=None):
         return self._run(None, None, timeout)

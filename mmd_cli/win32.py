@@ -211,6 +211,52 @@ def foreground_window():
     return user32.GetForegroundWindow()
 
 
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", wt.DWORD), ("dwFlags", wt.DWORD),
+                ("time", wt.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("mi", _MOUSEINPUT), ("pad", ctypes.c_ubyte * 40)]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wt.DWORD), ("u", _U)]
+
+
+user32.SendInput.argtypes = [wt.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
+user32.SetForegroundWindow.argtypes = [wt.HWND]
+
+
+def give_foreground_back(hwnd):
+    """Return the foreground to hwnd after another process took it.  A process may only set the
+    foreground when it is allowed to; injecting a zero-length mouse move makes this process the
+    last input provider, which is one of the allowed cases.  Returns True when hwnd is in front."""
+    if not user32.IsWindow(hwnd):
+        return False
+    if user32.SetForegroundWindow(hwnd) and user32.GetForegroundWindow() == hwnd:
+        return True
+    move = _INPUT()
+    move.type = 0                                  # INPUT_MOUSE
+    move.mi.dwFlags = 0x0001                       # MOUSEEVENTF_MOVE, dx = dy = 0: nothing visible happens
+    user32.SendInput(1, ctypes.byref(move), ctypes.sizeof(_INPUT))
+    user32.SetForegroundWindow(hwnd)
+    return user32.GetForegroundWindow() == hwnd
+
+
+def can_set_foreground():
+    """True when this process is currently allowed to take the foreground (Windows grants that to
+    the foreground process and to processes it started, as long as the user stays there).
+    Granting the right to ourselves is a no-op, so this is a pure query."""
+    return bool(user32.AllowSetForegroundWindow(kernel32.GetCurrentProcessId()))
+
+
+def lock_foreground(lock):
+    """LockSetForegroundWindow: while locked, no process may take the foreground (the user can
+    still lift the lock by pressing ALT or clicking another window).  Only a process that is
+    allowed to take the foreground may lock; returns whether the call succeeded."""
+    return bool(user32.LockSetForegroundWindow(1 if lock else 2))
+
+
 # ---- messages --------------------------------------------------------------------------------
 
 def send(hwnd, msg, wparam=0, lparam=None, timeout_ms=5000, abort_if_hung=True):

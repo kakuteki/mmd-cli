@@ -140,6 +140,9 @@ def summarize(project, keys=True):
         },
         "light": {
             "current": _light_values(project["light"]["current"]),
+            # measured on v9.32: with a model selected the file keeps a stale light here (the
+            # defaults), while the registered key is correct; mmd light get reads the panel instead
+            "current_is": "scene light" if project["editing_camera"] else "stale while a model is selected",
             "keys": [dict(_light_values(f), frame=f["frame"]) for f in light_keys],
         },
         "accessories": accessories,

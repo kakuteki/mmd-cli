@@ -29,6 +29,67 @@ class OperationTimeout(Exception):
     pass
 
 
+class FocusShield:
+    """Keep the user's foreground window where it is while MMD is being driven.
+
+    When the terminal that runs this command is the foreground window, Windows treats this process
+    as allowed to take the foreground, and a synchronous message to MMD passes that right along:
+    a dialog MMD opens for us could then come to the front and keep the keyboard focus.  Two
+    defences: the foreground is locked for the duration (LockSetForegroundWindow, which only a
+    process with the right can do, i.e. exactly when the danger exists), and a watcher thread hands
+    the foreground straight back should an MMD window take it anyway.  Nested uses share the
+    outermost shield; its `events` list what happened.
+    """
+    _outer = None
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.events = []
+        self.locked = False
+        self.fg_before = None
+        self._stop = threading.Event()
+        self._thread = None
+
+    def __enter__(self):
+        if FocusShield._outer is not None:
+            return FocusShield._outer
+        FocusShield._outer = self
+        fg = win32.foreground_window()
+        self.fg_before = fg if fg and win32.window_pid(fg) != self.pid else None
+        self.locked = win32.lock_foreground(True)
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+        return self
+
+    def _check(self):
+        fg = win32.foreground_window()
+        if self.fg_before and fg and fg != self.fg_before and self.pid and win32.window_pid(fg) == self.pid:
+            if self.locked:
+                win32.lock_foreground(False)
+            restored = win32.give_foreground_back(self.fg_before)
+            if self.locked:
+                win32.lock_foreground(True)
+            self.events.append({"foreground_taken_by": win32.class_name(fg),
+                                "title": win32.get_text(fg, timeout_ms=200), "restored": restored})
+
+    def _watch(self):
+        with win32.timer_resolution():
+            while not self._stop.is_set():
+                self._check()
+                time.sleep(0.003)
+
+    def __exit__(self, *exc):
+        if FocusShield._outer is not self:
+            return False
+        self._stop.set()
+        self._thread.join(2.0)
+        self._check()
+        if self.locked:
+            win32.lock_foreground(False)
+        FocusShield._outer = None
+        return False
+
+
 def describe(hwnd):
     controls = []
     for child in win32.child_windows(hwnd):
@@ -103,7 +164,7 @@ class Guard:
         retry_at = {}
         quiet = 0
         deadline = time.monotonic() + timeout
-        with win32.timer_resolution():
+        with FocusShield(self.pid), win32.timer_resolution():
             while True:
                 visible = 0
                 for hwnd in dialog_windows(self.pid, self.main):

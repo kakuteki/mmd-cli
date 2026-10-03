@@ -262,18 +262,28 @@ def run(args):
         exe = args.exe or os.environ.get("MMD_EXE") or app.load_state().get("exe")
         if not exe:
             raise app.MmdError("give the program with --exe PATH (or set MMD_EXE)")
-        return app.launch(exe, timeout=args.timeout or 90.0).state()
+        from .guard import FocusShield
+        with FocusShield(pid=None) as shield:
+            mmd = app.launch(exe, timeout=args.timeout or 90.0)
+            shield.pid = mmd.pid
+            result = mmd.state()
+        if shield.events:
+            result["foreground_restored"] = shield.events
+        return result
 
     mmd = app.Mmd.attach(args.pid)
     if args.timeout:
         mmd.timeout = args.timeout
     mmd.in_place = args.in_place
-    try:
-        result = dict(_dispatch(mmd, args))
-    finally:
-        answered = mmd.take_events()
+    with mmd.shield() as shield:
+        try:
+            result = dict(_dispatch(mmd, args))
+        finally:
+            answered = mmd.take_events()
     if answered:
         result["answered_dialogs"] = answered
+    if shield.events:
+        result["foreground_restored"] = shield.events
     return result
 
 
