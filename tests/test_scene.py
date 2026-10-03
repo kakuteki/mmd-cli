@@ -68,6 +68,8 @@ class SummarizeTest(unittest.TestCase):
                 "perspective": True}
         self.assertEqual(cam["current"], want)
         self.assertEqual(cam["keys"], [dict(want, frame=0)])
+        # the fixture was saved in camera mode; with a model selected MMD stores its editing view instead
+        self.assertEqual(cam["current_is"], "scene camera")
 
     def test_light_uses_the_numbers_shown_in_the_mmd_window(self):
         light = summary()["light"]

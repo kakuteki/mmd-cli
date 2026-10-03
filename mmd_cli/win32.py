@@ -330,6 +330,18 @@ def reveal_window(hwnd, x=100, y=100):
     user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
 
+user32.GetLayeredWindowAttributes.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD), ctypes.POINTER(ctypes.c_ubyte),
+                                              ctypes.POINTER(wt.DWORD)]
+
+
+def window_alpha(hwnd):
+    """opacity 0-255 of a layered window (255 when the window is not layered)"""
+    key, alpha, flags = wt.DWORD(0), ctypes.c_ubyte(255), wt.DWORD(0)
+    if not user32.GetLayeredWindowAttributes(hwnd, ctypes.byref(key), ctypes.byref(alpha), ctypes.byref(flags)):
+        return 255
+    return alpha.value if flags.value & LWA_ALPHA else 255
+
+
 def is_hidden(hwnd):
     return window_rect(hwnd)[0] <= OFFSCREEN_X + 100
 

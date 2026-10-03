@@ -134,6 +134,8 @@ def summarize(project, keys=True):
             "current": {"pos": _vec(camera_cur["position"]), "rot": _camera_rot(camera_cur["rotation"]),
                         "distance": _r(-camera_cur["target"][2]), "fov": int(round(project["edit_view_angle"])),
                         "perspective": not camera_cur["orthographic"]},
+            # while a model is selected MMD keeps its model editing view here, not the scene camera
+            "current_is": "scene camera" if project["editing_camera"] else "editing view",
             "keys": [_camera_key(f) for f in camera_keys],
         },
         "light": {

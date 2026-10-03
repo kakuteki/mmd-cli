@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmd-cli"
+dynamic = ["version"]
+description = "Operate MikuMikuDance from the command line without showing its window"
+requires-python = ">=3.9"
+dependencies = []
+license = { text = "MIT" }
+
+[project.scripts]
+mmd = "mmd_cli.cli:main"
+
+[tool.setuptools]
+packages = ["mmd_cli", "mmd_cli.formats"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mmd_cli.__version__" }

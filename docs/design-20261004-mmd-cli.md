@@ -59,7 +59,8 @@ MikuMikuDance（MMD、v9.32 x64）を、窓を前に出さずにコマンドラ�
 mmd_cli/
   win32.py      ctypes の薄い層。MMD の知識を持たない
   ids.py        コントロール ID とメニュー ID の表（v9.32）
-  guard.py      ダイアログの見張り。隠す・分類する・応答する
+  dialogs.py    ダイアログの記述と分類（Win32 を呼ばない。単体試験できる）
+  guard.py      ダイアログの見張り。操作を起動し、出てきた窓を隠し、応答する
   app.py        MMD の 1 インスタンスへの操作（Mmd クラス）
   scene.py      解析した pmm を、名前と度数法で読める JSON に直す
   mathutil.py   四元数とオイラー角の変換（MMD の流儀）
@@ -91,6 +92,11 @@ tests/
 
 MMD のプロセスに新しい最上位の窓が現れたら、表示される前に透明化（`WS_EX_LAYERED`、不透明度 0）し、
 画面外へ動かす。実測では、窓が作られてから表示されるまでの間に検出でき、表示時点で不透明度は 0 だった。
+あわせて `WS_EX_NOACTIVATE` を付ける。利用者が作業中の窓を閉じた瞬間に、Windows が次のアクティブな窓として
+隠したダイアログを選んでしまうのを防ぐためである（実機試験の最中に一度起き、試験の見張りが検出した）。
+
+状態を見るだけのコマンド（`state`、`dialog list`）は、既にあるダイアログを隠さない。人が同じ MMD を手で
+操作していて、そのダイアログが消えるのを避けるためである。
 
 既知のダイアログは自動で応答する。
 
@@ -127,28 +133,45 @@ mmd ps                         起動中の MMD の一覧
 mmd launch [--exe P] [--pmm F] 最小化・非アクティブで起動
 mmd quit [--force]             終了
 mmd state                      コントロールから読める状態
-mmd dump [--keys] [--in-place] 全状態（pmm を解析）
+mmd dump [--keys]              全状態（pmm を解析）。キーの一覧は --keys のときだけ
 mmd new / open F / save [F]    プロジェクト
 mmd model load F / list / select N / delete [N] / show / hide
 mmd motion load F [--frame N] [--model N]
 mmd pose load F [--register]
 mmd wav load F
-mmd accessory load F / list / select N / set ... / delete
-mmd frame get / set N / next / prev / first / last
-mmd play [--from A --to B] [--wait] / stop
-mmd camera get / set [--pos X Y Z] [--rot X Y Z] [--distance D] [--fov F] [--register]
+mmd accessory load F / list / get N / set N ... / delete N
+mmd frame get / set N / next / prev / next-key / prev-key / first / last
+mmd play [--from A --to B] [--wait] [--from-current] [--stay] [--repeat] / stop
+mmd camera get / set [--pos X Y Z] [--rot X Y Z] [--distance D] [--fov F] [--perspective on|off] [--register]
 mmd light get / set [--rgb R G B] [--dir X Y Z] [--register]
 mmd bone list / get NAME / set NAME [--pos X Y Z] [--rot X Y Z | --quat X Y Z W] [--frame N]
 mmd morph list / get NAME / set NAME VALUE [--frame N]
 mmd render image OUT [--size W H]
-mmd render avi OUT [--from A --to B] [--fps N] [--size W H] [--codec NAME]
+mmd render avi OUT --from A --to B [--fps N] [--size W H] [--codec NAME]
+mmd render size [W H]
 mmd menu list / click ID
 mmd control list / get ID / set ID VALUE / click ID
-mmd dialog list / click LABEL / close
+mmd dialog list / click LABEL / close / show
 mmd window status / minimize
+mmd file info F                vmd / vpd / pmm の中身（MMD 不要）
 ```
 
-共通オプション: `--pid N`（対象のインスタンス）、`--out FILE`（JSON を UTF-8 でファイルへ）、`--timeout 秒`。
+共通オプション: `--pid N`（対象のインスタンス）、`--out FILE`（JSON を UTF-8 でファイルへ）、`--timeout 秒`、
+`--in-place`（mmd-cli を通さずに開かれたプロジェクトへの保存を許す）。
+
+実装して分かり、仕様に入れたこと。
+
+- 角度は MMD の窓に表示される値で受け渡しする。ボーンは、数学上の Y と Z の符号が逆になる
+  （四元数を Y・X・Z の順のオイラー角 (10, 20, 30) から作ると、MMD は 10 / -20 / -30 と表示する）。
+- カメラと照明の値は、キーとして登録しない限り、モデルを選択した時点で MMD が捨てる。
+  モデルの選択中に登録なしで変更する指示はエラーにする。
+- 再生の範囲は入力欄 409 / 410 だけで決まる。チェックボックス 414（フレ・スタート）は「現在のフレームから始める」、
+  413（フレ・ストップ）は「止まったフレームに留まる」の意味である。再生中、フレーム番号の欄は更新されない。
+- 書き出しは場面のカメラを通す（カメラ編に切り替えてから出力し、元の選択へ戻す）。
+- `open` と保存の完了は、命令の戻りではなく状態（題名のパス、ファイルの更新時刻）で判定する。
+  大きなプロジェクトは、命令が戻ったあとも読み込みが続くためである。
+- ファイル選択ダイアログへ渡すパスは `\` 区切りに直す。`/` 区切りのままだと、ダイアログが
+  「ファイル名が無効」のメッセージを自分の上に開いて止まる。
 
 対象のインスタンスは、`--pid`、環境変数 `MMD_CLI_PID`、`mmd launch` が最後に起動したもの、
 唯一起動しているもの、の順で決める。複数あって決められないときは一覧を付けてエラーにする。

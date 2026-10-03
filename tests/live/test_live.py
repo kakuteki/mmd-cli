@@ -214,6 +214,9 @@ class CameraLightTest(Base):
         MMD.load_model(bundled("Model", "初音ミク.pmd"))
         r = MMD.set_camera(distance=33, register=True)
         self.assertEqual(r["distance"], 33.0)
+        cam = MMD.dump()["camera"]
+        self.assertEqual(cam["current_is"], "editing view")   # a model is selected: not the scene camera
+        self.assertEqual(cam["keys"][0]["distance"], 33.0)
         self.assertEqual(MMD.camera()["distance"], 33.0)
         self.assertEqual(MMD.state()["selected_model"], "初音ミク")
 
@@ -468,6 +471,60 @@ class DialogTest(Base):
         self.assertEqual(MMD.set_frame(5), 5)
 
 
+class ObserveTest(Base):
+    def test_looking_does_not_hide_a_dialog_the_cli_did_not_open(self):
+        # a person working in this MMD may have a dialog open: state / dialog list must leave it visible
+        from mmd_cli import guard, win32
+        win32.post(MMD.hwnd, win32.WM_COMMAND, 201, None)        # "about", opened behind the CLI's back
+        hwnd = None
+        deadline = time.time() + 10
+        with win32.timer_resolution():
+            while time.time() < deadline:
+                found = guard.dialog_windows(MMD.pid, MMD.hwnd)
+                if found:
+                    hwnd = found[0]
+                    # keep it off the real screen for this test, but do not make it transparent
+                    win32.user32.SetWindowPos(hwnd, None, -20000, 300, 0, 0, 0x0001 | 0x0004 | 0x0010)
+                    if win32.is_visible(hwnd):
+                        break
+                time.sleep(0.001)
+        self.assertIsNotNone(hwnd)
+        try:
+            listed = MMD.state()["dialogs"]
+            self.assertEqual([(d["title"], d["hidden"]) for d in listed], [("About", False)])
+            self.assertEqual([d["title"] for d in MMD.dialogs()], ["About"])
+            with self.assertRaises(guard.DialogPending):
+                MMD.set_frame(1)
+            self.assertEqual(win32.window_alpha(hwnd), 255)
+            self.assertFalse(win32.is_hidden(hwnd))
+        finally:
+            MMD.dialog_click("OK")
+
+
+class NestedDialogTest(Base):
+    def test_the_innermost_dialog_is_the_one_that_is_answered(self):
+        # a save dialog that rejects its file name opens a message on top of itself: two windows are
+        # open, and only the inner one can take an answer
+        from mmd_cli import guard
+        with self.assertRaises(guard.DialogPending):
+            MMD.menu(208, {"file_dialog": MMD._fill_file_dialog("C:/no such folder?/x.pmm")})
+        listed = MMD.dialogs()
+        self.assertEqual(len(listed), 2)
+        self.assertEqual([d["enabled"] for d in listed].count(True), 1)
+        MMD.dialog_click("OK")                      # the message
+        self.assertEqual([d["kind"] for d in MMD.dialogs()], ["file_dialog"])
+        MMD.dialog_close()                          # the save dialog itself
+        self.assertEqual(MMD.dialogs(), [])
+
+    def test_working_copies_are_found_when_the_home_path_has_forward_slashes(self):
+        previous = os.environ["MMD_CLI_HOME"]
+        os.environ["MMD_CLI_HOME"] = os.path.join(WORK, "home2").replace(os.sep, "/")
+        try:
+            self.assertEqual(MMD.dump()["models"], [])
+        finally:
+            os.environ["MMD_CLI_HOME"] = previous
+
+
 class GenericTest(Base):
     def test_menu_list_has_ids_and_check_marks(self):
         items = {i["id"]: i for i in MMD.menu_items()}
@@ -486,6 +543,63 @@ class GenericTest(Base):
         MMD.control_set(554, "7")                   # the frame bookmark box
         self.assertEqual(MMD.control_get(554)["text"], "7")
         self.assertEqual(len(MMD.controls()), 168)
+
+
+class GenericControlTest(Base):
+    def test_trackbar_moves_the_value_it_controls(self):
+        MMD.control_set(447, 60)                                 # view angle slider
+        self.assertEqual(MMD.control_get(447)["pos"], 60)
+        self.assertEqual(MMD.camera()["fov"], 60)
+
+    def test_check_box(self):
+        self.assertTrue(MMD.control_get(446)["checked"])         # perspective
+        MMD.control_set(446, "off")
+        self.assertFalse(MMD.camera()["perspective"])
+        MMD.control_set(446, "on")
+        self.assertTrue(MMD.camera()["perspective"])
+
+    def test_combo_box_by_text(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.control_set(436, 0)
+        self.assertEqual(MMD.state()["mode"], "camera")
+        MMD.control_set(436, "初音ミク")
+        self.assertEqual(MMD.state()["selected_model"], "初音ミク")
+
+    def test_frame_first_last_and_key_jumps(self):
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.set_bone("センター", pos=(0, 1, 0), frame=10)
+        MMD.set_bone("センター", pos=(0, 2, 0), frame=40)
+        MMD.set_frame(0)
+        self.assertEqual(MMD.jump_key(forward=True), 10)
+        self.assertEqual(MMD.jump_key(forward=True), 40)
+        self.assertEqual(MMD.jump_key(forward=False), 10)
+        self.assertEqual(MMD.go_last(), 40)
+        self.assertEqual(MMD.go_first(), 0)
+
+    def test_a_revealed_dialog_is_opaque_again(self):
+        from mmd_cli import guard, win32
+        with self.assertRaises(guard.DialogPending):
+            MMD.menu_click(201)
+        hwnd = MMD.dialogs()[0]["hwnd"]
+        try:
+            shown = MMD.dialog_show(x=win32.OFFSCREEN_X, y=300)   # "show", but still where nobody sees it
+            self.assertEqual([d["title"] for d in shown], ["About"])
+            self.assertFalse(win32.ex_style(hwnd) & win32.WS_EX_NOACTIVATE)
+            self.assertEqual(win32.window_alpha(hwnd), 255)
+        finally:
+            MMD.dialog_click("OK")
+
+
+class SampleProjectTest(Base):
+    def test_a_project_that_ships_with_mmd_opens_and_dumps(self):
+        samples = sorted(f for f in os.listdir(bundled()) if f.endswith(".pmm"))
+        self.assertTrue(samples)
+        smallest = min(samples, key=lambda f: os.path.getsize(bundled(f)))
+        MMD.open_project(bundled(smallest))
+        d = MMD.dump()
+        self.assertGreaterEqual(len(d["models"]), 1)
+        self.assertGreater(sum(m["key_counts"]["bones"] for m in d["models"]), 100)
+        self.assertGreater(d["last_frame"], 100)
 
 
 class CliTest(Base):

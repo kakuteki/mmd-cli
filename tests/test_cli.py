@@ -17,6 +17,11 @@ class ParserTest(unittest.TestCase):
     def test_global_options_come_before_the_command(self):
         a = parse(["--pid", "12", "--out", "x.json", "--timeout", "30", "state"])
         self.assertEqual((a.pid, a.out, a.timeout, a.command), (12, "x.json", 30.0, "state"))
+        self.assertIsNone(parse(["state"]).timeout)
+
+    def test_dump_lists_key_frames_only_on_request(self):
+        self.assertFalse(parse(["dump"]).keys)
+        self.assertTrue(parse(["dump", "--keys"]).keys)
 
     def test_camera_set_accepts_negative_numbers(self):
         a = parse(["camera", "set", "--pos", "1.5", "12", "-3.25", "--rot", "10", "20", "5", "--distance", "30",

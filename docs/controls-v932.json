@@ -1,0 +1,4810 @@
+{
+ "note": "MikuMikuDance v9.32 (x64). rect = [x, y, w, h] in window coordinates at 96 dpi, measured with the window at its normal size. Several panels move or hide when a model is selected.",
+ "window": [
+  1280,
+  770
+ ],
+ "client_origin": [
+  8,
+  51
+ ],
+ "controls": [
+  {
+   "id": 400,
+   "class": "Button",
+   "text": "元に戻す",
+   "camera_mode": {
+    "rect": [
+     53,
+     72,
+     70,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     53,
+     72,
+     70,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 401,
+   "class": "Button",
+   "text": "やり直し",
+   "camera_mode": {
+    "rect": [
+     143,
+     72,
+     70,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     143,
+     72,
+     70,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 402,
+   "class": "Button",
+   "text": "正面",
+   "camera_mode": {
+    "rect": [
+     1092,
+     621,
+     38,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     846,
+     621,
+     38,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 403,
+   "class": "Button",
+   "text": "背面",
+   "camera_mode": {
+    "rect": [
+     1131,
+     621,
+     37,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     885,
+     621,
+     37,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 404,
+   "class": "Button",
+   "text": "上面",
+   "camera_mode": {
+    "rect": [
+     1169,
+     621,
+     37,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     923,
+     621,
+     37,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 405,
+   "class": "Button",
+   "text": "左面",
+   "camera_mode": {
+    "rect": [
+     1092,
+     641,
+     38,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     846,
+     641,
+     38,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 406,
+   "class": "Button",
+   "text": "右面",
+   "camera_mode": {
+    "rect": [
+     1131,
+     641,
+     37,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     885,
+     641,
+     37,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 407,
+   "class": "Button",
+   "text": "カメラ",
+   "camera_mode": {
+    "rect": [
+     1169,
+     641,
+     37,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     923,
+     641,
+     37,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 408,
+   "class": "Button",
+   "text": "再　生",
+   "camera_mode": {
+    "rect": [
+     1093,
+     699,
+     50,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     847,
+     699,
+     50,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 409,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1094,
+     726,
+     50,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     848,
+     726,
+     50,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 410,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1158,
+     726,
+     50,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     912,
+     726,
+     50,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 411,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1158,
+     704,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     912,
+     704,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 412,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1108,
+     663,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     862,
+     663,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 413,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1158,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     912,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 414,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1094,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     848,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 415,
+   "class": "Button",
+   "text": "範囲選択",
+   "camera_mode": {
+    "rect": [
+     129,
+     581,
+     60,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     129,
+     581,
+     60,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 416,
+   "class": "Button",
+   "text": "縦選択",
+   "camera_mode": {
+    "rect": [
+     148,
+     538,
+     50,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     148,
+     538,
+     50,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 417,
+   "class": "Edit",
+   "text": "0",
+   "camera_mode": {
+    "rect": [
+     106,
+     117,
+     54,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     106,
+     117,
+     54,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 418,
+   "class": "Button",
+   "text": "＜",
+   "camera_mode": {
+    "rect": [
+     84,
+     118,
+     20,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     84,
+     118,
+     20,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 419,
+   "class": "Button",
+   "text": "＞",
+   "camera_mode": {
+    "rect": [
+     162,
+     118,
+     20,
+     24
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     162,
+     118,
+     20,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 420,
+   "class": "Button",
+   "text": "コピー",
+   "camera_mode": {
+    "rect": [
+     14,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     14,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 421,
+   "class": "Button",
+   "text": "ﾍﾟｰｽﾄ",
+   "camera_mode": {
+    "rect": [
+     57,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     57,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 422,
+   "class": "Button",
+   "text": "反転P",
+   "camera_mode": {
+    "rect": [
+     100,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     100,
+     538,
+     40,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 423,
+   "class": "Button",
+   "text": "削　除",
+   "camera_mode": {
+    "rect": [
+     203,
+     538,
+     50,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     203,
+     538,
+     50,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 424,
+   "class": "Button",
+   "text": "拡大縮小",
+   "camera_mode": {
+    "rect": [
+     193,
+     581,
+     60,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     193,
+     581,
+     60,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 425,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     130,
+     561,
+     50,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     130,
+     561,
+     50,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 426,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     202,
+     561,
+     50,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     202,
+     561,
+     50,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 427,
+   "class": "ScrollBar",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     239,
+     213,
+     16,
+     301
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     239,
+     213,
+     16,
+     301
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 428,
+   "class": "ScrollBar",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     105,
+     515,
+     134,
+     16
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     105,
+     515,
+     134,
+     16
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 429,
+   "class": "Button",
+   "text": "現フレーム",
+   "camera_mode": {
+    "rect": [
+     16,
+     515,
+     80,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     16,
+     515,
+     80,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 430,
+   "class": "Button",
+   "text": "コピー",
+   "camera_mode": {
+    "rect": [
+     152,
+     684,
+     63,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     152,
+     684,
+     63,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 431,
+   "class": "Button",
+   "text": "ペースト",
+   "camera_mode": {
+    "rect": [
+     152,
+     710,
+     63,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     152,
+     710,
+     63,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 432,
+   "class": "Button",
+   "text": "線形補間",
+   "camera_mode": {
+    "rect": [
+     152,
+     736,
+     63,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     152,
+     736,
+     63,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 433,
+   "class": "ComboBox",
+   "text": "回　転",
+   "camera_mode": {
+    "rect": [
+     152,
+     627,
+     63,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     152,
+     627,
+     63,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 434,
+   "class": "ComboBox",
+   "text": "ﾎﾞｰﾝ01",
+   "camera_mode": {
+    "rect": [
+     15,
+     569,
+     100,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     15,
+     569,
+     100,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 435,
+   "class": "Button",
+   "text": "読　込",
+   "camera_mode": {
+    "rect": [
+     232,
+     650,
+     60,
+     21
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     232,
+     650,
+     60,
+     21
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 436,
+   "class": "ComboBox",
+   "text": "ダミーボーン",
+   "camera_mode": {
+    "rect": [
+     233,
+     624,
+     125,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     233,
+     624,
+     125,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 437,
+   "class": "Button",
+   "text": "削　除",
+   "camera_mode": {
+    "rect": [
+     299,
+     650,
+     60,
+     21
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     299,
+     650,
+     60,
+     21
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 438,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     299,
+     727,
+     60,
+     28
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     299,
+     727,
+     60,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 439,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     233,
+     678,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     233,
+     678,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 440,
+   "class": "Button",
+   "text": "ｾﾙﾌ影",
+   "camera_mode": {
+    "rect": [
+     275,
+     676,
+     40,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     275,
+     676,
+     40,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 441,
+   "class": "Button",
+   "text": "加算",
+   "camera_mode": {
+    "rect": [
+     318,
+     676,
+     41,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     318,
+     676,
+     41,
+     18
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 442,
+   "class": "Button",
+   "text": "外",
+   "camera_mode": {
+    "rect": [
+     336,
+     700,
+     22,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     336,
+     700,
+     22,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 443,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     233,
+     701,
+     100,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     233,
+     701,
+     100,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 444,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     235,
+     726,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     235,
+     726,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 445,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     235,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     235,
+     743,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 446,
+   "class": "Button",
+   "text": "パース",
+   "camera_mode": {
+    "rect": [
+     451,
+     623,
+     65,
+     23
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     451,
+     623,
+     65,
+     23
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 447,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     371,
+     667,
+     151,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     371,
+     667,
+     151,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 448,
+   "class": "Edit",
+   "text": " 30",
+   "camera_mode": {
+    "rect": [
+     485,
+     651,
+     30,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     485,
+     651,
+     30,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 449,
+   "class": "ComboBox",
+   "text": "なし",
+   "camera_mode": {
+    "rect": [
+     376,
+     709,
+     90,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     376,
+     709,
+     90,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 450,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     376,
+     734,
+     90,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     376,
+     734,
+     90,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 451,
+   "class": "Button",
+   "text": "初期化",
+   "camera_mode": {
+    "rect": [
+     376,
+     623,
+     70,
+     23
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     376,
+     623,
+     70,
+     23
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 452,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     471,
+     722,
+     45,
+     33
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     471,
+     722,
+     45,
+     33
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 453,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 454,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 455,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     622,
+     136,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     622,
+     136,
+     18
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 456,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     640,
+     136,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     640,
+     136,
+     18
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 457,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     658,
+     136,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     658,
+     136,
+     18
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 458,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     678,
+     132,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     678,
+     132,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 459,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     696,
+     132,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     696,
+     132,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 460,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     540,
+     714,
+     132,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     540,
+     714,
+     132,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 461,
+   "class": "Edit",
+   "text": "154",
+   "camera_mode": {
+    "rect": [
+     676,
+     622,
+     23,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     676,
+     622,
+     23,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 462,
+   "class": "Edit",
+   "text": "154",
+   "camera_mode": {
+    "rect": [
+     676,
+     640,
+     23,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     676,
+     640,
+     23,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 463,
+   "class": "Edit",
+   "text": "154",
+   "camera_mode": {
+    "rect": [
+     676,
+     658,
+     23,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     676,
+     658,
+     23,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 464,
+   "class": "Edit",
+   "text": "-0.5",
+   "camera_mode": {
+    "rect": [
+     672,
+     678,
+     27,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     672,
+     678,
+     27,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 465,
+   "class": "Edit",
+   "text": "-1.0",
+   "camera_mode": {
+    "rect": [
+     672,
+     696,
+     27,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     672,
+     696,
+     27,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 466,
+   "class": "Edit",
+   "text": "+0.5",
+   "camera_mode": {
+    "rect": [
+     672,
+     714,
+     27,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     672,
+     714,
+     27,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 467,
+   "class": "Button",
+   "text": "初期化",
+   "camera_mode": {
+    "rect": [
+     550,
+     736,
+     50,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     550,
+     736,
+     50,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 468,
+   "class": "Button",
+   "text": "登　 録",
+   "camera_mode": {
+    "rect": [
+     616,
+     736,
+     75,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     616,
+     736,
+     75,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 469,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     527,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     527,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 470,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     527,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     527,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 471,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     894,
+     622,
+     125,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     894,
+     622,
+     125,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 472,
+   "class": "Button",
+   "text": "読　込",
+   "camera_mode": {
+    "rect": [
+     893,
+     646,
+     60,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     893,
+     646,
+     60,
+     18
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 473,
+   "class": "Button",
+   "text": "削　除",
+   "camera_mode": {
+    "rect": [
+     960,
+     646,
+     60,
+     18
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     960,
+     646,
+     60,
+     18
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 474,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     894,
+     667,
+     90,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     894,
+     667,
+     90,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 475,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     988,
+     667,
+     90,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     988,
+     667,
+     90,
+     20
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 476,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1026,
+     620,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1026,
+     620,
+     13,
+     13
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 477,
+   "class": "Button",
+   "text": "加 算",
+   "camera_mode": {
+    "rect": [
+     1025,
+     649,
+     53,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1025,
+     649,
+     53,
+     17
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 478,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     903,
+     692,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     903,
+     692,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 479,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     966,
+     692,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     966,
+     692,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 480,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1029,
+     692,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1029,
+     692,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 481,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     903,
+     712,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     903,
+     712,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 482,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     966,
+     712,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     966,
+     712,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 483,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1029,
+     712,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1029,
+     712,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 484,
+   "class": "Edit",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     903,
+     732,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     903,
+     732,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 485,
+   "class": "Edit",
+   "text": "1.00",
+   "camera_mode": {
+    "rect": [
+     966,
+     732,
+     48,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     966,
+     732,
+     48,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 486,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1026,
+     635,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1026,
+     635,
+     13,
+     13
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 487,
+   "class": "Button",
+   "text": "登　 録",
+   "camera_mode": {
+    "rect": [
+     1021,
+     730,
+     58,
+     26
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1021,
+     730,
+     58,
+     26
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 488,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     890,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     890,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 489,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     890,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     890,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 490,
+   "class": "Button",
+   "text": "選　択",
+   "camera_mode": {
+    "rect": [
+     374,
+     622,
+     60,
+     28
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     374,
+     622,
+     60,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 491,
+   "class": "Button",
+   "text": "BOX選択",
+   "camera_mode": {
+    "rect": [
+     374,
+     657,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     374,
+     657,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 492,
+   "class": "Button",
+   "text": "移　動",
+   "camera_mode": {
+    "rect": [
+     502,
+     622,
+     60,
+     28
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     502,
+     622,
+     60,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 493,
+   "class": "Button",
+   "text": "回　転",
+   "camera_mode": {
+    "rect": [
+     438,
+     622,
+     60,
+     28
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     438,
+     622,
+     60,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 494,
+   "class": "Button",
+   "text": "全て選択",
+   "camera_mode": {
+    "rect": [
+     438,
+     657,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     438,
+     657,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 495,
+   "class": "Button",
+   "text": "初期化",
+   "camera_mode": {
+    "rect": [
+     438,
+     730,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     438,
+     730,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 496,
+   "class": "Button",
+   "text": "コピー",
+   "camera_mode": {
+    "rect": [
+     374,
+     692,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     374,
+     692,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 497,
+   "class": "Button",
+   "text": "ペースト",
+   "camera_mode": {
+    "rect": [
+     438,
+     692,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     438,
+     692,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 498,
+   "class": "Button",
+   "text": "反転ﾍﾟｰｽﾄ",
+   "camera_mode": {
+    "rect": [
+     502,
+     692,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     502,
+     692,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 499,
+   "class": "Button",
+   "text": "物 理",
+   "camera_mode": {
+    "rect": [
+     508,
+     726,
+     48,
+     28
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     508,
+     726,
+     48,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 500,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     374,
+     726,
+     60,
+     28
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     374,
+     726,
+     60,
+     28
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 501,
+   "class": "Button",
+   "text": "未登録選",
+   "camera_mode": {
+    "rect": [
+     502,
+     657,
+     60,
+     24
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     502,
+     657,
+     60,
+     24
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 502,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 503,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     371,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 504,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     824,
+     712,
+     92,
+     20
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     591,
+     712,
+     92,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 505,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     803,
+     732,
+     135,
+     25
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     570,
+     732,
+     135,
+     25
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 506,
+   "class": "Edit",
+   "text": "0.0000",
+   "camera_mode": {
+    "rect": [
+     848,
+     694,
+     28,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     615,
+     694,
+     28,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 507,
+   "class": "Button",
+   "text": "<<",
+   "camera_mode": {
+    "rect": [
+     808,
+     711,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     575,
+     711,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 508,
+   "class": "Button",
+   "text": ">>",
+   "camera_mode": {
+    "rect": [
+     916,
+     711,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     683,
+     711,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 509,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     824,
+     642,
+     92,
+     20
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     591,
+     642,
+     92,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 510,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     803,
+     662,
+     135,
+     25
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     570,
+     662,
+     135,
+     25
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 511,
+   "class": "Edit",
+   "text": "0.0000",
+   "camera_mode": {
+    "rect": [
+     848,
+     624,
+     28,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     615,
+     624,
+     28,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 512,
+   "class": "Button",
+   "text": "<<",
+   "camera_mode": {
+    "rect": [
+     808,
+     641,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     575,
+     641,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 513,
+   "class": "Button",
+   "text": ">>",
+   "camera_mode": {
+    "rect": [
+     916,
+     641,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     683,
+     641,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 514,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     955,
+     642,
+     92,
+     20
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     722,
+     642,
+     92,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 515,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     935,
+     662,
+     135,
+     25
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     702,
+     662,
+     135,
+     25
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 516,
+   "class": "Edit",
+   "text": "0.0000",
+   "camera_mode": {
+    "rect": [
+     979,
+     624,
+     28,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     746,
+     624,
+     28,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 517,
+   "class": "Button",
+   "text": "<<",
+   "camera_mode": {
+    "rect": [
+     939,
+     641,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     706,
+     641,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 518,
+   "class": "Button",
+   "text": ">>",
+   "camera_mode": {
+    "rect": [
+     1047,
+     641,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     814,
+     641,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 519,
+   "class": "ComboBox",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     955,
+     712,
+     92,
+     20
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     722,
+     712,
+     92,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 520,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     935,
+     732,
+     135,
+     25
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     702,
+     732,
+     135,
+     25
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 521,
+   "class": "Edit",
+   "text": "0.0000",
+   "camera_mode": {
+    "rect": [
+     979,
+     694,
+     28,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     746,
+     694,
+     28,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 522,
+   "class": "Button",
+   "text": "<<",
+   "camera_mode": {
+    "rect": [
+     939,
+     711,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     706,
+     711,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 523,
+   "class": "Button",
+   "text": ">>",
+   "camera_mode": {
+    "rect": [
+     1047,
+     711,
+     16,
+     22
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     814,
+     711,
+     16,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 524,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     881,
+     621,
+     50,
+     19
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     648,
+     621,
+     50,
+     19
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 525,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     881,
+     691,
+     50,
+     19
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     648,
+     691,
+     50,
+     19
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 526,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     1013,
+     691,
+     50,
+     19
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     780,
+     691,
+     50,
+     19
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 527,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     1013,
+     621,
+     50,
+     19
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     780,
+     621,
+     50,
+     19
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 528,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     804,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     571,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 529,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     804,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     571,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 530,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     152,
+     657,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     152,
+     657,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 531,
+   "class": "Button",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1177,
+     663,
+     13,
+     13
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     931,
+     663,
+     13,
+     13
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 532,
+   "class": "Button",
+   "text": ">.",
+   "camera_mode": {
+    "rect": [
+     192,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     192,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 533,
+   "class": "Button",
+   "text": ".<",
+   "camera_mode": {
+    "rect": [
+     54,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     54,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 534,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     1223,
+     699,
+     22,
+     57
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     977,
+     699,
+     22,
+     57
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 535,
+   "class": "Button",
+   "text": "追従",
+   "camera_mode": {
+    "rect": [
+     1208,
+     621,
+     35,
+     37
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     962,
+     621,
+     35,
+     37
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 536,
+   "class": "Button",
+   "text": "カメラ編",
+   "camera_mode": {
+    "rect": [
+     272,
+     573,
+     55,
+     27
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     272,
+     573,
+     55,
+     27
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 537,
+   "class": "Button",
+   "text": "X",
+   "camera_mode": {
+    "rect": [
+     407,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     407,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 538,
+   "class": "Button",
+   "text": "Y",
+   "camera_mode": {
+    "rect": [
+     480,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     480,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 539,
+   "class": "Button",
+   "text": "Z",
+   "camera_mode": {
+    "rect": [
+     553,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     553,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 540,
+   "class": "Button",
+   "text": "X",
+   "camera_mode": {
+    "rect": [
+     667,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     667,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 541,
+   "class": "Button",
+   "text": "Y",
+   "camera_mode": {
+    "rect": [
+     725,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     725,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 542,
+   "class": "Button",
+   "text": "Z",
+   "camera_mode": {
+    "rect": [
+     783,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     783,
+     579,
+     16,
+     17
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 543,
+   "class": "Button",
+   "text": "距離",
+   "camera_mode": {
+    "rect": [
+     846,
+     578,
+     36,
+     21
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     846,
+     578,
+     36,
+     21
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 544,
+   "class": "Edit",
+   "text": "0.00",
+   "camera_mode": {
+    "rect": [
+     424,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     424,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 545,
+   "class": "Edit",
+   "text": "0.00",
+   "camera_mode": {
+    "rect": [
+     497,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     497,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 546,
+   "class": "Edit",
+   "text": "0.00",
+   "camera_mode": {
+    "rect": [
+     570,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     570,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 547,
+   "class": "Edit",
+   "text": "0.0",
+   "camera_mode": {
+    "rect": [
+     684,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     684,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 548,
+   "class": "Edit",
+   "text": "0.0",
+   "camera_mode": {
+    "rect": [
+     742,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     742,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 549,
+   "class": "Edit",
+   "text": "0.0",
+   "camera_mode": {
+    "rect": [
+     800,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     800,
+     581,
+     38,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 550,
+   "class": "Edit",
+   "text": "45.00",
+   "camera_mode": {
+    "rect": [
+     883,
+     581,
+     53,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     883,
+     581,
+     53,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 551,
+   "class": "Button",
+   "text": "情　報",
+   "camera_mode": {
+    "rect": [
+     1022,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1022,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 552,
+   "class": "Button",
+   "text": "省エネ",
+   "camera_mode": {
+    "rect": [
+     1077,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1077,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 553,
+   "class": "Button",
+   "text": "Go",
+   "camera_mode": {
+    "rect": [
+     912,
+     54,
+     40,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     912,
+     54,
+     40,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 554,
+   "class": "Edit",
+   "text": "0",
+   "camera_mode": {
+    "rect": [
+     874,
+     57,
+     35,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     874,
+     57,
+     35,
+     14
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 555,
+   "class": "Button",
+   "text": "ｾｯﾄ",
+   "camera_mode": {
+    "rect": [
+     831,
+     54,
+     40,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     831,
+     54,
+     40,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 556,
+   "class": "Button",
+   "text": "美　影",
+   "camera_mode": {
+    "rect": [
+     967,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     967,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 557,
+   "class": "Button",
+   "text": "座標軸",
+   "camera_mode": {
+    "rect": [
+     1132,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     1132,
+     54,
+     50,
+     20
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 558,
+   "class": "Button",
+   "text": "|<",
+   "camera_mode": {
+    "rect": [
+     23,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     23,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 559,
+   "class": "Button",
+   "text": ">|",
+   "camera_mode": {
+    "rect": [
+     228,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     228,
+     120,
+     20,
+     22
+    ],
+    "visible": true
+   }
+  },
+  {
+   "id": 560,
+   "class": "msctls_trackbar32",
+   "text": "",
+   "camera_mode": {
+    "rect": [
+     709,
+     682,
+     176,
+     25
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     709,
+     682,
+     176,
+     25
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 561,
+   "class": "Edit",
+   "text": "8875",
+   "camera_mode": {
+    "rect": [
+     846,
+     662,
+     30,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     846,
+     662,
+     30,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 562,
+   "class": "Button",
+   "text": "影なし",
+   "camera_mode": {
+    "rect": [
+     714,
+     627,
+     54,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     714,
+     627,
+     54,
+     22
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 563,
+   "class": "Button",
+   "text": "モード1",
+   "camera_mode": {
+    "rect": [
+     771,
+     627,
+     54,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     771,
+     627,
+     54,
+     22
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 564,
+   "class": "Button",
+   "text": "モード2",
+   "camera_mode": {
+    "rect": [
+     828,
+     627,
+     54,
+     22
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     828,
+     627,
+     54,
+     22
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 565,
+   "class": "Button",
+   "text": "登　録",
+   "camera_mode": {
+    "rect": [
+     771,
+     726,
+     54,
+     30
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     771,
+     726,
+     54,
+     30
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 566,
+   "class": "Button",
+   "text": "－",
+   "camera_mode": {
+    "rect": [
+     710,
+     607,
+     14,
+     14
+    ],
+    "visible": true
+   },
+   "model_mode": {
+    "rect": [
+     710,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  },
+  {
+   "id": 567,
+   "class": "Button",
+   "text": "＋",
+   "camera_mode": {
+    "rect": [
+     710,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   },
+   "model_mode": {
+    "rect": [
+     710,
+     607,
+     14,
+     14
+    ],
+    "visible": false
+   }
+  }
+ ],
+ "menu": [
+  {
+   "id": 204,
+   "path": [
+    "ファイル(&F)",
+    "新規(&N)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 205,
+   "path": [
+    "ファイル(&F)",
+    "開く(&O)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 207,
+   "path": [
+    "ファイル(&F)",
+    "上書き保存(&S)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 208,
+   "path": [
+    "ファイル(&F)",
+    "名前を付けて保存(&A)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 223,
+   "path": [
+    "ファイル(&F)",
+    "AVIファイルに出力(&V)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 276,
+   "path": [
+    "ファイル(&F)",
+    "画像ファイルに出力(&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 202,
+   "path": [
+    "ファイル(&F)",
+    "ポーズデータ読込(&P)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 203,
+   "path": [
+    "ファイル(&F)",
+    "ポーズデータ保存(&Q)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 209,
+   "path": [
+    "ファイル(&F)",
+    "モーションデータ読込(&M)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 210,
+   "path": [
+    "ファイル(&F)",
+    "モーションデータ保存(&L)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 206,
+   "path": [
+    "ファイル(&F)",
+    "WAVファイル読込(&W)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 284,
+   "path": [
+    "ファイル(&F)",
+    "ﾌﾚｰﾑ移動時WAVを鳴らす(&F)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 297,
+   "path": [
+    "ファイル(&F)",
+    "WAVファイルを鳴らさない(&D)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 301,
+   "path": [
+    "ファイル(&F)",
+    "ﾃﾞﾌｫﾙﾄﾌｫﾙﾀﾞを前回位置とする(&E)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 200,
+   "path": [
+    "ファイル(&F)",
+    "終了(&X)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 300,
+   "path": [
+    "編集(&D)",
+    "ボーン・カメラ数値入力(&O)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 302,
+   "path": [
+    "編集(&D)",
+    "ボーン・カメラ角度0化(&Z)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 222,
+   "path": [
+    "編集(&D)",
+    "不要ﾌﾚｰﾑ削除(&D)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 237,
+   "path": [
+    "編集(&D)",
+    "ｶﾒﾗﾌﾚｰﾑすべて選択(&C)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 238,
+   "path": [
+    "編集(&D)",
+    "照明ﾌﾚｰﾑすべて選択(&L)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 239,
+   "path": [
+    "編集(&D)",
+    "ｾﾙﾌ影ﾌﾚｰﾑすべて選択(&S)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 240,
+   "path": [
+    "編集(&D)",
+    "重力ﾌﾚｰﾑすべて選択(&V)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 241,
+   "path": [
+    "編集(&D)",
+    "ｱｸｾｻﾘﾌﾚｰﾑすべて選択(&A)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 242,
+   "path": [
+    "編集(&D)",
+    "ｶﾒﾗﾌﾚｰﾑ位置角度補正(&G)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 217,
+   "path": [
+    "編集(&D)",
+    "ﾎﾞｰﾝﾌﾚｰﾑすべて選択(&N)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 220,
+   "path": [
+    "編集(&D)",
+    "表情ﾌﾚｰﾑすべて選択(&E)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 218,
+   "path": [
+    "編集(&D)",
+    "表示･IK･外親ﾌﾚｰﾑすべて選択(&M)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 250,
+   "path": [
+    "編集(&D)",
+    "別ﾌﾚｰﾑへﾍﾟｰｽﾄ(Fｷｰ)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 255,
+   "path": [
+    "編集(&D)",
+    "空ﾌﾚｰﾑ挿入(ﾎﾞｰﾝorｶﾒﾗ)(Iｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 256,
+   "path": [
+    "編集(&D)",
+    "列ﾌﾚｰﾑ削除(ﾎﾞｰﾝorｶﾒﾗ)(Kｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 257,
+   "path": [
+    "編集(&D)",
+    "空ﾌﾚｰﾑ挿入(表情or照明)(Uｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 258,
+   "path": [
+    "編集(&D)",
+    "列ﾌﾚｰﾑ削除(表情or照明)(Jｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 251,
+   "path": [
+    "編集(&D)",
+    "ﾎﾞｰﾝﾌﾚｰﾑ位置角度補正(Rｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 252,
+   "path": [
+    "編集(&D)",
+    "表情大きさ補正(&T)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 219,
+   "path": [
+    "編集(&D)",
+    "ｾﾝﾀｰ位置ﾊﾞｲｱｽ付加(&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 212,
+   "path": [
+    "表示(&V)",
+    "出力サイズ(&O)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 280,
+   "path": [
+    "表示(&V)",
+    "別窓(&W)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 281,
+   "path": [
+    "表示(&V)",
+    "別窓最前列表示(&F)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 247,
+   "path": [
+    "表示(&V)",
+    "ﾓﾃﾞﾙ編集時ｶﾒﾗ･照明追従(&C)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 211,
+   "path": [
+    "表示(&V)",
+    "情報表示(&D)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 215,
+   "path": [
+    "表示(&V)",
+    "座標軸表示(&G)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 221,
+   "path": [
+    "表示(&V)",
+    "地面影表示(&S)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 248,
+   "path": [
+    "表示(&V)",
+    "地面影色設定(&X)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 254,
+   "path": [
+    "表示(&V)",
+    "地面影色透明化(&T)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 214,
+   "path": [
+    "表示(&V)",
+    "半透明化(Vｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 283,
+   "path": [
+    "表示(&V)",
+    "モデル非表示(&A)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 253,
+   "path": [
+    "表示(&V)",
+    "エッジ太さ(&E)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 286,
+   "path": [
+    "表示(&V)",
+    "エッジ色(&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 277,
+   "path": [
+    "表示(&V)",
+    "アンチエイリアス(&H)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 298,
+   "path": [
+    "表示(&V)",
+    "ミップマップ(異方性フィルタ)(&M)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 279,
+   "path": [
+    "表示(&V)",
+    "セルフシャドウ表示(&P)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 287,
+   "path": [
+    "表示(&V)",
+    "ワイヤーフレーム表示(&R)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 290,
+   "path": [
+    "表示(&V)",
+    "フルスクリーン表示(Alt+Enter)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 234,
+   "path": [
+    "表示(&V)",
+    "fps無制限"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 235,
+   "path": [
+    "表示(&V)",
+    "30fps制限"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 236,
+   "path": [
+    "表示(&V)",
+    "60fps制限"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 299,
+   "path": [
+    "表示(&V)",
+    "省エネモード"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 249,
+   "path": [
+    "背景(&B)",
+    "アクセサリ編集(&S)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 288,
+   "path": [
+    "背景(&B)",
+    "モデル描画順(&O)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 289,
+   "path": [
+    "背景(&B)",
+    "モデル計算順(&C)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 282,
+   "path": [
+    "背景(&B)",
+    "背景黒化(&D)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 213,
+   "path": [
+    "背景(&B)",
+    "背景AVIファイル読込(&L)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 232,
+   "path": [
+    "背景(&B)",
+    "背景画像ファイル読込(&R)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 216,
+   "path": [
+    "背景(&B)",
+    "背景AVI表示(&A)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 233,
+   "path": [
+    "背景(&B)",
+    "背景画像表示(&P)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 243,
+   "path": [
+    "背景(&B)",
+    "ｽｸﾘｰﾝ用ｷｬﾌﾟﾁｬOFF(&V)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 244,
+   "path": [
+    "背景(&B)",
+    "ON･モード１(全画面) (&M)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 245,
+   "path": [
+    "背景(&B)",
+    "ON･モード２(4:3比率) (&N)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 246,
+   "path": [
+    "背景(&B)",
+    "ON･モード３(背景AVI) (&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 226,
+   "path": [
+    "表情(&M)",
+    "リップフレーム全て削除"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 224,
+   "path": [
+    "表情(&M)",
+    "vsqによるリップシンク"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 225,
+   "path": [
+    "表情(&M)",
+    "リップフレーム時間シフト"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 228,
+   "path": [
+    "表情(&M)",
+    "目フレーム全て削除"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 227,
+   "path": [
+    "表情(&M)",
+    "まばたきランダム登録"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 231,
+   "path": [
+    "表情(&M)",
+    "まゆフレーム全て削除"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 230,
+   "path": [
+    "表情(&M)",
+    "全ての表情リセット"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 229,
+   "path": [
+    "表情(&M)",
+    "全ての表情フレーム登録(Hｷｰ)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 269,
+   "path": [
+    "物理演算(&P)",
+    "オン/オフモード(&O)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 265,
+   "path": [
+    "物理演算(&P)",
+    "常に演算(&E)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 270,
+   "path": [
+    "物理演算(&P)",
+    "トレースモード(&T)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 272,
+   "path": [
+    "物理演算(&P)",
+    "演算しない(&N)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 271,
+   "path": [
+    "物理演算(&P)",
+    "再生時は常にオン/オフモードにする(&P)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 264,
+   "path": [
+    "物理演算(&P)",
+    "剛体表示(&D)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 266,
+   "path": [
+    "物理演算(&P)",
+    "重力設定(&G)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 268,
+   "path": [
+    "物理演算(&P)",
+    "剛体位置初期化(&I)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 285,
+   "path": [
+    "物理演算(&P)",
+    "床(&F)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 273,
+   "path": [
+    "物理演算(&P)",
+    "物理影響ボーン選択(&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 274,
+   "path": [
+    "物理演算(&P)",
+    "全ての物理ONフレーム(X印)選択(&X)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 275,
+   "path": [
+    "物理演算(&P)",
+    "物理ON/OFFフレーム変換(&C)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 267,
+   "path": [
+    "物理演算(&P)",
+    "物理エンジンについて(&A)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 291,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "Kinect(&K)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 292,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "ｷｬﾌﾟﾁｬ(&C)"
+   ],
+   "checked": false,
+   "grayed": true
+  },
+  {
+   "id": 293,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "左右反転(&R)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 294,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "ﾛｽﾄﾎﾞｰﾝ初期化(&L)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 295,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "赤人表示(&D)"
+   ],
+   "checked": true,
+   "grayed": false
+  },
+  {
+   "id": 296,
+   "path": [
+    "ﾓｰｼｮﾝｷｬﾌﾟﾁｬ(&K)",
+    "oniﾌｧｲﾙ読込(&O)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 260,
+   "path": [
+    "ヘルプ(&H)",
+    "English Mode(&E)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 259,
+   "path": [
+    "ヘルプ(&H)",
+    "モデル拡張(&M)",
+    "英語名編集(&E)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 261,
+   "path": [
+    "ヘルプ(&H)",
+    "モデル拡張(&M)",
+    "ﾄｩｰﾝﾃｸｽﾁｬ変更(&T)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 262,
+   "path": [
+    "ヘルプ(&H)",
+    "モデル拡張(&M)",
+    "物理演算編集(&B)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 263,
+   "path": [
+    "ヘルプ(&H)",
+    "モデル拡張(&M)",
+    "拡張モデル保存(&P)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 278,
+   "path": [
+    "ヘルプ(&H)",
+    "ﾃｸｽﾁｬ読直し(&R)"
+   ],
+   "checked": false,
+   "grayed": false
+  },
+  {
+   "id": 201,
+   "path": [
+    "ヘルプ(&H)",
+    "ﾊﾞｰｼﾞｮﾝ情報(&I)"
+   ],
+   "checked": false,
+   "grayed": false
+  }
+ ]
+}

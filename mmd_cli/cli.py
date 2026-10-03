@@ -53,7 +53,8 @@ def build_parser():
     p.add_argument("--version", action="version", version="mmd-cli " + __version__)
     p.add_argument("--pid", type=int, help="the MMD process to talk to (default: the one started by 'mmd launch')")
     p.add_argument("--out", help="write the JSON result to this file as UTF-8 (stdout then only points to it)")
-    p.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for MMD (default 120)")
+    p.add_argument("--timeout", type=float,
+                   help="seconds to wait for MMD (default 120; AVI output allows 2 s per frame on top)")
     p.add_argument("--in-place", action="store_true",
                    help="allow saving into a project file that was not opened through mmd-cli")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -69,7 +70,7 @@ def build_parser():
     s.add_argument("--force", action="store_true", help="terminate the process if it does not close")
     sub.add_parser("state", help="what the controls of the MMD window show")
     s = sub.add_parser("dump", help="the whole scene (saves the working copy of the project and parses it)")
-    s.add_argument("--no-keys", action="store_true", help="leave out the key frame lists")
+    s.add_argument("--keys", action="store_true", help="include every key frame (can be long)")
     sub.add_parser("new", help="start a new project (discards the current one)")
     s = sub.add_parser("open", help="open a copy of a .pmm project")
     s.add_argument("file")
@@ -261,10 +262,11 @@ def run(args):
         exe = args.exe or os.environ.get("MMD_EXE") or app.load_state().get("exe")
         if not exe:
             raise app.MmdError("give the program with --exe PATH (or set MMD_EXE)")
-        return app.launch(exe, timeout=args.timeout).state()
+        return app.launch(exe, timeout=args.timeout or 90.0).state()
 
     mmd = app.Mmd.attach(args.pid)
-    mmd.timeout = args.timeout
+    if args.timeout:
+        mmd.timeout = args.timeout
     mmd.in_place = args.in_place
     try:
         result = dict(_dispatch(mmd, args))
@@ -283,7 +285,7 @@ def _dispatch(mmd, args):
     if command == "state":
         return mmd.state()
     if command == "dump":
-        return mmd.dump(keys=not args.no_keys)
+        return mmd.dump(keys=args.keys)
     if command == "new":
         return mmd.new_project()
     if command == "open":
@@ -336,10 +338,10 @@ def _dispatch(mmd, args):
             return {"frame": mmd.step_frame(1 if action == "next" else -1)}
         if action in ("next-key", "prev-key"):
             return {"frame": mmd.jump_key(action == "next-key")}
-        if action in ("first", "last"):
-            from .ids import Ctl
-            mmd.require_ready()
-            mmd.click(Ctl.FRAME_FIRST if action == "first" else Ctl.FRAME_LAST)
+        if action == "first":
+            return {"frame": mmd.go_first()}
+        if action == "last":
+            return {"frame": mmd.go_last()}
         return {"frame": mmd.frame()}
 
     if command == "camera":

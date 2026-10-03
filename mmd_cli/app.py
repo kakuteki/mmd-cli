@@ -31,6 +31,7 @@ def home_dir():
     base = os.environ.get("MMD_CLI_HOME")
     if not base:
         base = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mmd-cli")
+    base = os.path.abspath(base)        # also turns forward slashes into the ones MMD's file dialogs accept
     os.makedirs(base, exist_ok=True)
     return base
 
@@ -75,13 +76,27 @@ def _format(value):
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
-def _existing(path, extensions, what):
+def _require_ansi(path):
+    """MMD is an ANSI program: a path with characters outside the system code page does not reach it intact"""
+    try:
+        path.encode("mbcs")
+    except UnicodeEncodeError:
+        raise MmdError("MMD cannot open this path: it has characters outside the system code page: %s"
+                       % path.encode("ascii", "backslashreplace").decode("ascii"))
+    return path
+
+
+def check_input_file(path, extensions, what):
     full = os.path.abspath(path)
     if not os.path.isfile(full):
         raise FileNotFoundError(full)
     if extensions and os.path.splitext(full)[1].lower() not in extensions:
         raise MmdError("%s must be one of %s: %s" % (what, ", ".join(extensions), full))
-    return full
+    return _require_ansi(full)
+
+
+def check_output_file(path):
+    return _require_ansi(os.path.abspath(path))
 
 
 # ---- finding and starting MMD ---------------------------------------------------------------
@@ -176,7 +191,7 @@ class Mmd:
     def require_ready(self, allow_playing=False):
         if not win32.is_window(self.hwnd):
             raise MmdError("the MMD window is gone (pid %d)" % self.pid)
-        pending = guard.open_dialogs(self.pid, self.hwnd)
+        pending = guard.open_dialogs(self.pid, self.hwnd, hide=False)
         if pending:
             raise DialogPending(pending)
         if not allow_playing and self.playing():
@@ -231,6 +246,8 @@ class Mmd:
 
     @staticmethod
     def _fill_file_dialog(path):
+        path = os.path.normpath(path)       # a file dialog rejects forward slashes
+
         def handler(dialog):
             edit = dialog.file_name_edit()
             button = dialog.find_button(1)
@@ -270,16 +287,18 @@ class Mmd:
     def frame(self):
         return int(self.text(Ctl.FRAME).strip() or 0)
 
+    def _project_path(self):
+        match = _TITLE_PATH.match(win32.get_text(self.hwnd))
+        return match.group(1) if match else None
+
     def state(self):
         items = self._model_items()
         cur = win32.combo_selection(self.ctl(Ctl.MODEL_LIST))
-        title = win32.get_text(self.hwnd)
-        match = _TITLE_PATH.match(title)
         return {
             "pid": self.pid,
             "hwnd": self.hwnd,
             "minimized": win32.is_iconic(self.hwnd),
-            "project_path": match.group(1) if match else None,
+            "project_path": self._project_path(),
             "mode": "model" if cur > 0 else "camera",
             "models": items[1:],
             "selected_model": items[cur] if cur > 0 else None,
@@ -287,7 +306,7 @@ class Mmd:
             "frame": self.frame(),
             "playing": self.playing(),
             "accessories": self.accessories(),
-            "dialogs": [d.to_json() for d in guard.open_dialogs(self.pid, self.hwnd)],
+            "dialogs": self.dialogs(),
         }
 
     # ---- models -------------------------------------------------------------------------------
@@ -314,7 +333,7 @@ class Mmd:
         return self.state()
 
     def load_model(self, path):
-        path = _existing(path, _MODEL_EXTENSIONS, "a model")
+        path = check_input_file(path, _MODEL_EXTENSIONS, "a model")
         self.require_ready()
         before = self.models()
         info = {}
@@ -372,6 +391,16 @@ class Mmd:
 
     def step_frame(self, delta):
         return self.set_frame(max(0, self.frame() + int(delta)))
+
+    def go_first(self):
+        self.require_ready()
+        self.click(Ctl.FRAME_FIRST)
+        return self.frame()
+
+    def go_last(self):
+        self.require_ready()
+        self.click(Ctl.FRAME_LAST)
+        return self.frame()
 
     def jump_key(self, forward=True):
         """go to the next / previous key frame of the selected rows"""
@@ -493,7 +522,8 @@ class Mmd:
             self._set_record({"work": work, "origin": record.get("origin") if record else None})
             return work
         if (record and _same_path(current, record["work"])) or self.in_place or allow_foreign:
-            self.menu(Menu.SAVE)
+            before = os.stat(current).st_mtime_ns if os.path.exists(current) else None
+            self.menu(Menu.SAVE, done=lambda: os.path.exists(current) and os.stat(current).st_mtime_ns != before)
             return current
         raise MmdError("this project (%s) was not opened through mmd-cli; reading it needs a save. "
                        "Pass --in-place to save into that file, or reopen it with: mmd open FILE" % current)
@@ -516,7 +546,7 @@ class Mmd:
         source = self._save_project(allow_foreign=True)
         record = self._record()
         if record and _same_path(source, record["work"]):
-            target = os.path.abspath(path) if path else record.get("origin")
+            target = check_output_file(path) if path else record.get("origin")
             if not target:
                 raise MmdError("this project has no file yet: give one with  mmd save FILE.pmm")
             os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -525,7 +555,7 @@ class Mmd:
             self._set_record(record)
             return {"path": target, "bytes": os.path.getsize(target)}
         if path and not _same_path(path, source):
-            target = os.path.abspath(path)
+            target = check_output_file(path)
             self._save_as(target)
             return {"path": target, "bytes": os.path.getsize(target)}
         return {"path": source, "bytes": os.path.getsize(source)}
@@ -537,14 +567,21 @@ class Mmd:
         return self.state()
 
     def open_project(self, path):
-        path = _existing(path, (".pmm",), "a project")
+        path = check_input_file(path, (".pmm",), "a project")
         self.require_ready()
         work = self._new_work_path()
         shutil.copyfile(path, work)
-        self.menu(Menu.OPEN, {"file_dialog": self._fill_file_dialog(work)})   # MMD does not ask before discarding
-        current = self.state()["project_path"]
-        if current is None or not _same_path(current, work):
-            raise MmdError("MMD did not open the project (it reports %r)" % current)
+        def opened():
+            current = self._project_path()
+            return current is not None and _same_path(current, work)
+
+        try:
+            # MMD does not ask before discarding the current project; a big project keeps loading
+            # after the command has returned, so the title is what tells that it is open
+            self.menu(Menu.OPEN, {"file_dialog": self._fill_file_dialog(work)}, done=opened)
+        except OperationTimeout:
+            raise MmdError("MMD did not open the project (its title shows %r)" % self._project_path())
+        self.wait_quiet()
         self._set_record({"work": work, "origin": path})
         return self.state()
 
@@ -562,7 +599,7 @@ class Mmd:
         return bool(confirmed)
 
     def load_motion(self, path, frame=None, model=None):
-        path = _existing(path, (".vmd",), "a motion")
+        path = check_input_file(path, (".vmd",), "a motion")
         self.require_ready()
         motion = vmd.load(path)
         if motion.is_camera:
@@ -664,7 +701,7 @@ class Mmd:
                 "value": _num(after["morph_current"][after["morphs"].index(name)])}
 
     def load_pose(self, path, register=False, model=None):
-        path = _existing(path, (".vpd",), "a pose")
+        path = check_input_file(path, (".vpd",), "a pose")
         self.require_ready()
         if model is not None:
             self.select_model(model)
@@ -686,7 +723,7 @@ class Mmd:
     # ---- sound and accessories ----------------------------------------------------------------
 
     def load_wav(self, path):
-        path = _existing(path, (".wav",), "a sound file")
+        path = check_input_file(path, (".wav",), "a sound file")
         self.require_ready()
         self.drop(path)
         return {"path": path}
@@ -695,7 +732,7 @@ class Mmd:
         return win32.combo_items(self.ctl(Ctl.ACC_LIST))
 
     def load_accessory(self, path):
-        path = _existing(path, (".x", ".vac"), "an accessory")
+        path = check_input_file(path, (".x", ".vac"), "an accessory")
         self.require_ready()
         before = self.accessories()
         self.drop(path)
@@ -803,7 +840,7 @@ class Mmd:
         return done
 
     def render_image(self, path, size=None, timeout=None):
-        path = os.path.abspath(path)
+        path = check_output_file(path)
         if os.path.splitext(path)[1].lower() not in _IMAGE_EXTENSIONS:
             raise MmdError("image file must end with one of %s" % ", ".join(_IMAGE_EXTENSIONS))
         self.require_ready()
@@ -818,7 +855,7 @@ class Mmd:
         return {"path": path, "size": _image_size(path), "bytes": os.path.getsize(path), "frame": self.frame()}
 
     def render_avi(self, path, start, end, fps=30, size=None, codec=None, timeout=None):
-        path = os.path.abspath(path)
+        path = check_output_file(path)
         if not path.lower().endswith(".avi"):
             raise MmdError("video file must end with .avi")
         start, end = int(start), int(end)
@@ -828,6 +865,8 @@ class Mmd:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path):
             os.remove(path)
+        if timeout is None:
+            timeout = max(self.timeout, 60.0 + 2.0 * (end - start + 1))
         used = {}
         problem = []
 
@@ -990,13 +1029,19 @@ class Mmd:
     # ---- dialogs ------------------------------------------------------------------------------
 
     def dialogs(self):
-        return [d.to_json() for d in guard.open_dialogs(self.pid, self.hwnd)]
+        """dialogs MMD is waiting in.  Looking does not hide them: one that a person opened by hand
+        stays on screen ("hidden" tells which ones the CLI has put away)."""
+        return [dict(d.to_json(), hidden=win32.is_hidden(d.hwnd), enabled=win32.is_enabled(d.hwnd))
+                for d in guard.open_dialogs(self.pid, self.hwnd, hide=False)]
 
     def _pending_dialog(self):
-        pending = guard.open_dialogs(self.pid, self.hwnd)
+        """the dialog that can take an answer: when a dialog has opened another one on top of
+        itself, the outer one is disabled until the inner one is closed"""
+        pending = guard.open_dialogs(self.pid, self.hwnd, hide=False)
         if not pending:
             raise MmdError("no dialog is open")
-        return pending[-1]
+        enabled = [d for d in pending if win32.is_enabled(d.hwnd)]
+        return (enabled or pending)[-1]
 
     def _wait_closed(self, dialog):
         self._wait_for(lambda: not (win32.is_window(dialog.hwnd) and win32.is_visible(dialog.hwnd)), 10.0,
@@ -1022,11 +1067,11 @@ class Mmd:
             win32.post(dialog.hwnd, win32.WM_CLOSE)
         return self._wait_closed(dialog)
 
-    def dialog_show(self):
+    def dialog_show(self, x=100, y=100):
         """put pending dialogs back on screen for a person to answer"""
         shown = []
         for i, dialog in enumerate(guard.open_dialogs(self.pid, self.hwnd, hide=False)):
-            win32.reveal_window(dialog.hwnd, 100 + 40 * i, 100 + 40 * i)
+            win32.reveal_window(dialog.hwnd, x + 40 * i, y + 40 * i)
             shown.append(dialog.to_json())
         return shown
 
