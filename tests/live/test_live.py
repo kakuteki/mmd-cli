@@ -602,6 +602,56 @@ class SampleProjectTest(Base):
         self.assertGreater(d["last_frame"], 100)
 
 
+class HeadlessTest(unittest.TestCase):
+    """A second instance started with the window hidden: nothing on the taskbar, renders still work."""
+
+    def test_headless_instance(self):
+        from mmd_cli import app, win32
+        m = app.launch(EXE, headless=True)
+        try:
+            self.assertFalse(win32.is_visible(m.hwnd))
+            self.assertFalse(m.state()["visible"])
+            self.assertIn(m.pid, [i["pid"] for i in app.instances() if not i["visible"]])
+            m.load_model(bundled("Model", "初音ミク.pmd"))
+            path = out("headless.png")
+            r = m.render_image(path, size=(320, 180))
+            self.assertEqual(r["size"], [320, 180])
+            self.assertFalse(win32.is_visible(m.hwnd))               # still hidden after a render
+            self.assertEqual(m.show(), {"minimized": True, "visible": True})
+            self.assertEqual(m.hide(), {"minimized": True, "visible": False})
+        finally:
+            m.quit(force=True)
+        state = app.load_state()
+        state["current"] = MMD.pid                                   # give the shared instance back its role
+        app.save_state(state)
+
+
+class RelayTest(unittest.TestCase):
+    """The Task Scheduler bridge, driven from this (interactive) session: the scheduled copy runs the
+    command and the result comes back as JSON."""
+
+    def test_round_trip(self):
+        from mmd_cli import relay
+        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "state"], timeout=60)
+        self.assertEqual(code, 0, payload)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["relayed"])
+        self.assertEqual(payload["pid"], MMD.pid)
+
+    def test_errors_and_exit_codes_travel_back(self):
+        from mmd_cli import relay
+        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "model", "select", "nobody"], timeout=60)
+        self.assertEqual(code, 1)
+        self.assertIn("nobody", payload["error"]["message"])
+
+    def test_nothing_is_left_in_the_scheduler(self):
+        import subprocess
+        from mmd_cli import relay
+        relay.run_in_user_session(["--pid", str(MMD.pid), "frame", "get"], timeout=60)
+        listing = subprocess.run(["schtasks.exe", "/Query", "/FO", "CSV"], capture_output=True, creationflags=0x08000000)
+        self.assertNotIn(b"mmd-cli", listing.stdout)
+
+
 class CliTest(Base):
     def run_cli(self, *args):
         env = dict(os.environ)

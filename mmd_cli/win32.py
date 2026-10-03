@@ -396,6 +396,15 @@ def minimize_no_activate(hwnd):
     user32.ShowWindowAsync(hwnd, SW_SHOWMINNOACTIVE)
 
 
+def hide(hwnd):
+    """SW_HIDE: the window keeps running but has no taskbar button and is not on screen"""
+    user32.ShowWindowAsync(hwnd, SW_HIDE)
+
+
+def show_no_activate(hwnd):
+    user32.ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE)
+
+
 # ---- drag and drop ---------------------------------------------------------------------------
 
 def make_drop_handle(paths):

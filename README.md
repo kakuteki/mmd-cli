@@ -52,6 +52,29 @@ mmd quit
  "answered_dialogs": [{"kind": "model_info", "title": "モデル情報", "buttons": ["OK", "キャンセル"], "action": "ok"}]}
 ```
 
+## ヘッドレスで使う
+
+画面に何も出さずに使うには、`--headless` で起動する。主窓は非表示（タスクバーにも出ない）のまま動き、
+ダイアログは従来どおり画面に出ない。`mmd window show` で最小化状態に戻せる。
+
+```
+mmd launch --headless --exe C:/tools/MikuMikuDance_v932x64/MikuMikuDance.exe
+mmd model load C:/models/miku/miku.pmx
+mmd render image C:/work/shot.png
+mmd quit
+```
+
+SSH 越し・CI・サービスのように **利用者のデスクトップの外** から呼ばれたときは、`mmd` は自分をタスクスケジューラの
+一回限りのタスクとして、ログオン中の利用者のデスクトップセッションの中で走らせ、その結果を返す（結果の JSON に
+`"relayed": true` が付く）。窓メッセージはデスクトップセッションを越えて届かず、MMD 自体もデスクトップの無い
+セッションでは起動が終わらないためである（v9.32 で実測）。
+
+- 利用者がそのマシンにログオンしていることが必要。モニタは要らない（仮想ディスプレイでも、切断された
+  セッションでもよい）。誰もログオンしていなければ、その旨のエラーになる。
+- タスクは `pythonw.exe` で走るので、デスクトップにコンソール窓は出ない。タスクは終わると消す。
+- `--no-relay` で止められる。デスクトップの中にいても `--in-user-session` で強制できる。
+- `mmd file info` のようにファイルだけを扱うコマンドは、どこでもそのまま走る。
+
 ## 状態の確かめ方
 
 | 知りたいこと | コマンド | 仕組み |
@@ -93,7 +116,7 @@ mmd quit
 共通オプションはコマンド名の前に置く。
 
 ```
-mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] コマンド ...
+mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --no-relay] コマンド ...
 ```
 
 対象の MMD は、`--pid`、環境変数 `MMD_CLI_PID`、`mmd launch` が最後に起動したもの、唯一起動しているもの、の順で決まる。
@@ -103,7 +126,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] コマンド ...
 
 | コマンド | 内容 |
 | --- | --- |
-| `ps` / `launch [--exe P]` / `quit [--force]` | 一覧・起動（最小化、非アクティブ）・終了 |
+| `ps` / `launch [--exe P] [--headless]` / `quit [--force]` | 一覧・起動（最小化、または非表示）・終了 |
 | `state` / `dump [--keys]` | 状態の読み出し |
 | `new` / `open F.pmm` / `save [F.pmm]` | プロジェクト |
 | `model load F` / `list` / `select 名前\|番号\|camera` / `delete` / `show` / `hide` | モデル（pmx / pmd） |
@@ -121,7 +144,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] コマンド ...
 | `menu list` / `menu click ID` | 任意のメニュー項目 |
 | `control list` / `get ID` / `set ID 値` / `click ID` | 任意のコントロール |
 | `dialog list` / `click ボタン` / `close` / `show` | MMD が待っているダイアログ |
-| `window status` / `minimize` | 窓 |
+| `window status` / `minimize` / `hide` / `show` | 窓（hide は画面にもタスクバーにも出さない） |
 | `file info F` | vmd / vpd / pmm の中身（MMD 不要） |
 
 専用のコマンドが無い操作は、`menu` と `control` で届く。ID の一覧は `mmd menu list` と `mmd control list`、
@@ -178,7 +201,8 @@ mmd-cli は各コマンドの実行中、前面を固定する（`LockSetForegro
 
 ## 制約
 
-- MMD と同じ対話セッションの中で実行する。SSH 越しなど別セッションからは、窓メッセージが届かない。
+- 利用者がログオンしているデスクトップセッションが要る（SSH などからはそのセッションへ中継する。「ヘッドレスで使う」を参照）。
+  誰もログオンしていないマシンでは MMD が起動を終えないので動かない。
 - 日本語表示の MMD が前提（ダイアログを題名で見分けている）。English Mode では動かない。
 - ファイルのパスは、システムのコードページ（日本語 Windows では cp932）で表せること。MMD 自体が開けないため。
 - ボーンと表情のキーは vmd を作って読ませる方式で登録する。vmd の制約で、名前が cp932 で 15 バイトを超えるものは指定できない。

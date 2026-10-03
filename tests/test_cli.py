@@ -19,6 +19,16 @@ class ParserTest(unittest.TestCase):
         self.assertEqual((a.pid, a.out, a.timeout, a.command), (12, "x.json", 30.0, "state"))
         self.assertIsNone(parse(["state"]).timeout)
 
+    def test_launch_headless_and_window_actions(self):
+        self.assertTrue(parse(["launch", "--headless"]).headless)
+        self.assertFalse(parse(["launch"]).headless)
+        for action in ("status", "show", "hide", "minimize"):
+            self.assertEqual(parse(["window", action]).action, action)
+
+    def test_relay_flags_are_global(self):
+        self.assertTrue(parse(["--in-user-session", "state"]).in_user_session)
+        self.assertTrue(parse(["--no-relay", "state"]).no_relay)
+
     def test_dump_lists_key_frames_only_on_request(self):
         self.assertFalse(parse(["dump"]).keys)
         self.assertTrue(parse(["dump", "--keys"]).keys)
@@ -87,6 +97,22 @@ class OutputTest(unittest.TestCase):
         self.assertIn("初音ミク", raw)
         self.assertEqual(json.loads(raw)["name"], "初音ミク")
         self.assertEqual(json.loads(stream.getvalue()), {"ok": True, "out": target})
+
+
+class EmitTest(unittest.TestCase):
+    def test_out_directory_is_created(self):
+        folder = tempfile.mkdtemp()
+        target = os.path.join(folder, "deep", "er", "r.json")
+        cli.emit({"ok": True}, target, io.StringIO())
+        with open(target, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"ok": True})
+
+    def test_no_stdout_is_fine(self):
+        # pythonw.exe has no console: sys.stdout is None there
+        folder = tempfile.mkdtemp()
+        target = os.path.join(folder, "r.json")
+        cli.emit({"ok": True}, target, None)
+        self.assertTrue(os.path.exists(target))
 
 
 class FailureTest(unittest.TestCase):

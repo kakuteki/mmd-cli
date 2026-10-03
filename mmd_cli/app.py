@@ -105,16 +105,17 @@ def instances():
     out = []
     for hwnd in win32.find_windows(cls=MAIN_WINDOW_CLASS):
         out.append({"pid": win32.window_pid(hwnd), "hwnd": hwnd, "title": win32.get_text(hwnd, timeout_ms=500),
-                    "minimized": win32.is_iconic(hwnd)})
+                    "minimized": win32.is_iconic(hwnd), "visible": win32.is_visible(hwnd)})
     return out
 
 
-def launch(exe, timeout=90.0):
-    """start MMD minimized and without activating it; returns when it is ready for commands"""
+def launch(exe, timeout=90.0, headless=False):
+    """start MMD without activating it: minimized, or with headless=True hidden (no taskbar button,
+    nothing on screen; mmd window show brings it back).  Returns when it is ready for commands."""
     exe = os.path.abspath(exe)
     if not os.path.isfile(exe):
         raise FileNotFoundError(exe)
-    pid = win32.launch_detached(exe)
+    pid = win32.launch_detached(exe, show=win32.SW_HIDE if headless else win32.SW_SHOWMINNOACTIVE)
     deadline = time.monotonic() + timeout
     hwnd = None
     while True:
@@ -134,6 +135,8 @@ def launch(exe, timeout=90.0):
         time.sleep(0.1)
     mmd = Mmd(pid, hwnd)
     mmd.wait_quiet()
+    if headless and win32.is_visible(hwnd):
+        mmd.hide()
     state = load_state()
     state["current"] = pid
     state["exe"] = exe
@@ -305,6 +308,7 @@ class Mmd:
             "pid": self.pid,
             "hwnd": self.hwnd,
             "minimized": win32.is_iconic(self.hwnd),
+            "visible": win32.is_visible(self.hwnd),
             "project_path": self._project_path(),
             "mode": "model" if cur > 0 else "camera",
             "models": items[1:],
@@ -1084,10 +1088,26 @@ class Mmd:
 
     # ---- window and process -------------------------------------------------------------------
 
+    def _window(self):
+        return {"minimized": win32.is_iconic(self.hwnd), "visible": win32.is_visible(self.hwnd)}
+
     def minimize(self):
         win32.minimize_no_activate(self.hwnd)
         self._wait_for(lambda: win32.is_iconic(self.hwnd), 5.0, "the window did not minimize")
-        return {"minimized": True}
+        return self._window()
+
+    def hide(self):
+        """take the window off the screen and the taskbar; it keeps working"""
+        win32.hide(self.hwnd)
+        self._wait_for(lambda: not win32.is_visible(self.hwnd), 5.0, "the window did not hide")
+        return self._window()
+
+    def show(self):
+        """put a hidden window back (minimized, so it still does not cover anything)"""
+        if not win32.is_visible(self.hwnd):
+            win32.minimize_no_activate(self.hwnd)
+            self._wait_for(lambda: win32.is_visible(self.hwnd), 5.0, "the window did not show")
+        return self._window()
 
     def quit(self, force=False, timeout=20.0):
         if win32.is_window(self.hwnd):

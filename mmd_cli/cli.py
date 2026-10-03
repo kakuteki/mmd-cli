@@ -21,13 +21,17 @@ def parse_target(text):
 
 def emit(payload, out_path, stream):
     """stdout is always ASCII (non-ASCII is escaped) so it survives any console code page;
-    --out writes readable UTF-8 to a file instead"""
+    --out writes readable UTF-8 to a file instead (written whole, then moved into place)"""
     if out_path:
-        with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        tmp = out_path + ".part"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(payload, f, ensure_ascii=False, indent=1)
             f.write("\n")
+        os.replace(tmp, out_path)
         payload = {"ok": payload.get("ok", True), "out": out_path}
-    stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    if stream is not None:                       # pythonw.exe has no console
+        stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
 
 def failure(exc):
@@ -57,6 +61,10 @@ def build_parser():
                    help="seconds to wait for MMD (default 120; AVI output allows 2 s per frame on top)")
     p.add_argument("--in-place", action="store_true",
                    help="allow saving into a project file that was not opened through mmd-cli")
+    p.add_argument("--in-user-session", action="store_true",
+                   help="run this command inside the logged-on user's desktop session (done by itself when "
+                        "started from SSH, a service or a scheduled task without a desktop)")
+    p.add_argument("--no-relay", action="store_true", help="never hand the command to the desktop session")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     def group(name, help_text):
@@ -66,6 +74,8 @@ def build_parser():
     sub.add_parser("ps", help="list running MMD instances")
     s = sub.add_parser("launch", help="start MMD minimized, without activating it")
     s.add_argument("--exe", help="path to MikuMikuDance.exe (default: MMD_EXE or the one used last time)")
+    s.add_argument("--headless", action="store_true",
+                   help="keep the window hidden (no taskbar button, nothing on screen); mmd window show undoes it")
     s = sub.add_parser("quit", help="close MMD")
     s.add_argument("--force", action="store_true", help="terminate the process if it does not close")
     sub.add_parser("state", help="what the controls of the MMD window show")
@@ -221,6 +231,8 @@ def build_parser():
     g = group("window", "the MMD window")
     g.add_parser("status")
     g.add_parser("minimize")
+    g.add_parser("hide", help="take the window off the screen and the taskbar (it keeps working)")
+    g.add_parser("show", help="bring a hidden window back, minimized")
 
     g = group("file", "inspect files without MMD")
     s = g.add_parser("info", help="show a .vmd / .vpd / .pmm file as JSON")
@@ -264,7 +276,7 @@ def run(args):
             raise app.MmdError("give the program with --exe PATH (or set MMD_EXE)")
         from .guard import FocusShield
         with FocusShield(pid=None) as shield:
-            mmd = app.launch(exe, timeout=args.timeout or 90.0)
+            mmd = app.launch(exe, timeout=args.timeout or 90.0, headless=args.headless)
             shield.pid = mmd.pid
             result = mmd.state()
         if shield.events:
@@ -415,14 +427,27 @@ def _dispatch(mmd, args):
     if command == "window":
         if action == "minimize":
             return mmd.minimize()
+        if action == "hide":
+            return mmd.hide()
+        if action == "show":
+            return mmd.show()
         state = mmd.state()
-        return {k: state[k] for k in ("pid", "hwnd", "minimized", "project_path", "dialogs")}
+        return {k: state[k] for k in ("pid", "hwnd", "minimized", "visible", "project_path", "dialogs")}
     raise ValueError("unhandled command: %s" % command)
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) >= 2 and argv[0] == "--job":            # we are the copy running inside the desktop session
+        from . import relay
+        return relay.run_job(argv[1], main)
     args = build_parser().parse_args(argv)
     try:
+        from . import relay
+        if relay.should_relay(argv=argv):
+            payload, code = relay.run_in_user_session(argv, timeout=(args.timeout or 120.0) + 60.0)
+            emit(payload, args.out, sys.stdout)
+            return code
         result = run(args)
         payload = {"ok": True}
         payload.update(result)
