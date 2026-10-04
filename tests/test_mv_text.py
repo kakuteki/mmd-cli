@@ -5,6 +5,7 @@ import fractions
 import importlib.util
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -1001,29 +1002,65 @@ class DrawTest(unittest.TestCase):
         self.assertEqual((shadow[3] - bar[3]) - (bar[1] - shadow[1]), 8)
         self.assertGreater(bar[1] - shadow[1], 22)
 
-    def test_letters_at_rest_sit_on_whole_pixels_and_moving_ones_between_them(self):
-        # sub has 7.5 px of tracking after every letter (0.25 em of 30 px), so the second letter would start
-        # on half a pixel.  At rest every letter is put on the whole pixel (a stem on half a pixel is two grey
-        # columns); while the letters spread or close they move by fractions, or the motion would step.
-        layout = lay(cue_of("ABC", "sub"))
+    def test_every_letter_sits_on_a_whole_pixel_the_nearest_halves_up(self):
+        # Pillow draws a glyph on whole pixels only (asked for x.25 it draws at x, for x.75 at x + 1), so the
+        # tool says itself which pixel: the nearest, halves going up.  sub has 7.5 px of tracking after every
+        # letter (0.25 em of 30 px), so most letters of a line ask for half a pixel.
+        layout = lay(cue_of("feat. KAGAMINE RIN", "sub"))
         line = layout.lines[0]
-        ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0] + layout.line_x(line)
+        ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0]
         oy = layout.anchor[1] + layout.origin[1] - layout.canvas_origin[1] + line.baseline
-        self.assertEqual((ox, oy), (int(ox), int(oy)))
+        self.assertEqual(oy, int(oy))
 
-        def expected(extra, snap):
+        def expected(extra, nearest):
             mask = Image.new("L", layout.canvas, 0)
-            pen, x = ImageDraw.Draw(mask), ox + layout.line_x(line, extra) - layout.line_x(line)
+            pen, x = ImageDraw.Draw(mask), ox + layout.line_x(line, extra)
+            halves = 0
             for g in line.glyphs:
-                pen.text((round(x) if snap else x, oy), g.char, font=g.font, fill=255, anchor="ls")
+                halves += (x % 1.0 == 0.5)
+                pen.text((nearest(x), int(oy)), g.char, font=g.font, fill=255, anchor="ls")
                 x += g.advance + (g.tracking + extra) * g.size
-            return mask
+            return mask, halves
 
-        self.assertNotEqual(expected(0.0, True).tobytes(), expected(0.0, False).tobytes())     # the test can tell
-        self.assertEqual(alpha(mv_text.draw(layout, hold(layout))).tobytes(), expected(0.0, True).tobytes())
+        def up(x):
+            return int(math.floor(x + 0.5))
+
+        wanted, halves = expected(0.0, up)
+        self.assertGreater(halves, 4)
+        self.assertNotEqual(wanted.tobytes(), expected(0.0, lambda x: int(round(x)))[0].tobytes())      # halves to even differ
+        self.assertEqual(alpha(mv_text.draw(layout, hold(layout))).tobytes(), wanted.tobytes())
+        # letters that spread or close move by whole pixels too
         moving = dataclasses.replace(hold(layout), tracking_extra=0.31)
-        self.assertEqual(alpha(mv_text.draw(layout, moving)).tobytes(), expected(0.31, False).tobytes())
-        self.assertNotEqual(expected(0.31, True).tobytes(), expected(0.31, False).tobytes())
+        self.assertEqual(alpha(mv_text.draw(layout, moving)).tobytes(), expected(0.31, up)[0].tobytes())
+
+    def test_a_block_moves_by_fractions_of_a_pixel(self):
+        # a slow move in whole pixels steps (a roll at 1.87 px a frame would go 2, 2, 2, 1, 2 ...).  The picture
+        # a fraction of a pixel on the way is the two whole-pixel pictures around it, mixed in that proportion.
+        # (Each colour is shifted by itself and then they are laid over each other, so this holds to the last
+        # level where one colour is drawn; the hook's ink copy under its text mixes a little differently
+        # where their soft edges meet.)
+        for style in ("caption", "lyric"):
+            layout = lay(cue_of("ABC", style, anim="rise"))
+            rest = hold(layout)
+            for axis in ("dy", "dx"):
+                low, high = (mv_text.draw(layout, dataclasses.replace(rest, **{axis: v})) for v in (3.0, 4.0))
+                self.assertNotEqual(low.tobytes(), high.tobytes())
+                for share in (0.25, 0.5, 0.75):
+                    between = mv_text.draw(layout, dataclasses.replace(rest, **{axis: 3.0 + share}))
+                    off = ImageChops.difference(alpha(between), Image.blend(alpha(low), alpha(high), share)).getextrema()[1]
+                    self.assertLessEqual(off, 3, (style, axis, share))
+            up = mv_text.draw(layout, dataclasses.replace(rest, dy=-0.5))
+            low, high = (mv_text.draw(layout, dataclasses.replace(rest, dy=v)) for v in (-1.0, 0.0))
+            off = ImageChops.difference(alpha(up), Image.blend(alpha(low), alpha(high), 0.5)).getextrema()[1]
+            self.assertLessEqual(off, 3, style)
+        # a whole number of pixels is the picture at rest moved, nothing softened
+        layout = lay(cue_of("ABC", "caption", anim="rise"))
+        still = alpha(mv_text.draw(layout, hold(layout)))
+        moved = alpha(mv_text.draw(layout, dataclasses.replace(hold(layout), dy=5.0, dx=-3.0)))
+        self.assertEqual(moved.tobytes(), ImageChops.offset(still, -3, 5).tobytes())
+        # and the colour stays the text's own where the edge is mixed
+        soft = mv_text.draw(layout, dataclasses.replace(hold(layout), dy=0.5))
+        self.assertEqual({rgba[:3] for _, rgba in soft.getcolors(maxcolors=1 << 20) if rgba[3] > 0}, {TEXT})
 
     def test_under_ink_text_the_shadow_is_a_white_halo(self):
         # a black shadow under dark text smears it: on the white stage the text is ink, so what parts it from
@@ -1082,7 +1119,8 @@ class SequencesTest(unittest.TestCase):
     def test_the_plan_says_where_and_when_each_sequence_goes(self):
         plan = mv_text.render_sequences(small_doc(RISE_CUE, BACK_CUE), self.work)
         self.assertEqual(sorted(plan), ["cues", "fps", "size", "warnings"])
-        self.assertEqual((plan["fps"], plan["size"], plan["warnings"]), (30, [640, 360], []))
+        # the warnings are those of the fonts of this machine (none where the Y1 faces and Noto are installed)
+        self.assertEqual((plan["fps"], plan["size"], plan["warnings"]), (30, [640, 360], mv_text.FontBook().warnings))
         self.assertEqual([sorted(entry) for entry in plan["cues"]],
                          [["canvas", "frames", "id", "layer", "pattern", "start", "start_frame", "x", "y"]] * 2)
         first, second = plan["cues"]
@@ -1184,7 +1222,8 @@ class SequencesTest(unittest.TestCase):
 
     def test_no_cues_is_an_empty_plan(self):
         plan = mv_text.render_sequences(small_doc(), self.work)
-        self.assertEqual(plan, {"fps": 30, "size": [640, 360], "cues": [], "warnings": []})
+        self.assertEqual(plan, {"fps": 30, "size": [640, 360], "cues": [], "warnings": mv_text.FontBook().warnings})
+        self.assertFalse(os.path.exists(self.work))
 
 
 def plan_cue(cue_id, x, y, start_frame, frames, fps=30):

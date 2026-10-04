@@ -60,8 +60,10 @@ the frame grid: picture 0 of a cue is the State at its start.
 
 Drawing (draw).  Every colour is drawn as a mask of its own and the masks are laid over each other from the
 back (soft shadow, ink copy, text, underline), so the pictures have straight alpha: a half covered pixel
-has the full colour and half the alpha, which is what ffmpeg's overlay takes a PNG for.  Letters that do
-not move sideways are put on whole pixels (sharp), moving ones between them (smooth).
+has the full colour and half the alpha, which is what ffmpeg's overlay takes a PNG for.  Pillow draws a
+glyph on whole pixels only, so every letter sits on the nearest one (sharp at rest); the offset of the
+whole block is finer: its fraction of a pixel shifts the finished masks, so a slow rise or roll does not
+step from pixel to pixel.
 
 The video (ffmpeg_command).  Each sequence is an input; setpts moves it to the start of its cue and overlay
 lays it at the place of its canvas, passing the video through before and after it.  The shift is
@@ -754,24 +756,41 @@ def _wipe_mask(size, edge, soft):
     return row.resize((width, height), Image.NEAREST)
 
 
+def _nearest(value):
+    """the whole pixel nearest to a position, halves going up"""
+    return int(math.floor(value + 0.5))
+
+
+def _shifted(mask, right, down):
+    """a mask moved by a fraction of a pixel: the mix of the whole-pixel pictures on either side of it"""
+    if right == 0.0 and down == 0.0:
+        return mask
+    return mask.transform(mask.size, Image.AFFINE, (1, 0, -right, 0, 1, -down), Image.BILINEAR)
+
+
 def draw(layout, state):
     """The picture of a cue in one State: RGBA, the size of its canvas, transparent where nothing is drawn.
 
     Every colour is drawn as a mask of its own and the masks are laid over each other from the back: the
     soft shadow, the ink copies, the text, the underline.  That keeps the alpha straight (a half covered
     pixel has the full colour and half the alpha).  Drawing text onto a transparent RGBA picture directly
-    would mix the colour with the transparent black instead and show as a dark rim on the video."""
+    would mix the colour with the transparent black instead and show as a dark rim on the video.
+
+    Pillow draws a glyph on whole pixels only (asked for x.25 it draws at x), so every letter is put on the
+    nearest one here: sharp at rest, and letters that spread or close move by whole pixels, which is fine
+    for a fast move.  The offset of the whole block (rise, roll) is slow at its ends: its whole pixels go into
+    the drawing and the fraction left over shifts the finished masks, so the block does not step."""
     size = layout.canvas
-    # the reference box in the canvas, moved by the state
-    ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0] + state.dx
-    oy = layout.anchor[1] + layout.origin[1] - layout.canvas_origin[1] + state.dy
-    at_rest = state.tracking_extra == 0.0 and state.dx == 0.0
+    whole_x, whole_y = int(math.floor(state.dx)), int(math.floor(state.dy))
+    part_x, part_y = state.dx - whole_x, state.dy - whole_y
+    # the reference box in the canvas, on whole pixels
+    ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0] + whole_x
+    oy = layout.anchor[1] + layout.origin[1] - layout.canvas_origin[1] + whole_y
     placed = []                                  # (line, glyph, x and y of its origin on the baseline)
     for line in layout.lines:
         x = ox + layout.line_x(line, state.tracking_extra)
         for g in line.glyphs:
-            # letters that do not move sideways sit on whole pixels (sharp stems); moving ones go smoothly
-            placed.append((line, g, float(round(x)) if at_rest else x, oy + line.baseline))
+            placed.append((line, g, _nearest(x), _nearest(oy + line.baseline)))
             x += g.advance + (g.tracking + state.tracking_extra) * g.size
     layers = []                                  # (colour, mask), from the back to the front
 
@@ -779,14 +798,14 @@ def draw(layout, state):
         layers.append((colour, Image.new("L", size, 0)))
         return ImageDraw.Draw(layers[-1][1])
 
-    def text(to, entries, dx=0.0, dy=0.0):
+    def text(to, entries, dx=0, dy=0):
         for _, g, x, y in entries:
             if g.ink is not None:
                 to.text((x + dx, y + dy), g.char, font=g.font, fill=255, anchor="ls")
 
     shadowed = [entry for entry in placed if entry[0].style.shadow]
     if shadowed:
-        text(pen(layout.palette["shadow"]), shadowed, dy=SHADOW["offset"] * layout.scale)
+        text(pen(layout.palette["shadow"]), shadowed, dy=_nearest(SHADOW["offset"] * layout.scale))
         colour, mask = layers.pop()
         mask = mask.filter(ImageFilter.GaussianBlur(SHADOW["blur"] * layout.scale))
         layers.append((colour, mask.point(lambda v: (v * SHADOW["alpha"] + 127) // 255)))
@@ -797,10 +816,11 @@ def draw(layout, state):
         text(pen(colour), [entry for entry in placed if entry[0].colour == colour])
     if layout.underline is not None and state.underline > 0.0:
         x, y, width, height = layout.underline
-        left, top = int(round(ox + x)), int(round(oy + y))
-        shown = int(round((int(round(ox + x + width)) - left) * min(1.0, state.underline)))
+        left, top = _nearest(ox + x), _nearest(oy + y)
+        shown = _nearest((_nearest(ox + x + width) - left) * min(1.0, state.underline))
         if shown > 0:
             pen(layout.palette["accent"]).rectangle((left, top, left + shown - 1, top + height - 1), fill=255)
+    layers = [(colour, _shifted(mask, part_x, part_y)) for colour, mask in layers]
 
     out = Image.new("RGBA", size, (0, 0, 0, 0))
     for colour, mask in layers:
