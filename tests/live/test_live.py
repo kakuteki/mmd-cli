@@ -664,6 +664,17 @@ class GenericTest(Base):
         self.assertFalse({i["id"]: i for i in MMD.menu_items()}[215]["checked"])
         MMD.menu_click(215)
 
+    def test_menu_set_clicks_only_when_the_mark_differs(self):
+        self.addCleanup(MMD.menu_set, 215, True)
+        first = MMD.menu_set(215, False)
+        self.assertEqual((first["checked"], first["changed"]), (False, True))
+        again = MMD.menu_set(215, False)
+        self.assertEqual((again["checked"], again["changed"]), (False, False))
+        back = MMD.menu_set(215, True)
+        self.assertEqual((back["checked"], back["changed"]), (True, True))
+        with self.assertRaises(app.MmdError):
+            MMD.menu_set(204, True)                 # File > New has no check mark: never clicked to find out
+
     def test_control_get_set_and_click(self):
         self.assertEqual(MMD.control_get(417)["text"], "0")
         MMD.control_click(419)                      # the '>' button

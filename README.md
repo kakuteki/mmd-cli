@@ -287,7 +287,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `frame get` / `set N` / `next` / `prev` / `next-key` / `prev-key` / `first` / `last` | フレーム移動 |
 | `play [--from A --to B] [--wait] [--from-current] [--stay] [--repeat]` / `stop` | 再生 |
 | `render image F [--size W H]` / `render avi F --from A --to B [--fps N] [--size W H] [--codec 名前]` / `render size [W H]` / `render codecs` | 書き出し（`codecs` はこの機で選べる AVI のコーデック一覧） |
-| `menu list` / `menu click ID` | 任意のメニュー項目 |
+| `menu list` / `menu click ID` / `menu set ID on\|off` | 任意のメニュー項目（`set` はチェック印を望む状態にそろえる。すでにその状態なら押さない） |
 | `control list` / `get ID` / `set ID 値` / `click ID` | 任意のコントロール |
 | `dialog list` / `click ボタン` / `close` / `show` | MMD が待っているダイアログ |
 | `window status` / `minimize` / `hide` / `show` | 窓（hide は画面にもタスクバーにも出さない） |

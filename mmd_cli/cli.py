@@ -294,6 +294,9 @@ def build_parser():
     g.add_parser("list")
     s = g.add_parser("click")
     s.add_argument("id", type=int)
+    s = g.add_parser("set", help="bring an item with a check mark to on or off (clicks only when needed)")
+    s.add_argument("id", type=int)
+    s.add_argument("state", choices=("on", "off"))
 
     g = group("control", "any control of the main window, by id")
     g.add_parser("list")
@@ -622,6 +625,8 @@ def _dispatch(mmd, args):
     if command == "menu":
         if action == "list":
             return {"items": mmd.menu_items()}
+        if action == "set":
+            return mmd.menu_set(args.id, args.state == "on")
         return mmd.menu_click(args.id)
     if command == "control":
         if action == "list":

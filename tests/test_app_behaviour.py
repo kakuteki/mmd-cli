@@ -496,5 +496,61 @@ class LaunchFailureTest(TempHome):
         self.assertEqual([(e["message"], e["action"]) for e in m.events], [("Direct3D::Init", "ok")])
 
 
+@unittest.skipUnless(app is not None, "needs Windows")
+class MenuSetTest(unittest.TestCase):
+    """menu click toggles, so a batch that clicks depends on the state MMD was left in (the check marks of
+    the display menu outlive `new`); menu set brings an item to the wanted state and says whether it clicked"""
+
+    def menu(self, checked=True, grayed=False, toggles=True):
+        state = {"checked": checked, "clicks": []}
+
+        def items():
+            return [{"id": 215, "path": ["View", "Axes"], "checked": state["checked"], "grayed": grayed},
+                    {"id": 204, "path": ["File", "New"], "checked": False, "grayed": False}]
+
+        def click(mid, handlers=None, **kw):
+            state["clicks"].append(mid)
+            if toggles and mid == 215:
+                state["checked"] = not state["checked"]
+        return bare(menu_items=items, menu=click), state
+
+    def test_an_item_already_in_the_wanted_state_is_left_alone(self):
+        m, state = self.menu(checked=True)
+        result = m.menu_set(215, True)
+        self.assertEqual(state["clicks"], [])
+        self.assertEqual((result["checked"], result["changed"]), (True, False))
+
+    def test_an_item_in_the_other_state_is_clicked_once(self):
+        m, state = self.menu(checked=True)
+        result = m.menu_set(215, False)
+        self.assertEqual(state["clicks"], [215])
+        self.assertEqual((result["id"], result["checked"], result["changed"]), (215, False, True))
+        m, state = self.menu(checked=False)
+        self.assertTrue(m.menu_set(215, True)["checked"])
+        self.assertEqual(state["clicks"], [215])
+
+    def test_an_item_that_does_not_toggle_is_an_error(self):
+        # File > New has no check mark: clicking it would run the command and leave the mark as it was
+        m, state = self.menu()
+        with self.assertRaises(app.MmdError) as ctx:
+            m.menu_set(204, True)
+        self.assertIn("check mark", str(ctx.exception))
+        self.assertEqual(state["clicks"], [])
+        m, state = self.menu(checked=True, toggles=False)
+        with self.assertRaises(app.MmdError) as ctx:
+            m.menu_set(215, False)
+        self.assertIn("did not change", str(ctx.exception))
+
+    def test_unknown_and_disabled_items_are_errors(self):
+        m, _ = self.menu()
+        with self.assertRaises(app.MmdError):
+            m.menu_set(999, True)
+        m, state = self.menu(checked=True, grayed=True)
+        with self.assertRaises(app.MmdError) as ctx:
+            m.menu_set(215, False)
+        self.assertIn("disabled", str(ctx.exception))
+        self.assertEqual(state["clicks"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

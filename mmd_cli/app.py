@@ -21,6 +21,11 @@ from .ids import AviDialog, CONTROL_COUNT, Ctl, MAIN_WINDOW_CLASS, Menu, OutputS
 _TITLE_PATH = re.compile(r"^MikuMikuDance \[(.*)\]\s*$")
 _MODEL_EXTENSIONS = (".pmx", ".pmd")
 _IMAGE_EXTENSIONS = (".png", ".bmp", ".jpg", ".dds", ".dib", ".pfm", ".hdr")
+# menu items seen with a check mark on MMD v9.32 (2026-10-04, `menu list` on a fresh instance, and 282 after a
+# click): the ones `menu set` may click while they show no mark.  215 axes and grid, 221 ground shadow,
+# 254 transparent ground shadow, 277 anti-aliasing, 298 mip map, 282 black background (the PNG and the
+# uncompressed AVI then carry an alpha channel), 285 physics floor, 295 the motion capture figure
+CHECK_ITEMS = frozenset((215, 221, 254, 277, 298, 282, 285, 295))
 
 
 class MmdError(Exception):
@@ -1447,6 +1452,31 @@ class Mmd:
             raise MmdError("menu item %d (%s) is disabled right now" % (mid, " > ".join(known[mid]["path"])))
         self.menu(mid)
         return {i["id"]: i for i in self.menu_items()}[mid]
+
+    def menu_set(self, mid, on):
+        """bring a menu item with a check mark to `on`: clicked only when it is in the other state, so a batch
+        does not depend on how MMD was left (the check marks of the display menus outlive `new`).  An item
+        without a mark is only clicked when it is one of CHECK_ITEMS: clicking a command to find out that it
+        is not a toggle would already have run it."""
+        self.require_ready()
+        known = {i["id"]: i for i in self.menu_items()}
+        if mid not in known:
+            raise MmdError("no menu item has id %d (see: mmd menu list)" % mid)
+        item = known[mid]
+        name = " > ".join(item["path"])
+        if item["grayed"]:
+            raise MmdError("menu item %d (%s) is disabled right now" % (mid, name))
+        if bool(item["checked"]) == bool(on):
+            return dict(item, changed=False)
+        if not item["checked"] and mid not in CHECK_ITEMS:
+            raise MmdError("menu item %d (%s) shows no check mark and is not a known toggle of MMD v9.32; "
+                           "use `menu click %d` if it is one" % (mid, name, mid))
+        self.menu(mid)
+        after = {i["id"]: i for i in self.menu_items()}[mid]
+        if bool(after["checked"]) != bool(on):
+            raise MmdError("menu item %d (%s) did not change: it is still %s"
+                           % (mid, name, "checked" if after["checked"] else "unchecked"))
+        return dict(after, changed=True)
 
     def _describe_control(self, cid):
         hwnd = self.ctl(cid)

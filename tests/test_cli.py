@@ -45,6 +45,13 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(parse(["pose", "save", "a.vpd", "--model", "1"]).model, "1")
         self.assertEqual(parse(["render", "codecs"]).action, "codecs")
 
+    def test_menu_set_takes_an_id_and_on_or_off(self):
+        a = parse(["menu", "set", "282", "on"])
+        self.assertEqual((a.command, a.action, a.id, a.state), ("menu", "set", 282, "on"))
+        self.assertEqual(parse(["menu", "set", "215", "off"]).state, "off")
+        with self.assertRaises(SystemExit):
+            parse(["menu", "set", "215", "maybe"])
+
     def test_batch_takes_a_file_or_stdin(self):
         a = parse(["batch", "script.txt"])
         self.assertEqual((a.command, a.file, a.keep_going), ("batch", "script.txt", False))
