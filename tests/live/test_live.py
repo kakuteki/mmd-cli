@@ -392,6 +392,21 @@ class ProjectTest(Base):
         MMD.save()                                            # save without a path goes back to where it was opened
         self.assertNotEqual(read_bytes(target), before)
 
+    def test_opening_a_second_project_right_after_the_first(self):
+        # seen on hinata (2026-10-04): open A, save, open B left a file dialog waiting
+        a, b = out("a.pmm"), out("b.pmm")
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        MMD.save(a)
+        MMD.new_project()
+        MMD.load_model(bundled("Model", "鏡音リン.pmd"))
+        MMD.save(b)
+        MMD.open_project(a)
+        self.assertEqual(MMD.models(), ["初音ミク"])
+        MMD.save()                                   # like apply2: save, then open the other one
+        MMD.open_project(b)
+        self.assertEqual(MMD.models(), ["鏡音リン"])
+        self.assertEqual(MMD.dialogs(), [])
+
     def test_dump_refuses_a_project_the_cli_did_not_open(self):
         from mmd_cli import app
         MMD.dump()
@@ -515,6 +530,16 @@ class NestedDialogTest(Base):
         self.assertEqual([d["kind"] for d in MMD.dialogs()], ["file_dialog"])
         MMD.dialog_close()                          # the save dialog itself
         self.assertEqual(MMD.dialogs(), [])
+
+    def test_a_name_the_file_dialog_refuses_fails_cleanly(self):
+        # the dialog's complaint becomes the error, and nothing is left open
+        from mmd_cli import app
+        with self.assertRaises(app.MmdError) as ctx:
+            MMD.render_image(out("no?way.png"))
+        self.assertIn("refused", str(ctx.exception))
+        self.assertEqual(MMD.dialogs(), [])
+        MMD.set_frame(2)
+        self.assertEqual(MMD.frame(), 2)
 
     def test_working_copies_are_found_when_the_home_path_has_forward_slashes(self):
         previous = os.environ["MMD_CLI_HOME"]

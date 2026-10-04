@@ -408,6 +408,14 @@ def window_alpha(hwnd):
     return alpha.value if flags.value & LWA_ALPHA else 255
 
 
+user32.GetWindow.argtypes = [wt.HWND, wt.UINT]
+user32.GetWindow.restype = wt.HWND
+
+
+def owner_window(hwnd):
+    return user32.GetWindow(hwnd, 4)        # GW_OWNER
+
+
 def is_hidden(hwnd):
     return window_rect(hwnd)[0] <= OFFSCREEN_X + 100
 

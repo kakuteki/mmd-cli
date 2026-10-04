@@ -13,6 +13,7 @@ from .dialogs import Dialog
 DIALOG_CLASSES = ("#32770", "RecWindow")
 QUIET_ROUNDS = 5
 SETTLE_SECONDS = 1.0
+LINGER_SECONDS = 2.0
 
 
 class DialogPending(Exception):
@@ -138,7 +139,12 @@ class Guard:
 
         handlers maps a dialog kind to a callable(dialog).  The callable answers the dialog and
         returns a short action name, or False when the dialog is not ready yet (it is retried).
-        A visible dialog without a handler raises DialogPending.
+        A visible dialog without a handler raises DialogPending.  A file dialog that is still open,
+        idle and enabled LINGER_SECONDS after its name was entered has refused the name (the new-style
+        save dialog does that without a word; an accepted name closes it at once): it is handed to the
+        handler again, which cancels it and reports; should it still stay, DialogPending is raised
+        instead of waiting out the timeout.  MMD's own dialogs may stay open while it works (the model
+        information dialog does so during the load), so they are left alone.
 
         The operation is over when the sent message has returned (send), or MMD has answered
         QUIET_ROUNDS pings in a row (post / None), no dialog is open, and done() is true.
@@ -162,6 +168,9 @@ class Guard:
         needs_quiet = worker is None
         first_visible = {}
         retry_at = {}
+        handled_at = {}
+        kinds = {}
+        lingered = set()
         quiet = 0
         deadline = time.monotonic() + timeout
         with FocusShield(self.pid), win32.timer_resolution():
@@ -174,6 +183,14 @@ class Guard:
                     if not win32.is_visible(hwnd):
                         continue
                     visible += 1
+                    if seen[hwnd] == "handled" and kinds[hwnd] == "file_dialog" and self._lingers(hwnd, handled_at[hwnd]):
+                        if hwnd in lingered:
+                            dialog = describe(hwnd)
+                            events.append(dict(dialog.to_json(), action="still open after being answered"))
+                            raise DialogPending([dialog], events)
+                        lingered.add(hwnd)
+                        seen[hwnd] = "new"
+                        retry_at.pop(hwnd, None)
                     if seen[hwnd] != "new":
                         continue
                     win32.move_offscreen(hwnd)      # file dialogs put themselves back on screen while starting
@@ -195,6 +212,8 @@ class Guard:
                         retry_at[hwnd] = now + 0.02
                         continue
                     seen[hwnd] = "handled"
+                    handled_at[hwnd] = time.monotonic()
+                    kinds[hwnd] = dialog.kind
                     events.append(dict(dialog.to_json(), action=action if isinstance(action, str) else "handled"))
                 sent_returned = worker is None or not worker.is_alive()
                 if sent_returned and visible == 0 and (done is None or done()):
@@ -215,3 +234,11 @@ class Guard:
                     raise OperationTimeout("MMD did not finish within %.0f s" % timeout)
                 time.sleep(0.001)
         return events
+
+    @staticmethod
+    def _lingers(hwnd, since):
+        """answered a while ago, yet still shown, enabled (nothing on top of it) and idle (one busy
+        inside its OK handler does not answer WM_NULL, and is left alone)"""
+        if time.monotonic() - since < LINGER_SECONDS:
+            return False
+        return win32.is_enabled(hwnd) and win32.send(hwnd, win32.WM_NULL, timeout_ms=100) is not None

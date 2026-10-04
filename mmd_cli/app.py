@@ -257,8 +257,22 @@ class Mmd:
     @staticmethod
     def _fill_file_dialog(path):
         path = os.path.normpath(path)       # a file dialog rejects forward slashes
+        filled = set()
 
         def handler(dialog):
+            if dialog.hwnd in filled:
+                # handed back by the guard: still open and idle after its OK.  The new-style save dialog
+                # refuses a name it cannot use (characters such as ? or *) with nothing but a balloon tip,
+                # which never becomes a window of its own; cancel it and say so
+                cancel = dialog.find_button(2)
+                if cancel is not None:
+                    win32.post(cancel["hwnd"], win32.BM_CLICK)
+                else:
+                    win32.post(dialog.hwnd, win32.WM_COMMAND, win32.IDCANCEL, None)
+                closed = Mmd._gone(dialog.hwnd, 5.0)
+                raise MmdError("the file dialog refused %s: it stayed open after OK (a name with characters "
+                               "Windows does not allow in file names, or a place it cannot write to)%s"
+                               % (path, "" if closed else "; the dialog is still open"))
             edit = dialog.file_name_edit()
             button = dialog.find_button(1)
             if edit is None or button is None:
@@ -268,8 +282,65 @@ class Mmd:
                 return False
             time.sleep(0.05)
             win32.post(button["hwnd"], win32.BM_CLICK)
+            filled.add(dialog.hwnd)
             return "file name entered"
         return handler
+
+    @staticmethod
+    def _gone(hwnd, timeout):
+        """wait until a window is destroyed or no longer shown; False when it is still there"""
+        deadline = time.monotonic() + timeout
+        while win32.is_window(hwnd) and win32.is_visible(hwnd):
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def _file_handlers(self, path, said=None):
+        """handlers for an operation that goes through a file dialog.
+
+        A message the file dialog opens on top of itself (a folder that does not exist, a device
+        name) means it refuses the name: it is read, closed together with the file dialog, and the
+        operation fails with the dialog's own words instead of hanging.  A yes/no question of the
+        file dialog (replace an existing file) is answered はい.  A notice MMD itself shows meanwhile
+        is closed with its OK and its text collected in `said`, so that a failure which follows can
+        quote it; a yes/no question of MMD's own is not guessed at and is reported as pending."""
+        said = said if said is not None else []
+
+        def on_message(dialog):
+            text = dialog.message.strip()
+            owner = win32.owner_window(dialog.hwnd)
+            parent = guard.describe(owner) if owner and owner != self.hwnd else None
+            from_file_dialog = parent is not None and parent.kind == "file_dialog"
+            if dialog.find_button(6) is not None:
+                if not from_file_dialog:
+                    raise DialogPending([dialog])
+                guard.click(dialog, 6)
+                said.append(text)
+                return "yes"
+            for cid in (1, 2):                   # some MMD message boxes give their OK the id 2
+                if dialog.find_button(cid) is not None:
+                    guard.click(dialog, cid)
+                    break
+            else:
+                raise DialogPending([dialog])
+            if not from_file_dialog:
+                said.append(text)
+                return "ok"
+            self._gone(dialog.hwnd, 3.0)
+            cancel = parent.find_button(2)
+            if cancel is not None:
+                win32.post(cancel["hwnd"], win32.BM_CLICK)
+            else:
+                win32.post(owner, win32.WM_COMMAND, win32.IDCANCEL, None)
+            closed = self._gone(owner, 5.0)
+            raise MmdError("the file dialog refused %s: %s%s" % (
+                path, text or "(no message)", "" if closed else " (the file dialog is still open)"))
+        return {"file_dialog": self._fill_file_dialog(path), "message": on_message}
+
+    @staticmethod
+    def _not_written(path, said):
+        return MmdError("MMD did not write %s%s" % (path, (": " + " / ".join(said)) if said else ""))
 
     @staticmethod
     def _press(button, action, title=None):
@@ -519,9 +590,10 @@ class Mmd:
     def _save_as(self, path):
         if os.path.exists(path):
             os.remove(path)
-        self.menu(Menu.SAVE_AS, {"file_dialog": self._fill_file_dialog(path)})
+        said = []
+        self.menu(Menu.SAVE_AS, self._file_handlers(path, said))
         if not os.path.exists(path):
-            raise MmdError("MMD did not write %s" % path)
+            raise self._not_written(path, said)
 
     def _save_project(self, allow_foreign=False):
         """save the project MMD has open and return the file that now holds the current state"""
@@ -586,12 +658,14 @@ class Mmd:
             current = self._project_path()
             return current is not None and _same_path(current, work)
 
+        said = []
         try:
             # MMD does not ask before discarding the current project; a big project keeps loading
             # after the command has returned, so the title is what tells that it is open
-            self.menu(Menu.OPEN, {"file_dialog": self._fill_file_dialog(work)}, done=opened)
+            self.menu(Menu.OPEN, self._file_handlers(work, said), done=opened)
         except OperationTimeout:
-            raise MmdError("MMD did not open the project (its title shows %r)" % self._project_path())
+            raise MmdError("MMD did not open the project (its title shows %r)%s"
+                           % (self._project_path(), (": " + " / ".join(said)) if said else ""))
         self.wait_quiet()
         self._set_record({"work": work, "origin": path})
         return self.state()
@@ -731,14 +805,6 @@ class Mmd:
         return {"model": state["selected_model"], "frame": self.frame(), "bones": len(pose.bones),
                 "registered": bool(register)}
 
-    def _press_yes(self, dialog):
-        """overwrite confirmations and the like: はい when there is one, else OK"""
-        for cid in (6, 1, 2):                    # some MMD message boxes give their OK the id 2
-            if dialog.find_button(cid) is not None:
-                guard.click(dialog, cid)
-                return "yes" if cid == 6 else "ok"
-        raise DialogPending([dialog])
-
     def _save_through_menu(self, menu_id, path, extension):
         if not path.lower().endswith(extension):
             raise MmdError("the file name must end with %s" % extension)
@@ -746,10 +812,10 @@ class Mmd:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if os.path.exists(path):
             os.remove(path)                      # MMD would ask before overwriting; we do not want the question
-        handlers = {"file_dialog": self._fill_file_dialog(path), "message": self._press_yes}
-        self.menu(menu_id, handlers, done=self._written(path))
+        said = []
+        self.menu(menu_id, self._file_handlers(path, said), done=self._written(path))
         if not os.path.exists(path):
-            raise MmdError("MMD did not write %s" % path)
+            raise self._not_written(path, said)
         return path
 
     def save_motion(self, path):
@@ -795,8 +861,7 @@ class Mmd:
         probe = self._temp_path("codecs.avi")
         if os.path.exists(probe):
             os.remove(probe)
-        handlers = {"file_dialog": self._fill_file_dialog(probe), "avi_settings": on_settings,
-                    "message": self._press_yes}
+        handlers = dict(self._file_handlers(probe), avi_settings=on_settings)
         self.menu(Menu.AVI_OUT, handlers, done=lambda: bool(found))
         if os.path.exists(probe):
             os.remove(probe)
@@ -931,7 +996,7 @@ class Mmd:
             os.remove(path)
         if size is not None:
             self.set_output_size(*size)
-        handlers = {"file_dialog": self._fill_file_dialog(path), "recording": lambda dialog: "recording"}
+        handlers = dict(self._file_handlers(path), recording=lambda dialog: "recording")
         with self._camera_mode():       # the picture is taken through the scene camera, not the editing view
             self.menu(Menu.IMAGE_OUT, handlers, timeout=timeout, done=self._written(path))
         return {"path": path, "size": _image_size(path), "bytes": os.path.getsize(path), "frame": self.frame()}
@@ -981,8 +1046,7 @@ class Mmd:
             return bool(problem) or written()
 
         written = self._written(path)
-        handlers = {"file_dialog": self._fill_file_dialog(path), "avi_settings": on_settings,
-                    "recording": lambda dialog: "recording"}
+        handlers = dict(self._file_handlers(path), avi_settings=on_settings, recording=lambda dialog: "recording")
         with self._camera_mode():
             self.menu(Menu.AVI_OUT, handlers, timeout=timeout, done=done)
         if problem:
