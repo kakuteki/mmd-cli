@@ -106,6 +106,7 @@ user32.GetWindowLongW.restype = ctypes.c_long
 user32.SetWindowLongW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_long]
 user32.SetWindowLongW.restype = ctypes.c_long
 user32.SetLayeredWindowAttributes.argtypes = [wt.HWND, wt.DWORD, ctypes.c_ubyte, wt.DWORD]
+user32.GetForegroundWindow.argtypes = []
 user32.GetForegroundWindow.restype = wt.HWND
 user32.ShowWindowAsync.argtypes = [wt.HWND, ctypes.c_int]
 user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
@@ -231,6 +232,13 @@ class _INPUT(ctypes.Structure):
 
 user32.SendInput.argtypes = [wt.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
 user32.SetForegroundWindow.argtypes = [wt.HWND]
+user32.SetForegroundWindow.restype = wt.BOOL
+user32.AllowSetForegroundWindow.argtypes = [wt.DWORD]
+user32.AllowSetForegroundWindow.restype = wt.BOOL
+user32.LockSetForegroundWindow.argtypes = [wt.UINT]
+user32.LockSetForegroundWindow.restype = wt.BOOL
+kernel32.GetCurrentProcessId.argtypes = []
+kernel32.GetCurrentProcessId.restype = wt.DWORD
 
 
 def give_foreground_back(hwnd):
@@ -378,8 +386,7 @@ def hide_window(hwnd):
     """make a window invisible to the user without closing it: fully transparent, off-screen, and
     never chosen by Windows as the next active window (e.g. when the user closes the window they
     are working in while this one is open)"""
-    ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_NOACTIVATE)
+    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style(hwnd) | WS_EX_LAYERED | WS_EX_NOACTIVATE)
     user32.SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA)
     move_offscreen(hwnd)
 
@@ -398,8 +405,7 @@ def move_window(hwnd, x, y):
 
 def reveal_window(hwnd, x=100, y=100):
     """undo hide_window (for a person who wants to answer a dialog by hand)"""
-    ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE)
+    user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style(hwnd) & ~WS_EX_NOACTIVATE)
     user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
@@ -518,6 +524,12 @@ def terminate_process(pid):
         return bool(kernel32.TerminateProcess(handle, 1))
     finally:
         kernel32.CloseHandle(handle)
+
+
+winmm.timeBeginPeriod.argtypes = [wt.UINT]
+winmm.timeBeginPeriod.restype = wt.UINT             # MMRESULT
+winmm.timeEndPeriod.argtypes = [wt.UINT]
+winmm.timeEndPeriod.restype = wt.UINT
 
 
 @contextlib.contextmanager

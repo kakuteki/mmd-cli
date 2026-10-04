@@ -47,16 +47,16 @@ def current_session_id():
     return sid.value
 
 
-def should_relay(window_station=None, session_id=None, argv=None):
-    """decide whether this invocation must be handed to the interactive session"""
+def should_relay(window_station=None, session_id=None, argv=None, command=None):
+    """decide whether this invocation must be handed to the interactive session.  command is the
+    parsed sub-command (argparse knows which words are option values; a scan of argv does not)"""
     session_id_ = session_id
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--no-relay" in argv:
         return False
     if "--in-user-session" in argv:
         return True
-    positional = [a for a in argv if not a.startswith("-")]
-    if not positional or positional[0] in LOCAL_COMMANDS or "--version" in argv or "-h" in argv or "--help" in argv:
+    if command is None or command in LOCAL_COMMANDS:
         return False
     if window_station is None:
         window_station = window_station_name()
@@ -76,7 +76,8 @@ class Job:
 
 
 def child_argv(argv, out_path):
-    """the relayed command line: relay flags removed, --out pointed at the relay's result file"""
+    """the relayed command line: --out pointed at the relay's result file, and --no-relay so the
+    child never hands the command on again (should it land outside the interactive station)"""
     out = []
     skip = False
     had_out = False
@@ -99,7 +100,7 @@ def child_argv(argv, out_path):
         out.append(a)
     if not had_out:
         out = ["--out", out_path] + out
-    return out
+    return ["--no-relay"] + out
 
 
 def write_job(job, path):
@@ -133,14 +134,30 @@ def task_command(interpreter, job_path):
     return '"%s" -m mmd_cli --job "%s"' % (interpreter, job_path)
 
 
+def _write_whole(path, text):
+    """write a marker file in one step (to .part, then moved) so a reader never sees it half written"""
+    with open(path + ".part", "w") as f:
+        f.write(text)
+    os.replace(path + ".part", path)
+
+
+def _read_code(exit_path, retries=10):
+    """the child's exit code; an empty file is read again after a short wait and is never taken as 0"""
+    for _ in range(retries):
+        with open(exit_path) as f:
+            text = f.read().strip()
+        if text:
+            return int(text)
+        time.sleep(0.05)
+    raise ValueError("%s stayed empty" % exit_path)
+
+
 def collect(out_path):
     """the child's JSON and exit code, or an error when it left nothing behind"""
-    exit_path = out_path + ".exit"
     try:
         with open(out_path, encoding="utf-8") as f:
             payload = json.load(f)
-        with open(exit_path) as f:
-            code = int(f.read().strip() or 0)
+        code = _read_code(out_path + ".exit")
     except (OSError, ValueError) as exc:
         return {"ok": False, "error": {"type": "RelayError",
                                        "message": "the relayed command left no result (%s)" % exc}}, 1
@@ -171,8 +188,20 @@ class RelayError(Exception):
     pass
 
 
-def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
-    """hand argv to a copy of this program in the interactive session; returns (payload, exit_code)"""
+def _child_pid(started_marker):
+    with open(started_marker) as f:
+        text = f.read().strip()
+    if not text.isdigit():
+        raise RelayError("the relayed command did not record its process id in %s" % started_marker)
+    return int(text)
+
+
+def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
+    """hand argv to a copy of this program in the interactive session; returns (payload, exit_code).
+    The parent has no clock of its own: it waits as long as the child process lives (the child
+    times out its own operations) and gives up only when the child did not start or died without
+    leaving a result; then it stops the task before taking its files away."""
+    from . import win32
     folder = relay_dir()
     os.makedirs(folder, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
@@ -190,6 +219,7 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
     created = _schtasks("/Create", "/TN", name, "/TR", command, "/SC", "ONCE", "/ST", "00:00", "/IT", "/F")
     if created.returncode != 0:
         raise RelayError("schtasks /Create failed: %s" % _text(created.stderr or created.stdout).strip())
+    finished = False
     try:
         started = _schtasks("/Run", "/TN", name)
         if started.returncode != 0:
@@ -202,13 +232,19 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
                                  "logged on to this machine's desktop? (the task runs only while the user is "
                                  "logged on; a virtual display and a disconnected session are fine)" % start_timeout)
             time.sleep(0.1)
-        deadline = time.monotonic() + timeout
+        pid = _child_pid(started_marker)
+        dead_at = None
         while not os.path.exists(out_path + ".exit"):
-            if time.monotonic() > deadline:
-                raise RelayError("the relayed command did not finish within %.0f s" % timeout)
+            if dead_at is None and not win32.process_alive(pid):
+                dead_at = time.monotonic()
+            if dead_at is not None and time.monotonic() - dead_at > grace:
+                raise RelayError("the relayed command (pid %d) ended without leaving a result" % pid)
             time.sleep(0.1)
+        finished = True
         return collect(out_path)
     finally:
+        if not finished:
+            _schtasks("/End", "/TN", name)          # stop the child before taking its files away
         _schtasks("/Delete", "/TN", name, "/F")
         for p in (job_path, out_path, out_path + ".exit", out_path + ".started"):
             try:
@@ -220,19 +256,26 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
 def run_job(job_path, main):
     """child side: executed by the scheduled task"""
     job = read_job(job_path)
-    with open(job.out_path + ".started", "w") as f:
-        f.write(str(os.getpid()))
+    _write_whole(job.out_path + ".started", str(os.getpid()))
     os.environ.update(job.env)
     if job.cwd and os.path.isdir(job.cwd):
         os.chdir(job.cwd)
+    error = None
     try:
         code = main(job.argv)
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
     except Exception as exc:  # the parent must never wait forever
-        with open(job.out_path, "w", encoding="utf-8") as f:
-            json.dump({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, f)
+        error = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
         code = 1
-    with open(job.out_path + ".exit", "w") as f:
-        f.write(str(code))
+    if not os.path.exists(job_path):        # the parent gave up and took its files away: leave no litter
+        try:
+            os.remove(job.out_path)
+        except OSError:
+            pass
+        return code
+    if error is not None:
+        with open(job.out_path, "w", encoding="utf-8") as f:
+            json.dump(error, f)
+    _write_whole(job.out_path + ".exit", str(code))
     return code

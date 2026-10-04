@@ -4,6 +4,7 @@ Every command prints one JSON object.  Exit codes: 0 ok, 1 error, 2 usage, 3 a d
 """
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -11,10 +12,11 @@ from . import __version__
 
 
 def parse_target(text):
-    """model / accessory selector: None or "camera" -> camera mode, digits -> index, else a name"""
+    """model / accessory selector: None or "camera" -> camera mode, ASCII digits -> index, else a name
+    (str.isdigit alone is also true for full-width digits, which are a legitimate model name)"""
     if text is None or text == "camera":
         return None
-    if text.isdigit():
+    if text.isascii() and text.isdigit():
         return int(text)
     return text
 
@@ -52,7 +54,15 @@ def failure(exc):
 
 # ---- argument parsing -----------------------------------------------------------------------
 
-def _vector(parser, flag, count, help_text, cast=float):
+def finite(text):
+    """a float that is a number: argparse's float also accepts nan and inf, which MMD has no use for"""
+    value = float(text)
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError("%r is not a finite number" % text)
+    return value
+
+
+def _vector(parser, flag, count, help_text, cast=finite):
     parser.add_argument(flag, nargs=count, type=cast, metavar=tuple("XYZW"[:count]) if count <= 4 else None,
                         help=help_text)
 
@@ -185,8 +195,8 @@ def build_parser():
     s.add_argument("name")
     _vector(s, "--pos", 3, "translation")
     rotation = s.add_mutually_exclusive_group()
-    rotation.add_argument("--rot", nargs=3, type=float, metavar=("X", "Y", "Z"), help="degrees")
-    rotation.add_argument("--quat", nargs=4, type=float, metavar=("X", "Y", "Z", "W"))
+    rotation.add_argument("--rot", nargs=3, type=finite, metavar=("X", "Y", "Z"), help="degrees")
+    rotation.add_argument("--quat", nargs=4, type=finite, metavar=("X", "Y", "Z", "W"))
     s.add_argument("--frame", type=int)
     s.add_argument("--model")
 
@@ -198,7 +208,7 @@ def build_parser():
     s.add_argument("--model")
     s = g.add_parser("set", help="register a key for one morph")
     s.add_argument("name")
-    s.add_argument("value", type=float)
+    s.add_argument("value", type=finite)
     s.add_argument("--frame", type=int)
     s.add_argument("--model")
 
@@ -523,16 +533,24 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         from . import relay
-        if relay.should_relay(argv=argv):
-            if args.command == "batch" and args.file == "-":
-                # stdin does not travel through the relay: park it in a file first
-                folder = relay.relay_dir()
-                os.makedirs(folder, exist_ok=True)
-                parked = os.path.join(folder, "stdin-%d.txt" % os.getpid())
-                with open(parked, "w", encoding="utf-8") as f:
-                    f.write(sys.stdin.read())
-                argv = [parked if a == "-" else a for a in argv]
-            payload, code = relay.run_in_user_session(argv, timeout=(args.timeout or 120.0) + 60.0)
+        if relay.should_relay(argv=argv, command=args.command):
+            parked = None
+            try:
+                if args.command == "batch" and args.file == "-":
+                    # stdin does not travel through the relay: park it in a file first
+                    folder = relay.relay_dir()
+                    os.makedirs(folder, exist_ok=True)
+                    parked = os.path.join(folder, "stdin-%d.txt" % os.getpid())
+                    with open(parked, "w", encoding="utf-8") as f:
+                        f.write(sys.stdin.read())
+                    argv = [parked if a == "-" else a for a in argv]
+                payload, code = relay.run_in_user_session(argv)
+            finally:
+                if parked:
+                    try:
+                        os.remove(parked)
+                    except OSError:
+                        pass
             emit(payload, args.out, sys.stdout)
             return code
         result = run(args)

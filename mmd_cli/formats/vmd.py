@@ -96,18 +96,36 @@ class Motion:
         return self.model_name == CAMERA_MODEL_NAME
 
 
+def _encode(text, what):
+    try:
+        return text.encode(ENCODING)
+    except UnicodeEncodeError:
+        raise ValueError("%s %r has characters outside cp932" % (what, text)) from None
+
+
 def _fixed(text, size, what):
-    raw = text.encode(ENCODING)
+    raw = _encode(text, what)
     if len(raw) > size:
         raise ValueError("%s %r does not fit in %d bytes (cp932)" % (what, text, size))
     return raw.ljust(size, b"\x00")
 
 
 def _truncated(text, size):
-    """encode, cutting on a character boundary when the text is too long for the field"""
-    while len(text.encode(ENCODING)) > size:
+    """encode (characters outside cp932 become '?'), cutting on a character boundary when the text
+    is too long for the field"""
+    raw = text.encode(ENCODING, "replace")
+    while len(raw) > size:
         text = text[:-1]
-    return text.encode(ENCODING).ljust(size, b"\x00")
+        raw = text.encode(ENCODING, "replace")
+    return raw.ljust(size, b"\x00")
+
+
+def _frame(frame, what, name=None):
+    """frame numbers are unsigned 32-bit in the file"""
+    if not 0 <= frame <= 0xFFFFFFFF:
+        where = what if name is None else "%s %r" % (what, name)
+        raise ValueError("%s: frame %r is out of range (0 to 4294967295)" % (where, frame))
+    return frame
 
 
 def _text(raw):
@@ -120,25 +138,26 @@ def dumps(motion):
     for k in motion.bones:
         if len(k.interpolation) != 64:
             raise ValueError("bone interpolation must be 64 bytes")
-        out.append(_BONE.pack(_fixed(k.name, 15, "bone name"), k.frame, *k.position, *k.rotation, k.interpolation))
+        out.append(_BONE.pack(_fixed(k.name, 15, "bone name"), _frame(k.frame, "bone", k.name), *k.position,
+                              *k.rotation, k.interpolation))
     out.append(_COUNT.pack(len(motion.morphs)))
     for k in motion.morphs:
-        out.append(_MORPH.pack(_fixed(k.name, 15, "morph name"), k.frame, k.weight))
+        out.append(_MORPH.pack(_fixed(k.name, 15, "morph name"), _frame(k.frame, "morph", k.name), k.weight))
     out.append(_COUNT.pack(len(motion.cameras)))
     for k in motion.cameras:
         if len(k.interpolation) != 24:
             raise ValueError("camera interpolation must be 24 bytes")
-        out.append(_CAMERA.pack(k.frame, k.distance, *k.position, *k.rotation, k.interpolation, k.fov,
-                                0 if k.perspective else 1))
+        out.append(_CAMERA.pack(_frame(k.frame, "camera key"), k.distance, *k.position, *k.rotation,
+                                k.interpolation, k.fov, 0 if k.perspective else 1))
     out.append(_COUNT.pack(len(motion.lights)))
     for k in motion.lights:
-        out.append(_LIGHT.pack(k.frame, *k.rgb, *k.direction))
+        out.append(_LIGHT.pack(_frame(k.frame, "light key"), *k.rgb, *k.direction))
     out.append(_COUNT.pack(len(motion.shadows)))
     for k in motion.shadows:
-        out.append(_SHADOW.pack(k.frame, k.mode, k.distance))
+        out.append(_SHADOW.pack(_frame(k.frame, "shadow key"), k.mode, k.distance))
     out.append(_COUNT.pack(len(motion.show_iks)))
     for k in motion.show_iks:
-        out.append(struct.pack("<IBI", k.frame, 1 if k.visible else 0, len(k.iks)))
+        out.append(struct.pack("<IBI", _frame(k.frame, "show/IK key"), 1 if k.visible else 0, len(k.iks)))
         for name, enabled in k.iks:
             out.append(_fixed(name, 20, "IK bone name") + bytes([1 if enabled else 0]))
     return b"".join(out)

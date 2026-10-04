@@ -30,6 +30,12 @@ class LoadsTest(unittest.TestCase):
         self.assertEqual(pose.bones[0].rotation, (0.071834, 0.539167, 0.266196, 0.795784))
         self.assertEqual(pose.bones[1].position, (1.5, -2.0, 3.25))
 
+    def test_model_file_containing_the_word_bone(self):
+        # the parent file name comes from the lines before the first "BoneN{" block, not before the word "Bone"
+        pose = vpd.loads(SAMPLE.replace(b"miku.osm", b"MyBone.osm"))
+        self.assertEqual(pose.model_file, "MyBone.osm")
+        self.assertEqual([b.name for b in pose.bones], ["右親指１", "センター"])
+
     def test_wrong_header_is_rejected(self):
         with self.assertRaises(ValueError):
             vpd.loads(b"hello\r\n")
