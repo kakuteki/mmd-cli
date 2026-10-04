@@ -304,6 +304,15 @@ class RunJobTest(unittest.TestCase):
         self.assertIn((self.out + ".started.part", self.out + ".started"), [c.args for c in replace.call_args_list])
 
 
+@unittest.skipUnless(win32 is not None, "needs Windows")
+class ProcessAliveTest(unittest.TestCase):
+    def test_a_process_that_cannot_be_opened_is_not_reported_dead(self):
+        # pid 4 is the System process: a plain user cannot open it (access denied), yet it is certainly alive
+        self.assertIn(win32.process_alive(4), (None, True))
+        self.assertIs(win32.process_alive(os.getpid()), True)
+        self.assertIs(win32.process_alive(0x7FFFFFF0), False)              # no such process
+
+
 class FakeScheduler:
     """stands in for schtasks: records every call and plays the child when the task is run"""
 
@@ -417,6 +426,19 @@ class ParentWaitTest(unittest.TestCase):
         self.assertNotIn("/End", scheduler.verbs())
         self.assertEqual(scheduler.verbs()[-1], "/Delete")
         self.assertEqual(self.leftovers(), [])
+
+    def test_a_child_that_cannot_be_opened_is_waited_for_by_its_exit_file(self):
+        # review 2 (7.2): OpenProcess fails for a living child the parent may not open (another integrity
+        # level, another account).  That is "unknown", not "dead": the parent keeps waiting for the result
+        def child(job):
+            start(job)
+            self.clock.at(30.0, lambda: finish(job))
+
+        scheduler = FakeScheduler(child)
+        payload, code = self.run_with(scheduler, alive=lambda pid: None)
+        self.assertEqual((payload, code), ({"ok": True, "relayed": True}, 0))
+        self.assertGreaterEqual(self.clock.now, 30.0)
+        self.assertNotIn("/End", scheduler.verbs())
 
     def test_parent_reports_no_logon_when_the_child_never_starts(self):
         scheduler = FakeScheduler()

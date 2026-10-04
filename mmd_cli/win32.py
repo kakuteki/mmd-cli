@@ -539,9 +539,11 @@ def current_user_sid():
 
 
 def process_alive(pid):
+    """True or False; None when the process cannot be opened (another account or integrity level):
+    not knowing is not the same as dead"""
     handle = kernel32.OpenProcess(0x00100000, False, pid)   # SYNCHRONIZE
     if not handle:
-        return False
+        return None if ctypes.get_last_error() == 5 else False      # 5: ERROR_ACCESS_DENIED
     try:
         return kernel32.WaitForSingleObject(handle, 0) == 0x102   # WAIT_TIMEOUT: still running
     finally:

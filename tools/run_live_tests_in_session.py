@@ -61,7 +61,7 @@ def main(argv=None):
         print("running as pid %d in the desktop session; log: %s" % (pid, log), flush=True)
         dead_at = None
         while not os.path.exists(log + ".exit"):
-            if dead_at is None and not win32.process_alive(pid):
+            if dead_at is None and win32.process_alive(pid) is False:
                 dead_at = time.monotonic()
             if dead_at is not None and time.monotonic() - dead_at > GRACE:
                 print("the test process (pid %d) ended without leaving a verdict" % pid)

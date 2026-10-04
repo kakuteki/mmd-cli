@@ -299,7 +299,7 @@ def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
         pid = _child_pid(started_marker)
         dead_at = None
         while not os.path.exists(out_path + ".exit"):
-            if dead_at is None and not win32.process_alive(pid):
+            if dead_at is None and win32.process_alive(pid) is False:   # None (cannot be opened) is not dead
                 dead_at = time.monotonic()
             if dead_at is not None and time.monotonic() - dead_at > grace:
                 raise RelayError("the relayed command (pid %d) ended without leaving a result" % pid)

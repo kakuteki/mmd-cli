@@ -60,7 +60,7 @@ def load_state():
 
 
 def save_state(state):
-    state["projects"] = {pid: rec for pid, rec in state["projects"].items() if win32.process_alive(int(pid))}
+    state["projects"] = {pid: rec for pid, rec in state["projects"].items() if win32.process_alive(int(pid)) is not False}
     tmp = "%s.%d-%d.tmp" % (_state_path(), os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=1)
@@ -265,7 +265,7 @@ def launch(exe, timeout=90.0, headless=False):
                 if (len(win32.child_windows(hwnd)) >= CONTROL_COUNT
                         and win32.send(hwnd, win32.WM_NULL, timeout_ms=300) is not None):
                     break
-            if not win32.process_alive(pid):
+            if win32.process_alive(pid) is False:
                 raise MmdError("MMD exited right after it was started%s" % quoted())
             if time.monotonic() > deadline:
                 # not ready, perhaps stuck behind a notice it does not close: nobody could reach it afterwards
@@ -1510,7 +1510,7 @@ class Mmd:
             win32.post(self.hwnd, win32.WM_COMMAND, Menu.EXIT, None)
         deadline = time.monotonic() + timeout
         answered = set()
-        while win32.process_alive(self.pid) and time.monotonic() < deadline:
+        while win32.process_alive(self.pid) is not False and time.monotonic() < deadline:
             for dialog in guard.open_dialogs(self.pid, self.hwnd):
                 if dialog.hwnd in answered:
                     continue
@@ -1522,11 +1522,11 @@ class Mmd:
                 elif not force:
                     raise DialogPending([dialog])
             time.sleep(0.05)
-        if win32.process_alive(self.pid):
+        if win32.process_alive(self.pid) is not False:
             if not force:
                 raise OperationTimeout("MMD did not exit within %.0f s (use --force)" % timeout)
             win32.terminate_process(self.pid)
-            self._wait_for(lambda: not win32.process_alive(self.pid), 10.0, "MMD could not be terminated")
+            self._wait_for(lambda: win32.process_alive(self.pid) is False, 10.0, "MMD could not be terminated")
         forget_instance(self.pid)
         return {"pid": self.pid, "running": False}
 
