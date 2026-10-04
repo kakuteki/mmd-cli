@@ -1004,6 +1004,25 @@ class FramesTest(unittest.TestCase):
         self.assertEqual((layout.start_frame, layout.frames), (30, 31))
         self.assertEqual(layout.motion.start, 1.0)                             # the motion runs on the frame grid
 
+    def test_a_time_exactly_between_two_frames_goes_to_the_even_one(self):
+        # as the docstring says: half a frame either way.  x.25 and x.75 s are such times at 30 fps.
+        thirty = fractions.Fraction(30)
+        self.assertEqual([mv_text.frame_of(t, thirty) for t in (0.25, 0.75, 1.25, 1.75)], [8, 22, 38, 52])
+        layout = lay(cue_of(start=0.25, end=0.75))
+        self.assertEqual((layout.start_frame, layout.frames), (8, 14))
+        self.assertEqual(lay(cue_of(start=0.75, end=1.25)).frames, 16)
+
+    def test_the_first_picture_of_a_cue_is_empty_unless_it_is_a_flash_or_has_no_enter(self):
+        # as the docstring says: picture 0 is the State at the start of the cue
+        for anim in mv_text.ANIMS:
+            layout = lay(cue_of("HI", "caption", anim=anim, start=1.0, end=3.0))
+            first, soon = (alpha(frame(layout, i)).getextrema()[1] for i in (0, 4))
+            self.assertEqual(first, 255 if anim == "flash" else 0, anim)
+            if anim not in ("flash", "roll"):
+                self.assertGreater(soon, 0, anim)                                # and comes in the frames after it
+                at_once = lay(cue_of("HI", "caption", anim=anim, start=1.0, end=3.0, enter=0))
+                self.assertEqual(alpha(frame(at_once, 0)).getextrema()[1], 255, anim)
+
     def test_a_cue_shorter_than_a_frame_is_an_error_that_names_it(self):
         with self.assertRaises(ValueError) as caught:
             lay(cue_of(id="blink3", start=1.0, end=1.01))

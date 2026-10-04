@@ -283,15 +283,27 @@ python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
  ]}
 ```
 
-- 合図は `lines`（行ごとに text と style）か、`text` と `style`（1 行。改行で複数行）を持つ。`id` は連番のフォルダ名になる（英数字と `_` `-`）。
+- 合図ファイルは UTF-8（BOM つきでも読める）。合図は `lines`（行ごとに text と style）か、`text` と `style`（1 行。改行は
+  CR・LF・CRLF のどれでも行の区切り）を持つ。`id` は連番のフォルダ名になる（英数字と `_` `-`、64 文字まで）。大文字と小文字だけが
+  違う id は、Windows ではフォルダが同じになるので重複として拒む。
 - `x`: left / center / right / left-third / right-third（幅の 1/4・3/4 に箱の中心。中央に立つ人物の脇）。`y`: top / middle /
   lower（下 1/3 の中央）/ bottom。余白は左右 64 px・上下 48 px。px はすべて高さ 720 のときの値で、画面の高さに比例する。
+- 置き場所が決めるのは「行の箱」の位置。行の箱は文面でなく様式で決まる（logo・sub・hook は欧文の大文字の高さ、title_jp・lyric・
+  caption は漢字の高さ、credit はその両方）。だから同じ様式・同じ置き場所なら、文面が違っても基線は同じ行に来る
+  （題名を 1 文字ずつ別の合図で出し、ほかの字を全角空白にしておけば、重ねると 1 語と同じ絵になる）。濁点・アクセント・下に出る字の
+  墨は箱からはみ出して余白に掛かる。はみ出しが画面の外に出るときだけ、内側へ寄せる。
 - `style`: logo（Y1RevForge 150）/ title_jp（Noto Sans JP 900・44）/ sub（Y1Vectura 30・字間 0.25 em・大文字・差し色）/
-  credit（Vectura 22 と Noto 400 の 24・文字色の 70 %）/ lyric（Noto 700・46・差し色の下線・やわらかい影）/
-  hook（Y1Cybanin3000 Glitch 180・差し色・左に 3 px ずらした墨の写し）/ caption（Noto 400・28）。行に `size` を書くと大きさを変えられる。
+  credit（Vectura 22 と Noto 400 の 24・dark では文字色の 70 %、light では (120,120,130)）/ lyric（Noto 700・46・差し色の下線・
+  やわらかい影）/ hook（Y1Cybanin3000 Glitch 180・差し色・左に 3 px ずらした墨の写し）/ caption（Noto 400・28）。
+  行に `size` を書くと大きさを変えられる。
 - `anim`: fade / rise（24 px 下から上がって出て、12 px 上へ抜ける）/ tracking-in（字間 0.6 em から詰まる）/ wipe（左から現れる）/
   flash（1・0・1・0.35・1 と点滅して保持、最後は切る）/ roll（画面の下から上へ通り抜ける）。入りは `enter`（既定 0.6 秒、3 次の
-  ease-out）、抜けは `exit`（0.4 秒、ease-in）で、合図ごとに変えられる。
+  ease-out）、抜けは `exit`（0.4 秒、ease-in）で、合図ごとに変えられる。enter と exit の合計より短い合図は、両方を同じ比で縮めて
+  （どこかのフレームで全部見えるようにして）`warnings` に出す。
+- 時刻は最寄りのフレームに合わせる（フレームのちょうど中間は偶数のフレームへ。30 fps の 0.25 秒は 8、0.75 秒は 22）。合図は
+  start のフレームから end の 1 つ前のフレームまで。start のフレーム（連番の 0 枚目）は入りの始まりなので、flash 以外では
+  まだ何も見えない。start のフレームから見せたいときは `"enter": 0` にする。
+- 空白類の文字（TAB・EM SPACE など）は描かず、その書体のふつうの空白の幅だけ送る。全角空白（U+3000）だけは自分の幅（1 em）を保つ。
 - `palette`: dark（黒い舞台用。白文字＋琥珀。既定）/ light（白い舞台用。墨の文字）。
 - `layer`: front（既定）/ back。この道具は一覧の順に重ねるだけで、人物を別の層として持つ mv_look が back を人物の後ろに置く。
 - 欧文は利用者フォルダの Y1 シリーズ（`%LOCALAPPDATA%/Microsoft/Windows/Fonts`）で描く。かな・漢字を持たないので日本語は
@@ -301,8 +313,9 @@ python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
 - 以前の `tools/overlay_text.py` の合図（text / start / end / style / anim / x / y / fontsize の平らな一覧）もそのまま読める
   （title→logo、caption→sub、slide-up・slide-left→rise）。
 
-標準出力は 1 行の JSON（`ok`・`out`・`cues`・`frames`・`size`・`fps`・`work`・`warnings`・`ffmpeg`）。終了コードは 0 成功 /
-1 ffmpeg の失敗 / 2 引数や合図ファイルの誤り。
+標準出力は 1 行の ASCII の JSON（`ok`・`out`・`cues`・`frames`・`size`・`fps`・`work`・`warnings`・`ffmpeg`）。終了コードは 0 成功 /
+1 ffmpeg の失敗 / 2 引数や合図ファイルの誤り。ただし引数の書式の誤り（必要な引数が無い・知らないオプション・知らないコマンド）は
+`mmd` 本体と同じく argparse が扱い、usage を標準エラーに出して終了コード 2 で終わる（標準出力は空）。
 
 ## 出力
 

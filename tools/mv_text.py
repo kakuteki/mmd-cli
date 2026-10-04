@@ -22,9 +22,10 @@ The cue file (JSON; times are seconds in the video):
        {"id": "lyric1", "start": 60.0, "end": 64.0, "x": "left-third", "y": "lower", "anim": "rise",
         "text": "...", "style": "lyric", "enter": 0.3, "exit": 0.2}]}
 
-A cue has `lines`, or one `text` with a `style` (a line break in it makes lines).  `id` names the folder of
-its pictures; `layer` is "front" or "back" and only matters to a tool that has the dancer as a layer of its
-own (here both are laid over the video in the order of the list).  `palette` is "dark" (white text and an
+A cue has `lines`, or one `text` with a `style` (a line break in it, CR, LF or both, makes lines).  `id`
+names the folder of its pictures: letters, digits, _ and -, and two ids that differ only in capitals are
+the same folder on Windows, so they are refused.  `layer` is "front" or "back" and only matters to a tool
+that has the dancer as a layer of its own (here both are laid over the video in the order of the list).  `palette` is "dark" (white text and an
 amber accent, for a black stage) or "light" (ink, for the white stage).  fps and size are what `preview`
 and `frames` use; `render` takes them from the video.  A bare list of cues is the format of the older
 tools/overlay_text.py and is still read (OLD_STYLES, OLD_ANIMS).
@@ -61,8 +62,16 @@ of the underline is drawn.  A cue comes in `enter` seconds (cubic ease-out) and 
 (cubic ease-in).  "fade" changes the alpha only; "rise" comes up from 24 px below and leaves 12 px higher;
 "tracking-in" starts with 0.6 em more between the letters and closes; "wipe" shows the block from the left
 behind a soft edge and goes by fading; "flash" blinks for five frames (alpha 1, 0, 1, 0.35, 1), holds and is
-cut off; "roll" travels at one speed from under the frame to over it (end credits).  The motion runs on
-the frame grid: picture 0 of a cue is the State at its start.
+cut off; "roll" travels at one speed from under the frame to over it (end credits).
+
+The motion runs on the frame grid.  A time goes to the nearest frame (a time exactly between two frames
+to the even one: at 30 fps 0.25 s is frame 8 and 0.75 s is frame 22), and a cue has the frames from that
+of its start to the one before that of its end.  Picture 0 of a cue is the State at its start, so for
+every anim but flash it is still empty (alpha 0, a wipe not begun, a roll under the frame): nothing of
+the cue is seen on its start frame.  With "enter": 0 a fade, rise, tracking-in or wipe is whole on its
+start frame.  A cue shorter than its enter and exit together would start to go before it has come: both
+are cut down in proportion, to meet on a frame, so that it is whole on that frame, and the warnings say
+so.
 
 Drawing (draw).  Every colour is drawn as a mask of its own and the masks are laid over each other from the
 back (soft shadow, ink copy, text, underline), so the pictures have straight alpha: a half covered pixel
@@ -616,7 +625,8 @@ class Layout:
 
 
 def frame_of(seconds, fps):
-    """the frame a time falls on: the nearest"""
+    """the frame a time falls on: the nearest.  A time exactly between two frames goes to the even one (at
+    30 fps 0.25 s is frame 8, 0.75 s is frame 22): half a frame either way, not always the same way."""
     return int(round(fractions.Fraction(seconds) * fps))
 
 
@@ -964,8 +974,9 @@ def render_sequences(cues, work_dir, size=None, fps=None, book=None):
     x and y are where the top left of the pictures goes in the frame; `start` is the time of picture 0 in
     seconds (the cue's start on the frame grid: start_frame / fps); there are exactly `frames` pictures,
     numbered from 0; `pattern` is their printf path with forward slashes.  `fps` is a whole number, or the
-    text of the fraction when it is not one.  Every cue is laid out before a file is written, so a cue file
-    with an error leaves the folder as it was."""
+    text of the fraction when it is not one.  Every cue is checked and laid out before a file is written, so
+    an error in the cue file leaves the folder as it was (a disk that fails while writing can still leave a
+    part of the pictures)."""
     sheet = _sheet(cues)
     if size is not None:
         sheet = dataclasses.replace(sheet, size=_frame_size(size))
