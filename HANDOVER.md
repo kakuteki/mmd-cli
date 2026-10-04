@@ -191,7 +191,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      `C:/work/hibikase/out/mv_alpha_full.avi`（7,743 枚・28.5 GB、**歌唱リップ入り**。台本 `mv_full2.txt`）と、後処理した
      `mv_full_look.mp4`（文字なし、7,743 枚、後処理は 68 秒）。写しと台本は `_spike/out/hibikase/mv/production/`。
      文字入りの最終版は mv_text の取り込み後に `mv_look.py render ... --cues cues_mv.json` で作る（合図 24 本は作成済み）。
-     **28.5 GB の AVI は最終版が出来たら消す**（hinata は共有機）。
+     **28.5 GB の AVI は最終版が出来たら消す**（hinata は共有機）。作り直しの費用: MMD の描画 約 9 分（中継 1 回、
+     台本 `mv_full2.txt`）＋後処理 約 100 秒。場面は pmm `C:/work/hibikase/out/rin_hibikase_mv.pmm`（4.2 MB）にも保存済み。
+     後処理の層（板・光のループ 360 枚・フレア）は 31 MB。
    - リップ: えぬたのダンスには表情が冒頭しか無い。KAZUSA 配布（ATY 振付のトレース）の「Face&Lips 歌ってる方.vmd」を
      ダンスの後に読ませる（3,135/3,156 キーが載る。どちらも「本家の音源に 0 フレームから」）。
    - 歌の時刻: `tools/lip_timing.py`。題名の語「ひびかせ」は 2589 / 4646 / 6755 / 7218 フレームから 4 回。合図では 1 文字ずつ
