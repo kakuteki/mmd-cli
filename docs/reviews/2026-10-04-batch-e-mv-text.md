@@ -158,6 +158,29 @@ palette light で重ねた。
   `_spike/out/hibikase/mv/build_mv.md`（リポジトリの外）の手順 4 は旧道具の名前のまま。
 - 設計の記録は最初のコミットで枝に写したが、連絡を受けて外した（写しは main のものと同一だった）。
 
+## 10. 査読 6（`_spike/out/verify/review6/review-6-mv-text.md`、2026-10-05）への直し
+
+中 3 件・低 12 件のうち、指示のあった 中-1・中-2・中-3・低-1・低-4・低-6・低-12 と、生き残った変異 13 本の試験を直した。
+低-2（start のフレームは透明）と 低-3（フレームの中間は偶数へ）は挙動のまま、先頭の説明と README に書いて試験で留めた。
+
+- 中-3（基線が文面で動く）: 置き場所が置くのは「行の箱の積み」にし、箱からはみ出す墨は余白に掛ける（画面の外に出るときだけ内側へ寄せる）。
+  行の箱は文面でなく様式の字種の基準字（logo・sub・hook は H、title_jp・lyric・caption は「国」、credit は両方）から取る。
+  **本番の合図ファイルの題名 4 文字（title_jp・104 px・left-third・lower）の基線の行**: 直す前 ヒ 637・ビ 640・カ 637・セ 637（幅 3 px、
+  1 語で書くと 640）→ 直した後 **ヒ 637・ビ 637・カ 637・セ 637・1 語 637**（幅 0）。4 合図を重ねた絵は 1 語の絵と画素単位で同じ
+  （試験 `BaselineTest`）。査読の `t14_baseline.py` と同じ組（7 様式 × 4 置き場所 × 3〜7 文面）で基線の幅は最大 30 px → **全部 0 px**
+  （`_spike/baseline_spread_before.txt` / `_after.txt`）。墨が描画域から切れないことは査読と同じ方法（96 px 広げた描画域との比較）で
+  1,920 + 1,680 の割り付け・46,800 枚で 0 画素、静止時の墨の箱が画面の外に出る組み合わせも 0（`_spike/layout_check.py`）。
+- 中-1（空白類が箱で出る）: `str.isspace()` の文字は描かず、その書体のふつうの空白の幅だけ送る。U+3000 だけは自分の幅（1 em。
+  題名を 1 文字ずつ出す合図が列を保つため）。行は `splitlines()` で切る（CRLF の CR が残らない）。
+- 中-2・低-4: id の重複は `casefold()` で見る。id は `fullmatch` で末尾まで検査し 64 文字まで。
+- 低-1: enter + exit が長さを超える合図は両方を比のまま縮め、フレーム上で出会わせる（0.2 秒の fade は 4 枚目で alpha 1）。警告に出す。
+- 低-6: 合図ファイルは `utf-8-sig` で読む。低-12: README に「引数の書式の誤りは argparse が usage を標準エラーに出す」と書いた
+  （`mmd` 本体と同じ。確かめた）。
+- 試験: 110 → 140 本。査読で生き残った 13 本（M13〜M15・M17〜M19・M31〜M36・M41）は、同じ変異を手元の変異試験に移して全部赤くなる
+  ことを見た。今回の直しそれぞれを元に戻す変異も赤くなる。
+- 直していないもの（査読の低-5・低-7〜低-11）: 動画の外の合図と極端な fps の警告、ffmpeg の stderr の先頭、PCM 音声の `ipcm`、
+  bgr24 入力の丸め（`-sws_flags`）、縦長画面の倍率、5 フレーム未満の flash。
+
 ## 確かめていないこと
 
 - **曲全体（7742 フレーム）と多数の合図**。入力が数十本の ffmpeg は走らせていない（60 合図はコマンドの組み立てだけ）。
@@ -180,10 +203,11 @@ palette light で重ねた。
 - コミット（ブランチ `worktree-agent-ae4a7ddfdfb43b168`、起点 8ecbb80、push していない）: a061b35（設計の記録の写し。後で外した）→
   093f9cf（書体・合図）→ c45f1f1（動き）→ 2c9f300（layer・三分の一）→ a7783db（割り付け）→ 28b5dca（描画）→ e24306a（写しを外す）→
   2d10c95（連番・計画）→ de36e87（render / preview / frames）→ 92863af（overlay_text の置き換え・README）→ e40cef5（整数画素と端数の移動）→
-  14982d2（HANDOVER を戻す）→ fcc83e4（mv_look からの呼び方の試験とこの記録）→ 最後の 1 本（道具の注釈 2 か所とこの行）。
-- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 523 tests ... OK (skipped=1)`（416 − 3（overlay_text）+ 110（test_mv_text）。
-  test_mv_text の内訳: Runs 3・FontFiles 4・LoadFont 4・CueFile 13・Motion 12・Anchor 6・Lines 10・Canvas 6・Frames 4・Draw 15・
-  Sequences 10・Command 9・Main 11・Ffmpeg 3。この PC では Y1・Noto・ffmpeg が在るので 110 本とも走った）。
+  14982d2（HANDOVER を戻す）→ fcc83e4（mv_look からの呼び方の試験とこの記録）→ 5925437・b7a129b（注釈と記録）。
+  査読 6 の直し: dfd1d8a（id）→ bd967c8（BOM）→ b79f0fd（空白類）→ 2e1882c（行の箱で置く）→ b98202b（短い合図）→ 8e963a0・2bb856f（試験）→
+  de39f10（説明）→ 最後の 1 本（この記録）。
+- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 553 tests ... OK (skipped=1)`（416 − 3（overlay_text）+ 140（test_mv_text）。
+  査読 6 の前は 523 本。この PC では Y1・Noto・ffmpeg が在るので 140 本とも走った）。
 - 触ったファイル: 新規 `tools/mv_text.py`・`tests/test_mv_text.py`・この記録。削除 `tools/overlay_text.py`・`tests/test_overlay_text.py`。
   `README.md` は節の追加だけ。`mmd_cli/`・tests/live・HANDOVER.md は起点のまま。
 - 道具の依存: Pillow（描画）と ffmpeg / ffprobe（render だけ）。numpy は使わない。`mmd` 本体の依存は増えない。
