@@ -129,6 +129,41 @@ def difference(a, b):
     return sum(abs(x - y) for x, y in zip(pa, pb)) / float(len(pa))
 
 
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class FlareTest(unittest.TestCase):
+    """a flare is a burst of light with a streak across it, not a veil: an even white over the whole picture
+    reads as grey fog (seen on the first version)"""
+
+    def alpha(self, index):
+        frame = mv_look.flare_frame(SIZE, mv_look.DEFAULT_LOOK["flare"], index)
+        self.assertEqual((frame.size, frame.mode), (SIZE, "RGBA"))
+        return frame.getchannel("A")
+
+    def at(self, alpha, x, y):
+        w, h = SIZE
+        return alpha.getpixel((int(x * (w - 1)), int(y * (h - 1))))
+
+    def test_the_light_is_in_the_middle_and_the_corners_stay_nearly_clear(self):
+        a = self.alpha(0)
+        centre, corner = self.at(a, 0.5, 0.42), self.at(a, 0.02, 0.97)
+        self.assertGreater(centre, 180)
+        self.assertLess(corner, 64)                                   # a quarter of full at most
+        self.assertGreater(centre, 3 * corner)
+
+    def test_a_streak_runs_across_the_picture_at_the_height_of_the_burst(self):
+        a = self.alpha(0)
+        on_streak, beside = self.at(a, 0.08, 0.42), self.at(a, 0.08, 0.70)
+        self.assertGreater(on_streak, 2 * beside)
+        self.assertGreater(on_streak, 100)
+
+    def test_it_is_brightest_at_once_and_gone_after_its_frames(self):
+        frames = int(mv_look.DEFAULT_LOOK["flare"]["frames"])
+        levels = [self.at(self.alpha(i), 0.5, 0.42) for i in range(frames)]
+        self.assertEqual(levels, sorted(levels, reverse=True))
+        self.assertGreater(levels[0], 4 * max(1, levels[-1]))
+        self.assertEqual(self.alpha(frames).getextrema(), (0, 0))
+
+
 PLAN = {"fps": 30, "size": [320, 180], "warnings": [], "cues": [
     {"id": "title", "layer": "back", "x": 20, "y": 12, "start": 0.5, "start_frame": 15, "frames": 30,
      "pattern": "W/cue_title/f%05d.png", "canvas": [200, 60]},

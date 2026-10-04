@@ -169,14 +169,22 @@ def light_frame(size, look, index, count):
     return Image.fromarray(np.clip(total, 0, 255).astype(np.uint8), "RGB")
 
 
+FLARE_HEIGHT = 0.42              # of the picture, from the top: about the dancer's chest in a full shot
+
+
 def flare_frame(size, settings, index):
-    """frame `index` of a flare: the whole picture lit, strongest on the first frame, with a streak across"""
+    """frame `index` of a flare, strongest on the first frame: a burst of light in the middle of the picture,
+    a thin streak across it at the same height with a soft halo, and only a faint lift of everything else
+    (an even white over the whole picture reads as grey fog, not as light)"""
     w, h = size
     frames = max(1, int(settings["frames"]))
     decay = (1.0 - index / float(frames)) ** 2 if index < frames else 0.0
     y = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None]
-    streak = np.exp(-((y - 0.45) / 0.05) ** 2)
-    alpha = np.clip(float(settings["strength"]) * decay * (0.6 + 0.4 * streak), 0.0, 1.0)
+    x = np.linspace(-1.0, 1.0, w, dtype=np.float32)[None, :]
+    dy = y - FLARE_HEIGHT
+    burst = np.exp(-((x / 0.42) ** 2 + (dy / 0.30) ** 2))
+    streak = (np.exp(-(dy / 0.012) ** 2) + 0.45 * np.exp(-(dy / 0.07) ** 2)) * (0.55 + 0.45 * np.exp(-(x / 0.8) ** 2))
+    alpha = np.clip(float(settings["strength"]) * decay * (0.14 + np.maximum(1.05 * burst, 0.8 * streak)), 0.0, 1.0)
     out = np.zeros((h, w, 4), dtype=np.uint8)
     out[:, :, :3] = np.array(settings["colour"], dtype=np.uint8)[None, None, :]
     out[:, :, 3] = (alpha * 255.0).astype(np.uint8)
