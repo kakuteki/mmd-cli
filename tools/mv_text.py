@@ -132,7 +132,7 @@ DEFAULT_STYLE, DEFAULT_ANIM, DEFAULT_X, DEFAULT_Y, DEFAULT_LAYER = "lyric", "fad
 # the names of the older tools/overlay_text.py, read in a bare list of cues
 OLD_STYLES = {"title": "logo", "lyric": "lyric", "credit": "credit", "caption": "sub"}
 OLD_ANIMS = {"fade": "fade", "slide-up": "rise", "slide-left": "rise"}
-ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")      # the whole id (fullmatch): it names a folder
 SHEET_KEYS = ("fps", "size", "palette", "cues", "note")
 CUE_KEYS = ("id", "start", "end", "x", "y", "anim", "layer", "text", "style", "size", "lines", "enter", "exit", "note")
 LINE_KEYS = ("text", "style", "size")
@@ -365,8 +365,9 @@ def _parse_cue(raw, index, old):
     if not isinstance(raw, dict):
         raise ValueError("cue %s is not an object: %r" % (cue_id, raw))
     if "id" in raw:
-        if not isinstance(raw["id"], str) or not ID_PATTERN.match(raw["id"]):
-            raise ValueError("cue %s: the id %r must be letters, digits, _ or - (it names a folder)" % (cue_id, raw["id"]))
+        if not isinstance(raw["id"], str) or not ID_PATTERN.fullmatch(raw["id"]):
+            raise ValueError("cue %s: the id %r must be 1 to 64 letters, digits, _ or - (it names a folder)"
+                             % (cue_id, raw["id"]))
         cue_id = raw["id"]
     what = "cue %s" % cue_id
     _only(raw, CUE_KEYS + (("fontsize",) if old else ()), what)
@@ -436,8 +437,11 @@ def parse_cues(data):
     sheet = Sheet(parse_fps(data.get("fps", FPS)), _frame_size(data.get("size", list(SIZE))), palette, [])
     for index, raw in enumerate(data["cues"]):
         cue = _parse_cue(raw, index, old)
-        if any(cue.id == other.id for other in sheet.cues):
-            raise ValueError("cue %s: the id is used twice (it names the cue's folder)" % cue.id)
+        for other in sheet.cues:
+            # Windows folders ignore case: "Hook" and "hook" would share one folder of pictures
+            if cue.id.casefold() == other.id.casefold():
+                raise ValueError("cue %s: the id is used twice (cue %s; an id names the cue's folder, and folders "
+                                 "do not tell capitals from small letters)" % (cue.id, other.id))
         sheet.cues.append(cue)
     return sheet
 

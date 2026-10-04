@@ -296,6 +296,33 @@ class CueFileTest(unittest.TestCase):
                 mv_text.parse_cues(one_cue(id=bad))
         self.assertEqual(mv_text.parse_cues(one_cue(id="Verse_1-a")).cues[0].id, "Verse_1-a")
 
+    def test_ids_that_differ_only_in_case_are_one_folder(self):
+        # Windows folders ignore case: the pictures of "hook" would replace those of "Hook", and "Hook" would
+        # show them at its own time and place, with nothing said
+        for first, second in (("Hook", "hook"), ("verse_A", "VERSE_a"), ("c01", "C01")):
+            with self.assertRaises(ValueError) as caught:
+                mv_text.parse_cues({"cues": [{"id": first, "start": 0, "end": 1, "text": "x"},
+                                             {"id": second, "start": 2, "end": 3, "text": "y"}]})
+            self.assertIn(second, str(caught.exception))
+            self.assertIn(first, str(caught.exception))
+        # the name a cue without an id gets counts too
+        with self.assertRaises(ValueError) as caught:
+            mv_text.parse_cues({"cues": [{"start": 0, "end": 1, "text": "x"}, {"id": "C00", "start": 2, "end": 3, "text": "y"}]})
+        self.assertIn("C00", str(caught.exception))
+        both = mv_text.parse_cues({"cues": [{"id": "Hook", "start": 0, "end": 1, "text": "x"},
+                                            {"id": "hook2", "start": 2, "end": 3, "text": "y"}]})
+        self.assertEqual([c.id for c in both.cues], ["Hook", "hook2"])          # the id keeps its own case
+
+    def test_an_id_is_checked_to_its_last_character_and_has_a_length(self):
+        # "$" in a pattern also matches before a last line break: "second\n" got through and the folder could
+        # not be made, after the cues before it had been written
+        for bad in ("second\n", "a\n", "\n", "a\r", "a\n\n", "x" * 65, "x" * 300):
+            with self.assertRaises(ValueError, msg=repr(bad)) as caught:
+                mv_text.parse_cues({"cues": [{"id": "first", "start": 0, "end": 1, "text": "x"},
+                                             {"id": bad, "start": 2, "end": 3, "text": "y"}]})
+            self.assertIn("id", str(caught.exception))
+        self.assertEqual(mv_text.parse_cues(one_cue(id="x" * 64)).cues[0].id, "x" * 64)
+
     def test_the_frame_the_rate_and_the_palette_are_checked(self):
         for data in ({"palette": "sepia", "cues": []}, {"fps": 0, "cues": []}, {"fps": "fast", "cues": []},
                      {"size": [1280], "cues": []}, {"size": [0, 720], "cues": []}, {"size": "1280x720", "cues": []},
