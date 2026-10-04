@@ -35,20 +35,26 @@ Noto Sans JP, a variable font whose weight axis is set per style, the rest with 
 style.  A character the Latin face lacks (the Y1 faces have little punctuation) is drawn with Noto as
 well, and a Y1 file that is not installed is replaced by Noto.  Both are said in the "warnings" of the
 result, and so is a weight that could not be set (the default instance of the Noto file is Thin).
+White space is never drawn (most faces have no glyph for a tab or an em space and would draw their
+"missing" box): whatever it is, it moves the pen by the normal space of its face; the ideographic space
+(U+3000) alone keeps its own full width, so Japanese text can hold a column with it.
 
 Layout (layout_cue).  All px are those of a 720 high frame and scale with the frame height.
 
 * Every character is placed by itself: its advance plus the tracking of its style (em of its size).
 * The lines of a cue are stacked on whole pixels, LINE_GAP (0.35 em of the larger neighbour) from the
   bottom of one line to the top of the next.  Top and bottom of a line are those of a reference letter of
-  its faces (a capital for Latin, a kanji for Japanese), not of its text, so lines of a style sit alike
-  whatever they say.
-* The block is that stack grown to hold all the ink.  The anchors place it: x left / center / right keep
-  64 px free at the sides, "left-third" and "right-third" centre it on a quarter and on three quarters of
-  the width (beside a dancer in the middle); y top / middle / bottom keep 48 px, "lower" centres it on the
-  middle of the lower third.  A line wider than the frame between the margins is set smaller until it
-  fits, and the warnings say so.
-* The canvas is the block wherever its motion takes it, with padding, cut at the frame.
+  the script its style is set in (a capital for logo, sub and hook; a kanji for title_jp, lyric and
+  caption; both for credit), not of its text.
+* The anchors place that stack: x left / center / right keep 64 px free at the sides, "left-third" and
+  "right-third" centre it on a quarter and on three quarters of the width (beside a dancer in the middle);
+  y top / middle / bottom keep 48 px, "lower" centres it on the middle of the lower third.  So a style at
+  an anchor has its baseline on one row whatever the text says, and a word shown one character per cue
+  (the other characters replaced by ideographic spaces) adds up to the word.  Ink that reaches out of the
+  stack (a descender, an accent, a glitch letter taller than the capitals) lies in the margin; only
+  where it would leave the frame is the cue moved in.
+* A line wider than the frame between the margins is set smaller until it fits, and the warnings say so.
+* The canvas is the box of all the ink wherever the motion takes it, with padding, cut at the frame.
 
 Motion (Motion.at).  A State per frame: alpha, an offset, extra tracking, how far a wipe has come, how much
 of the underline is drawn.  A cue comes in `enter` seconds (cubic ease-out) and goes in `exit` seconds
@@ -100,7 +106,7 @@ JP_FONTS = ("C:/Windows/Fonts/NotoSansJP-VF.ttf", "C:/Windows/Fonts/YuGothB.ttc"
             "C:/Windows/Fonts/msgothic.ttc")
 CJK_START = 0x2E80                           # from here up (CJK, kana, fullwidth forms) a code point is Japanese
 MISSING = "\U0010ffff"                       # no font has it: it is drawn as the face's "missing" box
-IDEOGRAPHIC_SPACE = "　"                 # the one white space that keeps a width of its own (a full em)
+IDEOGRAPHIC_SPACE = "\u3000"                 # the one white space that keeps a width of its own (a full em)
 
 # ---- the cue file ---------------------------------------------------------------------------
 FPS = 30
@@ -166,6 +172,7 @@ class Style:
     weight: int                  # of the Japanese font: 900, 700 or 400
     tracking: float              # em added after every Latin character
     colour: str                  # the palette's "text", "accent" or "secondary"
+    box: Tuple[str, ...]         # the scripts whose reference letter (REFERENCE) gives a line its top and bottom
     upper: bool = False
     underline: bool = False      # an accent rule under the block, drawn as the cue comes in
     ink_copy: bool = False       # a copy in the palette's ink, a little to the left, behind the text
@@ -175,15 +182,17 @@ class Style:
 
 # Sizes are px in a 720 high frame and scale with the frame height.  A style the design gives one script
 # only gets the other at the same size and a weight to match (a Japanese title in "logo" is Noto Black);
-# "jp" as the Latin role means Noto draws the Latin of that style too.
+# "jp" as the Latin role means Noto draws the Latin of that style too.  The box of a line is that of the
+# script the design sets the style in (both for credit), whatever the text of the line: a capital for the
+# Latin display styles, a kanji for the Japanese ones.
 STYLES = {
-    "logo": Style("logo", 150, 150, 900, 0.02, "text"),
-    "title_jp": Style("jp", 44, 44, 900, 0.0, "text"),
-    "sub": Style("latin", 30, 30, 700, 0.25, "accent", upper=True),
-    "credit": Style("latin", 22, 24, 400, 0.12, "secondary"),
-    "lyric": Style("jp", 46, 46, 700, 0.0, "text", underline=True, shadow=True),
-    "hook": Style("accent", 180, 180, 900, 0.0, "accent", ink_copy=True),
-    "caption": Style("jp", 28, 28, 400, 0.0, "text"),
+    "logo": Style("logo", 150, 150, 900, 0.02, "text", ("latin",)),
+    "title_jp": Style("jp", 44, 44, 900, 0.0, "text", ("jp",)),
+    "sub": Style("latin", 30, 30, 700, 0.25, "accent", ("latin",), upper=True),
+    "credit": Style("latin", 22, 24, 400, 0.12, "secondary", ("latin", "jp")),
+    "lyric": Style("jp", 46, 46, 700, 0.0, "text", ("jp",), underline=True, shadow=True),
+    "hook": Style("accent", 180, 180, 900, 0.0, "accent", ("latin",), ink_copy=True),
+    "caption": Style("jp", 28, 28, 400, 0.0, "text", ("jp",)),
 }
 
 
@@ -574,14 +583,16 @@ def _line_x(line, extra, align, width):
 @dataclasses.dataclass
 class Layout:
     """A cue laid out in a frame.  The reference box is its lines at rest: as wide as the widest line, from
-    the top of the first line to the bottom of the last (or of the underline).  The block is the reference
-    box grown to hold all the ink (a descender, a glitch letter taller than the capitals, the ink copy);
-    the anchors place the block.  The canvas is the block through all of its motion, with padding, cut at
-    the frame: the picture drawn for every frame of the cue."""
+    the top of the first line to the bottom of the last (or of the underline).  The anchors place this box,
+    and the box of a line comes from its style, so a style at an anchor has its baseline on one row whatever
+    the text.  The block is the reference box grown to hold all the ink (a descender, an accent, a glitch
+    letter taller than the capitals, the ink copy): that ink may lie in the margin.  The canvas is the block
+    through all of its motion, with padding, cut at the frame: the picture drawn for every frame of the cue."""
     cue: Cue
     lines: List[Line]
     align: str                   # "left", "center" or "right"
     width: float                 # of the reference box
+    height: float                # of the reference box
     origin: Tuple[int, int]      # of the reference box, inside the block
     block: Tuple[int, int]       # width, height
     anchor: Tuple[int, int]      # the top left of the block in the frame
@@ -628,13 +639,19 @@ def _space(ch, font, px, book):
     return float(font.getlength(" "))
 
 
+def _faces(style, factor, book):
+    """script -> (face, px) of a style at `factor` times its size"""
+    latin_px = max(1, int(round(style.latin_size * factor)))
+    jp_px = max(1, int(round(style.jp_size * factor)))
+    return {"latin": (book.font(style.latin, latin_px, style.weight), latin_px),
+            "jp": (book.font("jp", jp_px, style.weight), jp_px)}
+
+
 def _glyphs(text, style, factor, book, warnings, what):
     """the characters of a line with the face that draws each: Japanese from the Japanese font, the rest from
     the Latin face of the style, or from the Japanese font as well where that face lacks the character (the
     Y1 faces have little punctuation; the box a face draws for what it lacks must not reach the video)"""
-    latin_px = max(1, int(round(style.latin_size * factor)))
-    jp_px = max(1, int(round(style.jp_size * factor)))
-    latin, jp = book.font(style.latin, latin_px, style.weight), book.font("jp", jp_px, style.weight)
+    (latin, latin_px), (jp, jp_px) = (_faces(style, factor, book)[script] for script in ("latin", "jp"))
     out = []
     for script, part in runs(text):
         for ch in part:
@@ -661,7 +678,9 @@ def _width(glyphs):
 
 def _line(spec, index, scale, palette, book, safe, warnings, what):
     """a line of a cue set in its style.  A line wider than the `safe` px between the margins is set smaller
-    until it fits (the headline face is wide: eight letters at 150 px are 1228 px in a 1280 px frame)."""
+    until it fits (the headline face is wide: eight letters at 150 px are 1228 px in a 1280 px frame).
+    Its top, its bottom and the em its gaps are counted in are those of the style at that size, not of its
+    text: a line of the style sits the same whether it is Latin, Japanese or both."""
     style = STYLES[spec.style]
     text = spec.text.upper() if style.upper else spec.text
     factor = wanted = scale * (spec.size / style.latin_size if spec.size else 1.0)
@@ -669,18 +688,21 @@ def _line(spec, index, scale, palette, book, safe, warnings, what):
     while _width(glyphs) > safe and max(g.size for g in glyphs) > 1:
         factor *= min(safe / _width(glyphs), 0.99)
         glyphs = _glyphs(text, style, factor, book, warnings, what)
-    size = max(g.size for g in glyphs)
+    faces = _faces(style, factor, book)
+    size = max(px for _, px in faces.values())
     if factor != wanted:
         _warn(warnings, "%s: line %d does not fit the %d px between the margins, it is drawn at %d %% of its size (%d px)"
               % (what, index, safe, int(round(100.0 * factor / wanted)), size))
-    boxes = [book.reference(g.font, g.script) for g in glyphs]
+    boxes = [book.reference(faces[script][0], script) for script in style.box]
     return Line(glyphs, style, palette[style.colour], size, _width(glyphs),
                 min(top for top, _ in boxes), max(bottom for _, bottom in boxes))
 
 
-def _anchor(cue, block, frame, margin, warnings, what):
-    """the top left of the block in the frame"""
-    (bw, bh), (width, height), (mx, my) = block, frame, margin
+def _anchor(cue, box, origin, block, frame, margin, warnings, what):
+    """The top left of the block in the frame.  The anchors of the cue place the reference box (`box`, which
+    sits at `origin` inside the block) inside the margins.  Ink that reaches out of that box lies in the
+    margin; only where it would leave the frame is the block moved in, by as little as keeps it inside."""
+    (bw, bh), (width, height), (mx, my) = box, frame, margin
     if cue.x == "left":
         x = mx
     elif cue.x == "right":
@@ -688,7 +710,7 @@ def _anchor(cue, block, frame, margin, warnings, what):
     else:
         x = int(round(width * X_CENTRES[cue.x] - bw / 2.0))
     x = max(mx, min(x, width - mx - bw))                 # a third stops at the margin
-    if bw > width - 2 * mx:                              # ink beyond a line that fills the width: shared by both sides
+    if bw > width - 2 * mx:                              # wider than the room between the margins: in the middle
         x = int(round((width - bw) / 2.0))
     y = {"top": my, "bottom": height - my - bh, "middle": int(round((height - bh) / 2.0)),
          "lower": int(round(height * LOWER - bh / 2.0))}[cue.y]
@@ -698,6 +720,10 @@ def _anchor(cue, block, frame, margin, warnings, what):
         if cue.anim != "roll":                           # a roll is as long as it likes: it passes through
             _warn(warnings, "%s: the block is %d px high, more than the %d px between the margins"
                   % (what, bh, height - 2 * my))
+    x, y = x - origin[0], y - origin[1]                  # from the reference box to the block
+    x = min(max(x, 0), max(0, width - block[0]))
+    if cue.anim != "roll":
+        y = min(max(y, 0), max(0, height - block[1]))
     return (x, y)
 
 
@@ -742,7 +768,8 @@ def layout_cue(cue, sheet, book):
             x += g.advance + g.tracking * g.size
     origin = (-int(math.floor(x0)), -int(math.floor(y0)))
     block = (int(math.ceil(x1)) + origin[0], int(math.ceil(y1)) + origin[1])
-    anchor = _anchor(cue, block, sheet.size, (margin_x, margin_y), warnings, what)
+    anchor = _anchor(cue, (int(math.ceil(ref_width)), int(math.ceil(y))), origin, block, sheet.size, (margin_x, margin_y),
+                     warnings, what)
 
     # the motion runs on the frame grid: its first frame is exactly its start
     motion = Motion(cue.anim, float(start_frame / sheet.fps), float(end_frame / sheet.fps), cue.enter, cue.exit,
@@ -764,7 +791,7 @@ def layout_cue(cue, sheet, book):
     right = min(width, anchor[0] + block[0] + int(math.ceil(grow_right)) + pad)
     bottom = min(height, anchor[1] + block[1] + int(math.ceil(max(0.0, dy_max))) + pad)
     canvas = (max(1, right - left), max(1, bottom - top))
-    return Layout(cue, lines, align, ref_width, origin, block, anchor, (left, top), canvas, motion, start_frame,
+    return Layout(cue, lines, align, ref_width, float(y), origin, block, anchor, (left, top), canvas, motion, start_frame,
                   end_frame - start_frame, scale, palette, underline, pad, warnings)
 
 

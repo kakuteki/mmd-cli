@@ -160,14 +160,14 @@ class LoadFontTest(unittest.TestCase):
         book = mv_text.FontBook()
         glitch = book.font("accent", 60, 900)
         self.assertFalse(book.has_glyph(glitch, "/"))
-        for ch in "HIBKASE09  ":
+        for ch in "HIBKASE09 \u00a0":
             self.assertTrue(book.has_glyph(glitch, ch), ch)
         self.assertTrue(book.has_glyph(book.font("latin", 30, 400), "/"))
         # white space is no exception: the Y1 faces have a space and a no-break space, and would draw their
         # box for a tab or an em space
-        for ch in "\t 　":
+        for ch in "\t\u2003\u3000":
             self.assertFalse(book.has_glyph(glitch, ch), repr(ch))
-        self.assertTrue(book.has_glyph(book.font("jp", 44, 900), "　"))
+        self.assertTrue(book.has_glyph(book.font("jp", 44, 900), "\u3000"))
 
     def test_the_same_face_is_loaded_once(self):
         try:
@@ -236,13 +236,13 @@ class CueFileTest(unittest.TestCase):
 
     def test_every_kind_of_line_break_makes_lines(self):
         # a text typed on Windows has CR LF: the CR must not stay at the end of the line (it was drawn as a box)
-        for text in ("one\r\ntwo", "one\rtwo", "one\ntwo\r\n", "one\r\n\r\ntwo", "one two", "\r\none\ntwo"):
+        for text in ("one\r\ntwo", "one\rtwo", "one\ntwo\r\n", "one\r\n\r\ntwo", "one\u2028two", "\r\none\ntwo"):
             sheet = mv_text.parse_cues(one_cue(text=text, style="credit"))
             self.assertEqual([line.text for line in sheet.cues[0].lines], ["one", "two"], repr(text))
         lines = mv_text.parse_cues({"cues": [{"start": 0, "end": 1, "lines": [{"text": "a\r\nb"}, {"text": "c\r"}]}]}).cues[0].lines
         self.assertEqual([line.text for line in lines], ["a", "b", "c"])
         with self.assertRaises(ValueError):
-            mv_text.parse_cues(one_cue(text="\r\n\t 　\r\n"))                # nothing but white space
+            mv_text.parse_cues(one_cue(text="\r\n\t \u3000\r\n"))                # nothing but white space
 
     def test_the_old_flat_list_loads_and_maps_styles_and_anims(self):
         sheet = mv_text.parse_cues(OLD_FORMAT)
@@ -377,10 +377,10 @@ class CueFileTest(unittest.TestCase):
         # Notepad and PowerShell 5.1 put a byte order mark in front of UTF-8
         path = os.path.join(tempfile.mkdtemp(), "cues.json")
         with open(path, "w", encoding="utf-8-sig") as f:
-            f.write('{"cues": [{"id": "a", "text": "ヒビ", "start": 1, "end": 2}]}')
+            f.write('{"cues": [{"id": "a", "text": "\u30d2\u30d3", "start": 1, "end": 2}]}')
         with open(path, "rb") as f:
             self.assertEqual(f.read(3), b"\xef\xbb\xbf")
-        self.assertEqual(mv_text.load_cues(path).cues[0].lines[0].text, "ヒビ")
+        self.assertEqual(mv_text.load_cues(path).cues[0].lines[0].text, "\u30d2\u30d3")
 
 
 def motion(anim, start=1.0, end=4.0, **more):
@@ -551,6 +551,13 @@ def rect(origin, size):
     return (origin[0], origin[1], origin[0] + size[0], origin[1] + size[1])
 
 
+def ref_rect(layout):
+    """the box the anchors place, in the frame: the boxes of the lines at rest (and the underline), without
+    the ink that reaches out of them"""
+    x, y = layout.anchor[0] + layout.origin[0], layout.anchor[1] + layout.origin[1]
+    return (x, y, x + int(math.ceil(layout.width)), y + int(math.ceil(layout.height)))
+
+
 # the white space that stays inside a line (str.splitlines() ends a line at the rest: CR, LF, U+2028 ...), but
 # for the ideographic space, which is as wide as a kanji: tab, space, no-break space, the em and en spaces ...
 WHITE_SPACE = [chr(c) for c in range(0x10000)
@@ -558,54 +565,60 @@ WHITE_SPACE = [chr(c) for c in range(0x10000)
 
 
 class AnchorTest(unittest.TestCase):
+    """the anchors place the box of the lines (ref_rect), inside the margins"""
+
     def test_left_center_and_right_keep_the_64_px_margins(self):
         for cue in (title, cue_of):
-            left, center, right = (lay(cue(x=x)) for x in ("left", "center", "right"))
-            self.assertEqual(left.anchor[0], 64)
-            self.assertEqual(right.anchor[0] + right.block[0], 1280 - 64)
-            self.assertLessEqual(abs(center.anchor[0] + center.block[0] / 2.0 - 640), 1)
-            self.assertEqual(left.block, right.block)
+            left, center, right = (ref_rect(lay(cue(x=x))) for x in ("left", "center", "right"))
+            self.assertEqual(left[0], 64)
+            self.assertEqual(right[2], 1280 - 64)
+            self.assertLessEqual(abs((center[0] + center[2]) / 2.0 - 640), 1)
+            self.assertEqual((left[2] - left[0], left[3] - left[1]), (right[2] - right[0], right[3] - right[1]))
+            self.assertEqual({left[1], center[1], right[1]}, {left[1]})       # the same height at each of them
 
     def test_the_thirds_centre_the_block_on_a_quarter_and_on_three_quarters(self):
-        left, right = lay(cue_of(x="left-third")), lay(cue_of(x="right-third"))
-        self.assertLessEqual(abs(left.anchor[0] + left.block[0] / 2.0 - 320), 1)
-        self.assertLessEqual(abs(right.anchor[0] + right.block[0] / 2.0 - 960), 1)
+        left, right = ref_rect(lay(cue_of(x="left-third"))), ref_rect(lay(cue_of(x="right-third")))
+        self.assertLessEqual(abs((left[0] + left[2]) / 2.0 - 320), 1)
+        self.assertLessEqual(abs((right[0] + right[2]) / 2.0 - 960), 1)
         # a block too wide to be centred there stops at the safe margin
         wide = "\u97ff\u304b\u305b" * 6
-        left, right = lay(cue_of(wide, x="left-third")), lay(cue_of(wide, x="right-third"))
-        self.assertGreater(left.block[0], 2 * (320 - 64))
-        self.assertEqual(left.anchor[0], 64)
-        self.assertEqual(right.anchor[0] + right.block[0], 1280 - 64)
+        left, right = ref_rect(lay(cue_of(wide, x="left-third"))), ref_rect(lay(cue_of(wide, x="right-third")))
+        self.assertGreater(left[2] - left[0], 2 * (320 - 64))
+        self.assertEqual(left[0], 64)
+        self.assertEqual(right[2], 1280 - 64)
 
     def test_top_middle_lower_and_bottom_keep_the_48_px_margins(self):
         for cue in (title, cue_of):
-            top, middle, lower, bottom = (lay(cue(y=y)) for y in ("top", "middle", "lower", "bottom"))
-            self.assertEqual(top.anchor[1], 48)
-            self.assertEqual(bottom.anchor[1] + bottom.block[1], 720 - 48)
-            self.assertLessEqual(abs(middle.anchor[1] + middle.block[1] / 2.0 - 360), 1)
-            self.assertLessEqual(lower.anchor[1] + lower.block[1], 720 - 48)
-            self.assertGreater(lower.anchor[1], middle.anchor[1])
+            top, middle, lower, bottom = (ref_rect(lay(cue(y=y))) for y in ("top", "middle", "lower", "bottom"))
+            self.assertEqual(top[1], 48)
+            self.assertEqual(bottom[3], 720 - 48)
+            self.assertLessEqual(abs((middle[1] + middle[3]) / 2.0 - 360), 1)
+            self.assertLessEqual(lower[3], 720 - 48)
+            self.assertGreater(lower[1], middle[1])
         # the lower third: a block that fits is centred on five sixths of the height
-        lower = lay(cue_of(y="lower"))
-        self.assertLessEqual(abs(lower.anchor[1] + lower.block[1] / 2.0 - 600), 1)
+        lower = ref_rect(lay(cue_of(y="lower")))
+        self.assertLessEqual(abs((lower[1] + lower[3]) / 2.0 - 600), 1)
 
     def test_the_margins_and_the_sizes_follow_the_frame_height(self):
         for size, margin_x, margin_y, px in (((1920, 1080), 96, 72, 69), ((640, 360), 32, 24, 23), ((320, 180), 16, 12, 12)):
             layout = lay(cue_of(x="left", y="top"), size=size)
-            self.assertEqual(layout.anchor, (margin_x, margin_y), size)
+            self.assertEqual(ref_rect(layout)[:2], (margin_x, margin_y), size)
             self.assertEqual(layout.lines[0].size, px, size)                   # lyric is 46 px in a 720 high frame
             bottom = lay(cue_of(x="right", y="bottom"), size=size)
-            self.assertEqual(rect(bottom.anchor, bottom.block)[2:], (size[0] - margin_x, size[1] - margin_y), size)
+            self.assertEqual(ref_rect(bottom)[2:], (size[0] - margin_x, size[1] - margin_y), size)
 
     def test_the_title_lockup_stays_inside_the_margins_at_every_anchor(self):
         for x in mv_text.X_ANCHORS:
             for y in mv_text.Y_ANCHORS:
                 layout = lay(title(x=x, y=y))
-                x0, y0, x1, y1 = rect(layout.anchor, layout.block)
+                x0, y0, x1, y1 = ref_rect(layout)
                 self.assertGreaterEqual(x0, 64, (x, y))
                 self.assertLessEqual(x1, 1280 - 64, (x, y))
                 self.assertGreaterEqual(y0, 48, (x, y))
                 self.assertLessEqual(y1, 720 - 48, (x, y))
+                # the ink that reaches out of that box (the dakuten, a full stop under the baseline) is in the frame
+                x0, y0, x1, y1 = rect(layout.anchor, layout.block)
+                self.assertTrue(x0 >= 0 and y0 >= 0 and x1 <= 1280 and y1 <= 720, (x, y))
         self.assertEqual(len(mv_text.X_ANCHORS) * len(mv_text.Y_ANCHORS), 20)
 
     def test_roll_starts_below_the_frame_and_ends_above_it_whatever_the_anchor(self):
@@ -615,6 +628,144 @@ class AnchorTest(unittest.TestCase):
             self.assertEqual(layout.anchor[1] + first.dy, 720, y)                              # its top on the bottom edge
             self.assertAlmostEqual(layout.anchor[1] + layout.block[1] + last.dy, 0, msg=y)     # its bottom on the top edge
             self.assertEqual({first.alpha, last.alpha}, {1.0})
+
+
+TITLE_WORD = "\u30d2\u30d3\u30ab\u30bb"
+# the production cue file shows the title word as four cues at one anchor: each character where it stands in
+# the word, the others replaced by ideographic spaces
+TITLE_LETTERS = ("\u30d2\u3000\u3000\u3000", "\u3000\u30d3\u3000\u3000", "\u3000\u3000\u30ab\u3000", "\u3000\u3000\u3000\u30bb")
+
+
+def baseline_row(layout, index=-1):
+    """the row of the frame the baseline of a line lies on (the last line, unless told)"""
+    return layout.anchor[1] + layout.origin[1] + layout.lines[index].baseline
+
+
+def pen_column(layout, index=-1):
+    """the column of the frame a line starts at"""
+    return layout.anchor[0] + layout.origin[0] + layout.line_x(layout.lines[index])
+
+
+def in_frame(layouts, size=(1280, 720)):
+    """the pictures of cues at rest, laid into an empty frame"""
+    picture = Image.new("RGBA", size, (0, 0, 0, 0))
+    for layout in layouts:
+        picture.alpha_composite(mv_text.draw(layout, hold(layout)), dest=layout.canvas_origin)
+    return picture
+
+
+class BaselineTest(unittest.TestCase):
+    """a style at an anchor sits at one height, whatever its text: the anchors place the boxes of the lines
+    (which come from the style), and ink that reaches out of them does not move anything"""
+
+    def test_a_title_shown_one_character_at_a_time_adds_up_to_the_title(self):
+        # the dakuten of the second character reaches above the others, so the cue that held it sat 3 px
+        # lower than the other three (and the word as one cue 3 px lower than its first character alone)
+        for x in mv_text.X_ANCHORS:
+            for y in mv_text.Y_ANCHORS:
+                where = (x, y)
+                letters = [lay(cue_of(text, "title_jp", size=104, x=x, y=y, anim="rise")) for text in TITLE_LETTERS]
+                rows = [baseline_row(layout) for layout in letters]
+                self.assertEqual(len(set(rows)), 1, (where, rows))
+                self.assertEqual(rows[0], int(rows[0]), where)
+                self.assertEqual(len({pen_column(layout) for layout in letters}), 1, where)
+                word = lay(cue_of(TITLE_WORD, "title_jp", size=104, x=x, y=y, anim="rise"))
+                self.assertEqual((baseline_row(word), pen_column(word)), (rows[0], pen_column(letters[0])), where)
+                # in the picture: the four cues laid over each other are the word, pixel for pixel
+                self.assertEqual(in_frame(letters).tobytes(), in_frame([word]).tobytes(), where)
+
+    def test_the_title_letters_of_the_production_file_sit_on_row_637(self):
+        # left-third and lower, 104 px, in a 1280 x 720 frame: the box of the line (96 px, from the reference
+        # kanji) is centred on row 600, its baseline 85 px under its top
+        rows = [baseline_row(lay(cue_of(text, "title_jp", size=104, x="left-third", y="lower", anim="rise")))
+                for text in TITLE_LETTERS + (TITLE_WORD,)]
+        self.assertEqual(rows, [637.0] * 5)
+
+    def test_tall_and_deep_ink_does_not_move_a_line(self):
+        # an accent, a dakuten, a descender, a glitch letter taller than its neighbours
+        pairs = (("title_jp", "\u30d2", "\u30d3"), ("caption", "A", "\u00c1"), ("caption", "ABC", "gypsy jig"),
+                 ("caption", "ABC", "Qy"), ("lyric", "\u97ff\u304b\u305b", "\u9b31\u3001\u3058\u3083\u3042"),
+                 ("credit", "Motion", "Qy,;"), ("sub", "feat. Rin", "J,"), ("hook", "HIBIKASE", "Q"), ("hook", "HHH", "KIK"),
+                 ("logo", "HIBI", "Q,"))
+        for style, plain, tall in pairs:
+            for x in mv_text.X_ANCHORS:
+                for y in mv_text.Y_ANCHORS:
+                    first, second = lay(cue_of(plain, style, x=x, y=y)), lay(cue_of(tall, style, x=x, y=y))
+                    where = (style, ascii(tall), x, y)
+                    self.assertEqual(baseline_row(first), baseline_row(second), where)
+                    if x == "left":
+                        self.assertEqual(pen_column(first), pen_column(second), where)
+                        self.assertEqual(pen_column(first), 64, where)
+        # and in the picture: A and the same A under an accent stand on the same row, at every anchor
+        for x in mv_text.X_ANCHORS:
+            for y in mv_text.Y_ANCHORS:
+                plain = alpha(in_frame([lay(cue_of("A", "caption", x=x, y=y))])).getbbox()
+                accent = alpha(in_frame([lay(cue_of("\u00c1", "caption", x=x, y=y))])).getbbox()
+                self.assertEqual((accent[0], accent[2], accent[3]), (plain[0], plain[2], plain[3]), (x, y))
+                self.assertLess(accent[1], plain[1] - 3, (x, y))                  # the accent is above the letter
+
+    def test_a_line_sits_alike_in_latin_and_in_japanese(self):
+        # the box of a line comes from its style, not from the scripts its text happens to have: an English
+        # lyric and a Japanese one stand on the same row
+        pairs = (("lyric", "\u97ff\u304b\u305b", "Hey, yo!"), ("lyric", "\u97ff\u304b\u305b", "ABC"),
+                 ("caption", "\u97ff\u304b\u305b", "ABC"), ("title_jp", "\u30d2\u30d3\u30ab\u30bb", "ABC"),
+                 ("credit", "Music \u30ae\u30ac", "Motion"), ("credit", "\u30ae\u30ac", "MADE WITH mmd-cli"),
+                 ("logo", "HIBI", "\u30d2\u30d3"), ("sub", "feat. Rin", "\u30ea\u30f3"))
+        for style, first_text, second_text in pairs:
+            for y in mv_text.Y_ANCHORS:
+                first, second = lay(cue_of(first_text, style, x="left", y=y)), lay(cue_of(second_text, style, x="left", y=y))
+                where = (style, ascii(second_text), y)
+                self.assertEqual(baseline_row(first), baseline_row(second), where)
+                self.assertEqual((first.lines[0].top, first.lines[0].bottom, first.lines[0].size),
+                                 (second.lines[0].top, second.lines[0].bottom, second.lines[0].size), where)
+
+    def test_the_box_of_a_line_is_that_of_the_letters_its_style_is_set_in(self):
+        fonts = book()
+
+        def box(style, script, role, px, weight):
+            return fonts.reference(fonts.font(role, px, weight), script)
+
+        latin = {"logo": box("logo", "latin", "logo", 150, 900), "sub": box("sub", "latin", "latin", 30, 700),
+                 "hook": box("hook", "latin", "accent", 180, 900)}
+        japanese = {"title_jp": box("title_jp", "jp", "jp", 44, 900), "lyric": box("lyric", "jp", "jp", 46, 700),
+                    "caption": box("caption", "jp", "jp", 28, 400)}
+        for style, (top, bottom) in list(latin.items()) + list(japanese.items()):
+            line = lay(cue_of("A\u3042", style)).lines[0]
+            self.assertEqual((line.top, line.bottom), (top, bottom), style)
+        self.assertEqual({bottom for _, bottom in latin.values()}, {0.0})         # a capital stands on the baseline
+        self.assertTrue(all(bottom > 0 for _, bottom in japanese.values()))       # a kanji reaches under it
+        # credit is set in both: its box holds the capital and the kanji
+        capital, kanji = box("credit", "latin", "latin", 22, 400), box("credit", "jp", "jp", 24, 400)
+        for text in ("Motion", "\u30ae\u30ac", "Music \u30ae\u30ac"):
+            line = lay(cue_of(text, "credit")).lines[0]
+            self.assertEqual((line.top, line.bottom, line.size), (min(capital[0], kanji[0]), max(capital[1], kanji[1]), 24),
+                             ascii(text))
+
+    def test_the_lines_of_a_list_are_evenly_apart_whatever_they_say(self):
+        # the end card: credit lines in Latin, in Japanese and in both
+        lines = ["MUSIC \u30ae\u30ac", "MADE WITH mmd-cli", "\u632f\u4ed8", "MODEL Sour\u5f0f\u93e1\u97f3\u30ea\u30f3 Ver.2.01", "gypsy"]
+        layout = lay({"id": "a", "start": 0, "end": 1, "x": "center", "y": "middle",
+                      "lines": [{"text": text, "style": "credit"} for text in lines]})
+        steps = [below.baseline - above.baseline for above, below in zip(layout.lines, layout.lines[1:])]
+        self.assertEqual(len(set(steps)), 1, steps)
+
+    def test_ink_out_of_the_box_lies_in_the_margin_and_stays_in_the_frame(self):
+        # the glitch face: letters 30 px taller and deeper than the capital H that gives the line its box
+        top, bottom = lay(cue_of("HIK", "hook", x="left", y="top")), lay(cue_of("HIK", "hook", x="left", y="bottom"))
+        self.assertEqual((ref_rect(top)[1], ref_rect(bottom)[3]), (48, 720 - 48))
+        self.assertEqual((top.anchor[1], bottom.anchor[1] + bottom.block[1]), (48 - 30, 720 - 48 + 30))
+        # so much taller that it would leave the frame: the block is moved in, as little as keeps the ink inside
+        huge_top, huge_bottom = (lay(cue_of("HIK", "hook", size=360, x="left", y=y)) for y in ("top", "bottom"))
+        self.assertEqual((huge_top.anchor[1], huge_bottom.anchor[1] + huge_bottom.block[1]), (0, 720))
+        self.assertGreater(ref_rect(huge_top)[1], 96 - 60 - 1)
+        # sideways too: the ink copy of the hook lies 3 px left of its text, in the margin
+        self.assertEqual((pen_column(top), top.anchor[0]), (64, 61))
+        for x in mv_text.X_ANCHORS:
+            for y in mv_text.Y_ANCHORS:
+                for cue in (cue_of("KIK/JQ", "hook", x=x, y=y), cue_of("\u30d3\u30d3", "logo", x=x, y=y), title(x=x, y=y)):
+                    layout = lay(cue)
+                    x0, y0, x1, y1 = rect(layout.anchor, layout.block)
+                    self.assertTrue(x0 >= 0 and y0 >= 0 and x1 <= 1280 and y1 <= 720, (x, y, cue.get("style")))
 
 
 class LinesTest(unittest.TestCase):
@@ -1182,11 +1333,11 @@ class DrawTest(unittest.TestCase):
     def test_a_tab_a_carriage_return_and_an_em_space_leave_no_mark(self):
         # each of them used to be drawn as the box a face has for what it lacks.  The picture is that of the
         # same text with a normal space or a plain line break in their place.
-        cases = (("credit", "Motion\tえぬた", "Motion えぬた"),
-                 ("sub", "feat. Kagamine Rin", "feat. Kagamine Rin"),
-                 ("lyric", "響かせて\r\nいくよ\r\n", "響かせて\nいくよ"),
-                 ("caption", "a\tb c d e f", "a b c d e f"),
-                 ("hook", "HI\tHI", "HI HI"), ("logo", "A B", "A B"))
+        cases = (("credit", "Motion\t\u3048\u306c\u305f", "Motion \u3048\u306c\u305f"),
+                 ("sub", "feat.\u2003Kagamine\u2003Rin", "feat. Kagamine Rin"),
+                 ("lyric", "\u97ff\u304b\u305b\u3066\r\n\u3044\u304f\u3088\r\n", "\u97ff\u304b\u305b\u3066\n\u3044\u304f\u3088"),
+                 ("caption", "a\tb\u2003c\u00a0d\u2009e\u202ff", "a b c d e f"),
+                 ("hook", "HI\tHI", "HI HI"), ("logo", "A\u2003B", "A B"))
         for style, text, same in cases:
             layout, wanted = lay(cue_of(text, style)), lay(cue_of(same, style))
             self.assertEqual(layout.warnings, wanted.warnings, style)
