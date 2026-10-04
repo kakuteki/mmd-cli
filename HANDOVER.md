@@ -1,6 +1,6 @@
 # mmd-cli 引き継ぎ（正本）
 
-最終更新: 2026-10-05 01:40（この PC の時計）。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
+最終更新: 2026-10-05 04:30（この PC の時計）。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
 MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/reviews/`。ヒビカセ MV の文字・背景・光の設計は
 `docs/design-20261004-mv-text.md`。
 
@@ -16,9 +16,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   245 秒）で、その後に足した `menu set` の実機 1 本は**未実行**（この PC で `menu set` の挙動は手で確かめた）。
 - MV 用の道具（`tools/`、MMD 不要。Pillow と numpy と ffmpeg を使うものがある）: `make_camera.py`（ダンスからカメラ）、
   `fix_twist.py`（前腕の捩りを手首へ）、`make_stage.py`（床のアクセサリ）、`mv_look.py`（舞台・光・グロー・フレア・
-  カメラのパンチの後処理）、`lip_timing.py`（リップの母音から歌の時刻）、`mv_text.py`（文字。**下請けの実装が完了、
-  枝 `worktree-agent-ae4a7ddfdfb43b168`。査読 6 の結果を見てから取り込む**。結合の確認は枝 `integrate-mv-text`
-  （作業木 `Desktop/mmd-cli-integrate`、595 本 OK）で済み。旧 `overlay_text.py` を置き換える）。
+  カメラのパンチの後処理）、`lip_timing.py`（リップの母音から歌の時刻）、`mv_text.py`（文字。査読 6 の中 3 件と
+  低の大半を直して 3472824 で取り込み済み。旧 `overlay_text.py` は削除）。単体は 628 本（2026-10-05 04:10）。
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
@@ -172,8 +171,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      無くても進むが、来れば MMD 内の発光なども足せる。
    - [~] テキスト: 書体は Y1（YUTAONE、204 本・117 書体、**欧文のみ**）から 見出し RevForge・小見出し Vectura・
      サビ頭のカードだけ Cybanin3000 Glitch、日本語は Noto Sans JP（可変）。題字は人物の後ろに置く。道具
-     `tools/mv_text.py` は下請けが実装中（Pillow で合図ごとの RGBA 連番 → ffmpeg overlay。字間が詰まる・ワイプ・点滅・
-     立ち上がり・ロール）。取り込み前に査読する。合図の案は取り込み後に `_spike/out/hibikase/mv/` に置く。
+     `tools/mv_text.py`（Pillow で合図ごとの RGBA 連番 → ffmpeg overlay。字間が詰まる・ワイプ・点滅・立ち上がり・ロール）は
+     査読 6 を経て取り込み済み。合図は `_spike/out/hibikase/mv/production/cues_mv.json`（26 本）。
    - [~] 歌詞: 仕組み（`lyric` と `hook` の様式）は mv_text に入る。**時刻は音源が無いと決められない**。歌詞の行も加賀さん
      から貰う（配布物に歌詞全文を写さない）。今はサビ頭のカードをダンスの強さの区切り（44.5 s・114.7 s・198.8 s 付近）に仮置き。
    - [~] 袖や布の破綻: **袖口のつぶれの原因は手捩（前腕の捩り）の 180 度**と特定（接写で確認）。`tools/fix_twist.py` で
@@ -187,7 +186,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      `render avi --codec 未圧縮`（**フレーム 0 から 1 本で**。途中のフレームから描くと物理が休みの姿勢から始まり布が跳ねる。
      1280x720 の全曲は約 28.5 GB、hinata の空きは 92 GB）→ `python tools/mv_look.py render ... --cues ...` → 音源を足す。
      先に 15 秒の抜粋（約 1.7 GB）で見た目を合わせる。
-   - **2026-10-05 01:30 の状態**: hinata（22:59 からログオン中）で全曲を描いた。alpha つき未圧縮 AVI
+   - **2026-10-05 04:25 の状態: 文字入りの全曲（無音）が出来た。** `Desktop/ヒビカセMV_20261005/hibikase_mv_無音_20261005.mp4`
+     （1280x720・7,743 枚・258.1 秒・280 MB。同じ所に cues_mv.json・look_mv.json・作り方 FINAL.md）。hinata の正本は
+     `C:/work/hibikase/out/hibikase_mv.mp4`。残りは 歌詞の行と音源（手が要る）。
+   - 01:30 の状態: hinata（22:59 からログオン中）で全曲を描いた。alpha つき未圧縮 AVI
      `C:/work/hibikase/out/mv_alpha_full.avi`（7,743 枚・28.5 GB、**歌唱リップ入り**。台本 `mv_full2.txt`）と、後処理した
      `mv_full_look.mp4`（文字なし、7,743 枚、後処理は 68 秒）。写しと台本は `_spike/out/hibikase/mv/production/`。
      文字入りの最終版は mv_text の取り込み後に `mv_look.py render ... --cues cues_mv.json` で作る（合図 24 本は作成済み）。
