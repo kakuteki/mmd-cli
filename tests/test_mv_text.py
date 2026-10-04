@@ -1,7 +1,10 @@
 """tools/mv_text.py: MV-style text drawn with Pillow into PNG sequences and overlaid with ffmpeg."""
+import contextlib
 import dataclasses
 import fractions
 import importlib.util
+import io
+import json
 import os
 import tempfile
 import unittest
@@ -1040,6 +1043,145 @@ class DrawTest(unittest.TestCase):
         self.assertLess(late[1], early[1])                                    # it moves up
         last = alpha(frame(layout, layout.frames - 1)).getbbox()
         self.assertTrue(last is None or last[3] < 12)                         # all but gone over the top
+
+
+def small_doc(*cues, **top):
+    """a cue file for a 640 x 360 frame at 30 fps"""
+    doc = {"fps": 30, "size": [640, 360], "cues": list(cues)}
+    doc.update(top)
+    return doc
+
+
+RISE_CUE = {"id": "a1", "start": 0.5, "end": 1.5, "text": "ABC", "style": "caption", "anim": "rise", "x": "left", "y": "top"}
+BACK_CUE = {"id": "b2", "start": 1.0, "end": 3.0, "text": "HIBI", "style": "logo", "anim": "fade", "layer": "back"}
+
+
+class SequencesTest(unittest.TestCase):
+    def setUp(self):
+        book()                                                                # skip without any font
+        self.work = os.path.join(tempfile.mkdtemp(), "work")
+
+    def test_every_frame_of_a_cue_is_a_png_of_its_canvas(self):
+        plan = mv_text.render_sequences(small_doc(RISE_CUE), self.work)
+        entry = plan["cues"][0]
+        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "cue_a1"))), ["f%05d.png" % i for i in range(30)])
+        self.assertEqual(os.listdir(self.work), ["cue_a1"])
+        layout = lay(RISE_CUE, size=(640, 360))
+        for i in (0, 1, 9, 17, 18, 24, 29):
+            with Image.open(entry["pattern"] % i) as im:
+                self.assertEqual((im.mode, im.size), ("RGBA", layout.canvas), i)
+                self.assertEqual(im.tobytes(), frame(layout, i).tobytes(), i)   # the frame draw() gives for that time
+        with Image.open(entry["pattern"] % 0) as im:
+            self.assertEqual(alpha(im).getextrema(), (0, 0))
+        with Image.open(entry["pattern"] % 18) as im:                        # the one frame fully there: 0.6 s in
+            self.assertEqual(alpha(im).getextrema()[1], 255)
+
+    def test_the_plan_says_where_and_when_each_sequence_goes(self):
+        plan = mv_text.render_sequences(small_doc(RISE_CUE, BACK_CUE), self.work)
+        self.assertEqual(sorted(plan), ["cues", "fps", "size", "warnings"])
+        self.assertEqual((plan["fps"], plan["size"], plan["warnings"]), (30, [640, 360], []))
+        self.assertEqual([sorted(entry) for entry in plan["cues"]],
+                         [["canvas", "frames", "id", "layer", "pattern", "start", "start_frame", "x", "y"]] * 2)
+        first, second = plan["cues"]
+        layout = lay(RISE_CUE, size=(640, 360))
+        self.assertEqual((first["id"], first["layer"], first["start_frame"], first["start"], first["frames"]),
+                         ("a1", "front", 15, 0.5, 30))
+        self.assertEqual(((first["x"], first["y"]), first["canvas"]), (layout.canvas_origin, list(layout.canvas)))
+        self.assertEqual((second["id"], second["layer"], second["start_frame"], second["start"], second["frames"]),
+                         ("b2", "back", 30, 1.0, 60))
+        # the printf path of the pictures, with forward slashes, whatever folder the caller is in
+        folder = os.path.abspath(self.work).replace("\\", "/")
+        self.assertEqual(first["pattern"], folder + "/cue_a1/f%05d.png")
+        self.assertEqual(second["pattern"], folder + "/cue_b2/f%05d.png")
+        self.assertTrue(os.path.isabs(first["pattern"]))
+        # a folder given relative to where the caller stands is still told in full
+        here = os.getcwd()
+        os.chdir(os.path.dirname(self.work))
+        try:
+            relative = mv_text.render_sequences(small_doc(RISE_CUE), "work")
+        finally:
+            os.chdir(here)
+        self.assertEqual(relative["cues"][0]["pattern"], first["pattern"])
+        for entry in plan["cues"]:
+            self.assertTrue(os.path.exists(entry["pattern"] % (entry["frames"] - 1)))
+            self.assertFalse(os.path.exists(entry["pattern"] % entry["frames"]))
+        # it travels as one line of ASCII JSON
+        text = json.dumps(plan, ensure_ascii=True)
+        self.assertEqual(json.loads(text), plan)
+        self.assertNotIn("\n", text)
+
+    def test_the_frame_and_the_rate_can_be_given_instead_of_the_cue_files(self):
+        plan = mv_text.render_sequences(small_doc(RISE_CUE), self.work, size=(320, 180), fps=60)
+        self.assertEqual((plan["fps"], plan["size"]), (60, [320, 180]))
+        entry = plan["cues"][0]
+        self.assertEqual((entry["start_frame"], entry["start"], entry["frames"]), (30, 0.5, 60))
+        layout = lay(RISE_CUE, size=(320, 180), fps=60)
+        self.assertEqual(entry["canvas"], list(layout.canvas))
+        self.assertEqual(len(os.listdir(os.path.join(self.work, "cue_a1"))), 60)
+        # a rate that is not a whole number stays exact: the text ffmpeg takes
+        ntsc = mv_text.render_sequences(small_doc(RISE_CUE), self.work, fps="30000/1001")
+        self.assertEqual(ntsc["fps"], "30000/1001")
+        self.assertEqual((ntsc["cues"][0]["start_frame"], ntsc["cues"][0]["frames"]), (15, 30))
+        self.assertAlmostEqual(ntsc["cues"][0]["start"], 15 * 1001 / 30000.0)
+        self.assertEqual(mv_text.render_sequences(small_doc(RISE_CUE), self.work, fps=fractions.Fraction(25))["fps"], 25)
+
+    def test_the_cues_can_be_the_document_its_path_or_a_sheet(self):
+        doc = small_doc(RISE_CUE)
+        path = os.path.join(os.path.dirname(self.work), "cues.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        wanted = mv_text.render_sequences(doc, self.work)
+        self.assertEqual(mv_text.render_sequences(path, self.work), wanted)
+        self.assertEqual(mv_text.render_sequences(mv_text.parse_cues(doc), self.work), wanted)
+        flat = mv_text.render_sequences([{"text": "x", "start": 0, "end": 0.2, "style": "credit"}], self.work)
+        self.assertEqual((flat["size"], flat["cues"][0]["id"], flat["cues"][0]["frames"]), ([1280, 720], "c00", 6))
+
+    def test_frames_left_by_an_earlier_longer_run_are_removed(self):
+        # ffmpeg reads a sequence until a number is missing: a frame left behind would lengthen the cue
+        folder = os.path.join(self.work, "cue_a1")
+        os.makedirs(folder)
+        for name in ("f00030.png", "f00031.png", "f00100.png", "notes.txt", "f00002.png.part", "f00050.png.part"):
+            with open(os.path.join(folder, name), "wb") as f:
+                f.write(b"old")
+        mv_text.render_sequences(small_doc(RISE_CUE), self.work)
+        self.assertEqual(sorted(os.listdir(folder)), ["f%05d.png" % i for i in range(30)] + ["notes.txt"])
+
+    def test_frames_that_look_the_same_are_the_same_bytes(self):
+        plan = mv_text.render_sequences(small_doc(dict(RISE_CUE, end=3.5)), self.work)
+        pattern = plan["cues"][0]["pattern"]
+
+        def data(i):
+            with open(pattern % i, "rb") as f:
+                return f.read()
+        self.assertEqual(data(30), data(60))                                  # both at rest
+        self.assertNotEqual(data(5), data(30))
+        self.assertNotEqual(data(89), data(60))
+
+    def test_it_prints_nothing_and_collects_the_warnings(self):
+        out = io.StringIO()
+        without_y1 = mv_text.FontBook(user_dir=tempfile.mkdtemp())
+        wide = {"id": "w", "start": 0, "end": 0.1, "text": "HIBIKASE " * 6, "style": "logo"}
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            plan = mv_text.render_sequences(small_doc(RISE_CUE, wide), self.work, book=without_y1)
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(len([w for w in plan["warnings"] if "Y1RevForge.otf" in w]), 1, plan["warnings"])
+        self.assertEqual(len([w for w in plan["warnings"] if w.startswith("cue w:")]), 1, plan["warnings"])
+        for warning in plan["warnings"]:
+            warning.encode("ascii")
+
+    def test_a_bad_cue_stops_it_before_anything_is_written(self):
+        short = {"id": "z", "start": 1.0, "end": 1.01, "text": "x"}
+        with self.assertRaises(ValueError):
+            mv_text.render_sequences(small_doc(RISE_CUE, short), self.work)
+        self.assertFalse(os.path.exists(self.work))
+        for size, fps in (((0, 180), None), ((320,), None), ("320x180", None), (None, 0), (None, "fast")):
+            with self.assertRaises(ValueError, msg=repr((size, fps))):
+                mv_text.render_sequences(small_doc(RISE_CUE), self.work, size=size, fps=fps)
+        self.assertFalse(os.path.exists(self.work))
+
+    def test_no_cues_is_an_empty_plan(self):
+        plan = mv_text.render_sequences(small_doc(), self.work)
+        self.assertEqual(plan, {"fps": 30, "size": [640, 360], "cues": [], "warnings": []})
 
 
 if __name__ == "__main__":

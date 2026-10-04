@@ -10,6 +10,7 @@ look designed; drawing the frames here can.  A sequence is only as large as the 
 """
 import dataclasses
 import fractions
+import io
 import json
 import math
 import os
@@ -83,6 +84,8 @@ INK_COPY = 3.0                               # px: how far left of the text its 
 SHADOW = {"alpha": 170, "blur": 6.0, "offset": 2.0}       # of 255; px: the blur radius and how far down it lies
 BLUR_REACH = 3.0                             # Pillow's GaussianBlur(r) reaches about 2.6 r past its source (measured)
 CANVAS_PAD = 8                               # px (not scaled) around everything a cue draws
+FRAME_NAME = "f%05d.png"                     # the pictures of a cue, numbered from 0, in a folder cue_<id>
+OLD_FRAME = re.compile(r"^f\d+\.png(\.part)?$")
 
 
 @dataclasses.dataclass
@@ -259,7 +262,7 @@ class Sheet:
 def parse_fps(value):
     """frames per second as a fraction: 30, 29.97 or "30000/1001" (what ffprobe prints)"""
     try:
-        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        if isinstance(value, bool) or not isinstance(value, (int, float, str, fractions.Fraction)):
             raise ValueError
         fps = fractions.Fraction(str(value) if isinstance(value, float) else value)
     except (ValueError, ZeroDivisionError):
@@ -750,3 +753,88 @@ def draw(layout, state):
         alpha = alpha.point(lambda v: int(v * max(0.0, state.alpha) + 0.5))
     out.putalpha(alpha)
     return out
+
+
+# ---- the sequences --------------------------------------------------------------------------
+
+def write_bytes(path, data):
+    """write next to the target and move over it, so a failure leaves the old file as it was"""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    part = path + ".part"
+    try:
+        with open(part, "wb") as f:
+            f.write(data)
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
+def render_cue(layout, folder):
+    """write the pictures of a cue into `folder`, one per frame, numbered from 0 (FRAME_NAME).  Pictures left
+    there by an earlier run go first: ffmpeg reads a sequence until a number is missing, so one more file
+    would make the cue longer.  Frames in the same State (a cue at rest) are drawn once."""
+    os.makedirs(folder, exist_ok=True)
+    for name in os.listdir(folder):
+        if OLD_FRAME.match(name):
+            os.remove(os.path.join(folder, name))
+    drawn, data = None, b""
+    for index in range(layout.frames):
+        state = layout.motion.at(layout.motion.start + index / layout.motion.fps)
+        if state != drawn:
+            buffer = io.BytesIO()
+            draw(layout, state).save(buffer, "PNG")
+            drawn, data = state, buffer.getvalue()
+        write_bytes(os.path.join(folder, FRAME_NAME % index), data)
+
+
+def _sheet(cues):
+    """the Sheet of what a caller has: the content of a cue file (an object or a bare list), its path, or a Sheet"""
+    if isinstance(cues, Sheet):
+        return cues
+    if isinstance(cues, (str, os.PathLike)):
+        return load_cues(cues)
+    return parse_cues(cues)
+
+
+def render_sequences(cues, work_dir, size=None, fps=None, book=None):
+    """Draw the sequences of a cue file under `work_dir` and return the plan: where and when each sequence is
+    laid over the video.  Nothing is printed and ffmpeg is not run, so another tool can import this (tools/
+    mv_look.py puts the "back" cues behind the dancer and the "front" cues before her).
+
+    `cues` is the content of a cue file (the object or the bare list), its path, or a Sheet.  `size` (width,
+    height) and `fps` (30, 29.97, "30000/1001") replace those of the cue file: the video decides them.
+
+        {"fps": 30, "size": [1280, 720], "warnings": [...],
+         "cues": [{"id": "title", "layer": "back", "x": 56, "y": 40, "canvas": [1224, 240],
+                   "start_frame": 30, "start": 1.0, "frames": 150, "pattern": "C:/.../cue_title/f%05d.png"}]}
+
+    x and y are where the top left of the pictures goes in the frame; `start` is the time of picture 0 in
+    seconds (the cue's start on the frame grid: start_frame / fps); there are exactly `frames` pictures,
+    numbered from 0; `pattern` is their printf path with forward slashes.  `fps` is a whole number, or the
+    text of the fraction when it is not one.  Every cue is laid out before a file is written, so a cue file
+    with an error leaves the folder as it was."""
+    sheet = _sheet(cues)
+    if size is not None:
+        sheet = dataclasses.replace(sheet, size=_frame_size(size))
+    if fps is not None:
+        sheet = dataclasses.replace(sheet, fps=parse_fps(fps))
+    book = book or FontBook()
+    layouts = [layout_cue(cue, sheet, book) for cue in sheet.cues]
+    work = os.path.abspath(work_dir)
+    plan = {"fps": sheet.fps.numerator if sheet.fps.denominator == 1 else fps_text(sheet.fps), "size": list(sheet.size),
+            "cues": [], "warnings": []}
+    for layout in layouts:
+        folder = os.path.join(work, "cue_%s" % layout.cue.id)
+        render_cue(layout, folder)
+        plan["cues"].append({
+            "id": layout.cue.id, "layer": layout.cue.layer, "x": layout.canvas_origin[0], "y": layout.canvas_origin[1],
+            "canvas": list(layout.canvas), "start_frame": layout.start_frame, "start": layout.motion.start,
+            "frames": layout.frames,
+            # a % in the folder's own name is doubled: the path is a printf pattern
+            "pattern": folder.replace("\\", "/").replace("%", "%%") + "/" + FRAME_NAME})
+    for warning in book.warnings + [w for layout in layouts for w in layout.warnings]:
+        _warn(plan["warnings"], warning)
+    return plan
