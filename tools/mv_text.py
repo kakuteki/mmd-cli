@@ -68,6 +68,20 @@ SHEET_KEYS = ("fps", "size", "palette", "cues", "note")
 CUE_KEYS = ("id", "start", "end", "x", "y", "anim", "layer", "text", "style", "size", "lines", "enter", "exit", "note")
 LINE_KEYS = ("text", "style", "size")
 
+# ---- the layout -----------------------------------------------------------------------------
+# All px below are those of a frame REFERENCE_HEIGHT high and scale with the frame height.
+REFERENCE_HEIGHT = 720
+MARGIN = (64, 48)                            # px kept free at the left and right, at the top and bottom
+LINE_GAP = 0.35                              # em of the larger neighbour, from the bottom of a line to the next top
+LOWER = 5.0 / 6.0                            # "lower": the block is centred on the middle of the lower third
+X_CENTRES = {"center": 0.5, "left-third": 0.25, "right-third": 0.75}
+REFERENCE = {"latin": "H", "jp": "国"}   # the letters whose ink gives a line its top and its bottom
+UNDERLINE = {"width": 0.6, "height": 2.0, "gap": 0.2}       # of the text width; px; em under the last line
+INK_COPY = 3.0                               # px: how far left of the text its ink copy sits
+SHADOW = {"colour": (0, 0, 0), "alpha": 170, "blur": 6.0, "offset": 2.0}     # px: blur radius, how far down
+BLUR_REACH = 3.0                             # Pillow's GaussianBlur(r) reaches about 2.6 r past its source (measured)
+CANVAS_PAD = 8                               # px (not scaled) around everything a cue draws
+
 
 @dataclasses.dataclass
 class Style:
@@ -80,6 +94,7 @@ class Style:
     upper: bool = False
     underline: bool = False      # an accent rule under the block, drawn as the cue comes in
     ink_copy: bool = False       # a copy in the palette's ink, a little to the left, behind the text
+    shadow: bool = False         # a soft dark copy under the text (SHADOW), for text that lies on the picture
 
 
 # Sizes are px in a 720 high frame and scale with the frame height.  A style the design gives one script
@@ -90,7 +105,7 @@ STYLES = {
     "title_jp": Style("jp", 44, 44, 900, 0.0, "text"),
     "sub": Style("latin", 30, 30, 700, 0.25, "accent", upper=True),
     "credit": Style("latin", 22, 24, 400, 0.12, "secondary"),
-    "lyric": Style("jp", 46, 46, 700, 0.0, "text", underline=True),
+    "lyric": Style("jp", 46, 46, 700, 0.0, "text", underline=True, shadow=True),
     "hook": Style("accent", 180, 180, 900, 0.0, "accent", ink_copy=True),
     "caption": Style("jp", 28, 28, 400, 0.0, "text"),
 }
@@ -176,6 +191,7 @@ class FontBook:
                 _warn(self.warnings, "%s not found in %s: the %s font is %s" % (name, user_dir, role, os.path.basename(jp)))
         self._faces = {}
         self._glyphs = {}
+        self._boxes = {}
 
     def font(self, role, size, weight):
         """the face of a role at `size` px.  The weight reaches the Japanese file only: the Y1 faces have one."""
@@ -195,6 +211,16 @@ class FontBook:
             mask, missing = font.getmask(ch), font.getmask(MISSING)
             self._glyphs[key] = not (mask.size == missing.size and bytes(mask) == bytes(missing))
         return self._glyphs[key]
+
+    def reference(self, font, script):
+        """(top, bottom) of a line set in this face, relative to its baseline (up is negative), from the ink
+        of one letter: a capital for Latin, which stands on the baseline, and the body of a kanji for
+        Japanese.  The same for every text, so lines of one style sit alike whatever they say."""
+        key = (id(font), script)
+        if key not in self._boxes:
+            _, top, _, bottom = font.getbbox(REFERENCE[script], anchor="ls")
+            self._boxes[key] = (float(top), float(bottom) if script == "jp" else 0.0)
+        return self._boxes[key]
 
 
 # ---- the cue file ---------------------------------------------------------------------------
@@ -422,3 +448,221 @@ class Motion:
         if self.anim == "roll":
             return (float(min(self.roll)), float(max(self.roll)), 0.0)
         return (0.0, 0.0, 0.0)
+
+
+# ---- layout ---------------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class Glyph:
+    char: str
+    script: str                  # "latin" or "jp": which reference letter gives its line its top and bottom
+    font: object                 # the Pillow face that draws it
+    size: int                    # px: the em its tracking is counted in
+    advance: float               # px to the next character, before tracking
+    tracking: float              # em
+    ink: Optional[Tuple[int, int, int, int]]     # what it sets, from its origin on the baseline; None: nothing
+
+
+@dataclasses.dataclass
+class Line:
+    glyphs: List[Glyph]
+    style: Style
+    colour: Tuple[int, int, int]
+    size: int                    # px: the largest em in the line, which the gaps around it are counted in
+    width: float                 # at rest: from the first origin to the end of the last advance
+    top: float                   # of its reference box, from the baseline (negative: above it)
+    bottom: float
+    baseline: float = 0.0        # y in the reference box of the block
+
+
+def _line_width(line, extra):
+    """the width of a line with `extra` em more after every character but the last"""
+    return line.width + extra * sum(g.size for g in line.glyphs[:-1])
+
+
+def _aligned(free, align):
+    """where something starts that leaves `free` px of its row: on the side the block is anchored to"""
+    return {"left": 0.0, "center": free / 2.0, "right": free}[align]
+
+
+def _line_x(line, extra, align, width):
+    """where a line starts in a reference box `width` wide; spread letters close in towards the anchored side"""
+    return _aligned(width - _line_width(line, extra), align)
+
+
+@dataclasses.dataclass
+class Layout:
+    """A cue laid out in a frame.  The reference box is its lines at rest: as wide as the widest line, from
+    the top of the first line to the bottom of the last (or of the underline).  The block is the reference
+    box grown to hold all the ink (a descender, a glitch letter taller than the capitals, the ink copy);
+    the anchors place the block.  The canvas is the block through all of its motion, with padding, cut at
+    the frame: the picture drawn for every frame of the cue."""
+    cue: Cue
+    lines: List[Line]
+    align: str                   # "left", "center" or "right"
+    width: float                 # of the reference box
+    origin: Tuple[int, int]      # of the reference box, inside the block
+    block: Tuple[int, int]       # width, height
+    anchor: Tuple[int, int]      # the top left of the block in the frame
+    canvas_origin: Tuple[int, int]               # in the frame: where ffmpeg lays the pictures
+    canvas: Tuple[int, int]
+    motion: Motion
+    start_frame: int
+    frames: int
+    scale: float                 # the frame height over REFERENCE_HEIGHT
+    palette: dict
+    underline: Optional[Tuple[float, float, float, int]]     # x, y, width, height in the reference box
+    warnings: List[str]
+
+    def line_width(self, line, extra=0.0):
+        return _line_width(line, extra)
+
+    def line_x(self, line, extra=0.0):
+        return _line_x(line, extra, self.align, self.width)
+
+
+def frame_of(seconds, fps):
+    """the frame a time falls on: the nearest"""
+    return int(round(fractions.Fraction(seconds) * fps))
+
+
+def fps_text(fps):
+    """30 or 30000/1001: the rate as ffmpeg takes it"""
+    return str(fps.numerator) if fps.denominator == 1 else "%d/%d" % (fps.numerator, fps.denominator)
+
+
+def _glyphs(text, style, factor, book, warnings, what):
+    """the characters of a line with the face that draws each: Japanese from the Japanese font, the rest from
+    the Latin face of the style, or from the Japanese font as well where that face lacks the character (the
+    Y1 faces have little punctuation; the box a face draws for what it lacks must not reach the video)"""
+    latin_px = max(1, int(round(style.latin_size * factor)))
+    jp_px = max(1, int(round(style.jp_size * factor)))
+    latin, jp = book.font(style.latin, latin_px, style.weight), book.font("jp", jp_px, style.weight)
+    out = []
+    for script, part in runs(text):
+        for ch in part:
+            font, px, tracking = (latin, latin_px, style.tracking) if script == "latin" else (jp, jp_px, 0.0)
+            if font is not jp and not book.has_glyph(font, ch):
+                _warn(warnings, "%s: %s has no glyph for %r (U+%04X), it is drawn with %s"
+                      % (what, os.path.basename(font.path), ch, ord(ch), os.path.basename(jp.path)))
+                font, px = jp, jp_px
+            if not book.has_glyph(font, ch):
+                _warn(warnings, "%s: no font here has a glyph for %r (U+%04X), it is drawn as an empty box"
+                      % (what, ch, ord(ch)))
+            box = font.getbbox(ch, anchor="ls")
+            ink = tuple(int(v) for v in box) if box[2] > box[0] and box[3] > box[1] else None
+            out.append(Glyph(ch, script, font, px, float(font.getlength(ch)), tracking, ink))
+    return out
+
+
+def _width(glyphs):
+    return sum(g.advance + g.tracking * g.size for g in glyphs) - glyphs[-1].tracking * glyphs[-1].size
+
+
+def _line(spec, index, scale, palette, book, safe, warnings, what):
+    """a line of a cue set in its style.  A line wider than the `safe` px between the margins is set smaller
+    until it fits (the headline face is wide: eight letters at 150 px are 1228 px in a 1280 px frame)."""
+    style = STYLES[spec.style]
+    text = spec.text.upper() if style.upper else spec.text
+    factor = wanted = scale * (spec.size / style.latin_size if spec.size else 1.0)
+    glyphs = _glyphs(text, style, factor, book, warnings, what)
+    while _width(glyphs) > safe and max(g.size for g in glyphs) > 1:
+        factor *= min(safe / _width(glyphs), 0.99)
+        glyphs = _glyphs(text, style, factor, book, warnings, what)
+    size = max(g.size for g in glyphs)
+    if factor != wanted:
+        _warn(warnings, "%s: line %d does not fit the %d px between the margins, it is drawn at %d %% of its size (%d px)"
+              % (what, index, safe, int(round(100.0 * factor / wanted)), size))
+    boxes = [book.reference(g.font, g.script) for g in glyphs]
+    return Line(glyphs, style, palette[style.colour], size, _width(glyphs),
+                min(top for top, _ in boxes), max(bottom for _, bottom in boxes))
+
+
+def _anchor(cue, block, frame, margin, warnings, what):
+    """the top left of the block in the frame"""
+    (bw, bh), (width, height), (mx, my) = block, frame, margin
+    if cue.x == "left":
+        x = mx
+    elif cue.x == "right":
+        x = width - mx - bw
+    else:
+        x = int(round(width * X_CENTRES[cue.x] - bw / 2.0))
+    x = max(mx, min(x, width - mx - bw))                 # a third stops at the margin
+    if bw > width - 2 * mx:                              # ink beyond a line that fills the width: shared by both sides
+        x = int(round((width - bw) / 2.0))
+    y = {"top": my, "bottom": height - my - bh, "middle": int(round((height - bh) / 2.0)),
+         "lower": int(round(height * LOWER - bh / 2.0))}[cue.y]
+    y = max(my, min(y, height - my - bh))
+    if bh > height - 2 * my:
+        y = int(round((height - bh) / 2.0))
+        if cue.anim != "roll":                           # a roll is as long as it likes: it passes through
+            _warn(warnings, "%s: the block is %d px high, more than the %d px between the margins"
+                  % (what, bh, height - 2 * my))
+    return (x, y)
+
+
+def layout_cue(cue, sheet, book):
+    """lay a cue out in the frame of the sheet (see Layout)"""
+    width, height = sheet.size
+    scale = height / float(REFERENCE_HEIGHT)
+    margin_x, margin_y = (int(round(m * scale)) for m in MARGIN)
+    what = "cue %s" % cue.id
+    start_frame, end_frame = frame_of(cue.start, sheet.fps), frame_of(cue.end, sheet.fps)
+    if end_frame <= start_frame:
+        raise ValueError("%s: %g s to %g s is less than one frame at %s fps" % (what, cue.start, cue.end, fps_text(sheet.fps)))
+    warnings, palette = [], PALETTES[sheet.palette]
+    lines = [_line(spec, i, scale, palette, book, width - 2 * margin_x, warnings, what) for i, spec in enumerate(cue.lines)]
+
+    # the reference box.  Lines sit on whole pixels: text at rest on a fraction of a pixel has blurred stems.
+    y = 0.0
+    for above, line in zip([None] + lines, lines):
+        if above is not None:
+            y += round(LINE_GAP * max(above.size, line.size))
+        line.baseline = y - line.top
+        y = line.baseline + line.bottom
+    align = cue.x if cue.x in ("left", "right") else "center"
+    ref_width = max(line.width for line in lines)
+    underline = None
+    if lines[-1].style.underline:
+        rule_width = UNDERLINE["width"] * ref_width
+        underline = (_aligned(ref_width - rule_width, align), y + round(UNDERLINE["gap"] * lines[-1].size), rule_width,
+                     max(1, int(round(UNDERLINE["height"] * scale))))
+        y = underline[1] + underline[3]
+
+    # the block: the reference box and all the ink at rest
+    copy = max(1, int(round(INK_COPY * scale)))
+    x0, y0, x1, y1 = 0.0, 0.0, ref_width, y
+    for line in lines:
+        x = _line_x(line, 0.0, align, ref_width)
+        for g in line.glyphs:
+            if g.ink is not None:
+                x0 = min(x0, x + g.ink[0] - (copy if line.style.ink_copy else 0))
+                y0 = min(y0, line.baseline + g.ink[1])
+                x1, y1 = max(x1, x + g.ink[2]), max(y1, line.baseline + g.ink[3])
+            x += g.advance + g.tracking * g.size
+    origin = (-int(math.floor(x0)), -int(math.floor(y0)))
+    block = (int(math.ceil(x1)) + origin[0], int(math.ceil(y1)) + origin[1])
+    anchor = _anchor(cue, block, sheet.size, (margin_x, margin_y), warnings, what)
+
+    # the motion runs on the frame grid: its first frame is exactly its start
+    motion = Motion(cue.anim, float(start_frame / sheet.fps), float(end_frame / sheet.fps), cue.enter, cue.exit,
+                    float(sheet.fps), scale)
+    if cue.anim == "roll":                               # from just under the frame to just over it
+        motion.roll = (float(height - anchor[1]), -float(anchor[1] + block[1]))
+
+    # the canvas: the block wherever the motion takes it, the letters as far as they spread, the shadow's blur
+    dy_min, dy_max, extra = motion.extents()
+    grow_left = grow_right = 0.0
+    for line in (lines if extra else ()):
+        x = _line_x(line, extra, align, ref_width)
+        grow_left, grow_right = max(grow_left, -x), max(grow_right, x + _line_width(line, extra) - ref_width)
+    pad = CANVAS_PAD
+    if any(line.style.shadow for line in lines):
+        pad = max(pad, int(math.ceil(BLUR_REACH * SHADOW["blur"] * scale)) + int(math.ceil(SHADOW["offset"] * scale)))
+    left = max(0, anchor[0] - int(math.ceil(grow_left)) - pad)
+    top = max(0, anchor[1] + int(math.floor(min(0.0, dy_min))) - pad)
+    right = min(width, anchor[0] + block[0] + int(math.ceil(grow_right)) + pad)
+    bottom = min(height, anchor[1] + block[1] + int(math.ceil(max(0.0, dy_max))) + pad)
+    canvas = (max(1, right - left), max(1, bottom - top))
+    return Layout(cue, lines, align, ref_width, origin, block, anchor, (left, top), canvas, motion, start_frame,
+                  end_frame - start_frame, scale, palette, underline, warnings)

@@ -457,5 +457,300 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(motion("rise", scale=0.25).extents(), (-3.0, 6.0, 0.0))
 
 
+BOOK = []
+
+
+def book():
+    """the fonts of this machine, resolved once (the Y1 faces or what stands in for them: the layout holds
+    either way); a test that lays out or draws skips on a machine with no Japanese font at all"""
+    if not BOOK:
+        try:
+            BOOK.append(mv_text.FontBook())
+        except ValueError as e:
+            raise unittest.SkipTest(str(e))
+    return BOOK[0]
+
+
+def lay(cue, size=(1280, 720), fps=30, palette="dark"):
+    sheet = mv_text.parse_cues({"fps": fps, "size": list(size), "palette": palette, "cues": [cue]})
+    return mv_text.layout_cue(sheet.cues[0], sheet, book())
+
+
+def cue_of(text="響かせ", style="lyric", **fields):
+    cue = {"id": "a", "start": 1.0, "end": 4.0, "text": text, "style": style, "anim": "fade", "x": "center", "y": "middle"}
+    cue.update(fields)
+    return cue
+
+
+def title(**fields):
+    cue = dict(NEW_FORMAT["cues"][0])
+    cue.update(fields)
+    return cue
+
+
+def rect(origin, size):
+    return (origin[0], origin[1], origin[0] + size[0], origin[1] + size[1])
+
+
+class AnchorTest(unittest.TestCase):
+    def test_left_center_and_right_keep_the_64_px_margins(self):
+        for cue in (title, cue_of):
+            left, center, right = (lay(cue(x=x)) for x in ("left", "center", "right"))
+            self.assertEqual(left.anchor[0], 64)
+            self.assertEqual(right.anchor[0] + right.block[0], 1280 - 64)
+            self.assertLessEqual(abs(center.anchor[0] + center.block[0] / 2.0 - 640), 1)
+            self.assertEqual(left.block, right.block)
+
+    def test_the_thirds_centre_the_block_on_a_quarter_and_on_three_quarters(self):
+        left, right = lay(cue_of(x="left-third")), lay(cue_of(x="right-third"))
+        self.assertLessEqual(abs(left.anchor[0] + left.block[0] / 2.0 - 320), 1)
+        self.assertLessEqual(abs(right.anchor[0] + right.block[0] / 2.0 - 960), 1)
+        # a block too wide to be centred there stops at the safe margin
+        wide = "響かせ" * 6
+        left, right = lay(cue_of(wide, x="left-third")), lay(cue_of(wide, x="right-third"))
+        self.assertGreater(left.block[0], 2 * (320 - 64))
+        self.assertEqual(left.anchor[0], 64)
+        self.assertEqual(right.anchor[0] + right.block[0], 1280 - 64)
+
+    def test_top_middle_lower_and_bottom_keep_the_48_px_margins(self):
+        for cue in (title, cue_of):
+            top, middle, lower, bottom = (lay(cue(y=y)) for y in ("top", "middle", "lower", "bottom"))
+            self.assertEqual(top.anchor[1], 48)
+            self.assertEqual(bottom.anchor[1] + bottom.block[1], 720 - 48)
+            self.assertLessEqual(abs(middle.anchor[1] + middle.block[1] / 2.0 - 360), 1)
+            self.assertLessEqual(lower.anchor[1] + lower.block[1], 720 - 48)
+            self.assertGreater(lower.anchor[1], middle.anchor[1])
+        # the lower third: a block that fits is centred on five sixths of the height
+        lower = lay(cue_of(y="lower"))
+        self.assertLessEqual(abs(lower.anchor[1] + lower.block[1] / 2.0 - 600), 1)
+
+    def test_the_margins_and_the_sizes_follow_the_frame_height(self):
+        for size, margin_x, margin_y, px in (((1920, 1080), 96, 72, 69), ((640, 360), 32, 24, 23), ((320, 180), 16, 12, 12)):
+            layout = lay(cue_of(x="left", y="top"), size=size)
+            self.assertEqual(layout.anchor, (margin_x, margin_y), size)
+            self.assertEqual(layout.lines[0].size, px, size)                   # lyric is 46 px in a 720 high frame
+            bottom = lay(cue_of(x="right", y="bottom"), size=size)
+            self.assertEqual(rect(bottom.anchor, bottom.block)[2:], (size[0] - margin_x, size[1] - margin_y), size)
+
+    def test_the_title_lockup_stays_inside_the_margins_at_every_anchor(self):
+        for x in mv_text.X_ANCHORS:
+            for y in mv_text.Y_ANCHORS:
+                layout = lay(title(x=x, y=y))
+                x0, y0, x1, y1 = rect(layout.anchor, layout.block)
+                self.assertGreaterEqual(x0, 64, (x, y))
+                self.assertLessEqual(x1, 1280 - 64, (x, y))
+                self.assertGreaterEqual(y0, 48, (x, y))
+                self.assertLessEqual(y1, 720 - 48, (x, y))
+        self.assertEqual(len(mv_text.X_ANCHORS) * len(mv_text.Y_ANCHORS), 20)
+
+    def test_roll_starts_below_the_frame_and_ends_above_it_whatever_the_anchor(self):
+        for y in mv_text.Y_ANCHORS:
+            layout = lay(title(anim="roll", y=y, start=10.0, end=30.0))
+            first, last = layout.motion.at(layout.motion.start), layout.motion.at(layout.motion.end)
+            self.assertEqual(layout.anchor[1] + first.dy, 720, y)                              # its top on the bottom edge
+            self.assertAlmostEqual(layout.anchor[1] + layout.block[1] + last.dy, 0, msg=y)     # its bottom on the top edge
+            self.assertEqual({first.alpha, last.alpha}, {1.0})
+
+
+class LinesTest(unittest.TestCase):
+    def test_lines_are_stacked_a_third_of_the_larger_em_apart(self):
+        # 0.35 em, to the whole pixel: lines at rest sit on whole pixels, or their stems blur
+        layout = lay(title())
+        self.assertEqual(len(layout.lines), 3)
+        for above, below in zip(layout.lines, layout.lines[1:]):
+            gap = (below.baseline + below.top) - (above.baseline + above.bottom)
+            self.assertLessEqual(abs(gap - 0.35 * max(above.size, below.size)), 0.5)
+            self.assertEqual(gap, int(gap))
+        self.assertEqual([line.baseline for line in layout.lines], [int(line.baseline) for line in layout.lines])
+        self.assertEqual(layout.origin, (int(layout.origin[0]), int(layout.origin[1])))
+        self.assertEqual([line.size for line in layout.lines[1:]], [44, 30])
+        self.assertLessEqual(layout.lines[0].size, 150)
+        # the same lines the other way round still measure the gap from the larger one
+        flipped = dict(title(), lines=list(reversed(NEW_FORMAT["cues"][0]["lines"])))
+        lines = lay(flipped).lines
+        gap = (lines[2].baseline + lines[2].top) - (lines[1].baseline + lines[1].bottom)
+        self.assertLessEqual(abs(gap - 0.35 * lines[2].size), 0.5)
+
+    def test_lines_follow_the_side_the_block_is_anchored_to(self):
+        left, center, right = (lay(title(x=x)) for x in ("left", "center", "right"))
+        self.assertEqual((left.align, center.align, right.align), ("left", "center", "right"))
+        self.assertEqual(lay(title(x="left-third")).align, "center")
+        widths = [line.width for line in left.lines]
+        self.assertEqual([left.line_x(line) for line in left.lines], [0.0, 0.0, 0.0])
+        for layout in (center, right):
+            self.assertAlmostEqual(max(layout.line_x(line) + line.width for line in layout.lines), layout.width)
+        self.assertEqual([right.line_x(line) for line in right.lines], [max(widths) - w for w in widths])
+        self.assertEqual([center.line_x(line) for line in center.lines], [(max(widths) - w) / 2.0 for w in widths])
+
+    def test_japanese_and_latin_in_one_line_use_two_fonts(self):
+        layout = lay(cue_of("Motion えぬた / Model Sour", "credit"))
+        glyphs = layout.lines[0].glyphs
+        self.assertEqual("".join(g.char for g in glyphs), "Motion えぬた / Model Sour")
+        latin, jp = book().font("latin", 22, 400), book().font("jp", 24, 400)
+        for g in glyphs:
+            if ord(g.char) >= 0x2E80:
+                self.assertIs(g.font, jp, g.char)
+                self.assertEqual((g.size, g.tracking), (24, 0.0))
+            else:
+                self.assertIs(g.font, latin, g.char)
+                self.assertEqual((g.size, g.tracking), (22, 0.12))
+        self.assertEqual(layout.lines[0].size, 24)
+        self.assertEqual(layout.lines[0].colour, mv_text.PALETTES["dark"]["secondary"])
+
+    def test_tracking_is_added_after_every_character_but_the_last(self):
+        layout = lay(cue_of("ABC", "sub"))
+        glyphs = layout.lines[0].glyphs
+        self.assertEqual([g.tracking for g in glyphs], [0.25, 0.25, 0.25])
+        self.assertAlmostEqual(layout.lines[0].width, sum(g.advance for g in glyphs) + 2 * 0.25 * 30)
+        self.assertAlmostEqual(layout.line_width(layout.lines[0], 0.6), layout.lines[0].width + 2 * 0.6 * 30)
+
+    def test_sub_is_set_in_capitals_and_in_the_accent(self):
+        layout = lay(cue_of("feat. Kagamine Rin", "sub"))
+        self.assertEqual("".join(g.char for g in layout.lines[0].glyphs), "FEAT. KAGAMINE RIN")
+        self.assertEqual(layout.lines[0].colour, (240, 160, 48))
+        self.assertEqual("".join(g.char for g in lay(cue_of("feat. Rin", "credit")).lines[0].glyphs), "feat. Rin")
+
+    def test_the_palette_gives_the_colours(self):
+        dark, light = lay(title()), lay(title(), palette="light")
+        self.assertEqual([line.colour for line in dark.lines], [(245, 245, 248), (245, 245, 248), (240, 160, 48)])
+        self.assertEqual([line.colour for line in light.lines], [(22, 22, 30), (22, 22, 30), (240, 160, 48)])
+        self.assertEqual(lay(cue_of("x", "credit"), palette="light").lines[0].colour, (120, 120, 130))
+        # the secondary colour of the dark palette is 70 % of its text colour (halves go up)
+        self.assertEqual(mv_text.PALETTES["dark"]["secondary"], tuple((7 * c + 5) // 10 for c in (245, 245, 248)))
+
+    def test_a_size_on_the_line_replaces_the_size_of_the_style(self):
+        layout = lay(cue_of("la la", "lyric", size=60))
+        self.assertEqual({g.size for g in layout.lines[0].glyphs}, {60})
+        self.assertEqual({g.size for g in lay(cue_of("la la", "lyric", size=60), size=(2560, 1440)).lines[0].glyphs}, {120})
+        # both scripts of a style grow by the same share: credit is 22 (Latin) and 24 (Japanese)
+        credit = lay(cue_of("Aあ", "credit", size=44)).lines[0].glyphs
+        self.assertEqual([g.size for g in credit], [44, 48])
+
+    def test_a_line_wider_than_the_safe_width_is_made_smaller_and_says_so(self):
+        layout = lay(cue_of("HIBIKASE HIBIKASE HIBIKASE", "logo", id="long1", x="left"))
+        line = layout.lines[0]
+        self.assertLessEqual(line.width, 1280 - 2 * 64)
+        self.assertGreater(line.width, 0.9 * (1280 - 2 * 64))                  # no smaller than it has to be
+        self.assertLess(line.size, 150)
+        self.assertEqual(len(layout.warnings), 1, layout.warnings)
+        self.assertIn("long1", layout.warnings[0])
+        layout.warnings[0].encode("ascii")
+        x0, _, x1, _ = rect(layout.anchor, layout.block)
+        self.assertGreaterEqual(x0, 64)
+        self.assertLessEqual(x1, 1280 - 64)
+        self.assertEqual(lay(cue_of("AB", "logo")).warnings, [])
+
+    @unittest.skipUnless(Y1, NO_Y1)
+    def test_a_character_the_face_lacks_is_drawn_with_the_japanese_font_and_says_so(self):
+        layout = lay(cue_of("A/B", "hook", id="hook9"))
+        a, slash, b = layout.lines[0].glyphs
+        self.assertIs(a.font, b.font)
+        self.assertIs(a.font, book().font("accent", 180, 900))
+        self.assertIs(slash.font, book().font("jp", 180, 900))
+        self.assertEqual(len(layout.warnings), 1, layout.warnings)
+        self.assertIn("U+002F", layout.warnings[0])
+        self.assertIn("hook9", layout.warnings[0])
+        self.assertEqual(lay(cue_of("AB09", "hook")).warnings, [])
+
+    def test_the_block_holds_the_reference_box_and_the_ink(self):
+        for cue in (title(), cue_of(), cue_of("HIBIKASE", "hook"), cue_of("gypsy jig", "caption")):
+            layout = lay(cue)
+            self.assertGreaterEqual(layout.block[0], layout.width - 1e-6)
+            for line in layout.lines:
+                x = layout.origin[0] + layout.line_x(line)
+                y = layout.origin[1] + line.baseline
+                self.assertGreaterEqual(x, 0.0)
+                self.assertGreaterEqual(y + line.top, -1e-6)
+                self.assertLessEqual(y + line.bottom, layout.block[1] + 1e-6)
+                for g in line.glyphs:
+                    if g.ink is not None:
+                        self.assertGreaterEqual(x + g.ink[0], -1e-6, g.char)
+                        self.assertGreaterEqual(y + g.ink[1], -1e-6, g.char)
+                        self.assertLessEqual(x + g.ink[2], layout.block[0] + 1e-6, g.char)
+                        self.assertLessEqual(y + g.ink[3], layout.block[1] + 1e-6, g.char)
+                    x += g.advance + g.tracking * g.size
+
+
+class CanvasTest(unittest.TestCase):
+    def test_a_cue_that_does_not_move_has_its_block_and_8_px_around(self):
+        layout = lay(cue_of("ABC", "caption"))
+        self.assertEqual(rect(layout.canvas_origin, layout.canvas),
+                         (layout.anchor[0] - 8, layout.anchor[1] - 8, layout.anchor[0] + layout.block[0] + 8,
+                          layout.anchor[1] + layout.block[1] + 8))
+
+    def test_rise_has_room_below_to_come_from_and_above_to_leave_to(self):
+        layout = lay(cue_of("ABC", "caption", anim="rise"))
+        x0, y0, x1, y1 = rect(layout.canvas_origin, layout.canvas)
+        self.assertEqual((x0, x1), (layout.anchor[0] - 8, layout.anchor[0] + layout.block[0] + 8))
+        self.assertEqual(y0, layout.anchor[1] - 12 - 8)
+        self.assertEqual(y1, layout.anchor[1] + layout.block[1] + 24 + 8)
+
+    def test_tracking_in_has_room_on_the_side_the_letters_spread_to(self):
+        grow = 0.6 * 150 * 3                                                   # four letters: three gaps of 0.6 em
+        left, center, right = (lay(cue_of("HIBI", "logo", anim="tracking-in", x=x)) for x in ("left", "center", "right"))
+        self.assertEqual(left.canvas_origin[0], left.anchor[0] - 8)
+        self.assertGreaterEqual(left.canvas_origin[0] + left.canvas[0], left.anchor[0] + left.block[0] + grow)
+        self.assertEqual(right.canvas_origin[0] + right.canvas[0], right.anchor[0] + right.block[0] + 8)
+        self.assertLessEqual(right.canvas_origin[0], right.anchor[0] - grow)
+        self.assertLessEqual(center.canvas_origin[0], center.anchor[0] - grow / 2)
+        self.assertGreaterEqual(center.canvas_origin[0] + center.canvas[0], center.anchor[0] + center.block[0] + grow / 2)
+
+    def test_the_canvas_is_cut_at_the_frame(self):
+        # what leaves the frame is never seen: a spread title and a roll would otherwise need huge pictures
+        for cue in (title(), title(anim="roll", start=10.0, end=30.0), title(x="right", y="bottom", anim="rise"),
+                    cue_of("HIBIKASE", "hook", anim="tracking-in")):
+            layout = lay(cue)
+            x0, y0, x1, y1 = rect(layout.canvas_origin, layout.canvas)
+            self.assertGreaterEqual(x0, 0, cue["anim"])
+            self.assertGreaterEqual(y0, 0, cue["anim"])
+            self.assertLessEqual(x1, 1280, cue["anim"])
+            self.assertLessEqual(y1, 720, cue["anim"])
+            self.assertGreater(layout.canvas[0] * layout.canvas[1], 0)
+        roll = lay(title(anim="roll", start=10.0, end=30.0))
+        self.assertEqual((roll.canvas_origin[1], roll.canvas[1]), (0, 720))    # the whole height it travels through
+        self.assertEqual(roll.canvas[0], roll.block[0] + 16)
+
+    def test_a_small_cue_has_a_small_canvas(self):
+        layout = lay(cue_of(anim="rise", y="lower"))
+        self.assertLess(layout.canvas[0] * layout.canvas[1], 1280 * 720 // 20)
+
+    def test_a_soft_shadow_gets_the_room_its_blur_needs(self):
+        # lyric has a shadow blurred 6 px and 2 px lower: Pillow's blur reaches 15 px, 3 radii are kept free
+        layout = lay(cue_of(style="lyric"))
+        self.assertEqual(rect(layout.canvas_origin, layout.canvas),
+                         (layout.anchor[0] - 20, layout.anchor[1] - 20, layout.anchor[0] + layout.block[0] + 20,
+                          layout.anchor[1] + layout.block[1] + 20))
+        big = lay(cue_of(style="lyric"), size=(2560, 1440))
+        self.assertEqual(big.anchor[0] - big.canvas_origin[0], 40)
+
+
+class FramesTest(unittest.TestCase):
+    def test_a_cue_covers_the_frames_from_its_start_to_just_before_its_end(self):
+        layout = lay(cue_of(start=44.5, end=45.3))
+        self.assertEqual((layout.start_frame, layout.frames), (1335, 24))
+        self.assertEqual((layout.motion.start, layout.motion.end, layout.motion.fps), (44.5, 1359 / 30.0, 30.0))
+        sixty = lay(cue_of(start=1.0, end=4.0), fps=60)
+        self.assertEqual((sixty.start_frame, sixty.frames, sixty.motion.fps), (60, 180, 60.0))
+        ntsc = lay(cue_of(start=1.0, end=4.0), fps="30000/1001")
+        self.assertEqual((ntsc.start_frame, ntsc.frames), (30, 90))
+        self.assertAlmostEqual(ntsc.motion.start, 30 * 1001 / 30000.0)
+
+    def test_times_between_two_frames_go_to_the_nearer_one(self):
+        layout = lay(cue_of(start=1.01, end=2.02))
+        self.assertEqual((layout.start_frame, layout.frames), (30, 31))
+        self.assertEqual(layout.motion.start, 1.0)                             # the motion runs on the frame grid
+
+    def test_a_cue_shorter_than_a_frame_is_an_error_that_names_it(self):
+        with self.assertRaises(ValueError) as caught:
+            lay(cue_of(id="blink3", start=1.0, end=1.01))
+        self.assertIn("blink3", str(caught.exception))
+
+    def test_the_motion_of_the_layout_is_the_anim_of_the_cue(self):
+        layout = lay(cue_of(anim="rise", enter=0.3, exit=0.2), size=(1920, 1080))
+        m = layout.motion
+        self.assertEqual((m.anim, m.enter, m.exit, m.scale), ("rise", 0.3, 0.2, 1.5))
+        self.assertEqual(m.at(1.0).dy, 36.0)
+
+
 if __name__ == "__main__":
     unittest.main()
