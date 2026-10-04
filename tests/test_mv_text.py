@@ -504,11 +504,18 @@ class MotionTest(unittest.TestCase):
         self.assertEqual((sudden.at(3.99).alpha, sudden.at(3.99).dy), (1.0, 0.0))
 
     def test_a_cue_shorter_than_its_enter_and_exit_still_shows(self):
+        # the Motion itself, given such an enter and exit (the layout cuts them down before it gets here):
+        # coming and going overlap, and the lower of the two holds
         m = motion("fade", start=1.0, end=1.5)
         alphas = [m.at(t).alpha for t in frame_times(m)]
         self.assertGreater(max(alphas), 0.5)
         self.assertTrue(all(0.0 <= a <= 1.0 for a in alphas))
         self.assertEqual(alphas[0], 0.0)
+        for t in (1.2, 1.3, 1.4, 1.45):
+            came = 1 - (1 - min(1.0, (t - 1.0) / 0.6)) ** 3
+            gone = max(0.0, (t - 1.1) / 0.4) ** 3
+            self.assertAlmostEqual(m.at(t).alpha, min(came, 1 - gone), msg=t)
+        self.assertLess(m.at(1.45).alpha, m.at(1.3).alpha)                    # going already, while still coming
 
     def test_what_does_not_move_has_no_extents(self):
         for anim in ("fade", "wipe", "flash"):
@@ -819,6 +826,44 @@ class LinesTest(unittest.TestCase):
         self.assertEqual([g.tracking for g in glyphs], [0.25, 0.25, 0.25])
         self.assertAlmostEqual(layout.lines[0].width, sum(g.advance for g in glyphs) + 2 * 0.25 * 30)
         self.assertAlmostEqual(layout.line_width(layout.lines[0], 0.6), layout.lines[0].width + 2 * 0.6 * 30)
+        # the tracking of every style, as the design has it (em of the Latin size; none on Japanese)
+        for style, tracking in (("logo", 0.02), ("sub", 0.25), ("credit", 0.12), ("title_jp", 0.0), ("lyric", 0.0),
+                                ("hook", 0.0), ("caption", 0.0)):
+            line = lay(cue_of("AB\u3042", style)).lines[0]
+            self.assertEqual([g.tracking for g in line.glyphs], [tracking, tracking, 0.0], style)
+
+    def test_every_style_is_drawn_at_its_weight(self):
+        # the weight axis of Noto is set per style: 900 for the titles, 700 for lyrics, 400 for credits and
+        # captions.  The ink of one kanji at one size grows with the weight, so the weights can be told apart
+        # in the picture, and the default instance of the file (Thin, 100) is far below them all.
+        fonts = book()
+        if not fonts.files["jp"].endswith("NotoSansJP-VF.ttf"):
+            self.skipTest("the Japanese font of this machine has no weight axis")
+
+        def ink(weight):
+            return sum(1 for v in bytes(fonts.font("jp", 60, weight).getmask("\u97ff")) if v > 127)
+
+        # measured for this kanji at 60 px: 910 / 1402 / 1969 / 2198 opaque pixels at 100 / 400 / 700 / 900
+        by_weight = {w: ink(w) for w in (100, 400, 700, 900)}
+        self.assertLess(by_weight[100] * 1.3, by_weight[400])
+        self.assertLess(by_weight[400] * 1.2, by_weight[700])
+        self.assertLess(by_weight[700] * 1.05, by_weight[900])
+        for style, weight in (("logo", 900), ("title_jp", 900), ("hook", 900), ("sub", 700), ("lyric", 700),
+                              ("credit", 400), ("caption", 400)):
+            layout = lay(cue_of("\u97ff", style, size=60 if style != "credit" else 55))
+            glyph = layout.lines[0].glyphs[0]
+            self.assertEqual(glyph.size, 60, style)
+            self.assertIs(glyph.font, fonts.font("jp", 60, weight), style)
+            colours = mv_text.draw(layout, hold(layout)).getcolors(maxcolors=1 << 20)
+            own = sum(count for count, (r, g, b, a) in colours if a > 127 and (r, g, b) == layout.lines[0].colour)
+            if mv_text.STYLES[style].ink_copy or mv_text.STYLES[style].shadow:
+                # what lies under the text (the ink copy, the shadow) mixes into the colour of its soft edge, so
+                # the count in the text's own colour falls short; the weight is pinned by the face above, and
+                # the decorations only add ink
+                self.assertGreaterEqual(sum(count for count, (r, g, b, a) in colours if a > 127), by_weight[weight], style)
+                self.assertLess(own, by_weight[weight], style)
+            else:
+                self.assertEqual(own, by_weight[weight], (style, by_weight))
 
     def test_sub_is_set_in_capitals_and_in_the_accent(self):
         layout = lay(cue_of("feat. Kagamine Rin", "sub"))
@@ -1702,12 +1747,25 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(after(cmd, "-map"), ["0:v", "0:a?"])
 
     def test_more_cues_than_a_command_line_holds_is_an_error(self):
-        # Windows takes 32767 characters; every cue adds an input and two filters
+        # Windows takes 32767 characters of command line; every cue adds an input and two filters
+        self.assertLess(mv_text.COMMAND_LIMIT, 32767)
+        self.assertGreater(mv_text.COMMAND_LIMIT, 30000)                       # and not so low that it costs cues
         many = dict(PLAN, cues=[plan_cue("c%03d" % i, 0, 0, i * 30, 20) for i in range(400)])
         with self.assertRaises(ValueError) as caught:
             mv_text.ffmpeg_command("in.avi", "out.mp4", many)
         self.assertIn("400", str(caught.exception))
-        mv_text.ffmpeg_command("in.avi", "out.mp4", dict(PLAN, cues=many["cues"][:60]))
+        # the most that fit, and one more: the line the tool counts stays under its limit
+        fits = 0
+        while True:
+            try:
+                argv = mv_text.ffmpeg_command("in.avi", "out.mp4", dict(PLAN, cues=many["cues"][:fits + 1]))
+            except ValueError:
+                break
+            fits += 1
+            self.assertLessEqual(sum(len(arg) + 3 for arg in argv), mv_text.COMMAND_LIMIT)
+        self.assertEqual(fits, 177)                                            # with these short patterns (about 180 characters a cue)
+        with self.assertRaises(ValueError):
+            mv_text.ffmpeg_command("in.avi", "out.mp4", dict(PLAN, cues=many["cues"][:178]))
 
     def test_the_probe_asks_ffprobe_for_the_frame_and_the_rate(self):
         self.assertEqual(mv_text.probe_command("in.avi"),
@@ -1914,6 +1972,21 @@ class MainTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(self.folder)), ["cues.json", "still.png"])
         with open(self.cues, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["size"], [640, 360])                # the cue file was not written over
+
+    def test_in_and_out_are_the_same_file_whatever_their_case(self):
+        # Windows names ignore case: "STILL.PNG" is the picture itself, and would be written over
+        still = self.path("still.png")
+        Image.new("RGB", (320, 180), (0, 0, 0)).save(still)
+        if os.path.normcase("A") != os.path.normcase("a"):
+            self.skipTest("this file system tells capitals from small letters")
+        upper = os.path.join(self.folder, "STILL.PNG")
+        for argv in (["render", still, self.cues, upper, "--size", "320x180", "--fps", "30"],
+                     ["preview", self.cues, upper, "--at", "1", "--over", still],
+                     ["render", still, self.cues, self.cues.upper(), "--size", "320x180", "--fps", "30"]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertIn("same file", result["error"]["message"], argv)
+        self.assertEqual(sorted(os.listdir(self.folder)), ["cues.json", "still.png"])
 
     def test_a_warning_that_quotes_a_character_outside_ascii_is_ascii(self):
         # a character no font here has is named in a warning.  The terminal is cp932: the warning writes it
