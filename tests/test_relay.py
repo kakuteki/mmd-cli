@@ -1,9 +1,17 @@
 import json
 import os
+import subprocess
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 from mmd_cli import relay
+
+try:
+    from mmd_cli import win32
+except ImportError:          # not on Windows
+    win32 = None
 
 
 class DecisionTest(unittest.TestCase):
@@ -87,6 +95,174 @@ class ResultTest(unittest.TestCase):
         payload, code = relay.collect(os.path.join(folder, "none.json"))
         self.assertEqual(code, 1)
         self.assertFalse(payload["ok"])
+
+    def test_collect_waits_for_a_complete_exit_file(self):
+        # an .exit that exists but is still empty must never read as exit code 0
+        folder = tempfile.mkdtemp()
+        out = os.path.join(folder, "r.json")
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump({"ok": False}, f)
+        with open(out + ".exit", "w"):
+            pass
+        payload, code = relay.collect(out)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(payload["ok"])
+
+    def test_collect_reads_again_when_the_exit_file_fills_up_late(self):
+        folder = tempfile.mkdtemp()
+        out = os.path.join(folder, "r.json")
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump({"ok": False}, f)
+        with open(out + ".exit", "w"):
+            pass
+
+        def fill():
+            with open(out + ".exit", "w") as f:
+                f.write("3")
+
+        threading.Timer(0.15, fill).start()
+        payload, code = relay.collect(out)
+        self.assertEqual(code, 3)
+        self.assertEqual(payload, {"ok": False, "relayed": True})
+
+
+class RunJobTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.out = os.path.join(self.folder, "r.out.json")
+        self.job_path = os.path.join(self.folder, "j.json")
+        relay.write_job(relay.Job(argv=["--out", self.out, "state"], out_path=self.out), self.job_path)
+
+    def main_writing(self, code):
+        def main(argv):
+            with open(self.out, "w", encoding="utf-8") as f:
+                json.dump({"ok": code == 0}, f)
+            return code
+        return main
+
+    def test_run_job_writes_exit_atomically(self):
+        # the parent reads .exit as soon as it exists: it must appear complete (written to .part, then moved)
+        with mock.patch.object(relay.os, "replace", wraps=os.replace) as replace:
+            code = relay.run_job(self.job_path, self.main_writing(3))
+        self.assertEqual(code, 3)
+        with open(self.out + ".exit") as f:
+            self.assertEqual(f.read(), "3")
+        self.assertIn((self.out + ".exit.part", self.out + ".exit"), [c.args for c in replace.call_args_list])
+        self.assertFalse(os.path.exists(self.out + ".exit.part"))
+
+    def test_run_job_writes_the_started_marker_atomically_with_its_pid(self):
+        # the parent reads the pid out of .started as soon as it exists
+        with mock.patch.object(relay.os, "replace", wraps=os.replace) as replace:
+            relay.run_job(self.job_path, self.main_writing(0))
+        with open(self.out + ".started") as f:
+            self.assertEqual(f.read(), str(os.getpid()))
+        self.assertIn((self.out + ".started.part", self.out + ".started"), [c.args for c in replace.call_args_list])
+
+
+class FakeScheduler:
+    """stands in for schtasks: records every call and plays the child when the task is run"""
+
+    def __init__(self, child=None):
+        self.calls = []
+        self.child = child
+        self.job_path = None
+
+    def __call__(self, *args, timeout=60):
+        self.calls.append(args)
+        if args[0] == "/Create":
+            self.job_path = args[args.index("/TR") + 1].split('"')[3]
+        if args[0] == "/Run" and self.child is not None:
+            self.child(relay.read_job(self.job_path))
+        return subprocess.CompletedProcess(["schtasks.exe"] + list(args), 0, b"", b"")
+
+    def verbs(self):
+        return [c[0] for c in self.calls]
+
+
+class FakeClock:
+    """replaces relay.time: sleep advances a virtual clock and runs what was scheduled on it"""
+
+    def __init__(self):
+        self.now = 0.0
+        self.due = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+        for when, callback in list(self.due):
+            if when <= self.now:
+                self.due.remove((when, callback))
+                callback()
+
+    def at(self, when, callback):
+        self.due.append((when, callback))
+
+
+def finish(job, code=0):
+    with open(job.out_path, "w", encoding="utf-8") as f:
+        json.dump({"ok": code == 0}, f)
+    relay._write_whole(job.out_path + ".exit", str(code))
+
+
+def start(job, pid=4242):
+    relay._write_whole(job.out_path + ".started", str(pid))
+
+
+@unittest.skipUnless(win32 is not None, "needs Windows")
+class ParentWaitTest(unittest.TestCase):
+    """run_in_user_session without a scheduler, a child process or real time"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.clock = FakeClock()
+        mock.patch.dict(os.environ, {"MMD_CLI_HOME": self.folder}).start()
+        mock.patch.object(relay, "time", self.clock).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def run_with(self, scheduler, alive, **kwargs):
+        with mock.patch.object(relay, "_schtasks", scheduler), \
+                mock.patch.object(win32, "process_alive", side_effect=alive):
+            return relay.run_in_user_session(["state"], **kwargs)
+
+    def leftovers(self):
+        return sorted(os.listdir(os.path.join(self.folder, "relay")))
+
+    def test_parent_waits_as_long_as_the_child_lives(self):
+        # an AVI of 300 frames keeps the child busy for minutes; the parent has no clock of its own
+        def child(job):
+            start(job)
+            self.clock.at(400.0, lambda: finish(job))
+
+        scheduler = FakeScheduler(child)
+        payload, code = self.run_with(scheduler, alive=lambda pid: True)
+        self.assertEqual((payload, code), ({"ok": True, "relayed": True}, 0))
+        self.assertGreaterEqual(self.clock.now, 400.0)
+        self.assertNotIn("/End", scheduler.verbs())
+        self.assertEqual(scheduler.verbs()[-1], "/Delete")
+        self.assertEqual(self.leftovers(), [])
+
+    def test_parent_gives_up_when_the_child_died_without_a_result(self):
+        scheduler = FakeScheduler(start)
+        seen = []
+        with self.assertRaises(relay.RelayError) as ctx:
+            self.run_with(scheduler, alive=lambda pid: seen.append(pid) or False)
+        self.assertIn("4242", str(ctx.exception))
+        self.assertEqual(seen[0], 4242)
+        self.assertGreaterEqual(self.clock.now, 2.0)        # the grace for a late .exit
+        self.assertLess(self.clock.now, 10.0)
+        self.assertEqual(scheduler.verbs()[-2:], ["/End", "/Delete"])
+        self.assertEqual(self.leftovers(), [])
+
+    def test_parent_reports_no_logon_when_the_child_never_starts(self):
+        scheduler = FakeScheduler()
+        with self.assertRaises(relay.RelayError) as ctx:
+            self.run_with(scheduler, alive=lambda pid: self.fail("nothing to ask about"))
+        self.assertIn("logged on", str(ctx.exception))
+        self.assertGreaterEqual(self.clock.now, 15.0)
+        self.assertEqual(scheduler.verbs()[-2:], ["/End", "/Delete"])
+        self.assertEqual(self.leftovers(), [])
 
 
 if __name__ == "__main__":

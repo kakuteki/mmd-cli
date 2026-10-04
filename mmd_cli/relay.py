@@ -133,14 +133,30 @@ def task_command(interpreter, job_path):
     return '"%s" -m mmd_cli --job "%s"' % (interpreter, job_path)
 
 
+def _write_whole(path, text):
+    """write a marker file in one step (to .part, then moved) so a reader never sees it half written"""
+    with open(path + ".part", "w") as f:
+        f.write(text)
+    os.replace(path + ".part", path)
+
+
+def _read_code(exit_path, retries=10):
+    """the child's exit code; an empty file is read again after a short wait and is never taken as 0"""
+    for _ in range(retries):
+        with open(exit_path) as f:
+            text = f.read().strip()
+        if text:
+            return int(text)
+        time.sleep(0.05)
+    raise ValueError("%s stayed empty" % exit_path)
+
+
 def collect(out_path):
     """the child's JSON and exit code, or an error when it left nothing behind"""
-    exit_path = out_path + ".exit"
     try:
         with open(out_path, encoding="utf-8") as f:
             payload = json.load(f)
-        with open(exit_path) as f:
-            code = int(f.read().strip() or 0)
+        code = _read_code(out_path + ".exit")
     except (OSError, ValueError) as exc:
         return {"ok": False, "error": {"type": "RelayError",
                                        "message": "the relayed command left no result (%s)" % exc}}, 1
@@ -233,6 +249,5 @@ def run_job(job_path, main):
         with open(job.out_path, "w", encoding="utf-8") as f:
             json.dump({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, f)
         code = 1
-    with open(job.out_path + ".exit", "w") as f:
-        f.write(str(code))
+    _write_whole(job.out_path + ".exit", str(code))
     return code
