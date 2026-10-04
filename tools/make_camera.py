@@ -31,12 +31,35 @@ How the strength of the motion is measured (analyze):
   the state becomes high when the trend rises to the upper threshold and low again when it falls to
   the lower one (hysteresis, so a beat does not flip it).  The frames where the state flips are the
   candidate cuts; the strength of a cut is the jump of the trend across it.
+
+How the shots are cut (cut_shots) and what each one does (plan_shots):
+
+* From the start of the dance, a shot ends at the strongest candidate cut that keeps it between
+  --min-shot and --max-shot frames (and leaves at least --min-shot for the rest); when there is none
+  in reach, what remains is divided evenly into as few shots of at most --max-shot as possible, one at
+  a time, so a stretch without a clear change still changes camera now and then.  The last shot ends
+  on the last frame of the dance.  --max-shot must be at least twice --min-shot, or such a division
+  is not always possible.
+* A shot is a peak when at least 60 % of its frames lie in high sections, a valley when at least 60 %
+  lie in low ones, and mid otherwise.
+* Each shot is one of four kinds, never the same as the shot before: a push in (distance 32 to 26,
+  height 12), a pull out (30 to 42, height 13), an orbit (distance 34, Y angle -15 to +15 or back,
+  height 12) or a low angle (height 7, X angle -6 which looks up, distance 30 to 28).  A peak is shot
+  from 6 further away and its orbit swings 22 degrees; valleys lean to push ins (weight 3 of 6),
+  peaks to pull outs and orbits.  The choice is drawn with the seed, so the same seed repeats it;
+  orbits alternate their direction.  The view angle is 30 and the values are held inside
+  DISTANCE_RANGE, HEIGHT_RANGE, ANGLE_X_RANGE and ANGLE_Y_RANGE (Z stays 0).
+* The look-at point (the camera's pos) follows the dancer: the x and z of the center bone (with the
+  parents that carry it, 全ての親 and グルーブ) interpolated linearly between its keys, at the shot's
+  height.  Only the first and the last frame of a shot look at the center; MMD moves the point in a
+  straight line between them, so the camera does not twitch with every step.
 """
 import dataclasses
 import math
 import os
+import random
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -45,6 +68,32 @@ FPS = 30
 WINDOW = 30                      # frames: the strength of a frame is the motion of the second around it
 TREND_WINDOW = 90                # frames: sections are found on a 3 second moving average of the strength
 LOW_PERCENTILE, HIGH_PERCENTILE = 35, 65
+MIN_SHOT, MAX_SHOT = 180, 480    # frames: 6 to 16 seconds
+LEVEL_SHARE = 0.6                # of a shot's frames in high (low) sections to call it a peak (valley)
+
+TYPES = ("push_in", "pull_out", "orbit", "low")
+# distance (start, end), height, X angle, Y angle (start, end): the numbers the MMD window shows
+SHOT_VALUES = {
+    "push_in": {"distance": (32.0, 26.0), "height": 12.0, "x": 0.0, "y": (0.0, 0.0)},
+    "pull_out": {"distance": (30.0, 42.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
+    "orbit": {"distance": (34.0, 34.0), "height": 12.0, "x": 0.0, "y": (-15.0, 15.0)},
+    "low": {"distance": (30.0, 28.0), "height": 7.0, "x": -6.0, "y": (0.0, 0.0)},
+}
+PEAK_DISTANCE_ADD = 6.0
+PEAK_ORBIT_SWING = 22.0
+TYPE_WEIGHTS = {
+    "valley": {"push_in": 3, "pull_out": 1, "orbit": 1, "low": 1},
+    "peak": {"push_in": 1, "pull_out": 2, "orbit": 2, "low": 1},
+    "mid": {"push_in": 1, "pull_out": 1, "orbit": 1, "low": 1},
+}
+DISTANCE_RANGE = (24.0, 48.0)
+HEIGHT_RANGE = (7.0, 14.0)
+ANGLE_X_RANGE = (-10.0, 10.0)
+ANGLE_Y_RANGE = (-25.0, 25.0)
+FOV = 30
+S_CURVE = (64, 0, 64, 127)       # ease in and out on every channel (the curve the distributed camera uses too)
+
+CENTER_BONES = ("全ての親", "センター", "グルーブ")       # the chain that carries the whole body
 
 # (part of the bone name, weight): the first match wins; see the module docstring for the reasoning
 ROTATION_WEIGHTS = (
@@ -228,6 +277,159 @@ def analyze(motion):
 
 def _r(value):
     return round(float(value), 4) + 0.0
+
+
+# ---- the shots ------------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class Shot:
+    index: int
+    start: int
+    end: int                     # both frames included; the next shot starts at end + 1
+    kind: str
+    level: str                   # "peak", "valley" or "mid"
+    distance: Tuple[float, float]
+    height: float
+    rot: Tuple[Tuple[float, float, float], Tuple[float, float, float]]     # window degrees, start and end
+    pos: Tuple[Tuple[float, float, float], Tuple[float, float, float]]     # the look-at point, start and end
+    intensity: Dict[str, float]  # mean and max of the strength over the shot
+    cut: str                     # how the end was chosen: "section", "even" or "end"
+
+
+def check_limits(min_shot, max_shot):
+    if min_shot < 2:
+        raise ValueError("--min-shot needs at least 2 frames, not %r" % (min_shot,))
+    if max_shot < 2 * min_shot:
+        raise ValueError("--max-shot (%r) must be at least twice --min-shot (%r), or a stretch between one and two "
+                         "shots long could not be divided" % (max_shot, min_shot))
+
+
+def cut_shots(analysis, min_shot=MIN_SHOT, max_shot=MAX_SHOT):
+    """(start, end, how) of every shot; see the module docstring"""
+    check_limits(min_shot, max_shot)
+    last = analysis.last
+    strength = {b.frame: b.strength for b in analysis.boundaries}
+    shots, start = [], 0
+    while start <= last:
+        remaining = last - start + 1
+        # a cut must leave at least min_shot frames for the rest of the dance
+        longest = min(max_shot, remaining - min_shot)
+        candidates = [f for f in strength if start + min_shot <= f <= start + longest]
+        if candidates:
+            # the strongest change; the earliest when equal
+            frame = min(candidates, key=lambda f: (-strength[f], f))
+            end, how = frame - 1, "section"
+        elif remaining <= max_shot:
+            end, how = last, "end"
+        else:
+            pieces = -(-remaining // max_shot)
+            end, how = start + -(-remaining // pieces) - 1, "even"
+        shots.append((start, end, how))
+        start = end + 1
+    return shots
+
+
+def level_of(analysis, start, end):
+    """peak / valley / mid by the share of the shot's frames in high and low sections"""
+    frames = end - start + 1
+    high = sum(min(end, s.end) - max(start, s.start) + 1 for s in analysis.sections
+               if s.level == "high" and s.start <= end and s.end >= start)
+    if high >= LEVEL_SHARE * frames:
+        return "peak"
+    if frames - high >= LEVEL_SHARE * frames:
+        return "valley"
+    return "mid"
+
+
+def pick_kind(rng, previous, level):
+    """a weighted draw among the kinds other than the previous one, from rng.random() alone (the
+    choice is reproducible from the seed, whatever the Python version)"""
+    candidates = [t for t in TYPES if t != previous]
+    weights = [TYPE_WEIGHTS[level][t] for t in candidates]
+    r = rng.random() * sum(weights)
+    for kind, weight in zip(candidates, weights):
+        r -= weight
+        if r < 0:
+            return kind
+    return candidates[-1]
+
+
+def _clamp(value, bounds):
+    return min(max(float(value), bounds[0]), bounds[1])
+
+
+def shot_values(kind, level, orbit_sign):
+    """distance (start, end), height, rot (start, end) of a shot, held inside the ranges"""
+    values = SHOT_VALUES[kind]
+    add = PEAK_DISTANCE_ADD if level == "peak" else 0.0
+    distance = tuple(_clamp(d + add, DISTANCE_RANGE) for d in values["distance"])
+    height = _clamp(values["height"], HEIGHT_RANGE)
+    x = _clamp(values["x"], ANGLE_X_RANGE)
+    if kind == "orbit":
+        swing = PEAK_ORBIT_SWING if level == "peak" else abs(values["y"][1])
+        y = (-swing * orbit_sign, swing * orbit_sign)
+    else:
+        y = values["y"]
+    rot = tuple((x, _clamp(v, ANGLE_Y_RANGE), 0.0) for v in y)
+    return distance, height, rot
+
+
+# ---- following the dancer -------------------------------------------------------------------
+
+def center_track(motion):
+    """the keys of the bones that carry the body, each as (frames, positions) sorted by frame"""
+    tracks = tracks_of(motion)
+    out = []
+    for name in CENTER_BONES:
+        keys = tracks.get(name)
+        if keys:
+            out.append(([k.frame for k in keys], [k.position for k in keys]))
+    return out
+
+
+def _position_at(frames, positions, frame):
+    """linear between the keys; held at the first (last) key before (after) them"""
+    i = 0
+    while i < len(frames) and frames[i] <= frame:
+        i += 1
+    if i == 0:
+        return positions[0]
+    if i == len(frames) or frames[i - 1] == frame:
+        return positions[i - 1]
+    f0, f1 = frames[i - 1], frames[i]
+    t = (frame - f0) / float(f1 - f0)
+    return tuple(a + (b - a) * t for a, b in zip(positions[i - 1], positions[i]))
+
+
+def look_at(track, frame, height):
+    """the point the camera looks at: the dancer's x and z, at `height`"""
+    x = z = 0.0
+    for frames, positions in track:
+        px, _, pz = _position_at(frames, positions, frame)
+        x += px
+        z += pz
+    return (x + 0.0, float(height), z + 0.0)
+
+
+def plan_shots(motion, min_shot=MIN_SHOT, max_shot=MAX_SHOT, seed=0, analysis=None):
+    """the shots of the camera for `motion`: where they are cut, what each does, where it looks"""
+    if analysis is None:
+        analysis = analyze(motion)
+    track = center_track(motion)
+    rng = random.Random(seed)
+    shots, previous, orbit_sign = [], None, 1
+    for index, (start, end, how) in enumerate(cut_shots(analysis, min_shot, max_shot)):
+        level = level_of(analysis, start, end)
+        kind = pick_kind(rng, previous, level)
+        distance, height, rot = shot_values(kind, level, orbit_sign)
+        if kind == "orbit":
+            orbit_sign = -orbit_sign
+        values = analysis.intensity[start:end + 1]
+        shots.append(Shot(index, start, end, kind, level, distance, height, rot,
+                          (look_at(track, start, height), look_at(track, end, height)),
+                          {"mean": sum(values) / len(values), "max": max(values)}, how))
+        previous = kind
+    return shots
 
 
 def analysis_json(analysis):

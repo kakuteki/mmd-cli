@@ -153,6 +153,164 @@ class WeightsTest(unittest.TestCase):
         self.assertEqual(intensity[170], 0.0)           # nothing moves after frame 100 (the window ends before 170)
 
 
+def still_dance(last):
+    return vmd.Motion(model_name="m", bones=[bone("センター", 0), bone("センター", last)])
+
+
+def length(shot):
+    return shot.end - shot.start + 1
+
+
+class ShotLengthTest(unittest.TestCase):
+    def test_shots_cover_the_dance_in_order_within_the_limits(self):
+        shots = make_camera.plan_shots(synthetic_dance(), seed=1)
+        self.assertEqual(shots[0].start, 0)
+        self.assertEqual(shots[-1].end, LAST)
+        for before, after in zip(shots, shots[1:]):
+            self.assertEqual(after.start, before.end + 1)
+        for s in shots:
+            self.assertTrue(make_camera.MIN_SHOT <= length(s) <= make_camera.MAX_SHOT, (s.start, s.end))
+        self.assertGreaterEqual(len(shots), 4)                       # 1500 frames, at most 480 each
+        self.assertEqual([s.index for s in shots], list(range(len(shots))))
+
+    def test_a_cut_falls_on_the_strongest_boundary_in_reach(self):
+        dance = synthetic_dance()
+        analysis = make_camera.analyze(dance)
+        shots = make_camera.plan_shots(dance, analysis=analysis)
+        strongest = max(analysis.boundaries, key=lambda b: b.strength).frame
+        self.assertIn(strongest, [s.start for s in shots])
+        before = [s for s in shots if s.end == strongest - 1][0]
+        self.assertEqual(before.cut, "section")
+        self.assertIn(shots[-1].cut, ("end",))
+
+    def test_a_dance_without_boundaries_is_cut_evenly(self):
+        shots = make_camera.plan_shots(still_dance(5999))
+        self.assertEqual(shots[-1].end, 5999)
+        for s in shots:
+            self.assertTrue(make_camera.MIN_SHOT <= length(s) <= make_camera.MAX_SHOT, (s.start, s.end))
+        self.assertEqual({s.cut for s in shots[:-1]}, {"even"})
+        self.assertLessEqual(max(length(s) for s in shots) - min(length(s) for s in shots), 1)
+
+    def test_other_limits_and_their_checks(self):
+        shots = make_camera.plan_shots(synthetic_dance(), min_shot=90, max_shot=200)
+        for s in shots:
+            self.assertTrue(90 <= length(s) <= 200, (s.start, s.end))
+        self.assertGreaterEqual(len(shots), 8)
+        for bad in (dict(min_shot=200, max_shot=300), dict(min_shot=1, max_shot=10), dict(min_shot=0, max_shot=0)):
+            with self.assertRaises(ValueError, msg=bad):
+                make_camera.plan_shots(synthetic_dance(), **bad)
+
+    def test_a_dance_shorter_than_a_shot_is_one_shot(self):
+        shots = make_camera.plan_shots(still_dance(100))
+        self.assertEqual([(s.start, s.end) for s in shots], [(0, 100)])
+
+
+class ShotTypeTest(unittest.TestCase):
+    def plans(self, dance, seeds=range(10), **limits):
+        return [make_camera.plan_shots(dance, seed=seed, **limits) for seed in seeds]
+
+    def test_the_same_type_never_follows_itself(self):
+        for shots in self.plans(synthetic_dance()) + self.plans(still_dance(5999), seeds=range(3)):
+            for s in shots:
+                self.assertIn(s.kind, make_camera.TYPES)
+            for before, after in zip(shots, shots[1:]):
+                self.assertNotEqual(before.kind, after.kind, [s.kind for s in shots])
+
+    def test_values_stay_inside_the_ranges(self):
+        plans = self.plans(synthetic_dance()) + self.plans(synthetic_dance(), seeds=range(3), min_shot=90, max_shot=200)
+        for shots in plans:
+            for s in shots:
+                for d in s.distance:
+                    self.assertTrue(make_camera.DISTANCE_RANGE[0] <= d <= make_camera.DISTANCE_RANGE[1], s)
+                self.assertTrue(make_camera.HEIGHT_RANGE[0] <= s.height <= make_camera.HEIGHT_RANGE[1], s)
+                for x, y, z in s.rot:
+                    self.assertTrue(make_camera.ANGLE_X_RANGE[0] <= x <= make_camera.ANGLE_X_RANGE[1], s)
+                    self.assertTrue(make_camera.ANGLE_Y_RANGE[0] <= y <= make_camera.ANGLE_Y_RANGE[1], s)
+                    self.assertEqual(z, 0.0)
+
+    def test_each_type_has_its_values_and_peaks_pull_back(self):
+        want = {"push_in": (32.0, 26.0), "pull_out": (30.0, 42.0), "orbit": (34.0, 34.0), "low": (30.0, 28.0)}
+        heights = {"push_in": 12.0, "pull_out": 13.0, "orbit": 12.0, "low": 7.0}
+        seen = set()
+        for shots in self.plans(synthetic_dance(), seeds=range(20)):
+            for s in shots:
+                seen.add((s.kind, s.level))
+                add = 6.0 if s.level == "peak" else 0.0
+                self.assertEqual(s.distance, (want[s.kind][0] + add, want[s.kind][1] + add), s)
+                self.assertEqual(s.height, heights[s.kind], s)
+                self.assertEqual(s.rot[0][0], -6.0 if s.kind == "low" else 0.0)
+                self.assertEqual(s.rot[1][0], s.rot[0][0])
+                if s.kind == "orbit":
+                    swing = 22.0 if s.level == "peak" else 15.0
+                    self.assertEqual(sorted((s.rot[0][1], s.rot[1][1])), [-swing, swing], s)
+                else:
+                    self.assertEqual((s.rot[0][1], s.rot[1][1]), (0.0, 0.0))
+        self.assertTrue({k for k, lv in seen} >= set(make_camera.TYPES))
+        self.assertIn(("orbit", "peak"), seen)
+
+    def test_the_wild_part_is_a_peak_and_the_quiet_parts_are_valleys(self):
+        dance = synthetic_dance()
+        analysis = make_camera.analyze(dance)
+        shots = make_camera.plan_shots(dance, analysis=analysis)
+        strongest = max(analysis.boundaries, key=lambda b: b.strength).frame
+        wild = [s for s in shots if s.start == strongest][0]
+        self.assertEqual(wild.level, "peak")
+        self.assertEqual(shots[0].level, "valley")
+        self.assertEqual(shots[-1].level, "valley")
+        self.assertGreater(wild.intensity["mean"], 5 * shots[0].intensity["mean"])
+        self.assertGreaterEqual(wild.intensity["max"], wild.intensity["mean"])
+
+    def test_valleys_lean_to_push_ins_and_peaks_away_from_them(self):
+        by_level = {"peak": [], "valley": []}
+        for shots in self.plans(synthetic_dance(), seeds=range(40)):
+            for s in shots:
+                if s.level in by_level:
+                    by_level[s.level].append(s.kind)
+        share = {lv: kinds.count("push_in") / float(len(kinds)) for lv, kinds in by_level.items()}
+        self.assertGreater(share["valley"], share["peak"] + 0.15, share)
+
+    def test_orbits_alternate_their_direction(self):
+        directions = []
+        for shots in self.plans(still_dance(11999), seeds=range(2)):
+            directions.append([1 if s.rot[1][1] > s.rot[0][1] else -1 for s in shots if s.kind == "orbit"])
+        self.assertTrue(all(len(d) >= 3 for d in directions), directions)
+        for d in directions:
+            for before, after in zip(d, d[1:]):
+                self.assertEqual(after, -before)
+
+
+class LookAtTest(unittest.TestCase):
+    def test_the_look_at_follows_the_center_at_both_ends_of_a_shot(self):
+        for shots in (make_camera.plan_shots(synthetic_dance(), seed=s) for s in range(3)):
+            for s in shots:
+                for frame, pos in ((s.start, s.pos[0]), (s.end, s.pos[1])):
+                    x, z = center_at(frame)
+                    self.assertAlmostEqual(pos[0], x, places=5, msg=(s.start, s.end, frame))
+                    self.assertAlmostEqual(pos[2], z, places=5, msg=(s.start, s.end, frame))
+                    self.assertEqual(pos[1], s.height)
+        shots = make_camera.plan_shots(synthetic_dance())
+        self.assertEqual(shots[0].pos[0][0], 0.0)
+        self.assertAlmostEqual(shots[-1].pos[1][0], CENTER_X_END, places=5)
+
+    def test_the_parents_of_the_center_are_added(self):
+        dance = synthetic_dance()
+        dance.bones += [bone("全ての親", 0, pos=(10, 0, 0)), bone("全ての親", LAST, pos=(10, 0, 0)),
+                        bone("グルーブ", 0, pos=(0, 1, 1)), bone("グルーブ", LAST, pos=(0, 1, 1))]
+        shots = make_camera.plan_shots(dance)
+        self.assertAlmostEqual(shots[0].pos[0][0], 10.0, places=6)
+        self.assertAlmostEqual(shots[0].pos[0][2], 1.0, places=6)
+        self.assertAlmostEqual(shots[-1].pos[1][0], 10.0 + CENTER_X_END, places=5)
+        self.assertEqual(shots[0].pos[0][1], shots[0].height)         # the parents' height is not followed
+
+    def test_before_the_first_and_after_the_last_center_key(self):
+        track = make_camera.center_track(vmd.Motion(model_name="m", bones=[
+            bone("センター", 100, pos=(1, 0, 0)), bone("センター", 200, pos=(3, 0, -2)), bone("右腕", 0), bone("右腕", 300)]))
+        self.assertEqual(make_camera.look_at(track, 0, 12.0), (1.0, 12.0, 0.0))
+        self.assertEqual(make_camera.look_at(track, 150, 12.0), (2.0, 12.0, -1.0))
+        self.assertEqual(make_camera.look_at(track, 300, 9.0), (3.0, 9.0, -2.0))
+        self.assertEqual(make_camera.look_at(make_camera.center_track(vmd.Motion(model_name="m")), 5, 7.0), (0.0, 7.0, 0.0))
+
+
 class AnalysisJsonTest(unittest.TestCase):
     def test_the_json_is_plain_data_with_the_definitions(self):
         import json
