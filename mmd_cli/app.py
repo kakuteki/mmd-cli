@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import struct
+import threading
 import time
 
 from . import guard, mathutil, scene, win32
@@ -32,6 +33,12 @@ def home_dir():
     if not base:
         base = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "mmd-cli")
     base = os.path.abspath(base)        # also turns forward slashes into the ones MMD's file dialogs accept
+    try:
+        _require_ansi(base)             # the working copies and key files written here must reach MMD
+    except MmdError:
+        raise MmdError("the working folder %s has characters outside the system code page, so MMD could not "
+                       "open the files kept there: set MMD_CLI_HOME to a plain path"
+                       % base.encode("ascii", "backslashreplace").decode("ascii"))
     os.makedirs(base, exist_ok=True)
     return base
 
@@ -53,10 +60,55 @@ def load_state():
 
 def save_state(state):
     state["projects"] = {pid: rec for pid, rec in state["projects"].items() if win32.process_alive(int(pid))}
-    tmp = _state_path() + ".tmp"
+    tmp = "%s.%d-%d.tmp" % (_state_path(), os.getpid(), threading.get_ident())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, _state_path())
+    for attempt in range(100):
+        try:
+            os.replace(tmp, _state_path())
+            return
+        except PermissionError:         # somebody is reading it at this very moment
+            if attempt == 99:
+                raise
+            time.sleep(0.01)
+
+
+@contextlib.contextmanager
+def _state_lock():
+    """one writer at a time, across processes: a lock file that only one can create"""
+    lock = _state_path() + ".lock"
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except (FileExistsError, PermissionError):       # held, or being removed by its holder right now
+            try:
+                if time.time() - os.path.getmtime(lock) > 10.0:     # left behind by a process that died
+                    os.remove(lock)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise MmdError("the state file is locked by another mmd command: %s" % lock)
+            time.sleep(0.005)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def update_state(change):
+    """read, change and write the state file under the lock, so that two commands do not lose each other's entries"""
+    with _state_lock():
+        state = load_state()
+        change(state)
+        save_state(state)
+    return state
 
 
 def _same_path(a, b):
@@ -99,6 +151,31 @@ def check_output_file(path):
     return _require_ansi(os.path.abspath(path))
 
 
+@contextlib.contextmanager
+def keeping_the_old_file(path):
+    """MMD is about to write `path`.  A file already there is moved aside first (MMD would otherwise ask
+    about overwriting it) and comes back when the new one does not get written; on success it is dropped."""
+    aside = None
+    if os.path.exists(path):
+        aside = path + ".mmdcli-old"
+        if os.path.exists(aside):
+            os.remove(aside)
+        os.replace(path, aside)
+    try:
+        yield
+    except BaseException:
+        if aside is not None:
+            if os.path.exists(path):
+                os.remove(path)                  # whatever was left of the attempt
+            os.replace(aside, path)
+        raise
+    if aside is not None:
+        if os.path.exists(path):
+            os.remove(aside)
+        else:
+            os.replace(aside, path)
+
+
 # ---- finding and starting MMD ---------------------------------------------------------------
 
 def instances():
@@ -118,29 +195,41 @@ def launch(exe, timeout=90.0, headless=False):
     pid = win32.launch_detached(exe, show=win32.SW_HIDE if headless else win32.SW_SHOWMINNOACTIVE)
     deadline = time.monotonic() + timeout
     hwnd = None
+    said = []
     while True:
         mains = win32.find_windows(pid=pid, cls=MAIN_WINDOW_CLASS)
-        pending = guard.open_dialogs(pid, mains[0] if mains else None)
-        if pending:
-            raise DialogPending(pending)
+        for dialog in guard.open_dialogs(pid, mains[0] if mains else None):
+            # MMD may complain while starting (an effect it could not load, a Direct3D device it could not
+            # create).  A notice is closed and remembered; a question cannot be answered blind, and a process
+            # stuck in one before it has a main window could not be reached afterwards, so it is ended
+            button = next((cid for cid in (1, 2) if dialog.find_button(cid) is not None), None)
+            if button is None or dialog.find_button(6) is not None:
+                win32.terminate_process(pid)
+                raise MmdError("MMD (pid %d) stopped at a dialog while starting and was ended: %s: %s"
+                               % (pid, dialog.title, dialog.message))
+            guard.click(dialog, button)
+            said.append(dict(dialog.to_json(), action="ok"))
         if mains:
             hwnd = mains[0]
             if (len(win32.child_windows(hwnd)) >= CONTROL_COUNT
                     and win32.send(hwnd, win32.WM_NULL, timeout_ms=300) is not None):
                 break
         if not win32.process_alive(pid):
-            raise MmdError("MMD exited right after it was started")
+            raise MmdError("MMD exited right after it was started%s"
+                           % ((": " + " / ".join(d["message"] for d in said)) if said else ""))
         if time.monotonic() > deadline:
             raise OperationTimeout("MMD did not become ready within %.0f s" % timeout)
         time.sleep(0.1)
     mmd = Mmd(pid, hwnd)
+    mmd.events.extend(said)
     mmd.wait_quiet()
     if headless and win32.is_visible(hwnd):
         mmd.hide()
-    state = load_state()
-    state["current"] = pid
-    state["exe"] = exe
-    save_state(state)
+
+    def remember(state):
+        state["current"] = pid
+        state["exe"] = exe
+    update_state(remember)
     return mmd
 
 
@@ -153,6 +242,7 @@ class Mmd:
         self.in_place = False
         self.events = []        # dialogs that were answered automatically, oldest first
         self._controls = None
+        self._parking = None
 
     @classmethod
     def attach(cls, pid=None):
@@ -201,13 +291,40 @@ class Mmd:
             raise MmdError("MMD is playing: stop it first with  mmd stop")
 
     def _run(self, trigger, handlers=None, timeout=None, done=None):
+        with self._parked() as hidden:
+            try:
+                events = self.guard.run(trigger, handlers, timeout or self.timeout, done, keep_hidden=hidden)
+            except DialogPending as exc:
+                self._keep(exc.events)
+                raise
+            self._keep(events)
+            return events
+
+    @contextlib.contextmanager
+    def _parked(self):
+        """a hidden instance must stay off the screen even when MMD shows its window on its own (it does so
+        when it starts writing an AVI, and an asynchronous hide only takes effect once MMD is idle again, a
+        second later).  For the outermost operation the hidden window is moved off-screen first, so that
+        whatever MMD shows appears nowhere, and is put back, hidden, afterwards."""
+        outermost = self._parking is None
+        if outermost:
+            hidden = not win32.is_visible(self.hwnd)
+            self._parking = {"hidden": hidden, "rect": win32.window_rect(self.hwnd) if hidden else None}
+            if hidden:
+                win32.move_offscreen(self.hwnd)
         try:
-            events = self.guard.run(trigger, handlers, timeout or self.timeout, done)
-        except DialogPending as exc:
-            self._keep(exc.events)
-            raise
-        self._keep(events)
-        return events
+            yield self._parking["hidden"]
+        finally:
+            if outermost:
+                parking, self._parking = self._parking, None
+                if parking["hidden"]:
+                    if win32.is_visible(self.hwnd):
+                        win32.hide(self.hwnd)
+                        self._gone(self.hwnd, 5.0)
+                        self.events.append({"kind": "main_window", "title": win32.get_text(self.hwnd, timeout_ms=200),
+                                            "message": "MMD showed its main window on its own", "buttons": [],
+                                            "action": "hidden again"})
+                    win32.move_window(self.hwnd, *parking["rect"][:2])
 
     def _keep(self, events):
         self.events.extend(e for e in events if e.get("action") != "left open")
@@ -341,6 +458,30 @@ class Mmd:
     @staticmethod
     def _not_written(path, said):
         return MmdError("MMD did not write %s%s" % (path, (": " + " / ".join(said)) if said else ""))
+
+    @staticmethod
+    def _edit(dialog, cid):
+        """the hwnd of an edit box of a dialog, or None while the dialog is not built yet"""
+        control = dialog.find_control(cid, "Edit")
+        return None if control is None else control["hwnd"]
+
+    @staticmethod
+    def _filled(dialog, *cids):
+        """True once MMD has put its own values into these boxes: ours must go in after that, not before"""
+        for cid in cids:
+            hwnd = Mmd._edit(dialog, cid)
+            if hwnd is None or not win32.get_text(hwnd).strip():
+                return False
+        return True
+
+    @staticmethod
+    def _put(dialog, cid, value):
+        """write a value into an edit box of a dialog; False when the box is missing or did not take it"""
+        hwnd = Mmd._edit(dialog, cid)
+        if hwnd is None:
+            return False
+        win32.set_text(hwnd, str(value))
+        return win32.get_text(hwnd) == str(value)
 
     @staticmethod
     def _press(button, action, title=None):
@@ -572,12 +713,12 @@ class Mmd:
         return load_state()["projects"].get(str(self.pid))
 
     def _set_record(self, record):
-        state = load_state()
-        if record is None:
-            state["projects"].pop(str(self.pid), None)
-        else:
-            state["projects"][str(self.pid)] = record
-        save_state(state)
+        def change(state):
+            if record is None:
+                state["projects"].pop(str(self.pid), None)
+            else:
+                state["projects"][str(self.pid)] = record
+        update_state(change)
 
     def forget_project(self):
         self._set_record(None)
@@ -588,12 +729,11 @@ class Mmd:
         return os.path.join(folder, "%d-%d.pmm" % (self.pid, int(time.time() * 1000)))
 
     def _save_as(self, path):
-        if os.path.exists(path):
-            os.remove(path)
         said = []
-        self.menu(Menu.SAVE_AS, self._file_handlers(path, said))
-        if not os.path.exists(path):
-            raise self._not_written(path, said)
+        with keeping_the_old_file(path):
+            self.menu(Menu.SAVE_AS, self._file_handlers(path, said))
+            if not os.path.exists(path):
+                raise self._not_written(path, said)
 
     def _save_project(self, allow_foreign=False):
         """save the project MMD has open and return the file that now holds the current state"""
@@ -626,6 +766,17 @@ class Mmd:
 
     def save(self, path=None):
         self.require_ready()
+        if path:
+            target = check_output_file(path)
+            current = self.state()["project_path"]
+            record = self._record()
+            ours = record is not None and current is not None and _same_path(current, record["work"])
+            if current is not None and not ours and not _same_path(target, current):
+                # a project opened by hand is to go somewhere else: MMD's own "save as".  The file it had
+                # open is not written (without a path, or with its own path, the overwrite is what was asked)
+                self._save_as(target)
+                self._set_record(None)
+                return {"path": target, "bytes": os.path.getsize(target)}
         source = self._save_project(allow_foreign=True)
         record = self._record()
         if record and _same_path(source, record["work"]):
@@ -633,7 +784,9 @@ class Mmd:
             if not target:
                 raise MmdError("this project has no file yet: give one with  mmd save FILE.pmm")
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copyfile(source, target)
+            part = target + ".part"
+            shutil.copyfile(source, part)
+            os.replace(part, target)
             record["origin"] = target
             self._set_record(record)
             return {"path": target, "bytes": os.path.getsize(target)}
@@ -810,12 +963,11 @@ class Mmd:
             raise MmdError("the file name must end with %s" % extension)
         self.require_ready()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if os.path.exists(path):
-            os.remove(path)                      # MMD would ask before overwriting; we do not want the question
         said = []
-        self.menu(menu_id, self._file_handlers(path, said), done=self._written(path))
-        if not os.path.exists(path):
-            raise self._not_written(path, said)
+        with keeping_the_old_file(path):
+            self.menu(menu_id, self._file_handlers(path, said), done=self._written(path))
+            if not os.path.exists(path):
+                raise self._not_written(path, said)
         return path
 
     def save_motion(self, path):
@@ -853,8 +1005,10 @@ class Mmd:
         found = []
 
         def on_settings(dialog):
-            combo = dialog.find_control(AviDialog.CODEC, "ComboBox")["hwnd"]
-            found.extend(win32.combo_items(combo))
+            control = dialog.find_control(AviDialog.CODEC, "ComboBox")
+            if control is None:
+                return False
+            found.extend(win32.combo_items(control["hwnd"]))
             guard.click(dialog, 2)
             return "read and cancelled"
 
@@ -949,8 +1103,10 @@ class Mmd:
         size = {}
 
         def on_size(dialog):
-            size["value"] = [int(win32.get_text(dialog.find_control(OutputSizeDialog.WIDTH, "Edit")["hwnd"])),
-                             int(win32.get_text(dialog.find_control(OutputSizeDialog.HEIGHT, "Edit")["hwnd"]))]
+            if not self._filled(dialog, OutputSizeDialog.WIDTH, OutputSizeDialog.HEIGHT):
+                return False
+            size["value"] = [int(win32.get_text(self._edit(dialog, OutputSizeDialog.WIDTH))),
+                             int(win32.get_text(self._edit(dialog, OutputSizeDialog.HEIGHT)))]
             guard.click(dialog, 2)
             return "read"
 
@@ -961,8 +1117,11 @@ class Mmd:
         self.require_ready()
 
         def on_size(dialog):
-            win32.set_text(dialog.find_control(OutputSizeDialog.WIDTH, "Edit")["hwnd"], str(int(width)))
-            win32.set_text(dialog.find_control(OutputSizeDialog.HEIGHT, "Edit")["hwnd"], str(int(height)))
+            if not self._filled(dialog, OutputSizeDialog.WIDTH, OutputSizeDialog.HEIGHT):
+                return False
+            if not (self._put(dialog, OutputSizeDialog.WIDTH, int(width))
+                    and self._put(dialog, OutputSizeDialog.HEIGHT, int(height))):
+                return False
             guard.click(dialog, 1)
             return "size entered"
 
@@ -992,12 +1151,10 @@ class Mmd:
             raise MmdError("image file must end with one of %s" % ", ".join(_IMAGE_EXTENSIONS))
         self.require_ready()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if os.path.exists(path):
-            os.remove(path)
         if size is not None:
             self.set_output_size(*size)
         handlers = dict(self._file_handlers(path), recording=lambda dialog: "recording")
-        with self._camera_mode():       # the picture is taken through the scene camera, not the editing view
+        with keeping_the_old_file(path), self._camera_mode():   # the picture is taken through the scene camera
             self.menu(Menu.IMAGE_OUT, handlers, timeout=timeout, done=self._written(path))
         return {"path": path, "size": _image_size(path), "bytes": os.path.getsize(path), "frame": self.frame()}
 
@@ -1010,18 +1167,21 @@ class Mmd:
             raise ValueError("need 0 <= start <= end")
         self.require_ready()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        if os.path.exists(path):
-            os.remove(path)
         if timeout is None:
             timeout = max(self.timeout, 60.0 + 2.0 * (end - start + 1))
         used = {}
         problem = []
 
-        def put(dialog, cid, value):
-            win32.set_text(dialog.find_control(cid, "Edit")["hwnd"], str(value))
+        if size is not None:
+            self.set_output_size(*size)     # the AVI is written at the output size; the dialog's own boxes only show it
 
         def on_settings(dialog):
-            combo = dialog.find_control(AviDialog.CODEC, "ComboBox")["hwnd"]
+            if not self._filled(dialog, AviDialog.WIDTH, AviDialog.HEIGHT, AviDialog.FPS):
+                return False                # MMD has not filled the dialog yet
+            control = dialog.find_control(AviDialog.CODEC, "ComboBox")
+            if control is None:
+                return False
+            combo = control["hwnd"]
             if codec is not None:
                 names = win32.combo_items(combo)
                 matches = [i for i, n in enumerate(names) if codec.lower() in n.lower()]
@@ -1032,12 +1192,9 @@ class Mmd:
                 win32.send(combo, win32.CB_SETCURSEL, matches[0])
                 win32.send(dialog.hwnd, win32.WM_COMMAND,
                            win32.command_wparam(AviDialog.CODEC, win32.CBN_SELCHANGE), combo)
-            if size is not None:
-                put(dialog, AviDialog.WIDTH, int(size[0]))
-                put(dialog, AviDialog.HEIGHT, int(size[1]))
-            put(dialog, AviDialog.FPS, int(fps))
-            put(dialog, AviDialog.FRAME_FROM, start)
-            put(dialog, AviDialog.FRAME_TO, end)
+            for cid, value in ((AviDialog.FPS, int(fps)), (AviDialog.FRAME_FROM, start), (AviDialog.FRAME_TO, end)):
+                if not self._put(dialog, cid, value):
+                    return False
             used["codec"] = win32.get_text(combo)
             guard.click(dialog, 1)
             return "settings entered"
@@ -1047,12 +1204,19 @@ class Mmd:
 
         written = self._written(path)
         handlers = dict(self._file_handlers(path), avi_settings=on_settings, recording=lambda dialog: "recording")
-        with self._camera_mode():
+        with keeping_the_old_file(path), self._camera_mode():
             self.menu(Menu.AVI_OUT, handlers, timeout=timeout, done=done)
-        if problem:
-            raise MmdError(problem[0])
-        return {"path": path, "frames": end - start + 1, "fps": int(fps), "codec": used.get("codec"),
-                "bytes": os.path.getsize(path)}
+            if problem:
+                raise MmdError(problem[0])
+            written = _avi_info(path)
+            asked = {"frames": end - start + 1, "fps": int(fps)}
+            if size is not None:
+                asked["size"] = [int(size[0]), int(size[1])]
+            wrong = {k: (asked[k], written[k]) for k in asked if written.get(k) != asked[k]}
+            if wrong:
+                raise MmdError("MMD wrote the video differently from what was asked: %s"
+                               % ", ".join("%s asked %s, written %s" % (k, a, w) for k, (a, w) in wrong.items()))
+        return dict(written, path=path, codec=used.get("codec"), bytes=os.path.getsize(path))
 
     # ---- playback -----------------------------------------------------------------------------
 
@@ -1064,6 +1228,8 @@ class Mmd:
         self.require_ready()
         if (start is None) != (end is None):
             raise ValueError("give both --from and --to, or neither")
+        if wait and repeat:
+            raise ValueError("--wait never returns with --repeat")
         win32.set_text(self.ctl(Ctl.PLAY_FROM), "" if start is None else str(int(start)))
         win32.set_text(self.ctl(Ctl.PLAY_TO), "" if end is None else str(int(end)))
         self.set_check(Ctl.PLAY_FROM_CURRENT, from_current)
@@ -1073,8 +1239,6 @@ class Mmd:
         win32.post(button, win32.BM_CLICK)
         self._wait_for(self.playing, 10.0, "MMD did not start playing")
         if wait:
-            if repeat:
-                raise ValueError("--wait never returns with --repeat")
             self._wait_for(lambda: not self.playing(), timeout or self.timeout, "playback did not finish in time")
             self.wait_quiet()
         return {"playing": self.playing(), "frame": self.frame()}
@@ -1272,6 +1436,18 @@ class Mmd:
             state["current"] = None
         save_state(state)
         return {"pid": self.pid, "running": False}
+
+
+def _avi_info(path):
+    """size, frame count and frame rate from the main AVI header (avih); empty when the file is not an AVI"""
+    with open(path, "rb") as f:
+        head = f.read(4096)
+    at = head.find(b"avih")
+    if head[:4] != b"RIFF" or at < 0 or at + 48 > len(head):
+        return {}
+    micro_per_frame, frames = struct.unpack_from("<I", head, at + 8)[0], struct.unpack_from("<I", head, at + 8 + 16)[0]
+    width, height = struct.unpack_from("<II", head, at + 8 + 32)
+    return {"size": [width, height], "frames": frames, "fps": round(1e6 / micro_per_frame) if micro_per_frame else None}
 
 
 def _image_size(path):

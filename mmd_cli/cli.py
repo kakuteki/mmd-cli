@@ -37,11 +37,16 @@ def emit(payload, out_path, stream):
 def failure(exc):
     error = {"type": type(exc).__name__, "message": str(exc)}
     code = 1
+    answered = getattr(exc, "answered_dialogs", None)      # attached by run(): what was pressed before the failure
     dialogs = getattr(exc, "dialogs", None)
     if dialogs is not None:
         code = 3
         error["dialogs"] = [d.to_json() for d in dialogs]
         error["hint"] = "answer it with: mmd dialog click BUTTON   (or: mmd dialog close)"
+        if answered is None:
+            answered = [e for e in getattr(exc, "events", []) if e.get("action") != "left open"]
+    if answered:
+        error["answered_dialogs"] = list(answered)
     return {"ok": False, "error": error}, code
 
 
@@ -295,7 +300,7 @@ def dispatch_any(mmd, args):
             shield.pid = mmd.pid
             result = mmd.state()
         if shield.events:
-            result["foreground_restored"] = shield.events
+            result["foreground_restored"] = list(shield.events)
         result["_instance"] = mmd
         return result
     return _dispatch(mmd, args)
@@ -337,7 +342,7 @@ def _run_batch(args):
         results, code = batch.run_batch(entries, make, dispatch, build_parser(), stop_on_error=not args.keep_going)
     result = batch.summary(results, code)
     if shield.events:
-        result["foreground_restored"] = shield.events
+        result["foreground_restored"] = list(shield.events)
     return result
 
 
@@ -352,12 +357,14 @@ def run(args):
     with mmd.shield() as shield:
         try:
             result = dict(_dispatch(mmd, args))
-        finally:
-            answered = mmd.take_events()
+        except Exception as exc:
+            exc.answered_dialogs = mmd.take_events()        # what was pressed on the way is part of the report
+            raise
+        answered = mmd.take_events()
     if answered:
         result["answered_dialogs"] = answered
     if shield.events:
-        result["foreground_restored"] = shield.events
+        result["foreground_restored"] = list(shield.events)
     return result
 
 

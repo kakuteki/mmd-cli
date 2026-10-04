@@ -57,8 +57,9 @@ class FocusWatch(threading.Thread):
                 self.previous = "%s (pid %d)" % (self.win32.class_name(fg), self.win32.window_pid(fg))
             else:
                 self.previous = "no foreground window"
-            if self.win32.is_window(self.hwnd) and not self.win32.is_iconic(self.hwnd):
-                self.restored_hits.append(time.time())
+            if (self.win32.is_window(self.hwnd) and self.win32.is_visible(self.hwnd)
+                    and not self.win32.is_iconic(self.hwnd) and self.win32.window_rect(self.hwnd)[0] > -10000):
+                self.restored_hits.append((time.time(), self.current_test))   # on the screen itself
             self.samples += 1
             time.sleep(0.01)
 
@@ -73,7 +74,9 @@ def setUpModule():
     from mmd_cli import app, win32
     WORK = tempfile.mkdtemp(prefix="mmdcli-live-")
     os.environ["MMD_CLI_HOME"] = os.path.join(WORK, "home")
-    MMD = app.Mmd.attach(int(ATTACH)) if ATTACH else app.launch(EXE)
+    # the shared instance is started hidden: a person at this PC must not be tempted to open or
+    # close a "MikuMikuDance" taskbar button in the middle of the run (it happened, 2026-10-04)
+    MMD = app.Mmd.attach(int(ATTACH)) if ATTACH else app.launch(EXE, headless=True)
     WATCH = FocusWatch(win32, MMD.pid, MMD.hwnd)
     WATCH.start()
 
@@ -110,8 +113,9 @@ class Base(unittest.TestCase):
 
 
 class LaunchTest(Base):
-    def test_main_window_is_minimized(self):
-        self.assertTrue(MMD.state()["minimized"])
+    def test_main_window_is_off_the_screen_and_the_taskbar(self):
+        s = MMD.state()
+        self.assertTrue(s["minimized"] or not s["visible"])
 
     def test_state_of_an_empty_project(self):
         s = MMD.state()
@@ -628,22 +632,38 @@ class SampleProjectTest(Base):
 
 
 class HeadlessTest(unittest.TestCase):
-    """A second instance started with the window hidden: nothing on the taskbar, renders still work."""
+    """The shared instance runs hidden (nothing on the taskbar); a second instance started the default
+    way is a taskbar button that is never activated.  Both render, both can be hidden and shown."""
 
-    def test_headless_instance(self):
+    def test_hidden_instance_renders_and_stays_hidden(self):
         from mmd_cli import app, win32
-        m = app.launch(EXE, headless=True)
+        self.assertFalse(win32.is_visible(MMD.hwnd))
+        self.assertFalse(MMD.state()["visible"])
+        self.assertIn(MMD.pid, [i["pid"] for i in app.instances() if not i["visible"]])
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        r = MMD.render_image(out("headless.png"), size=(320, 180))
+        self.assertEqual(r["size"], [320, 180])
+        self.assertFalse(win32.is_visible(MMD.hwnd))                 # still hidden after a render
+        # MMD shows its window on its own when it starts writing an AVI: it must appear nowhere and end hidden
+        r = MMD.render_avi(out("headless.avi"), 0, 5, fps=30, size=(320, 180))
+        self.assertEqual(r["size"], [320, 180])
+        self.assertFalse(win32.is_visible(MMD.hwnd))
+        self.assertGreaterEqual(win32.window_rect(MMD.hwnd)[0], -100)      # back where it was, not parked
+        self.assertIn("hidden again", [e["action"] for e in MMD.take_events()])
+
+    def test_minimized_instance(self):
+        from mmd_cli import app, win32
+        m = app.launch(EXE)
         try:
-            self.assertFalse(win32.is_visible(m.hwnd))
-            self.assertFalse(m.state()["visible"])
-            self.assertIn(m.pid, [i["pid"] for i in app.instances() if not i["visible"]])
+            self.assertTrue(win32.is_iconic(m.hwnd))
+            self.assertTrue(win32.is_visible(m.hwnd))
+            self.assertEqual(m.state()["minimized"], True)
             m.load_model(bundled("Model", "初音ミク.pmd"))
-            path = out("headless.png")
-            r = m.render_image(path, size=(320, 180))
+            r = m.render_image(out("minimized.png"), size=(320, 180))
             self.assertEqual(r["size"], [320, 180])
-            self.assertFalse(win32.is_visible(m.hwnd))               # still hidden after a render
-            self.assertEqual(m.show(), {"minimized": True, "visible": True})
+            self.assertTrue(win32.is_iconic(m.hwnd))                 # still minimized after a render
             self.assertEqual(m.hide(), {"minimized": True, "visible": False})
+            self.assertEqual(m.show(), {"minimized": True, "visible": True})
         finally:
             m.quit(force=True)
         state = app.load_state()
@@ -810,7 +830,7 @@ class ZzFocusTest(unittest.TestCase):
         self.assertGreater(WATCH.samples, 100)
         self.assertEqual(WATCH.foreground_hits, [])
 
-    def test_main_window_stayed_minimized(self):
+    def test_main_window_never_appeared_on_the_screen(self):
         self.assertEqual(WATCH.restored_hits, [])
 
 

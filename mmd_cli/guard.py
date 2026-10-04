@@ -14,6 +14,7 @@ DIALOG_CLASSES = ("#32770", "RecWindow")
 QUIET_ROUNDS = 5
 SETTLE_SECONDS = 1.0
 LINGER_SECONDS = 2.0
+RETRY_SECONDS = 5.0
 
 
 class DialogPending(Exception):
@@ -134,7 +135,7 @@ class Guard:
         self.pid = pid
         self.main = main_hwnd
 
-    def run(self, trigger=None, handlers=None, timeout=60.0, done=None):
+    def run(self, trigger=None, handlers=None, timeout=60.0, done=None, keep_hidden=False):
         """trigger: None, ("send", hwnd, msg, wparam, lparam) or ("post", hwnd, msg, wparam, lparam).
 
         handlers maps a dialog kind to a callable(dialog).  The callable answers the dialog and
@@ -144,7 +145,9 @@ class Guard:
         save dialog does that without a word; an accepted name closes it at once): it is handed to the
         handler again, which cancels it and reports; should it still stay, DialogPending is raised
         instead of waiting out the timeout.  MMD's own dialogs may stay open while it works (the model
-        information dialog does so during the load), so they are left alone.
+        information dialog does so during the load), so they are left alone.  keep_hidden: the main window
+        is hidden and must stay so; should MMD show it on its own (it does when it starts writing an AVI)
+        it is hidden again at once.
 
         The operation is over when the sent message has returned (send), or MMD has answered
         QUIET_ROUNDS pings in a row (post / None), no dialog is open, and done() is true.
@@ -175,6 +178,12 @@ class Guard:
         deadline = time.monotonic() + timeout
         with FocusShield(self.pid), win32.timer_resolution():
             while True:
+                if keep_hidden and win32.is_visible(self.main):
+                    win32.hide(self.main)
+                    events.append({"kind": "main_window", "title": win32.get_text(self.main, timeout_ms=200),
+                                   "message": "MMD showed its main window on its own", "buttons": [],
+                                   "action": "hidden again"})
+                    keep_hidden = False
                 visible = 0
                 for hwnd in dialog_windows(self.pid, self.main):
                     if hwnd not in seen:
@@ -209,6 +218,10 @@ class Guard:
                         raise DialogPending([dialog], events)
                     action = handler(dialog)
                     if action is False:
+                        if now - first_visible[hwnd] > RETRY_SECONDS:
+                            # the controls the handler needs never came (another version of the dialog?)
+                            events.append(dict(dialog.to_json(), action="not understood"))
+                            raise DialogPending([dialog], events)
                         retry_at[hwnd] = now + 0.02
                         continue
                     seen[hwnd] = "handled"

@@ -388,6 +388,14 @@ def move_offscreen(hwnd):
     user32.SetWindowPos(hwnd, None, OFFSCREEN_X, OFFSCREEN_Y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
 
 
+def move_window(hwnd, x, y):
+    user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+
+
+def move_window(hwnd, x, y):
+    user32.SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+
+
 def reveal_window(hwnd, x=100, y=100):
     """undo hide_window (for a person who wants to answer a dialog by hand)"""
     ex = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
