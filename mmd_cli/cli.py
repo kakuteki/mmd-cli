@@ -525,7 +525,7 @@ def main(argv=None):
                 with open(parked, "w", encoding="utf-8") as f:
                     f.write(sys.stdin.read())
                 argv = [parked if a == "-" else a for a in argv]
-            payload, code = relay.run_in_user_session(argv, timeout=(args.timeout or 120.0) + 60.0)
+            payload, code = relay.run_in_user_session(argv)
             emit(payload, args.out, sys.stdout)
             return code
         result = run(args)

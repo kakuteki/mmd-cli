@@ -187,8 +187,20 @@ class RelayError(Exception):
     pass
 
 
-def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
-    """hand argv to a copy of this program in the interactive session; returns (payload, exit_code)"""
+def _child_pid(started_marker):
+    with open(started_marker) as f:
+        text = f.read().strip()
+    if not text.isdigit():
+        raise RelayError("the relayed command did not record its process id in %s" % started_marker)
+    return int(text)
+
+
+def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
+    """hand argv to a copy of this program in the interactive session; returns (payload, exit_code).
+    The parent has no clock of its own: it waits as long as the child process lives (the child
+    times out its own operations) and gives up only when the child did not start or died without
+    leaving a result; then it stops the task before taking its files away."""
+    from . import win32
     folder = relay_dir()
     os.makedirs(folder, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
@@ -206,6 +218,7 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
     created = _schtasks("/Create", "/TN", name, "/TR", command, "/SC", "ONCE", "/ST", "00:00", "/IT", "/F")
     if created.returncode != 0:
         raise RelayError("schtasks /Create failed: %s" % _text(created.stderr or created.stdout).strip())
+    finished = False
     try:
         started = _schtasks("/Run", "/TN", name)
         if started.returncode != 0:
@@ -218,13 +231,19 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
                                  "logged on to this machine's desktop? (the task runs only while the user is "
                                  "logged on; a virtual display and a disconnected session are fine)" % start_timeout)
             time.sleep(0.1)
-        deadline = time.monotonic() + timeout
+        pid = _child_pid(started_marker)
+        dead_at = None
         while not os.path.exists(out_path + ".exit"):
-            if time.monotonic() > deadline:
-                raise RelayError("the relayed command did not finish within %.0f s" % timeout)
+            if dead_at is None and not win32.process_alive(pid):
+                dead_at = time.monotonic()
+            if dead_at is not None and time.monotonic() - dead_at > grace:
+                raise RelayError("the relayed command (pid %d) ended without leaving a result" % pid)
             time.sleep(0.1)
+        finished = True
         return collect(out_path)
     finally:
+        if not finished:
+            _schtasks("/End", "/TN", name)          # stop the child before taking its files away
         _schtasks("/Delete", "/TN", name, "/F")
         for p in (job_path, out_path, out_path + ".exit", out_path + ".started"):
             try:
@@ -236,8 +255,7 @@ def run_in_user_session(argv, timeout=180.0, start_timeout=15.0):
 def run_job(job_path, main):
     """child side: executed by the scheduled task"""
     job = read_job(job_path)
-    with open(job.out_path + ".started", "w") as f:
-        f.write(str(os.getpid()))
+    _write_whole(job.out_path + ".started", str(os.getpid()))
     os.environ.update(job.env)
     if job.cwd and os.path.isdir(job.cwd):
         os.chdir(job.cwd)
