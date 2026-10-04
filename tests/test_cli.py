@@ -79,6 +79,18 @@ class ParserTest(unittest.TestCase):
             parse(["fly"])
         self.assertEqual(ctx.exception.code, 2)
 
+    def test_non_finite_numbers_are_usage_errors(self):
+        # argparse's float accepts "nan" and "inf"; MMD's boxes and the vmd fields have no use for them
+        for argv in (["morph", "set", "あ", "nan"], ["camera", "set", "--pos", "1", "inf", "0"],
+                     ["bone", "set", "頭", "--rot", "0", "nan", "0"],
+                     ["bone", "set", "頭", "--quat", "0", "0", "0", "-inf"], ["light", "set", "--dir", "nan", "0", "0"],
+                     ["accessory", "set", "negi.x", "--pos", "0", "0", "Infinity"]):
+            with self.assertRaises(SystemExit) as ctx:
+                parse(argv)
+            self.assertEqual(ctx.exception.code, 2, argv)
+        self.assertEqual(parse(["morph", "set", "あ", "1e-3"]).value, 0.001)
+        self.assertEqual(parse(["camera", "set", "--pos", "-1.5", "2", "3"]).pos, [-1.5, 2.0, 3.0])
+
 
 class TargetTest(unittest.TestCase):
     def test_camera_keyword_digits_and_names(self):
@@ -86,6 +98,13 @@ class TargetTest(unittest.TestCase):
         self.assertEqual(cli.parse_target("2"), 2)
         self.assertEqual(cli.parse_target("初音ミク"), "初音ミク")
         self.assertIsNone(cli.parse_target(None))
+
+    def test_fullwidth_digits_are_a_name(self):
+        # str.isdigit is true for "１" (and int("１") is 1): a model called "１" must stay a name
+        self.assertEqual(cli.parse_target("１"), "１")
+        self.assertEqual(cli.parse_target("²"), "²")       # isdigit, but int() rejects it
+        self.assertEqual(cli.parse_target("-1"), "-1")
+        self.assertEqual(cli.parse_target(""), "")
 
 
 class OutputTest(unittest.TestCase):
