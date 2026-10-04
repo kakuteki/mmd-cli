@@ -20,6 +20,61 @@ DEFAULT_BONE_INTERPOLATION = bytes(
     + [20] * 5 + [107] * 8 + [0, 0, 0])
 DEFAULT_CAMERA_INTERPOLATION = bytes([20, 107, 20, 107] * 6)
 
+# An interpolation curve is the two control points (x1, y1) (x2, y2) of the bezier the MMD window
+# draws, each 0..127; (20, 20) (107, 107) is the curve above.  A bone key has one per channel
+# (X, Y, Z, rotation), a camera key one per channel (X, Y, Z, rotation, distance, view angle).
+LINEAR_CURVE = (20, 20, 107, 107)
+BONE_CHANNELS = ("x", "y", "z", "rotation")
+CAMERA_CHANNELS = ("x", "y", "z", "rotation", "distance", "fov")
+
+
+def check_curve(curve):
+    """x1 y1 x2 y2 as a tuple of ints, each 0..127"""
+    values = tuple(curve)
+    if len(values) != 4:
+        raise ValueError("an interpolation curve is 4 numbers: x1 y1 x2 y2")
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or int(v) != v or not 0 <= v <= 127:
+            raise ValueError("interpolation values are whole numbers from 0 to 127, not %r" % (v,))
+    return tuple(int(v) for v in values)
+
+
+def bone_interpolation(curve, keep=None):
+    """the 64 bytes of a bone key with `curve` on all four channels.
+
+    Layout, measured on files MMD and others wrote (tests/test_vmd.py): the first 16 bytes are x1 of
+    the four channels, then y1, x2 and y2 of the four; each later row of 16 is the previous row
+    shifted left by one byte and padded with 0.  Bytes 2 and 3 of the first row never hold the curve
+    (MMD writes 0 there even for curved keys; they are said to carry the physics on/off flag): a new
+    key gets 0 there, `keep` (an existing key's 64 bytes) keeps what that key had."""
+    x1, y1, x2, y2 = check_curve(curve)
+    row = [x1] * 4 + [y1] * 4 + [x2] * 4 + [y2] * 4
+    out = []
+    for shift in range(4):
+        out += row[shift:] + [0] * shift
+    out[2], out[3] = (keep[2], keep[3]) if keep is not None else (0, 0)
+    return bytes(out)
+
+
+def camera_interpolation(curve):
+    """the 24 bytes of a camera key with `curve` on all six channels: x1 x2 y1 y2 per channel"""
+    x1, y1, x2, y2 = check_curve(curve)
+    return bytes([x1, x2, y1, y2] * 6)
+
+
+def bone_curves(data):
+    """channel -> (x1, y1, x2, y2) of a bone key's 64 bytes.  x1 of Z and rotation are taken from the
+    second row, where the first row's bytes 2 and 3 are intact."""
+    first = list(data[:16])
+    first[2], first[3] = data[17], data[18]
+    return {name: (first[c], first[c + 4], first[c + 8], first[c + 12]) for c, name in enumerate(BONE_CHANNELS)}
+
+
+def camera_curves(data):
+    """channel -> (x1, y1, x2, y2) of a camera key's 24 bytes"""
+    return {name: (data[c * 4], data[c * 4 + 2], data[c * 4 + 1], data[c * 4 + 3])
+            for c, name in enumerate(CAMERA_CHANNELS)}
+
 _BONE = struct.Struct("<15sI3f4f64s")
 _MORPH = struct.Struct("<15sIf")
 _CAMERA = struct.Struct("<If3f3f24sIB")

@@ -144,5 +144,86 @@ class LoadsTest(unittest.TestCase):
             vmd.loads(data[:100])
 
 
+def shifted_rows(first):
+    """the 64 bytes MMD writes for a bone key whose canonical 16 bytes are `first`: rows 2-4 are row 1
+    shifted left by one byte each (padded with 0), and bytes 2 and 3 of row 1 are 0"""
+    first = list(first)
+    rows = [first[i:] + [0] * i for i in range(4)]
+    rows[0][2] = rows[0][3] = 0
+    return bytes(sum(rows, []))
+
+
+class InterpolationLayoutTest(unittest.TestCase):
+    """Where x1 y1 x2 y2 of each channel live in the 64 (bone) / 24 (camera) bytes.
+
+    Measured on 2026-10-04: every bone key of two distributed dance motions (39,660 + 52,030 keys)
+    has rows 2-4 equal to row 1 shifted by one byte per row, bytes 2 and 3 of row 1 are 0 in all of
+    them even when the curve is not linear (so they are not part of the curve), and the curved keys
+    read as four groups x1 / y1 / x2 / y2 of the four channels (64 64 64 20 | 0 0 0 20 | 64 64 64 107 |
+    127 127 127 107 is the ease-in-out (64, 0)-(64, 127) on X Y Z and linear rotation).  A curved camera
+    key reads 64 64 0 127 per channel, the same curve as x1 x2 y1 y2.  The channel order inside a group
+    (X Y Z rotation; X Y Z rotation distance view angle) is the commonly documented one and could not be
+    told apart from the data; it does not matter while every channel gets the same curve."""
+
+    def test_linear_curve_builds_the_bytes_mmd_writes(self):
+        self.assertEqual(vmd.bone_interpolation(vmd.LINEAR_CURVE), vmd.DEFAULT_BONE_INTERPOLATION)
+        self.assertEqual(vmd.camera_interpolation(vmd.LINEAR_CURVE), vmd.DEFAULT_CAMERA_INTERPOLATION)
+        self.assertEqual(vmd.LINEAR_CURVE, (20, 20, 107, 107))
+
+    def test_bone_rows_are_x1_y1_x2_y2_groups_shifted_by_one_byte_per_row(self):
+        data = vmd.bone_interpolation((64, 5, 100, 127))
+        self.assertEqual(len(data), 64)
+        self.assertEqual(data[:16], bytes([64, 64, 0, 0, 5, 5, 5, 5, 100, 100, 100, 100, 127, 127, 127, 127]))
+        self.assertEqual(data[16:32], bytes([64, 64, 64, 5, 5, 5, 5, 100, 100, 100, 100, 127, 127, 127, 127, 0]))
+        self.assertEqual(data[32:48], bytes([64, 64, 5, 5, 5, 5, 100, 100, 100, 100, 127, 127, 127, 127, 0, 0]))
+        self.assertEqual(data[48:64], bytes([64, 5, 5, 5, 5, 100, 100, 100, 100, 127, 127, 127, 127, 0, 0, 0]))
+        self.assertEqual(data, shifted_rows([64] * 4 + [5] * 4 + [100] * 4 + [127] * 4))
+
+    def test_bone_curves_read_back_per_channel(self):
+        curves = vmd.bone_curves(vmd.bone_interpolation((64, 5, 100, 127)))
+        self.assertEqual(curves, {"x": (64, 5, 100, 127), "y": (64, 5, 100, 127), "z": (64, 5, 100, 127),
+                                  "rotation": (64, 5, 100, 127)})
+        self.assertEqual(vmd.bone_curves(vmd.DEFAULT_BONE_INTERPOLATION), {c: (20, 20, 107, 107) for c in vmd.BONE_CHANNELS})
+
+    def test_a_distributed_key_with_different_channels_is_read_from_the_intact_rows(self):
+        # measured block: X Y Z ease-in-out, rotation linear; bytes 2 and 3 of row 1 are 0 in the file
+        data = shifted_rows([64, 64, 64, 20, 0, 0, 0, 20, 64, 64, 64, 107, 127, 127, 127, 107])
+        self.assertEqual(data[2:4], b"\x00\x00")
+        self.assertEqual(vmd.bone_curves(data), {"x": (64, 0, 64, 127), "y": (64, 0, 64, 127), "z": (64, 0, 64, 127),
+                                                 "rotation": (20, 20, 107, 107)})
+
+    def test_keep_preserves_bytes_2_and_3_of_the_first_row(self):
+        # MMD writes something other than the curve there (0 on every key seen; said to be the physics
+        # flag), so a curve written over an existing key leaves the two bytes alone
+        old = bytes(range(64))
+        data = vmd.bone_interpolation((64, 5, 100, 127), keep=old)
+        self.assertEqual(data[2:4], bytes([2, 3]))
+        self.assertEqual(data[:2] + data[4:], vmd.bone_interpolation((64, 5, 100, 127))[:2] + vmd.bone_interpolation((64, 5, 100, 127))[4:])
+        self.assertEqual(vmd.bone_curves(data)["z"], (64, 5, 100, 127))
+
+    def test_camera_channels_are_x1_x2_y1_y2_each(self):
+        data = vmd.camera_interpolation((64, 0, 64, 127))
+        self.assertEqual(data, bytes([64, 64, 0, 127] * 6))
+        self.assertEqual(vmd.camera_curves(data), {c: (64, 0, 64, 127) for c in vmd.CAMERA_CHANNELS})
+        self.assertEqual(vmd.CAMERA_CHANNELS, ("x", "y", "z", "rotation", "distance", "fov"))
+        self.assertEqual(vmd.BONE_CHANNELS, ("x", "y", "z", "rotation"))
+
+    def test_curve_values_must_be_whole_numbers_from_0_to_127(self):
+        for bad in ((128, 0, 0, 0), (0, -1, 0, 0), (20, 20, 107), (20, 20, 107, 107, 1), (20.5, 20, 107, 107), ("20", 20, 107, 107)):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                vmd.bone_interpolation(bad)
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                vmd.camera_interpolation(bad)
+        self.assertEqual(vmd.check_curve((0, 127.0, 64, 1)), (0, 127, 64, 1))
+
+    def test_keys_built_with_a_curve_survive_the_file(self):
+        bone = vmd.BoneKey("a", 3, (0, 0, 0), (0, 0, 0, 1), vmd.bone_interpolation((10, 20, 30, 40)))
+        cam = vmd.CameraKey(3, -30.0, (0, 0, 0), (0, 0, 0), interpolation=vmd.camera_interpolation((10, 20, 30, 40)))
+        back = vmd.loads(vmd.dumps(vmd.Motion(model_name="m", bones=[bone])))
+        self.assertEqual(vmd.bone_curves(back.bones[0].interpolation)["rotation"], (10, 20, 30, 40))
+        back = vmd.loads(vmd.dumps(vmd.Motion.for_camera(cameras=[cam])))
+        self.assertEqual(vmd.camera_curves(back.cameras[0].interpolation)["fov"], (10, 20, 30, 40))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -12,6 +13,8 @@ try:
 except ImportError:          # not on Windows
     app = None
 
+from mmd_cli.formats import vmd
+from tests.test_motion_edit import camera_motion, model_motion
 from tests.test_pmd import bone as pmd_bone, build as build_pmd, skin as pmd_skin
 from tests.test_pmx import Writer as PmxWriter
 
@@ -273,6 +276,248 @@ class ModelInfoTest(ModelFiles):
         with self.assertRaises(app.MmdError) as ctx:
             m.model_info(None)
         self.assertIn(gone, str(ctx.exception))
+
+
+class MotionKeysEditParserTest(unittest.TestCase):
+    def test_motion_keys_takes_one_target_and_a_range(self):
+        a = parse(["motion", "keys", "cam.vmd", "--camera", "--from", "0", "--to", "300"])
+        self.assertEqual((a.command, a.action, a.file, a.camera, a.start, a.end), ("motion", "keys", "cam.vmd", True, 0, 300))
+        a = parse(["motion", "keys", "m.vmd", "--bone", "右腕"])
+        self.assertEqual((a.bone, a.camera, a.light, a.morph, a.start, a.end), ("右腕", False, False, None, None, None))
+        self.assertEqual(parse(["motion", "keys", "m.vmd", "--morph", "あ"]).morph, "あ")
+        self.assertTrue(parse(["motion", "keys", "m.vmd", "--light"]).light)
+        with self.assertRaises(SystemExit):
+            parse(["motion", "keys", "m.vmd", "--camera", "--bone", "右腕"])
+
+    def test_motion_edit_combines_targets_range_and_operations(self):
+        a = parse(["motion", "edit", "in.vmd", "out.vmd", "--camera", "--light", "--bone", "a", "--bone", "b", "--all-bones",
+                   "--morph", "x", "--all-morphs", "--from", "10", "--to", "20", "--shift", "-5", "--copy-to", "100", "--replace",
+                   "--distance-scale", "0.6", "--distance-add", "-2.5", "--pos-add", "1", "2", "3", "--fov-add", "5",
+                   "--fov-set", "30", "--rot-add", "0", "0", "10", "--weight-scale", "0.5", "--weight-set", "1",
+                   "--interp", "64", "0", "64", "127"])
+        self.assertEqual((a.command, a.action, a.src, a.dst), ("motion", "edit", "in.vmd", "out.vmd"))
+        self.assertEqual((a.camera, a.light, a.bone, a.all_bones, a.morph, a.all_morphs), (True, True, ["a", "b"], True, ["x"], True))
+        self.assertEqual((a.start, a.end, a.shift, a.copy_to, a.replace, a.delete), (10, 20, -5, 100, True, False))
+        self.assertEqual((a.distance_scale, a.distance_add, a.pos_add, a.fov_add, a.fov_set), (0.6, -2.5, [1.0, 2.0, 3.0], 5, 30))
+        self.assertEqual((a.rot_add, a.weight_scale, a.weight_set, a.interp), ([0.0, 0.0, 10.0], 0.5, 1.0, [64, 0, 64, 127]))
+        self.assertIsNone(a.distance_clamp)
+        a = parse(["motion", "edit", "a", "b", "--camera", "--delete"])
+        self.assertEqual((a.delete, a.shift, a.bone, a.interp, a.start), (True, None, None, None, None))
+        self.assertEqual(parse(["motion", "edit", "a", "b", "--camera", "--distance-clamp", "0", "60"]).distance_clamp, [0.0, 60.0])
+        with self.assertRaises(SystemExit):
+            parse(["motion", "edit", "a", "b", "--camera", "--distance-clamp", "60"])
+
+    def test_interp_values_outside_0_127_are_usage_errors(self):
+        for argv in (["bone", "set", "頭", "--interp", "128", "0", "0", "0"], ["bone", "set", "頭", "--interp", "0", "-1", "0", "0"],
+                     ["bone", "set", "頭", "--interp", "0", "0", "0"], ["camera", "set", "--register", "--interp", "1.5", "0", "0", "0"],
+                     ["motion", "edit", "a", "b", "--camera", "--interp", "0", "0", "0", "200"]):
+            with self.assertRaises(SystemExit) as ctx:
+                parse(argv)
+            self.assertEqual(ctx.exception.code, 2, argv)
+        self.assertEqual(parse(["bone", "set", "頭", "--interp", "0", "127", "20", "107"]).interp, [0, 127, 20, 107])
+        self.assertIsNone(parse(["bone", "set", "頭", "--rot", "0", "0", "1"]).interp)
+        self.assertEqual(parse(["camera", "set", "--register", "--interp", "64", "0", "64", "127"]).interp, [64, 0, 64, 127])
+        self.assertIsNone(parse(["camera", "set", "--distance", "30"]).interp)
+
+
+class MotionFileCommandsTest(unittest.TestCase):
+    """motion keys / motion edit read and write files; they run without MMD, like file info"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.cam = os.path.join(self.folder, "cam.vmd")
+        self.model = os.path.join(self.folder, "model.vmd")
+        self.dst = os.path.join(self.folder, "out.vmd")
+        write(self.cam, vmd.dumps(camera_motion()))
+        write(self.model, vmd.dumps(model_motion()))
+
+    def test_they_are_standalone(self):
+        self.assertTrue(cli.standalone(parse(["motion", "keys", "x.vmd"])))
+        self.assertTrue(cli.standalone(parse(["motion", "edit", "x.vmd", "y.vmd", "--camera", "--shift", "1"])))
+        self.assertFalse(cli.standalone(parse(["motion", "load", "x.vmd"])))
+        self.assertFalse(cli.standalone(parse(["motion", "save", "x.vmd"])))
+
+    def test_from_alone_is_an_error_before_the_file_is_read(self):
+        missing = os.path.join(self.folder, "none.vmd")
+        with self.assertRaises(ValueError):
+            cli.dispatch_any(None, parse(["motion", "keys", missing, "--from", "5"]))
+        with self.assertRaises(ValueError):
+            cli.dispatch_any(None, parse(["motion", "edit", missing, self.dst, "--camera", "--shift", "1", "--to", "5"]))
+        self.assertFalse(os.path.exists(self.dst))
+
+    def test_keys_summary_and_listing(self):
+        out = cli.dispatch_any(None, parse(["motion", "keys", self.cam]))
+        self.assertEqual((out["kind"], out["counts"]["cameras"], out["ranges"]["cameras"], out["range"]), ("camera", 3, [0, 200], None))
+        out = cli.dispatch_any(None, parse(["motion", "keys", self.cam, "--camera", "--from", "0", "--to", "100"]))
+        self.assertEqual(([k["frame"] for k in out["keys"]], out["keys"][0]["distance"], out["range"]), ([0, 100], 45.0, [0, 100]))
+        out = cli.dispatch_any(None, parse(["motion", "keys", self.model, "--bone", "右腕"]))
+        self.assertEqual((out["target"], out["keys"][0]["rot"]), ({"kind": "bone", "name": "右腕"}, [0.0, 0.0, 30.0]))
+        self.assertEqual(cli.dispatch_any(None, parse(["motion", "keys", self.model, "--morph", "あ"]))["keys"], [{"frame": 5, "weight": 0.5}])
+        self.assertEqual(cli.dispatch_any(None, parse(["motion", "keys", self.cam, "--light"]))["count"], 2)
+        json.dumps(out)
+
+    def test_edit_writes_the_output_and_reads_it_back(self):
+        out = cli.dispatch_any(None, parse(["motion", "edit", self.cam, self.dst, "--camera", "--from", "0", "--to", "100",
+                                            "--distance-scale", "0.6"]))
+        self.assertEqual((out["out"], out["targets"][0]["touched"], out["counts"]["cameras"]), (self.dst, 2, 3))
+        self.assertEqual([k.distance for k in vmd.load(self.dst).cameras], [-27.0, -36.0, -30.0])
+        out = cli.dispatch_any(None, parse(["motion", "edit", self.cam, self.dst, "--camera", "--distance-clamp", "0", "40"]))
+        self.assertEqual([k.distance for k in vmd.load(self.dst).cameras], [-40.0, -40.0, -30.0])
+        out = cli.dispatch_any(None, parse(["motion", "edit", self.model, self.dst, "--all-bones", "--morph", "あ", "--shift", "100"]))
+        self.assertEqual([r.get("name") for r in out["targets"]], ["センター", "右腕", "あ"])
+        self.assertEqual(out["counts"], {"bones": 6, "morphs": 3, "cameras": 0, "lights": 0, "shadows": 0, "show_ik": 0})
+        out = cli.dispatch_any(None, parse(["motion", "edit", self.model, self.dst, "--bone", "右腕", "--rot-add", "0", "0", "10",
+                                            "--pos-add", "1", "0", "0", "--interp", "64", "0", "64", "127"]))
+        self.assertEqual(out["targets"][0]["interp"], 2)
+        back = [k for k in vmd.load(self.dst).bones if k.name == "右腕"]
+        self.assertEqual(back[0].position, (1.0, 0.0, 0.0))
+        self.assertEqual(vmd.bone_curves(back[0].interpolation)["x"], (64, 0, 64, 127))
+
+    def test_edit_needs_a_target_and_an_operation_that_fit(self):
+        for argv in (["--shift", "1"], ["--camera"], ["--bone", "x", "--distance-scale", "2"], ["--camera", "--delete", "--shift", "1"],
+                     ["--camera", "--replace"], ["--light", "--interp", "0", "0", "0", "0"]):
+            with self.assertRaises(ValueError, msg=argv):
+                cli.dispatch_any(None, parse(["motion", "edit", self.cam, self.dst] + argv))
+        self.assertFalse(os.path.exists(self.dst))
+
+    def test_through_main_as_json(self):
+        result = os.path.join(self.folder, "r.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(["--no-relay", "--out", result, "motion", "keys", self.cam, "--camera", "--from", "100", "--to", "200"])
+        self.assertEqual(code, 0)
+        with open(result, encoding="utf-8") as f:
+            self.assertEqual([k["frame"] for k in json.load(f)["keys"]], [100, 200])
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = cli.main(["--no-relay", "motion", "edit", self.cam, self.dst, "--camera", "--shift", "-1", "--from", "0", "--to", "0"])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(stream.getvalue())["error"]["type"], "ValueError")
+        self.assertFalse(os.path.exists(self.dst))
+
+
+class DispatchInterpTest(unittest.TestCase):
+    def test_bone_and_camera_set_pass_the_curve(self):
+        class FakeMmd:
+            def set_bone(self, name, pos=None, rot=None, quat=None, frame=None, model=None, interp=None):
+                return {"name": name, "rot": rot, "interp": interp}
+
+            def set_camera(self, pos=None, rot=None, distance=None, fov=None, perspective=None, register=False, interp=None):
+                return {"register": register, "interp": interp, "distance": distance}
+
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["bone", "set", "頭", "--rot", "0", "0", "5", "--interp", "64", "0", "64", "127"])),
+                         {"name": "頭", "rot": [0.0, 0.0, 5.0], "interp": [64, 0, 64, 127]})
+        self.assertIsNone(cli._dispatch(FakeMmd(), parse(["bone", "set", "頭", "--rot", "0", "0", "5"]))["interp"])
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["camera", "set", "--distance", "30", "--register", "--interp", "64", "0", "64", "127"])),
+                         {"register": True, "interp": [64, 0, 64, 127], "distance": 30.0})
+        self.assertIsNone(cli._dispatch(FakeMmd(), parse(["camera", "set", "--distance", "30"]))["interp"])
+
+
+def bare_mmd():
+    m = app.Mmd.__new__(app.Mmd)
+    m.pid, m.hwnd, m.events, m.in_place, m.timeout, m._controls, m._parking = 4242, 1, [], False, 1.0, None, None
+    m.require_ready = lambda allow_playing=False: None
+    return m
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class SetBoneInterpTest(unittest.TestCase):
+    """the vmd that set_bone builds and drops onto MMD"""
+
+    def make(self, dropped):
+        raw = {"name": "m", "bones": ["センター"], "bone_current": [{"position": (0.0, 0.0, 0.0), "rotation": (0.0, 0.0, 0.0, 1.0)}]}
+        after = dict(raw, bone_init=[], bone_keys=[{"bone": 0, "frame": 12, "interpolation": list(range(16))}])
+        folder = tempfile.mkdtemp()
+        m = bare_mmd()
+        m._selected_model = lambda model=None: (0, raw)
+        m._temp_path = lambda name: os.path.join(folder, name)
+        m._drop_motion = lambda path: dropped.append(vmd.load(path))
+        m.frame = lambda: 12
+        m._project = lambda: {"models": [after]}
+        return m
+
+    def test_without_a_curve_the_key_is_linear_as_before(self):
+        dropped = []
+        result = self.make(dropped).set_bone("センター", rot=(0, 0, 30))
+        self.assertEqual(dropped[0].bones[0].interpolation, vmd.DEFAULT_BONE_INTERPOLATION)
+        self.assertEqual((dropped[0].model_name, dropped[0].bones[0].name, dropped[0].bones[0].frame), ("m", "センター", 0))
+        self.assertNotIn("interp", result)
+        self.assertEqual(result["frame"], 12)
+
+    def test_the_curve_goes_into_the_vmd_on_all_four_channels(self):
+        dropped = []
+        result = self.make(dropped).set_bone("センター", rot=(0, 0, 30), interp=(64, 0, 64, 127))
+        key = dropped[0].bones[0]
+        self.assertEqual(key.interpolation, vmd.bone_interpolation((64, 0, 64, 127)))
+        self.assertEqual(vmd.bone_curves(key.interpolation), {c: (64, 0, 64, 127) for c in vmd.BONE_CHANNELS})
+        self.assertEqual(key.interpolation[2:4], b"\x00\x00")
+        self.assertEqual((result["interp"], result["interp_in_project"]), ([64, 0, 64, 127], list(range(16))))
+
+    def test_a_bad_curve_is_refused_before_anything_is_dropped(self):
+        dropped = []
+        with self.assertRaises(ValueError):
+            self.make(dropped).set_bone("センター", rot=(0, 0, 30), interp=(200, 0, 0, 0))
+        self.assertEqual(dropped, [])
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class SetCameraInterpTest(unittest.TestCase):
+    """with --interp the key is registered by dropping a one-key camera motion built from the values the
+    camera boxes show; without it the register button is pressed as before"""
+
+    SHOWN = {"pos": [1.0, 12.0, -3.25], "rot": [10.0, 20.0, 5.0], "distance": 30.0, "fov": 45, "perspective": True}
+
+    def make(self, dropped, clicks, keys=({"frame": 12},)):
+        from mmd_cli.ids import Ctl
+        folder = tempfile.mkdtemp()
+        m = bare_mmd()
+        m._require_register_or_camera_mode = lambda register, what: None
+        m._camera_mode = lambda: contextlib.nullcontext()
+        m.entered = {}
+        m.enter = lambda cid, text: m.entered.__setitem__(cid, text)
+        m.set_check = lambda cid, on: None
+        m.click = lambda cid: clicks.append(cid)
+        m._read_camera = lambda: dict(self.SHOWN)
+        m._temp_path = lambda name: os.path.join(folder, name)
+        m._drop_motion = lambda path: dropped.append(vmd.load(path))
+        m.frame = lambda: 12
+        m._project = lambda: {"camera": {"init": {"frame": 0}, "keys": list(keys)}}
+        self.register_id = Ctl.CAMERA_REGISTER
+        return m
+
+    def test_without_a_curve_the_register_button_is_used(self):
+        dropped, clicks = [], []
+        result = self.make(dropped, clicks).set_camera(distance=30, register=True)
+        self.assertEqual((clicks, dropped), ([self.register_id], []))
+        self.assertNotIn("interp", result)
+
+    def test_with_a_curve_a_one_key_camera_motion_is_dropped(self):
+        dropped, clicks = [], []
+        m = self.make(dropped, clicks)
+        result = m.set_camera(distance=30, register=True, interp=(64, 0, 64, 127))
+        self.assertEqual(clicks, [])
+        self.assertEqual(len(dropped), 1)
+        motion = dropped[0]
+        self.assertTrue(motion.is_camera)
+        self.assertEqual((len(motion.cameras), len(motion.lights)), (1, 0))
+        key = motion.cameras[0]
+        self.assertEqual((key.frame, key.distance, key.position, key.fov, key.perspective), (0, -30.0, (1.0, 12.0, -3.25), 45, True))
+        for got, want in zip(key.rotation, (-math.radians(10), math.radians(20), math.radians(5))):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertEqual(key.interpolation, vmd.camera_interpolation((64, 0, 64, 127)))
+        self.assertEqual(result["interp"], [64, 0, 64, 127])
+        self.assertEqual(result["distance"], 30.0)
+
+    def test_a_curve_needs_register(self):
+        dropped, clicks = [], []
+        with self.assertRaises(ValueError):
+            self.make(dropped, clicks).set_camera(distance=30, interp=(64, 0, 64, 127))
+        self.assertEqual((dropped, clicks), ([], []))
+
+    def test_the_key_must_appear_in_the_project(self):
+        dropped, clicks = [], []
+        with self.assertRaises(app.MmdError) as ctx:
+            self.make(dropped, clicks, keys=()).set_camera(distance=30, register=True, interp=(64, 0, 64, 127))
+        self.assertIn("12", str(ctx.exception))
 
 
 class FailureTest(unittest.TestCase):
