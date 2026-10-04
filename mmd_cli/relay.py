@@ -260,13 +260,22 @@ def run_job(job_path, main):
     os.environ.update(job.env)
     if job.cwd and os.path.isdir(job.cwd):
         os.chdir(job.cwd)
+    error = None
     try:
         code = main(job.argv)
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
     except Exception as exc:  # the parent must never wait forever
-        with open(job.out_path, "w", encoding="utf-8") as f:
-            json.dump({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, f)
+        error = {"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}
         code = 1
+    if not os.path.exists(job_path):        # the parent gave up and took its files away: leave no litter
+        try:
+            os.remove(job.out_path)
+        except OSError:
+            pass
+        return code
+    if error is not None:
+        with open(job.out_path, "w", encoding="utf-8") as f:
+            json.dump(error, f)
     _write_whole(job.out_path + ".exit", str(code))
     return code

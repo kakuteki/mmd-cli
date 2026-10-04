@@ -28,3 +28,9 @@
 - 何を直したか: `should_relay(window_station=None, session_id=None, argv=None, command=None)`。位置引数の走査（`--out r.json` の `r.json` を命令と誤認していた）を無くし、`command is None`（命令なし）または `command in LOCAL_COMMANDS` なら中継しない。`--version` / `-h` の個別判定も不要になった（argparse がそこで終わる。`command=None` で同じ結果）。`main()` は `relay.should_relay(argv=argv, command=args.command)` を呼ぶ。
 - 守る試験（tests/test_relay.py）: `test_should_relay_ignores_option_values_before_the_command`（査読の実測 2 例 `--out r.json file info x.pmm` と `--timeout 9 file info x.pmm` が False、`--out r.json state` は True）、`MainDecisionTest.test_file_info_runs_locally_whatever_options_come_first`（`cli.main` を Service ウィンドウステーション・セッション 0 の偽の答えで動かし、3 例とも `run_in_user_session` が呼ばれず fixture の pmm がその場で読める。修正前は `--out` の例で中継に入り失敗した）、`test_a_command_that_needs_the_window_is_handed_over_as_is`（`state` は argv そのままで渡される＝親のタイムアウト結合が無い）。既存の DecisionTest は `command=` を渡す形に書き換えた。
 - コミット: 381be16
+
+## 1.7 relay: 子の argv に `--no-relay`
+
+- 何を直したか: `child_argv` が返す argv の先頭に `--no-relay` を置く（`--in-user-session` / 元の `--no-relay` は従来どおり取り除いてから）。子がもし対話ステーション以外で動いても `should_relay` は最初の判定で False になり、孫のタスクは作られない。
+- 守る試験（tests/test_relay.py）: `test_child_argv_adds_no_relay`（3 通りの入力で `--no-relay` がちょうど 1 回・`--in-user-session` なし・その argv を Service ステーションで `should_relay` に掛けると False）、`test_child_argv_with_out_equals`（`--out=` の形）、既存の 2 件は期待値に `--no-relay` を足した。
+- コミット: 838f10d

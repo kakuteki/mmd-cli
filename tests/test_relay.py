@@ -75,6 +75,47 @@ class MainDecisionTest(unittest.TestCase):
         self.assertEqual(self.handed.call_args, mock.call(["--timeout", "9", "state"]))     # no timeout of its own
 
 
+class ParkedStdinTest(unittest.TestCase):
+    """batch - parks stdin in a file for the child; the parent removes it afterwards, success or not"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.parked = os.path.join(self.folder, "relay", "stdin-%d.txt" % os.getpid())
+        mock.patch.dict(os.environ, {"MMD_CLI_HOME": self.folder}).start()
+        mock.patch.object(relay, "window_station_name", return_value=SERVICE["window_station"]).start()
+        mock.patch.object(relay, "current_session_id", return_value=0).start()
+        mock.patch.object(cli.sys, "stdin", io.StringIO("state\nframe get\n")).start()
+        self.handed = mock.patch.object(relay, "run_in_user_session").start()
+        self.addCleanup(mock.patch.stopall)
+
+    def main(self, argv):
+        with contextlib.redirect_stdout(io.StringIO()) as stdout:
+            code = cli.main(argv)
+        return code, json.loads(stdout.getvalue())
+
+    def test_the_child_gets_the_parked_file_and_the_parent_removes_it(self):
+        seen = {}
+
+        def handed(argv):
+            seen["argv"] = argv
+            with open(self.parked, encoding="utf-8") as f:
+                seen["text"] = f.read()
+            return {"ok": True, "relayed": True}, 0
+
+        self.handed.side_effect = handed
+        code, payload = self.main(["batch", "-", "--keep-going"])
+        self.assertEqual((code, payload["ok"]), (0, True))
+        self.assertEqual(seen["argv"], ["batch", self.parked, "--keep-going"])
+        self.assertEqual(seen["text"], "state\nframe get\n")
+        self.assertFalse(os.path.exists(self.parked))
+
+    def test_the_parked_file_is_removed_when_the_relay_fails(self):
+        self.handed.side_effect = relay.RelayError("nobody is logged on")
+        code, payload = self.main(["batch", "-"])
+        self.assertEqual((code, payload["error"]["type"]), (1, "RelayError"))
+        self.assertFalse(os.path.exists(self.parked))
+
+
 class ArgvTest(unittest.TestCase):
     def test_relay_flags_are_removed_and_out_is_redirected(self):
         argv = relay.child_argv(["--in-user-session", "--pid", "5", "--out", "C:/x/r.json", "model", "load", "a.pmx"],
@@ -199,6 +240,27 @@ class RunJobTest(unittest.TestCase):
             self.assertEqual(f.read(), "3")
         self.assertIn((self.out + ".exit.part", self.out + ".exit"), [c.args for c in replace.call_args_list])
         self.assertFalse(os.path.exists(self.out + ".exit.part"))
+
+    def test_run_job_leaves_nothing_when_the_parent_gave_up(self):
+        # the parent takes the job file away when it stops waiting: a result written after that is litter
+        def main(argv):
+            os.remove(self.job_path)
+            with open(self.out, "w", encoding="utf-8") as f:
+                json.dump({"ok": True}, f)
+            return 0
+
+        self.assertEqual(relay.run_job(self.job_path, main), 0)
+        self.assertFalse(os.path.exists(self.out + ".exit"))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_run_job_writes_no_error_file_either_when_the_parent_gave_up(self):
+        def main(argv):
+            os.remove(self.job_path)
+            raise RuntimeError("late")
+
+        self.assertEqual(relay.run_job(self.job_path, main), 1)
+        self.assertFalse(os.path.exists(self.out + ".exit"))
+        self.assertFalse(os.path.exists(self.out))
 
     def test_run_job_writes_the_started_marker_atomically_with_its_pid(self):
         # the parent reads the pid out of .started as soon as it exists

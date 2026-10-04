@@ -517,15 +517,23 @@ def main(argv=None):
     try:
         from . import relay
         if relay.should_relay(argv=argv, command=args.command):
-            if args.command == "batch" and args.file == "-":
-                # stdin does not travel through the relay: park it in a file first
-                folder = relay.relay_dir()
-                os.makedirs(folder, exist_ok=True)
-                parked = os.path.join(folder, "stdin-%d.txt" % os.getpid())
-                with open(parked, "w", encoding="utf-8") as f:
-                    f.write(sys.stdin.read())
-                argv = [parked if a == "-" else a for a in argv]
-            payload, code = relay.run_in_user_session(argv)
+            parked = None
+            try:
+                if args.command == "batch" and args.file == "-":
+                    # stdin does not travel through the relay: park it in a file first
+                    folder = relay.relay_dir()
+                    os.makedirs(folder, exist_ok=True)
+                    parked = os.path.join(folder, "stdin-%d.txt" % os.getpid())
+                    with open(parked, "w", encoding="utf-8") as f:
+                        f.write(sys.stdin.read())
+                    argv = [parked if a == "-" else a for a in argv]
+                payload, code = relay.run_in_user_session(argv)
+            finally:
+                if parked:
+                    try:
+                        os.remove(parked)
+                    except OSError:
+                        pass
             emit(payload, args.out, sys.stdout)
             return code
         result = run(args)
