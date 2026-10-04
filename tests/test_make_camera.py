@@ -295,8 +295,8 @@ class ShotTypeTest(unittest.TestCase):
                     self.assertEqual(z, 0.0)
 
     def test_each_type_has_its_values_and_peaks_pull_back(self):
-        want = {"push_in": (38.0, 32.0), "pull_out": (32.0, 42.0), "orbit": (34.0, 34.0), "low": (38.0, 36.0)}
-        heights = {"push_in": 13.0, "pull_out": 13.0, "orbit": 12.0, "low": 11.0}
+        want = {"push_in": (38.0, 32.0), "pull_out": (32.0, 42.0), "orbit": (34.0, 34.0), "above": (38.0, 36.0)}
+        heights = {"push_in": 13.0, "pull_out": 13.0, "orbit": 12.0, "above": 12.0}
         seen = set()
         for shots in self.plans(synthetic_dance(), seeds=range(20)):
             for s in shots:
@@ -304,7 +304,7 @@ class ShotTypeTest(unittest.TestCase):
                 add = 6.0 if s.level == "peak" else 0.0
                 self.assertEqual(s.distance, (want[s.kind][0] + add, want[s.kind][1] + add), s)
                 self.assertEqual(s.height, heights[s.kind], s)
-                self.assertEqual(s.rot[0][0], -10.0 if s.kind == "low" else 0.0)
+                self.assertEqual(s.rot[0][0], 10.0 if s.kind == "above" else 0.0)
                 self.assertEqual(s.rot[1][0], s.rot[0][0])
                 if s.kind == "orbit":
                     swing = 22.0 if s.level == "peak" else 15.0
@@ -392,12 +392,26 @@ class FramingTest(unittest.TestCase):
                         self.assertGreaterEqual(top, self.HEAD_ROOM, (kind, level, which, distance, height, rot))
                         self.assertLessEqual(bottom, self.KNEES, (kind, level, which, distance, height, rot))
 
-    def test_a_low_angle_looks_up_from_below_the_hips(self):
-        distance, height, rot = make_camera.shot_values("low", "valley", 1)
-        self.assertLess(rot[0][0], 0.0)                              # the window's negative X looks up
-        camera_height = height - distance[0] * math.sin(math.radians(-rot[0][0]))
-        self.assertLess(camera_height, 6.0)
-        self.assertGreater(camera_height, 2.0)
+    HIPS = 10.0                         # the hem of Rin's skirt is at about 8, her hips at about 10
+
+    def camera_height(self, distance, height, x_angle):
+        return height - distance * math.sin(math.radians(-x_angle))
+
+    def test_no_camera_sits_below_the_hips(self):
+        # a camera below the hips looks up into a skirt that flares in a turn: seen on the first full render,
+        # where the low angle shot (camera 4 units above the floor) showed the underwear for some frames
+        for kind in make_camera.TYPES:
+            for level in ("valley", "peak", "mid"):
+                distance, height, rot = make_camera.shot_values(kind, level, 1)
+                for which in (0, 1):
+                    self.assertGreaterEqual(self.camera_height(distance[which], height, rot[which][0]), self.HIPS,
+                                            (kind, level, which, distance, height, rot))
+
+    def test_the_shot_from_above_looks_down_from_about_head_height(self):
+        distance, height, rot = make_camera.shot_values("above", "valley", 1)
+        self.assertGreater(rot[0][0], 0.0)                           # the window's positive X looks down
+        self.assertTrue(16.0 < self.camera_height(distance[0], height, rot[0][0]) < 20.0)
+        self.assertNotIn("low", make_camera.TYPES)
 
 
 def swaying_dance(last=2999, amplitude=5.0, period=600):
@@ -587,11 +601,11 @@ class OutputTest(unittest.TestCase):
                 self.assertTrue(min(shot.distance) <= ui["distance"] <= max(shot.distance), ui)
                 self.assertEqual(ui["rot"][0], shot.rot[0][0])
                 self.assertEqual(ui["rot"][2], 0.0)
-        low = [s for s in shots if s.kind == "low"]
-        self.assertTrue(low)
-        key = keys_by_shot(shots, back)[low[0].index][0]
-        self.assertAlmostEqual(key.rotation[0], math.radians(10.0), places=6)      # the window's -10 is +10 in the file
-        self.assertEqual(key.position[1], 11.0)
+        above = [s for s in shots if s.kind == "above"]
+        self.assertTrue(above)
+        key = keys_by_shot(shots, back)[above[0].index][0]
+        self.assertAlmostEqual(key.rotation[0], math.radians(-10.0), places=6)     # the window's +10 is -10 in the file
+        self.assertEqual(key.position[1], 12.0)
 
     def test_the_same_input_and_seed_give_the_same_bytes(self):
         a = vmd.dumps(make_camera.camera_motion(make_camera.plan_shots(synthetic_dance(), seed=3)))

@@ -5,7 +5,7 @@
 
 The distributed camera of a dance is often made for a hall and keeps the dancer small.  This tool
 writes a camera that keeps the dancer at a comfortable size and moves slowly once per shot (a push
-in, a pull out, an orbit or a low angle), each shot 6 to 16 seconds long.  There is no sound to cut
+in, a pull out, an orbit or a view from above), each shot 6 to 16 seconds long.  There is no sound to cut
 to, so the cuts follow the dance: how strongly the body moves, frame by frame, is measured from the
 bone keys, the strong stretches (a chorus) and the quiet ones are told apart, and the shots change
 where the strength changes.  The same input and seed give the same output.
@@ -48,8 +48,10 @@ How the shots are cut (cut_shots) and what each one does (plan_shots):
   lie in low ones, and mid otherwise.
 * Each shot is one of four kinds, never the same as the shot before: a push in (distance 38 to 32,
   look-at height 13), a pull out (32 to 42, height 13), an orbit (distance 34, Y angle -15 to +15 or
-  back, height 12) or a low angle (height 11, X angle -10 which looks up from a camera about 4 units
-  above the floor, distance 38 to 36).  A peak is shot from 6 further away and its orbit swings 22
+  back, height 12) or a view from above (height 12, X angle +10 which looks down from about head
+  height, distance 38 to 36).  No camera sits below the dancer's hips: the first version had a low
+  angle (a camera 4 units above the floor looking up), and it looked up into the skirt whenever a turn
+  made the skirt flare.  A peak is shot from 6 further away and its orbit swings 22
   degrees; valleys lean to push ins (weight 3 of 6), peaks to pull outs and orbits.  The choice is
   drawn with the seed, so the same seed repeats it; orbits alternate their direction.  A kind whose
   start would hardly differ from the end of the shot before (less than 8 of distance, 10 degrees and
@@ -88,23 +90,23 @@ LOW_PERCENTILE, HIGH_PERCENTILE = 35, 65
 MIN_SHOT, MAX_SHOT = 180, 480    # frames: 6 to 16 seconds
 LEVEL_SHARE = 0.6                # of a shot's frames in high (low) sections to call it a peak (valley)
 
-TYPES = ("push_in", "pull_out", "orbit", "low")
+TYPES = ("push_in", "pull_out", "orbit", "above")
 # distance (start, end), height of the look-at point, X angle, Y angle (start, end): the numbers the MMD
 # window shows.  Chosen so that the picture (FOV 30, see picture_span) covers the dancer from below the
 # knees (height 5) to above the head (21; Rin's head top is at about 19.5, her ribbon at 20.8) at both
-# ends of every shot, peaks included.
+# ends of every shot, peaks included, and so that no camera sits below her hips (height 10).
 SHOT_VALUES = {
     "push_in": {"distance": (38.0, 32.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
     "pull_out": {"distance": (32.0, 42.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
     "orbit": {"distance": (34.0, 34.0), "height": 12.0, "x": 0.0, "y": (-15.0, 15.0)},
-    "low": {"distance": (38.0, 36.0), "height": 11.0, "x": -10.0, "y": (0.0, 0.0)},
+    "above": {"distance": (38.0, 36.0), "height": 12.0, "x": 10.0, "y": (0.0, 0.0)},
 }
 PEAK_DISTANCE_ADD = 6.0
 PEAK_ORBIT_SWING = 22.0
 TYPE_WEIGHTS = {
-    "valley": {"push_in": 3, "pull_out": 1, "orbit": 1, "low": 1},
-    "peak": {"push_in": 1, "pull_out": 2, "orbit": 2, "low": 1},
-    "mid": {"push_in": 1, "pull_out": 1, "orbit": 1, "low": 1},
+    "valley": {"push_in": 3, "pull_out": 1, "orbit": 1, "above": 1},
+    "peak": {"push_in": 1, "pull_out": 2, "orbit": 2, "above": 1},
+    "mid": {"push_in": 1, "pull_out": 1, "orbit": 1, "above": 1},
 }
 # a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the
 # end of a shot and the start of the next
