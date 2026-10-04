@@ -238,6 +238,7 @@ def build_parser():
     s.add_argument("--fov", type=int, help="view angle in degrees")
     s.add_argument("--perspective", choices=("on", "off"))
     s.add_argument("--register", action="store_true", help="register a key at the current frame")
+    _interp(s, "the registered key (with --register)")
 
     g = group("light", "light")
     g.add_parser("get")
@@ -260,6 +261,7 @@ def build_parser():
     rotation.add_argument("--quat", nargs=4, type=finite, metavar=("X", "Y", "Z", "W"))
     s.add_argument("--frame", type=int)
     s.add_argument("--model")
+    _interp(s, "the registered key")
 
     g = group("morph", "morphs (facial expressions) of the selected model")
     s = g.add_parser("list")
@@ -581,7 +583,7 @@ def _dispatch(mmd, args):
             return mmd.camera()
         perspective = None if args.perspective is None else args.perspective == "on"
         return mmd.set_camera(pos=args.pos, rot=args.rot, distance=args.distance, fov=args.fov,
-                              perspective=perspective, register=args.register)
+                              perspective=perspective, register=args.register, interp=args.interp)
     if command == "light":
         if action == "get":
             return mmd.light()
@@ -593,7 +595,8 @@ def _dispatch(mmd, args):
             return {"bones": mmd.bones(model)}
         if action == "get":
             return mmd.bone(args.name, model)
-        return mmd.set_bone(args.name, pos=args.pos, rot=args.rot, quat=args.quat, frame=args.frame, model=model)
+        return mmd.set_bone(args.name, pos=args.pos, rot=args.rot, quat=args.quat, frame=args.frame, model=model,
+                            interp=args.interp)
     if command == "morph":
         model = parse_target(args.model)
         if action == "list":

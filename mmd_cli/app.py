@@ -796,8 +796,16 @@ class Mmd:
                            "model is selected again. Add --register, or switch with: mmd model select camera"
                            % what)
 
-    def set_camera(self, pos=None, rot=None, distance=None, fov=None, perspective=None, register=False):
+    def set_camera(self, pos=None, rot=None, distance=None, fov=None, perspective=None, register=False, interp=None):
+        """change the camera and, with register, key it at the current frame.  interp (x1, y1, x2, y2, each
+        0-127) gives the key that curve on all six channels: the register button cannot be told a curve, so
+        the key is then registered by loading a one-key camera motion built from the values the boxes show."""
         self.require_ready()
+        curve = None
+        if interp is not None:
+            if not register:
+                raise ValueError("--interp needs --register (the curve belongs to the registered key)")
+            curve = vmd.check_curve(interp)
         self._require_register_or_camera_mode(register, "camera")
         with self._camera_mode():
             for cids, values in (((Ctl.VALUE_X, Ctl.VALUE_Y, Ctl.VALUE_Z), pos),
@@ -811,9 +819,26 @@ class Mmd:
                 self.enter(Ctl.CAMERA_FOV, str(int(fov)))
             if perspective is not None:
                 self.set_check(Ctl.CAMERA_PERSPECTIVE, perspective)
-            if register:
+            if register and curve is None:
                 self.click(Ctl.CAMERA_REGISTER)
-            return self._read_camera()
+            elif register:
+                self._register_camera_through_motion(curve)
+            result = self._read_camera()
+            if curve is not None:
+                result["interp"] = list(curve)
+            return result
+
+    def _register_camera_through_motion(self, curve):
+        """key the camera at the current frame with an interpolation curve: a one-key camera motion (frame 0,
+        which MMD places at the current frame) made from what the boxes show, then checked in the project"""
+        from .motion_edit import camera_key_from_ui
+        path = self._temp_path("camera.vmd")
+        vmd.dump(vmd.Motion.for_camera(cameras=[camera_key_from_ui(self._read_camera(), curve)]), path)
+        self._drop_motion(path)
+        frame_now = self.frame()
+        camera = self._project()["camera"]
+        if not any(f["frame"] == frame_now for f in [camera["init"]] + camera["keys"]):
+            raise MmdError("MMD did not register a camera key at frame %d" % frame_now)
 
     def _read_light(self):
         return {"rgb": [int(v) for v in self._floats(Ctl.LIGHT_R, Ctl.LIGHT_G, Ctl.LIGHT_B)],
@@ -1014,10 +1039,12 @@ class Mmd:
         position, rotation = self._bone_values(self._selected_model(model)[1], name)
         return {"bone": name, "pos": _vec(position), "rot": _vec(mathutil.quat_to_ui(rotation))}
 
-    def set_bone(self, name, pos=None, rot=None, quat=None, frame=None, model=None):
+    def set_bone(self, name, pos=None, rot=None, quat=None, frame=None, model=None, interp=None):
         """register a key for one bone at the current (or given) frame.  rot is in degrees as shown in the MMD window,
-        quat is (x, y, z, w); whatever is not given keeps its value at that frame."""
+        quat is (x, y, z, w); whatever is not given keeps its value at that frame.  interp (x1, y1, x2, y2, each 0-127)
+        is the key's interpolation curve on all four channels (default: the linear 20 20 107 107)."""
         self.require_ready()
+        curve = vmd.check_curve(interp) if interp is not None else None
         if model is not None:
             self.select_model(model)
         if frame is not None:
@@ -1030,7 +1057,8 @@ class Mmd:
             rotation = tuple(float(v) for v in quat)
         elif rot is not None:
             rotation = mathutil.ui_to_quat(*rot)
-        key = vmd.BoneKey(name, 0, position, rotation)
+        interpolation = vmd.bone_interpolation(curve) if curve is not None else vmd.DEFAULT_BONE_INTERPOLATION
+        key = vmd.BoneKey(name, 0, position, rotation, interpolation)
         path = self._temp_path("bone.vmd")
         vmd.dump(vmd.Motion(model_name=raw["name"], bones=[key]), path)
         self._drop_motion(path)
@@ -1042,8 +1070,13 @@ class Mmd:
         if not registered:
             raise MmdError("MMD did not register a key for bone %r at frame %d" % (name, frame_now))
         position, rotation = self._bone_values(after, name)
-        return {"bone": name, "frame": frame_now, "pos": _vec(position),
-                "rot": _vec(mathutil.quat_to_ui(rotation))}
+        result = {"bone": name, "frame": frame_now, "pos": _vec(position),
+                  "rot": _vec(mathutil.quat_to_ui(rotation))}
+        if curve is not None:
+            # the 16 interpolation bytes the project file holds for the key, as they are (evidence for a live check)
+            result["interp"] = list(curve)
+            result["interp_in_project"] = list(registered[0]["interpolation"])
+        return result
 
     def morph(self, name, model=None):
         self.require_ready()

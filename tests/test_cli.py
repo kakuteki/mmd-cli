@@ -308,15 +308,16 @@ class MotionKeysEditParserTest(unittest.TestCase):
             parse(["motion", "edit", "a", "b", "--camera", "--distance-clamp", "60"])
 
     def test_interp_values_outside_0_127_are_usage_errors(self):
-        for argv in (["motion", "edit", "a", "b", "--camera", "--interp", "128", "0", "0", "0"],
-                     ["motion", "edit", "a", "b", "--camera", "--interp", "0", "-1", "0", "0"],
-                     ["motion", "edit", "a", "b", "--camera", "--interp", "0", "0", "0"],
-                     ["motion", "edit", "a", "b", "--camera", "--interp", "1.5", "0", "0", "0"],
+        for argv in (["bone", "set", "頭", "--interp", "128", "0", "0", "0"], ["bone", "set", "頭", "--interp", "0", "-1", "0", "0"],
+                     ["bone", "set", "頭", "--interp", "0", "0", "0"], ["camera", "set", "--register", "--interp", "1.5", "0", "0", "0"],
                      ["motion", "edit", "a", "b", "--camera", "--interp", "0", "0", "0", "200"]):
             with self.assertRaises(SystemExit) as ctx:
                 parse(argv)
             self.assertEqual(ctx.exception.code, 2, argv)
-        self.assertEqual(parse(["motion", "edit", "a", "b", "--camera", "--interp", "0", "127", "20", "107"]).interp, [0, 127, 20, 107])
+        self.assertEqual(parse(["bone", "set", "頭", "--interp", "0", "127", "20", "107"]).interp, [0, 127, 20, 107])
+        self.assertIsNone(parse(["bone", "set", "頭", "--rot", "0", "0", "1"]).interp)
+        self.assertEqual(parse(["camera", "set", "--register", "--interp", "64", "0", "64", "127"]).interp, [64, 0, 64, 127])
+        self.assertIsNone(parse(["camera", "set", "--distance", "30"]).interp)
 
 
 class MotionFileCommandsTest(unittest.TestCase):
@@ -392,6 +393,131 @@ class MotionFileCommandsTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stream.getvalue())["error"]["type"], "ValueError")
         self.assertFalse(os.path.exists(self.dst))
+
+
+class DispatchInterpTest(unittest.TestCase):
+    def test_bone_and_camera_set_pass_the_curve(self):
+        class FakeMmd:
+            def set_bone(self, name, pos=None, rot=None, quat=None, frame=None, model=None, interp=None):
+                return {"name": name, "rot": rot, "interp": interp}
+
+            def set_camera(self, pos=None, rot=None, distance=None, fov=None, perspective=None, register=False, interp=None):
+                return {"register": register, "interp": interp, "distance": distance}
+
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["bone", "set", "頭", "--rot", "0", "0", "5", "--interp", "64", "0", "64", "127"])),
+                         {"name": "頭", "rot": [0.0, 0.0, 5.0], "interp": [64, 0, 64, 127]})
+        self.assertIsNone(cli._dispatch(FakeMmd(), parse(["bone", "set", "頭", "--rot", "0", "0", "5"]))["interp"])
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["camera", "set", "--distance", "30", "--register", "--interp", "64", "0", "64", "127"])),
+                         {"register": True, "interp": [64, 0, 64, 127], "distance": 30.0})
+        self.assertIsNone(cli._dispatch(FakeMmd(), parse(["camera", "set", "--distance", "30"]))["interp"])
+
+
+def bare_mmd():
+    m = app.Mmd.__new__(app.Mmd)
+    m.pid, m.hwnd, m.events, m.in_place, m.timeout, m._controls, m._parking = 4242, 1, [], False, 1.0, None, None
+    m.require_ready = lambda allow_playing=False: None
+    return m
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class SetBoneInterpTest(unittest.TestCase):
+    """the vmd that set_bone builds and drops onto MMD"""
+
+    def make(self, dropped):
+        raw = {"name": "m", "bones": ["センター"], "bone_current": [{"position": (0.0, 0.0, 0.0), "rotation": (0.0, 0.0, 0.0, 1.0)}]}
+        after = dict(raw, bone_init=[], bone_keys=[{"bone": 0, "frame": 12, "interpolation": list(range(16))}])
+        folder = tempfile.mkdtemp()
+        m = bare_mmd()
+        m._selected_model = lambda model=None: (0, raw)
+        m._temp_path = lambda name: os.path.join(folder, name)
+        m._drop_motion = lambda path: dropped.append(vmd.load(path))
+        m.frame = lambda: 12
+        m._project = lambda: {"models": [after]}
+        return m
+
+    def test_without_a_curve_the_key_is_linear_as_before(self):
+        dropped = []
+        result = self.make(dropped).set_bone("センター", rot=(0, 0, 30))
+        self.assertEqual(dropped[0].bones[0].interpolation, vmd.DEFAULT_BONE_INTERPOLATION)
+        self.assertEqual((dropped[0].model_name, dropped[0].bones[0].name, dropped[0].bones[0].frame), ("m", "センター", 0))
+        self.assertNotIn("interp", result)
+        self.assertEqual(result["frame"], 12)
+
+    def test_the_curve_goes_into_the_vmd_on_all_four_channels(self):
+        dropped = []
+        result = self.make(dropped).set_bone("センター", rot=(0, 0, 30), interp=(64, 0, 64, 127))
+        key = dropped[0].bones[0]
+        self.assertEqual(key.interpolation, vmd.bone_interpolation((64, 0, 64, 127)))
+        self.assertEqual(vmd.bone_curves(key.interpolation), {c: (64, 0, 64, 127) for c in vmd.BONE_CHANNELS})
+        self.assertEqual(key.interpolation[2:4], b"\x00\x00")
+        self.assertEqual((result["interp"], result["interp_in_project"]), ([64, 0, 64, 127], list(range(16))))
+
+    def test_a_bad_curve_is_refused_before_anything_is_dropped(self):
+        dropped = []
+        with self.assertRaises(ValueError):
+            self.make(dropped).set_bone("センター", rot=(0, 0, 30), interp=(200, 0, 0, 0))
+        self.assertEqual(dropped, [])
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class SetCameraInterpTest(unittest.TestCase):
+    """with --interp the key is registered by dropping a one-key camera motion built from the values the
+    camera boxes show; without it the register button is pressed as before"""
+
+    SHOWN = {"pos": [1.0, 12.0, -3.25], "rot": [10.0, 20.0, 5.0], "distance": 30.0, "fov": 45, "perspective": True}
+
+    def make(self, dropped, clicks, keys=({"frame": 12},)):
+        from mmd_cli.ids import Ctl
+        folder = tempfile.mkdtemp()
+        m = bare_mmd()
+        m._require_register_or_camera_mode = lambda register, what: None
+        m._camera_mode = lambda: contextlib.nullcontext()
+        m.entered = {}
+        m.enter = lambda cid, text: m.entered.__setitem__(cid, text)
+        m.set_check = lambda cid, on: None
+        m.click = lambda cid: clicks.append(cid)
+        m._read_camera = lambda: dict(self.SHOWN)
+        m._temp_path = lambda name: os.path.join(folder, name)
+        m._drop_motion = lambda path: dropped.append(vmd.load(path))
+        m.frame = lambda: 12
+        m._project = lambda: {"camera": {"init": {"frame": 0}, "keys": list(keys)}}
+        self.register_id = Ctl.CAMERA_REGISTER
+        return m
+
+    def test_without_a_curve_the_register_button_is_used(self):
+        dropped, clicks = [], []
+        result = self.make(dropped, clicks).set_camera(distance=30, register=True)
+        self.assertEqual((clicks, dropped), ([self.register_id], []))
+        self.assertNotIn("interp", result)
+
+    def test_with_a_curve_a_one_key_camera_motion_is_dropped(self):
+        dropped, clicks = [], []
+        m = self.make(dropped, clicks)
+        result = m.set_camera(distance=30, register=True, interp=(64, 0, 64, 127))
+        self.assertEqual(clicks, [])
+        self.assertEqual(len(dropped), 1)
+        motion = dropped[0]
+        self.assertTrue(motion.is_camera)
+        self.assertEqual((len(motion.cameras), len(motion.lights)), (1, 0))
+        key = motion.cameras[0]
+        self.assertEqual((key.frame, key.distance, key.position, key.fov, key.perspective), (0, -30.0, (1.0, 12.0, -3.25), 45, True))
+        for got, want in zip(key.rotation, (-math.radians(10), math.radians(20), math.radians(5))):
+            self.assertAlmostEqual(got, want, places=6)
+        self.assertEqual(key.interpolation, vmd.camera_interpolation((64, 0, 64, 127)))
+        self.assertEqual(result["interp"], [64, 0, 64, 127])
+        self.assertEqual(result["distance"], 30.0)
+
+    def test_a_curve_needs_register(self):
+        dropped, clicks = [], []
+        with self.assertRaises(ValueError):
+            self.make(dropped, clicks).set_camera(distance=30, interp=(64, 0, 64, 127))
+        self.assertEqual((dropped, clicks), ([], []))
+
+    def test_the_key_must_appear_in_the_project(self):
+        dropped, clicks = [], []
+        with self.assertRaises(app.MmdError) as ctx:
+            self.make(dropped, clicks, keys=()).set_camera(distance=30, register=True, interp=(64, 0, 64, 127))
+        self.assertIn("12", str(ctx.exception))
 
 
 class FailureTest(unittest.TestCase):
