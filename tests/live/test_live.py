@@ -420,6 +420,24 @@ class ProjectTest(Base):
         self.assertEqual(MMD.dump(in_place=True)["models"], [])
 
 
+class HandOpenedProjectTest(Base):
+    def test_saving_a_hand_opened_project_elsewhere_leaves_it_untouched(self):
+        # review 1 (4.1): "save as" of a project a person opened must not write the file MMD has open
+        MMD.load_model(bundled("Model", "初音ミク.pmd"))
+        hand, copy = out("hand.pmm"), out("copy.pmm")
+        MMD._save_as(hand)                                   # MMD now has hand.pmm itself open ...
+        MMD.forget_project()                                 # ... and mmd-cli has no record of it: as if opened by hand
+        before = read_bytes(hand)
+        MMD.set_frame(7)
+        r = MMD.save(copy)
+        self.assertEqual(os.path.normcase(r["path"]), os.path.normcase(copy))
+        self.assertTrue(os.path.exists(copy))
+        self.assertEqual(read_bytes(hand), before)
+        self.assertTrue(os.path.normcase(MMD.state()["project_path"]).endswith("copy.pmm"))
+        MMD.save()                                           # no path: the overwrite that was asked for, of copy.pmm
+        self.assertEqual(read_bytes(hand), before)
+
+
 class RenderTest(Base):
     with_model = True
 
