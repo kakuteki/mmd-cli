@@ -712,7 +712,7 @@ class RelayTest(unittest.TestCase):
         from mmd_cli import relay
         relay.run_in_user_session(["--pid", str(MMD.pid), "frame", "get"])
         listing = subprocess.run(["schtasks.exe", "/Query", "/FO", "CSV"], capture_output=True, creationflags=0x08000000)
-        self.assertNotIn(b"mmd-cli", listing.stdout)
+        self.assertNotIn(b"mmd-cli\\relay-", listing.stdout)   # the suite itself may be running as mmd-cli\live-*
 
 
 class SaveTest(Base):
@@ -804,7 +804,7 @@ class CliTest(Base):
     def run_cli(self, *args):
         env = dict(os.environ)
         cmd = [sys.executable, "-m", "mmd_cli", "--pid", str(MMD.pid)] + list(args)
-        p = subprocess.run(cmd, capture_output=True, env=env,
+        p = subprocess.run(cmd, capture_output=True, env=env, creationflags=0x08000000,   # no console window
                            cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         return p.returncode, p.stdout.decode("ascii"), p.stderr.decode("utf-8", "replace")
 

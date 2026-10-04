@@ -279,6 +279,13 @@ python -m unittest tests.live.test_live
 
 実機試験は、試験の間に MMD の窓が一度も前面の窓にならなかったこと、主窓が一度も画面に現れなかったことも検査する。
 
+SSH で入ったマシン（セッション 0）では試験自身が MMD を動かせないので、`mmd` の中継と同じ仕組みで、ログオン中の
+利用者のデスクトップセッションの中で試験一式を走らせて判定だけを受け取る道具を使う:
+
+```
+python tools/run_live_tests_in_session.py --exe C:/tools/MikuMikuDance_v932x64/MikuMikuDance.exe
+```
+
 ## 資料
 
 - `docs/design-20261004-mmd-cli.md`: 設計書

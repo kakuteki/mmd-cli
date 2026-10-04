@@ -309,7 +309,10 @@ class Mmd:
         outermost = self._parking is None
         if outermost:
             hidden = not win32.is_visible(self.hwnd)
-            self._parking = {"hidden": hidden, "rect": win32.window_rect(self.hwnd) if hidden else None}
+            rect = win32.window_rect(self.hwnd) if hidden else None
+            if rect is not None and rect[0] <= win32.OFFSCREEN_X + 100:
+                rect = (100, 100) + tuple(rect[2:])     # an interrupted run left it parked: give it a place on the screen
+            self._parking = {"hidden": hidden, "rect": rect}
             if hidden:
                 win32.move_offscreen(self.hwnd)
         try:
@@ -1404,6 +1407,8 @@ class Mmd:
     def show(self):
         """put a hidden window back (minimized, so it still does not cover anything)"""
         if not win32.is_visible(self.hwnd):
+            if win32.is_hidden(self.hwnd):              # parked off-screen by an operation that was cut short
+                win32.move_window(self.hwnd, 100, 100)
             win32.minimize_no_activate(self.hwnd)
             self._wait_for(lambda: win32.is_visible(self.hwnd), 5.0, "the window did not show")
         return self._window()

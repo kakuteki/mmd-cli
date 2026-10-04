@@ -30,6 +30,7 @@ def bare(**attrs):
     """an Mmd that never talks to a window; attrs replace methods"""
     m = app.Mmd.__new__(app.Mmd)
     m.pid, m.hwnd, m.events, m.in_place, m.timeout, m._controls = 4242, 1, [], False, 1.0, None
+    m._parking = None
     m.require_ready = lambda allow_playing=False: None
     for name, value in attrs.items():
         setattr(m, name, value)
@@ -162,6 +163,49 @@ class PlayArgumentsTest(unittest.TestCase):
                 m.play(wait=True, repeat=True)
             with self.assertRaises(ValueError):
                 m.play(start=1)
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class ParkedWindowTest(unittest.TestCase):
+    """a hidden window is parked off-screen during an operation; one found there (an interrupted run left
+    it) must come back to a place on the screen, or a later `window show` would show nothing"""
+
+    def setUp(self):
+        import types
+        self.calls = []
+        self.rect = (-28000, 200, 1280, 770)
+        self.visible = False
+        patches = [
+            mock.patch.object(app.win32, "is_visible", side_effect=lambda h: self.visible),
+            mock.patch.object(app.win32, "window_rect", side_effect=lambda h: self.rect),
+            mock.patch.object(app.win32, "move_offscreen", side_effect=lambda h: self.calls.append(("park",))),
+            mock.patch.object(app.win32, "move_window", side_effect=lambda h, x, y: self.calls.append(("move", x, y))),
+            mock.patch.object(app.win32, "hide", side_effect=lambda h: self.calls.append(("hide",))),
+            mock.patch.object(app.win32, "minimize_no_activate", side_effect=self.minimize),
+            mock.patch.object(app.win32, "is_iconic", return_value=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.m = bare()
+        self.m.guard = types.SimpleNamespace(run=lambda *a, **k: [])
+
+    def minimize(self, hwnd):
+        self.calls.append(("minimize",))
+        self.visible = True
+
+    def test_a_window_found_off_screen_is_given_a_place_on_the_screen_after_the_operation(self):
+        self.m._run(None)
+        self.assertEqual(self.calls, [("park",), ("move", 100, 100)])
+
+    def test_a_window_found_where_it_belongs_goes_back_there(self):
+        self.rect = (40, 60, 1280, 770)
+        self.m._run(None)
+        self.assertEqual(self.calls, [("park",), ("move", 40, 60)])
+
+    def test_show_brings_a_parked_window_back_before_showing_it(self):
+        self.m.show()
+        self.assertEqual(self.calls, [("move", 100, 100), ("minimize",)])
 
 
 def notice(*buttons):
