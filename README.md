@@ -120,6 +120,7 @@ JSON の配列か `{"id": ..., "args": [...]}` で書く。`--pid` などの共�
 | 見た目 | `mmd render image out.png` | MMD の「画像ファイルに出力」 |
 | モデルの骨の親子・種類（IK、回転/移動、表示、付与、物理後）と表情の区分（眉・目・口・その他） | `mmd model info [名前]` | MMD は骨の名前しか見せないので、モデルファイル（pmx / pmd）を読む |
 | vmd / vpd / pmm / pmx / pmd ファイルの中身 | `mmd file info ファイル` | MMD を使わずに解析する |
+| vmd の中のキー（区間を絞って、表示値で） | `mmd motion keys F.vmd [--camera \| --bone 名前 \| --morph 名前 \| --light] [--from A --to B]` | 同上。「モーションファイルの編集」を参照 |
 
 角度は MMD の窓に表示される値と同じ（度）。ボーンの回転は四元数（`--quat X Y Z W`）でも指定できる。
 
@@ -178,6 +179,60 @@ mmd file info C:/models/初音ミク.pmd --brief
 （`group` `vertex` `bone` `uv` `uv1`〜`uv4` `material` `flip` `impulse`）で、pmd は常に `vertex`。IK の `angle` は pmx が
 ラジアン、pmd はファイルの値のまま（pmx の 1/4）。`display_frames` は MMD の左の枠一覧で、`special` は Root と 表情。）
 
+## モーションファイルの編集（MMD なし）
+
+配布されたカメラモーションの一部の区間だけ寄せたい、というような直しは、MMD を動かさずに vmd を直接編集する。
+`motion keys` で区間のキーを見て、`motion edit` で別名に書き出す。どちらも MMD に接続せず、中継もしない。
+数値は MMD の窓に表示される値（距離は正、角度は度）で見せ、受け取る。
+
+```
+mmd motion keys camera.vmd                                      # 種類ごとの件数と、最初と最後のフレーム
+mmd motion keys camera.vmd --camera --from 0 --to 300           # 区間のカメラのキー（距離・位置・角度・視野角）
+mmd motion edit camera.vmd near.vmd --camera --from 0 --to 247 --distance-scale 0.6     # 距離を 0.6 倍にして near.vmd へ
+mmd motion edit camera.vmd near.vmd --camera --from 0 --to 247 --distance-clamp 0 60    # または距離を 60 以下に抑える
+```
+
+```json
+{"ok": true, "path": "C:\\work\\camera.vmd", "range": [0, 300], "model_name": "カメラ・照明", "kind": "camera",
+ "target": {"kind": "camera"}, "count": 4,
+ "keys": [{"frame": 0, "distance": 500.0, "pos": [0.0, 60.0, 0.0], "rot": [-6.0, 0.0, 0.0], "fov": 30, "perspective": true}, "..."]}
+```
+
+`motion edit` の結果には、対象ごとに触ったキーの数と、書いた OUT を読み戻した件数が入る。
+
+```json
+{"ok": true, "in": "C:\\work\\camera.vmd", "out": "C:\\work\\near.vmd", "range": [0, 247],
+ "order": ["shift", "copy", "values", "interp"], "targets": [{"kind": "camera", "selected": 3, "changed": 3, "touched": 3}],
+ "counts": {"bones": 0, "morphs": 0, "cameras": 260, "lights": 0, "shadows": 0, "show_ik": 0}}
+```
+
+対象は `--camera` / `--light` / `--bone 名前`（複数可）/ `--all-bones` / `--morph 名前`（複数可）/ `--all-morphs`。`motion keys` は 1 つだけ。
+区間 `--from A --to B` は両端を含み、省略すると全体（片方だけはエラー）。ボーンと表情は名前の完全一致で選ぶので、
+同じフレームにある別のボーンのキーには触れない。無い名前はエラーにし、近い名前を添える。
+
+| 操作 | 対象 | 内容 |
+| --- | --- | --- |
+| `--shift N` | 全部 | フレームを N ずらす（負も可。0 未満になるキーがあれば何も変えずにエラー） |
+| `--delete` | 全部 | 消す。他の操作とは組み合わせられない |
+| `--copy-to F` | 全部 | 区間の先頭が F に来るように複製を足す |
+| `--replace` | | `--shift` / `--copy-to` の行き先に既にあるキーを置き換える（付けなければエラー） |
+| `--distance-scale K` / `--distance-add D` / `--distance-clamp MIN MAX` | カメラ | 距離を K 倍（K > 0）/ D 足す / MIN〜MAX に収める。表示値の意味で、ファイルが負で持つ符号はそのまま |
+| `--pos-add X Y Z` | カメラ・ボーン | 位置に足す |
+| `--fov-set F` / `--fov-add F` | カメラ | 視野角（度） |
+| `--rot-add X Y Z` | ボーン | 表示値の度。キーの回転の後にボーン自身の軸で回す（単一軸のキーなら角度の足し算と同じ） |
+| `--weight-set W` / `--weight-scale K` | 表情 | 重み |
+| `--interp X1 Y1 X2 Y2` | カメラ・ボーン | 補間曲線を全チャンネル同じ値に置き換える |
+
+1 回の呼び出しに複数の操作を書ける。適用の順番は固定で、ずらす → 複製 → 値の変更（倍率・設定 → 加算 → 上下限）→ 補間曲線。
+値の変更と補間曲線は、区間のキーとその呼び出しで作った複製の両方に効く。IN は変えずに OUT に書く。OUT に既にあるファイル
+（IN と同じパスを指定した場合も）は、書き終えるまで `名前.mmdcli-old` に退避する（他の書き出しと同じ規則）。キーの順番は
+ファイルのまま（並べ替えない）。
+
+補間曲線は MMD の補間パネルの 2 つの制御点 (X1, Y1)・(X2, Y2) で、各 0〜127。線形は `20 20 107 107`、`64 0 64 127` は
+ゆっくり始まってゆっくり止まる S 字。`bone set --interp` と `camera set --register --interp` で登録するキーにも同じ形で指定できる
+（省略すれば今までどおり線形）。カメラの登録ボタンには曲線を渡せないので、`camera set --interp` は欄の表示値から 1 キーの
+カメラモーションを組んで読ませる方法で登録する。
+
 ## 出力
 
 - 標準出力は常に ASCII。日本語などは `\uXXXX` に逃がすので、端末の文字コードが何であっても壊れない。
@@ -204,10 +259,11 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `new` / `open F.pmm` / `save [F.pmm]` | プロジェクト |
 | `model load F` / `list` / `select 名前\|番号\|camera` / `delete` / `show` / `hide` / `info [名前\|番号\|F]` | モデル（pmx / pmd）。`info` は骨（親・旗・IK・付与）と表情（区分・種類）と表示枠の一覧をモデルファイルから読む |
 | `motion load F.vmd [--frame N] [--model M]` / `motion save F.vmd` | モーションの読込と書き出し（保存は選択中のモデルの全キー。カメラ編ならカメラと照明） |
+| `motion keys F.vmd [対象] [--from A --to B]` / `motion edit IN.vmd OUT.vmd 対象... [--from A --to B] 操作...` | vmd の中のキーの一覧と、区間のキーのずらし・削除・複製・値の変更・補間曲線の置換（MMD 不要） |
 | `pose load F.vpd [--register]` / `pose save F.vpd` | ポーズの読込と書き出し。`--register` でキーも登録する |
-| `bone list` / `get 名前` / `set 名前 [--pos X Y Z] [--rot X Y Z \| --quat X Y Z W] [--frame N]` | ボーンのキー登録 |
+| `bone list` / `get 名前` / `set 名前 [--pos X Y Z] [--rot X Y Z \| --quat X Y Z W] [--frame N] [--interp X1 Y1 X2 Y2]` | ボーンのキー登録（`--interp` は補間曲線。省略は線形） |
 | `morph list` / `get 名前` / `set 名前 値 [--frame N]` | 表情のキー登録 |
-| `camera get` / `set [--pos] [--rot] [--distance] [--fov] [--perspective on\|off] [--register]` | カメラ |
+| `camera get` / `set [--pos] [--rot] [--distance] [--fov] [--perspective on\|off] [--register [--interp X1 Y1 X2 Y2]]` | カメラ（`--interp` は登録するキーの補間曲線） |
 | `light get` / `set [--rgb R G B] [--dir X Y Z] [--register]` | 照明 |
 | `accessory load F.x` / `list` / `get` / `set 名前 [--pos] [--rot] [--scale] [--alpha] [--show\|--hide]` / `delete` | アクセサリ（`set` は現在のフレームに登録する） |
 | `wav load F.wav` | 音 |

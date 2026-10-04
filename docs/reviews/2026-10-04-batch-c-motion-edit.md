@@ -33,7 +33,7 @@
 - 何を作ったか: 新規 `mmd_cli/motion_edit.py` の `keys_file(path, spec, span)`（CLI から独立）。対象なしなら `summary`（種類ごとの件数 `counts` と `ranges`（最初と最後のフレーム。区間を付ければ区間内）、`model_name`、`kind`）。対象ありなら `list_keys`（フレーム順。カメラは frame, distance（正）, pos, rot（度。X は符号を反転）, fov, perspective。ボーンは frame, pos, rot（`mathutil.quat_to_ui`）。表情は frame, weight。照明は frame, rgb（×256 で整数。scene.py と同じ）, dir）。数値は scene.py と同じ丸め（小数 4 桁、-0.0 を消す）。cli.py: `motion` グループに `keys`（対象は排他群、`--from/--to`）、`_motion_file(args)` を `standalone()` に足し、`dispatch_any` と `_dispatch` の motion の行で `_motion_file_command` に回す（MMD なし・中継なし）。`--from` だけ／`--to` だけ／負／逆順は `check_range` が `ValueError`（終了コード 2）。
 - 守る試験: tests/test_motion_edit.py `RangeTest` `SelectTest`（両端を含む・空の区間・同名ボーンの混在から名前で選ぶ）`NamesTest`（候補名つきのエラー、`--all-bones` の展開）`ListTest`（件数と区間、表示値、フレーム順）`KeysFileTest`。tests/test_cli.py `MotionKeysEditParserTest.test_motion_keys_takes_one_target_and_a_range`、`MotionFileCommandsTest`（standalone、`--from` だけはファイルを読む前にエラー、summary と一覧、`main` 経由で JSON と `--out`）。
 - 通し確認（MMD なし、実コマンド）: えぬたのカメラ vmd で `motion keys` → 260 キー・0〜7742。`--camera --from 0 --to 300` → 4 キー（距離 500 / 700 / 800 が fov 30、248 から距離 325 の fov 5）。`--from 1700 --to 1900` → 8 キー（距離 125〜325、fov 5 と 30 が切り替わる）。
-- コミット: 項目 2 と同じコミット（motion_edit.py は一覧と編集を 1 つのモジュールに持ち、cli.py の `motion` グループの変更も共通なので分けなかった）。
+- コミット: 00691aa（項目 2 と同じコミット。motion_edit.py は一覧と編集を 1 つのモジュールに持ち、cli.py の `motion` グループの変更も共通なので分けなかった。項目 3 の `bone set` / `camera set` の `--interp` に関わる cli.py・test_cli.py の部分はこのコミットから外し、次のコミットに入れた）。
 - 迷った点: 一覧の並びはファイル順でなくフレーム順にした（人が読むため。編集の方はファイル順を保つ）。summary に骨名・表情名の一覧は入れない（`file info` にある。長くなる）。照明の rgb は scene.py の ×256 に合わせた（1.0 は 256 になる。vmd の値が MMD の 0〜255 からどう写るかは scene.py の実測に従った）。
 
 ## 2. `mmd motion edit IN.vmd OUT.vmd 対象... [--from A --to B] 操作...`
@@ -49,7 +49,7 @@
   - cli.py: `edit` の引数（`--bone`/`--morph` は append、`--all-bones`/`--all-morphs`、`--camera`/`--light`、区間、操作。`--interp` は `curve_value` 型で 0〜127 以外は argparse の段階で終了コード 2）。`_motion_targets(args)` と `_motion_file_command(args)` で `Operations` を組む。
 - 守る試験: tests/test_motion_edit.py `ValidationTest` `ShiftTest`（区間外は動かない、負、0 未満は何も変えずエラー、衝突と `--replace`、区間内の入れ替わり、同名の別ボーンは衝突にならない、空の区間）`DeleteTest` `CopyTest`（複製の値と別オブジェクト、重なりと `--replace`、自分の区間に重なる複製、名前で絞る、空の選択）`CameraValuesTest`（距離の符号、add の向き、scale → add → clamp、clamp の符号と 0、fov の順序と下限、区間外は変わらない）`BoneValuesTest`（合成の順序を独立のハミルトン積で固定）`MorphValuesTest` `InterpTest`（2・3 バイト目を保つ、表情・照明はエラー）`OrderTest`（4 操作を 1 回で・複数対象）`CameraUiTest` `EditFileTest`（OUT の読み戻し、IN は不変、エラーは書く前、IN = OUT の退避、既存 OUT の置換、フォルダは拒否）。tests/test_cli.py `MotionKeysEditParserTest`、`MotionFileCommandsTest`（書いて読み戻す、clamp、対象・操作の検査、`main` 経由の終了コード 2）。
 - 通し確認（MMD なし、実コマンド）: えぬたのカメラ vmd に `motion edit ... --camera --from 0 --to 300 --distance-clamp 0 60` → `touched 4`、OUT を `motion keys` で読むと 0 / 150 / 247 の距離が 60 に、248（もともと 325・fov 5）も 60 になった（区間の端は `keys` を見て決める必要がある。README の例では 0〜247 にする）。注視点 `pos` は (0, 60, 0) のまま高いので、距離だけ詰めても人物が画面中央に来るとは限らない（`--pos-add` で下げる案を報告に書く）。
-- コミット: （項目 1 と同じコミット。後述）
+- コミット: 00691aa（項目 1 と同じ）
 - 迷った点と根拠:
   - `--delete` を他と組み合わせられるか → 単独にした。「消してからずらす」に意味が無く、組み合わせを許すと「触った 0 件」が黙って返るだけになる。指示の例の順序（delete → shift → copy → 値 → 補間）は、delete 以外をその順で固定した。
   - 値の変更を複製にも効かせるか → 効かせる（複製して調整する使い方が自然。原本だけ変えたければ 2 回に分ける）。README に明記。
@@ -64,5 +64,26 @@
 - 何を作ったか: app.py `set_bone(..., interp=None)`: `vmd.check_curve` を最初に通し（不正なら何も落とす前に `ValueError`）、`BoneKey` の interpolation に `bone_interpolation(curve)`（指定なしは今までどおり既定の線形）。結果に `interp`（指定値）と `interp_in_project`（登録後の pmm が持つそのキーの 16 バイトを生のまま。実機試験で曲線が入ったかを見るための証拠）を、指定があるときだけ足す。`set_camera(..., interp=None)`: `--interp` には `--register` が要る（無ければ `ValueError`）。**カメラの登録ボタンには曲線を渡せないので、`--interp` のときだけ登録の手段を変える**: 欄に値を入れた後、`_read_camera()` が示す値（表示値）から `motion_edit.camera_key_from_ui` で 1 キーのカメラ vmd（フレーム 0 = MMD が現在のフレームに置く。距離は負、X の角度は符号反転、ラジアン）を組み、`_drop_motion` で読ませ、`_project()` のカメラのキーに現在のフレームのものが無ければ `MmdError`。`--interp` なしは今までどおり登録ボタン（MMD 側の操作は変えていない）。cli.py: `bone set` / `camera set` に `--interp X1 Y1 X2 Y2`（`curve_value` 型）、`_dispatch` で渡す。
 - 守る試験: tests/test_cli.py `MotionKeysEditParserTest.test_interp_values_outside_0_127_are_usage_errors`、`DispatchInterpTest`、`SetBoneInterpTest`（窓なしの Mmd で `_drop_motion` に渡った vmd を読む: 指定なしは既定の線形・指定ありは 4 チャンネルに曲線・2・3 バイト目は 0・`interp_in_project`・不正な曲線は落とす前に止まる）、`SetCameraInterpTest`（指定なしは登録ボタンを押し vmd を落とさない・指定ありは登録ボタンを押さず 1 キーのカメラ vmd を落とす（距離 -30、位置、角度の符号と単位、fov、perspective、24 バイト）・`--register` 無しはエラー・登録後にキーが無ければ `MmdError`）。
 - 実機: 走らせていない（指示どおり）。**特に `camera set --interp` は MMD にカメラ vmd を落として登録する新しい経路なので、実機試験で確かめるまで未検証**（カメラモードでの vmd の読込で確認ダイアログが出るか、現在のフレームに置かれるか、`_project()` のキーに現れるか）。
-- コミット: （後述）
+- コミット: 7129ce8
 - 迷った点: 指示は「`set_camera` が組み立てる vmd に反映するだけ」だが、現状の `set_camera` は vmd を組み立てず欄と登録ボタンで登録している。曲線を付ける手段は vmd 経由しか無いので、`--interp` のときに限って vmd 経由にした。`--interp` なしの挙動は変えていない。
+
+## 4. README
+
+- 何を作ったか: 「状態の確かめ方」の表に `motion keys` の行。コマンド表に `motion keys` / `motion edit` の行、`bone set` と `camera set` の `--interp`。新しい節「モーションファイルの編集（MMD なし）」: ヒビカセの手順（`motion keys camera.vmd --camera --from 0 --to 300` で距離を見て、`motion edit camera.vmd near.vmd --camera --from 0 --to 247 --distance-scale 0.6` または `--distance-clamp 0 60`）、`keys` と `edit` の実出力から写した JSON、対象と区間の決まり、操作の表、適用順（ずらす → 複製 → 値（倍率・設定 → 加算 → 上下限）→ 補間）、値の変更が複製にも効くこと、OUT の退避、キーの順番を保つこと、補間曲線の意味（制御点 2 つ、各 0〜127、線形 20 20 107 107、64 0 64 127 の S 字）、`camera set --interp` が 1 キーのカメラモーションを読ませて登録すること。
+- 守る試験: なし（README）。例の JSON の数値は実コマンドの出力（えぬたのカメラ、0〜247 は 3 キーで `selected 3 / changed 3 / touched 3`、`cameras 260`）から写し、パスだけ `C:\work\...` に置き換えた。
+- コミット: このまとめと同じコミット。
+
+## まとめ
+
+- コミット（worktree のブランチ `worktree-agent-aaa6ff549d2593c39`、起点 f6b69a5、push していない）: 1b76366（vmd の補間の組み立て補助・`quat_multiply`）→ 00691aa（`motion keys` / `motion edit`、`--distance-clamp` を含む、この記録の初版）→ 7129ce8（`bone set` / `camera set --interp`）→ このまとめと README。
+- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 363 tests ... OK (skipped=1)`（278 → 363。内訳の追加分は test_vmd 8・test_motion_edit 60・test_cli 17。skip は tests/live のまま）。MMD は起動していない。tests/live は触っていない。
+- Python 3.9: 触った 8 ファイルを `ast.parse(..., feature_version=(3, 9))` で通した（match 文・`X | Y`・括弧つき with は使っていない）。
+- 触ったファイル: 新規 mmd_cli/motion_edit.py・tests/test_motion_edit.py・この記録。追加のみ mmd_cli/formats/vmd.py（定数と補助関数。既定値の定数と読み書きは変えていない）・mmd_cli/mathutil.py（`quat_multiply`）・mmd_cli/cli.py（`motion keys` / `edit` の引数と `_motion_targets` / `_motion_file_command`、`bone set` / `camera set` の `--interp`、`standalone()` / `dispatch_any` / `_dispatch` の分岐）・mmd_cli/app.py（`set_bone` / `set_camera` の `interp` と `_register_camera_through_motion` だけ）・tests/test_vmd.py・tests/test_cli.py・README.md。guard.py / relay.py / win32.py / scene.py / formats/pmm.py / pmx.py / pmd.py / tests/live / HANDOVER.md は触っていない。
+- 実物での通し確認（MMD なし）: えぬたのカメラ vmd（260 キー、0〜7742）で `keys`（0〜300: 距離 500 / 700 / 800 の fov 30、248 から 325 の fov 5。1700〜1900: 距離 125〜325）と `edit`（0〜247 を `--distance-scale 0.6` / `--distance-clamp 0 60`。OUT を `keys` で読み戻して値を確認）。注視点 `pos` が (0, 60, 0) と高いままなので、距離を詰めるだけでは人物が画面の中央に来ない可能性がある（`--pos-add` で下げるのは加賀さんの指定待ち）。
+- できなかった・やらなかったこと:
+  - 実機の MMD での `bone set --interp` / `camera set --register --interp` の確認（指示どおり MMD を起動していない）。**`camera set --interp` はカメラ vmd を落として登録する新しい経路で、実機では未検証**。実機試験で見るべき点: `interp_in_project` の 16 バイトに曲線が入ること、カメラのキーが現在のフレームに入ること、カメラモードでの vmd 読込に確認ダイアログが出るか（出れば `_drop_motion` が答える）。
+  - 補間の 1 行目の 2・3 バイト目の意味（物理 ON/OFF の旗と言われる）は確かめていない。既存キーの編集ではそのまま保ち、新規キーは MMD と同じ 0 を書く。
+  - 群の中のチャンネルの並び（X Y Z 回転 / X Y Z 回転 距離 視野角）は実物から区別できなかった。全チャンネル同じ値を書くので結果には影響しない（`bone_curves` / `camera_curves` の名前づけだけ）。
+  - 視野角の上限は検査していない（MMD の上限を測っていない。下限 1 だけ）。
+  - HANDOVER.md の残課題 4（補間曲線の指定・キー範囲の操作）を「済」にする更新は、触ってよいファイルに無いので行っていない。取り込み時に。
+  - 探査スクリプト（`_spike/probe_interp.py` `probe_interp2.py` `cut_item3_tests.py`）と通し確認の出力は `_spike/`（gitignore 内）に置いたまま。リポジトリには入れていない。
