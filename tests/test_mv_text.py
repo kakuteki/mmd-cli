@@ -1166,6 +1166,21 @@ class SequencesTest(unittest.TestCase):
         self.assertAlmostEqual(ntsc["cues"][0]["start"], 15 * 1001 / 30000.0)
         self.assertEqual(mv_text.render_sequences(small_doc(RISE_CUE), self.work, fps=fractions.Fraction(25))["fps"], 25)
 
+    def test_the_call_of_another_tool(self):
+        # tools/mv_look.py calls it so: the parsed cue file (the object or the old bare list), a folder, the
+        # frame as a tuple and the rate as a whole number or a float.  Picture 0 is the picture at `start`.
+        for fps, told, frames in ((30, 30, 30), (30.0, 30, 30), (60.0, 60, 60), (29.97, "2997/100", 30)):
+            plan = mv_text.render_sequences(small_doc(RISE_CUE), self.work, size=(320, 180), fps=fps)
+            entry = plan["cues"][0]
+            self.assertEqual((plan["fps"], plan["size"], entry["frames"]), (told, [320, 180], frames), fps)
+            self.assertIsInstance(entry["start"], float)
+            self.assertAlmostEqual(entry["start"], entry["start_frame"] / float(fps))
+            self.assertEqual(sorted(os.listdir(os.path.join(self.work, "cue_a1"))), ["f%05d.png" % i for i in range(frames)])
+            self.assertIsInstance(plan["warnings"], list)
+        old = [{"text": "x", "start": 0.5, "end": 1.0, "style": "title", "anim": "slide-up"}]
+        plan = mv_text.render_sequences(old, self.work, size=(320, 180), fps=30)
+        self.assertEqual([(c["id"], c["layer"], c["start"], c["frames"]) for c in plan["cues"]], [("c00", "front", 0.5, 15)])
+
     def test_the_cues_can_be_the_document_its_path_or_a_sheet(self):
         doc = small_doc(RISE_CUE)
         path = os.path.join(os.path.dirname(self.work), "cues.json")
