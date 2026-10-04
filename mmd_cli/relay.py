@@ -179,8 +179,9 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 
 
 def task_xml(exe, arguments):
-    user = "%s\\%s" % (os.environ.get("USERDOMAIN", os.environ.get("COMPUTERNAME", "")), os.environ.get("USERNAME", ""))
-    return TASK_XML % {"user": escape(user), "exe": escape(exe), "arguments": escape(arguments)}
+    from . import win32
+    # the principal by SID: schtasks could not map a DOMAIN\name written from the environment on one machine
+    return TASK_XML % {"user": escape(win32.current_user_sid()), "exe": escape(exe), "arguments": escape(arguments)}
 
 
 def create_task(name, exe, arguments):

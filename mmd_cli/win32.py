@@ -502,6 +502,42 @@ def launch_detached(exe, args=(), show=SW_SHOWMINNOACTIVE):
     raise OSError(error, "CreateProcess failed for %s" % exe)
 
 
+advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+advapi32.OpenProcessToken.argtypes = [wt.HANDLE, wt.DWORD, ctypes.POINTER(wt.HANDLE)]
+advapi32.OpenProcessToken.restype = wt.BOOL
+advapi32.GetTokenInformation.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.DWORD, ctypes.POINTER(wt.DWORD)]
+advapi32.GetTokenInformation.restype = wt.BOOL
+advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wt.LPWSTR)]
+advapi32.ConvertSidToStringSidW.restype = wt.BOOL
+kernel32.GetCurrentProcess.argtypes = []
+kernel32.GetCurrentProcess.restype = wt.HANDLE
+kernel32.LocalFree.argtypes = [wt.HLOCAL]
+kernel32.LocalFree.restype = wt.HLOCAL
+
+
+def current_user_sid():
+    """the SID of the account this process runs as, as text (S-1-5-21-...)"""
+    token = wt.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):   # TOKEN_QUERY
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        size = wt.DWORD(0)
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))                        # TokenUser
+        buffer = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]       # TOKEN_USER.User.Sid comes first
+        text = wt.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.CloseHandle(token)
+
+
 def process_alive(pid):
     handle = kernel32.OpenProcess(0x00100000, False, pid)   # SYNCHRONIZE
     if not handle:

@@ -84,6 +84,9 @@ CLI としての通し確認（2026-10-04 01:47）で、`mmd model load` が開�
   タスクも 6 秒待って始まらず、RelayTest 3 本と手での中継が「15 秒以内に始まらない」で失敗した）。タスクを XML 定義
   （`DisallowStartIfOnBatteries` と `StopIfGoingOnBatteries` を false、`LogonType` を InteractiveToken）で `/XML` から作ると、
   同じバッテリー駆動のまま始まる（直後に RelayTest 3 本 OK）。`/XML` なら `/TR` の 261 文字制限も無い。
+  XML の `<UserId>` を `USERDOMAIN\USERNAME` で書くと hinata では「アカウント名とセキュリティ ID の間のマッピングは
+  実行されませんでした」で登録できなかった。現在のユーザーの SID（`OpenProcessToken` → `GetTokenInformation(TokenUser)`
+  → `ConvertSidToStringSid`）を書くと両機で登録できる。
 - 中継の親が子の PID の生死で待つ方式（2026-10-04 午後）: hinata のセッション 0（sshd）から、コンソールセッションの
   pythonw の生死を `OpenProcess(SYNCHRONIZE)` で見られた。`mmd batch` 10 手（非表示起動・pmm を開く・7,743 枚の AVI・
   画像・終了）が 1 回の中継で 209 秒、失敗 0。全行で主窓は非表示のまま、AVI 行には `main_window: hidden again`

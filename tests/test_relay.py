@@ -171,10 +171,10 @@ class TaskCommandTest(unittest.TestCase):
                       "<RunLevel>LeastPrivilege</RunLevel>",
                       "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
                       "<Command>C:\\Py\\pythonw.exe</Command>",
-                      '<Arguments>-m mmd_cli --job "C:\\x\\a b.json" &lt;&amp;&gt;</Arguments>',
-                      "<UserId>%s\\%s</UserId>" % (os.environ.get("USERDOMAIN", os.environ.get("COMPUTERNAME", "")),
-                                                    os.environ["USERNAME"])):
+                      '<Arguments>-m mmd_cli --job "C:\\x\\a b.json" &lt;&amp;&gt;</Arguments>'):
             self.assertIn(piece, xml)
+        # the principal is the current user's SID: a DOMAIN\\name could not be mapped on hinata (2026-10-04)
+        self.assertRegex(xml, r"<UserId>S-1-5-21-[0-9-]+</UserId>")
         self.assertNotIn("<Triggers>", xml)      # on demand only
 
     def test_create_task_registers_from_a_utf16_file_that_does_not_stay_behind(self):
