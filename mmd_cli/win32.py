@@ -7,6 +7,7 @@ import ctypes
 import os
 import struct
 import subprocess
+import time
 from ctypes import wintypes as wt
 
 if os.name != "nt":
@@ -216,9 +217,14 @@ class _MOUSEINPUT(ctypes.Structure):
                 ("time", wt.DWORD), ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
 
 
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wt.WORD), ("wScan", wt.WORD), ("dwFlags", wt.DWORD), ("time", wt.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+
 class _INPUT(ctypes.Structure):
     class _U(ctypes.Union):
-        _fields_ = [("mi", _MOUSEINPUT), ("pad", ctypes.c_ubyte * 40)]
+        _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT)]       # 40 bytes in all on x64, as Windows expects
     _anonymous_ = ("u",)
     _fields_ = [("type", wt.DWORD), ("u", _U)]
 
@@ -241,6 +247,20 @@ def give_foreground_back(hwnd):
     user32.SendInput(1, ctypes.byref(move), ctypes.sizeof(_INPUT))
     user32.SetForegroundWindow(hwnd)
     return user32.GetForegroundWindow() == hwnd
+
+
+def send_key_return():
+    """press and release Enter through SendInput (goes to whichever window has the focus)"""
+    down = _INPUT()
+    down.type = 1                                   # INPUT_KEYBOARD
+    down.ki.wVk = VK_RETURN
+    up = _INPUT()
+    up.type = 1
+    up.ki.wVk = VK_RETURN
+    up.ki.dwFlags = 0x0002                          # KEYEVENTF_KEYUP
+    user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(_INPUT))
+    time.sleep(0.05)
+    user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(_INPUT))
 
 
 def can_set_foreground():
