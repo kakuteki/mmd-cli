@@ -16,7 +16,7 @@ import os
 import re
 from typing import List, Optional, Tuple
 
-from PIL import ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 # ---- the fonts ------------------------------------------------------------------------------
 # The per-user fonts folder holds the Y1 faces by YUTAONE.  They have Latin letters and digits only (no
@@ -51,12 +51,14 @@ Y_ANCHORS = ("top", "middle", "lower", "bottom")
 # that has the dancer as a layer of its own puts the "back" cues under her
 LAYERS = ("front", "back")
 PALETTES = {
-    # white text and an amber accent for a black stage (glow and light effects need the black)
+    # white text and an amber accent for a black stage (glow and light effects need the black); the secondary
+    # colour is 70 % of the text colour
     "dark": {"text": (245, 245, 248), "accent": (240, 160, 48), "secondary": (172, 172, 174), "ink": (22, 22, 30),
-             "stage": (0, 0, 0)},
-    # ink on the white stage MMD draws by default; white text would vanish there
+             "shadow": (0, 0, 0), "stage": (0, 0, 0)},
+    # ink on the white stage MMD draws by default; white text would vanish there.  The soft shadow is a white
+    # halo here: black under ink would smear the text instead of parting it from the picture.
     "light": {"text": (22, 22, 30), "accent": (240, 160, 48), "secondary": (120, 120, 130), "ink": (22, 22, 30),
-              "stage": (255, 255, 255)},
+              "shadow": (255, 255, 255), "stage": (255, 255, 255)},
 }
 DEFAULT_PALETTE = "dark"
 DEFAULT_STYLE, DEFAULT_ANIM, DEFAULT_X, DEFAULT_Y, DEFAULT_LAYER = "lyric", "fade", "center", "lower", "front"
@@ -75,10 +77,10 @@ MARGIN = (64, 48)                            # px kept free at the left and righ
 LINE_GAP = 0.35                              # em of the larger neighbour, from the bottom of a line to the next top
 LOWER = 5.0 / 6.0                            # "lower": the block is centred on the middle of the lower third
 X_CENTRES = {"center": 0.5, "left-third": 0.25, "right-third": 0.75}
-REFERENCE = {"latin": "H", "jp": "国"}   # the letters whose ink gives a line its top and its bottom
+REFERENCE = {"latin": "H", "jp": "\u56fd"}   # the letters whose ink gives a line its top and its bottom
 UNDERLINE = {"width": 0.6, "height": 2.0, "gap": 0.2}       # of the text width; px; em under the last line
 INK_COPY = 3.0                               # px: how far left of the text its ink copy sits
-SHADOW = {"colour": (0, 0, 0), "alpha": 170, "blur": 6.0, "offset": 2.0}     # px: blur radius, how far down
+SHADOW = {"alpha": 170, "blur": 6.0, "offset": 2.0}       # of 255; px: the blur radius and how far down it lies
 BLUR_REACH = 3.0                             # Pillow's GaussianBlur(r) reaches about 2.6 r past its source (measured)
 CANVAS_PAD = 8                               # px (not scaled) around everything a cue draws
 
@@ -512,6 +514,7 @@ class Layout:
     scale: float                 # the frame height over REFERENCE_HEIGHT
     palette: dict
     underline: Optional[Tuple[float, float, float, int]]     # x, y, width, height in the reference box
+    pad: int                     # px kept around the block in the canvas: as far as a shadow reaches
     warnings: List[str]
 
     def line_width(self, line, extra=0.0):
@@ -529,6 +532,11 @@ def frame_of(seconds, fps):
 def fps_text(fps):
     """30 or 30000/1001: the rate as ffmpeg takes it"""
     return str(fps.numerator) if fps.denominator == 1 else "%d/%d" % (fps.numerator, fps.denominator)
+
+
+def _copy_offset(scale):
+    """px: how far left of the text its ink copy sits"""
+    return max(1, int(round(INK_COPY * scale)))
 
 
 def _glyphs(text, style, factor, book, warnings, what):
@@ -630,7 +638,7 @@ def layout_cue(cue, sheet, book):
         y = underline[1] + underline[3]
 
     # the block: the reference box and all the ink at rest
-    copy = max(1, int(round(INK_COPY * scale)))
+    copy = _copy_offset(scale)
     x0, y0, x1, y1 = 0.0, 0.0, ref_width, y
     for line in lines:
         x = _line_x(line, 0.0, align, ref_width)
@@ -665,4 +673,80 @@ def layout_cue(cue, sheet, book):
     bottom = min(height, anchor[1] + block[1] + int(math.ceil(max(0.0, dy_max))) + pad)
     canvas = (max(1, right - left), max(1, bottom - top))
     return Layout(cue, lines, align, ref_width, origin, block, anchor, (left, top), canvas, motion, start_frame,
-                  end_frame - start_frame, scale, palette, underline, warnings)
+                  end_frame - start_frame, scale, palette, underline, pad, warnings)
+
+
+# ---- drawing --------------------------------------------------------------------------------
+
+def _wipe_mask(size, edge, soft):
+    """how much of each column a wipe shows: all of it up to `soft` px before `edge`, nothing from `edge` on"""
+    width, height = size
+    row = Image.new("L", (width, 1))
+    row.putdata([int(round(255.0 * min(1.0, max(0.0, (edge - (x + 0.5)) / soft)))) for x in range(width)])
+    return row.resize((width, height), Image.NEAREST)
+
+
+def draw(layout, state):
+    """The picture of a cue in one State: RGBA, the size of its canvas, transparent where nothing is drawn.
+
+    Every colour is drawn as a mask of its own and the masks are laid over each other from the back: the
+    soft shadow, the ink copies, the text, the underline.  That keeps the alpha straight (a half covered
+    pixel has the full colour and half the alpha).  Drawing text onto a transparent RGBA picture directly
+    would mix the colour with the transparent black instead and show as a dark rim on the video."""
+    size = layout.canvas
+    # the reference box in the canvas, moved by the state
+    ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0] + state.dx
+    oy = layout.anchor[1] + layout.origin[1] - layout.canvas_origin[1] + state.dy
+    at_rest = state.tracking_extra == 0.0 and state.dx == 0.0
+    placed = []                                  # (line, glyph, x and y of its origin on the baseline)
+    for line in layout.lines:
+        x = ox + layout.line_x(line, state.tracking_extra)
+        for g in line.glyphs:
+            # letters that do not move sideways sit on whole pixels (sharp stems); moving ones go smoothly
+            placed.append((line, g, float(round(x)) if at_rest else x, oy + line.baseline))
+            x += g.advance + (g.tracking + state.tracking_extra) * g.size
+    layers = []                                  # (colour, mask), from the back to the front
+
+    def pen(colour):
+        layers.append((colour, Image.new("L", size, 0)))
+        return ImageDraw.Draw(layers[-1][1])
+
+    def text(to, entries, dx=0.0, dy=0.0):
+        for _, g, x, y in entries:
+            if g.ink is not None:
+                to.text((x + dx, y + dy), g.char, font=g.font, fill=255, anchor="ls")
+
+    shadowed = [entry for entry in placed if entry[0].style.shadow]
+    if shadowed:
+        text(pen(layout.palette["shadow"]), shadowed, dy=SHADOW["offset"] * layout.scale)
+        colour, mask = layers.pop()
+        mask = mask.filter(ImageFilter.GaussianBlur(SHADOW["blur"] * layout.scale))
+        layers.append((colour, mask.point(lambda v: (v * SHADOW["alpha"] + 127) // 255)))
+    copies = [entry for entry in placed if entry[0].style.ink_copy]
+    if copies:
+        text(pen(layout.palette["ink"]), copies, dx=-_copy_offset(layout.scale))
+    for colour in dict.fromkeys(line.colour for line in layout.lines):         # each colour once
+        text(pen(colour), [entry for entry in placed if entry[0].colour == colour])
+    if layout.underline is not None and state.underline > 0.0:
+        x, y, width, height = layout.underline
+        left, top = int(round(ox + x)), int(round(oy + y))
+        shown = int(round((int(round(ox + x + width)) - left) * min(1.0, state.underline)))
+        if shown > 0:
+            pen(layout.palette["accent"]).rectangle((left, top, left + shown - 1, top + height - 1), fill=255)
+
+    out = Image.new("RGBA", size, (0, 0, 0, 0))
+    for colour, mask in layers:
+        tile = Image.new("RGBA", size, colour + (0,))
+        tile.putalpha(mask)
+        out = Image.alpha_composite(out, tile)
+    alpha = out.getchannel("A")
+    if state.wipe < 1.0:
+        # the edge travels from before everything drawn (the shadow reaches `pad` past the block) to after it
+        soft = WIPE_EDGE * layout.scale
+        start = layout.anchor[0] - layout.canvas_origin[0] + state.dx - layout.pad
+        edge = start + max(0.0, state.wipe) * (layout.block[0] + 2 * layout.pad + soft)
+        alpha = ImageChops.multiply(alpha, _wipe_mask(size, edge, soft))
+    if state.alpha < 1.0:
+        alpha = alpha.point(lambda v: int(v * max(0.0, state.alpha) + 0.5))
+    out.putalpha(alpha)
+    return out

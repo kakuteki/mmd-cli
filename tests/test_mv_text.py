@@ -1,4 +1,5 @@
 """tools/mv_text.py: MV-style text drawn with Pillow into PNG sequences and overlaid with ffmpeg."""
+import dataclasses
 import fractions
 import importlib.util
 import os
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageChops, ImageDraw
 except ImportError:                       # the package needs nothing; this one tool draws with Pillow
     raise unittest.SkipTest("Pillow is not installed: tools/mv_text.py draws with it")
 
@@ -476,7 +477,7 @@ def lay(cue, size=(1280, 720), fps=30, palette="dark"):
     return mv_text.layout_cue(sheet.cues[0], sheet, book())
 
 
-def cue_of(text="響かせ", style="lyric", **fields):
+def cue_of(text="\u97ff\u304b\u305b", style="lyric", **fields):
     cue = {"id": "a", "start": 1.0, "end": 4.0, "text": text, "style": style, "anim": "fade", "x": "center", "y": "middle"}
     cue.update(fields)
     return cue
@@ -506,7 +507,7 @@ class AnchorTest(unittest.TestCase):
         self.assertLessEqual(abs(left.anchor[0] + left.block[0] / 2.0 - 320), 1)
         self.assertLessEqual(abs(right.anchor[0] + right.block[0] / 2.0 - 960), 1)
         # a block too wide to be centred there stops at the safe margin
-        wide = "響かせ" * 6
+        wide = "\u97ff\u304b\u305b" * 6
         left, right = lay(cue_of(wide, x="left-third")), lay(cue_of(wide, x="right-third"))
         self.assertGreater(left.block[0], 2 * (320 - 64))
         self.assertEqual(left.anchor[0], 64)
@@ -583,9 +584,9 @@ class LinesTest(unittest.TestCase):
         self.assertEqual([center.line_x(line) for line in center.lines], [(max(widths) - w) / 2.0 for w in widths])
 
     def test_japanese_and_latin_in_one_line_use_two_fonts(self):
-        layout = lay(cue_of("Motion えぬた / Model Sour", "credit"))
+        layout = lay(cue_of("Motion \u3048\u306c\u305f / Model Sour", "credit"))
         glyphs = layout.lines[0].glyphs
-        self.assertEqual("".join(g.char for g in glyphs), "Motion えぬた / Model Sour")
+        self.assertEqual("".join(g.char for g in glyphs), "Motion \u3048\u306c\u305f / Model Sour")
         latin, jp = book().font("latin", 22, 400), book().font("jp", 24, 400)
         for g in glyphs:
             if ord(g.char) >= 0x2E80:
@@ -623,7 +624,7 @@ class LinesTest(unittest.TestCase):
         self.assertEqual({g.size for g in layout.lines[0].glyphs}, {60})
         self.assertEqual({g.size for g in lay(cue_of("la la", "lyric", size=60), size=(2560, 1440)).lines[0].glyphs}, {120})
         # both scripts of a style grow by the same share: credit is 22 (Latin) and 24 (Japanese)
-        credit = lay(cue_of("Aあ", "credit", size=44)).lines[0].glyphs
+        credit = lay(cue_of("A\u3042", "credit", size=44)).lines[0].glyphs
         self.assertEqual([g.size for g in credit], [44, 48])
 
     def test_a_line_wider_than_the_safe_width_is_made_smaller_and_says_so(self):
@@ -750,6 +751,295 @@ class FramesTest(unittest.TestCase):
         m = layout.motion
         self.assertEqual((m.anim, m.enter, m.exit, m.scale), ("rise", 0.3, 0.2, 1.5))
         self.assertEqual(m.at(1.0).dy, 36.0)
+
+
+TEXT, ACCENT, INK, SECONDARY = (245, 245, 248), (240, 160, 48), (22, 22, 30), (172, 172, 174)
+BAR = "\u2588" * 10                       # ten full blocks: one solid bar, 280 x 28 px in "caption"
+
+
+def block_rect(layout):
+    """the block inside the canvas"""
+    x, y = layout.anchor[0] - layout.canvas_origin[0], layout.anchor[1] - layout.canvas_origin[1]
+    return (x, y, x + layout.block[0], y + layout.block[1])
+
+
+def hold(layout):
+    """the State in the middle of the cue: it has come and has not started to go"""
+    return layout.motion.at((layout.motion.start + layout.motion.end) / 2.0)
+
+
+def frame(layout, index):
+    return mv_text.draw(layout, layout.motion.at(layout.motion.start + index / layout.motion.fps))
+
+
+def alpha(im):
+    return im.getchannel("A")
+
+
+def pixels(im, test):
+    """the mask (255 / 0) of the pixels whose (r, g, b, a) pass `test` channel by channel: a value to equal or
+    a function of the value"""
+    mask = Image.new("L", im.size, 255)
+    for band, want in zip(im.split(), test):
+        if want is None:
+            continue
+        check = want if callable(want) else (lambda v, want=want: v == want)
+        mask = ImageChops.multiply(mask, band.point(lambda v, check=check: 255 if check(v) else 0))
+    return mask
+
+
+def solid(im, colour):
+    """the box of the opaque pixels of exactly this colour; None when there is none"""
+    return pixels(im, colour + (255,)).getbbox()
+
+
+def inside(box, outer, slack=0):
+    return (box[0] >= outer[0] - slack and box[1] >= outer[1] - slack and box[2] <= outer[2] + slack
+            and box[3] <= outer[3] + slack)
+
+
+class DrawTest(unittest.TestCase):
+    def test_a_cue_at_rest_is_opaque_in_its_block_and_empty_outside_it(self):
+        cues = (title(anim="fade"), cue_of("Motion \u3048\u306c\u305f / Model Sour", "credit"), cue_of("HIBIKASE", "hook"),
+                cue_of("gypsy jig", "caption", x="left", y="bottom"), cue_of("\u97ff\u304b\u305b", "title_jp", x="right", y="top"))
+        for cue in cues:
+            layout = lay(cue)
+            im = mv_text.draw(layout, hold(layout))
+            self.assertEqual((im.mode, im.size), ("RGBA", layout.canvas))
+            block = block_rect(layout)
+            self.assertGreater(alpha(im).crop(block).getextrema()[1], 250, cue["style"] if "style" in cue else "title")
+            self.assertTrue(inside(alpha(im).getbbox(), block, slack=2), (alpha(im).getbbox(), block))
+
+    def test_the_first_frame_of_a_fade_is_empty_and_the_cue_is_whole_once_it_has_come(self):
+        layout = lay(cue_of("ABC", "caption"))
+        self.assertEqual(alpha(frame(layout, 0)).getextrema(), (0, 0))
+        partly = alpha(frame(layout, 9)).getextrema()[1]                    # half way through the enter: 0.875
+        self.assertLessEqual(abs(partly - 0.875 * 255), 1.5)
+        self.assertEqual(alpha(frame(layout, 18)).getextrema()[1], 255)
+        self.assertEqual(frame(layout, 18).tobytes(), mv_text.draw(layout, hold(layout)).tobytes())
+
+    def test_the_colour_is_not_darkened_where_the_edge_is_half_transparent(self):
+        # the pictures are straight alpha: a half covered pixel has the full colour and half the alpha.  Drawing
+        # text onto a transparent picture directly mixes the colour with the transparent black instead, which
+        # shows as a dark rim once ffmpeg lays it over the video.
+        layout = lay(cue_of("gypsy jig", "caption"))
+        im = mv_text.draw(layout, hold(layout))
+        colours = {rgba[:3] for _, rgba in im.getcolors(maxcolors=1 << 20) if rgba[3] > 0}
+        self.assertEqual(colours, {TEXT})
+        self.assertTrue(any(0 < rgba[3] < 255 for _, rgba in im.getcolors(maxcolors=1 << 20)))
+        half = mv_text.draw(layout, dataclasses.replace(hold(layout), alpha=0.5))
+        self.assertEqual({rgba[:3] for _, rgba in half.getcolors(maxcolors=1 << 20) if rgba[3] > 0}, {TEXT})
+        self.assertLessEqual(abs(alpha(half).getextrema()[1] - 127.5), 1.0)
+
+    def test_each_line_has_the_colour_of_its_style(self):
+        layout = lay(title(anim="fade"))
+        im = mv_text.draw(layout, hold(layout))
+        block = block_rect(layout)
+        text_box, accent_box = solid(im, TEXT), solid(im, ACCENT)
+        # the logo and the Japanese title in the text colour, the sub-head under them in the accent
+        self.assertLessEqual(abs(text_box[1] - block[1]), 1)
+        self.assertGreater(accent_box[1], text_box[3] - 1)
+        self.assertLessEqual(abs(accent_box[3] - block[3]), 1)
+        light = lay(title(anim="fade"), palette="light")
+        im = mv_text.draw(light, hold(light))
+        self.assertIsNotNone(solid(im, INK))
+        self.assertIsNone(solid(im, TEXT))
+        credit = lay(cue_of("Motion \u3048\u306c\u305f", "credit"))
+        box = solid(mv_text.draw(credit, hold(credit)), SECONDARY)
+        self.assertGreater(box[2] - box[0], 0.9 * credit.block[0])            # both scripts are drawn, end to end
+
+    def test_tracking_in_starts_wider_than_it_rests_and_closes_towards_its_anchor(self):
+        for x in ("left", "center", "right"):
+            layout = lay(cue_of("HIBI", "logo", anim="tracking-in", x=x))
+            rest = alpha(mv_text.draw(layout, hold(layout))).getbbox()
+            start = layout.motion.at(layout.motion.start)
+            self.assertEqual((start.alpha, start.tracking_extra), (0.0, 0.6))
+            spread = alpha(mv_text.draw(layout, dataclasses.replace(start, alpha=1.0))).getbbox()
+            grown = (spread[2] - spread[0]) - (rest[2] - rest[0])
+            self.assertLessEqual(abs(grown - 0.6 * 150 * 3), 2, x)            # three gaps of 0.6 em
+            if x == "left":
+                self.assertLessEqual(abs(spread[0] - rest[0]), 1)
+            elif x == "right":
+                self.assertLessEqual(abs(spread[2] - rest[2]), 1)
+            else:
+                self.assertLessEqual(abs((spread[0] + spread[2]) - (rest[0] + rest[2])), 2)
+            # the first frame that shows anything is still spread
+            second = alpha(frame(layout, 1)).getbbox()
+            self.assertGreater(second[2] - second[0], rest[2] - rest[0] + 200, x)
+
+    def test_rise_draws_the_cue_lower_while_it_comes_and_higher_as_it_goes(self):
+        layout = lay(cue_of("ABC", "caption", anim="rise"))
+        rest = alpha(mv_text.draw(layout, hold(layout))).getbbox()
+        self.assertTrue(inside(rest, block_rect(layout), slack=1))
+        start = dataclasses.replace(layout.motion.at(layout.motion.start), alpha=1.0)
+        low = alpha(mv_text.draw(layout, start)).getbbox()
+        self.assertEqual((low[1] - rest[1], low[3] - rest[3]), (24, 24))
+        self.assertEqual((low[0], low[2]), (rest[0], rest[2]))
+        last = alpha(frame(layout, layout.frames - 1)).getbbox()
+        self.assertLess(last[1], rest[1])
+        self.assertGreaterEqual(last[1], rest[1] - 12)
+
+    def test_wipe_half_way_shows_the_left_and_nothing_of_the_right(self):
+        layout = lay(cue_of(BAR, "caption", anim="wipe"))
+        x0, y0, x1, y1 = block_rect(layout)
+        whole = mv_text.draw(layout, hold(layout))
+        self.assertEqual(alpha(whole).crop((x0, y0, x1, y1)).getextrema(), (255, 255))       # the bar fills its block
+        half = mv_text.draw(layout, dataclasses.replace(hold(layout), wipe=0.5))
+        width = x1 - x0
+        self.assertIsNone(alpha(half).crop((x0 + int(0.6 * width), 0, half.size[0], half.size[1])).getbbox())
+        self.assertEqual(alpha(half).crop((x0, y0, x0 + int(0.4 * width), y1)).getextrema(), (255, 255))
+        # the edge is soft over 24 px: along a row the alpha only falls, through that many steps
+        row = [alpha(half).getpixel((x, (y0 + y1) // 2)) for x in range(x0, x1)]
+        self.assertEqual(row, sorted(row, reverse=True))
+        self.assertLessEqual(abs(len([v for v in row if 0 < v < 255]) - 24), 2)
+        # half way the edge has passed half of the block and of its own width: 280 / 2 + 24 / 2 = 152 px
+        self.assertEqual(row.index(0), 152)
+        self.assertEqual(len([v for v in row if v == 255]), 128)
+        # a shadow reaches past the block: nothing of it shows before the wipe starts, all of it at the end
+        soft = lay(cue_of(BAR, "lyric", anim="wipe"))
+        self.assertEqual(alpha(mv_text.draw(soft, dataclasses.replace(hold(soft), wipe=0.0))).getextrema(), (0, 0))
+        self.assertEqual(mv_text.draw(soft, dataclasses.replace(hold(soft), wipe=0.999999)).tobytes(),
+                         mv_text.draw(soft, hold(soft)).tobytes())
+        self.assertEqual(alpha(mv_text.draw(layout, dataclasses.replace(hold(layout), wipe=0.0))).getextrema(), (0, 0))
+        self.assertEqual(mv_text.draw(layout, dataclasses.replace(hold(layout), wipe=1.0)).tobytes(), whole.tobytes())
+        # a wipe comes at full alpha: what is shown on its first frames is opaque
+        self.assertEqual(alpha(frame(layout, 0)).getextrema(), (0, 0))
+        self.assertEqual(alpha(frame(layout, 4)).getextrema()[1], 255)
+
+    def test_flash_is_there_gone_there_dim_there(self):
+        layout = lay(cue_of("HIBIKASE", "hook", anim="flash", start=44.5, end=45.3))
+        peaks = [alpha(frame(layout, i)).getextrema()[1] for i in range(7)]
+        self.assertEqual(peaks[:3], [255, 0, 255])
+        self.assertLessEqual(abs(peaks[3] - 0.35 * 255), 1.0)
+        self.assertEqual(peaks[4:], [255, 255, 255])
+        self.assertEqual(alpha(frame(layout, layout.frames - 1)).getextrema()[1], 255)     # cut off, not faded
+        self.assertEqual(frame(layout, 0).tobytes(), frame(layout, layout.frames - 1).tobytes())
+
+    def test_the_hook_has_a_copy_in_ink_3_px_to_its_left(self):
+        layout = lay(cue_of("HIBIKASE", "hook"))
+        im = mv_text.draw(layout, hold(layout))
+        ink, accent = solid(im, INK), solid(im, ACCENT)
+        self.assertIsNotNone(ink)
+        self.assertEqual(ink[0], accent[0] - 3)                               # ink shows to the left of the accent
+        self.assertLessEqual(ink[2], accent[2])                               # and never to its right
+        self.assertLessEqual(max(abs(ink[1] - accent[1]), abs(ink[3] - accent[3])), 2)     # at the same height
+        self.assertTrue(inside(ink, block_rect(layout), slack=1))
+        # twice as far in a frame twice as high
+        big = lay(cue_of("HIBIKASE", "hook"), size=(2560, 1440))
+        im = mv_text.draw(big, hold(big))
+        self.assertEqual(solid(im, INK)[0], solid(im, ACCENT)[0] - 6)
+        self.assertIsNone(solid(mv_text.draw(lay(cue_of("AB", "logo")), hold(lay(cue_of("AB", "logo")))), INK))
+
+    def test_a_lyric_has_an_accent_rule_under_it_60_percent_of_its_width(self):
+        text = "\u97ff\u304b\u305b\u3066\u3044\u304f\u3088"                      # 7 kana and kanji: 322 px
+        layout = lay(cue_of(text, "lyric"))
+        im = mv_text.draw(layout, hold(layout))
+        rule = solid(im, ACCENT)
+        self.assertLessEqual(abs((rule[2] - rule[0]) - 0.6 * layout.width), 3)
+        self.assertEqual(rule[3] - rule[1], 2)
+        x0, y0, x1, y1 = block_rect(layout)
+        self.assertLessEqual(abs((rule[0] + rule[2]) - (x0 + x1)), 2)         # centred under the text
+        self.assertEqual(rule[3], y1)                                         # the last thing in the block
+        words = solid(im, TEXT)
+        self.assertGreater(rule[1], words[3])                                 # under the text, clear of it
+        # every pixel of the rule's rows between its ends is accent: a row, not dots
+        self.assertEqual(pixels(im, ACCENT + (255,)).crop(rule).getextrema(), (255, 255))
+        # it is drawn while the cue comes: nothing at first, 87.5 % half way through the enter
+        self.assertIsNone(solid(mv_text.draw(layout, dataclasses.replace(hold(layout), underline=0.0)), ACCENT))
+        grown = solid(mv_text.draw(layout, dataclasses.replace(hold(layout), underline=0.875)), ACCENT)
+        self.assertEqual(grown[0], rule[0])                                   # from its left end
+        self.assertLessEqual(abs((grown[2] - grown[0]) - 0.875 * (rule[2] - rule[0])), 1)
+        coming = pixels(frame(layout, 9), ACCENT + (lambda a: a > 0,)).getbbox()   # frame 9 of the cue itself
+        self.assertEqual(coming, grown)
+        self.assertIsNone(pixels(frame(layout, 0), ACCENT + (None,)).getbbox())
+        # left and right anchored lyrics keep the rule on their side
+        left, right = lay(cue_of(text, "lyric", x="left")), lay(cue_of(text, "lyric", x="right"))
+        self.assertEqual(solid(mv_text.draw(left, hold(left)), ACCENT)[0], block_rect(left)[0])
+        self.assertEqual(solid(mv_text.draw(right, hold(right)), ACCENT)[2], block_rect(right)[2])
+        self.assertIsNone(solid(mv_text.draw(lay(cue_of(text, "caption")), hold(lay(cue_of(text, "caption")))), ACCENT))
+
+    def test_a_lyric_has_a_soft_shadow_under_its_text(self):
+        # the same text in black at alpha 170, blurred 6 px, 2 px lower, under the text.  A solid bar shows
+        # its measure: Pillow's blur of 6 reaches 15 px past the bar, so 13 px above it and 17 px below.
+        layout = lay(cue_of(BAR, "lyric"))
+        im = mv_text.draw(layout, hold(layout))
+        bar, shadow = solid(im, TEXT), pixels(im, (0, 0, 0, lambda a: a > 0)).getbbox()
+        self.assertEqual((bar[1] - shadow[1], shadow[3] - bar[3]), (13, 17))
+        self.assertEqual((bar[0] - shadow[0], shadow[2] - bar[2]), (15, 15))
+        blacks = sorted(a for _, (r, g, b, a) in im.getcolors(maxcolors=1 << 20) if (r, g, b) == (0, 0, 0) and a > 0)
+        self.assertLessEqual(blacks[-1], 170)
+        # beside a long straight edge the blur leaves just under half of the shadow (120 of 255, measured):
+        # 170 x 120 / 255 = 80
+        beside = im.getpixel((bar[0] - 1, (bar[1] + bar[3]) // 2))
+        self.assertEqual(beside[:3], (0, 0, 0))
+        self.assertLessEqual(abs(beside[3] - 80), 2)
+        self.assertEqual(blacks[0], 1)                                        # and it fades out to nothing
+        # the canvas has the room: its border is empty, so the blur was not cut off
+        w, h = im.size
+        for edge in ((0, 0, w, 1), (0, h - 1, w, h), (0, 0, 1, h), (w - 1, 0, w, h)):
+            self.assertEqual(alpha(im).crop(edge).getextrema(), (0, 0), edge)
+        # the text lies over it untouched
+        self.assertEqual(alpha(im).crop(bar).getextrema(), (255, 255))
+        # the shadow goes with the cue: half as strong at half alpha, none in a style without it
+        half = mv_text.draw(layout, dataclasses.replace(hold(layout), alpha=0.5))
+        strongest = max(a for _, (r, g, b, a) in half.getcolors(maxcolors=1 << 20) if (r, g, b) == (0, 0, 0))
+        self.assertLessEqual(abs(strongest - blacks[-1] / 2.0), 1.5)
+        caption = lay(cue_of(BAR, "caption"))
+        self.assertIsNone(pixels(mv_text.draw(caption, hold(caption)), (0, 0, 0, lambda a: a > 0)).getbbox())
+        # real words have it too, and in a frame twice as high it reaches twice as far
+        words = lay(cue_of("\u97ff\u304b\u305b\u3066", "lyric"))
+        self.assertIsNotNone(pixels(mv_text.draw(words, hold(words)), (0, 0, 0, lambda a: a > 20)).getbbox())
+        big = lay(cue_of(BAR, "lyric"), size=(2560, 1440))
+        im = mv_text.draw(big, hold(big))
+        bar, shadow = solid(im, TEXT), pixels(im, (0, 0, 0, lambda a: a > 0)).getbbox()
+        self.assertEqual((shadow[3] - bar[3]) - (bar[1] - shadow[1]), 8)
+        self.assertGreater(bar[1] - shadow[1], 22)
+
+    def test_letters_at_rest_sit_on_whole_pixels_and_moving_ones_between_them(self):
+        # sub has 7.5 px of tracking after every letter (0.25 em of 30 px), so the second letter would start
+        # on half a pixel.  At rest every letter is put on the whole pixel (a stem on half a pixel is two grey
+        # columns); while the letters spread or close they move by fractions, or the motion would step.
+        layout = lay(cue_of("ABC", "sub"))
+        line = layout.lines[0]
+        ox = layout.anchor[0] + layout.origin[0] - layout.canvas_origin[0] + layout.line_x(line)
+        oy = layout.anchor[1] + layout.origin[1] - layout.canvas_origin[1] + line.baseline
+        self.assertEqual((ox, oy), (int(ox), int(oy)))
+
+        def expected(extra, snap):
+            mask = Image.new("L", layout.canvas, 0)
+            pen, x = ImageDraw.Draw(mask), ox + layout.line_x(line, extra) - layout.line_x(line)
+            for g in line.glyphs:
+                pen.text((round(x) if snap else x, oy), g.char, font=g.font, fill=255, anchor="ls")
+                x += g.advance + (g.tracking + extra) * g.size
+            return mask
+
+        self.assertNotEqual(expected(0.0, True).tobytes(), expected(0.0, False).tobytes())     # the test can tell
+        self.assertEqual(alpha(mv_text.draw(layout, hold(layout))).tobytes(), expected(0.0, True).tobytes())
+        moving = dataclasses.replace(hold(layout), tracking_extra=0.31)
+        self.assertEqual(alpha(mv_text.draw(layout, moving)).tobytes(), expected(0.31, False).tobytes())
+        self.assertNotEqual(expected(0.31, True).tobytes(), expected(0.31, False).tobytes())
+
+    def test_under_ink_text_the_shadow_is_a_white_halo(self):
+        # a black shadow under dark text smears it: on the white stage the text is ink, so what parts it from
+        # the picture is light around it
+        layout = lay(cue_of(BAR, "lyric"), palette="light")
+        im = mv_text.draw(layout, hold(layout))
+        self.assertIsNone(pixels(im, (0, 0, 0, lambda a: a > 0)).getbbox())
+        bar, halo = solid(im, INK), pixels(im, (255, 255, 255, lambda a: a > 0)).getbbox()
+        self.assertEqual((bar[1] - halo[1], halo[3] - bar[3]), (13, 17))
+        whites = [a for _, (r, g, b, a) in im.getcolors(maxcolors=1 << 20) if (r, g, b) == (255, 255, 255) and a > 0]
+        self.assertLessEqual(max(whites), 170)
+        self.assertEqual(mv_text.PALETTES["dark"]["shadow"], (0, 0, 0))
+
+    def test_a_roll_passes_through_the_frame(self):
+        layout = lay(title(anim="roll", start=10.0, end=30.0, x="center"))
+        self.assertEqual(alpha(frame(layout, 0)).getextrema(), (0, 0))        # still under the frame
+        middle = alpha(frame(layout, layout.frames // 2)).getbbox()
+        self.assertIsNotNone(middle)
+        early, late = alpha(frame(layout, 100)).getbbox(), alpha(frame(layout, 200)).getbbox()
+        self.assertLess(late[1], early[1])                                    # it moves up
+        last = alpha(frame(layout, layout.frames - 1)).getbbox()
+        self.assertTrue(last is None or last[3] < 12)                         # all but gone over the top
 
 
 if __name__ == "__main__":
