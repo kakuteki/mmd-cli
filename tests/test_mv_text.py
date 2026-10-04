@@ -1016,6 +1016,79 @@ class FramesTest(unittest.TestCase):
         self.assertEqual(m.at(1.0).dy, 36.0)
 
 
+def states(layout):
+    """the State of every picture of a cue"""
+    m = layout.motion
+    return [m.at(m.start + i / m.fps) for i in range(layout.frames)]
+
+
+class ShortCueTest(unittest.TestCase):
+    """a cue shorter than its enter and exit together: both are cut down in proportion and meet on a frame,
+    so that the cue is whole on that frame (it used to reach 42 % of its alpha and go again)"""
+
+    def test_a_fade_of_a_fifth_of_a_second_is_whole_on_one_frame(self):
+        layout = lay(cue_of("ABC", "caption", id="quick1", start=1.0, end=1.2))           # enter 0.6, exit 0.4
+        self.assertEqual(layout.frames, 6)
+        m = layout.motion
+        self.assertAlmostEqual(m.enter, 4 / 30.0)                                        # 0.6 : 0.4 of six frames,
+        self.assertAlmostEqual(m.exit, 2 / 30.0)                                         # meeting on frame 4
+        alphas = [s.alpha for s in states(layout)]
+        self.assertEqual((alphas[0], alphas[4]), (0.0, 1.0))
+        self.assertEqual(alphas[:5], sorted(alphas[:5]))
+        self.assertAlmostEqual(alphas[5], 1 - 0.5 ** 3)                                  # half way through the exit
+        self.assertEqual([alpha(frame(layout, i)).getextrema()[1] for i in (0, 4)], [0, 255])
+        self.assertEqual(len(layout.warnings), 1, layout.warnings)
+        self.assertIn("quick1", layout.warnings[0])
+        self.assertIn("0.133", layout.warnings[0])
+        self.assertIn("0.067", layout.warnings[0])
+        layout.warnings[0].encode("ascii")
+
+    def test_every_short_cue_has_a_frame_at_full_alpha(self):
+        for anim in ("fade", "rise", "tracking-in", "wipe"):
+            for frames in range(1, 30):
+                layout = lay(cue_of("ABC", "caption", anim=anim, start=2.0, end=2.0 + frames / 30.0))
+                self.assertEqual(layout.frames, frames)
+                where = (anim, frames)
+                m = layout.motion
+                full = [i for i, s in enumerate(states(layout)) if s.alpha == 1.0 and s.wipe == 1.0 and s.underline == 1.0]
+                self.assertTrue(full, where)
+                self.assertLessEqual(m.enter + m.exit, frames / 30.0 + 1e-9, where)
+                self.assertLessEqual(m.enter, 0.6, where)
+                self.assertLessEqual(m.exit, 0.4, where)
+                # in proportion: the enter takes six tenths of the frames, to the nearest frame (the last
+                # frame at the latest: there must be a frame to be whole on)
+                self.assertEqual(full[0], min(frames - 1, int(math.floor(0.6 * frames + 0.5))), where)
+                self.assertEqual(len(layout.warnings), 1, where)
+                # what is whole in the State is whole in the picture
+                self.assertEqual(alpha(frame(layout, full[0])).getextrema()[1], 255, where)
+
+    def test_a_short_wipe_shows_its_right_part(self):
+        layout = lay(cue_of(BAR, "caption", anim="wipe", start=1.0, end=1.2))
+        self.assertEqual(max(s.wipe for s in states(layout)), 1.0)
+        self.assertEqual(alpha(frame(layout, 4)).crop(block_rect(layout)).getextrema(), (255, 255))     # the whole bar
+
+    def test_a_cue_long_enough_keeps_its_enter_and_exit(self):
+        for end in (2.0, 2.5, 4.0):                                                      # exactly as long, and longer
+            layout = lay(cue_of("ABC", "caption", start=1.0, end=end))
+            self.assertEqual((layout.motion.enter, layout.motion.exit, layout.warnings), (0.6, 0.4, []))
+        own = lay(cue_of("ABC", "caption", start=1.0, end=1.5, enter=0.3, exit=0.2))
+        self.assertEqual((own.motion.enter, own.motion.exit, own.warnings), (0.3, 0.2, []))
+
+    def test_only_one_of_the_two_may_be_too_long(self):
+        slow_in = lay(cue_of("ABC", "caption", start=1.0, end=1.2, enter=0.6, exit=0.0))
+        self.assertAlmostEqual(slow_in.motion.enter, 5 / 30.0)                           # whole on the last frame
+        self.assertEqual((slow_in.motion.exit, states(slow_in)[5].alpha), (0.0, 1.0))
+        slow_out = lay(cue_of("ABC", "caption", start=1.0, end=1.2, enter=0.0, exit=0.6))
+        self.assertAlmostEqual(slow_out.motion.exit, 6 / 30.0)                           # whole on the first frame
+        self.assertEqual((slow_out.motion.enter, states(slow_out)[0].alpha), (0.0, 1.0))
+        self.assertLess(states(slow_out)[5].alpha, 0.5)
+
+    def test_flash_and_roll_do_not_come_and_go_and_are_left_alone(self):
+        for anim in ("flash", "roll"):
+            layout = lay(cue_of("HI", "hook", anim=anim, start=1.0, end=1.2))
+            self.assertEqual((layout.motion.enter, layout.motion.exit, layout.warnings), (0.6, 0.4, []), anim)
+
+
 TEXT, ACCENT, INK, SECONDARY = (245, 245, 248), (240, 160, 48), (22, 22, 30), (172, 172, 174)
 BAR = "\u2588" * 10                       # ten full blocks: one solid bar, 280 x 28 px in "caption"
 
@@ -1493,7 +1566,7 @@ class SequencesTest(unittest.TestCase):
     def test_it_prints_nothing_and_collects_the_warnings(self):
         out = io.StringIO()
         without_y1 = mv_text.FontBook(user_dir=tempfile.mkdtemp())
-        wide = {"id": "w", "start": 0, "end": 0.1, "text": "HIBIKASE " * 6, "style": "logo"}
+        wide = {"id": "w", "start": 0, "end": 0.1, "text": "HIBIKASE " * 6, "style": "logo", "enter": 0, "exit": 0}
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
             plan = mv_text.render_sequences(small_doc(RISE_CUE, wide), self.work, book=without_y1)
         self.assertEqual(out.getvalue(), "")
@@ -1810,7 +1883,7 @@ class MainTest(unittest.TestCase):
             self.assertEqual(json.load(f)["size"], [640, 360])                # the cue file was not written over
 
     def test_the_warnings_are_printed_as_ascii(self):
-        self.write(small_doc({"id": "w", "start": 0, "end": 0.2, "text": "\u97ff\u304b\u305b" * 30}))
+        self.write(small_doc({"id": "w", "start": 0, "end": 0.2, "text": "\u97ff\u304b\u305b" * 30, "enter": 0, "exit": 0}))
         code, result = run(["frames", self.cues, self.path("work")])
         self.assertEqual(code, 0)
         self.assertEqual(len([w for w in result["warnings"] if w.startswith("cue w:")]), 1, result["warnings"])

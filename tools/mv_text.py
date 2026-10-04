@@ -113,6 +113,7 @@ FPS = 30
 SIZE = (1280, 720)
 ENTER, EXIT = 0.6, 0.4                       # seconds a cue takes to come and to go, unless it says otherwise
 ANIMS = ("fade", "rise", "tracking-in", "wipe", "flash", "roll")
+EASED = ("fade", "rise", "tracking-in", "wipe")      # the anims that come in `enter` and go in `exit` seconds
 RISE = (24.0, -12.0)                         # px: where "rise" starts below its place, where it leaves above it
 TRACKING_IN = (0.6, 0.1)                     # em: how far "tracking-in" starts spread, and spreads again leaving
 WIPE_EDGE = 24.0                             # px: the soft edge of "wipe"
@@ -727,6 +728,20 @@ def _anchor(cue, box, origin, block, frame, margin, warnings, what):
     return (x, y)
 
 
+def _come_and_go(cue, frames, fps, warnings, what):
+    """(enter, exit) in seconds for a cue of `frames` pictures.  A cue shorter than the two together would
+    start to go before it has come and never be whole (a wipe would never show its right part): both are
+    cut down in proportion, and to meet on a frame, so that the cue is whole on that frame."""
+    enter, leave = cue.enter, cue.exit
+    if cue.anim not in EASED or fractions.Fraction(enter) + fractions.Fraction(leave) <= frames / fps:
+        return enter, leave
+    meet = min(frames - 1, int(math.floor(frames * enter / (enter + leave) + 0.5)))
+    enter, leave = min(enter, float(meet / fps)), min(leave, float((frames - meet) / fps))
+    _warn(warnings, "%s: it lasts %.3f s, less than its enter (%g s) and its exit (%g s) together: they are cut to "
+                    "%.3f s and %.3f s" % (what, float(frames / fps), cue.enter, cue.exit, enter, leave))
+    return enter, leave
+
+
 def layout_cue(cue, sheet, book):
     """lay a cue out in the frame of the sheet (see Layout)"""
     width, height = sheet.size
@@ -772,7 +787,8 @@ def layout_cue(cue, sheet, book):
                      warnings, what)
 
     # the motion runs on the frame grid: its first frame is exactly its start
-    motion = Motion(cue.anim, float(start_frame / sheet.fps), float(end_frame / sheet.fps), cue.enter, cue.exit,
+    enter, leave = _come_and_go(cue, end_frame - start_frame, sheet.fps, warnings, what)
+    motion = Motion(cue.anim, float(start_frame / sheet.fps), float(end_frame / sheet.fps), enter, leave,
                     float(sheet.fps), scale)
     if cue.anim == "roll":                               # from just under the frame to just over it
         motion.roll = (float(height - anchor[1]), -float(anchor[1] + block[1]))
