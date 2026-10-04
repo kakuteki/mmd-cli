@@ -821,11 +821,11 @@ class Mmd:
                 self.set_check(Ctl.CAMERA_PERSPECTIVE, perspective)
             if register and curve is None:
                 self.click(Ctl.CAMERA_REGISTER)
-            elif register:
-                self._register_camera_through_motion(curve)
+            evidence = self._register_camera_through_motion(curve) if register and curve is not None else {}
             result = self._read_camera()
             if curve is not None:
                 result["interp"] = list(curve)
+                result.update(evidence)
             return result
 
     def _register_camera_through_motion(self, curve):
@@ -837,8 +837,16 @@ class Mmd:
         self._drop_motion(path)
         frame_now = self.frame()
         camera = self._project()["camera"]
-        if not any(f["frame"] == frame_now for f in [camera["init"]] + camera["keys"]):
+        # the project is the evidence: a key at this frame whose 24 interpolation bytes are made of the curve
+        # (at frame 0 the init record always exists, so its curve is what tells whether anything was registered)
+        at_frame = [f for f in [camera["init"]] + camera["keys"] if f["frame"] == frame_now]
+        if not at_frame:
             raise MmdError("MMD did not register a camera key at frame %d" % frame_now)
+        key = at_frame[-1]
+        if set(key["interpolation"]) != set(curve):
+            raise MmdError("the camera key at frame %d does not carry the curve %s (the project holds %s)"
+                           % (frame_now, list(curve), list(key["interpolation"])))
+        return {"interp_in_project": list(key["interpolation"]), "distance_in_project": key["distance"]}
 
     def _read_light(self):
         return {"rgb": [int(v) for v in self._floats(Ctl.LIGHT_R, Ctl.LIGHT_G, Ctl.LIGHT_B)],

@@ -476,6 +476,31 @@ class ModelInfoTest(Base):
         self.assertEqual(MMD.state()["project_path"], before)      # no save of a working copy was needed
 
 
+class InterpTest(Base):
+    """interpolation curves given to bone set / camera set --register (batch C) reach the project"""
+    with_model = True
+
+    def test_bone_key_carries_the_curve_and_a_plain_key_the_linear_default(self):
+        r = MMD.set_bone("センター", pos=(0, 5, 0), frame=10, interp=(10, 20, 100, 110))
+        self.assertEqual(r["interp"], [10, 20, 100, 110])
+        self.assertEqual(len(r["interp_in_project"]), 16)
+        # whatever MMD's own layout of the 16 bytes is, all four channels got this curve and nothing else
+        self.assertEqual(set(r["interp_in_project"]), {10, 20, 100, 110})
+        plain = MMD.set_bone("センター", pos=(0, 6, 0), frame=20)
+        self.assertNotIn("interp_in_project", plain)
+
+    def test_camera_key_with_a_curve_lands_on_the_current_frame(self):
+        MMD.set_frame(15)
+        r = MMD.set_camera(pos=(0, 12, 0), distance=30, register=True, interp=(5, 5, 120, 120))
+        self.assertEqual(r["interp"], [5, 5, 120, 120])
+        keys = MMD.dump(keys=True)["camera"]["keys"]
+        at_15 = [k for k in keys if k["frame"] == 15]
+        self.assertEqual(len(at_15), 1)
+        self.assertAlmostEqual(at_15[0]["distance"], 30.0, places=1)
+        self.assertEqual(set(r["interp_in_project"]), {5, 120})           # the project holds the curve, not the default
+        self.assertEqual(MMD.dialogs(), [])
+
+
 class HandOpenedProjectTest(Base):
     def test_saving_a_hand_opened_project_elsewhere_leaves_it_untouched(self):
         # review 1 (4.1): "save as" of a project a person opened must not write the file MMD has open

@@ -169,22 +169,27 @@ def _no_such_name(motion, kind, name):
 
 
 def resolve_targets(motion, specs):
-    """check the names against the file and expand 'every bone' / 'every morph' into one target per name"""
-    out = []
+    """check the names against the file and expand 'every bone' / 'every morph' into one target per name.
+    A target named twice (or once and again through --all-bones) is one target: an operation applies once."""
+    out, seen = [], set()
     for spec in specs:
         if spec.kind not in KINDS:
             raise ValueError("unknown kind of key: %r" % spec.kind)
         if spec.kind in ("camera", "light"):
-            out.append(Target(spec.kind))
+            found = [Target(spec.kind)]
         elif spec.name is None:
             have = names(motion, spec.kind)
             if not have:
                 raise ValueError("the file has no %s keys" % spec.kind)
-            out.extend(Target(spec.kind, n) for n in have)
+            found = [Target(spec.kind, n) for n in have]
         elif spec.name in names(motion, spec.kind):
-            out.append(spec)
+            found = [spec]
         else:
             raise _no_such_name(motion, spec.kind, spec.name)
+        for target in found:
+            if (target.kind, target.name) not in seen:
+                seen.add((target.kind, target.name))
+                out.append(target)
     return out
 
 

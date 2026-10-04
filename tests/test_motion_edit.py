@@ -55,6 +55,17 @@ def write(path, motion):
         f.write(vmd.dumps(motion))
 
 
+class DuplicateTargetTest(unittest.TestCase):
+    def test_the_same_target_named_twice_is_touched_once(self):
+        # review 4 (2.1): --bone センター --all-bones shifted センター twice
+        m = model_motion()
+        targets = motion_edit.resolve_targets(m, [Target("bone", "センター"), Target("bone", None), Target("bone", "センター")])
+        self.assertEqual(sorted(t.name for t in targets), ["センター", "右腕"])
+        motion_edit.apply(m, targets, Operations(shift=10))
+        self.assertEqual(sorted(k.frame for k in m.bones if k.name == "センター"), [10, 20, 30, 40])
+        self.assertEqual(sorted(k.frame for k in m.bones if k.name == "右腕"), [10, 30])
+
+
 class QuatMultiplyTest(unittest.TestCase):
     def assert_close(self, got, want):
         for g, w in zip(got, want):

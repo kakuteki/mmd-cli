@@ -6,7 +6,7 @@ MMD window shows, and the camera distance is negative.
 """
 import struct
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 MAGIC = b"Vocaloid Motion Data 0002"
 ENCODING = "cp932"
@@ -90,6 +90,7 @@ class BoneKey:
     position: Tuple[float, float, float]
     rotation: Tuple[float, float, float, float]
     interpolation: bytes = DEFAULT_BONE_INTERPOLATION
+    raw_name: Optional[bytes] = None        # the name field as read; MMD cuts names at 15 bytes, even mid-character
 
 
 @dataclass
@@ -97,6 +98,7 @@ class MorphKey:
     name: str
     frame: int
     weight: float
+    raw_name: Optional[bytes] = None
 
 
 @dataclass
@@ -187,17 +189,30 @@ def _text(raw):
     return raw.split(b"\x00", 1)[0].decode(ENCODING, "replace")
 
 
+def _raw(raw):
+    return raw.split(b"\x00", 1)[0]
+
+
+def _name_field(key, size, what):
+    """the name as the file had it when the key came from a file and was not renamed (a name cut inside a
+    double-byte character cannot be re-encoded from its text), else the text encoded"""
+    raw = key.raw_name
+    if raw is not None and _text(raw) == key.name:
+        return raw.ljust(size, b"\x00")
+    return _fixed(key.name, size, what)
+
+
 def dumps(motion):
     out = [MAGIC.ljust(30, b"\x00"), _truncated(motion.model_name, 20)]
     out.append(_COUNT.pack(len(motion.bones)))
     for k in motion.bones:
         if len(k.interpolation) != 64:
             raise ValueError("bone interpolation must be 64 bytes")
-        out.append(_BONE.pack(_fixed(k.name, 15, "bone name"), _frame(k.frame, "bone", k.name), *k.position,
+        out.append(_BONE.pack(_name_field(k, 15, "bone name"), _frame(k.frame, "bone", k.name), *k.position,
                               *k.rotation, k.interpolation))
     out.append(_COUNT.pack(len(motion.morphs)))
     for k in motion.morphs:
-        out.append(_MORPH.pack(_fixed(k.name, 15, "morph name"), _frame(k.frame, "morph", k.name), k.weight))
+        out.append(_MORPH.pack(_name_field(k, 15, "morph name"), _frame(k.frame, "morph", k.name), k.weight))
     out.append(_COUNT.pack(len(motion.cameras)))
     for k in motion.cameras:
         if len(k.interpolation) != 24:
@@ -247,12 +262,12 @@ def loads(data):
     r.pos = 50
     for _ in range(r.count()):
         v = r.unpack(_BONE)
-        motion.bones.append(BoneKey(_text(v[0]), v[1], tuple(v[2:5]), tuple(v[5:9]), v[9]))
+        motion.bones.append(BoneKey(_text(v[0]), v[1], tuple(v[2:5]), tuple(v[5:9]), v[9], raw_name=_raw(v[0])))
     if r.at_end():
         return motion
     for _ in range(r.count()):
         v = r.unpack(_MORPH)
-        motion.morphs.append(MorphKey(_text(v[0]), v[1], v[2]))
+        motion.morphs.append(MorphKey(_text(v[0]), v[1], v[2], raw_name=_raw(v[0])))
     if r.at_end():
         return motion
     for _ in range(r.count()):

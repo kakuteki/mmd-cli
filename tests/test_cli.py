@@ -466,7 +466,8 @@ class SetCameraInterpTest(unittest.TestCase):
 
     SHOWN = {"pos": [1.0, 12.0, -3.25], "rot": [10.0, 20.0, 5.0], "distance": 30.0, "fov": 45, "perspective": True}
 
-    def make(self, dropped, clicks, keys=({"frame": 12},)):
+    # what the project then holds for the key: 24 interpolation bytes made of the curve (review 4, 3.1)
+    def make(self, dropped, clicks, keys=({"frame": 12, "interpolation": [64, 0, 64, 127] * 6, "distance": -30.0},)):
         from mmd_cli.ids import Ctl
         folder = tempfile.mkdtemp()
         m = bare_mmd()
@@ -480,7 +481,8 @@ class SetCameraInterpTest(unittest.TestCase):
         m._temp_path = lambda name: os.path.join(folder, name)
         m._drop_motion = lambda path: dropped.append(vmd.load(path))
         m.frame = lambda: 12
-        m._project = lambda: {"camera": {"init": {"frame": 0}, "keys": list(keys)}}
+        m._project = lambda: {"camera": {"init": {"frame": 0, "interpolation": [20, 20, 107, 107] * 6, "distance": -45.0},
+                                         "keys": list(keys)}}
         self.register_id = Ctl.CAMERA_REGISTER
         return m
 

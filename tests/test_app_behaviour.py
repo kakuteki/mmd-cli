@@ -251,6 +251,40 @@ class ModelInfoPathTest(TempHome):
 
 
 @unittest.skipUnless(app is not None, "needs Windows")
+class CameraInterpRegisterTest(TempHome):
+    """review 4 (3.1): registering a camera key with a curve must prove, from the project, that the key at the
+    current frame carries that curve (at frame 0 the init record exists even when nothing was registered)"""
+
+    def make(self, keys, frame=15, init_curve=(20, 20, 107, 107)):
+        m = bare()
+        m._drop_motion = lambda path: None
+        m._read_camera = lambda: {"pos": [0.0, 12.0, 0.0], "rot": [0.0, 0.0, 0.0], "distance": 30.0, "fov": 30,
+                                  "perspective": True}
+        m.frame = lambda: frame
+        m._project = lambda: {"camera": {"init": {"frame": 0, "interpolation": list(init_curve) * 6, "distance": -45.0},
+                                         "keys": keys}}
+        return m
+
+    def test_the_key_at_the_current_frame_must_carry_the_curve(self):
+        m = self.make([{"frame": 15, "interpolation": [5, 5, 120, 120] * 6, "distance": -30.0}])
+        r = m._register_camera_through_motion((5, 5, 120, 120))
+        self.assertEqual(set(r["interp_in_project"]), {5, 120})
+        self.assertEqual(r["distance_in_project"], -30.0)
+
+    def test_no_key_or_the_default_curve_at_the_frame_is_a_failure(self):
+        with self.assertRaises(app.MmdError):
+            self.make([])._register_camera_through_motion((5, 5, 120, 120))
+        with self.assertRaises(app.MmdError):
+            self.make([{"frame": 15, "interpolation": [20, 20, 107, 107] * 6, "distance": -30.0}])._register_camera_through_motion((5, 5, 120, 120))
+
+    def test_frame_zero_is_judged_by_the_init_record(self):
+        with self.assertRaises(app.MmdError):
+            self.make([], frame=0)._register_camera_through_motion((5, 5, 120, 120))
+        r = self.make([], frame=0, init_curve=(5, 5, 120, 120))._register_camera_through_motion((5, 5, 120, 120))
+        self.assertEqual(set(r["interp_in_project"]), {5, 120})
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
 class PlayArgumentsTest(unittest.TestCase):
     def test_contradicting_flags_are_refused_before_mmd_is_touched(self):
         m = bare()

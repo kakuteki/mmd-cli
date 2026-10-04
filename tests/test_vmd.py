@@ -225,5 +225,25 @@ class InterpolationLayoutTest(unittest.TestCase):
         self.assertEqual(vmd.camera_curves(back.cameras[0].interpolation)["fov"], (10, 20, 30, 40))
 
 
+class CutNameTest(unittest.TestCase):
+    def test_a_name_cut_inside_a_double_byte_character_survives_a_round_trip(self):
+        # review 4 (2.2): MMD cuts long names at 15 bytes, sometimes in the middle of a character; such a file
+        # must still be written back unchanged (editing only the camera of a dance is a common wish)
+        name = "あいうえおかき".encode("cp932") + b"\x82"            # 14 bytes and the first byte of く
+        self.assertEqual(len(name), 15)
+        bone = vmd._BONE.pack(name, 3, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, vmd.DEFAULT_BONE_INTERPOLATION)
+        data = vmd.MAGIC.ljust(30, b"\x00") + b"m".ljust(20, b"\x00") + struct.pack("<I", 1) + bone + struct.pack("<I", 0) * 5
+        m = vmd.loads(data)
+        self.assertIn("\ufffd", m.bones[0].name)
+        self.assertEqual(vmd.dumps(m), data)
+        m.bones[0].frame = 7                                           # a changed key keeps its bytes too
+        self.assertEqual(vmd.loads(vmd.dumps(m)).bones[0].frame, 7)
+
+    def test_a_renamed_key_is_written_from_its_new_name(self):
+        m = vmd.loads(vmd.dumps(vmd.Motion(model_name="m", bones=[vmd.BoneKey("センター", 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))])))
+        m.bones[0].name = "右腕"
+        self.assertEqual(vmd.loads(vmd.dumps(m)).bones[0].name, "右腕")
+
+
 if __name__ == "__main__":
     unittest.main()
