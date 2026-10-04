@@ -29,8 +29,10 @@ How the strength of the motion is measured (analyze):
 * The strong and the quiet stretches (sections) are found on the trend, a TREND_WINDOW (90) frame
   moving average of that strength, with two thresholds at the 35th and 65th percentiles of the trend:
   the state becomes high when the trend rises to the upper threshold and low again when it falls to
-  the lower one (hysteresis, so a beat does not flip it).  The frames where the state flips are the
-  candidate cuts; the strength of a cut is the jump of the trend across it.
+  the lower one (hysteresis, so a beat does not flip it).  Each flip gives a candidate cut, placed
+  where the trend crossed the middle of the two thresholds on its way to the flip (where the pace
+  changed, not the second or two later when the hysteresis confirmed it); the strength of a cut is
+  the jump of the trend across it.
 
 How the shots are cut (cut_shots) and what each one does (plan_shots):
 
@@ -44,19 +46,27 @@ How the shots are cut (cut_shots) and what each one does (plan_shots):
   must be at least twice --min-shot, or such a division is not always possible.
 * A shot is a peak when at least 60 % of its frames lie in high sections, a valley when at least 60 %
   lie in low ones, and mid otherwise.
-* Each shot is one of four kinds, never the same as the shot before: a push in (distance 32 to 26,
-  height 12), a pull out (30 to 42, height 13), an orbit (distance 34, Y angle -15 to +15 or back,
-  height 12) or a low angle (height 7, X angle -6 which looks up, distance 30 to 28).  A peak is shot
-  from 6 further away and its orbit swings 22 degrees; valleys lean to push ins (weight 3 of 6),
-  peaks to pull outs and orbits.  The choice is drawn with the seed, so the same seed repeats it;
-  orbits alternate their direction.  The view angle is 30 and the values are held inside
-  DISTANCE_RANGE, HEIGHT_RANGE, ANGLE_X_RANGE and ANGLE_Y_RANGE (Z stays 0).
+* Each shot is one of four kinds, never the same as the shot before: a push in (distance 38 to 32,
+  look-at height 13), a pull out (32 to 42, height 13), an orbit (distance 34, Y angle -15 to +15 or
+  back, height 12) or a low angle (height 11, X angle -10 which looks up from a camera about 4 units
+  above the floor, distance 38 to 36).  A peak is shot from 6 further away and its orbit swings 22
+  degrees; valleys lean to push ins (weight 3 of 6), peaks to pull outs and orbits.  The choice is
+  drawn with the seed, so the same seed repeats it; orbits alternate their direction.  A kind whose
+  start would hardly differ from the end of the shot before (less than 8 of distance, 10 degrees and
+  3 of height: the end of a push in and the start of a pull out) is not drawn either, since such a
+  cut reads as a dropped frame.  The view angle is 30, the values are held inside DISTANCE_RANGE,
+  HEIGHT_RANGE, ANGLE_X_RANGE and ANGLE_Y_RANGE (Z stays 0), and every shot keeps the dancer from
+  below the knees to above the head at both ends (picture_span; the report lists the span).
 * The look-at point (the camera's pos) follows the dancer: the x and z of the center bone (with the
-  parents that carry it, 全ての親 and グルーブ) interpolated linearly between its keys, at the shot's
-  height.  Only the first and the last frame of a shot look at the center; MMD moves the point in a
-  straight line between them, so the camera does not twitch with every step.
+  parents that carry it, 全ての親 and グルーブ) interpolated linearly between its keys and averaged
+  over LOOK_AT_WINDOW (90) frames, so a step or a hop does not move the camera, at the shot's height.
+  A shot has a key every LOOK_AT_STEP (90) frames at most, each looking at that smoothed center; MMD
+  moves the point in straight lines between them.  Distance, angles and fov ease over the whole shot
+  on one S curve (S_CURVE), cut into a piece per key; the first key of a shot carries the step curve
+  (CUT_CURVE), so a render at 60 fps draws nothing between two shots.
 """
 import argparse
+import bisect
 import dataclasses
 import json
 import math
@@ -79,12 +89,15 @@ MIN_SHOT, MAX_SHOT = 180, 480    # frames: 6 to 16 seconds
 LEVEL_SHARE = 0.6                # of a shot's frames in high (low) sections to call it a peak (valley)
 
 TYPES = ("push_in", "pull_out", "orbit", "low")
-# distance (start, end), height, X angle, Y angle (start, end): the numbers the MMD window shows
+# distance (start, end), height of the look-at point, X angle, Y angle (start, end): the numbers the MMD
+# window shows.  Chosen so that the picture (FOV 30, see picture_span) covers the dancer from below the
+# knees (height 5) to above the head (21; Rin's head top is at about 19.5, her ribbon at 20.8) at both
+# ends of every shot, peaks included.
 SHOT_VALUES = {
-    "push_in": {"distance": (32.0, 26.0), "height": 12.0, "x": 0.0, "y": (0.0, 0.0)},
-    "pull_out": {"distance": (30.0, 42.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
+    "push_in": {"distance": (38.0, 32.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
+    "pull_out": {"distance": (32.0, 42.0), "height": 13.0, "x": 0.0, "y": (0.0, 0.0)},
     "orbit": {"distance": (34.0, 34.0), "height": 12.0, "x": 0.0, "y": (-15.0, 15.0)},
-    "low": {"distance": (30.0, 28.0), "height": 7.0, "x": -6.0, "y": (0.0, 0.0)},
+    "low": {"distance": (38.0, 36.0), "height": 11.0, "x": -10.0, "y": (0.0, 0.0)},
 }
 PEAK_DISTANCE_ADD = 6.0
 PEAK_ORBIT_SWING = 22.0
@@ -93,23 +106,29 @@ TYPE_WEIGHTS = {
     "peak": {"push_in": 1, "pull_out": 2, "orbit": 2, "low": 1},
     "mid": {"push_in": 1, "pull_out": 1, "orbit": 1, "low": 1},
 }
+# a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the
+# end of a shot and the start of the next
+CLEAR_CUT = {"distance": 8.0, "angle": 10.0, "height": 3.0}
 DISTANCE_RANGE = (24.0, 48.0)
 HEIGHT_RANGE = (7.0, 14.0)
 ANGLE_X_RANGE = (-10.0, 10.0)
 ANGLE_Y_RANGE = (-25.0, 25.0)
 FOV = 30
-S_CURVE = (64, 0, 64, 127)       # ease in and out on every channel (the curve the distributed camera uses too)
+S_CURVE = (64, 0, 64, 127)       # ease in and out over a whole shot, on distance, angles and fov
+CUT_CURVE = (127, 0, 127, 0)     # on the first key of a shot: the step, so nothing is drawn between two shots
+LOOK_AT_STEP = 90                # frames: at most this far between two keys of a shot (the look-at point follows)
+LOOK_AT_WINDOW = 90              # frames: the look-at point is the center averaged over this window
 
 CENTER_BONES = ("全ての親", "センター", "グルーブ")       # the chain that carries the whole body
 
 # (part of the bone name, weight): the first match wins; see the module docstring for the reasoning
 ROTATION_WEIGHTS = (
-    ("指", 0.5), ("目", 0.2), ("ＩＫ", 1.0), ("足首", 1.0), ("手首", 1.5), ("頭", 2.0), ("首", 3.0),
-    ("ひじ", 4.0), ("ひざ", 4.0), ("肩", 7.0), ("腕", 7.0), ("足", 8.0),
+    ("指", 0.5), ("目", 0.2), ("捩", 1.0), ("ＩＫ", 1.0), ("IK", 1.0), ("足首", 1.0), ("手首", 1.5), ("頭", 2.0),
+    ("首", 3.0), ("ひじ", 4.0), ("ひざ", 4.0), ("肩", 7.0), ("腕", 7.0), ("足", 8.0),
     ("上半身", 8.0), ("下半身", 8.0), ("センター", 8.0), ("グルーブ", 8.0), ("全ての親", 8.0),
 )
 DEFAULT_ROTATION_WEIGHT = 1.0
-POSITION_WEIGHTS = (("センター", 1.0), ("グルーブ", 1.0), ("全ての親", 1.0), ("ＩＫ", 0.5))
+POSITION_WEIGHTS = (("センター", 1.0), ("グルーブ", 1.0), ("全ての親", 1.0), ("ＩＫ", 0.5), ("IK", 0.5))
 DEFAULT_POSITION_WEIGHT = 0.5
 
 
@@ -235,12 +254,15 @@ class Analysis:
 
 
 def find_sections(trend, low, high):
-    """runs of high and low state with hysteresis: up at `high`, down at `low`.  One section when the
-    thresholds do not leave room between them (a flat trend)."""
+    """runs of high and low state with hysteresis: up at `high`, down at `low`.  A section begins where the
+    trend crossed the middle of the two thresholds on its way to the flip, not where the flip was confirmed
+    (that is a second or two later).  One section when the thresholds do not leave room between them (a
+    flat trend)."""
     n = len(trend)
     if not high > low:
         return [Section(0, n - 1, "high" if trend[0] > 0 else "low", sum(trend) / n)]
-    state = "high" if trend[0] >= high else "low"
+    mid = (low + high) / 2.0
+    state = "high" if trend[0] >= mid else "low"
     sections, start = [], 0
     for f in range(1, n):
         if state == "low" and trend[f] >= high:
@@ -249,8 +271,11 @@ def find_sections(trend, low, high):
             flip = "low"
         else:
             continue
-        sections.append(Section(start, f - 1, state, sum(trend[start:f]) / (f - start)))
-        state, start = flip, f
+        cut = f
+        while cut - 1 > start and (trend[cut - 1] >= mid if flip == "high" else trend[cut - 1] <= mid):
+            cut -= 1
+        sections.append(Section(start, cut - 1, state, sum(trend[start:cut]) / (cut - start)))
+        state, start = flip, cut
     sections.append(Section(start, n - 1, state, sum(trend[start:]) / (n - start)))
     return sections
 
@@ -301,6 +326,8 @@ class Shot:
     pos: Tuple[Tuple[float, float, float], Tuple[float, float, float]]     # the look-at point, start and end
     intensity: Dict[str, float]  # mean and max of the strength over the shot
     cut: str                     # how the end was chosen: "section", "even" or "end"
+    track: List[Tuple[int, Tuple[float, float, float]]] = dataclasses.field(default_factory=list)
+    # (frame, look-at point) of every key of the shot: start, one every LOOK_AT_STEP frames at most, end
 
 
 def check_limits(min_shot, max_shot):
@@ -364,10 +391,9 @@ def level_of(analysis, start, end):
     return "mid"
 
 
-def pick_kind(rng, previous, level):
-    """a weighted draw among the kinds other than the previous one, from rng.random() alone (the
-    choice is reproducible from the seed, whatever the Python version)"""
-    candidates = [t for t in TYPES if t != previous]
+def pick_kind(rng, candidates, level):
+    """a weighted draw among `candidates`, from rng.random() alone (the choice is reproducible from the
+    seed, whatever the Python version)"""
     weights = [TYPE_WEIGHTS[level][t] for t in candidates]
     r = rng.random() * sum(weights)
     for kind, weight in zip(candidates, weights):
@@ -397,6 +423,26 @@ def shot_values(kind, level, orbit_sign):
     return distance, height, rot
 
 
+def picture_span(distance, height, x_angle, fov=FOV):
+    """(bottom, top): the heights the picture covers at the dancer's plane.  The camera sits `distance` from
+    the look-at point (at `height`) along a line tilted by the X angle as the window shows it (negative
+    looks up), and the picture is `fov` degrees tall.  Checked against the spike's frame 0 render (look-at
+    15, distance 25, angles 0: the hem cut at 8.3, the ribbon touching 21.7)."""
+    up = math.radians(-x_angle)
+    camera_height = height - distance * math.sin(up)
+    forward = distance * math.cos(up)
+    half = math.radians(fov / 2.0)
+    return camera_height + forward * math.tan(up - half), camera_height + forward * math.tan(up + half)
+
+
+def changes_clearly(before, after):
+    """whether a cut from the end values of one shot to the start values of the next reads as a cut:
+    (distance, height, (x, y, z)) on both sides, see CLEAR_CUT"""
+    (d0, h0, (x0, y0, _)), (d1, h1, (x1, y1, _)) = before, after
+    return (abs(d1 - d0) >= CLEAR_CUT["distance"] or abs(h1 - h0) >= CLEAR_CUT["height"]
+            or abs(x1 - x0) >= CLEAR_CUT["angle"] or abs(y1 - y0) >= CLEAR_CUT["angle"])
+
+
 # ---- following the dancer -------------------------------------------------------------------
 
 def center_track(motion):
@@ -412,9 +458,7 @@ def center_track(motion):
 
 def _position_at(frames, positions, frame):
     """linear between the keys; held at the first (last) key before (after) them"""
-    i = 0
-    while i < len(frames) and frames[i] <= frame:
-        i += 1
+    i = bisect.bisect_right(frames, frame)
     if i == 0:
         return positions[0]
     if i == len(frames) or frames[i - 1] == frame:
@@ -434,25 +478,67 @@ def look_at(track, frame, height):
     return (x + 0.0, float(height), z + 0.0)
 
 
+def _centered_average(values, window):
+    """the mean of the `window` values around each one; the window narrows towards the ends so that it stays
+    centred (a window cut short on one side would lean the mean towards the other side)"""
+    n = len(values)
+    prefix = _prefix(values)
+    out = []
+    for f in range(n):
+        half = min(window // 2, f, n - 1 - f)
+        out.append((prefix[f + half + 1] - prefix[f - half]) / (2 * half + 1))
+    return out
+
+
+def smoothed_center(track, last, window=LOOK_AT_WINDOW):
+    """(x, z) of the dancer for every frame 0..last, averaged over the `window` frames around each, so a
+    step or a hop does not move the camera; at the ends of the dance the average narrows to the frame itself"""
+    xs, zs = [], []
+    for frame in range(last + 1):
+        x, _, z = look_at(track, frame, 0.0)
+        xs.append(x)
+        zs.append(z)
+    return list(zip(_centered_average(xs, window), _centered_average(zs, window)))
+
+
+def shot_frames(start, end, step=LOOK_AT_STEP):
+    """the key frames of a shot: both ends and as few in between as keep them at most `step` apart"""
+    length = end - start
+    pieces = max(1, int(math.ceil(length / float(step))))
+    return [start + int(round(length * i / float(pieces))) for i in range(pieces + 1)]
+
+
 def plan_shots(motion, min_shot=MIN_SHOT, max_shot=MAX_SHOT, seed=0, analysis=None):
     """the shots of the camera for `motion`: where they are cut, what each does, where it looks"""
     if analysis is None:
         analysis = analyze(motion)
-    track = center_track(motion)
+    center = smoothed_center(center_track(motion), analysis.last)
     rng = random.Random(seed)
     shots, previous, orbit_sign = [], None, 1
     for index, (start, end, how) in enumerate(cut_shots(analysis, min_shot, max_shot)):
         level = level_of(analysis, start, end)
-        kind = pick_kind(rng, previous, level)
+        candidates = [t for t in TYPES if previous is None or t != previous.kind]
+        if previous is not None:
+            # never the same kind twice, and never a cut that hardly changes the picture
+            clear = [t for t in candidates if changes_clearly((previous.distance[1], previous.height, previous.rot[1]),
+                                                              _start_values(shot_values(t, level, orbit_sign)))]
+            candidates = clear or candidates
+        kind = pick_kind(rng, candidates, level)
         distance, height, rot = shot_values(kind, level, orbit_sign)
         if kind == "orbit":
             orbit_sign = -orbit_sign
         values = analysis.intensity[start:end + 1]
-        shots.append(Shot(index, start, end, kind, level, distance, height, rot,
-                          (look_at(track, start, height), look_at(track, end, height)),
-                          {"mean": sum(values) / len(values), "max": max(values)}, how))
-        previous = kind
+        track = [(f, (center[f][0] + 0.0, float(height), center[f][1] + 0.0)) for f in shot_frames(start, end)]
+        shot = Shot(index, start, end, kind, level, distance, height, rot, (track[0][1], track[-1][1]),
+                    {"mean": sum(values) / len(values), "max": max(values)}, how, track)
+        shots.append(shot)
+        previous = shot
     return shots
+
+
+def _start_values(values):
+    distance, height, rot = values
+    return distance[0], height, rot[0]
 
 
 def analysis_json(analysis):
@@ -472,14 +558,78 @@ def analysis_json(analysis):
 
 # ---- the camera motion and the report -------------------------------------------------------
 
-def camera_keys(shot):
-    """the two keys of a shot, built from the window values (negative distance and the sign of the X
-    angle are motion_edit's business) with the S curve on every channel"""
+def _bezier(curve, t):
+    """(x, y) in 0..1 of an MMD curve (x1, y1, x2, y2 in 0..127) at the parameter t, and its tangent"""
+    x1, y1, x2, y2 = (v / 127.0 for v in curve)
+    u = 1.0 - t
+    point = (3 * u * u * t * x1 + 3 * u * t * t * x2 + t ** 3, 3 * u * u * t * y1 + 3 * u * t * t * y2 + t ** 3)
+    tangent = (3 * (u * u * x1 + 2 * u * t * (x2 - x1) + t * t * (1.0 - x2)),
+               3 * (u * u * y1 + 2 * u * t * (y2 - y1) + t * t * (1.0 - y2)))
+    return point, tangent
+
+
+def _t_at_x(curve, x):
+    """the parameter at which the curve's x (the time) is `x`; x grows with t on an MMD curve"""
+    lo, hi = 0.0, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if _bezier(curve, mid)[0][0] < x:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def sub_curve(curve, a, b):
+    """the piece of `curve` between the parameters a < b as an MMD curve of its own (its box scaled back to
+    0..127), so that pieces played one after the other follow the whole curve.  The piece of a cubic
+    Bezier is a cubic Bezier: its inner control points are the ends moved a third of the way along the
+    tangents."""
+    (p0, t0), (p3, t3) = _bezier(curve, a), _bezier(curve, b)
+    span = (b - a) / 3.0
+    p1 = (p0[0] + span * t0[0], p0[1] + span * t0[1])
+    p2 = (p3[0] - span * t3[0], p3[1] - span * t3[1])
+    size = (p3[0] - p0[0], p3[1] - p0[1])
+
+    def scaled(p):
+        return tuple(int(round(127.0 * (p[i] - p0[i]) / size[i])) if size[i] > 1e-12 else 0 for i in (0, 1))
+    (x1, y1), (x2, y2) = scaled(p1), scaled(p2)
+    return (min(max(x1, 0), 127), min(max(y1, 0), 127), min(max(x2, 0), 127), min(max(y2, 0), 127))
+
+
+def _interpolation(curves):
+    """the 24 bytes of a camera key from a curve per channel (x1 x2 y1 y2 each, as vmd.camera_curves reads)"""
     out = []
-    for frame, distance, rot, pos in ((shot.start, shot.distance[0], shot.rot[0], shot.pos[0]),
-                                      (shot.end, shot.distance[1], shot.rot[1], shot.pos[1])):
+    for channel in vmd.CAMERA_CHANNELS:
+        x1, y1, x2, y2 = vmd.check_curve(curves[channel])
+        out += [x1, x2, y1, y2]
+    return bytes(out)
+
+
+def camera_keys(shot):
+    """the keys of a shot, from the window values (negative distance and the sign of the X angle are
+    motion_edit's business).  The first key sits on the cut with the step curve, so nothing is drawn
+    between two shots.  Distance, angles and fov follow the S curve over the whole shot: each later key
+    carries the piece of it that leads to that key, and its value is where the S curve is at that frame.
+    The look-at point moves in straight lines from key to key (it follows the dancer)."""
+    out, length, previous_t = [], float(shot.end - shot.start), 0.0
+    last = len(shot.track) - 1
+    for i, (frame, pos) in enumerate(shot.track):
+        if i == 0:
+            t = 0.0
+            curves = {channel: CUT_CURVE for channel in vmd.CAMERA_CHANNELS}
+        else:
+            t = 1.0 if i == last else _t_at_x(S_CURVE, (frame - shot.start) / length)
+            piece = sub_curve(S_CURVE, previous_t, t)
+            curves = {"x": vmd.LINEAR_CURVE, "y": vmd.LINEAR_CURVE, "z": vmd.LINEAR_CURVE,
+                      "rotation": piece, "distance": piece, "fov": piece}
+        at = _bezier(S_CURVE, t)[0][1]
+        distance = shot.distance[0] + (shot.distance[1] - shot.distance[0]) * at
+        rot = tuple(a + (b - a) * at for a, b in zip(shot.rot[0], shot.rot[1]))
         values = {"distance": distance, "pos": pos, "rot": rot, "fov": FOV, "perspective": True}
-        out.append(motion_edit.camera_key_from_ui(values, curve=S_CURVE, frame=frame))
+        key = motion_edit.camera_key_from_ui(values, frame=frame)
+        out.append(dataclasses.replace(key, interpolation=_interpolation(curves)))
+        previous_t = t
     return out
 
 
@@ -500,11 +650,15 @@ def shot_json(shot):
             "seconds": round(frames / float(FPS), 2), "kind": shot.kind, "level": shot.level, "cut": shot.cut,
             "distance": [_r(d) for d in shot.distance], "height": _r(shot.height),
             "rot": [[_r(v) for v in r] for r in shot.rot], "pos": [[_r(v) for v in p] for p in shot.pos],
+            "keys": len(shot.track),
+            # the heights the picture covers at the dancer, [bottom, top] at the start and at the end
+            "picture": [[_r(v) for v in picture_span(shot.distance[i], shot.height, shot.rot[i][0])] for i in (0, 1)],
             "intensity": {k: _r(v) for k, v in shot.intensity.items()}}
 
 
 def report_json(analysis, shots, seed, min_shot, max_shot):
     return {"seed": seed, "min_shot": min_shot, "max_shot": max_shot, "fps": FPS, "fov": FOV, "curve": list(S_CURVE),
+            "cut_curve": list(CUT_CURVE), "look_at_step": LOOK_AT_STEP, "look_at_window": LOOK_AT_WINDOW,
             "frames": [0, analysis.last], "thresholds": {k: _r(v) for k, v in analysis.thresholds.items()},
             "sections": [{"start": s.start, "end": s.end, "level": s.level} for s in analysis.sections],
             "kinds": _count(s.kind for s in shots), "levels": _count(s.level for s in shots),
@@ -530,10 +684,25 @@ def write_json(path, data, indent):
     write_bytes(path, (json.dumps(data, ensure_ascii=True, indent=indent) + "\n").encode("ascii"))
 
 
+def check_distinct(*paths):
+    """the dance and the files written must all differ, or a slip of the hand writes over the dance (there
+    is no way back: the camera is written in its place) or one output over another"""
+    seen = {}
+    for path in paths:
+        if not path:
+            continue
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            raise ValueError("%s and %s are the same file: DANCE, OUT, --analysis and --report must all differ"
+                             % (seen[key], path))
+        seen[key] = path
+
+
 def run(dance_path, out_path, seed=0, min_shot=MIN_SHOT, max_shot=MAX_SHOT, analysis_path=None, report_path=None):
     """read the dance, plan, write the camera, read it back; the summary is what main prints"""
     check_limits(min_shot, max_shot)
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
+    check_distinct(dance_full, out_full, analysis_path, report_path)
     motion = vmd.load(dance_full)
     analysis = analyze(motion)
     shots = plan_shots(motion, min_shot, max_shot, seed, analysis)

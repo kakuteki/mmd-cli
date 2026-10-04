@@ -110,6 +110,16 @@ class IntensityTest(unittest.TestCase):
         self.assertEqual(boundaries, [s.start for s in analysis.sections[1:]])
         self.assertTrue(all(b.strength > 0 for b in analysis.boundaries))
 
+    def test_the_cut_lands_within_half_a_second_of_the_change_of_pace(self):
+        # the pace changes at 600 and at 1200; the hysteresis confirms it only later (the trend reaches the
+        # upper threshold about 1.2 s after 600), but the cut must sit where the pace changed
+        analysis = make_camera.analyze(synthetic_dance())
+        strongest = sorted(analysis.boundaries, key=lambda b: -b.strength)[:2]
+        frames = sorted(b.frame for b in strongest)
+        self.assertEqual(len(frames), 2)
+        self.assertLessEqual(abs(frames[0] - WILD[0]), 15, frames)
+        self.assertLessEqual(abs(frames[1] - TAIL[0]), 15, frames)
+
     def test_a_still_dance_has_one_section_and_zero_intensity(self):
         still = vmd.Motion(model_name="m", bones=[bone("センター", 0), bone("センター", 300)])
         analysis = make_camera.analyze(still)
@@ -141,8 +151,14 @@ class WeightsTest(unittest.TestCase):
 
     def test_a_foot_ik_turn_counts_little_but_its_move_counts(self):
         self.assertLess(self.total("右足ＩＫ", rot=(0, 0, 30)), self.total("右足", rot=(0, 0, 30)))
+        self.assertEqual(self.total("右足IK", rot=(0, 0, 30)), self.total("右足ＩＫ", rot=(0, 0, 30)))    # half-width IK too
         self.assertGreater(self.total("右足ＩＫ", pos=(0, 0, 2)), 0.0)
         self.assertGreater(self.total("センター", pos=(0, 0, 2)), self.total("右足ＩＫ", pos=(0, 0, 2)))
+
+    def test_a_twist_bone_counts_as_little_as_a_hand_twist(self):
+        # 腕捩 turns the arm about its own axis: the hand hardly moves, so it must not count as an arm swing
+        self.assertEqual(self.total("右腕捩", rot=(0, 30, 0)), self.total("右手捩", rot=(0, 30, 0)))
+        self.assertLess(self.total("右腕捩", rot=(0, 30, 0)), self.total("右腕", rot=(0, 30, 0)) / 3.0)
 
     def test_a_turn_is_measured_as_the_angle_between_the_quaternions(self):
         q = mathutil.euler_to_quat(0, 0, 40)
@@ -279,8 +295,8 @@ class ShotTypeTest(unittest.TestCase):
                     self.assertEqual(z, 0.0)
 
     def test_each_type_has_its_values_and_peaks_pull_back(self):
-        want = {"push_in": (32.0, 26.0), "pull_out": (30.0, 42.0), "orbit": (34.0, 34.0), "low": (30.0, 28.0)}
-        heights = {"push_in": 12.0, "pull_out": 13.0, "orbit": 12.0, "low": 7.0}
+        want = {"push_in": (38.0, 32.0), "pull_out": (32.0, 42.0), "orbit": (34.0, 34.0), "low": (38.0, 36.0)}
+        heights = {"push_in": 13.0, "pull_out": 13.0, "orbit": 12.0, "low": 11.0}
         seen = set()
         for shots in self.plans(synthetic_dance(), seeds=range(20)):
             for s in shots:
@@ -288,7 +304,7 @@ class ShotTypeTest(unittest.TestCase):
                 add = 6.0 if s.level == "peak" else 0.0
                 self.assertEqual(s.distance, (want[s.kind][0] + add, want[s.kind][1] + add), s)
                 self.assertEqual(s.height, heights[s.kind], s)
-                self.assertEqual(s.rot[0][0], -6.0 if s.kind == "low" else 0.0)
+                self.assertEqual(s.rot[0][0], -10.0 if s.kind == "low" else 0.0)
                 self.assertEqual(s.rot[1][0], s.rot[0][0])
                 if s.kind == "orbit":
                     swing = 22.0 if s.level == "peak" else 15.0
@@ -302,8 +318,8 @@ class ShotTypeTest(unittest.TestCase):
         dance = synthetic_dance()
         analysis = make_camera.analyze(dance)
         shots = make_camera.plan_shots(dance, analysis=analysis)
-        strongest = max(analysis.boundaries, key=lambda b: b.strength).frame
-        wild = [s for s in shots if s.start == strongest][0]
+        wild = min(shots, key=lambda s: abs(s.start - WILD[0]))           # the shot that starts on the change of pace
+        self.assertLessEqual(abs(wild.start - WILD[0]), 15)
         self.assertEqual(wild.level, "peak")
         self.assertEqual(shots[0].level, "valley")
         self.assertEqual(shots[-1].level, "valley")
@@ -328,19 +344,135 @@ class ShotTypeTest(unittest.TestCase):
             for before, after in zip(d, d[1:]):
                 self.assertEqual(after, -before)
 
+    def test_every_cut_changes_the_picture_clearly(self):
+        # a cut between two nearly equal pictures (the end of a push in, the start of a pull out: the same
+        # angle, 13 % more distance) reads as a dropped frame, not as a cut
+        plans = self.plans(synthetic_dance(), seeds=range(40)) + self.plans(still_dance(11999), seeds=range(3))
+        pairs = 0
+        for shots in plans:
+            for before, after in zip(shots, shots[1:]):
+                pairs += 1
+                (x0, y0, _), (x1, y1, _) = before.rot[1], after.rot[0]
+                clear = (abs(after.distance[0] - before.distance[1]) >= 8.0 or abs(x1 - x0) >= 10.0
+                         or abs(y1 - y0) >= 10.0 or abs(after.height - before.height) >= 3.0)
+                self.assertTrue(clear, (before.kind, before.level, before.distance, before.height, before.rot,
+                                        after.kind, after.level, after.distance, after.height, after.rot))
+        self.assertGreater(pairs, 100)
+
+
+def picture_span(distance, height, x_angle, fov=30.0):
+    """the heights the picture covers at the dancer's plane: the camera sits `distance` from the look-at point
+    (x, `height`) along a line tilted by the X angle (the window's value: negative looks up), and the picture
+    is `fov` degrees tall"""
+    up = math.radians(-x_angle)
+    camera_height = height - distance * math.sin(up)
+    forward = distance * math.cos(up)
+    half = math.radians(fov / 2.0)
+    return camera_height + forward * math.tan(up - half), camera_height + forward * math.tan(up + half)
+
+
+class FramingTest(unittest.TestCase):
+    HEAD_ROOM, KNEES = 21.0, 5.0        # Rin's head top is at about 19.5, the ribbon at 20.8 (the frame 0 render)
+
+    def test_the_span_formula_matches_the_frame_0_render(self):
+        # the spike's frame 0 (look-at 15, distance 25, angles 0) showed the hem cut at the bottom and the
+        # ribbon touching the top: 8.3 to 21.7
+        bottom, top = picture_span(25.0, 15.0, 0.0)
+        self.assertAlmostEqual(bottom, 8.30, places=2)
+        self.assertAlmostEqual(top, 21.70, places=2)
+        self.assertEqual(make_camera.picture_span(25.0, 15.0, 0.0), (bottom, top))
+
+    def test_every_kind_keeps_the_dancer_from_the_knees_to_above_the_head(self):
+        for kind in make_camera.TYPES:
+            for level in ("valley", "peak", "mid"):
+                for sign in (1, -1):
+                    distance, height, rot = make_camera.shot_values(kind, level, sign)
+                    for which in (0, 1):
+                        bottom, top = picture_span(distance[which], height, rot[which][0])
+                        self.assertGreaterEqual(top, self.HEAD_ROOM, (kind, level, which, distance, height, rot))
+                        self.assertLessEqual(bottom, self.KNEES, (kind, level, which, distance, height, rot))
+
+    def test_a_low_angle_looks_up_from_below_the_hips(self):
+        distance, height, rot = make_camera.shot_values("low", "valley", 1)
+        self.assertLess(rot[0][0], 0.0)                              # the window's negative X looks up
+        camera_height = height - distance[0] * math.sin(math.radians(-rot[0][0]))
+        self.assertLess(camera_height, 6.0)
+        self.assertGreater(camera_height, 2.0)
+
+
+def swaying_dance(last=2999, amplitude=5.0, period=600):
+    """the center sways `amplitude` units from side to side every `period` frames (a 20 second figure of eight
+    is too wide to follow with a straight line per shot) while the arms swing; one center key per 10 frames"""
+    bones = []
+    for frame in range(0, last + 1, 10):
+        sign = 1 if (frame // 10) % 2 == 0 else -1
+        bones += [bone("右腕", frame, rot=(0, 0, 40 * sign)), bone("左腕", frame, rot=(0, 0, -40 * sign)),
+                  bone("センター", frame, pos=(sway_x(frame, amplitude, period), 0, 0))]
+    return vmd.Motion(model_name="sway", bones=bones)
+
+
+def sway_x(frame, amplitude=5.0, period=600):
+    return amplitude * math.sin(2 * math.pi * frame / float(period))
+
+
+def interpolated(track, frame):
+    """the look-at point MMD shows at `frame`: a straight line between the shot's keys around it"""
+    for (f0, p0), (f1, p1) in zip(track, track[1:]):
+        if f0 <= frame <= f1:
+            t = (frame - f0) / float(f1 - f0)
+            return tuple(a + (b - a) * t for a, b in zip(p0, p1))
+    raise AssertionError((frame, track))
+
 
 class LookAtTest(unittest.TestCase):
     def test_the_look_at_follows_the_center_at_both_ends_of_a_shot(self):
+        # within a tenth of a unit: the look-at point is the center smoothed over 3 seconds, which rounds the
+        # corners of the walk (at 600 and 1200) by less than that; where the center stands still it is exact
         for shots in (make_camera.plan_shots(synthetic_dance(), seed=s) for s in range(3)):
             for s in shots:
                 for frame, pos in ((s.start, s.pos[0]), (s.end, s.pos[1])):
                     x, z = center_at(frame)
-                    self.assertAlmostEqual(pos[0], x, places=5, msg=(s.start, s.end, frame))
-                    self.assertAlmostEqual(pos[2], z, places=5, msg=(s.start, s.end, frame))
+                    self.assertLess(abs(pos[0] - x), 0.1, (s.start, s.end, frame, pos))
+                    self.assertLess(abs(pos[2] - z), 0.1, (s.start, s.end, frame, pos))
                     self.assertEqual(pos[1], s.height)
         shots = make_camera.plan_shots(synthetic_dance())
-        self.assertEqual(shots[0].pos[0][0], 0.0)
+        self.assertEqual(shots[0].pos[0], (0.0, shots[0].height, 0.0))
         self.assertAlmostEqual(shots[-1].pos[1][0], CENTER_X_END, places=5)
+        self.assertAlmostEqual(shots[-1].pos[1][2], CENTER_Z_END, places=5)
+
+    def test_the_dancer_stays_near_the_look_at_through_a_shot(self):
+        # the shot's keys (3 seconds apart at most) keep the dancer within a unit of the look-at point; two keys
+        # per shot would let a 20 second sway drift 5 units (a third of the picture) off centre
+        dance = swaying_dance()
+        for seed in range(3):
+            shots = make_camera.plan_shots(dance, seed=seed)
+            for s in shots:
+                frames = [f for f, _ in s.track]
+                self.assertEqual((frames[0], frames[-1]), (s.start, s.end))
+                self.assertTrue(all(b > a for a, b in zip(frames, frames[1:])), frames)
+                self.assertLessEqual(max(b - a for a, b in zip(frames, frames[1:])), 90, frames)
+                self.assertEqual((s.pos[0], s.pos[1]), (s.track[0][1], s.track[-1][1]))
+                for frame in range(s.start, s.end + 1):
+                    x, y, z = interpolated(s.track, frame)
+                    self.assertLess(abs(x - sway_x(frame)), 1.0, (s.start, s.end, frame, x))
+                    self.assertEqual((y, z), (s.height, 0.0))
+
+    def test_the_look_at_does_not_twitch_with_a_bouncing_center(self):
+        # a center that hops a unit to the side and back every 10 frames (a step) must not shake the camera;
+        # the average stays centred on its frame, so it narrows towards the two ends of the dance (there the
+        # look-at point is the center itself) and the first and last keys are left out here
+        bones = []
+        for frame in range(0, 1200, 10):
+            bones += [bone("センター", frame, pos=(1.0 if (frame // 10) % 2 else -1.0, 0, 0)), bone("右腕", frame, rot=(0, 0, 20))]
+        shots = make_camera.plan_shots(vmd.Motion(model_name="hop", bones=bones))
+        checked = 0
+        for s in shots:
+            for frame, pos in s.track:
+                if 45 <= frame <= 1190 - 45:
+                    self.assertLess(abs(pos[0]), 0.15, (frame, pos))
+                    checked += 1
+        self.assertGreater(checked, 8)
+        self.assertEqual(shots[0].track[0][1][0], -1.0)                  # frame 0: the center itself
 
     def test_the_parents_of_the_center_are_added(self):
         dance = synthetic_dance()
@@ -365,37 +497,101 @@ def read_back(shots):
     return vmd.loads(vmd.dumps(make_camera.camera_motion(shots)))
 
 
+def keys_by_shot(shots, back):
+    """the keys of each shot, in order"""
+    out, keys = [], list(back.cameras)
+    for s in shots:
+        mine = [k for k in keys if s.start <= k.frame <= s.end]
+        out.append(mine)
+    return out
+
+
+def bezier_y_at(curve, x):
+    """y of an MMD curve (x1, y1, x2, y2 in 0..127) at x in 0..1, by bisection on the cubic's x"""
+    x1, y1, x2, y2 = (v / 127.0 for v in curve)
+
+    def point(t):
+        u = 1.0 - t
+        return (3 * u * u * t * x1 + 3 * u * t * t * x2 + t ** 3, 3 * u * u * t * y1 + 3 * u * t * t * y2 + t ** 3)
+    lo, hi = 0.0, 1.0
+    for _ in range(60):
+        mid = (lo + hi) / 2.0
+        if point(mid)[0] < x:
+            lo = mid
+        else:
+            hi = mid
+    return point((lo + hi) / 2.0)[1]
+
+
 class OutputTest(unittest.TestCase):
-    def test_two_keys_per_shot_in_frame_order_with_the_s_curve(self):
+    def test_one_key_on_the_cut_then_one_every_3_seconds_at_most(self):
         shots = make_camera.plan_shots(synthetic_dance())
         back = read_back(shots)
         self.assertTrue(back.is_camera)
         self.assertEqual((back.bones, back.morphs, back.lights), ([], [], []))
         frames = [k.frame for k in back.cameras]
-        self.assertEqual(len(frames), 2 * len(shots))
         self.assertEqual((frames[0], frames[-1]), (0, LAST))
         self.assertTrue(all(b > a for a, b in zip(frames, frames[1:])), frames)
-        self.assertEqual(frames, [f for s in shots for f in (s.start, s.end)])
-        curve = {channel: make_camera.S_CURVE for channel in vmd.CAMERA_CHANNELS}
+        self.assertEqual(frames, [f for s in shots for f, _ in s.track])
+        for s, keys in zip(shots, keys_by_shot(shots, back)):
+            self.assertEqual(len(keys), 1 + int(math.ceil((s.end - s.start) / 90.0)), (s.start, s.end))
+            self.assertLessEqual(max(b.frame - a.frame for a, b in zip(keys, keys[1:])), 90)
+            cut = {channel: make_camera.CUT_CURVE for channel in vmd.CAMERA_CHANNELS}
+            self.assertEqual(vmd.camera_curves(keys[0].interpolation), cut)       # nothing is drawn mid-cut
+            for key in keys[1:]:
+                curves = vmd.camera_curves(key.interpolation)
+                for channel in ("x", "y", "z"):
+                    self.assertEqual(curves[channel], vmd.LINEAR_CURVE)          # the look-at point just follows
+                self.assertEqual(curves["rotation"], curves["distance"])
+                self.assertEqual(curves["fov"], curves["distance"])
         for key in back.cameras:
-            self.assertEqual(vmd.camera_curves(key.interpolation), curve)
             self.assertEqual((key.fov, key.perspective), (30, True))
             self.assertLess(key.distance, 0.0)                        # the file holds the negative distance
+
+    def test_the_distance_and_the_angles_ease_over_the_whole_shot(self):
+        # the pieces on the keys of a shot, played one after the other, are the S curve of the whole shot:
+        # the move starts slowly on the cut, is fastest in the middle and settles before the next cut
+        shots = make_camera.plan_shots(synthetic_dance(), seed=1)
+        back = read_back(shots)
+        checked = 0
+        for s, keys in zip(shots, keys_by_shot(shots, back)):
+            length = float(s.end - s.start)
+            for before, after in zip(keys, keys[1:]):
+                piece = vmd.camera_curves(after.interpolation)["distance"]
+                for frame in range(before.frame, after.frame + 1, 7):
+                    inside = (frame - before.frame) / float(after.frame - before.frame)
+                    got = -(before.distance + (after.distance - before.distance) * bezier_y_at(piece, inside))
+                    whole = bezier_y_at(make_camera.S_CURVE, (frame - s.start) / length)
+                    want = s.distance[0] + (s.distance[1] - s.distance[0]) * whole
+                    self.assertLess(abs(got - want), 0.05, (s.start, s.end, frame, got, want))
+                    checked += 1
+            if s.kind == "orbit":
+                middle = keys[len(keys) // 2]
+                y = motion_edit.camera_to_ui(middle)["rot"][1]
+                self.assertLess(abs(y), abs(s.rot[0][1]))                       # the swing is under way
+        self.assertGreater(checked, 100)
 
     def test_the_keys_carry_the_shot_values_as_the_window_shows_them(self):
         shots = make_camera.plan_shots(synthetic_dance(), seed=0)
         back = read_back(shots)
-        for shot, first, second in zip(shots, back.cameras[::2], back.cameras[1::2]):
-            for key, which in ((first, 0), (second, 1)):
+        for shot, keys in zip(shots, keys_by_shot(shots, back)):
+            for key, which in ((keys[0], 0), (keys[-1], 1)):
                 ui = motion_edit.camera_to_ui(key)
                 self.assertEqual(ui["distance"], shot.distance[which])
                 self.assertEqual(ui["pos"], [round(v, 4) for v in shot.pos[which]])
                 self.assertEqual(ui["rot"], list(shot.rot[which]))
+            for key, (frame, pos) in zip(keys, shot.track):
+                ui = motion_edit.camera_to_ui(key)
+                self.assertEqual(key.frame, frame)
+                self.assertEqual(ui["pos"], [round(v, 4) for v in pos])
+                self.assertTrue(min(shot.distance) <= ui["distance"] <= max(shot.distance), ui)
+                self.assertEqual(ui["rot"][0], shot.rot[0][0])
+                self.assertEqual(ui["rot"][2], 0.0)
         low = [s for s in shots if s.kind == "low"]
         self.assertTrue(low)
-        key = back.cameras[2 * low[0].index]
-        self.assertAlmostEqual(key.rotation[0], math.radians(6.0), places=6)       # the window's -6 is +6 in the file
-        self.assertEqual(key.position[1], 7.0)
+        key = keys_by_shot(shots, back)[low[0].index][0]
+        self.assertAlmostEqual(key.rotation[0], math.radians(10.0), places=6)      # the window's -10 is +10 in the file
+        self.assertEqual(key.position[1], 11.0)
 
     def test_the_same_input_and_seed_give_the_same_bytes(self):
         a = vmd.dumps(make_camera.camera_motion(make_camera.plan_shots(synthetic_dance(), seed=3)))
@@ -432,7 +628,7 @@ class CommandTest(unittest.TestCase):
         back = vmd.load(self.out)
         self.assertTrue(back.is_camera)
         self.assertEqual(result["keys"], len(back.cameras))
-        self.assertEqual(result["shots"] * 2, result["keys"])
+        self.assertGreater(result["keys"], result["shots"] * 2)
         self.assertEqual(result["frames"], [0, LAST])
         self.assertEqual(result["key_frames"], [0, LAST])
         self.assertEqual((result["seed"], result["min_shot"], result["max_shot"]), (2, 180, 480))
@@ -442,11 +638,19 @@ class CommandTest(unittest.TestCase):
         self.assertEqual((r["in"], r["out"], r["seed"]), (result["in"], result["out"], 2))
         self.assertEqual(len(r["shots"]), result["shots"])
         shot = r["shots"][0]
-        self.assertEqual(sorted(shot), ["cut", "distance", "end", "frames", "height", "index", "intensity", "kind", "level",
-                                        "pos", "rot", "seconds", "start"])
+        self.assertEqual(sorted(shot), ["cut", "distance", "end", "frames", "height", "index", "intensity", "keys", "kind",
+                                        "level", "picture", "pos", "rot", "seconds", "start"])
         self.assertEqual((shot["start"], shot["index"]), (0, 0))
         self.assertEqual(shot["frames"], shot["end"] - shot["start"] + 1)
         self.assertEqual(shot["seconds"], round(shot["frames"] / 30.0, 2))
+        self.assertEqual(sum(s["keys"] for s in r["shots"]), result["keys"])
+        for s in r["shots"]:
+            # the heights the picture covers at the dancer, at the start and at the end of the shot
+            self.assertEqual([len(p) for p in s["picture"]], [2, 2])
+            for bottom, top in s["picture"]:
+                self.assertLess(bottom, 5.0)
+                self.assertGreater(top, 21.0)
+        self.assertEqual((r["cut_curve"], r["look_at_step"]), ([127, 0, 127, 0], 90))
         self.assertEqual(sorted(r["thresholds"]), ["high", "low"])
         self.assertEqual(r["kinds"], result["kinds"])
         with open(analysis, encoding="utf-8") as f:
@@ -492,6 +696,22 @@ class CommandTest(unittest.TestCase):
         self.assertEqual((result["min_shot"], result["max_shot"]), (90, 200))
         self.assertGreaterEqual(result["shots"], 8)
 
+    def test_dance_and_out_must_differ(self):
+        # writing the camera over the dance (or a JSON over either) would lose the dance for good
+        with open(self.dance, "rb") as f:
+            original = f.read()
+        same = os.path.join(self.folder, "DANCE.VMD") if os.path.normcase("A") == os.path.normcase("a") else self.dance
+        for argv in ([self.dance, same], [self.dance, self.out, "--report", same], [self.dance, self.out, "--analysis", same],
+                     [self.dance, self.out, "--report", self.out], [self.dance, self.out, "--report", self.out + ".json",
+                                                                     "--analysis", self.out + ".json"]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"])
+            self.assertIn("same file", result["error"]["message"])
+            self.assertFalse(os.path.exists(self.out), argv)
+        with open(self.dance, "rb") as f:
+            self.assertEqual(f.read(), original)
+
 
 def real_dance():
     """the distributed dance (the sleeve-less variant used in the scene), kept outside the repository in
@@ -531,9 +751,11 @@ class RealDanceTest(unittest.TestCase):
         self.assertIn("peak", {s.level for s in shots})
         back = read_back(shots)
         frames = [k.frame for k in back.cameras]
-        self.assertEqual(frames[0], 0)
-        self.assertEqual(len(frames), 2 * len(shots))
+        self.assertEqual((frames[0], frames[-1]), (0, 7742))
+        self.assertEqual(len(frames), sum(len(s.track) for s in shots))
+        self.assertGreater(len(frames), 2 * len(shots))
         self.assertTrue(all(b > a for a, b in zip(frames, frames[1:])))
+        self.assertLessEqual(max(b - a for a, b in zip(frames, frames[1:])), 90)
         self.assertEqual(vmd.dumps(back), vmd.dumps(read_back(make_camera.plan_shots(motion, analysis=analysis))))
 
 
