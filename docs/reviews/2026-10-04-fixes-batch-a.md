@@ -52,3 +52,25 @@
 - 何を直したか: `_fixed` は `_encode` 経由で `UnicodeEncodeError` を `ValueError("bone name '♥' has characters outside cp932")` に変える（morph 名・IK ボーン名も同じ経路）。`_frame(frame, what, name)` を足し、0〜2^32-1 の外のフレームは `ValueError("bone 'センター': frame -1 is out of range (0 to 4294967295)")`（camera / light / shadow / show-IK キーも）。`struct.error` が生で出る経路は無くした。`_truncated`（モデル名 20 バイト）は `errors="replace"` で、cp932 に無い文字は `?` になる。
 - 守る試験（tests/test_vmd.py）: `test_unencodable_name_is_a_value_error`（bone / morph / IK 名の U+2665 で `UnicodeEncodeError` でない `ValueError`、文言に cp932 と当該文字。修正前は `UnicodeEncodeError`、これは `ValueError` の派生なので `assertNotIsInstance` で区別）、`test_negative_frame_is_a_value_error`（bone / morph / camera / light の frame -1 で種類と `frame -1` を含む `ValueError`。修正前は `struct.error`）、`test_model_name_with_replacement_character_is_written`（`"�♥abc"` が `??abc`。修正前は例外）、`test_name_exactly_15_bytes_is_accepted`（境界の回帰防止。修正前後とも通る）。
 - コミット: 063919b
+
+## 3.3 vpd: 親ファイル名の取り出し
+
+- 何を直したか: `body.split("Bone", 1)[0]` を `_FIRST_BLOCK = re.compile(r"^Bone\d+\{", re.M)` の `split(body, 1)[0]` に。ブロック見出しは行頭に書かれるので、親ファイル名やコメントの中の "Bone" では切れない。
+- 守る試験（tests/test_vpd.py）: `test_model_file_containing_the_word_bone`（`MyBone.osm` が読め、ボーンは従来どおり 2 本。修正前は `''`）。
+- コミット: ed4025e
+
+## 3.5 / 4.5 cli: nan / inf の拒否、全角数字の扱い
+
+- 何を直したか: `_vector` の隣に `finite(text)`（`float` にして `math.isfinite` でなければ `argparse.ArgumentTypeError` → usage error、終了コード 2）を足し、`_vector` の既定 cast と `morph set` の値に使う。`bone set` の `--rot` / `--quat` は排他グループのため `_vector` を通っていなかったので、同じ種類の値として `type=finite` にした。`--scale` / `--alpha` / `--distance` などのスカラーの `type=float` は指示の範囲外なので触っていない（nan は MMD の入力欄に文字列 "nan" として届く。査読 3.5 の「推測: 入力欄は 0 扱い」のまま未確認）。`parse_target` は `text.isascii() and text.isdigit()` のときだけ番号。
+- 守る試験（tests/test_cli.py）: `test_non_finite_numbers_are_usage_errors`（`morph set あ nan`、`camera set --pos 1 inf 0`、`bone set 頭 --rot 0 nan 0`、`--quat ... -inf`、`light set --dir nan 0 0`、`accessory set ... --pos 0 0 Infinity` が終了コード 2、`1e-3` と負数は通る。修正前は SystemExit が出ない）、`test_fullwidth_digits_are_a_name`（"１" と "²" と "-1" と "" は名前。修正前は "１" が 1 に、"²" は `int()` の ValueError）。
+- コミット: dec8c80
+
+## まとめ
+
+- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 142 tests in 1.493s` / `OK (skipped=1)`（114 → 142、skip は tests/live のまま）。MMD は起動していない。`schtasks` は偽物（`FakeScheduler`）だけで、本物は一度も呼んでいない。
+- 直せなかった・やらなかったもの:
+  - 1.5 の「親から対話セッションの子への `OpenProcess(SYNCHRONIZE)`」は実機で未確認（上の 1.5 の項）。実機の通し試験 1 回（SSH から `mmd state`、できれば `render avi` 60 フレーム超）で確かめること。
+  - 1.4 の査読の追加案「`.exit` に `.out.json` の大きさも書いて照合する」は指示に無いので入れていない。
+  - 3.5 のスカラーの `type=float`（`--scale` / `--alpha` / `--distance` ほか）は指示の範囲外のまま。
+  - 文書（README / HANDOVER / 設計書）には親の 180 秒待ちの記述が無かったので、文書の更新は要らなかった（grep で "180" / "60 秒" を確認）。`--timeout` のヘルプは子の待ち時間の説明として引き続き正しい。
+- 触ったファイル: mmd_cli/relay.py、mmd_cli/cli.py（`main()` の中継ブロック・`finite` と `_vector`・`parse_target`・`morph set` の value・`bone set` の `--rot/--quat` の type のみ）、mmd_cli/win32.py（宣言と hide/reveal の `ex_style()` のみ）、mmd_cli/formats/vmd.py、mmd_cli/formats/vpd.py、tests/test_relay.py、tests/test_vmd.py、tests/test_vpd.py、tests/test_cli.py、tests/test_win32_layout.py（新規）。app.py / guard.py / batch.py / dialogs.py / tests/live / tests/test_pmm.py は触っていない（pmm に対応する修正項目が無かった）。
