@@ -47,6 +47,41 @@ class DumpsTest(unittest.TestCase):
         data = vmd.dumps(vmd.Motion(model_name="あ" * 11))  # 22 bytes in cp932, field is 20
         self.assertEqual(data[30:50], ("あ" * 10).encode("cp932"))
 
+    def test_name_exactly_15_bytes_is_accepted(self):
+        name = "あいうえおかき" + "x"                       # 14 + 1 = 15 bytes in cp932
+        data = vmd.dumps(vmd.Motion(model_name="m", bones=[vmd.BoneKey(name, 0, (0, 0, 0), (0, 0, 0, 1))]))
+        self.assertEqual(data[54:69], name.encode("cp932"))
+
+    def test_unencodable_name_is_a_value_error(self):
+        # U+2665 has no cp932 code; the codec's UnicodeEncodeError must not reach the user raw
+        for motion in (vmd.Motion(model_name="m", bones=[vmd.BoneKey("♥", 0, (0, 0, 0), (0, 0, 0, 1))]),
+                       vmd.Motion(model_name="m", morphs=[vmd.MorphKey("♥", 0, 1.0)]),
+                       vmd.Motion.for_camera(shadows=[], cameras=[])):
+            if motion.is_camera:
+                motion.show_iks = [vmd.ShowIkKey(0, True, [("♥", True)])]
+            with self.assertRaises(ValueError) as ctx:
+                vmd.dumps(motion)
+            self.assertNotIsInstance(ctx.exception, UnicodeEncodeError)
+            self.assertIn("cp932", str(ctx.exception))
+            self.assertIn("♥", str(ctx.exception))
+
+    def test_negative_frame_is_a_value_error(self):
+        cases = (("bone", vmd.Motion(model_name="m", bones=[vmd.BoneKey("a", -1, (0, 0, 0), (0, 0, 0, 1))])),
+                 ("morph", vmd.Motion(model_name="m", morphs=[vmd.MorphKey("a", -1, 1.0)])),
+                 ("camera", vmd.Motion.for_camera(cameras=[vmd.CameraKey(-1, -30.0, (0, 0, 0), (0, 0, 0))])),
+                 ("light", vmd.Motion.for_camera(lights=[vmd.LightKey(-1, (1, 1, 1), (0, -1, 0))])))
+        for what, motion in cases:
+            with self.assertRaises(ValueError) as ctx:
+                vmd.dumps(motion)
+            self.assertIn(what, str(ctx.exception))
+            self.assertIn("frame -1", str(ctx.exception))
+
+    def test_model_name_with_replacement_character_is_written(self):
+        # a pmm model name that did not decode cleanly carries U+FFFD; the name is only the label MMD
+        # compares before asking "load this motion?", so it is written with '?' instead of failing
+        data = vmd.dumps(vmd.Motion(model_name="�♥abc"))
+        self.assertEqual(data[30:50], b"??abc".ljust(20, b"\x00"))
+
     def test_camera_motion_uses_the_camera_model_name(self):
         key = vmd.CameraKey(frame=5, distance=-30.0, position=(1.0, 2.0, 3.0), rotation=(0.1, 0.2, 0.3), fov=45)
         data = vmd.dumps(vmd.Motion.for_camera(cameras=[key]))
