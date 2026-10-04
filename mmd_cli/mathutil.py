@@ -42,6 +42,17 @@ def quat_to_euler(quat):
             math.degrees(math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z))))
 
 
+def quat_multiply(a, b):
+    """the Hamilton product a * b of two (x, y, z, w) quaternions: rotating by it is rotating by b
+    first, then by a"""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
 def ui_to_quat(x_deg, y_deg, z_deg):
     return euler_to_quat(x_deg, -y_deg, -z_deg)
 
