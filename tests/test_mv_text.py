@@ -6,6 +6,9 @@ import importlib.util
 import io
 import json
 import os
+import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -1182,6 +1185,421 @@ class SequencesTest(unittest.TestCase):
     def test_no_cues_is_an_empty_plan(self):
         plan = mv_text.render_sequences(small_doc(), self.work)
         self.assertEqual(plan, {"fps": 30, "size": [640, 360], "cues": [], "warnings": []})
+
+
+def plan_cue(cue_id, x, y, start_frame, frames, fps=30):
+    return {"id": cue_id, "layer": "front", "x": x, "y": y, "canvas": [200, 60], "start_frame": start_frame,
+            "start": float(fractions.Fraction(start_frame) / fractions.Fraction(str(fps))), "frames": frames,
+            "pattern": "C:/work/cue_%s/f%%05d.png" % cue_id}
+
+
+PLAN = {"fps": 30, "size": [1280, 720], "warnings": [],
+        "cues": [plan_cue("title", 56, 40, 30, 150), plan_cue("hook1", 240, 278, 1335, 24), plan_cue("late", 0, 600, 123, 12)]}
+
+
+def after(cmd, flag):
+    """the arguments that follow each `flag`"""
+    return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == flag]
+
+
+class CommandTest(unittest.TestCase):
+    def test_the_video_comes_first_then_one_input_per_cue(self):
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", PLAN)
+        self.assertTrue(all(isinstance(arg, str) for arg in cmd))
+        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertEqual(cmd[-1], "out.mp4")
+        self.assertEqual(after(cmd, "-i"), ["in.avi", "C:/work/cue_title/f%05d.png", "C:/work/cue_hook1/f%05d.png",
+                                            "C:/work/cue_late/f%05d.png"])
+        for pattern in after(cmd, "-i")[1:]:
+            at = cmd.index(pattern)
+            self.assertEqual(cmd[at - 5:at], ["-framerate", "30", "-start_number", "0", "-i"])
+        self.assertLess(cmd.index("-y"), cmd.index("-i"))
+        self.assertIn("-nostdin", cmd)                                        # it must not wait for a key
+
+    def test_each_sequence_is_shifted_to_its_start_and_laid_at_its_canvas(self):
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", PLAN)
+        chains = after(cmd, "-filter_complex")[0].split(";")
+        self.assertEqual(chains, [
+            "[1:v]format=rgba,setpts=PTS-STARTPTS+round(1/1/TB)[t1]", "[0:v][t1]overlay=x=56:y=40:eof_action=pass[v1]",
+            "[2:v]format=rgba,setpts=PTS-STARTPTS+round(89/2/TB)[t2]", "[v1][t2]overlay=x=240:y=278:eof_action=pass[v2]",
+            "[3:v]format=rgba,setpts=PTS-STARTPTS+round(41/10/TB)[t3]", "[v2][t3]overlay=x=0:y=600:eof_action=pass[v3]"])
+        for chain, cue in zip(chains[0::2], PLAN["cues"]):
+            num, den = re.search(r"\+round\((\d+)/(\d+)/TB\)", chain).groups()
+            self.assertEqual(fractions.Fraction(int(num), int(den)), fractions.Fraction(cue["start_frame"], 30))
+            self.assertAlmostEqual(int(num) / float(den), cue["start"])
+
+    def test_the_shift_is_rounded_because_setpts_cuts_its_result_off(self):
+        # setpts turns its result into a whole tick by cutting the fraction off, and 4.1 s over a tick of
+        # 1/30 s is 122.99999999999999 in floating point: without round() the cue that starts on frame 123
+        # shows from frame 122 (seen with ffmpeg 8.1.2: frames 122..134 lit instead of 123..134)
+        self.assertEqual(int(4.1 / (1 / 30.0)), 122)
+        self.assertEqual(int(round(4.1 / (1 / 30.0))), 123)
+        graph = after(mv_text.ffmpeg_command("in.avi", "out.mp4", PLAN), "-filter_complex")[0]
+        self.assertEqual(graph.count("setpts=PTS-STARTPTS+round("), 3)
+        self.assertEqual(len(re.findall(r"setpts=[^\[]*/TB(?!\))", graph)), 0)       # no shift is left bare
+
+    def test_the_last_picture_is_mapped_encoded_and_the_sound_copied(self):
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", PLAN)
+        self.assertEqual(after(cmd, "-map"), ["[v3]", "0:a?"])
+        pairs = list(zip(cmd, cmd[1:]))
+        for pair in (("-c:v", "libx264"), ("-preset", "medium"), ("-crf", "18"), ("-pix_fmt", "yuv420p"),
+                     ("-movflags", "+faststart"), ("-c:a", "copy")):
+            self.assertIn(pair, pairs)
+        self.assertGreater(cmd.index("-map"), cmd.index("-filter_complex"))
+
+    def test_a_rate_that_is_a_fraction_stays_exact(self):
+        plan = dict(PLAN, fps="30000/1001", cues=[plan_cue("title", 56, 40, 30, 150, fps="30000/1001")])
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", plan)
+        self.assertEqual(after(cmd, "-framerate"), ["30000/1001"])
+        self.assertIn("setpts=PTS-STARTPTS+round(1001/1000/TB)", after(cmd, "-filter_complex")[0])
+        # MMD writes its rate as 30000030/1000001, which is 30 exactly (30 x 1000001): it is passed on as 30
+        mmd = dict(PLAN, fps="30000030/1000001", cues=[plan_cue("title", 56, 40, 30, 150, fps="30000030/1000001")])
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", mmd)
+        self.assertEqual(after(cmd, "-framerate"), ["30"])
+        self.assertIn("setpts=PTS-STARTPTS+round(1/1/TB)", after(cmd, "-filter_complex")[0])
+
+    def test_without_cues_the_video_is_only_encoded(self):
+        cmd = mv_text.ffmpeg_command("in.avi", "out.mp4", dict(PLAN, cues=[]))
+        self.assertNotIn("-filter_complex", cmd)
+        self.assertEqual(after(cmd, "-i"), ["in.avi"])
+        self.assertEqual(after(cmd, "-map"), ["0:v", "0:a?"])
+
+    def test_more_cues_than_a_command_line_holds_is_an_error(self):
+        # Windows takes 32767 characters; every cue adds an input and two filters
+        many = dict(PLAN, cues=[plan_cue("c%03d" % i, 0, 0, i * 30, 20) for i in range(400)])
+        with self.assertRaises(ValueError) as caught:
+            mv_text.ffmpeg_command("in.avi", "out.mp4", many)
+        self.assertIn("400", str(caught.exception))
+        mv_text.ffmpeg_command("in.avi", "out.mp4", dict(PLAN, cues=many["cues"][:60]))
+
+    def test_the_probe_asks_ffprobe_for_the_frame_and_the_rate(self):
+        self.assertEqual(mv_text.probe_command("in.avi"),
+                         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=width,height,r_frame_rate", "-of", "json", "in.avi"])
+        answer = '{"programs": [], "streams": [{"width": 1280, "height": 720, "r_frame_rate": "30000030/1000001"}]}'
+        self.assertEqual(mv_text.parse_probe(answer), ((1280, 720), fractions.Fraction(30)))       # what MMD writes
+        ntsc = '{"streams": [{"width": 1920, "height": 1080, "r_frame_rate": "30000/1001"}]}'
+        self.assertEqual(mv_text.parse_probe(ntsc), ((1920, 1080), fractions.Fraction(30000, 1001)))
+        self.assertEqual(mv_text.parse_probe('{"streams": [{"width": 320, "height": 180, "r_frame_rate": "30/1"}]}'),
+                         ((320, 180), fractions.Fraction(30)))
+        for bad in ('{"streams": []}', "{}", "", "not json", '{"streams": [{"width": 320}]}',
+                    '{"streams": [{"width": 320, "height": 180, "r_frame_rate": "0/0"}]}'):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_text.parse_probe(bad)
+
+    def test_a_size_on_the_command_line_is_width_x_height(self):
+        self.assertEqual(mv_text.parse_size("1280x720"), (1280, 720))
+        self.assertEqual(mv_text.parse_size("320X180"), (320, 180))
+        for bad in ("1280", "1280x", "x720", "0x720", "1280x720x3", "wide", "12.5x7", "-1280x720"):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_text.parse_size(bad)
+
+
+def run(argv):
+    """main() with its one line of output, which must be ASCII (the terminal is cp932) and JSON"""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = mv_text.main(argv)
+    text = out.getvalue()
+    text.encode("ascii")
+    if text.count("\n") != 1 or not text.endswith("\n"):
+        raise AssertionError("not one line: %r" % text)
+    return code, json.loads(text)
+
+
+class MainTest(unittest.TestCase):
+    def setUp(self):
+        book()
+        self.folder = tempfile.mkdtemp()
+        self.cues = os.path.join(self.folder, "cues.json")
+        self.write(dict(NEW_FORMAT, size=[640, 360]))
+
+    def write(self, doc):
+        with open(self.cues, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False)
+
+    def path(self, name):
+        return os.path.join(self.folder, name)
+
+    def test_frames_writes_the_sequences_and_prints_the_plan(self):
+        self.write(small_doc(RISE_CUE, BACK_CUE))
+        code, result = run(["frames", self.cues, self.path("work")])
+        self.assertEqual(code, 0, result)
+        wanted = mv_text.render_sequences(small_doc(RISE_CUE, BACK_CUE), self.path("work"))
+        self.assertEqual(result, dict(wanted, ok=True))
+        self.assertEqual([c["layer"] for c in result["cues"]], ["front", "back"])
+        self.assertEqual(len(os.listdir(self.path("work/cue_a1"))), 30)
+
+    def test_frames_takes_the_frame_and_the_rate_from_the_command_line(self):
+        self.write(small_doc(RISE_CUE))
+        code, result = run(["frames", self.cues, self.path("work"), "--size", "320x180", "--fps", "60"])
+        self.assertEqual((code, result["size"], result["fps"], result["cues"][0]["frames"]), (0, [320, 180], 60, 60))
+        code, result = run(["frames", self.cues, self.path("work"), "--fps", "30000/1001"])
+        self.assertEqual((code, result["fps"], result["size"]), (0, "30000/1001", [640, 360]))
+
+    def test_preview_draws_the_cues_of_that_moment_on_the_stage(self):
+        out = self.path("shots/at3.png")
+        code, result = run(["preview", self.cues, out, "--at", "3.0"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["ok"], result["out"], result["at"], result["size"]), (True, os.path.abspath(out), 3.0, [640, 360]))
+        self.assertEqual(result["cues"], ["title", "credit1"])               # 1 to 6 s and 2 to 7 s; the others are later
+        with Image.open(out) as im:
+            self.assertEqual((im.mode, im.size), ("RGB", (640, 360)))
+            self.assertEqual(im.getpixel((639, 0)), (0, 0, 0))                # the black stage of the dark palette
+            self.assertIsNotNone(pixels(im.convert("RGBA"), TEXT + (None,)).getbbox())
+            self.assertIsNotNone(pixels(im.convert("RGBA"), ACCENT + (None,)).getbbox())
+        self.assertEqual(os.listdir(os.path.dirname(out)), ["at3.png"])
+        code, result = run(["preview", self.cues, out, "--at", "30"])
+        self.assertEqual((code, result["cues"]), (0, []))
+        with Image.open(out) as im:
+            self.assertEqual(im.getextrema(), ((0, 0), (0, 0), (0, 0)))
+
+    def test_preview_of_the_light_palette_is_on_white(self):
+        self.write(dict(NEW_FORMAT, size=[640, 360], palette="light"))
+        code, result = run(["preview", self.cues, self.path("light.png"), "--at", "3"])
+        self.assertEqual(code, 0, result)
+        with Image.open(self.path("light.png")) as im:
+            self.assertEqual(im.getpixel((639, 0)), (255, 255, 255))
+            self.assertIsNotNone(pixels(im.convert("RGBA"), INK + (None,)).getbbox())
+
+    def test_preview_over_a_frame_of_the_video_keeps_the_frame_around_the_text(self):
+        still = self.path("still.png")
+        Image.new("RGB", (320, 180), (10, 80, 160)).save(still)
+        out = self.path("over.png")
+        code, result = run(["preview", self.cues, out, "--at", "3", "--over", still])
+        self.assertEqual((code, result["size"], result["cues"]), (0, [320, 180], ["title", "credit1"]))
+        with Image.open(out) as im:
+            self.assertEqual(im.size, (320, 180))
+            self.assertEqual(im.getpixel((319, 90)), (10, 80, 160))
+            self.assertIsNotNone(pixels(im.convert("RGBA"), TEXT + (None,)).getbbox())
+        with Image.open(still) as im:
+            self.assertEqual(im.getextrema(), ((10, 10), (80, 80), (160, 160)))                 # the frame itself is untouched
+        # a size asked for wins: the frame is scaled to it
+        code, result = run(["preview", self.cues, out, "--at", "3", "--over", still, "--size", "640x360"])
+        self.assertEqual((code, result["size"]), (0, [640, 360]))
+        with Image.open(out) as im:
+            self.assertEqual((im.size, im.getpixel((639, 180))), ((640, 360), (10, 80, 160)))
+
+    def test_preview_draws_back_and_front_cues_alike(self):
+        self.write(small_doc(dict(RISE_CUE, id="f1", start=0.0, end=4.0), dict(BACK_CUE, start=0.0, end=4.0)))
+        code, result = run(["preview", self.cues, self.path("layers.png"), "--at", "2"])
+        self.assertEqual((code, result["cues"]), (0, ["f1", "b2"]))
+
+    def test_preview_shows_a_cue_in_the_middle_of_its_motion(self):
+        self.write(small_doc(dict(RISE_CUE, start=1.0, end=3.0)))
+        boxes, shown = {}, {}
+        for at in ("0.99", "1.0", "1.1", "2.0", "3.0"):
+            code, result = run(["preview", self.cues, self.path("m.png"), "--at", at])
+            self.assertEqual(code, 0)
+            shown[at] = result["cues"]
+            with Image.open(self.path("m.png")) as im:
+                boxes[at] = im.getbbox()
+        self.assertIsNone(boxes["1.0"])                                       # alpha 0 on its first frame
+        self.assertGreater(boxes["1.1"][1], boxes["2.0"][1])                  # still rising
+        # a cue is on from its start to just before its end
+        self.assertEqual(shown, {"0.99": [], "1.0": ["a1"], "1.1": ["a1"], "2.0": ["a1"], "3.0": []})
+        # a flash is cut off at full strength: at its end there is nothing
+        self.write(small_doc({"id": "h", "start": 1.0, "end": 2.0, "text": "HI", "style": "hook", "anim": "flash"}))
+        for at, lit in (("1.9", True), ("2.0", False)):
+            run(["preview", self.cues, self.path("m.png"), "--at", at])
+            with Image.open(self.path("m.png")) as im:
+                self.assertEqual(im.getbbox() is not None, lit, at)
+
+    def test_render_moves_a_finished_video_over_out_and_removes_a_failed_one(self):
+        # ffmpeg itself is stood in for: it writes where it is told and succeeds or fails
+        video, out = self.path("in.avi"), self.path("final.mp4")
+        for name, data in ((video, b"video"), (out, b"the old output")):
+            with open(name, "wb") as f:
+                f.write(data)
+        self.write(small_doc(RISE_CUE))
+        calls = []
+
+        def fake(code):
+            def run_it(argv):
+                calls.append(argv)
+                with open(argv[-1], "wb") as f:
+                    f.write(b"new video")
+                return code, "", "it broke\n"
+            return run_it
+
+        real = mv_text._run
+        try:
+            mv_text._run = fake(3)
+            code, result = run(["render", video, self.cues, out, "--size", "640x360", "--fps", "30"])
+            self.assertEqual((code, result["ok"], result["ffmpeg"]), (1, False, 3))
+            self.assertEqual(result["error"], {"type": "ffmpeg", "message": "ffmpeg exited with 3: it broke"})
+            self.assertEqual((result["cues"], result["frames"], result["out"]), (1, 30, os.path.abspath(out)))
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"the old output")
+            self.assertEqual(sorted(os.listdir(self.folder)), ["cues.json", "final.mp4", "final.mp4.work", "in.avi"])
+            mv_text._run = fake(0)
+            code, result = run(["render", video, self.cues, out, "--size", "640x360", "--fps", "30"])
+            self.assertEqual((code, result["ok"], result["ffmpeg"]), (0, True, 0))
+            self.assertNotIn("error", result)
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(), b"new video")
+            self.assertEqual(sorted(os.listdir(self.folder)), ["cues.json", "final.mp4", "final.mp4.work", "in.avi"])
+        finally:
+            mv_text._run = real
+        # ffmpeg was asked to write next to the output, under a name that keeps the extension
+        self.assertEqual([argv[0] for argv in calls], ["ffmpeg", "ffmpeg"])
+        self.assertEqual(calls[0][-1], os.path.abspath(self.path("final.part.mp4")))
+        self.assertEqual(calls[0], mv_text.ffmpeg_command(os.path.abspath(video), calls[0][-1],
+                                                          mv_text.render_sequences(small_doc(RISE_CUE), self.path("final.mp4.work"))))
+        self.assertEqual(sorted(result), ["cues", "ffmpeg", "fps", "frames", "ok", "out", "size", "warnings", "work"])
+
+    def test_a_bad_cue_file_is_exit_2_and_writes_nothing(self):
+        self.write({"cues": [{"id": "x", "start": 2, "end": 1, "text": "a"}]})
+        for argv in (["frames", self.cues, self.path("work")], ["preview", self.cues, self.path("p.png"), "--at", "1"],
+                     ["render", self.cues, self.cues, self.path("o.mp4")],
+                     ["frames", self.path("none.json"), self.path("work")],
+                     ["preview", self.path("none.json"), self.path("p.png"), "--at", "1"]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"])
+            self.assertEqual(sorted(result["error"]), ["message", "type"])
+        self.assertEqual(os.listdir(self.folder), ["cues.json"])
+
+    def test_arguments_that_cannot_be_used_are_exit_2(self):
+        still = self.path("still.png")
+        Image.new("RGB", (320, 180), (0, 0, 0)).save(still)
+        for argv in (["frames", self.cues, self.path("work"), "--size", "640"],
+                     ["frames", self.cues, self.path("work"), "--fps", "0"],
+                     ["preview", self.cues, self.path("p.png"), "--at", "-1"],
+                     ["preview", self.cues, self.cues, "--at", "1"],
+                     ["preview", self.cues, still, "--at", "1", "--over", still],
+                     ["preview", self.cues, self.path("p.png"), "--at", "1", "--over", self.path("none.png")],
+                     ["render", self.path("none.avi"), self.cues, self.path("o.mp4")],
+                     ["render", still, self.cues, still]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"], argv)
+        self.assertEqual(sorted(os.listdir(self.folder)), ["cues.json", "still.png"])
+        with open(self.cues, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["size"], [640, 360])                # the cue file was not written over
+
+    def test_the_warnings_are_printed_as_ascii(self):
+        self.write(small_doc({"id": "w", "start": 0, "end": 0.2, "text": "\u97ff\u304b\u305b" * 30}))
+        code, result = run(["frames", self.cues, self.path("work")])
+        self.assertEqual(code, 0)
+        self.assertEqual(len([w for w in result["warnings"] if w.startswith("cue w:")]), 1, result["warnings"])
+
+
+FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
+
+
+def ffmpeg(*args):
+    result = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y"] + list(args), stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    if result.returncode:
+        raise AssertionError("ffmpeg failed: %s" % result.stderr.decode("ascii", "replace")[-400:])
+    return result.stdout
+
+
+def streams(path):
+    """what ffprobe says of a file: its duration and its streams"""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,nb_frames",
+                          "-of", "json", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    return json.loads(out.decode("ascii"))
+
+
+def still_at(path, seconds):
+    """the frame of a video at a time, as a picture"""
+    return Image.open(io.BytesIO(ffmpeg("-ss", "%.3f" % seconds, "-i", path, "-frames:v", "1", "-f", "image2pipe",
+                                        "-c:v", "png", "-"))).convert("RGB")
+
+
+def brightness(path, size):
+    """the brightest pixel of every frame of a video"""
+    data = ffmpeg("-i", path, "-f", "rawvideo", "-pix_fmt", "gray", "-")
+    step = size[0] * size[1]
+    return [max(data[i:i + step]) for i in range(0, len(data), step)]
+
+
+@unittest.skipUnless(FFMPEG, "ffmpeg and ffprobe are not on the PATH")
+class FfmpegTest(unittest.TestCase):
+    def setUp(self):
+        book()
+        self.folder = tempfile.mkdtemp()
+
+    def path(self, name):
+        return os.path.join(self.folder, name)
+
+    def cues(self, *cues):
+        with open(self.path("cues.json"), "w", encoding="utf-8") as f:
+            json.dump({"cues": list(cues)}, f)
+        return self.path("cues.json")
+
+    def test_two_cues_over_a_two_second_clip(self):
+        clip = self.path("in.mp4")
+        ffmpeg("-f", "lavfi", "-i", "color=c=black:s=320x180:r=30", "-f", "lavfi", "-i", "sine=frequency=440",
+               "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip)
+        cues = self.cues({"id": "fade1", "start": 0.3, "end": 1.5, "text": "HIBIKASE", "style": "logo", "anim": "fade",
+                          "x": "center", "y": "middle"},
+                         {"id": "rise1", "start": 0.5, "end": 1.2, "text": "\u97ff\u304b\u305b", "style": "lyric", "anim": "rise"})
+        out = self.path("out/with_text.mp4")
+        code, result = run(["render", clip, cues, out])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["ok"], result["ffmpeg"], result["cues"], result["frames"]), (True, 0, 2, 36 + 21))
+        self.assertEqual((result["out"], result["size"], result["fps"]), (os.path.abspath(out), [320, 180], 30))
+        self.assertEqual(result["work"], os.path.abspath(out) + ".work")      # the pictures stay next to the output
+        self.assertEqual(sorted(os.listdir(self.path("out"))), ["with_text.mp4", "with_text.mp4.work"])
+        info = streams(out)
+        self.assertLessEqual(abs(float(info["format"]["duration"]) - 2.0), 0.1)
+        video = [s for s in info["streams"] if s["codec_type"] == "video"]
+        self.assertEqual([(s["width"], s["height"], s["codec_name"]) for s in video], [(320, 180, "h264")])
+        self.assertEqual([s["codec_name"] for s in info["streams"] if s["codec_type"] == "audio"], ["aac"])   # copied
+        self.assertGreater(max(high for _, high in still_at(out, 0.9).getextrema()), 200)      # the text is there
+        self.assertLess(max(high for _, high in still_at(out, 1.9).getextrema()), 20)          # and gone: black again
+        self.assertLess(max(high for _, high in still_at(out, 0.1).getextrema()), 20)
+        # the text sits where the plan says: inside the canvas of the cue, nowhere else
+        plan = mv_text.render_sequences(mv_text.load_cues(cues), self.path("again"), size=(320, 180), fps=30)
+        lit = still_at(out, 0.9).convert("L").point(lambda v: 255 if v > 60 else 0).getbbox()
+        boxes = [(c["x"], c["y"], c["x"] + c["canvas"][0], c["y"] + c["canvas"][1]) for c in plan["cues"]]
+        union = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        self.assertTrue(inside(lit, union, slack=2), (lit, union))
+
+    def test_a_cue_starts_on_its_frame_and_lasts_its_frames(self):
+        # a flash is lit on its first frame, dark on its second, lit on its third and cut off at its end: its
+        # place in time shows to the frame.  Frame 123 (4.1 s) is one that a bare setpts shift puts on 122.
+        clip = self.path("in.mp4")
+        ffmpeg("-f", "lavfi", "-i", "color=c=black:s=320x180:r=30", "-t", "5", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip)
+        cues = self.cues({"id": "f123", "start": 4.1, "end": 4.5, "text": "HI", "style": "hook", "anim": "flash", "x": "center",
+                          "y": "middle"},
+                         {"id": "f31", "start": 31 / 30.0, "end": 41 / 30.0, "text": "HI", "style": "hook", "anim": "flash",
+                          "x": "left", "y": "top"})
+        out = self.path("flash.mp4")
+        code, result = run(["render", clip, cues, out, "--work", self.path("w")])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["work"], os.path.abspath(self.path("w")))
+        levels = brightness(out, (320, 180))
+        self.assertEqual(len(levels), 150)
+        lit = [i for i, level in enumerate(levels) if level > 128]
+        self.assertEqual(lit, [31, 33] + list(range(35, 41)) + [123, 125] + list(range(127, 135)))
+        self.assertEqual([s["codec_type"] for s in streams(out)["streams"]], ["video"])        # no sound in, none out
+
+    def test_a_failed_ffmpeg_is_exit_1_and_leaves_no_output(self):
+        clip = self.path("in.mp4")
+        ffmpeg("-f", "lavfi", "-i", "color=c=black:s=320x180:r=30", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip)
+        cues = self.cues({"id": "a", "start": 0.1, "end": 0.5, "text": "HI", "style": "caption"})
+        old = self.path("keep.mp4")
+        with open(old, "wb") as f:
+            f.write(b"the old output")
+        broken = self.path("not_a_video.mp4")
+        with open(broken, "wb") as f:
+            f.write(b"this is not a video")
+        code, result = run(["render", broken, cues, old, "--size", "320x180", "--fps", "30"])
+        self.assertEqual(code, 1, result)
+        self.assertFalse(result["ok"])
+        self.assertNotEqual(result["ffmpeg"], 0)
+        self.assertEqual(result["error"]["type"], "ffmpeg")
+        self.assertTrue(result["error"]["message"])
+        with open(old, "rb") as f:
+            self.assertEqual(f.read(), b"the old output")                     # a failure leaves the old file as it was
+        self.assertEqual(sorted(n for n in os.listdir(self.folder) if "part" in n), [])
+        # without --size and --fps the same file fails earlier, at the probe: exit 2
+        code, result = run(["render", broken, cues, old])
+        self.assertEqual(code, 2, result)
 
 
 if __name__ == "__main__":

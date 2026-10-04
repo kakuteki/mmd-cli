@@ -8,6 +8,7 @@ The text is drawn with Pillow, one RGBA PNG sequence per cue, and ffmpeg lays th
 (`overlay`).  ffmpeg's own drawtext cannot space letters, wipe or offset a copy, which is what makes a title
 look designed; drawing the frames here can.  A sequence is only as large as the cue's box, not the frame.
 """
+import argparse
 import dataclasses
 import fractions
 import io
@@ -15,6 +16,8 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 from typing import List, Optional, Tuple
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
@@ -84,6 +87,7 @@ INK_COPY = 3.0                               # px: how far left of the text its 
 SHADOW = {"alpha": 170, "blur": 6.0, "offset": 2.0}       # of 255; px: the blur radius and how far down it lies
 BLUR_REACH = 3.0                             # Pillow's GaussianBlur(r) reaches about 2.6 r past its source (measured)
 CANVAS_PAD = 8                               # px (not scaled) around everything a cue draws
+COMMAND_LIMIT = 32000                        # characters of one command line (Windows takes 32767)
 FRAME_NAME = "f%05d.png"                     # the pictures of a cue, numbered from 0, in a folder cue_<id>
 OLD_FRAME = re.compile(r"^f\d+\.png(\.part)?$")
 
@@ -838,3 +842,196 @@ def render_sequences(cues, work_dir, size=None, fps=None, book=None):
     for warning in book.warnings + [w for layout in layouts for w in layout.warnings]:
         _warn(plan["warnings"], warning)
     return plan
+
+
+# ---- the video ------------------------------------------------------------------------------
+
+def probe_command(video):
+    return ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,r_frame_rate",
+            "-of", "json", video]
+
+
+def parse_probe(text):
+    """((width, height), fps) from what ffprobe printed for probe_command.  The rate is kept as a fraction
+    (30000/1001 stays that; the 30000030/1000001 MMD writes is 30 exactly), so the pictures land on the
+    frames of the video."""
+    try:
+        stream = json.loads(text)["streams"][0]
+        return _frame_size([stream["width"], stream["height"]]), parse_fps(stream["r_frame_rate"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise ValueError("ffprobe found no video stream: %r" % (text[:200],)) from None
+
+
+def _run(argv):
+    """run a program: no shell, no window of its own, nothing to read from the keyboard"""
+    done = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return done.returncode, done.stdout.decode("utf-8", "replace"), done.stderr.decode("utf-8", "replace")
+
+
+def probe(video):
+    code, out, err = _run(probe_command(video))
+    if code != 0:
+        raise ValueError("ffprobe cannot read %s: %s" % (video, err.strip()[-300:]))
+    return parse_probe(out)
+
+
+def ffmpeg_command(video, out, plan):
+    """The ffmpeg argv that lays the sequences of a plan (render_sequences) over the video, in the order of
+    the plan, and encodes the result; the sound is copied when the video has any.
+
+    Every sequence is an input of its own.  Its pictures are timed from 0, so setpts moves them to the start
+    of the cue, and overlay passes the video through before the first picture and after the last
+    (eof_action=pass).  The shift is start_frame / fps as an exact fraction inside round(): setpts cuts its
+    result off to a whole tick, and a quotient like 4.1 / (1/30) is 122.99999999999999 in floating point,
+    which would put the cue of frame 123 on frame 122."""
+    fps = fractions.Fraction(str(plan["fps"]))
+    argv = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", video]
+    chains, last = [], "0:v"
+    for k, cue in enumerate(plan["cues"], 1):
+        argv += ["-framerate", fps_text(fps), "-start_number", "0", "-i", cue["pattern"]]
+        shift = fractions.Fraction(cue["start_frame"]) / fps
+        chains.append("[%d:v]format=rgba,setpts=PTS-STARTPTS+round(%d/%d/TB)[t%d]" % (k, shift.numerator, shift.denominator, k))
+        chains.append("[%s][t%d]overlay=x=%d:y=%d:eof_action=pass[v%d]" % (last, k, cue["x"], cue["y"], k))
+        last = "v%d" % k
+    argv += ["-filter_complex", ";".join(chains), "-map", "[%s]" % last] if chains else ["-map", "0:v"]
+    argv += ["-map", "0:a?", "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+             "-movflags", "+faststart", "-c:a", "copy", out]
+    length = sum(len(arg) + 3 for arg in argv)
+    if length > COMMAND_LIMIT:
+        raise ValueError("%d cues make a command line of %d characters, more than the %d one command can have: "
+                         "split the cue file and lay the parts over the video one after the other"
+                         % (len(plan["cues"]), length, COMMAND_LIMIT))
+    return argv
+
+
+# ---- the commands ---------------------------------------------------------------------------
+
+def parse_size(text):
+    """WIDTHxHEIGHT from the command line"""
+    match = re.match(r"^(\d+)[xX](\d+)$", text.strip())
+    if not match or int(match.group(1)) < 1 or int(match.group(2)) < 1:
+        raise ValueError("a size is WIDTHxHEIGHT in pixels, like 1280x720, not %r" % (text,))
+    return (int(match.group(1)), int(match.group(2)))
+
+
+def check_distinct(**paths):
+    """the files read and the file written must all differ: the output would be written over what is read"""
+    seen = {}
+    for name, path in paths.items():
+        if not path:
+            continue
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            raise ValueError("%s and %s are the same file: %s" % (seen[key], name, path))
+        seen[key] = name
+
+
+def run_render(video, cues, out, work=None, size=None, fps=None):
+    """lay the cues over the video.  The frame and the rate are the video's (ffprobe), unless both are given;
+    the pictures go to `work` (OUT.work when not given) and stay there.  ffmpeg writes next to OUT and the
+    result is moved over OUT when it succeeded, so a failure leaves an old OUT as it was."""
+    video, out = os.path.abspath(video), os.path.abspath(out)
+    check_distinct(IN=video, cues=cues, OUT=out)
+    if not os.path.isfile(video):
+        raise ValueError("no such video: %s" % video)
+    sheet = load_cues(cues)
+    if size is None or fps is None:
+        probed_size, probed_fps = probe(video)
+        size, fps = size or probed_size, fps or probed_fps
+    work = os.path.abspath(work or out + ".work")
+    plan = render_sequences(sheet, work, size, fps)
+    root, extension = os.path.splitext(out)
+    part = root + ".part" + extension            # the extension stays last: ffmpeg picks the container by it
+    if os.path.dirname(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+    try:
+        code, _, err = _run(ffmpeg_command(video, part, plan))
+        if code == 0:
+            os.replace(part, out)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+    result = {"ok": code == 0, "out": out, "cues": len(plan["cues"]), "frames": sum(c["frames"] for c in plan["cues"]),
+              "size": plan["size"], "fps": plan["fps"], "work": work, "warnings": plan["warnings"], "ffmpeg": code}
+    if code != 0:
+        result["error"] = {"type": "ffmpeg", "message": "ffmpeg exited with %d: %s" % (code, err.strip()[-600:])}
+    return result
+
+
+def run_preview(cues, out, at, over=None, size=None):
+    """one picture: every cue that is on at `at` seconds, drawn over a frame of the video (`over`) or over the
+    stage colour of the palette.  Front and back cues alike, in the order of the list."""
+    out = os.path.abspath(out)
+    check_distinct(**{"cues": cues, "--over": over, "OUT": out})
+    if not _number(at) or at < 0:
+        raise ValueError("--at is a time in seconds, 0 or more, not %r" % (at,))
+    sheet = load_cues(cues)
+    if over:
+        with Image.open(over) as picture:
+            frame = picture.convert("RGBA")
+        if size and frame.size != tuple(size):
+            frame = frame.resize(tuple(size), Image.LANCZOS)
+    else:
+        frame = Image.new("RGBA", tuple(size or sheet.size), PALETTES[sheet.palette]["stage"] + (255,))
+    sheet = dataclasses.replace(sheet, size=frame.size)
+    book, shown, warnings = FontBook(), [], []
+    for cue in sheet.cues:
+        layout = layout_cue(cue, sheet, book)
+        if layout.motion.start <= at < layout.motion.end:
+            frame.alpha_composite(draw(layout, layout.motion.at(at)), dest=layout.canvas_origin)
+            shown.append(cue.id)
+            warnings += layout.warnings
+    buffer = io.BytesIO()
+    frame.convert("RGB").save(buffer, "PNG")
+    write_bytes(out, buffer.getvalue())
+    result = {"ok": True, "out": out, "at": at, "size": list(frame.size), "cues": shown, "warnings": []}
+    for warning in book.warnings + warnings:
+        _warn(result["warnings"], warning)
+    return result
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("render", help="lay the cues over a video")
+    s.add_argument("video", help="the video MMD rendered (anything ffmpeg reads)")
+    s.add_argument("cues", help="the cue file (JSON)")
+    s.add_argument("out", help="the video to write (.mp4)")
+    s.add_argument("--work", help="folder for the pictures (default: OUT.work)")
+    s.add_argument("--size", help="WIDTHxHEIGHT of the video, instead of asking ffprobe")
+    s.add_argument("--fps", help="frames per second of the video (30, 29.97, 30000/1001), instead of asking ffprobe")
+    s = sub.add_parser("preview", help="one picture of the cues that are on at a time")
+    s.add_argument("cues")
+    s.add_argument("out", help="the picture to write (.png)")
+    s.add_argument("--at", required=True, help="the time in seconds")
+    s.add_argument("--over", help="a frame of the video to draw on (default: the stage colour of the palette)")
+    s.add_argument("--size", help="WIDTHxHEIGHT (default: that of --over, or of the cue file)")
+    s = sub.add_parser("frames", help="only draw the sequences and print the plan")
+    s.add_argument("cues")
+    s.add_argument("work", help="folder for the pictures")
+    s.add_argument("--size", help="WIDTHxHEIGHT (default: that of the cue file)")
+    s.add_argument("--fps", help="frames per second (default: that of the cue file)")
+    args = p.parse_args(argv)
+    try:
+        size = parse_size(args.size) if args.size is not None else None
+        fps = parse_fps(args.fps) if getattr(args, "fps", None) is not None else None
+        if args.command == "render":
+            result = run_render(args.video, args.cues, args.out, args.work, size, fps)
+        elif args.command == "preview":
+            try:
+                at = float(args.at)
+            except ValueError:
+                raise ValueError("--at is a time in seconds, not %r" % (args.at,)) from None
+            result = run_preview(args.cues, args.out, at, args.over, size)
+        else:
+            result = dict({"ok": True}, **render_sequences(load_cues(args.cues), args.work, size, fps))
+    except (ValueError, OSError) as e:
+        print(json.dumps({"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}, ensure_ascii=True))
+        return 2
+    print(json.dumps(result, ensure_ascii=True))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
