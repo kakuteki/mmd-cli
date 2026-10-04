@@ -143,12 +143,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
    - [ ] カメラをウザくない程度に動かす: 配布カメラ（会場前提）を使わず、ダンスの構造に合わせて 8〜16 秒に 1 回のゆっくりした
      寄り・引き・回り込み（距離 25〜45、高さ 10〜16、角度は小さく、S 字の補間）を生成する。生成器を `_spike/out/hibikase/`
      に置き、キーは `motion edit` で微調整できる形（vmd）にする。音源が無いので同期はダンスの区切り（キーの密度の変化）から。
-   - [ ] テキストを出して動かす（MV らしく）: `tools/mv_text.py`（`tools/overlay_text.py` を置き換えた。使い方は README の
-     「動画に文字を重ねる」、記録は `docs/reviews/2026-10-04-batch-e-mv-text.md`）。MMD の外で合成する。文字は Pillow で合図ごとの
-     連番 PNG に描き、ffmpeg の overlay で重ねる（字間の開閉・ワイプ・点滅・ロール）。書体は Y1RevForge / Y1Vectura /
-     Y1Cybanin3000 Glitch と、日本語に Noto Sans JP。手元の抜粋 AVI（白い舞台、1280x720、300 フレーム）で題名・クレジット・
-     サビ頭のカード・歌詞の合成を確認済み（合図がフレーム単位で予定どおり出ること、合図の箱の外の絵が変わらないこと）。
-     旧形式の合図（`_spike/out/hibikase/mv/cues_*.json`）もそのまま読める。同じ場所の `build_mv.md` の手順 4 は旧道具の名前のまま。
+   - [ ] テキストを出して動かす（MV らしく）: `tools/overlay_text.py` を作成し、手元の抜粋 AVI で題名・クレジット・歌詞の
+     合成を確認済み（`_spike/out/hibikase/mv/`。全体の手順は同じ場所の `build_mv.md`）。MMD の外で合成する。書き出した AVI に、曲名・歌詞などの手がかりを JSON で
+     与え、ffmpeg（drawtext / overlay。無ければ PIL で重ねる）でフェード・スライドを付けて MP4 にする。日本語は meiryo。
      歌詞の時刻は音源が無いと決められないので、まず題名・クレジットの出し入れから。
    - [ ] 袖や布の破綻: 配布モーションは別モデル向けで腕が袖や体に食い込む。手段は (1) `motion edit --bone 右腕 --bone 左腕
      --rot-add` で腕を数度開く「腕補正」の版（作成済み: `variants/dance_arms_open6.vmd` / `open10.vmd`。右腕 Z +6/+10、
