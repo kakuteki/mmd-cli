@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import struct
 import threading
 import time
@@ -148,32 +149,75 @@ def check_input_file(path, extensions, what):
 
 
 def check_output_file(path):
-    return _require_ansi(os.path.abspath(path))
+    full = os.path.abspath(path)
+    if os.path.isdir(full):
+        raise MmdError("%s is a folder: give a file name" % full)
+    return _require_ansi(full)
+
+
+def _free_name(base):
+    """base, or base.1, base.2 ... when something is already there"""
+    name, n = base, 0
+    while os.path.exists(name):
+        n += 1
+        name = "%s.%d" % (base, n)
+    return name
+
+
+def _remove_quietly(path):
+    try:
+        os.chmod(path, stat.S_IWRITE)            # a read-only file can be renamed but not removed
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _rename_quietly(src, dst):
+    try:
+        os.replace(src, dst)
+    except OSError:
+        pass
 
 
 @contextlib.contextmanager
 def keeping_the_old_file(path):
     """MMD is about to write `path`.  A file already there is moved aside first (MMD would otherwise ask
-    about overwriting it) and comes back when the new one does not get written; on success it is dropped."""
+    about overwriting it) and comes back when the operation fails; on success it is dropped.  What a failed
+    operation wrote is not thrown away: it stays next to the old file as `path.mmdcli-failed` (the error
+    names it).  A `.mmdcli-old` left behind by an interrupted run is somebody's original and is never
+    removed: this run's copy takes another name."""
+    if os.path.isdir(path):
+        raise MmdError("%s is a folder: give a file name" % path)
     aside = None
     if os.path.exists(path):
-        aside = path + ".mmdcli-old"
-        if os.path.exists(aside):
-            os.remove(aside)
+        aside = _free_name(path + ".mmdcli-old")
         os.replace(path, aside)
     try:
         yield
-    except BaseException:
+    except BaseException as exc:
+        if os.path.exists(path):
+            kept = _free_name(path + ".mmdcli-failed")
+            _rename_quietly(path, kept)
+            exc.kept_output = kept
+            if exc.args:
+                exc.args = ("%s (what MMD wrote is kept as %s)" % (exc.args[0], kept),) + exc.args[1:]
         if aside is not None:
-            if os.path.exists(path):
-                os.remove(path)                  # whatever was left of the attempt
-            os.replace(aside, path)
+            _rename_quietly(aside, path)
         raise
     if aside is not None:
         if os.path.exists(path):
-            os.remove(aside)
+            _remove_quietly(aside)
         else:
-            os.replace(aside, path)
+            _rename_quietly(aside, path)
+
+
+def forget_instance(pid):
+    """drop what the state file keeps about an instance that is gone"""
+    def change(state):
+        state["projects"].pop(str(pid), None)
+        if state.get("current") == pid:
+            state["current"] = None
+    update_state(change)
 
 
 # ---- finding and starting MMD ---------------------------------------------------------------
@@ -196,30 +240,39 @@ def launch(exe, timeout=90.0, headless=False):
     deadline = time.monotonic() + timeout
     hwnd = None
     said = []
-    while True:
-        mains = win32.find_windows(pid=pid, cls=MAIN_WINDOW_CLASS)
-        for dialog in guard.open_dialogs(pid, mains[0] if mains else None):
-            # MMD may complain while starting (an effect it could not load, a Direct3D device it could not
-            # create).  A notice is closed and remembered; a question cannot be answered blind, and a process
-            # stuck in one before it has a main window could not be reached afterwards, so it is ended
-            button = next((cid for cid in (1, 2) if dialog.find_button(cid) is not None), None)
-            if button is None or dialog.find_button(6) is not None:
+    answered = set()
+    quoted = lambda: (": " + " / ".join(d["message"] for d in said)) if said else ""
+    with win32.timer_resolution():
+        while True:
+            mains = win32.find_windows(pid=pid, cls=MAIN_WINDOW_CLASS)
+            for dialog in guard.open_dialogs(pid, mains[0] if mains else None):
+                if dialog.hwnd in answered:
+                    continue                    # its OK is posted; MMD closes it when it gets to it
+                # MMD may complain while starting (an effect it could not load, a Direct3D device it could not
+                # create).  A notice (a single OK) is closed and remembered.  A question cannot be answered
+                # blind, and a process stuck in one before it has a main window could not be reached afterwards,
+                # so it is ended
+                buttons = dialog.buttons
+                if len(buttons) != 1 or buttons[0][0] not in (1, 2):
+                    win32.terminate_process(pid)
+                    raise MmdError("MMD (pid %d) stopped at a dialog while starting and was ended: %s: %s"
+                                   % (pid, dialog.title, dialog.message))
+                guard.click(dialog, buttons[0][0])
+                answered.add(dialog.hwnd)
+                said.append(dict(dialog.to_json(), action="ok"))
+            if mains:
+                hwnd = mains[0]
+                if (len(win32.child_windows(hwnd)) >= CONTROL_COUNT
+                        and win32.send(hwnd, win32.WM_NULL, timeout_ms=300) is not None):
+                    break
+            if not win32.process_alive(pid):
+                raise MmdError("MMD exited right after it was started%s" % quoted())
+            if time.monotonic() > deadline:
+                # not ready, perhaps stuck behind a notice it does not close: nobody could reach it afterwards
                 win32.terminate_process(pid)
-                raise MmdError("MMD (pid %d) stopped at a dialog while starting and was ended: %s: %s"
-                               % (pid, dialog.title, dialog.message))
-            guard.click(dialog, button)
-            said.append(dict(dialog.to_json(), action="ok"))
-        if mains:
-            hwnd = mains[0]
-            if (len(win32.child_windows(hwnd)) >= CONTROL_COUNT
-                    and win32.send(hwnd, win32.WM_NULL, timeout_ms=300) is not None):
-                break
-        if not win32.process_alive(pid):
-            raise MmdError("MMD exited right after it was started%s"
-                           % ((": " + " / ".join(d["message"] for d in said)) if said else ""))
-        if time.monotonic() > deadline:
-            raise OperationTimeout("MMD did not become ready within %.0f s" % timeout)
-        time.sleep(0.1)
+                raise MmdError("MMD (pid %d) did not become ready within %.0f s and was ended%s"
+                               % (pid, timeout, quoted()))
+            time.sleep(0.01)
     mmd = Mmd(pid, hwnd)
     mmd.events.extend(said)
     mmd.wait_quiet()
@@ -294,8 +347,8 @@ class Mmd:
         with self._parked() as hidden:
             try:
                 events = self.guard.run(trigger, handlers, timeout or self.timeout, done, keep_hidden=hidden)
-            except DialogPending as exc:
-                self._keep(exc.events)
+            except Exception as exc:
+                self._keep(getattr(exc, "events", []))      # what was answered before the failure is kept
                 raise
             self._keep(events)
             return events
@@ -321,13 +374,20 @@ class Mmd:
             if outermost:
                 parking, self._parking = self._parking, None
                 if parking["hidden"]:
+                    put_back = True
                     if win32.is_visible(self.hwnd):
                         win32.hide(self.hwnd)
-                        self._gone(self.hwnd, 5.0)
-                        self.events.append({"kind": "main_window", "title": win32.get_text(self.hwnd, timeout_ms=200),
-                                            "message": "MMD showed its main window on its own", "buttons": [],
-                                            "action": "hidden again"})
-                    win32.move_window(self.hwnd, *parking["rect"][:2])
+                        note = {"kind": "main_window", "title": win32.get_text(self.hwnd, timeout_ms=200),
+                                "message": "MMD showed its main window on its own", "buttons": []}
+                        if self._gone(self.hwnd, 5.0):
+                            self.events.append(dict(note, action="hidden again"))
+                        else:
+                            # still shown: brought back now it would be on the screen.  It stays parked; the next
+                            # operation (or window show) gives it a place on the screen again
+                            self.events.append(dict(note, action="still visible, left parked"))
+                            put_back = False
+                    if put_back:
+                        win32.move_window(self.hwnd, *parking["rect"][:2])
 
     def _keep(self, events):
         self.events.extend(e for e in events if e.get("action") != "left open")
@@ -383,7 +443,11 @@ class Mmd:
             if dialog.hwnd in filled:
                 # handed back by the guard: still open and idle after its OK.  The new-style save dialog
                 # refuses a name it cannot use (characters such as ? or *) with nothing but a balloon tip,
-                # which never becomes a window of its own; cancel it and say so
+                # which never becomes a window of its own, and clears its box.  One that still shows the
+                # name is merely slow (a network drive, a scan) and is given more time
+                edit = dialog.file_name_edit()
+                if edit is not None and win32.get_text(edit["hwnd"]) == path:
+                    return False
                 cancel = dialog.find_button(2)
                 if cancel is not None:
                     win32.post(cancel["hwnd"], win32.BM_CLICK)
@@ -405,6 +469,31 @@ class Mmd:
             filled.add(dialog.hwnd)
             return "file name entered"
         return handler
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _quoting(said):
+        """a timeout raised inside quotes the notices MMD showed meanwhile (what it said is the clue)"""
+        try:
+            yield
+        except OperationTimeout as exc:
+            if said and exc.args:
+                exc.args = ("%s (MMD said: %s)" % (exc.args[0], " / ".join(said)),) + exc.args[1:]
+            raise
+
+    @staticmethod
+    def _closed_by_writer(path, timeout=10.0):
+        """wait until the program writing `path` has closed it: an AVI gets its final header on close, and a
+        file still open for writing cannot be opened for appending"""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                with open(path, "ab"):
+                    return True
+            except PermissionError:
+                if time.monotonic() > deadline:
+                    return False
+                time.sleep(0.05)
 
     @staticmethod
     def _gone(hwnd, timeout):
@@ -733,7 +822,7 @@ class Mmd:
 
     def _save_as(self, path):
         said = []
-        with keeping_the_old_file(path):
+        with self._quoting(said), keeping_the_old_file(path):
             self.menu(Menu.SAVE_AS, self._file_handlers(path, said))
             if not os.path.exists(path):
                 raise self._not_written(path, said)
@@ -967,7 +1056,7 @@ class Mmd:
         self.require_ready()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         said = []
-        with keeping_the_old_file(path):
+        with self._quoting(said), keeping_the_old_file(path):
             self.menu(menu_id, self._file_handlers(path, said), done=self._written(path))
             if not os.path.exists(path):
                 raise self._not_written(path, said)
@@ -1156,8 +1245,9 @@ class Mmd:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if size is not None:
             self.set_output_size(*size)
-        handlers = dict(self._file_handlers(path), recording=lambda dialog: "recording")
-        with keeping_the_old_file(path), self._camera_mode():   # the picture is taken through the scene camera
+        said = []
+        handlers = dict(self._file_handlers(path, said), recording=lambda dialog: "recording")
+        with self._quoting(said), keeping_the_old_file(path), self._camera_mode():   # through the scene camera
             self.menu(Menu.IMAGE_OUT, handlers, timeout=timeout, done=self._written(path))
         return {"path": path, "size": _image_size(path), "bytes": os.path.getsize(path), "frame": self.frame()}
 
@@ -1203,23 +1293,25 @@ class Mmd:
             return "settings entered"
 
         def done():
-            return bool(problem) or written()
+            return bool(problem) or finished()
 
-        written = self._written(path)
-        handlers = dict(self._file_handlers(path), avi_settings=on_settings, recording=lambda dialog: "recording")
-        with keeping_the_old_file(path), self._camera_mode():
+        finished = self._written(path)
+        said = []
+        handlers = dict(self._file_handlers(path, said), avi_settings=on_settings, recording=lambda dialog: "recording")
+        with self._quoting(said), keeping_the_old_file(path), self._camera_mode():
             self.menu(Menu.AVI_OUT, handlers, timeout=timeout, done=done)
             if problem:
                 raise MmdError(problem[0])
-            written = _avi_info(path)
+            self._closed_by_writer(path)        # the frame count goes into the header when MMD closes the file
+            header = _avi_info(path)
             asked = {"frames": end - start + 1, "fps": int(fps)}
             if size is not None:
                 asked["size"] = [int(size[0]), int(size[1])]
-            wrong = {k: (asked[k], written[k]) for k in asked if written.get(k) != asked[k]}
+            wrong = {k: (asked[k], header.get(k)) for k in asked if header.get(k) != asked[k]}
             if wrong:
                 raise MmdError("MMD wrote the video differently from what was asked: %s"
                                % ", ".join("%s asked %s, written %s" % (k, a, w) for k, (a, w) in wrong.items()))
-        return dict(written, path=path, codec=used.get("codec"), bytes=os.path.getsize(path))
+        return dict(header, path=path, codec=used.get("codec"), bytes=os.path.getsize(path))
 
     # ---- playback -----------------------------------------------------------------------------
 
@@ -1435,11 +1527,7 @@ class Mmd:
                 raise OperationTimeout("MMD did not exit within %.0f s (use --force)" % timeout)
             win32.terminate_process(self.pid)
             self._wait_for(lambda: not win32.process_alive(self.pid), 10.0, "MMD could not be terminated")
-        state = load_state()
-        state["projects"].pop(str(self.pid), None)
-        if state.get("current") == self.pid:
-            state["current"] = None
-        save_state(state)
+        forget_instance(self.pid)
         return {"pid": self.pid, "running": False}
 
 

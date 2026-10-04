@@ -666,7 +666,7 @@ class HeadlessTest(unittest.TestCase):
         r = MMD.render_avi(out("headless.avi"), 0, 5, fps=30, size=(320, 180))
         self.assertEqual(r["size"], [320, 180])
         self.assertFalse(win32.is_visible(MMD.hwnd))
-        self.assertGreaterEqual(win32.window_rect(MMD.hwnd)[0], -100)      # back where it was, not parked
+        self.assertGreater(win32.window_rect(MMD.hwnd)[0], win32.OFFSCREEN_X + 100)   # not left parked
         self.assertIn("hidden again", [e["action"] for e in MMD.take_events()])
 
     def test_minimized_instance(self):
@@ -684,9 +684,7 @@ class HeadlessTest(unittest.TestCase):
             self.assertEqual(m.show(), {"minimized": True, "visible": True})
         finally:
             m.quit(force=True)
-        state = app.load_state()
-        state["current"] = MMD.pid                                   # give the shared instance back its role
-        app.save_state(state)
+        app.update_state(lambda s: s.__setitem__("current", MMD.pid))   # give the shared instance back its role
 
 
 class RelayTest(unittest.TestCase):

@@ -1,6 +1,6 @@
 # mmd-cli 引き継ぎ（正本）
 
-最終更新: 2026-10-04 15:00。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
+最終更新: 2026-10-04 15:35（この PC の時計。以前の版の時刻は進んで書かれていたので直した）。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
 MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/reviews/`。
 
 ## 今どこにいるか
@@ -15,10 +15,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
-  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は 2026-10-04 15:30 に 827de16 へ更新済み。
+  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は 2026-10-04 に更新済み（最後の pull は下の残課題 7 の時点）。
 - 直近の成果: ヒビカセ（えぬた 0.992）× Sour式鏡音リンの場面を hinata で作成。pmm 2 本・静止画・AVI は hinata
   `C:/work/hibikase/out/`、写しは `_spike/out/hibikase/hinata_out/`。配布モーションの比較は `_spike/out/hibikase/compare.txt`。
-  **全曲の AVI** `rin_hibikase_enuta_full.avi`（1280x720・7,743 枚・30 fps・MJPEG・885 MB）は 2026-10-04 15:45 に
+  **全曲の AVI** `rin_hibikase_enuta_full.avi`（1280x720・7,743 枚・30 fps・MJPEG・885 MB）は 2026-10-04 14:41 に
   非表示の MMD で作成（台本 `_spike/out/verify/hinata_hidden_avi.txt`、結果 `_spike/out/verify/hidden_full.json`）。
   以前の抜粋 AVI は 640x360 の指定が効かず 1280x720 で出来ていた（AVI ダイアログの欄が効かない件）。
 - 査読 1 回目（`docs/reviews/2026-10-04-review-1.md`、読み取り専用の下請け）の指摘への対応状況は残課題 1。
@@ -59,6 +59,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 | 既存ファイルの保護は「脇に退避して戻す」 | pmm は一時名で書かせると MMD の「現在のプロジェクトのパス」が一時名になり、以後の上書き保存が壊れる。退避なら MMD の見るパスは変わらない |
 | 起動時の通知ダイアログは OK を押して文言を控える・答えられないものはプロセスを終了 | 主窓が無い段階のダイアログは後から attach できず、透明なまま残る（査読 1.14） |
 | 退避したまま残された窓（x <= -28000）は、次の操作の後と `window show` で (100, 100) へ戻す | 途中で殺された `mmd` が窓を画面外に残すと、復元しても見えない窓になる |
+| 失敗後に MMD が書いたものは消さず `.mmdcli-failed` に改名して残す。残っていた `.mmdcli-old` は消さない | 検査外れや時間切れで数分かけた AVI が消えていた。中断 → 再実行の 2 手で原本が消える経路があった（査読 2） |
+| 中継の親は Ctrl-C で子を殺さない | 書き込み中・ダイアログ中に殺すと半端な状態（退避した窓、透明なダイアログ、`.mmdcli-old`）が残る。子は job ファイルが無ければ結果を書かずに終わる |
+| 起動の時間切れでも MMD を終了する | 主窓の無い段階で透明化したダイアログを持ったまま残ると、attach も dialog show も効かない |
+| 中継のタスクは XML 定義で作る（`relay.create_task`、電源条件なし） | `schtasks /Create` の既定は「AC 電源のときだけ開始」。ノートの電源を抜いた途端、タスクが「キューに登録済み」のまま始まらず中継が全滅した（2026-10-04 15:21） |
 
 ## 知見（再利用できる形で）
 
@@ -88,14 +92,21 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      1.1 の宣言漏れと 5.1 `test_win32_layout.py`、3.1〜3.3・3.5 形式、4.5 parse_target、5.3・5.5 の試験。
      **取り込み前に敵対的査読。取り込んだら RelayTest（実機）と、セッション 0 からの AVI 60 フレーム超の中継を実測する。**
    - 未着手: 1.16（低のまとめ）、3.4 `vmd.peek`、4.4 ValueError を終了コード 2 に、5.4 の残り、5.7 の実機試験
-     （手で開いた pmm への save、15 バイト超のボーン名、menu の grayed）。
-2. 済（2026-10-04 15:45）: hinata の checkout を更新し、全曲 AVI を非表示で作成。全行で `visible: false`、AVI 行に
+     （15 バイト超のボーン名、menu の grayed。手で開いた pmm への save は済）。
+   - 査読 2 回目（`docs/reviews/2026-10-04-review-2.md`、今日の変更分）: 高 1・中 9 のうち、2026-10-04 15:20 に修正済み:
+     2.1 残った `.mmdcli-old` を消さない / 2.2 フォルダを拒否 / 2.3 読み取り専用 / 2.4・2.6 失敗後の成果物を
+     `.mmdcli-failed` に残す / 3.1 quit の錠 / 4.1 起動時ダイアログの押し直し防止 / 4.2 起動の時間切れでプロセスを終了 /
+     4.3 ボタン 1 つだけを通知とみなす / 5.1 入力欄に名前が残っていれば待つ / 5.2 例外に events と通知の文言 / 7.1 Ctrl-C で
+     子を殺さない / 1.2 隠れないまま戻さない / 6.5 変数名とヘルプ。未対応: 1.4（SetWindowPos の非同期化。表示中の
+     ダイアログが一瞬元の位置に描かれる危険があり採らない）、7.2（`process_alive` の「開けない」の区別）、7.3 の低、
+     8.3（FocusWatch を全窓・2 体目へ広げる。`dialog show` の試験と衝突するので設計が要る）、6.1（RIFF を辿る解析）。
+2. 済（2026-10-04 14:41）: hinata の checkout を更新し、全曲 AVI を非表示で作成。全行で `visible: false`、AVI 行に
    `hidden again`、中継は 209 秒（旧上限 180 秒超）で完走。残プロセス 0。
 3. `model info`（骨・表情の一覧と分類）。
 4. 補間曲線の指定（`bone set --interp`）、キー範囲の操作（コピー・削除・ずらし）。
 5. English Mode の MMD への対応（ダイアログを題名でなくコントロール ID で見分ける）。
 6. pmm 版 0001（同梱の見本）の読み取り。
-7. 済（2026-10-04 16:40）: `tools/run_live_tests_in_session.py`（中継と同じタスクスケジューラの仕組みで、ログオン中の
+7. 済（2026-10-04 15:10）: `tools/run_live_tests_in_session.py`（中継と同じタスクスケジューラの仕組みで、ログオン中の
    利用者セッションの中で `tests.live.test_live` を pythonw で走らせ、PID の生死で待って判定行を返す。`/TR` は 261 文字
    までなので引数は job ファイルで渡す）。この PC で 73 本・470 秒、**hinata（Python 3.10）で SSH から 73 本・165 秒 OK**。
    hinata での呼び方: `ssh hinata` → `cd C:/work/mmd-cli; $env:MMD_CLI_HOME='C:/work/mmd-cli-home'; python tools/run_live_tests_in_session.py --exe C:/Users/nayta/Desktop/MikuMikuDance_v932x64/MikuMikuDance.exe`。

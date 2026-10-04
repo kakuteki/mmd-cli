@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+from xml.sax.saxutils import escape
 from ctypes import wintypes as wt
 from dataclasses import dataclass, field
 from typing import Dict, List
@@ -130,8 +131,72 @@ def windowless_interpreter(python_exe):
     return os.path.join(os.path.dirname(python_exe), "pythonw.exe")
 
 
-def task_command(interpreter, job_path):
-    return '"%s" -m mmd_cli --job "%s"' % (interpreter, job_path)
+def task_arguments(job_path):
+    return '-m mmd_cli --job "%s"' % job_path
+
+
+# A task that runs once, on demand, in the logged-on user's interactive session.  Written out in full
+# because `schtasks /Create /TR` cannot say two things that matter: no power condition (its default task
+# waits for AC power, and on an unplugged notebook every relay stayed "queued" for ever, 2026-10-04) and
+# no time limit (the default 72 hours is fine, but the field is explicit here).
+TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>mmd-cli: one command relayed into the interactive session</Description></RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>%(user)s</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%(exe)s</Command>
+      <Arguments>%(arguments)s</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"""
+
+
+def task_xml(exe, arguments):
+    user = "%s\\%s" % (os.environ.get("USERDOMAIN", os.environ.get("COMPUTERNAME", "")), os.environ.get("USERNAME", ""))
+    return TASK_XML % {"user": escape(user), "exe": escape(exe), "arguments": escape(arguments)}
+
+
+def create_task(name, exe, arguments):
+    """register the task from its XML definition (schtasks wants that file in UTF-16); the file is not kept"""
+    folder = relay_dir()
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, name.rsplit("\\", 1)[-1] + ".xml")
+    with open(path, "w", encoding="utf-16") as f:
+        f.write(task_xml(exe, arguments))
+    try:
+        return _schtasks("/Create", "/TN", name, "/XML", path, "/F")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _write_whole(path, text):
@@ -213,13 +278,11 @@ def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
     interpreter = windowless_interpreter(sys.executable)
     if not os.path.isfile(interpreter):
         interpreter = sys.executable
-    command = task_command(interpreter, job_path)
-    if len(command) > 260:
-        raise RelayError("the command line for the Task Scheduler is longer than 260 characters: %s" % command)
-    created = _schtasks("/Create", "/TN", name, "/TR", command, "/SC", "ONCE", "/ST", "00:00", "/IT", "/F")
+    created = create_task(name, interpreter, task_arguments(job_path))
     if created.returncode != 0:
         raise RelayError("schtasks /Create failed: %s" % _text(created.stderr or created.stdout).strip())
     finished = False
+    interrupted = False
     try:
         started = _schtasks("/Run", "/TN", name)
         if started.returncode != 0:
@@ -242,11 +305,21 @@ def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
             time.sleep(0.1)
         finished = True
         return collect(out_path)
+    except KeyboardInterrupt:
+        # the person stopped waiting.  The child is left to finish what it is doing: ended in the middle of a
+        # write or with a dialog open it would leave half-done state behind.  Finding its job file gone, it
+        # writes no result
+        interrupted = True
+        raise
     finally:
-        if not finished:
-            _schtasks("/End", "/TN", name)          # stop the child before taking its files away
-        _schtasks("/Delete", "/TN", name, "/F")
-        for p in (job_path, out_path, out_path + ".exit", out_path + ".started"):
+        try:
+            if not finished and not interrupted:
+                _schtasks("/End", "/TN", name)      # a task that never got going, or whose child died
+            _schtasks("/Delete", "/TN", name, "/F")
+        except subprocess.SubprocessError:
+            pass
+        for p in (job_path, out_path, out_path + ".exit", out_path + ".started",
+                  out_path + ".part", out_path + ".exit.part", out_path + ".started.part"):
             try:
                 os.remove(p)
             except OSError:

@@ -49,6 +49,9 @@ def failure(exc):
             answered = [e for e in getattr(exc, "events", []) if e.get("action") != "left open"]
     if answered:
         error["answered_dialogs"] = list(answered)
+    kept = getattr(exc, "kept_output", None)                 # what MMD wrote before the operation failed
+    if kept:
+        error["kept_output"] = kept
     return {"ok": False, "error": error}, code
 
 
@@ -73,7 +76,7 @@ def build_parser():
     p.add_argument("--pid", type=int, help="the MMD process to talk to (default: the one started by 'mmd launch')")
     p.add_argument("--out", help="write the JSON result to this file as UTF-8 (stdout then only points to it)")
     p.add_argument("--timeout", type=float,
-                   help="seconds to wait for MMD (default 120; AVI output allows 2 s per frame on top)")
+                   help="seconds to wait for MMD (default 120; render avi, when this is not given, allows 60 s plus 2 s per frame)")
     p.add_argument("--in-place", action="store_true",
                    help="allow saving into a project file that was not opened through mmd-cli")
     p.add_argument("--in-user-session", action="store_true",

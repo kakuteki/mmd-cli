@@ -136,6 +136,16 @@ class Guard:
         self.main = main_hwnd
 
     def run(self, trigger=None, handlers=None, timeout=60.0, done=None, keep_hidden=False):
+        """see _loop.  Whatever is raised carries `events`: what was answered before the failure."""
+        events = []
+        try:
+            return self._loop(trigger, handlers, timeout, done, keep_hidden, events)
+        except Exception as exc:
+            if not hasattr(exc, "events"):
+                exc.events = events
+            raise
+
+    def _loop(self, trigger, handlers, timeout, done, keep_hidden, events):
         """trigger: None, ("send", hwnd, msg, wparam, lparam) or ("post", hwnd, msg, wparam, lparam).
 
         handlers maps a dialog kind to a callable(dialog).  The callable answers the dialog and
@@ -153,7 +163,6 @@ class Guard:
         QUIET_ROUNDS pings in a row (post / None), no dialog is open, and done() is true.
         """
         handlers = handlers or {}
-        events = []
         seen = {}
         worker = None
         if trigger is not None:

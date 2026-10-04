@@ -32,6 +32,12 @@ class FailureReportTest(unittest.TestCase):
         self.assertEqual(payload["error"]["answered_dialogs"], [{"kind": "model_info", "action": "ok"}])
         self.assertEqual([x["title"] for x in payload["error"]["dialogs"]], ["何か"])
 
+    def test_what_a_failed_operation_wrote_is_pointed_at(self):
+        exc = app.MmdError("boom")
+        exc.kept_output = "C:/x/clip.avi.mmdcli-failed"
+        payload, code = cli.failure(exc)
+        self.assertEqual(payload["error"]["kept_output"], "C:/x/clip.avi.mmdcli-failed")
+
     def test_run_attaches_the_answered_dialogs_to_the_failure(self):
         shield = types.SimpleNamespace(events=[])
 

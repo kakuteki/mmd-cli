@@ -40,10 +40,8 @@ def main(argv=None):
     with open(job_path, "w", encoding="utf-8") as f:
         json.dump({"repo": repo, "log": log, "exe": os.path.abspath(args.exe), "home": args.home or ""}, f)
     child = os.path.join(repo, "tools", "live_in_session.py")
-    # schtasks allows 261 characters for /TR: everything else travels in the job file
-    command = '"%s" "%s" "%s"' % (relay.windowless_interpreter(sys.executable), child, job_path)
     name = "mmd-cli\\live-" + run_id
-    created = relay._schtasks("/Create", "/TN", name, "/TR", command, "/SC", "ONCE", "/ST", "00:00", "/IT", "/F")
+    created = relay.create_task(name, relay.windowless_interpreter(sys.executable), '"%s" "%s"' % (child, job_path))
     if created.returncode != 0:
         print("schtasks /Create failed: %s" % relay._text(created.stderr or created.stdout).strip())
         return 2

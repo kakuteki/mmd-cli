@@ -116,6 +116,58 @@ class KeepOldFileTest(TempHome):
         self.assertEqual(read(path), b"new")
         self.assertEqual(os.listdir(self.folder), ["dance.vmd"])
 
+    def test_a_leftover_old_copy_is_not_deleted_by_the_next_run(self):
+        # review 2 (2.1): an interrupted run leaves X.mmdcli-old (the user's original) and a half-written X;
+        # the next run must not remove that original on its way
+        path = self.path("dance.vmd")
+        write(path + ".mmdcli-old", b"original")
+        write(path, b"half")
+        m = bare(menu=lambda *a, **k: write(path, b"new"))
+        m._save_through_menu(Menu.MOTION_SAVE, path, ".vmd")
+        self.assertEqual(read(path), b"new")
+        self.assertEqual(read(path + ".mmdcli-old"), b"original")
+        self.assertEqual(sorted(os.listdir(self.folder)), ["dance.vmd", "dance.vmd.mmdcli-old"])
+
+    def test_an_output_path_that_is_a_folder_is_refused_before_anything_is_renamed(self):
+        folder = self.path("shots.png")
+        os.mkdir(folder)
+        with self.assertRaises(app.MmdError) as ctx:
+            app.check_output_file(folder)
+        self.assertIn("folder", str(ctx.exception))
+        self.assertTrue(os.path.isdir(folder))
+        os.mkdir(self.path("taken.vmd"))
+        m = bare(menu=lambda *a, **k: None)
+        with self.assertRaises(app.MmdError):
+            m._save_through_menu(Menu.MOTION_SAVE, self.path("taken.vmd"), ".vmd")
+        self.assertTrue(os.path.isdir(self.path("taken.vmd")))
+        self.assertEqual(sorted(os.listdir(self.folder)), ["shots.png", "taken.vmd"])
+
+    def test_a_read_only_old_file_does_not_turn_a_success_into_a_failure(self):
+        import stat
+        path = self.path("dance.vmd")
+        write(path, b"old")
+        os.chmod(path, stat.S_IREAD)
+        m = bare(menu=lambda *a, **k: write(path, b"new"))
+        self.assertEqual(m._save_through_menu(Menu.MOTION_SAVE, path, ".vmd"), path)
+        self.assertEqual(read(path), b"new")
+        self.assertEqual(os.listdir(self.folder), ["dance.vmd"])
+
+    def test_what_mmd_wrote_is_kept_when_the_operation_fails_afterwards(self):
+        # review 2 (2.4 / 2.6): a verification or a timeout after MMD wrote the file must not destroy it
+        path = self.path("clip.avi")
+        write(path, b"old")
+
+        def menu(*a, **k):
+            write(path, b"new")
+            raise guard.OperationTimeout("took too long")
+
+        m = bare(menu=menu)
+        with self.assertRaises(guard.OperationTimeout) as ctx:
+            m._save_through_menu(Menu.MOTION_SAVE, path, ".avi")
+        self.assertEqual(read(path), b"old")
+        self.assertEqual(read(path + ".mmdcli-failed"), b"new")
+        self.assertIn("mmdcli-failed", str(ctx.exception))
+
     def test_save_as_keeps_the_old_project_file_until_the_new_one_exists(self):
         path = self.path("scene.pmm")
         write(path, b"old")
@@ -143,6 +195,29 @@ class StateFileTest(TempHome):
             t.join()
         self.assertEqual(app.load_state()["n"], 400)
         self.assertEqual(sorted(os.listdir(app.home_dir())), ["state.json"])
+
+    def test_forgetting_an_instance_happens_under_the_lock(self):
+        # review 2 (3.1): quit used to read, change and write the state without the lock
+        app.update_state(lambda s: s["projects"].update({"4242": {"work": "a"}, "7": {"work": "b"}}) or s.__setitem__("current", 4242))
+        stop = threading.Event()
+
+        def other():
+            n = 0
+            while not stop.is_set():
+                app.update_state(lambda s: s["projects"].__setitem__("7", {"work": "b%d" % n}))
+                n += 1
+
+        t = threading.Thread(target=other)
+        with mock.patch.object(app.win32, "process_alive", return_value=True):
+            t.start()
+            for _ in range(20):
+                app.forget_instance(4242)
+            stop.set()
+            t.join()
+            state = app.load_state()
+        self.assertNotIn("4242", state["projects"])
+        self.assertIn("7", state["projects"])
+        self.assertIsNone(state["current"])
 
     @unittest.skipUnless(outside_code_page(OUTSIDE), "the system code page can encode the test character")
     def test_a_home_mmd_cannot_reach_is_refused_with_the_variable_to_set(self):
@@ -207,6 +282,57 @@ class ParkedWindowTest(unittest.TestCase):
         self.m.show()
         self.assertEqual(self.calls, [("move", 100, 100), ("minimize",)])
 
+    def test_a_window_still_visible_after_the_wait_is_left_parked(self):
+        # review 2 (1.2): when MMD has not obeyed the hide yet, moving the window back would put it on the screen
+        self.rect = (40, 60, 1280, 770)
+        shown = {"after": False}
+
+        def run(*a, **k):
+            self.visible = True             # MMD shows the window during the operation and stays busy
+            return []
+        self.m.guard.run = run
+        with mock.patch.object(app.Mmd, "_gone", staticmethod(lambda hwnd, timeout: False)):
+            self.m._run(None)
+        self.assertEqual(self.calls, [("park",), ("hide",)])
+        self.assertEqual([e["action"] for e in self.m.events], ["still visible, left parked"])
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class FileDialogRefusalTest(unittest.TestCase):
+    """the save dialog refuses a name silently: it stays open and clears its box.  A dialog that is merely
+    slow (review 2, 5.1) still holds the name and must be given time instead of being cancelled."""
+
+    def setUp(self):
+        self.texts = {}
+        self.posted = []
+        patches = [
+            mock.patch.object(app.win32, "set_text", side_effect=lambda h, t: self.texts.__setitem__(h, t)),
+            mock.patch.object(app.win32, "get_text", side_effect=lambda h, timeout_ms=None: self.texts.get(h, "")),
+            mock.patch.object(app.win32, "post", side_effect=lambda *a: self.posted.append(a) or True),
+            mock.patch.object(app.Mmd, "_gone", staticmethod(lambda hwnd, timeout: True)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.dialog = dialogs.Dialog(7, "#32770", "名前を付けて保存", [
+            {"id": 1001, "cls": "Edit", "text": "", "hwnd": 71, "visible": True},
+            {"id": 1, "cls": "Button", "text": "保存(&S)", "hwnd": 72, "visible": True},
+            {"id": 2, "cls": "Button", "text": "キャンセル", "hwnd": 73, "visible": True}])
+        self.handler = app.Mmd._fill_file_dialog("C:/out/a.png")
+
+    def test_a_dialog_that_still_holds_the_name_is_given_more_time(self):
+        self.assertEqual(self.handler(self.dialog), "file name entered")
+        self.assertIs(self.handler(self.dialog), False)          # the box still shows the name: still working
+        self.assertEqual([p[0] for p in self.posted], [72])      # OK once, no cancel
+
+    def test_a_dialog_that_cleared_its_box_has_refused_the_name(self):
+        self.handler(self.dialog)
+        self.texts[71] = ""
+        with self.assertRaises(app.MmdError) as ctx:
+            self.handler(self.dialog)
+        self.assertIn("refused", str(ctx.exception))
+        self.assertEqual([p[0] for p in self.posted], [72, 73])  # OK, then cancel
+
 
 def notice(*buttons):
     controls = [{"id": 0, "cls": "Static", "text": "Direct3D::Init", "hwnd": 9001, "visible": True}]
@@ -263,6 +389,35 @@ class LaunchFailureTest(TempHome):
         self.dialog_rounds = [[notice()]]
         with self.assertRaises(app.MmdError) as ctx:
             app.launch(sys.executable, timeout=5.0)
+        self.assertEqual(self.ended, [4242])
+        self.assertIn("4242", str(ctx.exception))
+        self.assertIn("Direct3D::Init", str(ctx.exception))
+
+    def test_a_notice_still_open_on_the_next_poll_is_not_pressed_again(self):
+        # review 2 (4.1): the OK is posted; MMD may take a while to close the notice
+        same = notice((1, "OK"))
+        self.dialog_rounds = [[same], [same], [same]]
+        self.alive = [True]
+
+        def die_on_round_four(*a):
+            return self.alive[0]
+        with mock.patch.object(app.guard, "open_dialogs", side_effect=self.dialogs_then_death):
+            with self.assertRaises(app.MmdError):
+                app.launch(sys.executable, timeout=5.0)
+        self.assertEqual([p[0] for p in self.posted], [9])
+
+    def dialogs_then_death(self, pid, main_hwnd, hide=True):
+        if self.dialog_rounds:
+            return self.dialog_rounds.pop(0)
+        self.alive[0] = False
+        return []
+
+    def test_a_timeout_ends_the_process_and_names_the_dialog(self):
+        # review 2 (4.2): a notice that never closes left a transparent dialog on a live MMD nobody could reach
+        same = notice((1, "OK"))
+        with mock.patch.object(app.guard, "open_dialogs", side_effect=lambda *a, **k: [same]):
+            with self.assertRaises(app.MmdError) as ctx:
+                app.launch(sys.executable, timeout=0.5)
         self.assertEqual(self.ended, [4242])
         self.assertIn("4242", str(ctx.exception))
         self.assertIn("Direct3D::Init", str(ctx.exception))

@@ -155,13 +155,46 @@ class JobFileTest(unittest.TestCase):
 
 
 class TaskCommandTest(unittest.TestCase):
-    def test_task_command_uses_pythonw_and_the_job_file(self):
+    def test_task_arguments_use_pythonw_and_the_job_file(self):
         interpreter = relay.windowless_interpreter(r"C:\Py\python.exe")
         self.assertEqual(interpreter, r"C:\Py\pythonw.exe")
-        cmd = relay.task_command(interpreter, r"C:\Users\k\AppData\Local\mmd-cli\relay\ab12.json")
-        self.assertTrue(cmd.startswith('"C:\\Py\\pythonw.exe" -m mmd_cli --job "'))
-        self.assertTrue(cmd.endswith('ab12.json"'))
-        self.assertLess(len(cmd), 261)      # the limit of schtasks /TR
+        self.assertEqual(relay.task_arguments(r"C:\Users\k\AppData\Local\mmd-cli\relay\ab12.json"),
+                         '-m mmd_cli --job "C:\\Users\\k\\AppData\\Local\\mmd-cli\\relay\\ab12.json"')
+
+    def test_task_definition_runs_on_battery_in_the_interactive_session(self):
+        # schtasks /Create alone makes a task that waits for AC power: unplugged, the notebook queued every
+        # relay forever (2026-10-04).  The definition is written out in full instead
+        xml = relay.task_xml(r"C:\Py\pythonw.exe", '-m mmd_cli --job "C:\\x\\a b.json" <&>')
+        for piece in ("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+                      "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+                      "<LogonType>InteractiveToken</LogonType>",
+                      "<RunLevel>LeastPrivilege</RunLevel>",
+                      "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+                      "<Command>C:\\Py\\pythonw.exe</Command>",
+                      '<Arguments>-m mmd_cli --job "C:\\x\\a b.json" &lt;&amp;&gt;</Arguments>',
+                      "<UserId>%s\\%s</UserId>" % (os.environ.get("USERDOMAIN", os.environ.get("COMPUTERNAME", "")),
+                                                    os.environ["USERNAME"])):
+            self.assertIn(piece, xml)
+        self.assertNotIn("<Triggers>", xml)      # on demand only
+
+    def test_create_task_registers_from_a_utf16_file_that_does_not_stay_behind(self):
+        folder = tempfile.mkdtemp()
+        seen = {}
+
+        def scheduler(*args, timeout=60):
+            seen["args"] = args
+            with open(args[args.index("/XML") + 1], "rb") as f:
+                seen["bytes"] = f.read()
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+        with mock.patch.dict(os.environ, {"MMD_CLI_HOME": folder}), mock.patch.object(relay, "_schtasks", scheduler):
+            result = relay.create_task("mmd-cli\\relay-abc", r"C:\Py\pythonw.exe", "-m mmd_cli")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(seen["args"][:4], ("/Create", "/TN", "mmd-cli\\relay-abc", "/XML"))
+        self.assertEqual(seen["args"][5], "/F")
+        self.assertTrue(seen["bytes"].startswith(b"\xff\xfe"))                   # UTF-16 with a byte order mark
+        self.assertIn("<Command>C:\\Py\\pythonw.exe</Command>", seen["bytes"].decode("utf-16"))
+        self.assertEqual(os.listdir(os.path.join(folder, "relay")), [])        # the definition file is gone
 
     def test_task_name_is_unique_and_namespaced(self):
         a, b = relay.task_name(), relay.task_name()
@@ -282,7 +315,11 @@ class FakeScheduler:
     def __call__(self, *args, timeout=60):
         self.calls.append(args)
         if args[0] == "/Create":
-            self.job_path = args[args.index("/TR") + 1].split('"')[3]
+            from xml.etree import ElementTree
+            with open(args[args.index("/XML") + 1], "rb") as f:
+                root = ElementTree.fromstring(f.read())
+            arguments = root.find(".//{http://schemas.microsoft.com/windows/2004/02/mit/task}Arguments").text
+            self.job_path = arguments.split('"')[1]
         if args[0] == "/Run" and self.child is not None:
             self.child(relay.read_job(self.job_path))
         return subprocess.CompletedProcess(["schtasks.exe"] + list(args), 0, b"", b"")
@@ -365,6 +402,20 @@ class ParentWaitTest(unittest.TestCase):
         self.assertGreaterEqual(self.clock.now, 2.0)        # the grace for a late .exit
         self.assertLess(self.clock.now, 10.0)
         self.assertEqual(scheduler.verbs()[-2:], ["/End", "/Delete"])
+        self.assertEqual(self.leftovers(), [])
+
+    def test_a_keyboard_interrupt_leaves_the_child_to_finish_on_its_own(self):
+        # review 2 (7.1): /End killed the child in the middle of writing a file or holding a dialog open.
+        # Interrupted, the parent walks away; the child finishes and, finding no job file, leaves nothing behind
+        scheduler = FakeScheduler(start)
+
+        def alive(pid):
+            raise KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_with(scheduler, alive=alive)
+        self.assertNotIn("/End", scheduler.verbs())
+        self.assertEqual(scheduler.verbs()[-1], "/Delete")
         self.assertEqual(self.leftovers(), [])
 
     def test_parent_reports_no_logon_when_the_child_never_starts(self):

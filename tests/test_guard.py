@@ -243,6 +243,34 @@ class GuardRunTest(unittest.TestCase):
         with self.assertRaises(guard.OperationTimeout):
             self.guard.run(None, {}, timeout=0.3, done=lambda: False)
 
+    def test_events_travel_with_any_exception_a_handler_raises(self):
+        # review 2 (5.2): what was answered before the failure is part of the report
+        self.dialog(2, "お知らせ", MESSAGE)
+        self.dialog(3, "別の何か", MESSAGE)
+        calls = []
+
+        def handler(dialog):
+            calls.append(dialog.hwnd)
+            if len(calls) == 1:
+                del self.fake.windows[dialog.hwnd]
+                return "ok"
+            raise RuntimeError("the second one is unbearable")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.guard.run(None, {"message": handler}, timeout=2.0)
+        self.assertEqual([e["action"] for e in ctx.exception.events], ["ok"])
+
+    def test_a_timeout_carries_the_events_so_far(self):
+        self.dialog(2, "お知らせ", MESSAGE)
+
+        def handler(dialog):
+            del self.fake.windows[2]
+            return "ok"
+
+        with self.assertRaises(guard.OperationTimeout) as ctx:
+            self.guard.run(None, {"message": handler}, timeout=0.3, done=lambda: False)
+        self.assertEqual([e["action"] for e in ctx.exception.events], ["ok"])
+
     def test_click_posts_a_command_to_the_dialog_and_a_click_to_a_file_dialog_button(self):
         self.dialog(2, "何か", MESSAGE)
         self.dialog(3, "名前を付けて保存", FILE_DIALOG)
