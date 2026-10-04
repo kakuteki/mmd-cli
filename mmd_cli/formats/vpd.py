@@ -7,6 +7,7 @@ HEADER = "Vocaloid Pose Data file"
 ENCODING = "cp932"
 
 _BLOCK = re.compile(r"Bone\d+\{([^\r\n]*)\r?\n(.*?)\}", re.S)
+_FIRST_BLOCK = re.compile(r"^Bone\d+\{", re.M)
 _NUMBERS = re.compile(r"^\s*([-+0-9.eE,\s]+);", re.M)
 
 
@@ -32,7 +33,7 @@ def loads(data):
     if not text.lstrip().startswith(HEADER):
         raise ValueError("not a VPD file (bad header)")
     body = _strip_comments(text)
-    head = body.split("Bone", 1)[0]
+    head = _FIRST_BLOCK.split(body, 1)[0]       # the lines before the first block: parent file name, bone count
     names = re.findall(r"^\s*([^;\r\n]+);", head, re.M)
     pose = Pose(model_file=names[0].strip() if names else "")
     for m in _BLOCK.finditer(body):
