@@ -43,8 +43,13 @@ RISE = (24.0, -12.0)                         # px: where "rise" starts below its
 TRACKING_IN = (0.6, 0.1)                     # em: how far "tracking-in" starts spread, and spreads again leaving
 WIPE_EDGE = 24.0                             # px: the soft edge of "wipe"
 FLASH = (1.0, 0.0, 1.0, 0.35, 1.0)           # the alpha of the first frames of "flash"; full after them
-X_ANCHORS = ("left", "center", "right")
+# "left-third" and "right-third" centre the block on a quarter and on three quarters of the width: beside
+# the dancer, who stands in the middle (a lyric in the centre of the lower third lands on the legs)
+X_ANCHORS = ("left", "center", "right", "left-third", "right-third")
 Y_ANCHORS = ("top", "middle", "lower", "bottom")
+# in front of the dancer or behind: this tool lays both over the video in the order of the list; a tool
+# that has the dancer as a layer of its own puts the "back" cues under her
+LAYERS = ("front", "back")
 PALETTES = {
     # white text and an amber accent for a black stage (glow and light effects need the black)
     "dark": {"text": (245, 245, 248), "accent": (240, 160, 48), "secondary": (172, 172, 174), "ink": (22, 22, 30),
@@ -54,13 +59,13 @@ PALETTES = {
               "stage": (255, 255, 255)},
 }
 DEFAULT_PALETTE = "dark"
-DEFAULT_STYLE, DEFAULT_ANIM, DEFAULT_X, DEFAULT_Y = "lyric", "fade", "center", "lower"
+DEFAULT_STYLE, DEFAULT_ANIM, DEFAULT_X, DEFAULT_Y, DEFAULT_LAYER = "lyric", "fade", "center", "lower", "front"
 # the names of the older tools/overlay_text.py, read in a bare list of cues
 OLD_STYLES = {"title": "logo", "lyric": "lyric", "credit": "credit", "caption": "sub"}
 OLD_ANIMS = {"fade": "fade", "slide-up": "rise", "slide-left": "rise"}
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 SHEET_KEYS = ("fps", "size", "palette", "cues", "note")
-CUE_KEYS = ("id", "start", "end", "x", "y", "anim", "text", "style", "size", "lines", "enter", "exit", "note")
+CUE_KEYS = ("id", "start", "end", "x", "y", "anim", "layer", "text", "style", "size", "lines", "enter", "exit", "note")
 LINE_KEYS = ("text", "style", "size")
 
 
@@ -212,6 +217,7 @@ class Cue:
     lines: List[LineSpec]
     enter: float = ENTER
     exit: float = EXIT
+    layer: str = DEFAULT_LAYER
 
 
 @dataclasses.dataclass
@@ -311,7 +317,7 @@ def _parse_cue(raw, index, old):
         raise ValueError("%s: no text to draw" % what)
     return Cue(cue_id, start, end, choice("x", X_ANCHORS, DEFAULT_X), choice("y", Y_ANCHORS, DEFAULT_Y),
                choice("anim", ANIMS, DEFAULT_ANIM, OLD_ANIMS if old else None), lines,
-               seconds("enter", ENTER), seconds("exit", EXIT))
+               seconds("enter", ENTER), seconds("exit", EXIT), choice("layer", LAYERS, DEFAULT_LAYER))
 
 
 def parse_cues(data):

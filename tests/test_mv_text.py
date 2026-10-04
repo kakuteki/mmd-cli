@@ -295,6 +295,23 @@ class CueFileTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(data)):
                 mv_text.parse_cues(data)
 
+    def test_a_cue_is_in_front_of_the_dancer_unless_it_says_back(self):
+        # the layer only matters to a tool that puts the dancer between the two; it travels with the cue
+        sheet = mv_text.parse_cues({"cues": [{"id": "a", "start": 0, "end": 1, "text": "x"},
+                                             {"id": "b", "start": 0, "end": 1, "text": "x", "layer": "back"},
+                                             {"id": "c", "start": 0, "end": 1, "text": "x", "layer": "front"}]})
+        self.assertEqual([c.layer for c in sheet.cues], ["front", "back", "front"])
+        self.assertEqual([c.layer for c in mv_text.parse_cues(OLD_FORMAT).cues], ["front"] * 4)
+        for bad in ("middle", "", None, 1, "Back"):
+            with self.assertRaises(ValueError, msg=repr(bad)) as caught:
+                mv_text.parse_cues(one_cue(id="title7", layer=bad))
+            self.assertIn("title7", str(caught.exception))
+            self.assertIn("layer", str(caught.exception))
+
+    def test_a_lyric_can_stand_beside_the_dancer(self):
+        for x in ("left", "center", "right", "left-third", "right-third"):
+            self.assertEqual(mv_text.parse_cues(one_cue(x=x)).cues[0].x, x)
+
     def test_a_cue_file_is_read_as_utf8(self):
         path = os.path.join(tempfile.mkdtemp(), "cues.json")
         with open(path, "w", encoding="utf-8") as f:
