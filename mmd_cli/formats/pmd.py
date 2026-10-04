@@ -5,7 +5,7 @@ only counted (counts["textures"] is the number of distinct texture file names th
 Values are kept as stored; in particular the IK angle is the file's value, which PMX stores times 4
 as radians (the standard leg IK is 0.5 here and 2.0 in PMX files, the toe IK 1.0 and 4.0).
 
-Bone types (one byte per bone) and the PMX-style flags they become.  Measured on the 14 models
+Bone types (one byte per bone) and the PMX-style flags they become.  Measured on the 13 models
 shipped with MMD 9.32: bones of types 0, 1, 2, 4, 5 and 8 are the ones that appear in the bone
 display frames, so those are called visible; PMD has no separate "enabled" (操作可) flag and MMD
 cannot operate a bone it does not show, so enabled follows visible.  Every bone rotates
@@ -177,7 +177,8 @@ def loads(data):
     for i, frame_name in enumerate(frame_names):
         items = [{"kind": "bone", "index": b} for b, f in bone_display if f == i + 1]
         frames.append(DisplayFrame(_frame_name(frame_name), _frame_name(english["frames"][i]) if english else None, False, items))
-    counts.update(bones=len(bones), morphs=len(morphs), display_frames=len(frames), rigid_bodies=rigid_bodies, joints=joints)
+    counts.update(bones=len(bones), morphs=len(morphs), display_frames=len(frames), rigid_bodies=rigid_bodies, joints=joints,
+                  soft_bodies=0)                 # PMD has none; the key keeps the two formats' JSON alike
     return Model("pmd", version, _text(name), english["name"] if english else None, _text(comment),
                  english["comment"] if english else None, counts, bones, morphs, frames)
 

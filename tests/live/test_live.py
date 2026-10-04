@@ -455,6 +455,27 @@ class ProjectTest(Base):
         self.assertEqual(MMD.dump(in_place=True)["models"], [])
 
 
+class ModelInfoTest(Base):
+    with_model = True
+
+    def test_model_info_of_the_selected_model_agrees_with_what_mmd_lists(self):
+        info = MMD.model_info()                              # the bundled Miku, selected since it was loaded
+        self.assertEqual((info["name"], info["format"]), ("初音ミク", "pmd"))
+        names = [b["name"] for b in info["bones"]]
+        self.assertEqual(len(names), info["counts"]["bones"])
+        self.assertTrue(set(MMD.bones()) <= set(names))     # MMD's own bone list comes from the same file
+        self.assertEqual([b["parent"] for b in info["bones"] if b["name"] == "センター"], [None])
+        morphs = {m["name"]: m for m in info["morphs"]}
+        self.assertEqual(morphs["まばたき"]["panel"], "eye")
+        self.assertTrue(set(MMD.morphs()) - {"base"} <= set(morphs))
+
+    def test_model_info_of_a_file_does_not_touch_the_project(self):
+        before = MMD.state()["project_path"]
+        info = MMD.model_info(bundled("Model", "初音ミク.pmd"))
+        self.assertEqual(info["counts"]["bones"], len(info["bones"]))
+        self.assertEqual(MMD.state()["project_path"], before)      # no save of a working copy was needed
+
+
 class HandOpenedProjectTest(Base):
     def test_saving_a_hand_opened_project_elsewhere_leaves_it_untouched(self):
         # review 1 (4.1): "save as" of a project a person opened must not write the file MMD has open

@@ -239,7 +239,7 @@ def _bone(r, index, size):
         r.skip(12)
     append = None
     if flags["append_rotate"] or flags["append_translate"]:
-        append = {"parent": r.index(size), "ratio": r.f32()}
+        append = {"parent": _optional(r.index(size)), "ratio": r.f32()}
     if flags["fixed_axis"]:
         r.skip(12)
     if flags["local_axis"]:
@@ -248,9 +248,9 @@ def _bone(r, index, size):
         r.i32()
     ik = None
     if flags["ik"]:
-        ik = {"target": r.index(size), "loops": r.i32(), "angle": r.f32(), "links": []}
+        ik = {"target": _optional(r.index(size)), "loops": r.i32(), "angle": r.f32(), "links": []}
         for _ in range(r.count(size + 1, "IK link")):
-            ik["links"].append(r.index(size))
+            ik["links"].append(_optional(r.index(size)))
             if r.u8():
                 r.skip(24)                      # angle limits
     return Bone(index, name, name_en, parent, layer, flags, append, ik)
@@ -320,14 +320,14 @@ def loads(data):
     for _ in range(counts["textures"]):
         r.text()
     counts["materials"] = _skip_materials(r, sizes["texture"])
-    bones = [_bone(r, i, sizes["bone"]) for i in range(r.count(8 + 12 + sizes["bone"] + 6 + 12, "bone"))]
+    # the smallest bone: two empty names, position, parent, layer, flags and a tail given as a bone index
+    bones = [_bone(r, i, sizes["bone"]) for i in range(r.count(26 + 2 * sizes["bone"], "bone"))]
     morphs = [_morph(r, i, sizes) for i in range(r.count(8 + 2 + 4, "morph"))]
     frames = [_frame(r, sizes) for _ in range(r.count(8 + 1 + 4, "display frame"))]
     counts.update(bones=len(bones), morphs=len(morphs), display_frames=len(frames))
     counts["rigid_bodies"] = _skip_rigid_bodies(r, sizes["bone"])
     counts["joints"] = _skip_joints(r, sizes["rigid"])
-    if version >= 2.1 and not r.at_end():
-        _skip_soft_bodies(r, sizes)
+    counts["soft_bodies"] = _skip_soft_bodies(r, sizes) if version >= 2.1 and not r.at_end() else 0
     if not r.at_end():
         raise PmxFormatError("%d bytes are left after the last known field: the layout was misread"
                              % (len(data) - r.pos))

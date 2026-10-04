@@ -302,11 +302,25 @@ def _file_info(path, brief=False):
 STANDALONE = ("file", "ps", "launch")       # commands that do not need an attached instance
 
 
+def _model_file(args):
+    """`model info FILE`: the file itself is read, like `file info`"""
+    target = getattr(args, "target", None)
+    return (args.command == "model" and getattr(args, "action", None) == "info" and isinstance(target, str)
+            and os.path.splitext(target)[1].lower() in (".pmx", ".pmd") and os.path.isfile(target))
+
+
+def standalone(args):
+    """commands that need neither a running MMD nor the relay into the desktop session"""
+    return args.command in STANDALONE or _model_file(args)
+
+
 def dispatch_any(mmd, args):
     """run one parsed command.  mmd may be None for the standalone commands; a launch returns the
     new instance under "_instance" so a batch can keep using it."""
     if args.command == "file":
         return _file_info(args.file, brief=args.brief)
+    if _model_file(args):
+        return dict(_file_info(args.target), path=os.path.abspath(args.target))
     from . import app
     if args.command == "ps":
         return {"instances": app.instances(), "current": app.load_state().get("current")}
@@ -369,7 +383,7 @@ def _run_batch(args):
 def run(args):
     if args.command == "batch":
         return _run_batch(args)
-    if args.command in STANDALONE:
+    if standalone(args):
         result = dispatch_any(None, args)
         result.pop("_instance", None)
         return result
@@ -545,7 +559,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         from . import relay
-        if relay.should_relay(argv=argv, command=args.command):
+        if relay.should_relay(argv=argv, command=None if standalone(args) else args.command):
             parked = None
             try:
                 if args.command == "batch" and args.file == "-":

@@ -1,5 +1,6 @@
 """what a failed command reports, and what a launch reports, without MMD"""
 import contextlib
+import os
 import sys
 import types
 import unittest
@@ -63,6 +64,32 @@ class FailureReportTest(unittest.TestCase):
             with self.assertRaises(app.MmdError) as ctx:
                 cli.run(parse(["state"]))
         self.assertEqual(ctx.exception.answered_dialogs, [{"kind": "message", "action": "ok"}])
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class ModelInfoFileTest(unittest.TestCase):
+    """review 3 (3.1): `mmd model info FILE` reads the file; it needs neither a running MMD nor the relay"""
+
+    def setUp(self):
+        import tempfile
+        from tests.test_pmx import Writer, NORMAL
+        w = Writer()
+        self.path = os.path.join(tempfile.mkdtemp(), "tiny.pmx")
+        with open(self.path, "wb") as f:
+            f.write(w.build(name="小さいモデル", bones=[w.bone("センター", flags=NORMAL)]))
+
+    def test_run_reads_the_file_without_attaching(self):
+        with mock.patch.object(cli, "_attach", side_effect=AssertionError("no MMD must be looked for")):
+            result = cli.run(parse(["model", "info", self.path]))
+        self.assertEqual(result["name"], "小さいモデル")
+        self.assertEqual([b["name"] for b in result["bones"]], ["センター"])
+        self.assertEqual(os.path.normcase(result["path"]), os.path.normcase(self.path))
+
+    def test_a_file_target_is_local_but_a_model_name_is_not(self):
+        self.assertTrue(cli.standalone(parse(["model", "info", self.path])))
+        self.assertFalse(cli.standalone(parse(["model", "info", "初音ミク"])))
+        self.assertFalse(cli.standalone(parse(["model", "info"])))
+        self.assertTrue(cli.standalone(parse(["file", "info", self.path])))
 
 
 @unittest.skipUnless(app is not None, "needs Windows")

@@ -230,6 +230,27 @@ class StateFileTest(TempHome):
 
 
 @unittest.skipUnless(app is not None, "needs Windows")
+class ModelInfoPathTest(TempHome):
+    """review 3 (3.2): a path that is not a model file must fail before the project is saved"""
+
+    def setUp(self):
+        super().setUp()
+        self.m = bare(dump=lambda keys=False: self.fail("the project must not be saved for a path"))
+
+    def test_a_missing_file_is_reported_as_missing(self):
+        with self.assertRaises(FileNotFoundError):
+            self.m.model_info(self.path("nowhere.pmx"))
+        with self.assertRaises(FileNotFoundError):
+            self.m.model_info("C:/nowhere/at/all/miku.pmd")
+
+    def test_a_file_that_is_not_a_model_is_refused(self):
+        write(self.path("dance.vmd"), b"Vocaloid Motion Data 0002")
+        with self.assertRaises(app.MmdError) as ctx:
+            self.m.model_info(self.path("dance.vmd"))
+        self.assertIn(".pmx", str(ctx.exception))
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
 class PlayArgumentsTest(unittest.TestCase):
     def test_contradicting_flags_are_refused_before_mmd_is_touched(self):
         m = bare()

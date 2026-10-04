@@ -141,14 +141,15 @@ class HeaderTest(unittest.TestCase):
     def test_counts_of_an_empty_model_are_zero(self):
         m = pmx.loads(minimal())
         self.assertEqual(m.counts, {"vertices": 0, "faces": 0, "textures": 0, "materials": 0, "bones": 0, "morphs": 0,
-                                    "display_frames": 0, "rigid_bodies": 0, "joints": 0})
+                                    "display_frames": 0, "rigid_bodies": 0, "joints": 0, "soft_bodies": 0})
         self.assertEqual((m.bones, m.morphs, m.display_frames), ([], [], []))
 
     def test_version_2_1_with_soft_bodies_is_read_to_the_end(self):
         w = Writer(version=2.1)
-        m = pmx.loads(w.build(softbodies=[w.softbody(anchors=2, pins=3)], bones=[w.bone("a")]))
+        m = pmx.loads(w.build(softbodies=[w.softbody(anchors=2, pins=3), w.softbody()], bones=[w.bone("a")]))
         self.assertEqual(m.version, 2.1)
         self.assertEqual(m.counts["bones"], 1)
+        self.assertEqual(m.counts["soft_bodies"], 2)             # review 3 (1.3): walked and counted
 
     def test_version_2_1_without_the_soft_body_section_is_accepted(self):
         m = pmx.loads(Writer(version=2.1).build())
@@ -252,6 +253,22 @@ class BoneTest(unittest.TestCase):
             self.assertIsNone(m.bones[0].ik)
             self.assertTrue(m.bones[6].flags["fixed_axis"])
             self.assertEqual(m.counts["bones"], 7)
+
+    def test_a_missing_append_parent_and_ik_target_become_none(self):
+        # review 3 (1.2): -1 means "none" for these links too, as the module docstring promises
+        w = Writer(bone=2)
+        ik = {"target": -1, "loops": 1, "angle": 1.0, "links": [(-1, None), (0, None)]}
+        m = pmx.loads(w.build(bones=[w.bone("付与", flags=NORMAL | APPEND_ROTATE, append=(-1, 0.5)),
+                                     w.bone("ＩＫ", flags=NORMAL | IK, ik=ik)]))
+        self.assertEqual(m.bones[0].append, {"parent": None, "ratio": 0.5})
+        self.assertEqual(m.bones[1].ik, {"target": None, "loops": 1, "angle": 1.0, "links": [None, 0]})
+
+    def test_bones_whose_tail_is_a_bone_index_pass_the_count_check(self):
+        # review 3 (1.1): the smallest bone is 26 + 2 x index size bytes (tail as an index, nothing optional)
+        w = Writer(bone=1)
+        bones = [w.bone("", flags=NORMAL | TAIL_IS_BONE, tail=0) for _ in range(12)]
+        m = pmx.loads(w.build(bones=bones))
+        self.assertEqual(m.counts["bones"], 12)
 
     def test_a_bone_with_every_optional_block_is_followed_correctly(self):
         w = Writer(bone=2)

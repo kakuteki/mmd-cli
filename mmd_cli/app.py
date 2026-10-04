@@ -694,9 +694,11 @@ class Mmd:
         project holds.  Reading the project saves the working copy, so for a project opened by hand the
         file has to be given."""
         from .formats import pmd, pmx
-        if (isinstance(target, str) and os.path.splitext(target)[1].lower() in _MODEL_EXTENSIONS
-                and os.path.isfile(target)):
-            path = os.path.abspath(target)
+        looks_like_a_path = isinstance(target, str) and (
+            os.path.splitext(target)[1].lower() in _MODEL_EXTENSIONS or "/" in target or os.sep in target)
+        if looks_like_a_path:
+            # missing, of another kind or out of the code page: said here, before the project gets saved
+            path = check_input_file(target, _MODEL_EXTENSIONS, "a model")
         else:
             try:
                 summary = self.dump(keys=False)

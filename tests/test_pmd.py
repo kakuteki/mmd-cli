@@ -79,10 +79,10 @@ class HeaderTest(unittest.TestCase):
         self.assertEqual((m.format, m.version), ("pmd", 1.0))
         self.assertEqual((m.name, m.name_en, m.comment, m.comment_en), ("初音ミク", "Miku Hatsune", "説明\r\n2行目", "about"))
         self.assertEqual(m.counts, {"vertices": 3, "faces": 2, "textures": 3, "materials": 4, "bones": 0, "morphs": 0,
-                                    "display_frames": 1, "rigid_bodies": 2, "joints": 1})
+                                    "display_frames": 1, "rigid_bodies": 2, "joints": 1, "soft_bodies": 0})
         # the same key order as formats.pmx, so the JSON of the two formats reads alike
         self.assertEqual(list(m.counts), ["vertices", "faces", "textures", "materials", "bones", "morphs", "display_frames",
-                                          "rigid_bodies", "joints"])
+                                          "rigid_bodies", "joints", "soft_bodies"])
 
     def test_text_is_cut_at_nul_and_bad_bytes_are_replaced(self):
         # 0x81 is a cp932 lead byte with nothing after it (0xFF would not do: Python's cp932 maps it to U+F8F3)
@@ -269,7 +269,7 @@ class MikuTest(unittest.TestCase):
         self.assertEqual(m.counts["display_frames"], len(m.display_frames))
         # 122 bones, 7 IK, 16 skins of which one is the base, 7 bone frames + the expression frame, 45 rigid bodies, 27 joints
         self.assertEqual(m.counts, {"vertices": 9036, "faces": 14997, "textures": 1, "materials": 17, "bones": 122, "morphs": 15,
-                                    "display_frames": 8, "rigid_bodies": 45, "joints": 27})
+                                    "display_frames": 8, "rigid_bodies": 45, "joints": 27, "soft_bodies": 0})
 
     def test_center_bone_has_no_parent(self):
         bones = {b.name: b for b in self.model.bones}
