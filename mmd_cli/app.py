@@ -1441,12 +1441,16 @@ class Mmd:
 def _avi_info(path):
     """size, frame count and frame rate from the main AVI header (avih); empty when the file is not an AVI"""
     with open(path, "rb") as f:
-        head = f.read(4096)
+        head = f.read(65536)
     at = head.find(b"avih")
-    if head[:4] != b"RIFF" or at < 0 or at + 48 > len(head):
+    if head[:4] != b"RIFF" or head[8:12] != b"AVI " or at < 0 or at + 48 > len(head):
         return {}
     micro_per_frame, frames = struct.unpack_from("<I", head, at + 8)[0], struct.unpack_from("<I", head, at + 8 + 16)[0]
     width, height = struct.unpack_from("<II", head, at + 8 + 32)
+    # past 1 GB the file goes on in AVIX segments and avih counts only the first; the OpenDML header has them all
+    total = head.find(b"dmlh")
+    if total >= 0 and total + 12 <= len(head):
+        frames = struct.unpack_from("<I", head, total + 8)[0] or frames
     return {"size": [width, height], "frames": frames, "fps": round(1e6 / micro_per_frame) if micro_per_frame else None}
 
 

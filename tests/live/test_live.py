@@ -677,7 +677,7 @@ class RelayTest(unittest.TestCase):
 
     def test_round_trip(self):
         from mmd_cli import relay
-        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "state"], timeout=60)
+        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "state"])
         self.assertEqual(code, 0, payload)
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["relayed"])
@@ -685,14 +685,14 @@ class RelayTest(unittest.TestCase):
 
     def test_errors_and_exit_codes_travel_back(self):
         from mmd_cli import relay
-        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "model", "select", "nobody"], timeout=60)
+        payload, code = relay.run_in_user_session(["--pid", str(MMD.pid), "model", "select", "nobody"])
         self.assertEqual(code, 1)
         self.assertIn("nobody", payload["error"]["message"])
 
     def test_nothing_is_left_in_the_scheduler(self):
         import subprocess
         from mmd_cli import relay
-        relay.run_in_user_session(["--pid", str(MMD.pid), "frame", "get"], timeout=60)
+        relay.run_in_user_session(["--pid", str(MMD.pid), "frame", "get"])
         listing = subprocess.run(["schtasks.exe", "/Query", "/FO", "CSV"], capture_output=True, creationflags=0x08000000)
         self.assertNotIn(b"mmd-cli", listing.stdout)
 
