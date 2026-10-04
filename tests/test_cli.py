@@ -7,6 +7,14 @@ import unittest
 
 from mmd_cli import cli, dialogs
 
+try:
+    from mmd_cli import app
+except ImportError:          # not on Windows
+    app = None
+
+from tests.test_pmd import bone as pmd_bone, build as build_pmd, skin as pmd_skin
+from tests.test_pmx import Writer as PmxWriter
+
 
 def parse(argv):
     with contextlib.redirect_stderr(io.StringIO()):   # argparse prints usage on errors
@@ -42,6 +50,17 @@ class ParserTest(unittest.TestCase):
     def test_dump_lists_key_frames_only_on_request(self):
         self.assertFalse(parse(["dump"]).keys)
         self.assertTrue(parse(["dump", "--keys"]).keys)
+
+    def test_file_info_takes_brief(self):
+        a = parse(["file", "info", "x.pmx", "--brief"])
+        self.assertEqual((a.command, a.action, a.file, a.brief), ("file", "info", "x.pmx", True))
+        self.assertFalse(parse(["file", "info", "x.vmd"]).brief)
+
+    def test_model_info_target_is_optional(self):
+        a = parse(["model", "info"])
+        self.assertEqual((a.command, a.action, a.target), ("model", "info", None))
+        self.assertEqual(parse(["model", "info", "初音ミク"]).target, "初音ミク")
+        self.assertEqual(parse(["model", "info", "C:/models/miku.pmx"]).target, "C:/models/miku.pmx")
 
     def test_camera_set_accepts_negative_numbers(self):
         a = parse(["camera", "set", "--pos", "1.5", "12", "-3.25", "--rot", "10", "20", "5", "--distance", "30",
@@ -142,6 +161,118 @@ class EmitTest(unittest.TestCase):
         target = os.path.join(folder, "r.json")
         cli.emit({"ok": True}, target, None)
         self.assertTrue(os.path.exists(target))
+
+
+def write(path, data):
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+class ModelFiles(unittest.TestCase):
+    """a folder with a tiny pmx and a tiny pmd"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        w = PmxWriter()
+        self.pmx = os.path.join(self.folder, "model.pmx")
+        write(self.pmx, w.build(name="pmxモデル", bones=[w.bone("センター"), w.bone("頭", parent=0)],
+                                morphs=[w.morph("まばたき", panel=2)], frames=[w.frame("Root", special=True, items=[("bone", 0)])]))
+        self.pmd = os.path.join(self.folder, "model.pmd")
+        write(self.pmd, build_pmd(name="pmdモデル", bones=[pmd_bone("センター", kind=1)], skins=[pmd_skin("base", 0), pmd_skin("あ", 3)]))
+
+
+class FileInfoTest(ModelFiles):
+    def test_model_files_give_names_counts_and_the_tables(self):
+        full = cli._file_info(self.pmx)
+        self.assertEqual((full["format"], full["name"], full["counts"]["bones"]), ("pmx", "pmxモデル", 2))
+        self.assertEqual([b["name"] for b in full["bones"]], ["センター", "頭"])
+        self.assertEqual(full["morphs"][0]["panel"], "eye")
+        self.assertEqual(full["display_frames"][0]["items"], [{"kind": "bone", "index": 0}])
+        brief = cli._file_info(self.pmd, brief=True)
+        self.assertEqual((brief["format"], brief["name"], brief["counts"]["morphs"]), ("pmd", "pmdモデル", 1))
+        for key in ("bones", "morphs", "display_frames"):
+            self.assertNotIn(key, brief)
+        self.assertIn("counts", brief)
+
+    def test_through_the_parser_and_dispatch(self):
+        self.assertNotIn("bones", cli.dispatch_any(None, parse(["file", "info", self.pmd, "--brief"])))
+        self.assertIn("bones", cli.dispatch_any(None, parse(["file", "info", self.pmx])))
+        self.assertEqual(json.loads(json.dumps(cli.dispatch_any(None, parse(["file", "info", self.pmx]))))["name"], "pmxモデル")
+
+
+class DispatchModelInfoTest(unittest.TestCase):
+    def test_model_info_goes_to_the_instance_with_the_parsed_target(self):
+        class FakeMmd:
+            def model_info(self, target):
+                return {"target": target}
+
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["model", "info", "2"])), {"target": 2})
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["model", "info", "初音ミク"])), {"target": "初音ミク"})
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["model", "info", "C:/m/x.pmx"])), {"target": "C:/m/x.pmx"})
+        self.assertEqual(cli._dispatch(FakeMmd(), parse(["model", "info"])), {"target": None})
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class ModelInfoTest(ModelFiles):
+    def bare(self, dump):
+        m = app.Mmd.__new__(app.Mmd)
+        m.pid, m.hwnd, m.events, m.in_place, m.timeout, m._controls, m._parking = 4242, 1, [], False, 1.0, None, None
+        m.require_ready = lambda allow_playing=False: None
+        m.dump = dump
+        return m
+
+    def summary(self, selected=1):
+        return {"selected_model": selected,
+                "models": [{"index": 0, "name": "pmxモデル", "path": self.pmx}, {"index": 1, "name": "初音ミク", "path": self.pmd}]}
+
+    def test_a_file_path_is_read_without_touching_the_project(self):
+        m = self.bare(dump=lambda keys=True: self.fail("the project must not be saved for a file"))
+        result = m.model_info(self.pmx)
+        self.assertEqual((result["path"], result["format"], result["name"]), (os.path.abspath(self.pmx), "pmx", "pmxモデル"))
+        self.assertEqual(result["counts"]["bones"], 2)
+        self.assertEqual(sorted(k for k in result if k in ("path", "format", "name", "counts", "bones", "morphs", "display_frames")),
+                         ["bones", "counts", "display_frames", "format", "morphs", "name", "path"])
+
+    def test_a_loaded_model_is_found_by_selection_index_or_name(self):
+        calls = []
+
+        def dump(keys=True):
+            calls.append(keys)
+            return self.summary()
+
+        m = self.bare(dump)
+        self.assertEqual((m.model_info(None)["name"], m.model_info(None)["path"]), ("pmdモデル", self.pmd))
+        self.assertEqual(m.model_info(0)["format"], "pmx")
+        self.assertEqual(m.model_info("初音ミク")["format"], "pmd")
+        self.assertEqual(calls, [False, False, False, False])         # never the key frames
+
+    def test_unknown_models_and_no_selection_are_errors(self):
+        m = self.bare(lambda keys=True: self.summary())
+        with self.assertRaises(app.MmdError) as ctx:
+            m.model_info("nobody")
+        self.assertIn("nobody", str(ctx.exception))
+        with self.assertRaises(app.MmdError):
+            m.model_info(2)
+        m = self.bare(lambda keys=True: self.summary(selected=None))
+        with self.assertRaises(app.MmdError) as ctx:
+            m.model_info(None)
+        self.assertIn("select", str(ctx.exception))
+
+    def test_a_hand_opened_project_asks_for_the_file(self):
+        def dump(keys=True):
+            raise app.MmdError("this project (C:/x.pmm) was not opened through mmd-cli; reading it needs a save")
+
+        with self.assertRaises(app.MmdError) as ctx:
+            self.bare(dump).model_info("初音ミク")
+        self.assertIn("not opened through mmd-cli", str(ctx.exception))
+        self.assertIn("mmd model info FILE", str(ctx.exception))
+
+    def test_a_model_file_that_moved_is_reported_with_its_path(self):
+        gone = os.path.join(self.folder, "gone.pmx")
+        m = self.bare(lambda keys=True: {"selected_model": 0, "models": [{"index": 0, "name": "x", "path": gone}]})
+        with self.assertRaises(app.MmdError) as ctx:
+            m.model_info(None)
+        self.assertIn(gone, str(ctx.exception))
 
 
 class FailureTest(unittest.TestCase):

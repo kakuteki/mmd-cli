@@ -687,6 +687,42 @@ class Mmd:
         self.click(Ctl.MODEL_REGISTER)
         return {"visible": win32.button_checked(self.ctl(Ctl.MODEL_VISIBLE))}
 
+    def model_info(self, target=None):
+        """bones (parents, flags, IK and append links), morphs (panel, kind) and display frames of a model,
+        read from its .pmx / .pmd file: MMD's window shows nothing but the bone names.  target is the path
+        of such a file, or a loaded model (name, 0-based index, None = the selected one) whose path the
+        project holds.  Reading the project saves the working copy, so for a project opened by hand the
+        file has to be given."""
+        from .formats import pmd, pmx
+        if (isinstance(target, str) and os.path.splitext(target)[1].lower() in _MODEL_EXTENSIONS
+                and os.path.isfile(target)):
+            path = os.path.abspath(target)
+        else:
+            try:
+                summary = self.dump(keys=False)
+            except MmdError as exc:
+                raise MmdError("%s. Or read the model file itself: mmd model info FILE.pmx" % exc)
+            models = summary["models"]
+            if target is None:
+                index = summary["selected_model"]
+                if index is None:
+                    raise MmdError("select a model first (mmd model select NAME), or give the model file")
+            elif isinstance(target, int):
+                if not 0 <= target < len(models):
+                    raise MmdError("model index %d is out of range (%d models)" % (target, len(models)))
+                index = target
+            else:
+                found = [m["index"] for m in models if m["name"] == target]
+                if not found:
+                    raise MmdError("no model named %r (loaded: %s)" % (target, ", ".join(m["name"] for m in models) or "none"))
+                index = found[0]
+            path = models[index]["path"]
+            if not os.path.isfile(path):
+                raise MmdError("the file of model %r is no longer where MMD loaded it from: %s" % (models[index]["name"], path))
+        result = {"path": path}
+        result.update((pmd if path.lower().endswith(".pmd") else pmx).load(path).to_json())
+        return result
+
     # ---- frames -------------------------------------------------------------------------------
 
     def set_frame(self, number):

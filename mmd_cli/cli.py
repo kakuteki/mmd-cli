@@ -114,6 +114,9 @@ def build_parser():
     for name in ("delete", "show", "hide"):
         s = g.add_parser(name)
         s.add_argument("target", nargs="?")
+    s = g.add_parser("info", help="bones (parents, flags, IK, append), morphs (panel, kind) and display frames of a model, "
+                                  "read from its .pmx / .pmd file")
+    s.add_argument("target", nargs="?", help="a loaded model by name or index (default: the selected one), or a model file")
 
     g = group("motion", "motion data (.vmd)")
     s = g.add_parser("load", help="load a motion at the current (or given) frame")
@@ -260,8 +263,9 @@ def build_parser():
     g.add_parser("show", help="bring a hidden window back, minimized")
 
     g = group("file", "inspect files without MMD")
-    s = g.add_parser("info", help="show a .vmd / .vpd / .pmm file as JSON")
+    s = g.add_parser("info", help="show a .vmd / .vpd / .pmm / .pmx / .pmd file as JSON")
     s.add_argument("file")
+    s.add_argument("--brief", action="store_true", help="for models: names and counts only, without the bone and morph lists")
 
     s = sub.add_parser("batch", help="run many commands from a file (one per line; '-' reads stdin) in one process")
     s.add_argument("file")
@@ -271,10 +275,13 @@ def build_parser():
 
 # ---- commands -------------------------------------------------------------------------------
 
-def _file_info(path):
+def _file_info(path, brief=False):
     from . import scene
     from .formats import pmm, vmd, vpd
     ext = os.path.splitext(path)[1].lower()
+    if ext in (".pmx", ".pmd"):
+        from .formats import pmd, pmx
+        return (pmd if ext == ".pmd" else pmx).load(path).to_json(brief=brief)
     if ext == ".pmm":
         return scene.summarize(pmm.load(path))
     if ext == ".vpd":
@@ -299,7 +306,7 @@ def dispatch_any(mmd, args):
     """run one parsed command.  mmd may be None for the standalone commands; a launch returns the
     new instance under "_instance" so a batch can keep using it."""
     if args.command == "file":
-        return _file_info(args.file)
+        return _file_info(args.file, brief=args.brief)
     from . import app
     if args.command == "ps":
         return {"instances": app.instances(), "current": app.load_state().get("current")}
@@ -410,6 +417,8 @@ def _dispatch(mmd, args):
             return {"models": state["models"], "selected": state["selected_model"]}
         if action == "select":
             return mmd.select_model(parse_target(args.target))
+        if action == "info":
+            return mmd.model_info(parse_target(args.target))
         target = parse_target(args.target)
         if action == "delete":
             return mmd.delete_model(target)
