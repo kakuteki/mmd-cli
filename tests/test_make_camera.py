@@ -1,9 +1,15 @@
 """tools/make_camera.py: a calm camera motion generated from a dance motion, without MMD."""
+import contextlib
+import glob
 import importlib.util
+import io
+import json
+import math
 import os
+import tempfile
 import unittest
 
-from mmd_cli import mathutil
+from mmd_cli import mathutil, motion_edit
 from mmd_cli.formats import vmd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -311,9 +317,184 @@ class LookAtTest(unittest.TestCase):
         self.assertEqual(make_camera.look_at(make_camera.center_track(vmd.Motion(model_name="m")), 5, 7.0), (0.0, 7.0, 0.0))
 
 
+def read_back(shots):
+    return vmd.loads(vmd.dumps(make_camera.camera_motion(shots)))
+
+
+class OutputTest(unittest.TestCase):
+    def test_two_keys_per_shot_in_frame_order_with_the_s_curve(self):
+        shots = make_camera.plan_shots(synthetic_dance())
+        back = read_back(shots)
+        self.assertTrue(back.is_camera)
+        self.assertEqual((back.bones, back.morphs, back.lights), ([], [], []))
+        frames = [k.frame for k in back.cameras]
+        self.assertEqual(len(frames), 2 * len(shots))
+        self.assertEqual((frames[0], frames[-1]), (0, LAST))
+        self.assertTrue(all(b > a for a, b in zip(frames, frames[1:])), frames)
+        self.assertEqual(frames, [f for s in shots for f in (s.start, s.end)])
+        curve = {channel: make_camera.S_CURVE for channel in vmd.CAMERA_CHANNELS}
+        for key in back.cameras:
+            self.assertEqual(vmd.camera_curves(key.interpolation), curve)
+            self.assertEqual((key.fov, key.perspective), (30, True))
+            self.assertLess(key.distance, 0.0)                        # the file holds the negative distance
+
+    def test_the_keys_carry_the_shot_values_as_the_window_shows_them(self):
+        shots = make_camera.plan_shots(synthetic_dance(), seed=0)
+        back = read_back(shots)
+        for shot, first, second in zip(shots, back.cameras[::2], back.cameras[1::2]):
+            for key, which in ((first, 0), (second, 1)):
+                ui = motion_edit.camera_to_ui(key)
+                self.assertEqual(ui["distance"], shot.distance[which])
+                self.assertEqual(ui["pos"], [round(v, 4) for v in shot.pos[which]])
+                self.assertEqual(ui["rot"], list(shot.rot[which]))
+        low = [s for s in shots if s.kind == "low"]
+        self.assertTrue(low)
+        key = back.cameras[2 * low[0].index]
+        self.assertAlmostEqual(key.rotation[0], math.radians(6.0), places=6)       # the window's -6 is +6 in the file
+        self.assertEqual(key.position[1], 7.0)
+
+    def test_the_same_input_and_seed_give_the_same_bytes(self):
+        a = vmd.dumps(make_camera.camera_motion(make_camera.plan_shots(synthetic_dance(), seed=3)))
+        b = vmd.dumps(make_camera.camera_motion(make_camera.plan_shots(synthetic_dance(), seed=3)))
+        self.assertEqual(a, b)
+        kinds = {seed: [s.kind for s in make_camera.plan_shots(synthetic_dance(), seed=seed)] for seed in range(6)}
+        self.assertGreater(len({tuple(k) for k in kinds.values()}), 1)        # the seed does choose
+
+
+def run(argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = make_camera.main(argv)
+    text = out.getvalue()
+    text.encode("ascii")                                                      # the terminal is cp932: ASCII only
+    return code, json.loads(text)
+
+
+class CommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        with open(self.dance, "wb") as f:
+            f.write(vmd.dumps(synthetic_dance()))
+        self.out = os.path.join(self.folder, "sub", "camera.vmd")
+
+    def test_writes_the_camera_the_report_and_the_analysis(self):
+        report, analysis = os.path.join(self.folder, "r.json"), os.path.join(self.folder, "a.json")
+        code, result = run([self.dance, self.out, "--report", report, "--analysis", analysis, "--seed", "2"])
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["ok"])
+        self.assertEqual((result["in"], result["out"]), (os.path.abspath(self.dance), os.path.abspath(self.out)))
+        self.assertEqual((result["report"], result["analysis"]), (os.path.abspath(report), os.path.abspath(analysis)))
+        back = vmd.load(self.out)
+        self.assertTrue(back.is_camera)
+        self.assertEqual(result["keys"], len(back.cameras))
+        self.assertEqual(result["shots"] * 2, result["keys"])
+        self.assertEqual(result["frames"], [0, LAST])
+        self.assertEqual(result["key_frames"], [0, LAST])
+        self.assertEqual((result["seed"], result["min_shot"], result["max_shot"]), (2, 180, 480))
+        self.assertEqual(sum(result["kinds"].values()), result["shots"])
+        with open(report, encoding="utf-8") as f:
+            r = json.load(f)
+        self.assertEqual((r["in"], r["out"], r["seed"]), (result["in"], result["out"], 2))
+        self.assertEqual(len(r["shots"]), result["shots"])
+        shot = r["shots"][0]
+        self.assertEqual(sorted(shot), ["cut", "distance", "end", "frames", "height", "index", "intensity", "kind", "level",
+                                        "pos", "rot", "seconds", "start"])
+        self.assertEqual((shot["start"], shot["index"]), (0, 0))
+        self.assertEqual(shot["frames"], shot["end"] - shot["start"] + 1)
+        self.assertEqual(shot["seconds"], round(shot["frames"] / 30.0, 2))
+        self.assertEqual(sorted(r["thresholds"]), ["high", "low"])
+        self.assertEqual(r["kinds"], result["kinds"])
+        with open(analysis, encoding="utf-8") as f:
+            a = json.load(f)
+        self.assertEqual(len(a["intensity"]), LAST + 1)
+        self.assertEqual(a["in"], result["in"])
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.out))), ["camera.vmd"])
+
+    def test_the_output_is_deterministic_and_replaces_an_old_file(self):
+        os.makedirs(os.path.dirname(self.out))
+        with open(self.out, "wb") as f:
+            f.write(b"not a vmd")
+        code, _ = run([self.dance, self.out, "--seed", "5"])
+        self.assertEqual(code, 0)
+        with open(self.out, "rb") as f:
+            first = f.read()
+        code, _ = run([self.dance, self.out, "--seed", "5"])
+        with open(self.out, "rb") as f:
+            self.assertEqual(f.read(), first)
+        self.assertEqual(os.listdir(os.path.dirname(self.out)), ["camera.vmd"])
+        self.assertTrue(vmd.loads(first).is_camera)
+
+    def test_errors_exit_2_before_anything_is_written(self):
+        for argv in ([self.dance, self.out, "--min-shot", "300", "--max-shot", "400"],
+                     [os.path.join(self.folder, "none.vmd"), self.out],
+                     [self.dance, self.out, "--min-shot", "1", "--max-shot", "10"]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"])
+            self.assertIn("message", result["error"])
+            self.assertFalse(os.path.exists(self.out), argv)
+        camera = os.path.join(self.folder, "camera_in.vmd")
+        with open(camera, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion.for_camera(cameras=[vmd.CameraKey(0, -45.0, (0, 10, 0), (0, 0, 0))])))
+        code, result = run([camera, self.out])
+        self.assertEqual(code, 2)
+        self.assertIn("bone", result["error"]["message"])
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_other_limits_reach_the_plan(self):
+        code, result = run([self.dance, self.out, "--min-shot", "90", "--max-shot", "200"])
+        self.assertEqual(code, 0)
+        self.assertEqual((result["min_shot"], result["max_shot"]), (90, 200))
+        self.assertGreaterEqual(result["shots"], 8)
+
+
+def real_dance():
+    """the distributed dance (the sleeve-less variant used in the scene), kept outside the repository in
+    _spike/ of this checkout or of the checkout this worktree hangs under; None when it is not there"""
+    folder = ROOT
+    for _ in range(4):
+        pattern = os.path.join(folder, "_spike", "out", "hibikase", "enuta", "**", "*.vmd")
+        found = [p for p in glob.glob(pattern, recursive=True)
+                 if "ダンス" in os.path.basename(p) and "袖の値なし" in os.path.basename(p)]
+        if found:
+            return found[0]
+        folder = os.path.dirname(folder)
+    return None
+
+
+REAL = real_dance()
+
+
+@unittest.skipUnless(REAL, "the distributed dance is not on this machine")
+class RealDanceTest(unittest.TestCase):
+    def test_the_whole_dance_is_covered_by_20_to_60_shots(self):
+        motion = vmd.load(REAL)
+        analysis = make_camera.analyze(motion)
+        self.assertEqual(analysis.last, 7742)
+        self.assertGreater(len(analysis.sections), 2)
+        shots = make_camera.plan_shots(motion, analysis=analysis)
+        self.assertTrue(20 <= len(shots) <= 60, len(shots))
+        self.assertEqual((shots[0].start, shots[-1].end), (0, 7742))
+        for before, after in zip(shots, shots[1:]):
+            self.assertEqual(after.start, before.end + 1)
+            self.assertNotEqual(before.kind, after.kind)
+        for s in shots:
+            self.assertTrue(make_camera.MIN_SHOT <= length(s) <= make_camera.MAX_SHOT, (s.start, s.end))
+            for d in s.distance:
+                self.assertTrue(make_camera.DISTANCE_RANGE[0] <= d <= make_camera.DISTANCE_RANGE[1])
+        self.assertEqual({s.level for s in shots} - {"peak", "valley", "mid"}, set())
+        self.assertIn("peak", {s.level for s in shots})
+        back = read_back(shots)
+        frames = [k.frame for k in back.cameras]
+        self.assertEqual(frames[0], 0)
+        self.assertEqual(len(frames), 2 * len(shots))
+        self.assertTrue(all(b > a for a, b in zip(frames, frames[1:])))
+        self.assertEqual(vmd.dumps(back), vmd.dumps(read_back(make_camera.plan_shots(motion, analysis=analysis))))
+
+
 class AnalysisJsonTest(unittest.TestCase):
     def test_the_json_is_plain_data_with_the_definitions(self):
-        import json
         analysis = make_camera.analyze(synthetic_dance())
         text = json.dumps(make_camera.analysis_json(analysis), ensure_ascii=True)
         data = json.loads(text)

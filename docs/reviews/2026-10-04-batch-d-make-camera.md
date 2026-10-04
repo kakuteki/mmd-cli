@@ -50,3 +50,19 @@
   - ショットの水準を平均の強さで決めるか区間の占有率で決めるか → 占有率（60 %）。報告の `sections` と整合し、1 つの大きな山に 1 つの数字（閾値）で説明できる。
   - 注視点の Y にセンターの Y を足すか → 足さない（指示は「X・Z に高さを足す」）。しゃがみ・跳びでカメラが上下すると「ウザい」方へ行く。
   - 注視点は センター だけでなく 全ての親・グルーブ も足した（親の移動でモデルがずれていれば追う必要がある。親の回転は無視。**この 2 骨の有無は実物では 1 キー・2 キーで、値は手順 5 で確かめる**）。
+
+## 3. 出力（カメラ vmd・報告 JSON・コマンド）
+
+- 何を作ったか:
+  - `camera_keys(shot)` / `camera_motion(shots)`: 1 ショット 2 キー（start と end）。表示値（距離は正・角度は度）の辞書を `motion_edit.camera_key_from_ui(values, curve=S_CURVE, frame)` に渡すだけで、ファイルの負の距離と X の符号反転は motion_edit に任せる。全キー・全チャンネルに S 字 `(64, 0, 64, 127)`、視野 30、透視。`vmd.Motion.for_camera` で組む。キーはショット順＝フレーム順で、次のショットの始点は前の終点 + 1（1 フレームで切り替わる＝カット）。
+  - `report_json`: seed・上下限・fps・fov・curve・frames・閾値・区間・型と水準と切り方の内訳・ショット一覧（index, start, end, frames, seconds, kind, level, cut, distance[2], height, rot[2][3], pos[2][3], intensity{mean, max}）。
+  - `write_bytes`: `名前.part` に書いて `os.replace`。失敗しても元のファイルは触られない（`.part` は消す）。`app.keeping_the_old_file` は使わない（app は Windows 専用で、道具を他の OS でも動かせるようにした。退避ファイル `.mmdcli-old` は作らないが、「書けなければ元のまま」は満たす）。
+  - `run(...)`: 上下限の検査 → 読む → 解析 → 計画 → 書く → **書いた OUT を読み戻して** キー数と最初と最後のフレームを返す。`--analysis` は 1 行の JSON（系列 2 本で約 150 KB）、`--report` は indent 1。どちらも ASCII（`ensure_ascii`）。
+  - `main(argv)`: 引数は指示どおり。成功は `{"ok": true, in, out, seed, min_shot, max_shot, frames, shots, keys, key_frames, kinds, levels[, analysis][, report]}` を 1 行の ASCII JSON で標準出力に。`ValueError` / `OSError`（無いファイル・骨キーの無いファイル・上下限の誤り）は `{"ok": false, "error": {...}}` で終了コード 2。何も書く前に止まる。
+- 守る試験: `OutputTest`（1 ショット 2 キー・フレーム順で単調増加・最初 0 最後 LAST・全チャンネル S 字・fov 30・透視・ファイルの距離は負、キーの表示値がショットの値に一致・ロー角の X は表示 −6 がファイルでは +6 度のラジアン、同じ seed で同じバイト列・seed を変えると型の列が変わる）、`CommandTest`（OUT と report と analysis を書き、標準出力は ASCII の JSON、OUT の読み戻しと件数の一致、report の鍵の集合、既存の OUT を置き換えて `.part` を残さない、誤りは終了コード 2 で何も書かない（上下限・無いファイル・カメラ vmd を入力）、上下限が計画に届く）、`RealDanceTest`（実物があれば: 7742 フレーム・区間が 3 つ以上・ショット 20〜60 本・全区間を覆う・同じ型が続かない・長さと距離が範囲内・peak がある・最初のキーが 0・キーが単調増加・2 回作って同じバイト列。実物は この checkout か、この worktree がぶら下がる checkout の `_spike/out/hibikase/enuta/` から glob で「ダンス」と「袖の値なし」を含む名前を選ぶ。無ければ skip）。
+- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 400 tests ... OK (skipped=1)`（369 → 400。追加 31 本は全部 test_make_camera。実物の 1 本はこの PC では走った）。
+- コミット: 下記。
+- 迷った点と根拠:
+  - ショット間を 1 フレームの切り替え（カット）にするか、終点と次の始点を同じ値にして連続させるか → カット。型ごとの始点の値（寄り 32、引き 30…）が前の終点と一致しない設計なので、連続にすると毎ショットの頭に速い移動が入る。カットは MV の普通の手法で「ウザさ」は動き続けることの方にある。
+  - 補間曲線はどのキーに置くか → 全キーに置いた。vmd では各キーの曲線が「前のキーからそのキーまで」の補間を決める（一般に知られた仕様。**今回は実測していない**）ので効くのは各ショットの終点のキーの曲線だが、始点のキーに置いても害は無い（前のショットの終点から 1 フレームの切り替えに掛かるだけ）。
+  - 書き込みに `app.keeping_the_old_file`（`.mmdcli-old` への退避）を使うか → 使わなかった（上記）。取り込み時に「退避の規則を道具にも適用する」と決まれば `motion_edit._write` を呼ぶ形に変えられる。

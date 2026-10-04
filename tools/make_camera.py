@@ -54,15 +54,20 @@ How the shots are cut (cut_shots) and what each one does (plan_shots):
   height.  Only the first and the last frame of a shot look at the center; MMD moves the point in a
   straight line between them, so the camera does not twitch with every step.
 """
+import argparse
 import dataclasses
+import json
 import math
 import os
 import random
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+from mmd_cli import motion_edit  # noqa: E402
+from mmd_cli.formats import vmd  # noqa: E402
 
 FPS = 30
 WINDOW = 30                      # frames: the strength of a frame is the motion of the second around it
@@ -445,3 +450,111 @@ def analysis_json(analysis):
         "intensity": [_r(v) for v in analysis.intensity],
         "trend": [_r(v) for v in analysis.trend],
     }
+
+
+# ---- the camera motion and the report -------------------------------------------------------
+
+def camera_keys(shot):
+    """the two keys of a shot, built from the window values (negative distance and the sign of the X
+    angle are motion_edit's business) with the S curve on every channel"""
+    out = []
+    for frame, distance, rot, pos in ((shot.start, shot.distance[0], shot.rot[0], shot.pos[0]),
+                                      (shot.end, shot.distance[1], shot.rot[1], shot.pos[1])):
+        values = {"distance": distance, "pos": pos, "rot": rot, "fov": FOV, "perspective": True}
+        out.append(motion_edit.camera_key_from_ui(values, curve=S_CURVE, frame=frame))
+    return out
+
+
+def camera_motion(shots):
+    return vmd.Motion.for_camera(cameras=[k for shot in shots for k in camera_keys(shot)])
+
+
+def _count(items):
+    out = {}
+    for item in items:
+        out[item] = out.get(item, 0) + 1
+    return out
+
+
+def shot_json(shot):
+    frames = shot.end - shot.start + 1
+    return {"index": shot.index, "start": shot.start, "end": shot.end, "frames": frames,
+            "seconds": round(frames / float(FPS), 2), "kind": shot.kind, "level": shot.level, "cut": shot.cut,
+            "distance": [_r(d) for d in shot.distance], "height": _r(shot.height),
+            "rot": [[_r(v) for v in r] for r in shot.rot], "pos": [[_r(v) for v in p] for p in shot.pos],
+            "intensity": {k: _r(v) for k, v in shot.intensity.items()}}
+
+
+def report_json(analysis, shots, seed, min_shot, max_shot):
+    return {"seed": seed, "min_shot": min_shot, "max_shot": max_shot, "fps": FPS, "fov": FOV, "curve": list(S_CURVE),
+            "frames": [0, analysis.last], "thresholds": {k: _r(v) for k, v in analysis.thresholds.items()},
+            "sections": [{"start": s.start, "end": s.end, "level": s.level} for s in analysis.sections],
+            "kinds": _count(s.kind for s in shots), "levels": _count(s.level for s in shots),
+            "cuts": _count(s.cut for s in shots), "shots": [shot_json(s) for s in shots]}
+
+
+def write_bytes(path, data):
+    """write next to the target and move over it, so a failure leaves the old file as it was"""
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    part = path + ".part"
+    try:
+        with open(part, "wb") as f:
+            f.write(data)
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
+def write_json(path, data, indent):
+    write_bytes(path, (json.dumps(data, ensure_ascii=True, indent=indent) + "\n").encode("ascii"))
+
+
+def run(dance_path, out_path, seed=0, min_shot=MIN_SHOT, max_shot=MAX_SHOT, analysis_path=None, report_path=None):
+    """read the dance, plan, write the camera, read it back; the summary is what main prints"""
+    check_limits(min_shot, max_shot)
+    dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
+    motion = vmd.load(dance_full)
+    analysis = analyze(motion)
+    shots = plan_shots(motion, min_shot, max_shot, seed, analysis)
+    write_bytes(out_full, vmd.dumps(camera_motion(shots)))
+    back = vmd.load(out_full)
+    result = {"in": dance_full, "out": out_full, "seed": seed, "min_shot": min_shot, "max_shot": max_shot,
+              "frames": [0, analysis.last], "shots": len(shots), "keys": len(back.cameras),
+              "key_frames": [back.cameras[0].frame, back.cameras[-1].frame],
+              "kinds": _count(s.kind for s in shots), "levels": _count(s.level for s in shots)}
+    if analysis_path:
+        full = os.path.abspath(analysis_path)
+        write_json(full, dict({"in": dance_full}, **analysis_json(analysis)), None)
+        result["analysis"] = full
+    if report_path:
+        full = os.path.abspath(report_path)
+        write_json(full, dict({"in": dance_full, "out": out_full}, **report_json(analysis, shots, seed, min_shot, max_shot)), 1)
+        result["report"] = full
+    return result
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("dance", help="the dance motion (.vmd with bone keys)")
+    p.add_argument("out", help="the camera motion to write (.vmd)")
+    p.add_argument("--analysis", help="write the strength per frame, the sections and the thresholds to this JSON")
+    p.add_argument("--report", help="write the list of shots to this JSON")
+    p.add_argument("--seed", type=int, default=0, help="the draw of the shot kinds (default 0)")
+    p.add_argument("--min-shot", type=int, default=MIN_SHOT, help="shortest shot in frames (default %d)" % MIN_SHOT)
+    p.add_argument("--max-shot", type=int, default=MAX_SHOT,
+                   help="longest shot in frames (default %d; at least twice --min-shot)" % MAX_SHOT)
+    args = p.parse_args(argv)
+    try:
+        result = run(args.dance, args.out, args.seed, args.min_shot, args.max_shot, args.analysis, args.report)
+    except (ValueError, OSError) as e:
+        print(json.dumps({"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}, ensure_ascii=True))
+        return 2
+    print(json.dumps(dict({"ok": True}, **result), ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
