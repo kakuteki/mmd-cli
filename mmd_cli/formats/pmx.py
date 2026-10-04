@@ -88,6 +88,10 @@ class Model:
 
 
 class _Reader:
+    """a cursor over the file with bounds checks that name the offset (formats.pmd derives its own from it)"""
+    kind = "PMX"
+    error = PmxFormatError
+
     def __init__(self, data, encoding="utf-16-le"):
         self.data = data
         self.pos = 0
@@ -98,7 +102,7 @@ class _Reader:
 
     def need(self, size):
         if size < 0 or self.pos + size > len(self.data):
-            raise PmxFormatError("PMX ends unexpectedly at offset %d (wanted %d more bytes)" % (self.pos, size))
+            raise self.error("%s ends unexpectedly at offset %d (wanted %d more bytes)" % (self.kind, self.pos, size))
 
     def take(self, size):
         self.need(size)
@@ -131,20 +135,22 @@ class _Reader:
     def f32(self):
         return self.unpack(_F32)[0]
 
-    def count(self, item_size, what):
-        """an element count, refused before anything is read when the elements could not fit in the file"""
-        at = self.pos
-        n = self.i32()
+    def plausible(self, n, item_size, what, at):
+        """an element count read at `at`, refused before anything is read when the elements could not fit"""
         if n < 0 or n * item_size > len(self.data) - self.pos:
-            raise PmxFormatError("implausible %s count %d at offset %d (%d bytes remain)"
-                                 % (what, n, at, len(self.data) - self.pos))
+            raise self.error("implausible %s count %d at offset %d (%d bytes remain)"
+                             % (what, n, at, len(self.data) - self.pos))
         return n
+
+    def count(self, item_size, what):
+        at = self.pos
+        return self.plausible(self.i32(), item_size, what, at)
 
     def text(self):
         at = self.pos
         n = self.i32()
         if n < 0 or n > len(self.data) - self.pos:
-            raise PmxFormatError("implausible text length %d at offset %d" % (n, at))
+            raise self.error("implausible text length %d at offset %d" % (n, at))
         return self.take(n).decode(self.encoding, "replace")
 
     def index(self, size):
