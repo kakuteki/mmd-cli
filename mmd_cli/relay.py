@@ -47,16 +47,16 @@ def current_session_id():
     return sid.value
 
 
-def should_relay(window_station=None, session_id=None, argv=None):
-    """decide whether this invocation must be handed to the interactive session"""
+def should_relay(window_station=None, session_id=None, argv=None, command=None):
+    """decide whether this invocation must be handed to the interactive session.  command is the
+    parsed sub-command (argparse knows which words are option values; a scan of argv does not)"""
     session_id_ = session_id
     argv = list(sys.argv[1:] if argv is None else argv)
     if "--no-relay" in argv:
         return False
     if "--in-user-session" in argv:
         return True
-    positional = [a for a in argv if not a.startswith("-")]
-    if not positional or positional[0] in LOCAL_COMMANDS or "--version" in argv or "-h" in argv or "--help" in argv:
+    if command is None or command in LOCAL_COMMANDS:
         return False
     if window_station is None:
         window_station = window_station_name()

@@ -516,7 +516,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         from . import relay
-        if relay.should_relay(argv=argv):
+        if relay.should_relay(argv=argv, command=args.command):
             if args.command == "batch" and args.file == "-":
                 # stdin does not travel through the relay: park it in a file first
                 folder = relay.relay_dir()

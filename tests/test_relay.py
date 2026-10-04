@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -6,7 +8,7 @@ import threading
 import unittest
 from unittest import mock
 
-from mmd_cli import relay
+from mmd_cli import cli, relay
 
 try:
     from mmd_cli import win32
@@ -14,24 +16,63 @@ except ImportError:          # not on Windows
     win32 = None
 
 
+SERVICE = dict(window_station="Service-0x0-3e7$", session_id=0)     # an SSH login, a service, a task without a desktop
+
+
 class DecisionTest(unittest.TestCase):
     def test_interactive_desktop_runs_locally(self):
-        self.assertFalse(relay.should_relay(window_station="WinSta0", session_id=1, argv=["state"]))
+        self.assertFalse(relay.should_relay(window_station="WinSta0", session_id=1, argv=["state"], command="state"))
 
     def test_service_window_station_relays(self):
-        # what an SSH login, a service or a scheduled task without a desktop sees
-        self.assertTrue(relay.should_relay(window_station="Service-0x0-3e7$", session_id=0, argv=["state"]))
+        self.assertTrue(relay.should_relay(argv=["state"], command="state", **SERVICE))
 
     def test_session_zero_relays_even_with_winsta0_name(self):
-        self.assertTrue(relay.should_relay(window_station="WinSta0", session_id=0, argv=["state"]))
+        self.assertTrue(relay.should_relay(window_station="WinSta0", session_id=0, argv=["state"], command="state"))
 
     def test_explicit_flags_win(self):
-        self.assertTrue(relay.should_relay(window_station="WinSta0", session_id=1, argv=["--in-user-session", "state"]))
-        self.assertFalse(relay.should_relay(window_station="Service-0x0-3e7$", session_id=0, argv=["--no-relay", "state"]))
+        self.assertTrue(relay.should_relay(window_station="WinSta0", session_id=1, argv=["--in-user-session", "state"],
+                                           command="state"))
+        self.assertFalse(relay.should_relay(argv=["--no-relay", "state"], command="state", **SERVICE))
 
     def test_commands_that_need_no_window_run_locally(self):
-        self.assertFalse(relay.should_relay(window_station="Service-0x0-3e7$", session_id=0, argv=["file", "info", "a.pmm"]))
-        self.assertFalse(relay.should_relay(window_station="Service-0x0-3e7$", session_id=0, argv=["--version"]))
+        self.assertFalse(relay.should_relay(argv=["file", "info", "a.pmm"], command="file", **SERVICE))
+        self.assertFalse(relay.should_relay(argv=["--version"], command=None, **SERVICE))
+
+    def test_should_relay_ignores_option_values_before_the_command(self):
+        # the decision is made with the parsed command: "r.json" and "9" are option values, not the command
+        for argv in (["--out", "r.json", "file", "info", "x.pmm"], ["--timeout", "9", "file", "info", "x.pmm"]):
+            self.assertFalse(relay.should_relay(argv=argv, command="file", **SERVICE), argv)
+        self.assertTrue(relay.should_relay(argv=["--out", "r.json", "state"], command="state", **SERVICE))
+
+
+class MainDecisionTest(unittest.TestCase):
+    """cli.main hands the parsed command to should_relay (the three argv shapes measured in review 1, 1.6)"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        mock.patch.object(relay, "window_station_name", return_value=SERVICE["window_station"]).start()
+        mock.patch.object(relay, "current_session_id", return_value=0).start()
+        self.handed = mock.patch.object(relay, "run_in_user_session",
+                                        return_value=({"ok": True, "relayed": True}, 0)).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def main(self, argv):
+        with contextlib.redirect_stdout(io.StringIO()) as stdout:
+            code = cli.main(argv)
+        return code, json.loads(stdout.getvalue())
+
+    def test_file_info_runs_locally_whatever_options_come_first(self):
+        pmm = os.path.join(os.path.dirname(__file__), "fixtures", "scene_v932.pmm")
+        out = os.path.join(self.folder, "r.json")
+        for argv in (["--out", out, "file", "info", pmm], ["--timeout", "9", "file", "info", pmm], ["file", "info", pmm]):
+            code, payload = self.main(argv)
+            self.assertEqual((code, payload["ok"]), (0, True), argv)
+        self.assertFalse(self.handed.called)
+
+    def test_a_command_that_needs_the_window_is_handed_over_as_is(self):
+        code, payload = self.main(["--timeout", "9", "state"])
+        self.assertEqual((code, payload["relayed"]), (0, True))
+        self.assertEqual(self.handed.call_args, mock.call(["--timeout", "9", "state"]))     # no timeout of its own
 
 
 class ArgvTest(unittest.TestCase):
