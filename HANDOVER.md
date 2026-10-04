@@ -15,7 +15,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
-  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は 2026-10-04 に更新済み（最後の pull は下の残課題 7 の時点）。
+  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は e3806b4（2026-10-04 15:45 の pull）。
+  **hinata は 2026-10-04 15:21 に再起動し、以後ログオンが無い**（`quser` にユーザーなし）。XML 定義のタスク（SID の UserId）は
+  登録まで通ることを確認済みで、実行の確認はログオン後。
 - 直近の成果: ヒビカセ（えぬた 0.992）× Sour式鏡音リンの場面を hinata で作成。pmm 2 本・静止画・AVI は hinata
   `C:/work/hibikase/out/`、写しは `_spike/out/hibikase/hinata_out/`。配布モーションの比較は `_spike/out/hibikase/compare.txt`。
   **全曲の AVI** `rin_hibikase_enuta_full.avi`（1280x720・7,743 枚・30 fps・MJPEG・885 MB）は 2026-10-04 14:41 に
