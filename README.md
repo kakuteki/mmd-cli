@@ -250,6 +250,60 @@ python tools/make_camera.py dance.vmd camera.vmd --report shots.json --analysis 
 始点と終点、注視点、強さ）、`--analysis` はフレームごとの強さと閾値・山と谷の区間。出来た vmd は `motion keys --camera` で見られ、
 `motion edit` で直せる。
 
+### 動画に文字を重ねる（`tools/mv_text.py`、MMD なし）
+
+MMD が書き出した動画に、題名・クレジット・歌詞・サビ頭のカードを重ねる。文字は Pillow で合図（cue）ごとの RGBA の連番 PNG に
+描き（合図の箱の大きさだけで、全画面ではない）、ffmpeg の `overlay` で重ねる。ffmpeg の drawtext では作れない字間の開閉・
+ワイプ・ずらした写し・やわらかい影が使える。Pillow と ffmpeg / ffprobe が要る（`mmd` 本体の依存は増えない）。
+
+```
+python tools/mv_text.py render IN.avi cues.json OUT.mp4 [--work DIR] [--size WxH] [--fps N]
+python tools/mv_text.py preview cues.json OUT.png --at 秒 [--over FRAME.png] [--size WxH]
+python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
+```
+
+- `render`: 動画の大きさと fps を ffprobe で読み（`--size` と `--fps` を両方与えれば読まない）、連番を `WORK`（既定は `OUT.work`）に
+  描いて重ね、libx264（crf 18）で書く。音声があれば copy。ffmpeg は OUT の隣に書いて成功したら置き換えるので、失敗しても元の OUT は残る。
+- `preview`: その時刻に出ている合図を 1 枚に描く（`--over` で動画の静止画の上に。無ければ palette の舞台色の上に）。設計の確認と報告用。
+- `frames`: 連番だけ描いて計画（合図ごとの置き場所・開始フレーム・枚数・連番の経路）を出す。`tools/mv_look.py` のような別の道具は
+  同じ計画を関数 `render_sequences(cues, work_dir, size=None, fps=None)` で受け取る（何も印字せず、ffmpeg も走らせない）。
+
+合図ファイル（JSON、時刻は秒）:
+
+```
+{"fps": 30, "size": [1280, 720], "palette": "dark",
+ "cues": [
+  {"id": "title", "start": 1.0, "end": 6.0, "x": "left", "y": "top", "anim": "tracking-in", "layer": "back",
+   "lines": [{"text": "HIBIKASE", "style": "logo"}, {"text": "ヒビカセ", "style": "title_jp"},
+             {"text": "feat. KAGAMINE RIN", "style": "sub"}]},
+  {"id": "credit1", "start": 2.0, "end": 7.0, "x": "left", "y": "bottom", "anim": "rise",
+   "text": "Motion えぬた / Model Sour / Music ギガ", "style": "credit"},
+  {"id": "hook1", "start": 44.5, "end": 45.3, "x": "center", "y": "middle", "anim": "flash", "text": "HIBIKASE", "style": "hook"},
+  {"id": "lyric1", "start": 60.0, "end": 64.0, "x": "left-third", "y": "lower", "anim": "rise", "text": "歌詞の 1 行", "style": "lyric"}
+ ]}
+```
+
+- 合図は `lines`（行ごとに text と style）か、`text` と `style`（1 行。改行で複数行）を持つ。`id` は連番のフォルダ名になる（英数字と `_` `-`）。
+- `x`: left / center / right / left-third / right-third（幅の 1/4・3/4 に箱の中心。中央に立つ人物の脇）。`y`: top / middle /
+  lower（下 1/3 の中央）/ bottom。余白は左右 64 px・上下 48 px。px はすべて高さ 720 のときの値で、画面の高さに比例する。
+- `style`: logo（Y1RevForge 150）/ title_jp（Noto Sans JP 900・44）/ sub（Y1Vectura 30・字間 0.25 em・大文字・差し色）/
+  credit（Vectura 22 と Noto 400 の 24・文字色の 70 %）/ lyric（Noto 700・46・差し色の下線・やわらかい影）/
+  hook（Y1Cybanin3000 Glitch 180・差し色・左に 3 px ずらした墨の写し）/ caption（Noto 400・28）。行に `size` を書くと大きさを変えられる。
+- `anim`: fade / rise（24 px 下から上がって出て、12 px 上へ抜ける）/ tracking-in（字間 0.6 em から詰まる）/ wipe（左から現れる）/
+  flash（1・0・1・0.35・1 と点滅して保持、最後は切る）/ roll（画面の下から上へ通り抜ける）。入りは `enter`（既定 0.6 秒、3 次の
+  ease-out）、抜けは `exit`（0.4 秒、ease-in）で、合図ごとに変えられる。
+- `palette`: dark（黒い舞台用。白文字＋琥珀。既定）/ light（白い舞台用。墨の文字）。
+- `layer`: front（既定）/ back。この道具は一覧の順に重ねるだけで、人物を別の層として持つ mv_look が back を人物の後ろに置く。
+- 欧文は利用者フォルダの Y1 シリーズ（`%LOCALAPPDATA%/Microsoft/Windows/Fonts`）で描く。かな・漢字を持たないので日本語は
+  Noto Sans JP（可変。太さは軸で指定）で描き、1 行の中でも字種ごとに書体を切り替える。Y1 が入っていない PC では Noto で代替し、
+  Y1 に無い記号（書体によって `/` `!` `?` `(` など）も Noto で描く。どちらも結果の `warnings` に出る。
+- 余白の内側に入らない行は入る大きさまで縮めて `warnings` に出す（見出しの書体は幅が広く、8 文字を 150 px で組むと 1228 px になる）。
+- 以前の `tools/overlay_text.py` の合図（text / start / end / style / anim / x / y / fontsize の平らな一覧）もそのまま読める
+  （title→logo、caption→sub、slide-up・slide-left→rise）。
+
+標準出力は 1 行の JSON（`ok`・`out`・`cues`・`frames`・`size`・`fps`・`work`・`warnings`・`ffmpeg`）。終了コードは 0 成功 /
+1 ffmpeg の失敗 / 2 引数や合図ファイルの誤り。
+
 ## 出力
 
 - 標準出力は常に ASCII。日本語などは `\uXXXX` に逃がすので、端末の文字コードが何であっても壊れない。

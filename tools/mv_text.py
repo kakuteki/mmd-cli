@@ -4,9 +4,70 @@
     python tools/mv_text.py preview cues.json OUT.png --at SECONDS [--over FRAME.png] [--size WxH]
     python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
 
-The text is drawn with Pillow, one RGBA PNG sequence per cue, and ffmpeg lays the sequences over the video
-(`overlay`).  ffmpeg's own drawtext cannot space letters, wipe or offset a copy, which is what makes a title
-look designed; drawing the frames here can.  A sequence is only as large as the cue's box, not the frame.
+The text is drawn with Pillow, one sequence of RGBA PNGs per cue, and ffmpeg lays the sequences over the
+video (overlay).  ffmpeg's own drawtext cannot space letters, wipe, or put a copy behind the text, and those
+are what make a title look designed; drawing the frames here can.  A sequence is as large as the box its
+cue moves in, not as the frame, so the pictures stay small.  `render` does all of it; `preview` draws one
+moment into one picture (to design with, and for a report); `frames` only draws the sequences and prints
+where they go.  Another tool imports render_sequences() for that same plan (tools/mv_look.py puts the
+dancer between the "back" and the "front" cues).
+
+The cue file (JSON; times are seconds in the video):
+
+    {"fps": 30, "size": [1280, 720], "palette": "dark",
+     "cues": [
+       {"id": "title", "start": 1.0, "end": 6.0, "x": "left", "y": "top", "anim": "tracking-in", "layer": "back",
+        "lines": [{"text": "HIBIKASE", "style": "logo"}, {"text": "...", "style": "title_jp"},
+                  {"text": "feat. KAGAMINE RIN", "style": "sub"}]},
+       {"id": "lyric1", "start": 60.0, "end": 64.0, "x": "left-third", "y": "lower", "anim": "rise",
+        "text": "...", "style": "lyric", "enter": 0.3, "exit": 0.2}]}
+
+A cue has `lines`, or one `text` with a `style` (a line break in it makes lines).  `id` names the folder of
+its pictures; `layer` is "front" or "back" and only matters to a tool that has the dancer as a layer of its
+own (here both are laid over the video in the order of the list).  `palette` is "dark" (white text and an
+amber accent, for a black stage) or "light" (ink, for the white stage).  fps and size are what `preview`
+and `frames` use; `render` takes them from the video.  A bare list of cues is the format of the older
+tools/overlay_text.py and is still read (OLD_STYLES, OLD_ANIMS).
+
+Fonts.  The Y1 faces by YUTAONE in the per-user fonts folder have Latin letters and digits only, so a line
+is cut into runs by script (runs): code points from U+2E80 up (kana, kanji, fullwidth forms) are drawn with
+Noto Sans JP, a variable font whose weight axis is set per style, the rest with the Latin face of the
+style.  A character the Latin face lacks (the Y1 faces have little punctuation) is drawn with Noto as
+well, and a Y1 file that is not installed is replaced by Noto.  Both are said in the "warnings" of the
+result, and so is a weight that could not be set (the default instance of the Noto file is Thin).
+
+Layout (layout_cue).  All px are those of a 720 high frame and scale with the frame height.
+
+* Every character is placed by itself: its advance plus the tracking of its style (em of its size).
+* The lines of a cue are stacked on whole pixels, LINE_GAP (0.35 em of the larger neighbour) from the
+  bottom of one line to the top of the next.  Top and bottom of a line are those of a reference letter of
+  its faces (a capital for Latin, a kanji for Japanese), not of its text, so lines of a style sit alike
+  whatever they say.
+* The block is that stack grown to hold all the ink.  The anchors place it: x left / center / right keep
+  64 px free at the sides, "left-third" and "right-third" centre it on a quarter and on three quarters of
+  the width (beside a dancer in the middle); y top / middle / bottom keep 48 px, "lower" centres it on the
+  middle of the lower third.  A line wider than the frame between the margins is set smaller until it
+  fits, and the warnings say so.
+* The canvas is the block wherever its motion takes it, with padding, cut at the frame.
+
+Motion (Motion.at).  A State per frame: alpha, an offset, extra tracking, how far a wipe has come, how much
+of the underline is drawn.  A cue comes in `enter` seconds (cubic ease-out) and goes in `exit` seconds
+(cubic ease-in).  "fade" changes the alpha only; "rise" comes up from 24 px below and leaves 12 px higher;
+"tracking-in" starts with 0.6 em more between the letters and closes; "wipe" shows the block from the left
+behind a soft edge and goes by fading; "flash" blinks for five frames (alpha 1, 0, 1, 0.35, 1), holds and is
+cut off; "roll" travels at one speed from under the frame to over it (end credits).  The motion runs on
+the frame grid: picture 0 of a cue is the State at its start.
+
+Drawing (draw).  Every colour is drawn as a mask of its own and the masks are laid over each other from the
+back (soft shadow, ink copy, text, underline), so the pictures have straight alpha: a half covered pixel
+has the full colour and half the alpha, which is what ffmpeg's overlay takes a PNG for.  Letters that do
+not move sideways are put on whole pixels (sharp), moving ones between them (smooth).
+
+The video (ffmpeg_command).  Each sequence is an input; setpts moves it to the start of its cue and overlay
+lays it at the place of its canvas, passing the video through before and after it.  The shift is
+start_frame / fps as an exact fraction inside round(): setpts cuts its result off to a whole tick, and the
+plain quotient is a tick short for one start frame in fifty (4.1 s at 30 fps is 122.99999999999999 ticks).
+The rate is the video's own, as a fraction (ffprobe), so the pictures land on the frames of the video.
 """
 import argparse
 import dataclasses
