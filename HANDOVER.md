@@ -15,9 +15,12 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
-  MMD が起動を終えない）。ログオンは加賀さんが行う。**hinata の checkout は今日の修正より古い**（下の残課題 2）。
+  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は 2026-10-04 15:30 に 827de16 へ更新済み。
 - 直近の成果: ヒビカセ（えぬた 0.992）× Sour式鏡音リンの場面を hinata で作成。pmm 2 本・静止画・AVI は hinata
   `C:/work/hibikase/out/`、写しは `_spike/out/hibikase/hinata_out/`。配布モーションの比較は `_spike/out/hibikase/compare.txt`。
+  **全曲の AVI** `rin_hibikase_enuta_full.avi`（1280x720・7,743 枚・30 fps・MJPEG・885 MB）は 2026-10-04 15:45 に
+  非表示の MMD で作成（台本 `_spike/out/verify/hinata_hidden_avi.txt`、結果 `_spike/out/verify/hidden_full.json`）。
+  以前の抜粋 AVI は 640x360 の指定が効かず 1280x720 で出来ていた（AVI ダイアログの欄が効かない件）。
 - 査読 1 回目（`docs/reviews/2026-10-04-review-1.md`、読み取り専用の下請け）の指摘への対応状況は残課題 1。
 
 ## 守ること（この案件に固有）
@@ -85,8 +88,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      **取り込み前に敵対的査読。取り込んだら RelayTest（実機）と、セッション 0 からの AVI 60 フレーム超の中継を実測する。**
    - 未着手: 1.16（低のまとめ）、3.4 `vmd.peek`、4.4 ValueError を終了コード 2 に、5.4 の残り、5.7 の実機試験
      （手で開いた pmm への save、15 バイト超のボーン名、menu の grayed）。
-2. **hinata の checkout を更新**（`C:/work/mmd-cli` で `git pull`）し、ヒビカセの AVI を非表示で作り直して窓が出ないことを
-   `mmd window status` と `answered_dialogs` の `hidden again` で確かめる。
+2. 済（2026-10-04 15:45）: hinata の checkout を更新し、全曲 AVI を非表示で作成。全行で `visible: false`、AVI 行に
+   `hidden again`、中継は 209 秒（旧上限 180 秒超）で完走。残プロセス 0。
 3. `model info`（骨・表情の一覧と分類）。
 4. 補間曲線の指定（`bone set --interp`）、キー範囲の操作（コピー・削除・ずらし）。
 5. English Mode の MMD への対応（ダイアログを題名でなくコントロール ID で見分ける）。
