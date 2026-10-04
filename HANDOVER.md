@@ -10,8 +10,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   モーション/ポーズの書き出し・フレーム移動・再生・カメラ/照明・ボーンと表情のキー登録（vmd を組み立てて読ませる）・
   画像/AVI 書き出し・任意のメニュー/コントロール操作・ダイアログの自動応答と報告・vmd/vpd/pmm の解析（MMD 不要）・
   デスクトップの外（SSH 等）からの自動中継・1 プロセスで台本を流す batch。
-- 試験: 単体 144 本（MMD 不要、約 10 秒）、実機 72 本（専用 MMD を**非表示で**起動して閉じる。約 4 分）。
-  2026-10-04 15:00 時点で、単体は全部通る。実機は直近の全走行の結果をこの節の下に追記すること。
+- 試験: 単体 278 本（MMD 不要、約 10 秒）、実機 75 本（専用 MMD を**非表示で**起動して閉じる。約 5 分）。
+  2026-10-04 17:15 時点で両方通る（実機の直近の全走行は 17:10、75 本 OK、245 秒）。
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
@@ -109,7 +109,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      8.3 と 6.1 は済（見張りを全窓・2 体目へ広げ、AVI ヘッダは RIFF を辿る）。
 2. 済（2026-10-04 14:41）: hinata の checkout を更新し、全曲 AVI を非表示で作成。全行で `visible: false`、AVI 行に
    `hidden again`、中継は 209 秒（旧上限 180 秒超）で完走。残プロセス 0。
-3. `model info`（骨・表情の一覧と分類）。
+3. 済（2026-10-04 17:00）: `model info`（骨・表情の一覧と分類。pmx 2.0/2.1・pmd 1.0 を `formats/pmx.py` `pmd.py` で読む。
+   下請け batch B を査読 3（`docs/reviews/2026-10-04-review-3-model-info.md`、高なし・中 2）のうえ取り込み、中 2 と低 3 を直した。
+   `mmd model info FILE` は MMD なしで読む。`file info` も pmx/pmd 対応、`--brief`）。pmd の表情 `base` は一覧に出さないので
+   `dump` の morph_count（base を含む）と 1 違う。
 4. 補間曲線の指定（`bone set --interp`）、キー範囲の操作（コピー・削除・ずらし）。
 5. English Mode の MMD への対応（ダイアログを題名でなくコントロール ID で見分ける）。
 6. pmm 版 0001（同梱の見本）の読み取り。
