@@ -48,7 +48,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 - Windows: 新しい/端末配下のプロセスが持つ前面の権利と SendMessage による伝播（`~/.claude/.../memory/reference_sendmessage_passes_the_foreground_right_to_the_target.md`）。
   `INPUT` 構造体は x64 で 40 バイト（違うと SendInput が黙って失敗する）。
 - hinata: SSH はセッション 0。接続ごとにウィンドウステーションが変わる。96 コマンドの中継が 170 秒・失敗 0。
-  AVI は MJPEG が使える。
+  AVI は MJPEG が使える。`mmd batch` なら起動・モデル読込・モーション 2 本・書き出し 3 枚・終了の 14 手が中継 1 回で
+  9 秒（2026-10-04 実測。1 コマンド 1 プロセスでは同じ手順が約 40 秒）。
 - 配布モーション: BowlRoll は `download-check` API に鍵と csrf を渡すと URL が返る。ニコニコの説明文は
   `<meta name="server-response">` の JSON にある。
 

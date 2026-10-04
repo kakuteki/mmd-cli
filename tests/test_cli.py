@@ -29,6 +29,11 @@ class ParserTest(unittest.TestCase):
         self.assertTrue(parse(["--in-user-session", "state"]).in_user_session)
         self.assertTrue(parse(["--no-relay", "state"]).no_relay)
 
+    def test_save_commands(self):
+        self.assertEqual(parse(["motion", "save", "a.vmd"]).action, "save")
+        self.assertEqual(parse(["pose", "save", "a.vpd", "--model", "1"]).model, "1")
+        self.assertEqual(parse(["render", "codecs"]).action, "codecs")
+
     def test_batch_takes_a_file_or_stdin(self):
         a = parse(["batch", "script.txt"])
         self.assertEqual((a.command, a.file, a.keep_going), ("batch", "script.txt", False))

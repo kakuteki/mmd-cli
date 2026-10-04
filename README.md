@@ -159,8 +159,8 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `state` / `dump [--keys]` | 状態の読み出し |
 | `new` / `open F.pmm` / `save [F.pmm]` | プロジェクト |
 | `model load F` / `list` / `select 名前\|番号\|camera` / `delete` / `show` / `hide` | モデル（pmx / pmd） |
-| `motion load F.vmd [--frame N] [--model M]` | モーションを現在（または指定）のフレームから読み込む |
-| `pose load F.vpd [--register]` | ポーズ。`--register` でキーも登録する |
+| `motion load F.vmd [--frame N] [--model M]` / `motion save F.vmd` | モーションの読込と書き出し（保存は選択中のモデルの全キー。カメラ編ならカメラと照明） |
+| `pose load F.vpd [--register]` / `pose save F.vpd` | ポーズの読込と書き出し。`--register` でキーも登録する |
 | `bone list` / `get 名前` / `set 名前 [--pos X Y Z] [--rot X Y Z \| --quat X Y Z W] [--frame N]` | ボーンのキー登録 |
 | `morph list` / `get 名前` / `set 名前 値 [--frame N]` | 表情のキー登録 |
 | `camera get` / `set [--pos] [--rot] [--distance] [--fov] [--perspective on\|off] [--register]` | カメラ |
@@ -169,7 +169,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `wav load F.wav` | 音 |
 | `frame get` / `set N` / `next` / `prev` / `next-key` / `prev-key` / `first` / `last` | フレーム移動 |
 | `play [--from A --to B] [--wait] [--from-current] [--stay] [--repeat]` / `stop` | 再生 |
-| `render image F [--size W H]` / `render avi F --from A --to B [--fps N] [--size W H] [--codec 名前]` / `render size [W H]` | 書き出し |
+| `render image F [--size W H]` / `render avi F --from A --to B [--fps N] [--size W H] [--codec 名前]` / `render size [W H]` / `render codecs` | 書き出し（`codecs` はこの機で選べる AVI のコーデック一覧） |
 | `menu list` / `menu click ID` | 任意のメニュー項目 |
 | `control list` / `get ID` / `set ID 値` / `click ID` | 任意のコントロール |
 | `dialog list` / `click ボタン` / `close` / `show` | MMD が待っているダイアログ |

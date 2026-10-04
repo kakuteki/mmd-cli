@@ -731,6 +731,77 @@ class Mmd:
         return {"model": state["selected_model"], "frame": self.frame(), "bones": len(pose.bones),
                 "registered": bool(register)}
 
+    def _press_yes(self, dialog):
+        """overwrite confirmations and the like: はい when there is one, else OK"""
+        for cid in (6, 1, 2):                    # some MMD message boxes give their OK the id 2
+            if dialog.find_button(cid) is not None:
+                guard.click(dialog, cid)
+                return "yes" if cid == 6 else "ok"
+        raise DialogPending([dialog])
+
+    def _save_through_menu(self, menu_id, path, extension):
+        if not path.lower().endswith(extension):
+            raise MmdError("the file name must end with %s" % extension)
+        self.require_ready()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if os.path.exists(path):
+            os.remove(path)                      # MMD would ask before overwriting; we do not want the question
+        handlers = {"file_dialog": self._fill_file_dialog(path), "message": self._press_yes}
+        self.menu(menu_id, handlers, done=self._written(path))
+        if not os.path.exists(path):
+            raise MmdError("MMD did not write %s" % path)
+        return path
+
+    def save_motion(self, path):
+        """write the selected model's motion as .vmd (camera + light motion while no model is selected).
+        MMD writes only the key frames that are selected in its frame panel, so they are all selected first."""
+        path = check_output_file(path)
+        state = self.state()
+        kind = "model" if state["mode"] == "model" else "camera"
+        if kind == "model":
+            for mid in (Menu.SELECT_ALL_BONE_FRAMES, Menu.SELECT_ALL_MORPH_FRAMES, Menu.SELECT_ALL_CONFIG_FRAMES):
+                self.menu(mid)
+        else:
+            for mid in (Menu.SELECT_ALL_CAMERA_FRAMES, Menu.SELECT_ALL_LIGHT_FRAMES):
+                self.menu(mid)
+        self._save_through_menu(Menu.MOTION_SAVE, path, ".vmd")
+        motion = vmd.load(path)
+        return {"path": path, "kind": kind, "model": state["selected_model"], "bytes": os.path.getsize(path),
+                "bones": len(motion.bones), "morphs": len(motion.morphs), "cameras": len(motion.cameras),
+                "lights": len(motion.lights)}
+
+    def save_pose(self, path):
+        """write the selected model's current pose as .vpd"""
+        path = check_output_file(path)
+        state = self.state()
+        if state["mode"] != "model":
+            raise MmdError("select a model first (mmd model select NAME)")
+        self.click(Ctl.BONE_SELECT_ALL)          # MMD writes the pose of the selected bones only
+        self._save_through_menu(Menu.POSE_SAVE, path, ".vpd")
+        pose = vpd.load(path)
+        return {"path": path, "model": state["selected_model"], "bytes": os.path.getsize(path), "bones": len(pose.bones)}
+
+    def render_codecs(self):
+        """the video codecs the AVI dialog offers on this machine (nothing is written)"""
+        self.require_ready()
+        found = []
+
+        def on_settings(dialog):
+            combo = dialog.find_control(AviDialog.CODEC, "ComboBox")["hwnd"]
+            found.extend(win32.combo_items(combo))
+            guard.click(dialog, 2)
+            return "read and cancelled"
+
+        probe = self._temp_path("codecs.avi")
+        if os.path.exists(probe):
+            os.remove(probe)
+        handlers = {"file_dialog": self._fill_file_dialog(probe), "avi_settings": on_settings,
+                    "message": self._press_yes}
+        self.menu(Menu.AVI_OUT, handlers, done=lambda: bool(found))
+        if os.path.exists(probe):
+            os.remove(probe)
+        return found
+
     # ---- sound and accessories ----------------------------------------------------------------
 
     def load_wav(self, path):

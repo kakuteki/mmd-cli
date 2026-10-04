@@ -154,6 +154,11 @@ class Ctl:
 
 class Menu:
     EXIT = 200
+    SELECT_ALL_BONE_FRAMES = 217
+    SELECT_ALL_CONFIG_FRAMES = 218  # 表示・IK・外親
+    SELECT_ALL_MORPH_FRAMES = 220
+    SELECT_ALL_CAMERA_FRAMES = 237
+    SELECT_ALL_LIGHT_FRAMES = 238
     ABOUT = 201
     POSE_LOAD = 202
     POSE_SAVE = 203
@@ -163,7 +168,7 @@ class Menu:
     SAVE = 207
     SAVE_AS = 208
     MOTION_LOAD = 209
-    MOTION_SAVE = 210
+    MOTION_SAVE = 210           # model motion while a model is selected, camera + light motion otherwise
     OUTPUT_SIZE = 212
     AVI_OUT = 223
     IMAGE_OUT = 276

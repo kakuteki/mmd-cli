@@ -652,6 +652,60 @@ class RelayTest(unittest.TestCase):
         self.assertNotIn(b"mmd-cli", listing.stdout)
 
 
+class SaveTest(Base):
+    """motion save / pose save hand MMD's own writers a file name; render codecs reads the AVI dialog."""
+    with_model = True
+
+    def test_motion_save_writes_the_registered_keys(self):
+        from mmd_cli.formats import vmd
+        MMD.set_bone("センター", pos=(0, 5, 0), frame=10)
+        MMD.set_morph("まばたき", 1.0, frame=12)
+        path = out("saved.vmd")
+        r = MMD.save_motion(path)
+        self.assertEqual(os.path.normcase(r["path"]), os.path.normcase(path))
+        m = vmd.load(path)
+        self.assertEqual(m.model_name, "初音ミク")
+        self.assertIn(("センター", 10), [(k.name, k.frame) for k in m.bones])
+        self.assertIn(("まばたき", 12), [(k.name, k.frame) for k in m.morphs])
+        self.assertEqual((r["bones"], r["morphs"]), (len(m.bones), len(m.morphs)))
+
+    def test_motion_save_overwrites_an_existing_file(self):
+        path = out("saved2.vmd")
+        MMD.save_motion(path)
+        before = os.path.getsize(path)
+        MMD.set_bone("センター", pos=(0, 1, 0), frame=20)
+        MMD.save_motion(path)
+        self.assertGreater(os.path.getsize(path), before)
+
+    def test_camera_motion_save(self):
+        from mmd_cli.formats import vmd
+        MMD.set_frame(15)
+        MMD.set_camera(distance=20, register=True)
+        MMD.select_model(None)
+        path = out("camera.vmd")
+        r = MMD.save_motion(path)
+        m = vmd.load(path)
+        self.assertTrue(m.is_camera)
+        self.assertEqual(r["kind"], "camera")
+        self.assertIn(15, [k.frame for k in m.cameras])
+
+    def test_pose_save_writes_the_current_pose(self):
+        from mmd_cli.formats import vpd
+        MMD.set_bone("右腕", rot=(0, 0, 45))
+        path = out("pose.vpd")
+        r = MMD.save_pose(path)
+        pose = vpd.load(path)
+        names = [b.name for b in pose.bones]
+        self.assertIn("右腕", names)
+        self.assertEqual(r["bones"], len(pose.bones))
+
+    def test_render_codecs_lists_what_the_avi_dialog_offers(self):
+        codecs = MMD.render_codecs()
+        self.assertGreaterEqual(len(codecs), 1)
+        self.assertTrue(all(isinstance(c, str) and c for c in codecs))
+        self.assertEqual(MMD.dialogs(), [])          # the dialogs were cancelled again
+
+
 class BatchTest(Base):
     def run_batch(self, text, *extra):
         path = out("script.txt")

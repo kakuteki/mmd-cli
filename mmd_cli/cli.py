@@ -102,11 +102,17 @@ def build_parser():
     s.add_argument("file")
     s.add_argument("--frame", type=int)
     s.add_argument("--model")
+    s = g.add_parser("save", help="write the selected model's motion (or the camera motion in camera mode)")
+    s.add_argument("file")
+    s.add_argument("--model")
 
     g = group("pose", "pose data (.vpd)")
     s = g.add_parser("load")
     s.add_argument("file")
     s.add_argument("--register", action="store_true", help="also register key frames for the posed bones")
+    s.add_argument("--model")
+    s = g.add_parser("save", help="write the selected model's current pose")
+    s.add_argument("file")
     s.add_argument("--model")
 
     g = group("wav", "sound")
@@ -204,6 +210,7 @@ def build_parser():
     s.add_argument("--codec", help="part of a codec name from the AVI dialog (default: MMD's current choice)")
     s = g.add_parser("size", help="show or set the output size")
     s.add_argument("size", nargs="*", type=int, metavar="N")
+    g.add_parser("codecs", help="list the video codecs the AVI dialog offers")
 
     g = group("menu", "any menu item, by id")
     g.add_parser("list")
@@ -389,8 +396,16 @@ def _dispatch(mmd, args):
         return mmd.set_model_visible(action == "show", target)
 
     if command == "motion":
+        if action == "save":
+            if args.model is not None:
+                mmd.select_model(parse_target(args.model))
+            return mmd.save_motion(args.file)
         return mmd.load_motion(args.file, frame=args.frame, model=parse_target(args.model))
     if command == "pose":
+        if action == "save":
+            if args.model is not None:
+                mmd.select_model(parse_target(args.model))
+            return mmd.save_pose(args.file)
         return mmd.load_pose(args.file, register=args.register, model=parse_target(args.model))
     if command == "wav":
         return mmd.load_wav(args.file)
@@ -453,6 +468,8 @@ def _dispatch(mmd, args):
         if action == "avi":
             return mmd.render_avi(args.file, args.start, args.end, fps=args.fps, size=args.size,
                                   codec=args.codec, timeout=args.timeout)
+        if action == "codecs":
+            return {"codecs": mmd.render_codecs()}
         if len(args.size) == 2:
             return {"size": mmd.set_output_size(*args.size)}
         if args.size:
