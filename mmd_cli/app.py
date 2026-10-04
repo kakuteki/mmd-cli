@@ -1510,18 +1510,19 @@ class Mmd:
             win32.post(self.hwnd, win32.WM_COMMAND, Menu.EXIT, None)
         deadline = time.monotonic() + timeout
         answered = set()
-        while win32.process_alive(self.pid) is not False and time.monotonic() < deadline:
-            for dialog in guard.open_dialogs(self.pid, self.hwnd):
-                if dialog.hwnd in answered:
-                    continue
-                answered.add(dialog.hwnd)
-                if dialog.kind == "message" and dialog.find_button(1) is not None:
-                    guard.click(dialog, 1)
-                elif dialog.kind == "message" and dialog.find_button(6) is not None:
-                    guard.click(dialog, 6)
-                elif not force:
-                    raise DialogPending([dialog])
-            time.sleep(0.05)
+        with win32.timer_resolution():          # the exit confirmation is hidden on the next pass: keep passes short
+            while win32.process_alive(self.pid) is not False and time.monotonic() < deadline:
+                for dialog in guard.open_dialogs(self.pid, self.hwnd):
+                    if dialog.hwnd in answered:
+                        continue
+                    answered.add(dialog.hwnd)
+                    if dialog.kind == "message" and dialog.find_button(1) is not None:
+                        guard.click(dialog, 1)
+                    elif dialog.kind == "message" and dialog.find_button(6) is not None:
+                        guard.click(dialog, 6)
+                    elif not force:
+                        raise DialogPending([dialog])
+                time.sleep(0.002)
         if win32.process_alive(self.pid) is not False:
             if not force:
                 raise OperationTimeout("MMD did not exit within %.0f s (use --force)" % timeout)

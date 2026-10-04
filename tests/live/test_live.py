@@ -35,9 +35,15 @@ def bundled(*parts):
 
 
 class FocusWatch(threading.Thread):
+    """Every 10 ms: did a window of a watched MMD become the foreground window, or appear on the screen
+    (visible, not a taskbar button, opaque, not parked off-screen)?  Dialogs the CLI hides are transparent
+    and off-screen, a hidden main window is invisible, a parked one sits at x = -28000: none of them count.
+    `pids` can grow while a test runs a second instance."""
+
     def __init__(self, win32, pid, hwnd):
         super().__init__(daemon=True)
         self.win32, self.pid, self.hwnd = win32, pid, hwnd
+        self.pids = {pid}
         self.foreground_hits = []
         self.restored_hits = []
         self.samples = 0
@@ -48,7 +54,7 @@ class FocusWatch(threading.Thread):
     def run(self):
         while not self._stop_flag.is_set():
             fg = self.win32.foreground_window()
-            if fg and self.win32.window_pid(fg) == self.pid:
+            if fg and self.win32.window_pid(fg) in self.pids:
                 if not self.foreground_hits or self.foreground_hits[-1]["window"] != fg:
                     self.foreground_hits.append({"window": fg, "class": self.win32.class_name(fg),
                                                  "title": self.win32.get_text(fg, timeout_ms=200),
@@ -57,11 +63,40 @@ class FocusWatch(threading.Thread):
                 self.previous = "%s (pid %d)" % (self.win32.class_name(fg), self.win32.window_pid(fg))
             else:
                 self.previous = "no foreground window"
-            if (self.win32.is_window(self.hwnd) and self.win32.is_visible(self.hwnd)
-                    and not self.win32.is_iconic(self.hwnd) and self.win32.window_rect(self.hwnd)[0] > -10000):
-                self.restored_hits.append((time.time(), self.current_test))   # on the screen itself
+            for pid in list(self.pids):
+                for hwnd in self.win32.find_windows(pid=pid):
+                    if self.on_screen(hwnd):
+                        self.restored_hits.append((time.time(), self.current_test, self.win32.class_name(hwnd),
+                                                   self.win32.get_text(hwnd, timeout_ms=100), hwnd))
             self.samples += 1
             time.sleep(0.01)
+
+    def main_window_hits(self):
+        return [h for h in self.restored_hits if h[2] == "Polygon Movie Maker"]
+
+    def dialog_episodes(self):
+        """runs of consecutive samples (10 ms apart) in which the same dialog was on the screen.  MMD puts
+        its own confirmations in the middle of the screen the instant it creates them, so one sample
+        (one compositor frame at most) cannot be prevented from outside the process; two or more mean
+        the dialog stayed."""
+        episodes = []
+        for when, test, cls, title, hwnd in self.restored_hits:
+            if cls == "Polygon Movie Maker":
+                continue
+            if episodes and episodes[-1]["hwnd"] == hwnd and when - episodes[-1]["until"] < 0.04:
+                episodes[-1]["until"] = when
+                episodes[-1]["samples"] += 1
+            else:
+                episodes.append({"hwnd": hwnd, "title": title, "test": test, "since": when, "until": when, "samples": 1})
+        return episodes
+
+    def on_screen(self, hwnd):
+        w = self.win32
+        if not w.is_visible(hwnd) or w.is_iconic(hwnd):
+            return False
+        if w.window_alpha(hwnd) != 255:                 # transparent: hidden by the CLI
+            return False
+        return w.window_rect(hwnd)[0] > -10000          # not parked or put away off-screen
 
     def stop(self):
         self._stop_flag.set()
@@ -672,6 +707,7 @@ class HeadlessTest(unittest.TestCase):
     def test_minimized_instance(self):
         from mmd_cli import app, win32
         m = app.launch(EXE)
+        WATCH.pids.add(m.pid)                                        # this one is watched too, while it lives
         try:
             self.assertTrue(win32.is_iconic(m.hwnd))
             self.assertTrue(win32.is_visible(m.hwnd))
@@ -684,6 +720,7 @@ class HeadlessTest(unittest.TestCase):
             self.assertEqual(m.show(), {"minimized": True, "visible": True})
         finally:
             m.quit(force=True)
+            WATCH.pids.discard(m.pid)
         app.update_state(lambda s: s.__setitem__("current", MMD.pid))   # give the shared instance back its role
 
 
@@ -847,7 +884,15 @@ class ZzFocusTest(unittest.TestCase):
         self.assertEqual(WATCH.foreground_hits, [])
 
     def test_main_window_never_appeared_on_the_screen(self):
-        self.assertEqual(WATCH.restored_hits, [])
+        # the full record goes to a file: unittest's diff cuts the list, and the titles and durations are the clue
+        episodes = WATCH.dialog_episodes()
+        record = os.path.join(tempfile.gettempdir(), "mmdcli-focus-watch-%d.json" % int(time.time()))
+        with open(record, "w", encoding="utf-8") as f:
+            json.dump({"on_screen": WATCH.restored_hits, "dialog_episodes": episodes, "foreground": WATCH.foreground_hits,
+                       "samples": WATCH.samples}, f, ensure_ascii=False, indent=1)
+        self.assertEqual(WATCH.main_window_hits(), [], "the main window was on the screen; the record is in %s" % record)
+        stayed = [e for e in episodes if e["samples"] >= 2]
+        self.assertEqual(stayed, [], "a dialog stayed on the screen longer than one frame; the record is in %s" % record)
 
 
 if __name__ == "__main__":

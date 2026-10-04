@@ -81,7 +81,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   `<meta name="server-response">` の JSON にある。
 - 試験の作り: `tests/test_guard.py` の `FakeWin32` で Guard と FocusShield を MMD なしで試験できる。
   `tests/test_app_behaviour.py` の `bare()` は窓に触らない Mmd を作る。実機試験は `FocusWatch` が「前面になった」
-  「画面に現れた（可視・非最小化・x > -10000）」を 10 ms ごとに記録し、最後の `ZzFocusTest` で検査する。
+  「画面に現れた（見張る pid の全トップレベル窓について 可視・非最小化・不透明・x > -10000）」を 10 ms ごとに記録し、
+  最後の `ZzFocusTest` で検査する。判定は 主窓は 1 標本も不可・ダイアログは 2 標本以上の連続（1 フレーム超）が不可。
+  MMD が画面中央に即座に出す確認（モデル情報・新規作成・終了など）は 1 標本（最大 1 フレーム）だけ出るのが現状の限界
+  （外のプロセスからは表示後にしか隠せない。`docs/spike-result` の「ダイアログが画面に出る瞬間」）。記録の全文は失敗時に
+  `%TEMP%/mmdcli-focus-watch-*.json` に残る。2 体目のインスタンスを立てる試験は `WATCH.pids` に pid を足す。
 
 ## 残課題（優先順。着手したら印を付ける）
 
@@ -113,6 +117,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
    までなので引数は job ファイルで渡す）。この PC で 73 本・470 秒、**hinata（Python 3.10）で SSH から 73 本・165 秒 OK**。
    hinata での呼び方: `ssh hinata` → `cd C:/work/mmd-cli; $env:MMD_CLI_HOME='C:/work/mmd-cli-home'; python tools/run_live_tests_in_session.py --exe C:/Users/nayta/Desktop/MikuMikuDance_v932x64/MikuMikuDance.exe`。
 8. ヒビカセの場面: えぬたのカメラは会場前提で 0:00・1:00 付近でリンが小さい。寄せるか正面固定にするかは加賀さんの指定待ち。音源なし。
+   ログオンが戻ったら、hinata で「元のカメラ／リンに寄せたカメラ／正面固定」の 3 案を 0:00 と 1:00 の短い抜粋で作って比較に出す。
+9. 任意: ダイアログを隠す専用スレッド（Guard のループがハンドラや `_gone` の待ちで塞がっている間も 1 ms で隠す）。
+   通常経路では隠すまで 1 標本以内なので優先度は低い。失敗経路（拒否の待ち 3〜5 秒）で新しいダイアログが出た場合にだけ効く。
 
 ## 振り返り（方針の見直しの記録）
 
