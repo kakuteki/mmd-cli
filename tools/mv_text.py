@@ -39,6 +39,10 @@ FPS = 30
 SIZE = (1280, 720)
 ENTER, EXIT = 0.6, 0.4                       # seconds a cue takes to come and to go, unless it says otherwise
 ANIMS = ("fade", "rise", "tracking-in", "wipe", "flash", "roll")
+RISE = (24.0, -12.0)                         # px: where "rise" starts below its place, where it leaves above it
+TRACKING_IN = (0.6, 0.1)                     # em: how far "tracking-in" starts spread, and spreads again leaving
+WIPE_EDGE = 24.0                             # px: the soft edge of "wipe"
+FLASH = (1.0, 0.0, 1.0, 0.35, 1.0)           # the alpha of the first frames of "flash"; full after them
 X_ANCHORS = ("left", "center", "right")
 Y_ANCHORS = ("top", "middle", "lower", "bottom")
 PALETTES = {
@@ -338,3 +342,77 @@ def load_cues(path):
         except ValueError as e:
             raise ValueError("%s is not JSON: %s" % (path, e)) from None
     return parse_cues(data)
+
+
+# ---- motion ---------------------------------------------------------------------------------
+
+@dataclasses.dataclass
+class State:
+    """how a cue is drawn at one moment"""
+    alpha: float = 1.0
+    dx: float = 0.0                  # px, to the right
+    dy: float = 0.0                  # px, down
+    tracking_extra: float = 0.0      # em added after every character
+    wipe: float = 1.0                # the share of the block shown, from the left
+    underline: float = 1.0           # the share of a lyric's underline drawn
+
+
+def _progress(elapsed, duration):
+    """0 to 1 over `duration` seconds; a duration of 0 is done as soon as it starts"""
+    if duration <= 0.0:
+        return 1.0 if elapsed >= 0.0 else 0.0
+    return min(1.0, max(0.0, elapsed / duration))
+
+
+def ease_out(p):
+    """cubic: fast at first, settling"""
+    return 1.0 - (1.0 - p) ** 3
+
+
+def ease_in(p):
+    """cubic: slow at first, leaving fast"""
+    return p ** 3
+
+
+@dataclasses.dataclass
+class Motion:
+    """the anim of one cue.  `start` and `end` are the times of its first frame and of the frame after its
+    last; `scale` is the frame height over 720 (the px of RISE are those of a 720 high frame); `roll` is the
+    offset "roll" starts and ends at, which only the layout knows."""
+    anim: str
+    start: float
+    end: float
+    enter: float = ENTER
+    exit: float = EXIT
+    fps: float = float(FPS)
+    scale: float = 1.0
+    roll: Tuple[float, float] = (0.0, 0.0)
+
+    def at(self, t):
+        """the State at the time t (seconds in the video)"""
+        came = ease_out(_progress(t - self.start, self.enter))
+        gone = ease_in(_progress(t - (self.end - self.exit), self.exit))
+        if self.anim == "flash":
+            frame = int(round((t - self.start) * self.fps))
+            return State(alpha=FLASH[frame] if 0 <= frame < len(FLASH) else 1.0)
+        if self.anim == "roll":
+            share = _progress(t - self.start, self.end - self.start)
+            return State(dy=self.roll[0] + (self.roll[1] - self.roll[0]) * share)
+        if self.anim == "wipe":
+            return State(alpha=1.0 - gone, wipe=came, underline=came)
+        state = State(alpha=min(came, 1.0 - gone), underline=came)
+        if self.anim == "rise":
+            state.dy = self.scale * (RISE[0] * (1.0 - came) + RISE[1] * gone)
+        elif self.anim == "tracking-in":
+            state.tracking_extra = TRACKING_IN[0] * (1.0 - came) + TRACKING_IN[1] * gone
+        return state
+
+    def extents(self):
+        """(least dy, greatest dy, greatest tracking_extra) over the whole cue: what the canvas must hold"""
+        if self.anim == "rise":
+            return (self.scale * RISE[1], self.scale * RISE[0], 0.0)
+        if self.anim == "tracking-in":
+            return (0.0, 0.0, max(TRACKING_IN))
+        if self.anim == "roll":
+            return (float(min(self.roll)), float(max(self.roll)), 0.0)
+        return (0.0, 0.0, 0.0)

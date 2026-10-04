@@ -307,5 +307,138 @@ class CueFileTest(unittest.TestCase):
             mv_text.load_cues(path)
 
 
+def motion(anim, start=1.0, end=4.0, **more):
+    """a cue from 1.0 to 4.0 s: it has come at 1.6 (enter 0.6) and starts to go at 3.6 (exit 0.4)"""
+    return mv_text.Motion(anim, start, end, **more)
+
+
+def frame_times(m, count=None):
+    """the times of the frames of a cue, the first on its start"""
+    total = int(round((m.end - m.start) * m.fps))
+    return [m.start + i / m.fps for i in range(total if count is None else count)]
+
+
+class MotionTest(unittest.TestCase):
+    def test_a_cue_comes_holds_and_goes(self):
+        for anim in ("fade", "rise", "tracking-in"):
+            m = motion(anim)
+            self.assertEqual(m.at(1.0).alpha, 0.0, anim)
+            self.assertEqual(m.at(1.6).alpha, 1.0, anim)
+            self.assertEqual(m.at(2.5).alpha, 1.0, anim)
+            self.assertEqual(m.at(3.59).alpha, 1.0, anim)                      # just before it starts to go
+            self.assertAlmostEqual(m.at(4.0).alpha, 0.0, places=9, msg=anim)
+            alphas = [m.at(t).alpha for t in frame_times(m)]
+            self.assertTrue(all(0.0 <= a <= 1.0 for a in alphas), anim)
+            coming, going = alphas[:19], alphas[78:]                           # frames 0..18 and 78..89
+            self.assertEqual(coming, sorted(coming), anim)
+            self.assertEqual(going, sorted(going, reverse=True), anim)
+            # the last frame drawn is one before the end: 1 - (11/12)^3 of it is left, then it is gone
+            self.assertAlmostEqual(going[-1], 1 - (11.0 / 12.0) ** 3, places=6, msg=anim)
+
+    def test_coming_eases_out_and_going_eases_in(self):
+        # cubic: half way through the enter the cue is already 1 - 0.5^3 there, half way through the exit it
+        # has lost only 0.5^3
+        m = motion("fade")
+        self.assertAlmostEqual(m.at(1.3).alpha, 0.875)
+        self.assertAlmostEqual(m.at(3.8).alpha, 0.875)
+        self.assertAlmostEqual(m.at(1.15).alpha, 1 - 0.75 ** 3)
+        self.assertAlmostEqual(m.at(3.9).alpha, 1 - 0.75 ** 3)
+
+    def test_fade_moves_nothing(self):
+        m = motion("fade")
+        for t in frame_times(m):
+            s = m.at(t)
+            self.assertEqual((s.dx, s.dy, s.tracking_extra, s.wipe), (0.0, 0.0, 0.0, 1.0))
+
+    def test_rise_comes_up_24_px_and_leaves_12_px_higher(self):
+        m = motion("rise")
+        self.assertEqual(m.at(1.0).dy, 24.0)
+        self.assertEqual(m.at(1.6).dy, 0.0)
+        self.assertEqual(m.at(3.0).dy, 0.0)
+        self.assertAlmostEqual(m.at(4.0).dy, -12.0)
+        ys = [m.at(t).dy for t in frame_times(m)]
+        self.assertEqual(ys, sorted(ys, reverse=True))                         # it only ever moves up
+        self.assertAlmostEqual(m.at(1.3).dy, 24.0 * 0.125)
+        self.assertEqual(m.at(1.0).dx, 0.0)
+        # the px are those of a 720 high frame: twice as far in a 1440 high one
+        self.assertEqual(motion("rise", scale=2.0).at(1.0).dy, 48.0)
+        self.assertEqual(m.extents(), (-12.0, 24.0, 0.0))
+
+    def test_tracking_in_starts_spread_and_closes(self):
+        m = motion("tracking-in")
+        self.assertEqual(m.at(1.0).tracking_extra, 0.6)
+        self.assertEqual(m.at(1.6).tracking_extra, 0.0)
+        self.assertEqual(m.at(3.0).tracking_extra, 0.0)
+        self.assertAlmostEqual(m.at(4.0).tracking_extra, 0.1)
+        self.assertAlmostEqual(m.at(1.3).tracking_extra, 0.6 * 0.125)
+        self.assertEqual(m.at(1.0).dy, 0.0)
+        self.assertEqual(m.extents(), (0.0, 0.0, 0.6))
+
+    def test_wipe_shows_from_the_left_at_full_alpha_and_goes_by_fading(self):
+        m = motion("wipe")
+        self.assertEqual((m.at(1.0).wipe, m.at(1.0).alpha), (0.0, 1.0))
+        self.assertEqual((m.at(1.6).wipe, m.at(1.6).alpha), (1.0, 1.0))
+        self.assertAlmostEqual(m.at(1.3).wipe, 0.875)
+        self.assertEqual((m.at(3.8).wipe, m.at(3.0).alpha), (1.0, 1.0))
+        self.assertAlmostEqual(m.at(3.8).alpha, 0.875)
+        self.assertAlmostEqual(m.at(4.0).alpha, 0.0, places=9)
+
+    def test_flash_blinks_for_five_frames_holds_and_is_cut_off(self):
+        m = motion("flash", start=44.5, end=45.3)
+        times = frame_times(m)
+        self.assertEqual(len(times), 24)
+        alphas = [m.at(t).alpha for t in times]
+        self.assertEqual(alphas[:5], [1.0, 0.0, 1.0, 0.35, 1.0])
+        self.assertEqual(set(alphas[5:]), {1.0})                               # the last frame is as strong: no fade
+        for t in times:
+            s = m.at(t)
+            self.assertEqual((s.dx, s.dy, s.tracking_extra, s.wipe, s.underline), (0.0, 0.0, 0.0, 1.0, 1.0))
+        # the blink is counted in frames, whatever the rate
+        fast = motion("flash", start=2.0, end=3.0, fps=60.0)
+        self.assertEqual([fast.at(t).alpha for t in frame_times(fast, 6)], [1.0, 0.0, 1.0, 0.35, 1.0, 1.0])
+
+    def test_roll_travels_at_one_speed_from_its_first_offset_to_its_last(self):
+        m = motion("roll", start=10.0, end=30.0, roll=(672.0, -548.0))
+        self.assertEqual(m.at(10.0).dy, 672.0)
+        self.assertAlmostEqual(m.at(30.0).dy, -548.0)
+        self.assertAlmostEqual(m.at(20.0).dy, (672.0 - 548.0) / 2)
+        ys = [m.at(t).dy for t in frame_times(m)]
+        self.assertTrue(all(a > b for a, b in zip(ys, ys[1:])))                # strictly up, every frame
+        steps = [a - b for a, b in zip(ys, ys[1:])]
+        self.assertAlmostEqual(max(steps), min(steps), places=6)
+        self.assertEqual({m.at(t).alpha for t in frame_times(m)}, {1.0})
+        self.assertEqual(m.extents(), (-548.0, 672.0, 0.0))
+
+    def test_the_underline_is_drawn_while_the_cue_comes(self):
+        for anim in ("fade", "rise", "tracking-in", "wipe"):
+            m = motion(anim)
+            self.assertEqual(m.at(1.0).underline, 0.0, anim)
+            self.assertAlmostEqual(m.at(1.3).underline, 0.875, msg=anim)
+            self.assertEqual(m.at(1.6).underline, 1.0, anim)
+            self.assertEqual(m.at(3.9).underline, 1.0, anim)                   # it goes with the alpha, not by itself
+
+    def test_the_cue_sets_how_long_it_takes_to_come_and_go(self):
+        m = motion("rise", enter=1.0, exit=2.0)
+        self.assertEqual(m.at(2.0).alpha, 1.0)
+        self.assertAlmostEqual(m.at(1.5).alpha, 0.875)
+        self.assertAlmostEqual(m.at(3.0).alpha, 0.875)
+        # no time at all: it is there on the first frame and until the last
+        sudden = motion("rise", enter=0.0, exit=0.0)
+        self.assertEqual((sudden.at(1.0).alpha, sudden.at(1.0).dy), (1.0, 0.0))
+        self.assertEqual((sudden.at(3.99).alpha, sudden.at(3.99).dy), (1.0, 0.0))
+
+    def test_a_cue_shorter_than_its_enter_and_exit_still_shows(self):
+        m = motion("fade", start=1.0, end=1.5)
+        alphas = [m.at(t).alpha for t in frame_times(m)]
+        self.assertGreater(max(alphas), 0.5)
+        self.assertTrue(all(0.0 <= a <= 1.0 for a in alphas))
+        self.assertEqual(alphas[0], 0.0)
+
+    def test_what_does_not_move_has_no_extents(self):
+        for anim in ("fade", "wipe", "flash"):
+            self.assertEqual(motion(anim).extents(), (0.0, 0.0, 0.0), anim)
+        self.assertEqual(motion("rise", scale=0.25).extents(), (-3.0, 6.0, 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()
