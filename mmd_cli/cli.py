@@ -237,6 +237,10 @@ def build_parser():
     g = group("file", "inspect files without MMD")
     s = g.add_parser("info", help="show a .vmd / .vpd / .pmm file as JSON")
     s.add_argument("file")
+
+    s = sub.add_parser("batch", help="run many commands from a file (one per line; '-' reads stdin) in one process")
+    s.add_argument("file")
+    s.add_argument("--keep-going", action="store_true", help="carry on after a failing line (default: stop there)")
     return p
 
 
@@ -263,10 +267,14 @@ def _file_info(path):
     raise ValueError("unsupported file type: %s" % ext)
 
 
-def run(args):
+STANDALONE = ("file", "ps", "launch")       # commands that do not need an attached instance
+
+
+def dispatch_any(mmd, args):
+    """run one parsed command.  mmd may be None for the standalone commands; a launch returns the
+    new instance under "_instance" so a batch can keep using it."""
     if args.command == "file":
         return _file_info(args.file)
-
     from . import app
     if args.command == "ps":
         return {"instances": app.instances(), "current": app.load_state().get("current")}
@@ -276,17 +284,64 @@ def run(args):
             raise app.MmdError("give the program with --exe PATH (or set MMD_EXE)")
         from .guard import FocusShield
         with FocusShield(pid=None) as shield:
-            mmd = app.launch(exe, timeout=args.timeout or 90.0, headless=args.headless)
+            mmd = app.launch(exe, timeout=getattr(args, "timeout", None) or 90.0, headless=args.headless)
             shield.pid = mmd.pid
             result = mmd.state()
         if shield.events:
             result["foreground_restored"] = shield.events
+        result["_instance"] = mmd
         return result
+    return _dispatch(mmd, args)
 
+
+def _attach(args):
+    from . import app
     mmd = app.Mmd.attach(args.pid)
     if args.timeout:
         mmd.timeout = args.timeout
     mmd.in_place = args.in_place
+    return mmd
+
+
+def _run_batch(args):
+    from . import batch
+    from .guard import FocusShield
+    if args.file == "-":
+        text = sys.stdin.read()
+    else:
+        with open(args.file, encoding="utf-8-sig") as f:
+            text = f.read()
+    entries = batch.parse_lines(text)
+    with FocusShield(pid=None) as shield:
+        def make():
+            mmd = _attach(args)
+            shield.pid = mmd.pid
+            return mmd
+
+        def dispatch(mmd, parsed):
+            result = dispatch_any(mmd, parsed)
+            if isinstance(result, dict) and result.get("_instance") is not None:
+                shield.pid = result["_instance"].pid
+                if args.timeout:
+                    result["_instance"].timeout = args.timeout
+                result["_instance"].in_place = args.in_place
+            return result
+
+        results, code = batch.run_batch(entries, make, dispatch, build_parser(), stop_on_error=not args.keep_going)
+    result = batch.summary(results, code)
+    if shield.events:
+        result["foreground_restored"] = shield.events
+    return result
+
+
+def run(args):
+    if args.command == "batch":
+        return _run_batch(args)
+    if args.command in STANDALONE:
+        result = dispatch_any(None, args)
+        result.pop("_instance", None)
+        return result
+    mmd = _attach(args)
     with mmd.shield() as shield:
         try:
             result = dict(_dispatch(mmd, args))
@@ -445,13 +500,21 @@ def main(argv=None):
     try:
         from . import relay
         if relay.should_relay(argv=argv):
+            if args.command == "batch" and args.file == "-":
+                # stdin does not travel through the relay: park it in a file first
+                folder = relay.relay_dir()
+                os.makedirs(folder, exist_ok=True)
+                parked = os.path.join(folder, "stdin-%d.txt" % os.getpid())
+                with open(parked, "w", encoding="utf-8") as f:
+                    f.write(sys.stdin.read())
+                argv = [parked if a == "-" else a for a in argv]
             payload, code = relay.run_in_user_session(argv, timeout=(args.timeout or 120.0) + 60.0)
             emit(payload, args.out, sys.stdout)
             return code
         result = run(args)
-        payload = {"ok": True}
+        payload = {"ok": result.get("ok", True)}
         payload.update(result)
-        code = 0
+        code = 0 if payload["ok"] else int(payload.get("exit_code", 1))
     except Exception as exc:  # every failure is reported as JSON
         if os.environ.get("MMD_CLI_DEBUG"):
             raise

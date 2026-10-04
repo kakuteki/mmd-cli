@@ -166,7 +166,12 @@ mmd control list / get ID / set ID VALUE / click ID
 mmd dialog list / click LABEL / close / show
 mmd window status / minimize
 mmd file info F                vmd / vpd / pmm の中身（MMD 不要）
+mmd batch F [--keep-going]     1 行 1 コマンドの台本を 1 プロセスで順に実行（'-' は標準入力）
 ```
+
+`batch` は 2026-10-04 に追加した。1 コマンド 1 プロセスの固定費（起動・接続・中継で 1〜3 秒）を、長い台本で
+払わずに済ませるため。行の解釈は `batch.py`（空白区切り・二重引用符・JSON 行）、実行は `cli.dispatch_any` を
+共有する。中継されるときは台本ごと利用者のセッションで走る（標準入力は先にファイルへ写す）。
 
 共通オプション: `--pid N`（対象のインスタンス）、`--out FILE`（JSON を UTF-8 でファイルへ）、`--timeout 秒`、
 `--in-place`（mmd-cli を通さずに開かれたプロジェクトへの保存を許す）。

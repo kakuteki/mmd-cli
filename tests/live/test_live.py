@@ -652,6 +652,37 @@ class RelayTest(unittest.TestCase):
         self.assertNotIn(b"mmd-cli", listing.stdout)
 
 
+class BatchTest(Base):
+    def run_batch(self, text, *extra):
+        path = out("script.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        cmd = [sys.executable, "-m", "mmd_cli", "--pid", str(MMD.pid), "batch", path] + list(extra)
+        p = subprocess.run(cmd, capture_output=True, cwd=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        return p.returncode, json.loads(p.stdout.decode("ascii"))
+
+    def test_lines_run_in_order_in_one_process(self):
+        code, data = self.run_batch("new\nmodel load \"%s\"\nframe set 12\nbone set 右腕 --rot 0 0 20\nstate\n"
+                                    % bundled("Model", "初音ミク.pmd"))
+        self.assertEqual(code, 0, data)
+        self.assertTrue(data["ok"])
+        self.assertEqual((data["ran"], data["failed"]), (5, 0))
+        self.assertEqual(data["results"][1]["name"], "初音ミク")
+        self.assertEqual(data["results"][3]["rot"], [0.0, 0.0, 20.0])
+        self.assertEqual(data["results"][4]["frame"], 12)
+        self.assertEqual([d["kind"] for d in data["results"][1]["answered_dialogs"]], ["model_info"])
+
+    def test_a_failing_line_stops_the_batch_unless_asked_otherwise(self):
+        code, data = self.run_batch("frame set 3\nmodel select nobody\nframe set 4\n")
+        self.assertEqual(code, 1)
+        self.assertEqual([r["ok"] for r in data["results"]], [True, False])
+        self.assertEqual(MMD.frame(), 3)
+        code, data = self.run_batch("frame set 5\nmodel select nobody\nframe set 6\n", "--keep-going")
+        self.assertEqual(code, 1)
+        self.assertEqual([r["ok"] for r in data["results"]], [True, False, True])
+        self.assertEqual(MMD.frame(), 6)
+
+
 class CliTest(Base):
     def run_cli(self, *args):
         env = dict(os.environ)

@@ -29,6 +29,11 @@ class ParserTest(unittest.TestCase):
         self.assertTrue(parse(["--in-user-session", "state"]).in_user_session)
         self.assertTrue(parse(["--no-relay", "state"]).no_relay)
 
+    def test_batch_takes_a_file_or_stdin(self):
+        a = parse(["batch", "script.txt"])
+        self.assertEqual((a.command, a.file, a.keep_going), ("batch", "script.txt", False))
+        self.assertTrue(parse(["batch", "-", "--keep-going"]).keep_going)
+
     def test_dump_lists_key_frames_only_on_request(self):
         self.assertFalse(parse(["dump"]).keys)
         self.assertTrue(parse(["dump", "--keys"]).keys)

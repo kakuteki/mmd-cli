@@ -77,6 +77,33 @@ SSH 越し・CI・サービスのように **利用者のデスクトップの�
 - 確認済み: 別の機から SSH で入ったセッション 0 から、起動（非表示）・読込・キー登録・書き出し・終了まで
   中継で通り、その間デスクトップの前面の窓は変わらず、MMD の窓は一度も表示されなかった。
 
+## 台本をまとめて流す（batch）
+
+1 コマンド 1 プロセスだと、起動・接続・（中継なら）タスクの登録で 1 回あたり 1〜3 秒かかる。
+何十手もある台本は `mmd batch` で 1 プロセスにまとめる。
+
+```
+mmd batch script.txt            # 1 行 1 コマンド。'-' なら標準入力
+mmd batch script.txt --keep-going   # 失敗した行で止めず最後まで
+```
+
+```
+# script.txt   コメントと空行は飛ばす。mmd の後ろに書く形で 1 行ずつ
+new
+model load "C:\models\miku\miku.pmx"
+frame set 30
+["bone", "set", "右腕", "--rot", "0", "0", "35"]
+{"id": "wink", "args": ["morph", "set", "ウィンク", "1.0"]}
+render image C:\work\shot.png --size 640 360
+```
+
+行はそのまま空白で区切り、二重引用符で囲めば 1 語になる。バックスラッシュはそのまま。引用の心配をしたくなければ
+JSON の配列か `{"id": ..., "args": [...]}` で書く。`--pid` などの共通オプションは `mmd batch` 側に付ける。
+
+結果は `{"ok", "ran", "failed", "exit_code", "results": [...]}` で、`results` の各要素が行ごとの結果（行番号・引数・
+その行の JSON、応答したダイアログ）。既定では失敗した行で止まり、終了コードはその行のもの（1 失敗 / 2 引数の誤り /
+3 ダイアログ待ち）。`launch` を台本に入れれば、起動したインスタンスを続く行がそのまま使う。
+
 ## 状態の確かめ方
 
 | 知りたいこと | コマンド | 仕組み |
@@ -148,6 +175,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `dialog list` / `click ボタン` / `close` / `show` | MMD が待っているダイアログ |
 | `window status` / `minimize` / `hide` / `show` | 窓（hide は画面にもタスクバーにも出さない） |
 | `file info F` | vmd / vpd / pmm の中身（MMD 不要） |
+| `batch F [--keep-going]` | ファイル（`-` で標準入力）の 1 行 1 コマンドを 1 プロセスで順に実行 |
 
 専用のコマンドが無い操作は、`menu` と `control` で届く。ID の一覧は `mmd menu list` と `mmd control list`、
 窓の中の位置は下の図と `docs/controls-v932.json` にある。
