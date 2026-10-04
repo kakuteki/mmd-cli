@@ -358,6 +358,15 @@ class CueFileTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             mv_text.load_cues(path)
 
+    def test_a_cue_file_with_a_byte_order_mark_is_read(self):
+        # Notepad and PowerShell 5.1 put a byte order mark in front of UTF-8
+        path = os.path.join(tempfile.mkdtemp(), "cues.json")
+        with open(path, "w", encoding="utf-8-sig") as f:
+            f.write('{"cues": [{"id": "a", "text": "ヒビ", "start": 1, "end": 2}]}')
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(3), b"\xef\xbb\xbf")
+        self.assertEqual(mv_text.load_cues(path).cues[0].lines[0].text, "ヒビ")
+
 
 def motion(anim, start=1.0, end=4.0, **more):
     """a cue from 1.0 to 4.0 s: it has come at 1.6 (enter 0.6) and starts to go at 3.6 (exit 0.4)"""

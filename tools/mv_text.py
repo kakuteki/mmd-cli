@@ -447,7 +447,8 @@ def parse_cues(data):
 
 
 def load_cues(path):
-    with open(path, encoding="utf-8") as f:
+    """the cue file at `path` as a Sheet: UTF-8, with or without a byte order mark (Notepad writes one)"""
+    with open(path, encoding="utf-8-sig") as f:
         try:
             data = json.load(f)
         except ValueError as e:
