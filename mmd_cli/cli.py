@@ -70,6 +70,27 @@ def _vector(parser, flag, count, help_text, cast=finite):
                         help=help_text)
 
 
+def curve_value(text):
+    """one number of an interpolation curve: a whole number from 0 to 127"""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("%r is not a whole number" % text) from None
+    if not 0 <= value <= 127:
+        raise argparse.ArgumentTypeError("%r is outside 0 to 127" % text)
+    return value
+
+
+def _interp(parser, what):
+    parser.add_argument("--interp", nargs=4, type=curve_value, metavar=("X1", "Y1", "X2", "Y2"),
+                        help="interpolation curve of %s, 0-127 each (default 20 20 107 107: linear)" % what)
+
+
+def _range(parser, what):
+    parser.add_argument("--from", dest="start", type=int, metavar="A", help="first frame of %s (with --to; default: all)" % what)
+    parser.add_argument("--to", dest="end", type=int, metavar="B", help="last frame of %s, included" % what)
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="mmd", description=__doc__.split("\n")[0])
     p.add_argument("--version", action="version", version="mmd-cli " + __version__)
@@ -126,6 +147,40 @@ def build_parser():
     s = g.add_parser("save", help="write the selected model's motion (or the camera motion in camera mode)")
     s.add_argument("file")
     s.add_argument("--model")
+    s = g.add_parser("keys", help="list the keys of a .vmd file (no MMD needed): counts per kind, or one target's keys")
+    s.add_argument("file")
+    which = s.add_mutually_exclusive_group()
+    which.add_argument("--camera", action="store_true", help="camera keys")
+    which.add_argument("--bone", metavar="NAME", help="keys of one bone")
+    which.add_argument("--morph", metavar="NAME", help="keys of one morph")
+    which.add_argument("--light", action="store_true", help="light keys")
+    _range(s, "the keys to list")
+    s = g.add_parser("edit", help="write a copy of a .vmd with keys of a frame range shifted, deleted, copied, changed "
+                                  "or given a curve (no MMD needed). The operations apply in the order shift, copy, values, interp")
+    s.add_argument("src", help="the .vmd to read (left as it is unless dst is the same path)")
+    s.add_argument("dst", help="the .vmd to write (an existing file is kept aside until the new one is written)")
+    s.add_argument("--camera", action="store_true", help="the camera keys")
+    s.add_argument("--light", action="store_true", help="the light keys")
+    s.add_argument("--bone", action="append", metavar="NAME", help="the keys of this bone (repeatable)")
+    s.add_argument("--all-bones", action="store_true", help="the keys of every bone in the file")
+    s.add_argument("--morph", action="append", metavar="NAME", help="the keys of this morph (repeatable)")
+    s.add_argument("--all-morphs", action="store_true", help="the keys of every morph in the file")
+    _range(s, "the keys to edit")
+    s.add_argument("--shift", type=int, metavar="N", help="move the keys by N frames (negative moves them earlier)")
+    s.add_argument("--delete", action="store_true", help="remove the keys (not combined with other operations)")
+    s.add_argument("--copy-to", type=int, metavar="F", help="add a copy of the keys, the first one at frame F")
+    s.add_argument("--replace", action="store_true", help="let --shift / --copy-to overwrite keys already at the destination")
+    s.add_argument("--distance-scale", type=finite, metavar="K", help="camera: multiply the distance by K (K > 0)")
+    s.add_argument("--distance-add", type=finite, metavar="D", help="camera: add D to the distance the window shows")
+    s.add_argument("--distance-clamp", nargs=2, type=finite, metavar=("MIN", "MAX"),
+                   help="camera: keep the distance between MIN and MAX (applied after scale and add)")
+    _vector(s, "--pos-add", 3, "camera / bone: add to the position")
+    s.add_argument("--fov-add", type=int, metavar="F", help="camera: add F degrees to the view angle")
+    s.add_argument("--fov-set", type=int, metavar="F", help="camera: set the view angle to F degrees")
+    _vector(s, "--rot-add", 3, "bone: turn further by these degrees (as the angle boxes show them), about the bone's own axes")
+    s.add_argument("--weight-scale", type=finite, metavar="K", help="morph: multiply the weight by K")
+    s.add_argument("--weight-set", type=finite, metavar="W", help="morph: set the weight to W")
+    _interp(s, "camera / bone keys, on every channel")
 
     g = group("pose", "pose data (.vpd)")
     s = g.add_parser("load")
@@ -299,6 +354,39 @@ def _file_info(path, brief=False):
     raise ValueError("unsupported file type: %s" % ext)
 
 
+def _motion_targets(args):
+    from .motion_edit import Target
+    specs = []
+    if args.camera:
+        specs.append(Target("camera"))
+    if args.light:
+        specs.append(Target("light"))
+    for kind in ("bone", "morph"):
+        given = getattr(args, kind)
+        for name in (given if isinstance(given, list) else [given] if given is not None else []):
+            specs.append(Target(kind, name))
+        if getattr(args, "all_%ss" % kind, False):
+            specs.append(Target(kind, None))             # every name in the file
+    return specs
+
+
+def _motion_file_command(args):
+    """`motion keys` / `motion edit`: the file is read (and written) here, without MMD"""
+    from . import motion_edit
+    span = motion_edit.check_range(args.start, args.end)
+    specs = _motion_targets(args)
+    if args.action == "keys":
+        return motion_edit.keys_file(args.file, specs[0] if specs else None, span)
+    ops = motion_edit.Operations(
+        shift=args.shift, delete=args.delete, copy_to=args.copy_to, replace=args.replace,
+        distance_scale=args.distance_scale, distance_add=args.distance_add,
+        distance_clamp=tuple(args.distance_clamp) if args.distance_clamp else None,
+        pos_add=tuple(args.pos_add) if args.pos_add else None, fov_add=args.fov_add, fov_set=args.fov_set,
+        rot_add=tuple(args.rot_add) if args.rot_add else None, weight_scale=args.weight_scale, weight_set=args.weight_set,
+        interp=tuple(args.interp) if args.interp else None)
+    return motion_edit.edit_file(args.src, args.dst, specs, ops, span)
+
+
 STANDALONE = ("file", "ps", "launch")       # commands that do not need an attached instance
 
 
@@ -309,9 +397,14 @@ def _model_file(args):
             and os.path.splitext(target)[1].lower() in (".pmx", ".pmd") and os.path.isfile(target))
 
 
+def _motion_file(args):
+    """`motion keys` / `motion edit` work on the file alone"""
+    return args.command == "motion" and getattr(args, "action", None) in ("keys", "edit")
+
+
 def standalone(args):
     """commands that need neither a running MMD nor the relay into the desktop session"""
-    return args.command in STANDALONE or _model_file(args)
+    return args.command in STANDALONE or _model_file(args) or _motion_file(args)
 
 
 def dispatch_any(mmd, args):
@@ -321,6 +414,8 @@ def dispatch_any(mmd, args):
         return _file_info(args.file, brief=args.brief)
     if _model_file(args):
         return dict(_file_info(args.target), path=os.path.abspath(args.target))
+    if _motion_file(args):
+        return _motion_file_command(args)
     from . import app
     if args.command == "ps":
         return {"instances": app.instances(), "current": app.load_state().get("current")}
@@ -439,6 +534,8 @@ def _dispatch(mmd, args):
         return mmd.set_model_visible(action == "show", target)
 
     if command == "motion":
+        if action in ("keys", "edit"):
+            return _motion_file_command(args)
         if action == "save":
             if args.model is not None:
                 mmd.select_model(parse_target(args.model))
