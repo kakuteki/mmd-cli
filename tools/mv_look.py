@@ -44,7 +44,9 @@ DEFAULT_LOOK = {
     "beams": {"count": 6, "spread": 76.0, "sway": 3.0, "opacity": 0.55, "loop_seconds": 12,
               "cool": [90, 110, 190], "warm": [200, 150, 80], "warm_every": 5},
     "bokeh": {"count": 26, "opacity": 0.8, "seed": 7, "warm_share": 0.35},
-    "glow": {"threshold": 150, "radius": 16, "strength": 0.6},
+    # tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and
+    # turned the skin pink; this keeps the folds of the dress and still gives her a soft edge
+    "glow": {"threshold": 175, "radius": 14, "strength": 0.45},
     "flare": {"frames": 12, "strength": 0.85, "colour": [255, 244, 224]},
     "flares": [],
 }
