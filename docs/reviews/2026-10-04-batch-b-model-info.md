@@ -39,7 +39,7 @@
 
 - 何を作ったか: README の「状態の確かめ方」の表に `model info` の行を足し `file info` の行に pmx / pmd を足した。コマンド表の `model` 行に `info [名前|番号|F]`、`file info F [--brief]`。`dump` の例の後ろに「モデルの骨と表情」の小節（コマンド 2 行と、初音ミク.pmd の実出力から抜いた JSON、`index` / `panel` / `kind` / `angle` の読み方）。例の数値は `--out out/miku.json` で書いた実出力から写した（センター・左目・左足ＩＫ・まばたき・あ・表情枠の先頭 2 件・ＩＫ枠の先頭 2 件）。ついでに pmd の `counts` のキー順を pmx と同じ（vertices, faces, textures, materials, bones, morphs, display_frames, rigid_bodies, joints）に揃えた（通し確認で順が違うのに気づいた。中身は同じ）。
 - 守る試験: tests/test_pmd.py `test_names_counts_and_textures` にキー順の assert を足した（揃える前は失敗、揃えて通る）。README は試験なし。
-- コミット: 次の節のまとめに書く（この記録と同じコミット）。
+- コミット: b05c6a8（この記録の項目 2〜4 と「構造で判断したこと」を含む）。まとめの追記は次のコミット。
 
 ## pmx / pmd の構造で判断したこと（仕様の出所と実ファイルで確かめたこと）
 
@@ -57,3 +57,17 @@
 - pmd の後置節: カイト.pmd とダミーボーン.pmd は英語ブロックとトゥーンで終わり、剛体・ジョイント節が無い。他の 12 本は全部そろっている。
 - pmd の骨枠名は "ＩＫ\n" のように改行つきで格納（ダミーボーンの 'ﾎﾞｰﾝ02～' には無い）。改行は取り除く。センター はどの枠にも属さない（MMD が独立に出す）ので、Root 枠は作らない。
 - pmd の `counts["textures"]`: 材質 70 バイトの末尾 20 バイトのテクスチャ名を `*` で割った異なる名前の数（ミクは eye2.bmp だけで 1）。トゥーンの 10 枚は数えない。
+
+## まとめ
+
+- コミット（worktree のブランチ `worktree-agent-a7769b4f14a7f6723`、起点 da80c0c、push していない）: 2f5839c（pmx）→ db0f3d0（pmd）→ 4e6f590（model info / file info）→ b05c6a8（README・counts の順・記録）→ このまとめ。
+- 単体試験: `python -m unittest discover -s tests -t .` → `Ran 267 tests in 13.616s` / `OK (skipped=1)`（195 → 267、skip は tests/live のまま）。内訳の追加分は test_pmx 31・test_pmd 31・test_cli 10。MMD は起動していない。tests/live は触っていない。
+- 実機モデルで読めた件数（骨 / 表情 / 表示枠、すべて末尾まで読み切り）: 初音ミク.pmd 122 / 15（+ base）/ 8、MEIKO.pmd 99 / 42 / 8、カイト.pmd 106 / 24 / 8（剛体・ジョイント節なし）、ダミーボーン.pmd 30 / 0 / 2、Sour式鏡音リン White.pmx 373 / 133 / 14、Tda式重音テトAP.pmx 150 / 56 / 11。残りの pmd 8 本・pmx 9 本も探査スクリプトで残り 0 バイトまで読めた。
+- Python 3.9: 触った 7 ファイルを `ast.parse(..., feature_version=(3, 9))` で通した。match 文・`X | Y`・removeprefix は使っていない。
+- 触ったファイル: 新規 mmd_cli/formats/pmx.py・mmd_cli/formats/pmd.py・tests/test_pmx.py・tests/test_pmd.py・docs/reviews/2026-10-04-batch-b-model-info.md、追加のみ mmd_cli/cli.py（`model info` の parser と `_dispatch` の 1 行、`file info --brief`、`_file_info` の分岐、`dispatch_any` の `brief` 引き渡し）・mmd_cli/app.py（`Mmd.model_info` だけ。import は method の中）・tests/test_cli.py・README.md。guard.py / relay.py / win32.py / scene.py / formats/pmm.py / HANDOVER.md は触っていない。
+- できなかった・やらなかったこと:
+  - 実機の MMD に対する `mmd model info 名前`（dump 経由）の通し確認。指示どおり MMD を起動していない。実機の `tests/live` に 1 本足すのも範囲外（tests/live は触らない）。
+  - `model info ファイル` は MMD が無いと attach で失敗する（`run()` と `STANDALONE` を触らない制約のため）。MMD なしなら `file info`。
+  - QDEF・フリップ／インパルスモーフ・ソフトボディ・pmd 種別 3・英語旗 0 の実例は無く、合成データのみ。
+  - pmd の `enabled` は visible と同じにした（PMXEditor の変換結果とは 先 骨で違いうる。推測）。
+  - 探査に使った使い捨てのスクリプト（probe_pmd.py / probe_pmx.py）と出力は worktree から消した（リポジトリには入れていない）。
