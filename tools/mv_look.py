@@ -20,6 +20,7 @@ ffmpeg (the compositing), from back to front:
   `glow.radius` pixels and screened over the picture with `glow.strength`;
 * at every time in `flares` (a hook, a chorus) the camera punches in a little and comes back, and red and
   blue part for those frames (`camera`): the stage and the dancer move, the text in front does not;
+* the lens: darker corners and a fine grain over all of that (`lens`);
 * the text cues of the "front" layer;
 * a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
@@ -53,6 +54,9 @@ DEFAULT_LOOK = {
     # what the camera does at a flare: it punches in by `punch` of the picture and comes back within
     # `punch_frames`, and red and blue part by `aberration` pixels for as long
     "camera": {"punch": 0.04, "punch_frames": 10, "aberration": 3},
+    # the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with
+    # every frame (0 none, up to about 10); both lie under the text in front
+    "lens": {"vignette": 0.3, "grain": 3},
     "flares": [],
 }
 REFERENCE_HEIGHT = 720.0
@@ -319,6 +323,16 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         enable = "+".join("between(t,%.3f,%.3f)" % (at, at + span) for at in hits)
         parts.append("[%s]rgbashift=rh=-%d:bh=%d:enable='%s'[parted]" % (state["label"], shift, shift, enable))
         state["label"] = "parted"
+    lens = look["lens"]
+    finish = []
+    if lens["vignette"] > 0:
+        # the filter takes the angle of the lens: 0.3 is about PI/6.5, 1 about PI/2.6 (dark far into the picture)
+        finish.append("vignette=angle=%s" % _number(0.28 + 0.92 * min(float(lens["vignette"]), 1.0)))
+    if lens["grain"] > 0:
+        finish.append("noise=alls=%d:allf=t" % int(round(lens["grain"])))
+    if finish:
+        parts.append("[%s]%s[lens]" % (state["label"], ",".join(finish)))
+        state["label"] = "lens"
     lay(overlays["front"])
     lay(overlays["flare"])
     parts.append("[%s]format=yuv420p[out]" % state["label"])

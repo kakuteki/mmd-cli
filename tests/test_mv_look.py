@@ -249,6 +249,16 @@ class GraphTest(unittest.TestCase):
             self.assertNotIn("eval=frame", f)
             self.assertNotIn("rgbashift", f)
 
+    def test_the_lens_darkens_the_corners_and_adds_grain_under_the_front_text(self):
+        f = self.filter_of(self.graph(plan=PLAN, look={"lens": {"vignette": 0.4, "grain": 6}}))
+        self.assertIn("vignette=", f)
+        self.assertIn("noise=alls=6:allf=t", f)
+        glow, lens, front = f.index("all_opacity="), f.index("vignette="), f.index("overlay=x=16:y=140")
+        self.assertTrue(glow < lens < front, (glow, lens, front))         # the text in front stays clean
+        plain = self.filter_of(self.graph(look={"lens": {"vignette": 0, "grain": 0}}))
+        self.assertNotIn("vignette", plain)
+        self.assertNotIn("noise", plain)
+
     def test_an_excerpt_shifts_the_cues_and_drops_the_ones_outside(self):
         argv = self.graph(plan=PLAN, start=0.4, duration=0.3)             # 0.4 .. 0.7 s of the song
         f = self.filter_of(argv)
@@ -279,7 +289,7 @@ class RenderTest(unittest.TestCase):
         cls.out = os.path.join(cls.folder, "out.mp4")
         look = os.path.join(cls.folder, "look.json")
         with open(look, "w", encoding="utf-8") as f:
-            json.dump({"beams": {"loop_seconds": 1}, "flares": [1.0]}, f)
+            json.dump({"beams": {"loop_seconds": 1}, "flares": [1.0], "lens": {"vignette": 0, "grain": 0}}, f)
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
             cls.code = mv_look.main(["render", cls.fg, look, cls.out, "--work", os.path.join(cls.folder, "work")])
@@ -289,7 +299,8 @@ class RenderTest(unittest.TestCase):
         plain_look = os.path.join(cls.folder, "plain.json")
         with open(plain_look, "w", encoding="utf-8") as f:
             json.dump({"beams": {"loop_seconds": 1}, "glow": {"strength": 0}, "flares": [1.0],
-                       "flare": {"strength": 0}, "camera": {"punch": 0.1, "aberration": 0}}, f)
+                       "flare": {"strength": 0}, "camera": {"punch": 0.1, "aberration": 0},
+                       "lens": {"vignette": 0, "grain": 0}}, f)
         with contextlib.redirect_stdout(io.StringIO()):
             mv_look.main(["render", cls.fg, plain_look, cls.plain, "--work", os.path.join(cls.folder, "work_plain")])
 
@@ -368,6 +379,28 @@ class RenderTest(unittest.TestCase):
         self.assertGreater(block(16), 200)                               # from its own frame
         self.assertGreater(block(25), 200)                               # 10 frames long
         self.assertLess(block(26), 80)
+
+    def test_the_lens_darkens_the_corners_but_not_the_middle(self):
+        def corner_and_middle(lens):
+            work = os.path.join(self.folder, "lens_%s" % lens["vignette"])
+            look = mv_look.merge_look({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                                       "lens": lens})
+            layers = mv_look.write_layers(look, work, SIZE, 30)
+            out = os.path.join(work, "out.mp4")
+            argv = mv_look.ffmpeg_command(self.fg, out, layers["plate"], layers["light_pattern"], look, SIZE, 30,
+                                          flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"])
+            subprocess.run(argv, check=True, stdin=subprocess.DEVNULL)
+            path = os.path.join(work, "frame.png")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", out, "-frames:v", "1", path],
+                           check=True, stdin=subprocess.DEVNULL)
+            with Image.open(path) as image:
+                return sum(mean(image, (0, 60, 24, 120))), sum(mean(image, (100, 70, 116, 110)))
+        clear_edge, clear_middle = corner_and_middle({"vignette": 0, "grain": 0})
+        dark_edge, dark_middle = corner_and_middle({"vignette": 0.6, "grain": 0})
+        edge, middle = dark_edge / clear_edge, dark_middle / clear_middle
+        self.assertLess(edge, 0.6, (edge, middle))                       # the left edge, where the plate has light
+        self.assertGreater(middle, 0.8, (edge, middle))                  # beside the dancer much less changes
+        self.assertLess(edge, middle - 0.25, (edge, middle))
 
     def test_the_camera_punches_in_and_comes_back(self):
         # the plain picture has a punch of a tenth at 1.0 s and a flare without light: the box (80 px wide) is
