@@ -95,9 +95,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 4. 補間曲線の指定（`bone set --interp`）、キー範囲の操作（コピー・削除・ずらし）。
 5. English Mode の MMD への対応（ダイアログを題名でなくコントロール ID で見分ける）。
 6. pmm 版 0001（同梱の見本）の読み取り。
-7. 着手（2026-10-04 16:20）: `tools/run_live_tests_in_session.py`（中継と同じタスクスケジューラの仕組みで、ログオン中の
+7. 済（2026-10-04 16:40）: `tools/run_live_tests_in_session.py`（中継と同じタスクスケジューラの仕組みで、ログオン中の
    利用者セッションの中で `tests.live.test_live` を pythonw で走らせ、PID の生死で待って判定行を返す。`/TR` は 261 文字
-   までなので引数は job ファイルで渡す）。この PC での通し確認のあと hinata（Python 3.10）で回す。
+   までなので引数は job ファイルで渡す）。この PC で 73 本・470 秒、**hinata（Python 3.10）で SSH から 73 本・165 秒 OK**。
+   hinata での呼び方: `ssh hinata` → `cd C:/work/mmd-cli; $env:MMD_CLI_HOME='C:/work/mmd-cli-home'; python tools/run_live_tests_in_session.py --exe C:/Users/nayta/Desktop/MikuMikuDance_v932x64/MikuMikuDance.exe`。
 8. ヒビカセの場面: えぬたのカメラは会場前提で 0:00・1:00 付近でリンが小さい。寄せるか正面固定にするかは加賀さんの指定待ち。音源なし。
 
 ## 振り返り（方針の見直しの記録）
