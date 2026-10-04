@@ -38,7 +38,7 @@ def emit(payload, out_path, stream):
 
 def failure(exc):
     error = {"type": type(exc).__name__, "message": str(exc)}
-    code = 1
+    code = 2 if isinstance(exc, ValueError) else 1       # a value that cannot be used is a usage error, like argparse's
     answered = getattr(exc, "answered_dialogs", None)      # attached by run(): what was pressed before the failure
     dialogs = getattr(exc, "dialogs", None)
     if dialogs is not None:

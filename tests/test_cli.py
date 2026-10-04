@@ -145,9 +145,10 @@ class EmitTest(unittest.TestCase):
 
 
 class FailureTest(unittest.TestCase):
-    def test_value_errors_become_json_with_exit_code_1(self):
+    def test_value_errors_become_json_with_exit_code_2(self):
+        # a value that cannot be used is a usage error (README: 2), like an argument argparse rejects
         payload, code = cli.failure(ValueError("frame must be 0 or more"))
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)
         self.assertEqual(payload, {"ok": False, "error": {"type": "ValueError",
                                                          "message": "frame must be 0 or more"}})
 

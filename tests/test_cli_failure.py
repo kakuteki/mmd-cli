@@ -32,6 +32,14 @@ class FailureReportTest(unittest.TestCase):
         self.assertEqual(payload["error"]["answered_dialogs"], [{"kind": "model_info", "action": "ok"}])
         self.assertEqual([x["title"] for x in payload["error"]["dialogs"]], ["何か"])
 
+    def test_a_bad_value_is_a_usage_error(self):
+        # review 1 (4.4): README promises exit code 2 for an argument that is wrong; frame set -1 raised ValueError -> 1
+        payload, code = cli.failure(ValueError("need 0 <= start <= end"))
+        self.assertEqual(code, 2)
+        self.assertEqual(payload["error"]["type"], "ValueError")
+        payload, code = cli.failure(app.MmdError("select a model first"))
+        self.assertEqual(code, 1)
+
     def test_what_a_failed_operation_wrote_is_pointed_at(self):
         exc = app.MmdError("boom")
         exc.kept_output = "C:/x/clip.avi.mmdcli-failed"

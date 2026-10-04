@@ -1532,20 +1532,42 @@ class Mmd:
         return {"pid": self.pid, "running": False}
 
 
+def _riff_chunks(data):
+    """(tag, payload) for the chunks laid end to end in `data`; a LIST's payload starts with its kind"""
+    pos = 0
+    while pos + 8 <= len(data):
+        tag, size = data[pos:pos + 4], struct.unpack_from("<I", data, pos + 4)[0]
+        yield tag, data[pos + 8:pos + 8 + size]
+        pos += 8 + size + (size & 1)
+
+
 def _avi_info(path):
-    """size, frame count and frame rate from the main AVI header (avih); empty when the file is not an AVI"""
+    """size, frame count and frame rate from the AVI header list (hdrl); empty when the file is not an AVI.
+    The list is walked, not searched: pixel data may contain any bytes."""
     with open(path, "rb") as f:
-        head = f.read(65536)
-    at = head.find(b"avih")
-    if head[:4] != b"RIFF" or head[8:12] != b"AVI " or at < 0 or at + 48 > len(head):
+        head = f.read(20)
+        if head[:4] != b"RIFF" or head[8:12] != b"AVI " or head[12:16] != b"LIST":
+            return {}
+        size = struct.unpack_from("<I", head, 16)[0]
+        if size > (4 << 20):
+            return {}
+        hdrl = f.read(size)
+    if hdrl[:4] != b"hdrl":
         return {}
-    micro_per_frame, frames = struct.unpack_from("<I", head, at + 8)[0], struct.unpack_from("<I", head, at + 8 + 16)[0]
-    width, height = struct.unpack_from("<II", head, at + 8 + 32)
-    # past 1 GB the file goes on in AVIX segments and avih counts only the first; the OpenDML header has them all
-    total = head.find(b"dmlh")
-    if total >= 0 and total + 12 <= len(head):
-        frames = struct.unpack_from("<I", head, total + 8)[0] or frames
-    return {"size": [width, height], "frames": frames, "fps": round(1e6 / micro_per_frame) if micro_per_frame else None}
+    info, total = {}, None
+    for tag, payload in _riff_chunks(hdrl[4:]):
+        if tag == b"avih" and len(payload) >= 40:
+            micro = struct.unpack_from("<I", payload, 0)[0]
+            info = {"size": list(struct.unpack_from("<II", payload, 32)), "frames": struct.unpack_from("<I", payload, 16)[0],
+                    "fps": round(1e6 / micro) if micro else None}
+        elif tag == b"LIST" and payload[:4] == b"odml":
+            # past 1 GB the file goes on in AVIX segments and avih counts only the first; OpenDML has them all
+            for inner, data in _riff_chunks(payload[4:]):
+                if inner == b"dmlh" and len(data) >= 4:
+                    total = struct.unpack_from("<I", data, 0)[0]
+    if info and total:
+        info["frames"] = total
+    return info
 
 
 def _image_size(path):

@@ -52,6 +52,18 @@ class AviHeaderTest(unittest.TestCase):
         path = write(riff(lst(b"hdrl", avih(3000, 1280, 720), lst(b"odml", dmlh(7743)))))
         self.assertEqual(app._avi_info(path)["frames"], 7743)
 
+    def test_a_dmlh_pattern_inside_the_movie_data_is_not_mistaken_for_the_header(self):
+        # review 2 (6.1): the header is found by walking the RIFF structure, not by searching bytes
+        frame = chunk(b"00db", b"\x00" * 100 + dmlh(999) + b"\x00" * 100)     # pixel data that looks like a chunk
+        path = write(riff(lst(b"hdrl", avih(21, 320, 180)), lst(b"movi", frame)))
+        self.assertEqual(app._avi_info(path)["frames"], 21)
+
+    def test_three_streams_push_dmlh_far_in_but_it_is_still_read(self):
+        # each stream list of an MMD AVI carries a 32,024 byte OpenDML super index; a fixed read window missed dmlh
+        streams = [lst(b"strl", chunk(b"strh", b"\x00" * 56), chunk(b"indx", b"\x00" * 32024)) for _ in range(3)]
+        path = write(riff(lst(b"hdrl", avih(3000, 1280, 720), *streams, lst(b"odml", dmlh(7743)))))
+        self.assertEqual(app._avi_info(path)["frames"], 7743)
+
     def test_not_an_avi(self):
         path = write(b"RIFF\x04\x00\x00\x00WAVE")
         self.assertEqual(app._avi_info(path), {})

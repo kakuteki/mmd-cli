@@ -74,14 +74,14 @@ class RunBatchTest(unittest.TestCase):
 
     def test_stops_at_the_first_failure_by_default(self):
         results, code = self.run_text("frame get\nframe set 99\nframe get\n")
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)                    # the failing line raised ValueError: a usage error
         self.assertEqual([r["ok"] for r in results], [True, False])
         self.assertEqual(results[1]["error"]["type"], "ValueError")
         self.assertEqual(len(self.mmd.calls), 2)
 
     def test_keep_going_runs_everything_and_still_reports_failure(self):
         results, code = self.run_text("frame get\nframe set 99\nframe get\n", stop_on_error=False)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 2)                    # the failing line raised ValueError: a usage error
         self.assertEqual([r["ok"] for r in results], [True, False, True])
 
     def test_usage_errors_in_a_line_are_reported_not_raised(self):
@@ -117,7 +117,7 @@ class RunBatchTest(unittest.TestCase):
     def test_summary(self):
         results, code = self.run_text("frame get\nframe set 99\n", stop_on_error=False)
         s = batch.summary(results, code)
-        self.assertEqual((s["ok"], s["ran"], s["failed"], s["exit_code"]), (False, 2, 1, 1))
+        self.assertEqual((s["ok"], s["ran"], s["failed"], s["exit_code"]), (False, 2, 1, 2))
         self.assertEqual(s["results"], results)
 
 
