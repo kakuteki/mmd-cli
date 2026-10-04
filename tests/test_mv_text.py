@@ -1542,6 +1542,20 @@ class SequencesTest(unittest.TestCase):
         flat = mv_text.render_sequences([{"text": "x", "start": 0, "end": 0.2, "style": "credit"}], self.work)
         self.assertEqual((flat["size"], flat["cues"][0]["id"], flat["cues"][0]["frames"]), ([1280, 720], "c00", 6))
 
+    def test_a_percent_sign_in_the_folder_is_doubled_in_the_pattern(self):
+        # the pattern is a printf format, for Python and for ffmpeg alike: a % of the folder's own name must
+        # not be read as the start of a conversion ("% d" is one, "%d" another, "%s" a third)
+        for name in ("50% done", "take %d", "100%", "%s and %05d"):
+            work = os.path.join(os.path.dirname(self.work), name)
+            plan = mv_text.render_sequences(small_doc(RISE_CUE), work)
+            pattern = plan["cues"][0]["pattern"]
+            folder = os.path.abspath(work).replace("\\", "/")
+            self.assertEqual(pattern, folder.replace("%", "%%") + "/cue_a1/f%05d.png", name)
+            for i in (0, 7, 29):
+                self.assertEqual(pattern % i, folder + "/cue_a1/f%05d.png" % i, name)
+                self.assertTrue(os.path.exists(pattern % i), name)
+            self.assertEqual(sorted(os.listdir(os.path.join(work, "cue_a1"))), ["f%05d.png" % i for i in range(30)], name)
+
     def test_frames_left_by_an_earlier_longer_run_are_removed(self):
         # ffmpeg reads a sequence until a number is missing: a frame left behind would lengthen the cue
         folder = os.path.join(self.work, "cue_a1")
@@ -1882,7 +1896,56 @@ class MainTest(unittest.TestCase):
         with open(self.cues, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["size"], [640, 360])                # the cue file was not written over
 
-    def test_the_warnings_are_printed_as_ascii(self):
+    def test_a_warning_that_quotes_a_character_outside_ascii_is_ascii(self):
+        # a character no font here has is named in a warning.  The terminal is cp932: the warning writes it
+        # as its escape, and the line printed is ASCII whatever the result holds (a folder with a Japanese name)
+        fonts = book()
+        face = fonts.font("jp", 46, 700)
+        missing = next((ch for ch in "\ud55c\uac00\ua000\u0e01" if not fonts.has_glyph(face, ch)), None)
+        if missing is None:
+            self.skipTest("the Japanese font of this machine has every character this test could ask for")
+        self.write(small_doc({"id": "w", "start": 0, "end": 0.2, "text": "\u97ff" + missing, "enter": 0, "exit": 0}))
+        work = self.path("\u9023\u756a work")
+        code, result = run(["frames", self.cues, work])                       # run() fails on a line that is not ASCII
+        self.assertEqual(code, 0, result)
+        quoting = [w for w in result["warnings"] if "U+%04X" % ord(missing) in w]
+        self.assertEqual(len(quoting), 1, [ascii(w) for w in result["warnings"]])
+        self.assertTrue(quoting[0].startswith("cue w:"))
+        quoting[0].encode("ascii")                                            # the warning itself, read back from the JSON
+        self.assertIn("\\u%04x" % ord(missing), quoting[0])
+        # nothing is lost on the way: the Japanese of the folder comes back out of the JSON
+        self.assertEqual(result["cues"][0]["pattern"], os.path.abspath(work).replace("\\", "/") + "/cue_w/f%05d.png")
+        self.assertTrue(os.path.exists(result["cues"][0]["pattern"] % 5))
+        # the same through preview, whose result names the picture
+        out = self.path("\u9759\u6b62\u753b.png")
+        code, result = run(["preview", self.cues, out, "--at", "0.1"])
+        self.assertEqual((code, result["out"]), (0, os.path.abspath(out)))
+        self.assertEqual([w for w in result["warnings"] if "U+%04X" % ord(missing) in w], quoting)
+
+    def test_an_error_that_quotes_japanese_is_printed_as_ascii(self):
+        self.write({"cues": [{"id": "e", "start": 0, "end": 1, "text": "x", "style": "\u6b4c\u8a5e"}]})
+        code, result = run(["frames", self.cues, self.path("work")])
+        self.assertEqual(code, 2)
+        self.assertIn("\u6b4c\u8a5e", result["error"]["message"])            # it comes back out of the JSON
+        code, result = run(["preview", self.path("\u7121\u3044.json"), self.path("p.png"), "--at", "1"])
+        self.assertEqual(code, 2)
+        self.assertIn("\u7121\u3044.json", result["error"]["message"])
+
+    def test_a_malformed_command_line_is_left_to_argparse(self):
+        # like the other tools of this repository: usage on stderr, exit code 2 and nothing on stdout (the
+        # README says so); only what argparse accepts ends in a line of JSON
+        for argv in (["render"], ["preview", self.cues, self.path("p.png")], ["frames", self.cues], ["sing"], [],
+                     ["frames", self.cues, self.path("work"), "--loud"]):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as caught:
+                    mv_text.main(argv)
+            self.assertEqual(caught.exception.code, 2, argv)
+            self.assertEqual(out.getvalue(), "", argv)
+            self.assertTrue(err.getvalue().startswith("usage:"), argv)
+        self.assertEqual(os.listdir(self.folder), ["cues.json"])
+
+    def test_the_warnings_of_the_cues_are_in_the_result(self):
         self.write(small_doc({"id": "w", "start": 0, "end": 0.2, "text": "\u97ff\u304b\u305b" * 30, "enter": 0, "exit": 0}))
         code, result = run(["frames", self.cues, self.path("work")])
         self.assertEqual(code, 0)
@@ -1981,6 +2044,23 @@ class FfmpegTest(unittest.TestCase):
         lit = [i for i, level in enumerate(levels) if level > 128]
         self.assertEqual(lit, [31, 33] + list(range(35, 41)) + [123, 125] + list(range(127, 135)))
         self.assertEqual([s["codec_type"] for s in streams(out)["streams"]], ["video"])        # no sound in, none out
+
+    def test_ffmpeg_finds_the_pictures_in_a_folder_with_a_percent_sign(self):
+        # ffmpeg reads the pattern as a printf format too: a % of the folder's name that is not doubled makes it
+        # look for other files, or none.  With a space and Japanese in the names as well.
+        base = self.path("100% %d \u6620\u50cf")
+        os.makedirs(base)
+        clip = os.path.join(base, "in 50%.mp4")
+        ffmpeg("-f", "lavfi", "-i", "color=c=black:s=320x180:r=30", "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", clip)
+        cues = self.cues({"id": "h", "start": 0.5, "end": 1.0, "text": "HI", "style": "hook", "anim": "flash"})
+        out = os.path.join(base, "out %s.mp4")
+        for work in (None, os.path.join(base, "w%05d")):                       # OUT.work, and one given
+            code, result = run(["render", clip, cues, out] + (["--work", work] if work else []))
+            self.assertEqual((code, result["ok"], result["ffmpeg"]), (0, True, 0), result)
+            self.assertEqual(result["work"], os.path.abspath(work or out + ".work"))
+            lit = [i for i, level in enumerate(brightness(out, (320, 180))) if level > 128]
+            self.assertEqual(lit, [15, 17] + list(range(19, 30)), work)
+            os.remove(out)
 
     def test_a_failed_ffmpeg_is_exit_1_and_leaves_no_output(self):
         clip = self.path("in.mp4")
