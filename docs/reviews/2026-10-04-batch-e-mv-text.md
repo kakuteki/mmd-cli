@@ -179,7 +179,7 @@ palette light で重ねた。
 - コミット（ブランチ `worktree-agent-ae4a7ddfdfb43b168`、起点 8ecbb80、push していない）: a061b35（設計の記録の写し。後で外した）→
   093f9cf（書体・合図）→ c45f1f1（動き）→ 2c9f300（layer・三分の一）→ a7783db（割り付け）→ 28b5dca（描画）→ e24306a（写しを外す）→
   2d10c95（連番・計画）→ de36e87（render / preview / frames）→ 92863af（overlay_text の置き換え・README）→ e40cef5（整数画素と端数の移動）→
-  14982d2（HANDOVER を戻す）→ このあとの 1 本（試験 1 本とこの記録）。
+  14982d2（HANDOVER を戻す）→ fcc83e4（mv_look からの呼び方の試験とこの記録）→ 最後の 1 本（道具の注釈 2 か所とこの行）。
 - 単体試験: `python -m unittest discover -s tests -t .` → `Ran 523 tests ... OK (skipped=1)`（416 − 3（overlay_text）+ 110（test_mv_text）。
   test_mv_text の内訳: Runs 3・FontFiles 4・LoadFont 4・CueFile 13・Motion 12・Anchor 6・Lines 10・Canvas 6・Frames 4・Draw 15・
   Sequences 10・Command 9・Main 11・Ffmpeg 3。この PC では Y1・Noto・ffmpeg が在るので 110 本とも走った）。

@@ -150,9 +150,11 @@ INK_COPY = 3.0                               # px: how far left of the text its 
 SHADOW = {"alpha": 170, "blur": 6.0, "offset": 2.0}       # of 255; px: the blur radius and how far down it lies
 BLUR_REACH = 3.0                             # Pillow's GaussianBlur(r) reaches about 2.6 r past its source (measured)
 CANVAS_PAD = 8                               # px (not scaled) around everything a cue draws
-COMMAND_LIMIT = 32000                        # characters of one command line (Windows takes 32767)
+
+# ---- the sequences and the video ------------------------------------------------------------
 FRAME_NAME = "f%05d.png"                     # the pictures of a cue, numbered from 0, in a folder cue_<id>
-OLD_FRAME = re.compile(r"^f\d+\.png(\.part)?$")
+OLD_FRAME = re.compile(r"^f\d+\.png(\.part)?$")          # what an earlier run may have left in that folder
+COMMAND_LIMIT = 32000                        # characters of one command line (Windows takes 32767)
 
 
 @dataclasses.dataclass
@@ -166,7 +168,8 @@ class Style:
     upper: bool = False
     underline: bool = False      # an accent rule under the block, drawn as the cue comes in
     ink_copy: bool = False       # a copy in the palette's ink, a little to the left, behind the text
-    shadow: bool = False         # a soft dark copy under the text (SHADOW), for text that lies on the picture
+    shadow: bool = False         # a soft copy under the text in the palette's shadow colour (SHADOW): it parts
+    #                              text that lies on the picture from what is behind it
 
 
 # Sizes are px in a 720 high frame and scale with the frame height.  A style the design gives one script
