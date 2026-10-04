@@ -160,9 +160,14 @@ class LoadFontTest(unittest.TestCase):
         book = mv_text.FontBook()
         glitch = book.font("accent", 60, 900)
         self.assertFalse(book.has_glyph(glitch, "/"))
-        for ch in "HIBKASE09 ":
+        for ch in "HIBKASE09  ":
             self.assertTrue(book.has_glyph(glitch, ch), ch)
         self.assertTrue(book.has_glyph(book.font("latin", 30, 400), "/"))
+        # white space is no exception: the Y1 faces have a space and a no-break space, and would draw their
+        # box for a tab or an em space
+        for ch in "\t 　":
+            self.assertFalse(book.has_glyph(glitch, ch), repr(ch))
+        self.assertTrue(book.has_glyph(book.font("jp", 44, 900), "　"))
 
     def test_the_same_face_is_loaded_once(self):
         try:
@@ -228,6 +233,16 @@ class CueFileTest(unittest.TestCase):
     def test_a_text_with_line_breaks_is_several_lines_of_one_style(self):
         sheet = mv_text.parse_cues(one_cue(text="one\ntwo", style="credit"))
         self.assertEqual([(line.text, line.style) for line in sheet.cues[0].lines], [("one", "credit"), ("two", "credit")])
+
+    def test_every_kind_of_line_break_makes_lines(self):
+        # a text typed on Windows has CR LF: the CR must not stay at the end of the line (it was drawn as a box)
+        for text in ("one\r\ntwo", "one\rtwo", "one\ntwo\r\n", "one\r\n\r\ntwo", "one two", "\r\none\ntwo"):
+            sheet = mv_text.parse_cues(one_cue(text=text, style="credit"))
+            self.assertEqual([line.text for line in sheet.cues[0].lines], ["one", "two"], repr(text))
+        lines = mv_text.parse_cues({"cues": [{"start": 0, "end": 1, "lines": [{"text": "a\r\nb"}, {"text": "c\r"}]}]}).cues[0].lines
+        self.assertEqual([line.text for line in lines], ["a", "b", "c"])
+        with self.assertRaises(ValueError):
+            mv_text.parse_cues(one_cue(text="\r\n\t 　\r\n"))                # nothing but white space
 
     def test_the_old_flat_list_loads_and_maps_styles_and_anims(self):
         sheet = mv_text.parse_cues(OLD_FORMAT)
@@ -536,6 +551,12 @@ def rect(origin, size):
     return (origin[0], origin[1], origin[0] + size[0], origin[1] + size[1])
 
 
+# the white space that stays inside a line (str.splitlines() ends a line at the rest: CR, LF, U+2028 ...), but
+# for the ideographic space, which is as wide as a kanji: tab, space, no-break space, the em and en spaces ...
+WHITE_SPACE = [chr(c) for c in range(0x10000)
+               if chr(c).isspace() and len(("a" + chr(c) + "b").splitlines()) == 1 and c != 0x3000]
+
+
 class AnchorTest(unittest.TestCase):
     def test_left_center_and_right_keep_the_64_px_margins(self):
         for cue in (title, cue_of):
@@ -695,6 +716,54 @@ class LinesTest(unittest.TestCase):
         self.assertIn("U+002F", layout.warnings[0])
         self.assertIn("hook9", layout.warnings[0])
         self.assertEqual(lay(cue_of("AB09", "hook")).warnings, [])
+
+    def test_white_space_moves_the_pen_by_a_normal_space_and_draws_nothing(self):
+        # a tab, an em space and the like have no glyph in most faces: drawn, they are the box a face has for
+        # what it lacks.  Each takes the room of the normal space of the face of its run, in every style.
+        self.assertEqual(len(WHITE_SPACE), 18)
+        self.assertTrue({"\t", " ", "\u00a0", "\u2003", "\u2009", "\u202f"} <= set(WHITE_SPACE))
+        for style in mv_text.STYLES:
+            plain = lay(cue_of("A B", style, id="ws1"))
+            wanted = plain.lines[0].glyphs[1]
+            self.assertIsNone(wanted.ink, style)
+            self.assertEqual(wanted.advance, wanted.font.getlength(" "), style)
+            for space in WHITE_SPACE:
+                layout = lay(cue_of("A" + space + "B", style, id="ws1"))
+                a, gap, b = layout.lines[0].glyphs
+                where = (style, "U+%04X" % ord(space))
+                self.assertEqual(gap.char, space, where)
+                self.assertIsNone(gap.ink, where)
+                self.assertIs(gap.font, wanted.font, where)                  # no other face stands in for it
+                self.assertEqual((gap.advance, gap.tracking, gap.size), (wanted.advance, wanted.tracking, wanted.size), where)
+                self.assertEqual(layout.lines[0].width, plain.lines[0].width, where)
+                self.assertEqual(layout.warnings, [], where)
+
+    def test_the_ideographic_space_keeps_its_full_width(self):
+        # Japanese text holds a column with it: a title shown one character at a time is padded with it
+        wide = lay(cue_of("\u30d2\u3000\u30d3", "title_jp")).lines[0].glyphs
+        self.assertIsNone(wide[1].ink)
+        self.assertEqual([g.advance for g in wide], [44.0, 44.0, 44.0])
+        self.assertIs(wide[1].font, wide[0].font)
+        # in a style whose Latin has a face of its own too: it is Japanese, the Japanese face gives its width
+        mixed = lay(cue_of("A\u3000B", "credit"))
+        gap = mixed.lines[0].glyphs[1]
+        self.assertEqual((gap.advance, gap.size, gap.tracking, gap.ink), (24.0, 24, 0.0, None))
+        self.assertIs(gap.font, book().font("jp", 24, 400))
+        self.assertEqual(mixed.warnings, [])
+        # the four cues of the production title are as wide as the word
+        word = lay(cue_of("\u30d2\u30d3\u30ab\u30bb", "title_jp", size=104)).lines[0].width
+        for text in ("\u30d2\u3000\u3000\u3000", "\u3000\u30d3\u3000\u3000", "\u3000\u3000\u30ab\u3000", "\u3000\u3000\u3000\u30bb"):
+            self.assertEqual(lay(cue_of(text, "title_jp", size=104)).lines[0].width, word)
+
+    def test_a_japanese_font_without_the_ideographic_space_still_gives_it_a_full_em(self):
+        arial = "C:/Windows/Fonts/arial.ttf"                                   # Latin only: no U+3000
+        if not os.path.exists(arial):
+            self.skipTest("no font without the ideographic space among the candidates")
+        latin_only = mv_text.FontBook(user_dir=tempfile.mkdtemp(), jp_candidates=(arial,))
+        sheet = mv_text.parse_cues({"cues": [cue_of("A\u3000B", "caption")]})
+        gap = mv_text.layout_cue(sheet.cues[0], sheet, latin_only).lines[0].glyphs[1]
+        self.assertFalse(latin_only.has_glyph(gap.font, "\u3000"))
+        self.assertEqual((gap.advance, gap.ink), (28.0, None))
 
     def test_the_block_holds_the_reference_box_and_the_ink(self):
         for cue in (title(), cue_of(), cue_of("HIBIKASE", "hook"), cue_of("gypsy jig", "caption")):
@@ -1109,6 +1178,27 @@ class DrawTest(unittest.TestCase):
         whites = [a for _, (r, g, b, a) in im.getcolors(maxcolors=1 << 20) if (r, g, b) == (255, 255, 255) and a > 0]
         self.assertLessEqual(max(whites), 170)
         self.assertEqual(mv_text.PALETTES["dark"]["shadow"], (0, 0, 0))
+
+    def test_a_tab_a_carriage_return_and_an_em_space_leave_no_mark(self):
+        # each of them used to be drawn as the box a face has for what it lacks.  The picture is that of the
+        # same text with a normal space or a plain line break in their place.
+        cases = (("credit", "Motion\tえぬた", "Motion えぬた"),
+                 ("sub", "feat. Kagamine Rin", "feat. Kagamine Rin"),
+                 ("lyric", "響かせて\r\nいくよ\r\n", "響かせて\nいくよ"),
+                 ("caption", "a\tb c d e f", "a b c d e f"),
+                 ("hook", "HI\tHI", "HI HI"), ("logo", "A B", "A B"))
+        for style, text, same in cases:
+            layout, wanted = lay(cue_of(text, style)), lay(cue_of(same, style))
+            self.assertEqual(layout.warnings, wanted.warnings, style)
+            self.assertEqual((layout.block, layout.anchor, layout.canvas, layout.canvas_origin),
+                             (wanted.block, wanted.anchor, wanted.canvas, wanted.canvas_origin), style)
+            self.assertEqual(mv_text.draw(layout, hold(layout)).tobytes(), mv_text.draw(wanted, hold(wanted)).tobytes(), style)
+        # the space itself is empty: nothing between the two letters, in the columns the space takes
+        layout = lay(cue_of("A\tB", "caption"))
+        a, gap, b = layout.lines[0].glyphs
+        left = block_rect(layout)[0] + int(a.advance) + 1
+        strip = alpha(mv_text.draw(layout, hold(layout))).crop((left, 0, left + int(gap.advance) - 2, layout.canvas[1]))
+        self.assertEqual(strip.getextrema(), (0, 0))
 
     def test_a_roll_passes_through_the_frame(self):
         layout = lay(title(anim="roll", start=10.0, end=30.0, x="center"))

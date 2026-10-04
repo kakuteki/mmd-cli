@@ -100,6 +100,7 @@ JP_FONTS = ("C:/Windows/Fonts/NotoSansJP-VF.ttf", "C:/Windows/Fonts/YuGothB.ttc"
             "C:/Windows/Fonts/msgothic.ttc")
 CJK_START = 0x2E80                           # from here up (CJK, kana, fullwidth forms) a code point is Japanese
 MISSING = "\U0010ffff"                       # no font has it: it is drawn as the face's "missing" box
+IDEOGRAPHIC_SPACE = "　"                 # the one white space that keeps a width of its own (a full em)
 
 # ---- the cue file ---------------------------------------------------------------------------
 FPS = 30
@@ -277,10 +278,9 @@ class FontBook:
         return self._faces[key]
 
     def has_glyph(self, font, ch):
-        """whether the face draws `ch` itself.  A code point it lacks comes out as its "missing" box, which is
-        what MISSING comes out as too; white space draws nothing in any face and is taken as present."""
-        if ch.isspace():
-            return True
+        """whether the face has `ch`.  A code point it lacks comes out as its "missing" box, which is what
+        MISSING comes out as too.  (That holds for white space as well: most faces have a space and a
+        no-break space and draw the box for a tab or an em space, so white space is never drawn at all.)"""
         key = (id(font), ch)
         if key not in self._glyphs:
             mask, missing = font.getmask(ch), font.getmask(MISSING)
@@ -401,7 +401,8 @@ def _parse_cue(raw, index, old):
         text = spec.get("text")
         if not isinstance(text, str):
             raise ValueError("%s: %s has no text" % (what, where))
-        return [LineSpec(part, style, size) for part in text.split("\n") if part.strip()]
+        # every kind of line break makes a line (CR LF from Windows is one); a line of white space alone is none
+        return [LineSpec(part, style, size) for part in text.splitlines() if part.strip()]
 
     start, end = seconds("start"), seconds("end")
     if not end > start:
@@ -617,6 +618,16 @@ def _copy_offset(scale):
     return max(1, int(round(INK_COPY * scale)))
 
 
+def _space(ch, font, px, book):
+    """px a white space character moves the pen; it is never drawn.  Whatever it is (a tab, an em space, a
+    thin space: most faces have no glyph for them and would draw their "missing" box) it takes the room of
+    the face's normal space.  The ideographic space alone keeps its own width, a full em: Japanese text
+    holds a column with it."""
+    if ch == IDEOGRAPHIC_SPACE:
+        return float(font.getlength(ch)) if book.has_glyph(font, ch) else float(px)
+    return float(font.getlength(" "))
+
+
 def _glyphs(text, style, factor, book, warnings, what):
     """the characters of a line with the face that draws each: Japanese from the Japanese font, the rest from
     the Latin face of the style, or from the Japanese font as well where that face lacks the character (the
@@ -628,6 +639,9 @@ def _glyphs(text, style, factor, book, warnings, what):
     for script, part in runs(text):
         for ch in part:
             font, px, tracking = (latin, latin_px, style.tracking) if script == "latin" else (jp, jp_px, 0.0)
+            if ch.isspace():
+                out.append(Glyph(ch, script, font, px, _space(ch, font, px, book), tracking, None))
+                continue
             if font is not jp and not book.has_glyph(font, ch):
                 _warn(warnings, "%s: %s has no glyph for %r (U+%04X), it is drawn with %s"
                       % (what, os.path.basename(font.path), ch, ord(ch), os.path.basename(jp.path)))
