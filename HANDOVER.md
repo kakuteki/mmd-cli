@@ -113,7 +113,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
    下請け batch B を査読 3（`docs/reviews/2026-10-04-review-3-model-info.md`、高なし・中 2）のうえ取り込み、中 2 と低 3 を直した。
    `mmd model info FILE` は MMD なしで読む。`file info` も pmx/pmd 対応、`--brief`）。pmd の表情 `base` は一覧に出さないので
    `dump` の morph_count（base を含む）と 1 違う。
-4. 補間曲線の指定（`bone set --interp`）、キー範囲の操作（コピー・削除・ずらし）。
+4. 着手（2026-10-04 17:20、下請け batch C、worktree）: `mmd motion keys` / `mmd motion edit`（MMD なしで vmd のキーの一覧と
+   範囲操作: shift / delete / copy / カメラの距離・位置・視野の変更 / 補間の置換）と `bone set` / `camera set --interp`。
+   記録は `docs/reviews/2026-10-04-batch-c-motion-edit.md`。取り込み前に差分を査読する。ヒビカセのカメラ調整に使う。
 5. English Mode の MMD への対応（ダイアログを題名でなくコントロール ID で見分ける）。
 6. pmm 版 0001（同梱の見本）の読み取り。
 7. 済（2026-10-04 15:10）: `tools/run_live_tests_in_session.py`（中継と同じタスクスケジューラの仕組みで、ログオン中の
@@ -121,7 +123,13 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
    までなので引数は job ファイルで渡す）。この PC で 73 本・470 秒、**hinata（Python 3.10）で SSH から 73 本・165 秒 OK**。
    hinata での呼び方: `ssh hinata` → `cd C:/work/mmd-cli; $env:MMD_CLI_HOME='C:/work/mmd-cli-home'; python tools/run_live_tests_in_session.py --exe C:/Users/nayta/Desktop/MikuMikuDance_v932x64/MikuMikuDance.exe`。
 8. ヒビカセの場面: えぬたのカメラは会場前提で 0:00・1:00 付近でリンが小さい。寄せるか正面固定にするかは加賀さんの指定待ち。音源なし。
-   ログオンが戻ったら、hinata で「元のカメラ／リンに寄せたカメラ／正面固定」の 3 案を 0:00 と 1:00 の短い抜粋で作って比較に出す。
+   実測（2026-10-04、`_spike/out/hibikase/enuta/.../ヒビカセ_カメラ_0_992.vmd`、260 キー、0〜7742）: 冒頭 0〜247 は距離 500〜800・
+   視野 30・注視点の高さ 60（会場の引き）。248〜530 は視野 5 の望遠で距離 325〜550・高さ 12〜26。1:00〜1:10（1800〜2100）は
+   距離 90〜500。全体の中央値 250、最小 25、最大 1200。
+   案: A 元のまま / B 寄せる（視野 30 の区間は距離を 60 以下に抑え高さを 12〜16 に。視野 5 の区間は距離 × 0.6 程度） /
+   C 正面固定（フレーム 0 に 距離 35・高さ 12・回転 0 の 1 キーだけ）。B・C は batch C の `motion edit` で作り、
+   ログオンが戻ったら hinata で 0:00 と 1:00 の短い抜粋（各 10 秒）を 3 案ぶん書き出して比較に出す。
+   `motion edit` に距離の上下限（clamp）が無ければ取り込み時に足す。
 9. 任意: ダイアログを隠す専用スレッド（Guard のループがハンドラや `_gone` の待ちで塞がっている間も 1 ms で隠す）。
    通常経路では隠すまで 1 標本以内なので優先度は低い。失敗経路（拒否の待ち 3〜5 秒）で新しいダイアログが出た場合にだけ効く。
 
