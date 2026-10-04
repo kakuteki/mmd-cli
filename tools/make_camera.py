@@ -35,11 +35,13 @@ How the strength of the motion is measured (analyze):
 How the shots are cut (cut_shots) and what each one does (plan_shots):
 
 * From the start of the dance, a shot ends at the strongest candidate cut that keeps it between
-  --min-shot and --max-shot frames (and leaves at least --min-shot for the rest); when there is none
-  in reach, what remains is divided evenly into as few shots of at most --max-shot as possible, one at
-  a time, so a stretch without a clear change still changes camera now and then.  The last shot ends
-  on the last frame of the dance.  --max-shot must be at least twice --min-shot, or such a division
-  is not always possible.
+  --min-shot and --max-shot frames (and leaves at least --min-shot for the rest).  When there is none
+  in reach, the stretch up to the next clear cut (one at least as strong as the median of all the
+  cuts) is divided evenly into as few shots of at most --max-shot as possible and the first of them
+  is taken; the rest is planned again from there, so the cut is met on a shot change.  With no clear
+  cut ahead the rest of the dance is divided the same way, so a stretch without a change of pace
+  still changes camera now and then.  The last shot ends on the last frame of the dance.  --max-shot
+  must be at least twice --min-shot, or such a division is not always possible.
 * A shot is a peak when at least 60 % of its frames lie in high sections, a valley when at least 60 %
   lie in low ones, and mid otherwise.
 * Each shot is one of four kinds, never the same as the shot before: a push in (distance 32 to 26,
@@ -309,26 +311,42 @@ def check_limits(min_shot, max_shot):
                          "shots long could not be divided" % (max_shot, min_shot))
 
 
+def _median(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    return ordered[n // 2] if n % 2 else (ordered[n // 2 - 1] + ordered[n // 2]) / 2.0
+
+
+def _first_piece(stretch, max_shot):
+    """the length of the first of the fewest equal pieces of at most max_shot that make up `stretch`"""
+    pieces = -(-stretch // max_shot)
+    return -(-stretch // pieces)
+
+
 def cut_shots(analysis, min_shot=MIN_SHOT, max_shot=MAX_SHOT):
     """(start, end, how) of every shot; see the module docstring"""
     check_limits(min_shot, max_shot)
     last = analysis.last
     strength = {b.frame: b.strength for b in analysis.boundaries}
+    clear = sorted(f for f, s in strength.items() if s >= _median(strength.values())) if strength else []
     shots, start = [], 0
     while start <= last:
         remaining = last - start + 1
         # a cut must leave at least min_shot frames for the rest of the dance
         longest = min(max_shot, remaining - min_shot)
         candidates = [f for f in strength if start + min_shot <= f <= start + longest]
+        # a clear cut beyond reach that still leaves min_shot frames after it (then it is more than
+        # max_shot away, so the stretch up to it divides into pieces between max_shot / 2 and max_shot)
+        ahead = [f for f in clear if f > start + longest and last + 1 - f >= min_shot]
         if candidates:
             # the strongest change; the earliest when equal
             frame = min(candidates, key=lambda f: (-strength[f], f))
             end, how = frame - 1, "section"
-        elif remaining <= max_shot:
+        elif remaining <= max_shot and not ahead:
             end, how = last, "end"
         else:
-            pieces = -(-remaining // max_shot)
-            end, how = start + -(-remaining // pieces) - 1, "even"
+            # divide the stretch up to the next clear cut (or the rest) evenly and take its first piece
+            end, how = start + _first_piece((ahead[0] if ahead else last + 1) - start, max_shot) - 1, "even"
         shots.append((start, end, how))
         start = end + 1
     return shots

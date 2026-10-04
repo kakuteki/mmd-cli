@@ -210,6 +210,50 @@ class ShotLengthTest(unittest.TestCase):
         shots = make_camera.plan_shots(still_dance(100))
         self.assertEqual([(s.start, s.end) for s in shots], [(0, 100)])
 
+    def analysis_with(self, last, boundaries):
+        """an Analysis whose only content is the cuts: (frame, strength) pairs"""
+        n = last + 1
+        sections, start, level = [], 0, "low"
+        for frame, _ in boundaries:
+            sections.append(make_camera.Section(start, frame - 1, level, 0.0))
+            start, level = frame, "high" if level == "low" else "low"
+        sections.append(make_camera.Section(start, last, level, 0.0))
+        return make_camera.Analysis(last, [0.0] * n, [0.0] * n, {"low": 0.0, "high": 0.0}, sections,
+                                    [make_camera.Boundary(f, s) for f, s in boundaries])
+
+    def test_a_cut_just_out_of_reach_is_met_by_dividing_the_stretch_before_it(self):
+        # 523 is 43 frames beyond the longest shot: two shots of 262 / 261 end on it instead of 456 + ...
+        shots = make_camera.cut_shots(self.analysis_with(1499, [(523, 10.0)]))
+        self.assertEqual(shots[:2], [(0, 261, "even"), (262, 522, "section")])
+        self.assertEqual(shots[2][0], 523)
+        self.assertEqual(shots[-1][1], 1499)
+        for start, end, _ in shots:
+            self.assertTrue(180 <= end - start + 1 <= 480, (start, end))
+
+    def test_random_cuts_always_respect_the_limits(self):
+        import random
+        rng = random.Random(0)
+        for _ in range(300):
+            min_shot = rng.choice((2, 30, 180, 300))
+            max_shot = min_shot * rng.choice((2, 3, 5)) + rng.randint(0, 50)
+            last = rng.randint(min_shot, 12000)
+            frames = sorted(set(rng.randint(1, last) for _ in range(rng.randint(0, 40))))
+            boundaries = [(f, rng.random() * 100) for f in frames]
+            shots = make_camera.cut_shots(self.analysis_with(last, boundaries), min_shot, max_shot)
+            self.assertEqual((shots[0][0], shots[-1][1]), (0, last), (min_shot, max_shot, last, frames))
+            for (a0, a1, _), (b0, _, _) in zip(shots, shots[1:]):
+                self.assertEqual(b0, a1 + 1)
+            for start, end, _ in shots:
+                self.assertTrue(min_shot <= end - start + 1 <= max_shot, (min_shot, max_shot, last, frames, shots))
+
+    def test_only_a_clear_cut_is_aimed_at_from_afar(self):
+        # 700 is weak (below the median strength): the stretch is divided up to 900, and 900 is the cut
+        shots = make_camera.cut_shots(self.analysis_with(2999, [(700, 1.0), (900, 50.0)]))
+        self.assertEqual(shots[:2], [(0, 449, "even"), (450, 899, "section")])
+        # in reach, the strongest cut wins even when it is weak in absolute terms
+        shots = make_camera.cut_shots(self.analysis_with(2999, [(300, 1.0), (1500, 50.0)]))
+        self.assertEqual(shots[0], (0, 299, "section"))
+
 
 class ShotTypeTest(unittest.TestCase):
     def plans(self, dance, seeds=range(10), **limits):
