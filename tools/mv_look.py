@@ -1,0 +1,433 @@
+"""Put a stage, light and glow around the dancer MMD rendered with an alpha channel: nothing happens in MMD.
+
+    python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR]
+                                   [--from SECONDS] [--to SECONDS] [--size WxH] [--fps N]
+    python tools/mv_look.py layers look.json WORK --size WxH --fps N
+
+MMD writes the picture with an alpha channel when its background is blackened (menu 282, `mmd menu set 282
+on`): both the PNG of `render image` and the uncompressed AVI of `render avi --codec 未圧縮` are BGRA with
+alpha 0 where nothing was drawn (measured on v9.32, 2026-10-04).  So the dancer can be laid over any stage
+afterwards, and light can be put behind her.  This tool makes that picture with Pillow (the layers) and
+ffmpeg (the compositing), from back to front:
+
+* the plate: a dark stage, a band of haze at the horizon and a pool of light behind the dancer (`plate`);
+* the light: soft beams fanning down from above the frame and a few floating specks, drawn on black and
+  screened over the plate.  It is a loop of `beams.loop_seconds` that closes (every motion in it is a
+  whole number of sine periods per loop), repeated for the whole song with -stream_loop;
+* the text cues of the "back" layer (tools/mv_text.py renders them; a title behind the dancer);
+* the dancer, by her alpha;
+* her glow: the bright parts of the dancer alone (each channel above `glow.threshold` of 255), blurred by
+  `glow.radius` pixels and screened over the picture with `glow.strength`;
+* the text cues of the "front" layer;
+* a flare at every time in `flares` (a hook, a chorus): the whole picture lights up for `flare.frames`.
+
+look.json overrides single values of DEFAULT_LOOK; an unknown name is an error (a misspelt setting would
+otherwise silently do nothing).  Lengths are in pixels of a 720 line picture and scale with the height.
+The output has no sound: the song is added afterwards (ffmpeg -i OUT.mp4 -i song.wav -c:v copy ...).
+"""
+import argparse
+import copy
+import importlib.util
+import json
+import math
+import os
+import subprocess
+import sys
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
+
+DEFAULT_LOOK = {
+    # colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)
+    "plate": {"base": [10, 12, 20], "haze": [34, 44, 78], "pool": [70, 86, 140], "horizon": 0.68, "vignette": 0.45},
+    # count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm
+    "beams": {"count": 6, "spread": 76.0, "sway": 3.0, "opacity": 0.55, "loop_seconds": 12,
+              "cool": [90, 110, 190], "warm": [200, 150, 80], "warm_every": 5},
+    "bokeh": {"count": 26, "opacity": 0.8, "seed": 7, "warm_share": 0.35},
+    "glow": {"threshold": 150, "radius": 16, "strength": 0.6},
+    "flare": {"frames": 12, "strength": 0.85, "colour": [255, 244, 224]},
+    "flares": [],
+}
+REFERENCE_HEIGHT = 720.0
+LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
+
+
+# ---- the look -------------------------------------------------------------------------------
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _check(name, value, default):
+    if isinstance(default, list):
+        if not isinstance(value, list) or not all(_is_number(v) for v in value):
+            raise ValueError("%s must be a list of numbers, not %r" % (name, value))
+        if default and len(value) != len(default):
+            raise ValueError("%s needs %d numbers, not %d" % (name, len(default), len(value)))
+    elif not _is_number(value):
+        raise ValueError("%s must be a number, not %r" % (name, value))
+
+
+def merge_look(overrides):
+    """DEFAULT_LOOK with the values of `overrides` put over it; unknown names and wrong kinds are errors"""
+    look = copy.deepcopy(DEFAULT_LOOK)
+    if not isinstance(overrides, dict):
+        raise ValueError("a look is a JSON object, not %r" % (overrides,))
+    for name, value in overrides.items():
+        if name not in look:
+            raise ValueError("the look has no setting %r (it has: %s)" % (name, ", ".join(sorted(look))))
+        if isinstance(look[name], dict):
+            if not isinstance(value, dict):
+                raise ValueError("%s must be an object, not %r" % (name, value))
+            for key, v in value.items():
+                if key not in look[name]:
+                    raise ValueError("%s has no setting %r (it has: %s)" % (name, key, ", ".join(sorted(look[name]))))
+                _check("%s.%s" % (name, key), v, look[name][key])
+                look[name][key] = v
+        else:
+            _check(name, value, look[name])
+            look[name] = value
+    return look
+
+
+# ---- the layers -----------------------------------------------------------------------------
+
+def plate(size, settings):
+    """the stage: dark, lighter in a band of haze at the horizon and in a pool behind the dancer, darker
+    towards the corners"""
+    w, h = size
+    y = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None]
+    x = np.linspace(-1.0, 1.0, w, dtype=np.float32)[None, :]
+    haze = np.exp(-((y - float(settings["horizon"])) / 0.22) ** 2)
+    pool = np.exp(-((x / 0.55) ** 2 + ((y - 0.52) / 0.42) ** 2))
+    img = (np.array(settings["base"], dtype=np.float32)[None, None, :]
+           + haze[:, :, None] * np.array(settings["haze"], dtype=np.float32)[None, None, :] * 0.55
+           + pool[:, :, None] * np.array(settings["pool"], dtype=np.float32)[None, None, :] * 0.55)
+    dark = 1.0 - float(settings["vignette"]) * np.clip(x ** 2 + (2.0 * y - 1.0) ** 2 * 0.6, 0.0, 1.0)
+    return Image.fromarray(np.clip(img * dark[:, :, None], 0, 255).astype(np.uint8), "RGB")
+
+
+def light_frame_count(look, fps):
+    return max(1, int(round(float(look["beams"]["loop_seconds"]) * fps)))
+
+
+def _unit(i, salt):
+    """a fixed number in 0..1 for the i-th thing (no random module: the same on every Python)"""
+    return (math.sin(i * 12.9898 + salt * 78.233) * 43758.5453) % 1.0
+
+
+def _beams(size, settings, phase):
+    w, h = size
+    layer = Image.new("RGB", size, (0, 0, 0))
+    count = int(settings["count"])
+    if count <= 0 or settings["opacity"] <= 0:
+        return np.zeros((h, w, 3), dtype=np.float32)
+    draw = ImageDraw.Draw(layer)
+    origin = (w * 0.5, -h * 0.35)
+    length = h * 2.4
+    warm_every = int(settings["warm_every"])
+    for i in range(count):
+        centre = -settings["spread"] / 2.0 + settings["spread"] * (i + 0.5) / count
+        # each beam sways one or two whole periods per loop, out of step with its neighbours
+        sway = settings["sway"] * math.sin((1 + i % 2) * phase + 2.0 * math.pi * _unit(i, 1))
+        angle = math.radians(centre + sway)
+        half = math.radians(2.0 + 2.5 * _unit(i, 2))
+        tone = 0.55 + 0.45 * _unit(i, 3)
+        colour = settings["warm"] if warm_every > 0 and i % warm_every == warm_every - 1 else settings["cool"]
+        p1 = (origin[0] + length * math.sin(angle - half), origin[1] + length * math.cos(angle - half))
+        p2 = (origin[0] + length * math.sin(angle + half), origin[1] + length * math.cos(angle + half))
+        draw.polygon([origin, p1, p2], fill=tuple(int(c * tone) for c in colour))
+    layer = layer.filter(ImageFilter.GaussianBlur(max(1.0, w * 0.022)))
+    fade = np.linspace(1.0, 0.25, h, dtype=np.float32)[:, None, None]          # thinner towards the floor
+    return np.asarray(layer, dtype=np.float32) * fade * float(settings["opacity"])
+
+
+def _bokeh(size, settings, phase):
+    w, h = size
+    count = int(settings["count"])
+    if count <= 0 or settings["opacity"] <= 0:
+        return np.zeros((h, w, 3), dtype=np.float32)
+    layer = Image.new("RGB", size, (0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    seed = float(settings["seed"])
+    for i in range(count):
+        x = _unit(i, seed + 1) * w + 0.02 * w * math.sin(phase + 2.0 * math.pi * _unit(i, seed + 2))
+        y = _unit(i, seed + 3) * h * 0.9 + 0.03 * h * math.sin(phase + 2.0 * math.pi * _unit(i, seed + 4))
+        r = (3.0 + 11.0 * _unit(i, seed + 5)) * h / REFERENCE_HEIGHT * LIGHT_SCALE / 2.0 + 1.0
+        twinkle = 0.7 + 0.3 * math.sin(2.0 * phase + 2.0 * math.pi * _unit(i, seed + 6))
+        tone = (0.25 + 0.55 * _unit(i, seed + 7)) * twinkle
+        colour = (255, 214, 150) if _unit(i, seed + 8) < settings["warm_share"] else (150, 180, 255)
+        draw.ellipse([x - r, y - r, x + r, y + r], fill=tuple(int(c * tone) for c in colour))
+    layer = layer.filter(ImageFilter.GaussianBlur(max(1.0, h * 0.014)))
+    return np.asarray(layer, dtype=np.float32) * float(settings["opacity"])
+
+
+def light_frame(size, look, index, count):
+    """frame `index` of the loop of `count` frames: beams and specks on black, to be screened over the plate"""
+    phase = 2.0 * math.pi * (index % count) / float(count)
+    total = _beams(size, look["beams"], phase) + _bokeh(size, look["bokeh"], phase)
+    return Image.fromarray(np.clip(total, 0, 255).astype(np.uint8), "RGB")
+
+
+def flare_frame(size, settings, index):
+    """frame `index` of a flare: the whole picture lit, strongest on the first frame, with a streak across"""
+    w, h = size
+    frames = max(1, int(settings["frames"]))
+    decay = (1.0 - index / float(frames)) ** 2 if index < frames else 0.0
+    y = np.linspace(0.0, 1.0, h, dtype=np.float32)[:, None]
+    streak = np.exp(-((y - 0.45) / 0.05) ** 2)
+    alpha = np.clip(float(settings["strength"]) * decay * (0.6 + 0.4 * streak), 0.0, 1.0)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    out[:, :, :3] = np.array(settings["colour"], dtype=np.uint8)[None, None, :]
+    out[:, :, 3] = (alpha * 255.0).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+def write_layers(look, work, size, fps):
+    """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are"""
+    os.makedirs(work, exist_ok=True)
+    plate_path = os.path.join(work, "plate.png")
+    plate(size, look["plate"]).save(plate_path)
+    light_dir = os.path.join(work, "light")
+    os.makedirs(light_dir, exist_ok=True)
+    small = (max(2, size[0] // LIGHT_SCALE), max(2, size[1] // LIGHT_SCALE))
+    count = light_frame_count(look, fps)
+    for i in range(count):
+        light_frame(small, look, i, count).save(os.path.join(light_dir, "light_%05d.png" % i))
+    flare_dir = os.path.join(work, "flare")
+    os.makedirs(flare_dir, exist_ok=True)
+    flare_frames = max(1, int(look["flare"]["frames"]))
+    for i in range(flare_frames):
+        flare_frame(small, look["flare"], i).save(os.path.join(flare_dir, "flare_%05d.png" % i))
+    return {"plate": plate_path, "light_pattern": _slashes(os.path.join(light_dir, "light_%05d.png")), "light_frames": count,
+            "flare_pattern": _slashes(os.path.join(flare_dir, "flare_%05d.png")), "flare_frames": flare_frames}
+
+
+def _slashes(path):
+    return path.replace("\\", "/")
+
+
+# ---- the compositing ------------------------------------------------------------------------
+
+def _visible(start, frames, fps, clip_start, clip_duration):
+    """(seconds into the excerpt, first frame to show) of a sequence that starts at `start` seconds, or None
+    when no frame of it falls inside the excerpt"""
+    offset = start - clip_start
+    skip = 0
+    if offset < 0:
+        skip = int(round(-offset * fps))
+        offset = 0.0
+    if skip >= frames or (clip_duration is not None and offset >= clip_duration):
+        return None
+    return offset, skip
+
+
+def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
+                   start=None, duration=None):
+    """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
+    (see the module docstring); `start` and `duration` cut an excerpt out of the song, in seconds"""
+    w, h = size
+    clip_start = float(start or 0.0)
+    argv = ["ffmpeg", "-v", "error", "-y"]
+    if start is not None:
+        argv += ["-ss", "%.3f" % clip_start]
+    if duration is not None:
+        argv += ["-t", "%.3f" % duration]
+    argv += ["-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
+             "-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
+    next_input = 3
+    overlays = {"back": [], "front": [], "flare": []}
+    for cue in (plan or {}).get("cues", []):
+        seen = _visible(cue["start"], cue["frames"], fps, clip_start, duration)
+        if seen is None:
+            continue
+        offset, skip = seen
+        argv += ["-framerate", str(fps), "-start_number", str(skip), "-i", cue["pattern"]]
+        layer = "back" if cue.get("layer") == "back" else "front"
+        overlays[layer].append((next_input, offset, cue["x"], cue["y"], None))
+        next_input += 1
+    for at in look["flares"]:
+        seen = _visible(float(at), flare_frames, fps, clip_start, duration) if flare_pattern else None
+        if seen is None:
+            continue
+        offset, skip = seen
+        argv += ["-framerate", str(fps), "-start_number", str(skip), "-i", flare_pattern]
+        overlays["flare"].append((next_input, offset, 0, 0, (w, h)))
+        next_input += 1
+
+    parts = ["[1:v]scale=%d:%d,format=gbrp[plate]" % (w, h),
+             "[2:v]scale=%d:%d:flags=bilinear,format=gbrp[light]" % (w, h),
+             "[plate][light]blend=all_mode=screen[stage]"]
+    state = {"label": "stage", "n": 0}
+
+    def lay(items):
+        for index, offset, x, y, scale in items:
+            state["n"] += 1
+            scaled = "scale=%d:%d:flags=bilinear," % scale if scale else ""
+            parts.append("[%d:v]%sformat=rgba,setpts=PTS-STARTPTS+%.3f/TB[c%d]" % (index, scaled, offset, state["n"]))
+            parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass[v%d]" % (state["label"], state["n"], x, y, state["n"]))
+            state["label"] = "v%d" % state["n"]
+
+    lay(overlays["back"])
+    glow = look["glow"]
+    scale = h / REFERENCE_HEIGHT
+    if glow["strength"] > 0 and glow["radius"] > 0:
+        t = int(glow["threshold"])
+        curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
+        parts += ["[0:v]format=rgba,split=2[fg][fgb]",
+                  "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
+                  "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
+                  "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
+                  "[fgk]lutrgb=r='%s':g='%s':b='%s',gblur=sigma=%s[glow]" % (curve, curve, curve, _number(glow["radius"] * scale)),
+                  "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
+        state["label"] = "lit"
+    else:
+        parts += ["[0:v]format=rgba[fg]", "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
+        state["label"] = "lit"
+    lay(overlays["front"])
+    lay(overlays["flare"])
+    parts.append("[%s]format=yuv420p[out]" % state["label"])
+    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps),
+             "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+    return argv
+
+
+def _number(value):
+    """a short decimal without a trailing zero: 4.0 -> 4, 2.25 -> 2.25"""
+    return ("%.3f" % value).rstrip("0").rstrip(".")
+
+
+# ---- the commands ---------------------------------------------------------------------------
+
+def probe(path):
+    """(width, height), fps of the first video stream"""
+    result = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                             "stream=width,height,r_frame_rate", "-of", "json", path],
+                            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    try:
+        stream = json.loads(result.stdout)["streams"][0]
+        return (int(stream["width"]), int(stream["height"])), parse_rate(stream["r_frame_rate"])
+    except (ValueError, KeyError, IndexError):
+        raise ValueError("ffprobe cannot read a video stream from %s: %s" % (path, result.stderr.strip()[-300:]))
+
+
+def parse_rate(text):
+    """frames per second from ffprobe's "num/den"; a rate a hair off a whole number is that number (MMD
+    writes 30 fps as 30000030/1000001, and layers at 30.00003 would drift against a 30 fps song)"""
+    try:
+        num, den = text.split("/")
+        fps = float(num) / float(den)
+    except (ValueError, ZeroDivisionError):
+        raise ValueError("not a frame rate: %r" % (text,))
+    return int(round(fps)) if abs(fps - round(fps)) < 0.001 else fps
+
+
+def parse_size(text):
+    try:
+        w, h = (int(v) for v in text.lower().split("x"))
+        if w < 2 or h < 2:
+            raise ValueError
+        return w, h
+    except ValueError:
+        raise ValueError("a size is WIDTHxHEIGHT, like 1280x720, not %r" % (text,))
+
+
+def load_look(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return merge_look(json.load(f))
+    except OSError as exc:
+        raise ValueError("cannot read the look %s: %s" % (path, exc))
+    except json.JSONDecodeError as exc:
+        raise ValueError("the look %s is not JSON: %s" % (path, exc))
+
+
+def text_plan(cues_path, work, size, fps):
+    """the text sequences of tools/mv_text.py for this picture (it is loaded from its file: tools/ is no package)"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_text.py")
+    if not os.path.exists(path):
+        raise ValueError("--cues needs tools/mv_text.py next to this tool")
+    spec = importlib.util.spec_from_file_location("mv_text", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with open(cues_path, encoding="utf-8") as f:
+        doc = json.load(f)
+    return module.render_sequences(doc, os.path.join(work, "text"), size=size, fps=fps)
+
+
+def render(args):
+    fg = os.path.abspath(args.dancer)
+    if not os.path.isfile(fg):
+        raise ValueError("no such file: %s" % fg)
+    look = load_look(args.look)
+    out = os.path.abspath(args.out)
+    if os.path.normcase(out) == os.path.normcase(fg):
+        raise ValueError("OUT must not be the dancer's file")
+    size, fps = probe(fg) if not (args.size and args.fps) else (None, None)
+    size = parse_size(args.size) if args.size else size
+    fps = args.fps or fps
+    work = os.path.abspath(args.work or out + ".work")
+    layers = write_layers(look, work, size, fps)
+    plan = text_plan(args.cues, work, size, fps) if args.cues else None
+    start = args.start
+    duration = None if args.to is None else args.to - (start or 0.0)
+    if duration is not None and duration <= 0:
+        raise ValueError("--to must be after --from")
+    folder = os.path.dirname(out)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
+                          flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
+                          start=start, duration=duration)
+    done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    result = {"out": out, "size": list(size), "fps": fps, "work": work, "light_frames": layers["light_frames"],
+              "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
+              "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
+              "ffmpeg": done.returncode}
+    if done.returncode != 0 or not os.path.exists(out):
+        raise RuntimeError("ffmpeg failed (%d): %s" % (done.returncode, done.stderr.strip()[-600:]))
+    return result
+
+
+def layers_command(args):
+    look = load_look(args.look)
+    if not args.size or not args.fps:
+        raise ValueError("layers needs --size WxH and --fps N")
+    return write_layers(look, os.path.abspath(args.work), parse_size(args.size), args.fps)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("render", help="lay the stage, the light, the glow (and the text) around the dancer")
+    s.add_argument("dancer", help="the video MMD wrote with an alpha channel")
+    s.add_argument("look", help="look.json: the settings that differ from the default")
+    s.add_argument("out", help="the video to write (.mp4)")
+    s.add_argument("--cues", help="text cues for tools/mv_text.py")
+    s.add_argument("--work", help="where the layers go (default: OUT.work)")
+    s.add_argument("--from", dest="start", type=float, help="start of an excerpt, in seconds of the song")
+    s.add_argument("--to", type=float, help="end of an excerpt, in seconds of the song")
+    s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
+    s.add_argument("--fps", type=float, help="frames per second, when it is not to be read from the dancer's file")
+    s = sub.add_parser("layers", help="only write the plate, the light loop and the flare")
+    s.add_argument("look")
+    s.add_argument("work")
+    s.add_argument("--size")
+    s.add_argument("--fps", type=float)
+    args = p.parse_args(argv)
+    if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
+        args.fps = int(args.fps)
+    try:
+        result = render(args) if args.command == "render" else layers_command(args)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": {"type": "ValueError", "message": str(exc)}}, ensure_ascii=True))
+        return 2
+    except (RuntimeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
+        return 1
+    print(json.dumps(dict({"ok": True}, **result), ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
