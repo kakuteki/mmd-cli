@@ -18,8 +18,10 @@ ffmpeg (the compositing), from back to front:
 * the dancer, by her alpha;
 * her glow: the bright parts of the dancer alone (each channel above `glow.threshold` of 255), blurred by
   `glow.radius` pixels and screened over the picture with `glow.strength`;
+* at every time in `flares` (a hook, a chorus) the camera punches in a little and comes back, and red and
+  blue part for those frames (`camera`): the stage and the dancer move, the text in front does not;
 * the text cues of the "front" layer;
-* a flare at every time in `flares` (a hook, a chorus): the whole picture lights up for `flare.frames`.
+* a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
 look.json overrides single values of DEFAULT_LOOK; an unknown name is an error (a misspelt setting would
 otherwise silently do nothing).  Lengths are in pixels of a 720 line picture and scale with the height.
@@ -48,6 +50,9 @@ DEFAULT_LOOK = {
     # turned the skin pink; this keeps the folds of the dress and still gives her a soft edge
     "glow": {"threshold": 175, "radius": 14, "strength": 0.45},
     "flare": {"frames": 12, "strength": 0.85, "colour": [255, 244, 224]},
+    # what the camera does at a flare: it punches in by `punch` of the picture and comes back within
+    # `punch_frames`, and red and blue part by `aberration` pixels for as long
+    "camera": {"punch": 0.04, "punch_frames": 10, "aberration": 3},
     "flares": [],
 }
 REFERENCE_HEIGHT = 720.0
@@ -294,6 +299,21 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     else:
         parts += ["[0:v]format=rgba[fg]", "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
+    camera = look["camera"]
+    span = camera["punch_frames"] / float(fps)
+    hits = [offset for _, offset, _, _, _ in overlays["flare"]] if span > 0 else []
+    if hits and camera["punch"] > 0:
+        # 1 + punch * (1 - (t - T) / span)^2 from each flare time T on; the picture is scaled about its centre
+        amount = "+".join("%s*pow(max(0,1-(t-%.3f)/%.3f),2)*gte(t,%.3f)" % (_number(camera["punch"]), at, span, at)
+                          for at in hits)
+        parts.append("[%s]scale=w='trunc(%d*(1+%s)/2)*2':h='trunc(%d*(1+%s)/2)*2':eval=frame:flags=bilinear,"
+                     "crop=%d:%d:(iw-%d)/2:(ih-%d)/2[punch]" % (state["label"], w, amount, h, amount, w, h, w, h))
+        state["label"] = "punch"
+    shift = int(round(camera["aberration"] * scale))
+    if hits and shift > 0:
+        enable = "+".join("between(t,%.3f,%.3f)" % (at, at + span) for at in hits)
+        parts.append("[%s]rgbashift=rh=-%d:bh=%d:enable='%s'[parted]" % (state["label"], shift, shift, enable))
+        state["label"] = "parted"
     lay(overlays["front"])
     lay(overlays["flare"])
     parts.append("[%s]format=yuv420p[out]" % state["label"])

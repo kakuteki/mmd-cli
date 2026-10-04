@@ -228,6 +228,27 @@ class GraphTest(unittest.TestCase):
         self.assertIn("setpts=PTS-STARTPTS+1.000/TB", f)
         self.assertIn("setpts=PTS-STARTPTS+2.500/TB", f)
 
+    def test_the_camera_punches_in_at_every_flare_between_the_glow_and_the_front_text(self):
+        f = self.filter_of(self.graph(plan=PLAN, look={"flares": [1.0, 2.5], "camera": {"punch": 0.05, "punch_frames": 9}}))
+        self.assertIn("eval=frame", f)                                    # the size follows the time
+        self.assertIn("(t-1.000)", f)
+        self.assertIn("(t-2.500)", f)
+        self.assertIn("0.05", f)
+        self.assertIn("crop=320:180", f)                                  # and the picture keeps its size
+        glow, punch, front = f.index("all_opacity="), f.index("eval=frame"), f.index("overlay=x=16:y=140")
+        self.assertTrue(glow < punch < front, (glow, punch, front))       # the text in front does not jump with it
+
+    def test_the_colours_part_for_the_length_of_the_punch(self):
+        f = self.filter_of(self.graph(look={"flares": [1.0], "camera": {"aberration": 8, "punch_frames": 9}}))
+        self.assertIn("rgbashift=rh=-2:bh=2", f)                          # 8 px of a 720 line picture, at 180 lines
+        self.assertIn("between(t,1.000,1.300)", f)
+
+    def test_no_camera_effect_without_a_flare_or_when_it_is_zero(self):
+        for look in ({}, {"flares": [1.0], "camera": {"punch": 0, "aberration": 0}}):
+            f = self.filter_of(self.graph(look=look))
+            self.assertNotIn("eval=frame", f)
+            self.assertNotIn("rgbashift", f)
+
     def test_an_excerpt_shifts_the_cues_and_drops_the_ones_outside(self):
         argv = self.graph(plan=PLAN, start=0.4, duration=0.3)             # 0.4 .. 0.7 s of the song
         f = self.filter_of(argv)
@@ -265,7 +286,8 @@ class RenderTest(unittest.TestCase):
         cls.plain = os.path.join(cls.folder, "plain.mp4")
         plain_look = os.path.join(cls.folder, "plain.json")
         with open(plain_look, "w", encoding="utf-8") as f:
-            json.dump({"beams": {"loop_seconds": 1}, "glow": {"strength": 0}}, f)
+            json.dump({"beams": {"loop_seconds": 1}, "glow": {"strength": 0}, "flares": [1.0],
+                       "flare": {"strength": 0}, "camera": {"punch": 0.1, "aberration": 0}}, f)
         with contextlib.redirect_stdout(io.StringIO()):
             mv_look.main(["render", cls.fg, plain_look, cls.plain, "--work", os.path.join(cls.folder, "work_plain")])
 
@@ -308,6 +330,16 @@ class RenderTest(unittest.TestCase):
         far = (290, 90, 300, 110)
         self.assertGreater(sum(mean(frame, near)), sum(mean(plain, near)) + 30)       # her glow reaches out
         self.assertLess(abs(sum(mean(frame, far)) - sum(mean(plain, far))), 12)       # and has faded 90 px away
+
+    def test_the_camera_punches_in_and_comes_back(self):
+        # the plain picture has a punch of a tenth at 1.0 s and a flare without light: the box (80 px wide) is
+        # some 6 px wider a frame later and back to its size before the next third of a second is over
+        def width(seconds):
+            frame = self.frame(seconds, self.plain)
+            return sum(1 for x in range(SIZE[0]) if min(frame.getpixel((x, 100))) > 200)
+        self.assertAlmostEqual(width(0.8), 80, delta=2)
+        self.assertGreaterEqual(width(1.04), 84)
+        self.assertAlmostEqual(width(1.45), 80, delta=2)
 
     def test_the_flare_lights_the_whole_picture_for_a_moment(self):
         before, during = self.frame(0.8), self.frame(1.03)
