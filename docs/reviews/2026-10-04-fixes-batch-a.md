@@ -22,3 +22,9 @@
 - 未確認: 親（SSH = セッション 0、管理者なら高整合性）から対話セッションの子 pythonw.exe への `OpenProcess(SYNCHRONIZE)` が通ること。この PC では自分のプロセス 680 本すべてがセッション 1 にあり、`schtasks` を本当に動かさない制約の下では別セッションの同一利用者プロセスを作れないので測れなかった。測れた範囲: 自分の PID は True、System(PID 4) は err 5 で False、存在しない PID は err 87 で False。もし通らない場合の症状は「`.started` が出た約 2 秒後に ended without leaving a result」で、実機の通し試験（SSH から `mmd state`）を 1 回流せば判る。
 - 守る試験（tests/test_relay.py、偽の schtasks `FakeScheduler`・仮想時計 `FakeClock`・`win32.process_alive` の差し替え。実時間も MMD も使わない）: `test_parent_waits_as_long_as_the_child_lives`（子が仮想時刻 400 秒で終えても結果を回収し `/End` を呼ばない。修正前は 180 秒で RelayError）、`test_parent_gives_up_when_the_child_died_without_a_result`（死んだ子に 2 秒の猶予のあと PID 入りの RelayError、`/End` → `/Delete` の順、relay/ に何も残らない）、`test_parent_reports_no_logon_when_the_child_never_starts`（15 秒で従来の文言、`/End` も呼ぶ。修正前は `/End` が無い）、`test_run_job_writes_the_started_marker_atomically_with_its_pid`。
 - コミット: d332c2b
+
+## 1.6 relay: 中継の要否を解析済みの `args.command` で決める
+
+- 何を直したか: `should_relay(window_station=None, session_id=None, argv=None, command=None)`。位置引数の走査（`--out r.json` の `r.json` を命令と誤認していた）を無くし、`command is None`（命令なし）または `command in LOCAL_COMMANDS` なら中継しない。`--version` / `-h` の個別判定も不要になった（argparse がそこで終わる。`command=None` で同じ結果）。`main()` は `relay.should_relay(argv=argv, command=args.command)` を呼ぶ。
+- 守る試験（tests/test_relay.py）: `test_should_relay_ignores_option_values_before_the_command`（査読の実測 2 例 `--out r.json file info x.pmm` と `--timeout 9 file info x.pmm` が False、`--out r.json state` は True）、`MainDecisionTest.test_file_info_runs_locally_whatever_options_come_first`（`cli.main` を Service ウィンドウステーション・セッション 0 の偽の答えで動かし、3 例とも `run_in_user_session` が呼ばれず fixture の pmm がその場で読める。修正前は `--out` の例で中継に入り失敗した）、`test_a_command_that_needs_the_window_is_handed_over_as_is`（`state` は argv そのままで渡される＝親のタイムアウト結合が無い）。既存の DecisionTest は `command=` を渡す形に書き換えた。
+- コミット: 381be16

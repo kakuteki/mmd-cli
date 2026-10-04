@@ -79,14 +79,23 @@ class ArgvTest(unittest.TestCase):
     def test_relay_flags_are_removed_and_out_is_redirected(self):
         argv = relay.child_argv(["--in-user-session", "--pid", "5", "--out", "C:/x/r.json", "model", "load", "a.pmx"],
                                 out_path="C:/relay/1.json")
-        self.assertEqual(argv, ["--pid", "5", "--out", "C:/relay/1.json", "model", "load", "a.pmx"])
+        self.assertEqual(argv, ["--no-relay", "--pid", "5", "--out", "C:/relay/1.json", "model", "load", "a.pmx"])
 
     def test_out_is_added_when_missing(self):
         argv = relay.child_argv(["state"], out_path="C:/relay/1.json")
-        self.assertEqual(argv, ["--out", "C:/relay/1.json", "state"])
+        self.assertEqual(argv, ["--no-relay", "--out", "C:/relay/1.json", "state"])
 
-    def test_no_relay_flag_is_removed_too(self):
-        self.assertEqual(relay.child_argv(["--no-relay", "state"], out_path="o.json"), ["--out", "o.json", "state"])
+    def test_child_argv_adds_no_relay(self):
+        # the child must never hand the command on again, whatever window station it lands in
+        for argv in (["state"], ["--no-relay", "state"], ["--in-user-session", "state"]):
+            child = relay.child_argv(argv, out_path="o.json")
+            self.assertEqual(child.count("--no-relay"), 1, argv)
+            self.assertNotIn("--in-user-session", child)
+            self.assertFalse(relay.should_relay(argv=child, command="state", **SERVICE))
+
+    def test_child_argv_with_out_equals(self):
+        self.assertEqual(relay.child_argv(["--out=C:/x/r.json", "state"], out_path="C:/relay/1.json"),
+                         ["--no-relay", "--out=C:/relay/1.json", "state"])
 
 
 class JobFileTest(unittest.TestCase):

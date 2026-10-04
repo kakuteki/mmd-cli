@@ -76,7 +76,8 @@ class Job:
 
 
 def child_argv(argv, out_path):
-    """the relayed command line: relay flags removed, --out pointed at the relay's result file"""
+    """the relayed command line: --out pointed at the relay's result file, and --no-relay so the
+    child never hands the command on again (should it land outside the interactive station)"""
     out = []
     skip = False
     had_out = False
@@ -99,7 +100,7 @@ def child_argv(argv, out_path):
         out.append(a)
     if not had_out:
         out = ["--out", out_path] + out
-    return out
+    return ["--no-relay"] + out
 
 
 def write_job(job, path):
