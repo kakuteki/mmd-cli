@@ -34,3 +34,9 @@
 - 何を直したか: `child_argv` が返す argv の先頭に `--no-relay` を置く（`--in-user-session` / 元の `--no-relay` は従来どおり取り除いてから）。子がもし対話ステーション以外で動いても `should_relay` は最初の判定で False になり、孫のタスクは作られない。
 - 守る試験（tests/test_relay.py）: `test_child_argv_adds_no_relay`（3 通りの入力で `--no-relay` がちょうど 1 回・`--in-user-session` なし・その argv を Service ステーションで `should_relay` に掛けると False）、`test_child_argv_with_out_equals`（`--out=` の形）、既存の 2 件は期待値に `--no-relay` を足した。
 - コミット: 838f10d
+
+## 1.8 relay: 後始末の抜け
+
+- 何を直したか: 親（cli.py `main()` の中継ブロック）は `batch -` の stdin を退避したファイルを `try/finally` で消す（中継が成功しても `RelayError` でも）。子（`run_job`）は `main` が戻ったあと job ファイルの有無を見て、無ければ（親が諦めて片づけた）`.exit` もエラー JSON も書かず、`emit` が書いた自分の `.out.json` も消す。job ファイルは親が `finally` でしか消さないので「無い＝親はもういない」。
+- 守る試験（tests/test_relay.py）: `ParkedStdinTest.test_the_child_gets_the_parked_file_and_the_parent_removes_it`（`cli.main(["batch", "-", "--keep-going"])` で子に渡る argv が `batch <退避ファイル> --keep-going`、呼ばれた時点で中身が読め、戻ったあとは無い）、`test_the_parked_file_is_removed_when_the_relay_fails`（RelayError でも消える。修正前はどちらも残った）、`RunJobTest.test_run_job_leaves_nothing_when_the_parent_gave_up` と `test_run_job_writes_no_error_file_either_when_the_parent_gave_up`（job ファイルが消えていれば `.exit` も `.out.json` も残らない。修正前は `.exit` が書かれた）。
+- コミット: 11a2f50
