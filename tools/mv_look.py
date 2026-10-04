@@ -248,7 +248,10 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         argv += ["-ss", "%.3f" % clip_start]
     if duration is not None:
         argv += ["-t", "%.3f" % duration]
-    argv += ["-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
+    # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
+    # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
+    # falls after her last frame and is dropped (7742 of 7743 on the whole song)
+    argv += ["-r", str(fps), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
              "-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
     next_input = 3
     overlays = {"back": [], "front": [], "flare": []}
@@ -279,7 +282,9 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         for index, offset, x, y, scale in items:
             state["n"] += 1
             scaled = "scale=%d:%d:flags=bilinear," % scale if scale else ""
-            parts.append("[%d:v]%sformat=rgba,setpts=PTS-STARTPTS+%.3f/TB[c%d]" % (index, scaled, offset, state["n"]))
+            # round: setpts cuts its result down to a whole tick, and 16 / 30 s written in decimals is a hair
+            # short of the 16th tick (one cue in three came a frame early)
+            parts.append("[%d:v]%sformat=rgba,setpts=PTS-STARTPTS+round(%.6f/TB)[c%d]" % (index, scaled, offset, state["n"]))
             parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass[v%d]" % (state["label"], state["n"], x, y, state["n"]))
             state["label"] = "v%d" % state["n"]
 
@@ -343,7 +348,7 @@ def probe(path):
 
 def parse_rate(text):
     """frames per second from ffprobe's "num/den"; a rate a hair off a whole number is that number (MMD
-    writes 30 fps as 30000030/1000001, and layers at 30.00003 would drift against a 30 fps song)"""
+    writes 30 fps as 10000000/333333, and layers at 30.00003 would drift against a 30 fps song)"""
     try:
         num, den = text.split("/")
         fps = float(num) / float(den)

@@ -50,9 +50,9 @@ class LookSettingsTest(unittest.TestCase):
         self.assertNotEqual(mv_look.DEFAULT_LOOK["glow"]["strength"], 0.2)          # the default is not touched
 
     def test_a_frame_rate_a_hair_off_a_whole_number_is_that_number(self):
-        # MMD writes "30 fps" as 30.00003 (ffprobe: 30000030/1000001); the layers must run at 30, not drift
-        self.assertEqual(mv_look.parse_rate("30000030/1000001"), 30)
-        self.assertIsInstance(mv_look.parse_rate("30000030/1000001"), int)
+        # MMD writes "30 fps" as 30.00003 (ffprobe: 10000000/333333); the layers must run at 30, not drift
+        self.assertEqual(mv_look.parse_rate("10000000/333333"), 30)
+        self.assertIsInstance(mv_look.parse_rate("10000000/333333"), int)
         self.assertEqual(mv_look.parse_rate("60/1"), 60)
         self.assertAlmostEqual(mv_look.parse_rate("30000/1001"), 29.97, places=2)   # a real 29.97 stays
         with self.assertRaises(ValueError):
@@ -198,8 +198,8 @@ class GraphTest(unittest.TestCase):
         stage, back, dancer, glow, front = (f.index(part) for part in (
             "[stage]", "overlay=x=20:y=12", "[fg]overlay", "blend=all_mode=screen:all_opacity=", "overlay=x=16:y=140"))
         self.assertTrue(stage < back < dancer < glow < front, (stage, back, dancer, glow, front))
-        self.assertIn("setpts=PTS-STARTPTS+0.500/TB", f)                 # a cue starts when its plan says
-        self.assertIn("setpts=PTS-STARTPTS+0.200/TB", f)
+        self.assertIn("setpts=PTS-STARTPTS+round(0.500000/TB)", f)     # a cue starts when its plan says
+        self.assertIn("setpts=PTS-STARTPTS+round(0.200000/TB)", f)
         self.assertEqual(f.count("eof_action=pass"), 2)                  # the picture goes on after a cue ends
         argv = self.graph(plan=PLAN)
         inputs = [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
@@ -225,8 +225,8 @@ class GraphTest(unittest.TestCase):
         inputs = [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
         self.assertEqual(inputs.count("W/flare_%05d.png"), 2)
         f = self.filter_of(argv)
-        self.assertIn("setpts=PTS-STARTPTS+1.000/TB", f)
-        self.assertIn("setpts=PTS-STARTPTS+2.500/TB", f)
+        self.assertIn("setpts=PTS-STARTPTS+round(1.000000/TB)", f)
+        self.assertIn("setpts=PTS-STARTPTS+round(2.500000/TB)", f)
 
     def test_the_camera_punches_in_at_every_flare_between_the_glow_and_the_front_text(self):
         f = self.filter_of(self.graph(plan=PLAN, look={"flares": [1.0, 2.5], "camera": {"punch": 0.05, "punch_frames": 9}}))
@@ -252,7 +252,7 @@ class GraphTest(unittest.TestCase):
     def test_an_excerpt_shifts_the_cues_and_drops_the_ones_outside(self):
         argv = self.graph(plan=PLAN, start=0.4, duration=0.3)             # 0.4 .. 0.7 s of the song
         f = self.filter_of(argv)
-        self.assertIn("setpts=PTS-STARTPTS+0.100/TB", f)                  # the title (0.5 s) is 0.1 s into the excerpt
+        self.assertIn("setpts=PTS-STARTPTS+round(0.100000/TB)", f)      # the title (0.5 s) is 0.1 s into the excerpt
         self.assertIn("W/cue_credit/f%05d.png", argv)                     # the credit began before: it is cut in
         credit = argv.index("W/cue_credit/f%05d.png")
         self.assertEqual(argv[argv.index("-start_number", credit - 6) + 1], "6")      # its 7th frame is at 0.4 s
@@ -269,10 +269,12 @@ class RenderTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.folder = tempfile.mkdtemp()
-        cls.fg = os.path.join(cls.folder, "fg.mov")
+        # as MMD writes it: an uncompressed BGRA AVI whose "30 fps" is 10000000/333333
+        cls.fg = os.path.join(cls.folder, "fg.avi")
         source = ("color=c=black@0.0:s=%dx%d:r=30,format=rgba,"
                   "drawbox=x=120:y=40:w=80:h=120:color=white@1.0:t=fill:replace=1" % SIZE)   # replace: alpha too
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-t", "1.5", "-c:v", "png", cls.fg],
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "45",
+                        "-r", "10000000/333333", "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg],
                        check=True, stdin=subprocess.DEVNULL)
         cls.out = os.path.join(cls.folder, "out.mp4")
         look = os.path.join(cls.folder, "look.json")
@@ -330,6 +332,42 @@ class RenderTest(unittest.TestCase):
         far = (290, 90, 300, 110)
         self.assertGreater(sum(mean(frame, near)), sum(mean(plain, near)) + 30)       # her glow reaches out
         self.assertLess(abs(sum(mean(frame, far)) - sum(mean(plain, far))), 12)       # and has faded 90 px away
+
+    def test_no_frame_of_the_dancer_is_lost(self):
+        # 45 frames in, 45 out.  MMD's frames come a hair early (30.00003 fps), and against layers at exactly 30
+        # the last frame of the stage came after the dancer's last frame and was dropped (7742 of 7743 on the song)
+        probe = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                "stream=nb_read_frames", "-of", "csv=p=0", self.out],
+                               check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(int(probe.stdout.strip().strip(",")), 45)
+
+    def test_a_cue_starts_on_its_frame_and_not_one_before(self):
+        # 16 / 30 s is 0.5333...: written with three decimals it falls a hair short of the 16th tick and setpts
+        # cut it down to the 15th, so one cue in three came a frame early
+        work = os.path.join(self.folder, "cue_work")
+        cue_dir = os.path.join(work, "cue")
+        os.makedirs(cue_dir)
+        for i in range(10):
+            Image.new("RGBA", (40, 20), (255, 255, 255, 255)).save(os.path.join(cue_dir, "f%05d.png" % i))
+        look = mv_look.merge_look({"beams": {"loop_seconds": 1}, "glow": {"strength": 0}})
+        layers = mv_look.write_layers(look, work, SIZE, 30)
+        plan = {"cues": [{"id": "block", "layer": "front", "x": 4, "y": 4, "start": 16 / 30.0, "start_frame": 16, "frames": 10,
+                          "pattern": os.path.join(cue_dir, "f%05d.png").replace("\\", "/"), "canvas": [40, 20]}], "warnings": []}
+        out = os.path.join(self.folder, "cue.mp4")
+        argv = mv_look.ffmpeg_command(self.fg, out, layers["plate"], layers["light_pattern"], look, SIZE, 30, plan=plan,
+                                      flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"])
+        subprocess.run(argv, check=True, stdin=subprocess.DEVNULL)
+
+        def block(n):
+            path = os.path.join(self.folder, "cue_%d.png" % n)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", out, "-vf", "select='eq(n,%d)'" % n, "-frames:v", "1", path],
+                           check=True, stdin=subprocess.DEVNULL)
+            with Image.open(path) as image:
+                return min(mean(image, (10, 8, 38, 20)))
+        self.assertLess(block(15), 80)                                   # not yet
+        self.assertGreater(block(16), 200)                               # from its own frame
+        self.assertGreater(block(25), 200)                               # 10 frames long
+        self.assertLess(block(26), 80)
 
     def test_the_camera_punches_in_and_comes_back(self):
         # the plain picture has a punch of a tenth at 1.0 s and a flare without light: the box (80 px wide) is
