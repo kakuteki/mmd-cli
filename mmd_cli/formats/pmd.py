@@ -127,13 +127,13 @@ def loads(data):
         raise PmdFormatError("face index count %d at offset %d is not a multiple of 3" % (n, at))
     r.skip(n * 2)
     counts["faces"] = n // 3
-    counts["materials"] = r.count32(_MATERIAL_SIZE, "material")
+    materials = r.count32(_MATERIAL_SIZE, "material")
     textures = set()
-    for _ in range(counts["materials"]):
+    for _ in range(materials):
         for part in _text(r.take(_MATERIAL_SIZE)[50:]).split("*"):       # "texture.bmp*sphere.sph"
             if part:
                 textures.add(part)
-    counts["textures"] = len(textures)
+    counts.update(textures=len(textures), materials=materials)
 
     raw_bones = [r.unpack(_BONE) for _ in range(r.count16(_BONE.size, "bone"))]
     iks = {}
@@ -159,13 +159,13 @@ def loads(data):
                    "frames": [r.fixed(50) for _ in frame_names]}
     if not r.at_end():
         r.skip(_TOON_BLOCK_SIZE)
-    counts["rigid_bodies"] = counts["joints"] = 0
+    rigid_bodies = joints = 0
     if not r.at_end():
-        counts["rigid_bodies"] = r.count32(_RIGID_BODY_SIZE, "rigid body")
-        r.skip(counts["rigid_bodies"] * _RIGID_BODY_SIZE)
+        rigid_bodies = r.count32(_RIGID_BODY_SIZE, "rigid body")
+        r.skip(rigid_bodies * _RIGID_BODY_SIZE)
     if not r.at_end():
-        counts["joints"] = r.count32(_JOINT_SIZE, "joint")
-        r.skip(counts["joints"] * _JOINT_SIZE)
+        joints = r.count32(_JOINT_SIZE, "joint")
+        r.skip(joints * _JOINT_SIZE)
     if not r.at_end():
         raise PmdFormatError("%d bytes are left after the last known field: the layout was misread"
                              % (len(data) - r.pos))
@@ -177,7 +177,7 @@ def loads(data):
     for i, frame_name in enumerate(frame_names):
         items = [{"kind": "bone", "index": b} for b, f in bone_display if f == i + 1]
         frames.append(DisplayFrame(_frame_name(frame_name), _frame_name(english["frames"][i]) if english else None, False, items))
-    counts.update(bones=len(bones), morphs=len(morphs), display_frames=len(frames))
+    counts.update(bones=len(bones), morphs=len(morphs), display_frames=len(frames), rigid_bodies=rigid_bodies, joints=joints)
     return Model("pmd", version, _text(name), english["name"] if english else None, _text(comment),
                  english["comment"] if english else None, counts, bones, morphs, frames)
 

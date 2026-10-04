@@ -118,7 +118,8 @@ JSON の配列か `{"id": ..., "args": [...]}` で書く。`--pid` などの共�
 | 1 つのボーン・表情の現在値 | `mmd bone get 名前` / `mmd morph get 名前` | 同上 |
 | カメラ・照明の値 | `mmd camera get` / `mmd light get` | 入力欄の値を読む |
 | 見た目 | `mmd render image out.png` | MMD の「画像ファイルに出力」 |
-| vmd / vpd / pmm ファイルの中身 | `mmd file info ファイル` | MMD を使わずに解析する |
+| モデルの骨の親子・種類（IK、回転/移動、表示、付与、物理後）と表情の区分（眉・目・口・その他） | `mmd model info [名前]` | MMD は骨の名前しか見せないので、モデルファイル（pmx / pmd）を読む |
+| vmd / vpd / pmm / pmx / pmd ファイルの中身 | `mmd file info ファイル` | MMD を使わずに解析する |
 
 角度は MMD の窓に表示される値と同じ（度）。ボーンの回転は四元数（`--quat X Y Z W`）でも指定できる。
 
@@ -139,6 +140,42 @@ JSON の配列か `{"id": ..., "args": [...]}` で書く。`--pid` などの共�
 
 （一部の項目を省いてある。モデルを選択している間、`camera.current` は MMD の編集用の視点になる。
 場面のカメラは `camera.keys` か `mmd camera get` で見る。）
+
+### モデルの骨と表情
+
+`mmd model info` は、読み込み中のモデル（名前・番号、省略なら選択中）のファイルを `dump` の結果から探して読む。
+ファイルのパスを渡せばそのファイルを読む（MMD が動いていなくてよいのは `mmd file info ファイル`。`--brief` で件数と名前だけ）。
+pmx 2.0 / 2.1 と pmd 1.0 に対応し、どちらも同じ形で返す。pmd の骨の種別（回転・IK・IK影響下・非表示 など）は pmx の旗に写してある。
+
+```
+mmd model info 初音ミク
+mmd file info C:/models/初音ミク.pmd --brief
+```
+
+```json
+{"ok": true, "path": "C:\\tools\\MikuMikuDance_v932x64\\UserFile\\Model\\初音ミク.pmd", "format": "pmd", "version": 1.0,
+ "name": "初音ミク", "name_en": "Miku Hatsune", "comment": "PolyMo用モデルデータ：初音ミク ver.1.3\n...", "comment_en": "...",
+ "counts": {"vertices": 9036, "faces": 14997, "textures": 1, "materials": 17, "bones": 122, "morphs": 15, "display_frames": 8,
+            "rigid_bodies": 45, "joints": 27},
+ "bones": [{"index": 0, "name": "センター", "name_en": "center", "parent": null, "layer": 0,
+            "flags": {"rotate": true, "translate": true, "visible": true, "enabled": true, "ik": false, "append_rotate": false,
+                      "append_translate": false, "fixed_axis": false, "local_axis": false, "physics_after": false, "external_parent": false},
+            "append": null, "ik": null},
+           {"index": 4, "name": "左目", "name_en": "eye_L", "parent": 3, "layer": 0, "flags": {"rotate": true, "visible": true, "enabled": true, "append_rotate": true, "...": false},
+            "append": {"parent": 71, "ratio": 1.0}, "ik": null},
+           {"index": 83, "name": "左足ＩＫ", "name_en": "leg IK_L", "parent": null, "layer": 0, "flags": {"rotate": true, "translate": true, "visible": true, "enabled": true, "ik": true, "...": false},
+            "append": null, "ik": {"target": 40, "loops": 40, "angle": 0.5, "links": [39, 38]}}],
+ "morphs": [{"index": 5, "name": "まばたき", "name_en": "blink", "panel": "eye", "kind": "vertex", "offsets": 147},
+            {"index": 9, "name": "あ", "name_en": "a", "panel": "mouth", "kind": "vertex", "offsets": 88}],
+ "display_frames": [{"name": "表情", "name_en": null, "special": true, "items": [{"kind": "morph", "index": 9}, {"kind": "morph", "index": 10}]},
+                    {"name": "ＩＫ", "name_en": "IK", "special": false, "items": [{"kind": "bone", "index": 80}, {"kind": "bone", "index": 81}]}]}
+```
+
+（骨 122 本・表情 15 個・表示枠 8 個のうち数個だけ示した。`index` はファイルの中の番号で、`parent`・`append.parent`・`ik.target`・
+`ik.links`・表示枠の `items` はこの番号で指す。pmd では表情の番号が MMD の内部番号と同じになるよう、ファイルの skin 番号をそのまま使う
+（0 番の base は一覧に出さない）。`panel` は眉 `eyebrow` / 目 `eye` / 口 `mouth` / その他 `other`。`kind` は pmx の種類
+（`group` `vertex` `bone` `uv` `uv1`〜`uv4` `material` `flip` `impulse`）で、pmd は常に `vertex`。IK の `angle` は pmx が
+ラジアン、pmd はファイルの値のまま（pmx の 1/4）。`display_frames` は MMD の左の枠一覧で、`special` は Root と 表情。）
 
 ## 出力
 
@@ -163,7 +200,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `ps` / `launch [--exe P] [--headless]` / `quit [--force]` | 一覧・起動（最小化、または非表示）・終了 |
 | `state` / `dump [--keys]` | 状態の読み出し |
 | `new` / `open F.pmm` / `save [F.pmm]` | プロジェクト |
-| `model load F` / `list` / `select 名前\|番号\|camera` / `delete` / `show` / `hide` | モデル（pmx / pmd） |
+| `model load F` / `list` / `select 名前\|番号\|camera` / `delete` / `show` / `hide` / `info [名前\|番号\|F]` | モデル（pmx / pmd）。`info` は骨（親・旗・IK・付与）と表情（区分・種類）と表示枠の一覧をモデルファイルから読む |
 | `motion load F.vmd [--frame N] [--model M]` / `motion save F.vmd` | モーションの読込と書き出し（保存は選択中のモデルの全キー。カメラ編ならカメラと照明） |
 | `pose load F.vpd [--register]` / `pose save F.vpd` | ポーズの読込と書き出し。`--register` でキーも登録する |
 | `bone list` / `get 名前` / `set 名前 [--pos X Y Z] [--rot X Y Z \| --quat X Y Z W] [--frame N]` | ボーンのキー登録 |
@@ -179,7 +216,7 @@ mmd [--pid N] [--out FILE] [--timeout 秒] [--in-place] [--in-user-session | --n
 | `control list` / `get ID` / `set ID 値` / `click ID` | 任意のコントロール |
 | `dialog list` / `click ボタン` / `close` / `show` | MMD が待っているダイアログ |
 | `window status` / `minimize` / `hide` / `show` | 窓（hide は画面にもタスクバーにも出さない） |
-| `file info F` | vmd / vpd / pmm の中身（MMD 不要） |
+| `file info F [--brief]` | vmd / vpd / pmm / pmx / pmd の中身（MMD 不要）。`--brief` はモデルの件数と名前だけ |
 | `batch F [--keep-going]` | ファイル（`-` で標準入力）の 1 行 1 コマンドを 1 プロセスで順に実行 |
 
 専用のコマンドが無い操作は、`menu` と `control` で届く。ID の一覧は `mmd menu list` と `mmd control list`、
