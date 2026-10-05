@@ -191,6 +191,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **08:20: 60 fps・平滑化・歌詞入りの全曲が最終** `Desktop/ヒビカセMV_20261005/hibikase_mv_60fps_無音_20261005.mp4`
+     （15,486 枚・258.1 秒・220 MB）。Discord に 480p 版を送付。hinata の正本 `C:/work/hibikase/out/hibikase_mv_60.mp4`。
+     残り: 音源（加賀さん）。「まだ機械的」の指摘が来たら `smooth_motion --tension` と保持前後の緩急で調整。
    - 07:50: 査読 7 の指摘を直した smooth_motion を取り込み（e409434。単調接線で保持区間は止まる・足ＩＫの最低高さ 0.0・
      キー全保存・20 MB・2.6 秒）。モーションの組み立ては 原文 → 腕補正 → smooth_motion → fix_twist
      （`variants/dance_arms_open6_smooth_twist.vmd`）。全曲は 60 fps、alpha AVI が 57 GB になるので 3 区間
