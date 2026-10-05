@@ -191,6 +191,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **05:40 加賀さん: 「動きがカクカクしていて人間味がない」→ 対処中。** 原因の実測: 動画の重複フレームは 0、ダンスの
+     39,660 キー中 39,451 が直線補間でキー間隔の中央値 3〜6 フレーム（折れ線運動）。対処は (1) `tools/smooth_motion.py`
+     （キーを C1 連続の曲線で通し直して全フレームに焼く。下請けが worktree で実装中、batch F）、(2) 60 fps で描く。
+     60 fps の描画で `render avi` の枚数検査が誤って失敗する不具合を見つけて直した（c0f22b3）。比較用の 80〜94 秒を
+     60 / 30 fps で作成中（`C:/work/hibikase/out/fps60_test.mp4` / `fps30_test.mp4`）。
    - 04:25 の状態: 文字入りの全曲（無音）が出来た。 `Desktop/ヒビカセMV_20261005/hibikase_mv_無音_20261005.mp4`
      （1280x720・7,743 枚・258.1 秒・280 MB。同じ所に cues_mv.json・look_mv.json・作り方 FINAL.md）。hinata の正本は
      `C:/work/hibikase/out/hibikase_mv.mp4`。残りは 歌詞の行と音源（手が要る）。
