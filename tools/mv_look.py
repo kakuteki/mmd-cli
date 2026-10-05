@@ -242,14 +242,18 @@ def _visible(start, frames, fps, clip_start, clip_duration):
 
 
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
-                   start=None, duration=None):
+                   start=None, duration=None, offset=0.0):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
-    (see the module docstring); `start` and `duration` cut an excerpt out of the song, in seconds"""
+    (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
+    rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song"""
     w, h = size
-    clip_start = float(start or 0.0)
+    offset = float(offset or 0.0)
+    if start is not None and start < offset - 1e-9:
+        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
+    clip_start = float(start) if start is not None else offset
     argv = ["ffmpeg", "-v", "error", "-y"]
     if start is not None:
-        argv += ["-ss", "%.3f" % clip_start]
+        argv += ["-ss", "%.3f" % (clip_start - offset)]
     if duration is not None:
         argv += ["-t", "%.3f" % duration]
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
@@ -427,9 +431,9 @@ def render(args):
         os.makedirs(folder, exist_ok=True)
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
-                          start=start, duration=duration)
+                          start=start, duration=duration, offset=args.offset)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    result = {"out": out, "size": list(size), "fps": fps, "work": work, "light_frames": layers["light_frames"],
+    result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "work": work, "light_frames": layers["light_frames"],
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
               "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
               "ffmpeg": done.returncode}
@@ -454,6 +458,8 @@ def main(argv=None):
     s.add_argument("out", help="the video to write (.mp4)")
     s.add_argument("--cues", help="text cues for tools/mv_text.py")
     s.add_argument("--work", help="where the layers go (default: OUT.work)")
+    s.add_argument("--offset", type=float, default=0.0,
+                   help="the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame)")
     s.add_argument("--from", dest="start", type=float, help="start of an excerpt, in seconds of the song")
     s.add_argument("--to", type=float, help="end of an excerpt, in seconds of the song")
     s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")

@@ -271,6 +271,21 @@ class GraphTest(unittest.TestCase):
         gone = self.graph(plan=PLAN, start=5.0, duration=1.0)
         self.assertNotIn("W/cue_title/f%05d.png", gone)
 
+    def test_a_chunk_of_the_song_rendered_from_a_later_frame_keeps_the_song_clock(self):
+        # the dancer's file starts at 0.3 s of the song (a chunk rendered from frame 9): the cues keep their
+        # song times, and --from/--to still count in seconds of the song
+        argv = self.graph(plan=PLAN, offset=0.3)
+        f = self.filter_of(argv)
+        self.assertIn("setpts=PTS-STARTPTS+round(0.200000/TB)", f)      # the title at 0.5 s is 0.2 s into the file
+        credit = argv.index("W/cue_credit/f%05d.png")                    # the credit began at 0.2 s: 3 frames are gone
+        self.assertEqual(argv[argv.index("-start_number", credit - 6) + 1], "3")
+        self.assertNotIn("-ss", argv[:argv.index("fg.avi")])
+        argv = self.graph(plan=PLAN, offset=0.3, start=0.4, duration=0.3)   # 0.4 .. 0.7 s of the song = 0.1 s into the file
+        self.assertEqual(argv[argv.index("-ss") + 1], "0.100")
+        self.assertIn("setpts=PTS-STARTPTS+round(0.100000/TB)", self.filter_of(argv))
+        with self.assertRaises(ValueError):
+            self.graph(plan=PLAN, offset=0.3, start=0.1, duration=0.1)       # before the file begins
+
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class RenderTest(unittest.TestCase):
