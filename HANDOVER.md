@@ -191,6 +191,12 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - 07:50: 査読 7 の指摘を直した smooth_motion を取り込み（e409434。単調接線で保持区間は止まる・足ＩＫの最低高さ 0.0・
+     キー全保存・20 MB・2.6 秒）。モーションの組み立ては 原文 → 腕補正 → smooth_motion → fix_twist
+     （`variants/dance_arms_open6_smooth_twist.vmd`）。全曲は 60 fps、alpha AVI が 57 GB になるので 3 区間
+     （0〜2576 / 2427〜5063 を 2577 から / 4914〜7742 を 5064 から。境目はカメラのカット、150 フレームの物理の助走）に
+     分けて描き、`mv_look --offset` で曲の時計に乗せ、concat で結合（`mv/production/render_chunk.ps1`・`concat.txt`）。
+     描画は 1 区間 約 3 分（MMD 65 秒 + 後処理）。
    - 07:10: smooth_motion の査読 7 で **高 1（保持区間が止まらない: 右足ＩＫ の y が 0 → -0.30、足が最大 0.63 滑る、
      止めた指が 27 度揺れる）**・中 4（行き過ぎ最大 41 度、180 度近傍の接線、定数軌道も全フレーム化、試験の穴）。
      原因は Catmull-Rom の接線。単調（PCHIP）接線と区間ごとの相対回転から作る接線に直すよう下請けに差し戻し。
