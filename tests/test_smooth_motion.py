@@ -194,7 +194,7 @@ class KeysTest(unittest.TestCase):
         # the linear one in the middle was replaced: the straight path is not kept there
         straight = original[15][0]
         self.assertNotAlmostEqual(track[15].position[0], straight[0], places=3)
-        self.assertEqual(report["bones"][0]["segments"], {"linear": 1, "authored": 2})
+        self.assertEqual(report["bones"][0]["segments"], {"linear": 1, "authored": 2, "flat": 0})
 
     def test_tracks_with_one_key_or_one_frame_pass_through_unchanged(self):
         one = bone("首", 7, rot=about((1.0, 0.0, 0.0), 5.0), curve=EASE)
@@ -246,6 +246,187 @@ class KeysTest(unittest.TestCase):
         for a, b in zip(sorted(once.bones, key=lambda k: (k.name, k.frame)), sorted(twice.bones, key=lambda k: (k.name, k.frame))):
             self.assertEqual((a.name, a.frame, a.position, a.rotation), (b.name, b.frame, b.position, b.rotation))
         self.assertEqual(sum(b["segments"]["authored"] for b in report["bones"]), 0)
+
+
+def deviation_from_mmd_path(before, after):
+    """per frame inside the linear segments of 2+ frames: (angle in degrees, position distance) between what MMD
+    showed for the original keys and what it shows for the output; returns ((max, p99) of each)"""
+    angles, dists = [], []
+    tb, ta = smooth_motion.tracks_of(before), smooth_motion.tracks_of(after)
+    for name, keys in tb.items():
+        if len(keys) < 2 or name not in ta:
+            continue
+        frames = [k.frame for k in keys]
+        out = ta[name]
+        out_frames = [k.frame for k in out]
+        for a, b in zip(keys, keys[1:]):
+            if b.frame - a.frame < 2 or not all(smooth_motion.is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
+                continue
+            for f in range(a.frame + 1, b.frame):
+                p0, q0 = smooth_motion.sample(keys, f, frames)
+                p1, q1 = smooth_motion.sample(out, f, out_frames)
+                angles.append(angle_between(q0, q1))
+                dists.append(math.sqrt(sum((x - y) ** 2 for x, y in zip(p0, p1))))
+
+    def stats(v):
+        v = sorted(v)
+        return (v[-1], v[int(round(0.99 * (len(v) - 1)))]) if v else (0.0, 0.0)
+    return stats(angles), stats(dists)
+
+
+class HoldTest(unittest.TestCase):
+    """H1: two equal consecutive keys are a hold (a planted foot, a closed finger): it must stay still"""
+
+    def test_a_hold_before_a_move_stays_exactly_at_the_held_value_and_the_move_does_not_dip(self):
+        keys = [bone("右足ＩＫ", 0, pos=(1.0, 0.0, 2.0)), bone("右足ＩＫ", 10, pos=(1.0, 0.0, 2.0)),
+                bone("右足ＩＫ", 20, pos=(1.0, 5.0, 2.0)), bone("右足ＩＫ", 30, pos=(1.0, 5.0, 2.0))]
+        out, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右足ＩＫ")
+        frames = [k.frame for k in track]
+        path = [smooth_motion.sample(track, f, frames)[0] for f in range(0, 31)]
+        for f in range(0, 11):
+            self.assertEqual(path[f], (1.0, 0.0, 2.0), f)                  # the hold is exactly still
+        for f in range(20, 31):
+            self.assertEqual(path[f], (1.0, 5.0, 2.0), f)
+        ys = [p[1] for p in path[10:21]]
+        self.assertGreaterEqual(min(ys), 0.0)                                 # no dip below the hold
+        self.assertLessEqual(max(ys), 5.0)                                    # no overshoot past the next hold
+        self.assertEqual(ys, sorted(ys))                                      # the move is monotone
+        self.assertLess(path[11][1] - path[10][1], 0.5)                       # it eases out of the hold (chord speed 0.5)
+
+    def test_a_held_rotation_stays_exactly_still(self):
+        q = about((0.3, 0.5, 0.8), 70.0)
+        keys = [bone("右中指３", 0, rot=q), bone("右中指３", 40, rot=q), bone("右中指３", 50, rot=about((0.0, 0.0, 1.0), 20.0)), bone("右中指３", 60, rot=q)]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右中指３")
+        frames = [k.frame for k in track]
+        for f in range(0, 41):
+            self.assertEqual(smooth_motion.sample(track, f, frames)[1], smooth_motion._normalized(q), f)
+
+
+class OvershootTest(unittest.TestCase):
+    """M1: the curve never passes beyond the key values"""
+
+    def test_a_sharp_reversal_never_passes_beyond_the_keys(self):
+        keys = [bone("センター", 0, pos=(0.0, 0.0, 0.0)), bone("センター", 3, pos=(0.0, 10.0, 0.0)),
+                bone("センター", 40, pos=(0.0, 2.0, 0.0)), bone("センター", 44, pos=(0.0, 9.0, 0.0)), bone("センター", 90, pos=(0.0, 9.5, 0.0))]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "センター")
+        for a, b in zip(keys, keys[1:]):
+            lo, hi = sorted((a.position[1], b.position[1]))
+            for k in track[a.frame:b.frame + 1]:
+                self.assertTrue(lo - 1e-9 <= k.position[1] <= hi + 1e-9, (k.frame, k.position[1]))
+            ys = [k.position[1] for k in track[a.frame:b.frame + 1]]
+            self.assertEqual(ys, sorted(ys) if b.position[1] >= a.position[1] else sorted(ys, reverse=True))
+
+    def test_a_rotation_segment_never_turns_further_than_its_own_arc(self):
+        keys = [bone("右手捩", 0, rot=IDENTITY), bone("右手捩", 4, rot=about((1.0, 0.0, 0.0), 20.0)),
+                bone("右手捩", 42, rot=about((1.0, 0.0, 0.0), 130.0)), bone("右手捩", 46, rot=about((1.0, 0.0, 0.0), 100.0))]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右手捩")
+        angles = [math.degrees(math.sqrt(sum(v * v for v in smooth_motion.log_map(smooth_motion._normalized(k.rotation))))) for k in track]
+        self.assertLessEqual(max(angles[4:43]), 130.0 + 1e-6)
+        self.assertGreaterEqual(min(angles[4:43]), 20.0 - 1e-6)
+        self.assertEqual(angles[4:43], sorted(angles[4:43]))
+
+    def test_the_tangent_of_a_mid_key_between_two_large_arcs_is_the_segment_rate(self):
+        # M2: 0 -> 100 -> 200 degrees about one axis: MMD turns 100 degrees per segment (the short way each time);
+        # the neighbour-to-neighbour short way would be -160 degrees and give a tangent of 1 deg/frame instead of 10
+        keys = [bone("右手捩", 0, rot=IDENTITY), bone("右手捩", 10, rot=about((1.0, 0.0, 0.0), 100.0)), bone("右手捩", 20, rot=about((1.0, 0.0, 0.0), 200.0))]
+        slopes = smooth_motion.tangents(keys, 0.5)
+        rate = math.degrees(math.sqrt(sum(v * v for v in slopes[1][1])))
+        self.assertAlmostEqual(rate, 10.0, places=6)
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右手捩")
+        for k in track:                                                       # a steady turn stays a steady turn
+            self.assertLess(angle_between(k.rotation, about((1.0, 0.0, 0.0), 10.0 * k.frame)), 1e-5, k.frame)
+
+    def test_a_three_axis_track_stays_close_to_the_mmd_path(self):
+        # kills the mutants that mix up the frame of the tangent (world instead of body: 93 degrees off)
+        rots = [about((1.0, 0.0, 0.0), 60.0), about((0.0, 1.0, 0.0), 50.0), about((0.0, 0.0, 1.0), -70.0),
+                about((1.0, 1.0, 0.0), 80.0), about((0.0, 1.0, 1.0), -40.0), IDENTITY]
+        gaps = [0, 6, 20, 23, 40, 70]
+        keys = [bone("上半身", f, rot=r) for f, r in zip(gaps, rots)]
+        before = vmd.Motion(model_name="m", bones=keys)
+        after, _ = smooth_motion.smooth(before)
+        (worst, _), _ = deviation_from_mmd_path(before, after)
+        self.assertLess(worst, 8.0, worst)
+
+
+class FlatTest(unittest.TestCase):
+    """M3: nothing is baked where nothing moves"""
+
+    def test_a_constant_track_is_left_as_its_keys(self):
+        q = about((0.0, 1.0, 0.0), 15.0)
+        keys = [bone("グルーブ", 0, pos=(0.0, 1.0, 0.0), rot=q), bone("グルーブ", 7000, pos=(0.0, 1.0, 0.0), rot=q)]
+        out, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        self.assertEqual(out.bones, keys)
+        self.assertEqual((report["bones"][0]["keys_after"], report["bones"][0]["changed"]), (2, False))
+
+    def test_a_flat_segment_inside_a_track_keeps_just_its_two_keys(self):
+        keys = [bone("センター", 0), bone("センター", 10, pos=(0.0, 3.0, 0.0)), bone("センター", 50, pos=(0.0, 3.0, 0.0)), bone("センター", 60, pos=(0.0, 0.0, 0.0))]
+        out, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        frames = [k.frame for k in track_of(out, "センター")]
+        self.assertEqual(frames, list(range(0, 11)) + list(range(50, 61)))
+        self.assertEqual(report["bones"][0]["segments"], {"linear": 2, "authored": 0, "flat": 1})
+        self.assertEqual(report["bones"][0]["keys_after"], 22)
+        # a flat segment whose keys only differ in the stored sign of the quaternion is still flat
+        q = about((1.0, 0.0, 0.0), 30.0)
+        keys = [bone("右腕", 0, rot=q), bone("右腕", 10, rot=tuple(-v for v in q)), bone("右腕", 20, rot=IDENTITY)]
+        out, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        self.assertEqual([k.frame for k in track_of(out, "右腕")], [0] + list(range(10, 21)))
+
+
+class MutantTest(unittest.TestCase):
+    """M4: the holes the mutation check found (review 7)"""
+
+    def test_keys_with_alternating_stored_sign_still_turn_the_short_way(self):
+        # a slerp or relative() that takes the long way would spin 300 degrees between frames 10 and 20
+        keys = [bone("右腕", 10 * i, rot=tuple((-1.0) ** i * v for v in about((0.0, 1.0, 0.0), 12.0 * i))) for i in range(6)]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右腕")
+        for k in track[10:41]:
+            self.assertLess(angle_between(k.rotation, about((0.0, 1.0, 0.0), 1.2 * k.frame)), 1e-5, k.frame)
+        for k in keys:                                                        # the stored sign of a key is kept
+            self.assertEqual(track[k.frame].rotation, k.rotation)
+        r = smooth_motion.relative(about((1.0, 0.0, 0.0), 20.0), tuple(-v for v in about((1.0, 0.0, 0.0), 65.0)))
+        self.assertLess(angle_between(r, about((1.0, 0.0, 0.0), 45.0)), 1e-6)
+        self.assertGreaterEqual(r[3], 0.0)
+        self.assertLess(angle_between(smooth_motion.slerp(about((1.0, 0.0, 0.0), 0.0), tuple(-v for v in about((1.0, 0.0, 0.0), 90.0)), 0.5),
+                                      about((1.0, 0.0, 0.0), 45.0)), 1e-6)
+
+    def test_a_stored_quaternion_that_is_not_unit_is_written_back_as_it_was(self):
+        q = tuple(1.0001 * v for v in about((0.0, 0.0, 1.0), 40.0))
+        keys = [bone("右腕", 0, rot=q), bone("右腕", 10, rot=about((0.0, 0.0, 1.0), 80.0)), bone("右腕", 20, rot=IDENTITY)]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        self.assertEqual(track_of(out, "右腕")[0].rotation, q)
+        for k in track_of(out, "右腕")[1:10]:
+            self.assertAlmostEqual(sum(v * v for v in k.rotation), 1.0, places=9)   # the frames between are unit
+
+    def test_physics_bytes_and_raw_name_are_kept(self):
+        flagged = bytearray(vmd.bone_interpolation(vmd.LINEAR_CURVE))
+        flagged[2], flagged[3] = 1, 0
+        plain = vmd.bone_interpolation(vmd.LINEAR_CURVE)
+        keys = [vmd.BoneKey("右腕", 0, (0.0, 0.0, 0.0), IDENTITY, bytes(flagged), b"raw-a"),
+                vmd.BoneKey("右腕", 10, (0.0, 0.0, 0.0), about((0.0, 0.0, 1.0), 30.0), plain, b"raw-b"),
+                vmd.BoneKey("右腕", 20, (0.0, 0.0, 0.0), IDENTITY, bytes(flagged), b"raw-a")]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        track = track_of(out, "右腕")
+        self.assertEqual([k.interpolation[2:4] for k in track[:3]], [b"\x01\x00"] * 3)   # the frames after a key carry its flag
+        self.assertEqual([k.interpolation[2:4] for k in track[10:13]], [b"\x00\x00"] * 3)
+        self.assertEqual(track[20].interpolation[2:4], b"\x01\x00")
+        self.assertEqual({k.raw_name for k in track[:10]}, {b"raw-a"})
+        self.assertEqual({k.raw_name for k in track[10:20]}, {b"raw-b"})
+        for k in track:
+            self.assertEqual(set(vmd.bone_curves(k.interpolation).values()), {vmd.LINEAR_CURVE})
+
+    def test_the_output_does_not_share_its_lists_with_the_input(self):
+        motion = vmd.Motion(model_name="m", bones=zigzag())
+        motion.morphs.append(vmd.MorphKey("あ", 5, 0.5))
+        out, _ = smooth_motion.smooth(motion)
+        self.assertIsNot(out.morphs, motion.morphs)
+        self.assertIsNot(out.bones, motion.bones)
+        self.assertEqual(out.morphs, motion.morphs)
 
 
 class JerkTest(unittest.TestCase):
@@ -363,6 +544,15 @@ class RealDanceTest(unittest.TestCase):
             self.assertTrue(same_quaternion(got.rotation, k.rotation), (name.encode("ascii", "backslashreplace"), frame))
         self.assertEqual(back.morphs, before.morphs)
         self.assertGreater(sum(b["keys_after"] for b in report["bones"]), len(before.bones))
+        tb, ta = smooth_motion.tracks_of(before), smooth_motion.tracks_of(back)
+        for name in ("右足ＩＫ", "左足ＩＫ"):
+            floor = min(k.position[1] for k in tb[name])
+            self.assertGreaterEqual(min(k.position[1] for k in ta[name]), floor, name.encode("ascii", "backslashreplace"))
+        (worst, p99), (worst_pos, _) = deviation_from_mmd_path(before, back)
+        self.assertLess(worst, 8.0, worst)
+        self.assertLess(p99, 3.0, p99)
+        self.assertLess(worst_pos, 1.0, worst_pos)
+        self.assertLess(len(data), 50 * 1024 * 1024, len(data))
 
 
 if __name__ == "__main__":
