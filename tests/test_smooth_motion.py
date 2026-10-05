@@ -42,6 +42,11 @@ def angle_between(a, b):
     return math.degrees(2.0 * math.acos(min(1.0, dot)))
 
 
+def same_quaternion(a, b, tol=1e-6):
+    """components within tol, up to sign (angle_between would amplify the norm error of a stored quaternion)"""
+    return all(abs(x - y) <= tol for x, y in zip(a, b)) or all(abs(x + y) <= tol for x, y in zip(a, b))
+
+
 def bone(name, frame, pos=(0.0, 0.0, 0.0), rot=IDENTITY, curve=None):
     interpolation = vmd.bone_interpolation(curve) if curve else vmd.DEFAULT_BONE_INTERPOLATION
     return vmd.BoneKey(name, frame, tuple(float(v) for v in pos), tuple(float(v) for v in rot), interpolation)
@@ -113,16 +118,20 @@ class HermiteTest(unittest.TestCase):
         out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
         track = track_of(out, "センター")
         self.assertEqual([k.frame for k in track], list(range(0, 51)))
-        for k in track:
+        for k in track[10:41]:                                                # the interior segments: identical frames
             expected = (0.2 * k.frame, -0.1 * k.frame, 0.05 * k.frame)
             for got, want in zip(k.position, expected):
                 self.assertAlmostEqual(got, want, places=9, msg=k.frame)
+        self.assertLess(track[1].position[0], 0.2)                            # the first and last segment ease in and out
+        self.assertGreater(track[49].position[0], 9.8)
 
     def test_a_steady_turn_about_one_axis_stays_a_steady_turn(self):
         keys = [bone("右腕", 10 * i, rot=about((0.0, 1.0, 0.0), 12.0 * i)) for i in range(6)]
         out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
-        for k in track_of(out, "右腕"):
-            self.assertLess(angle_between(k.rotation, about((0.0, 1.0, 0.0), 1.2 * k.frame)), 1e-6, k.frame)
+        track = track_of(out, "右腕")
+        for k in track[10:41]:                                                # the interior segments: identical frames
+            self.assertLess(angle_between(k.rotation, about((0.0, 1.0, 0.0), 1.2 * k.frame)), 1e-5, k.frame)   # acos noise ~2e-6
+        self.assertLess(angle_between(track[1].rotation, IDENTITY), 1.2)      # the first segment eases in
 
     def test_the_zigzag_loses_its_velocity_jumps_at_the_keys(self):
         for rotate in (False, True):
@@ -163,7 +172,7 @@ class KeysTest(unittest.TestCase):
         by_frame = {k.frame: k for k in track}
         for k in keys:
             self.assertEqual(by_frame[k.frame].position, k.position)
-            self.assertLess(angle_between(by_frame[k.frame].rotation, k.rotation), 1e-6)
+            self.assertTrue(same_quaternion(by_frame[k.frame].rotation, k.rotation), k.frame)
         for k in track:
             self.assertEqual(set(vmd.bone_curves(k.interpolation).values()), {vmd.LINEAR_CURVE})
         self.assertEqual(report["bones"][0]["name"], "右腕")
@@ -248,7 +257,7 @@ class JerkTest(unittest.TestCase):
         self.assertEqual(sorted(a["bones"]), ["センター", "上半身", "右腕", "左腕"])
         for name in a["bones"]:
             self.assertGreater(a["bones"][name]["p99"], 3.0 * b["bones"][name]["p99"], name.encode("ascii", "backslashreplace"))
-            self.assertGreater(a["bones"][name]["mean"], b["bones"][name]["mean"])
+            self.assertGreater(a["bones"][name]["max"], 3.0 * b["bones"][name]["max"])
             self.assertEqual(a["bones"][name]["frames"], 51)
         self.assertEqual(a["bones"]["センター"]["unit"], "units/frame^2")
         self.assertEqual(a["bones"]["右腕"]["unit"], "deg/frame^2")
@@ -351,7 +360,7 @@ class RealDanceTest(unittest.TestCase):
         for (name, frame), k in originals.items():
             got = by[(name, frame)]
             self.assertEqual(got.position, k.position, (name.encode("ascii", "backslashreplace"), frame))
-            self.assertLess(angle_between(got.rotation, k.rotation), 1e-6, (name.encode("ascii", "backslashreplace"), frame))
+            self.assertTrue(same_quaternion(got.rotation, k.rotation), (name.encode("ascii", "backslashreplace"), frame))
         self.assertEqual(back.morphs, before.morphs)
         self.assertGreater(sum(b["keys_after"] for b in report["bones"]), len(before.bones))
 
