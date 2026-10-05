@@ -186,7 +186,12 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      `render avi --codec 未圧縮`（**フレーム 0 から 1 本で**。途中のフレームから描くと物理が休みの姿勢から始まり布が跳ねる。
      1280x720 の全曲は約 28.5 GB、hinata の空きは 92 GB）→ `python tools/mv_look.py render ... --cues ...` → 音源を足す。
      先に 15 秒の抜粋（約 1.7 GB）で見た目を合わせる。
-   - **2026-10-05 04:25 の状態: 文字入りの全曲（無音）が出来た。** `Desktop/ヒビカセMV_20261005/hibikase_mv_無音_20261005.mp4`
+   - **2026-10-05 05:20: 歌詞 48 行入りの全曲（無音）が最終**（同じ置き場所に上書き、Discord に 480p 版を送付済み）。
+     歌詞は うたてん のふりがなを母音にして `lip_timing.py` でリップに当てた（41 行一致、8 行は前後で補間）。
+     音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
+     加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
+     hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - 04:25 の状態: 文字入りの全曲（無音）が出来た。 `Desktop/ヒビカセMV_20261005/hibikase_mv_無音_20261005.mp4`
      （1280x720・7,743 枚・258.1 秒・280 MB。同じ所に cues_mv.json・look_mv.json・作り方 FINAL.md）。hinata の正本は
      `C:/work/hibikase/out/hibikase_mv.mp4`。残りは 歌詞の行と音源（手が要る）。
    - 01:30 の状態: hinata（22:59 からログオン中）で全曲を描いた。alpha つき未圧縮 AVI
