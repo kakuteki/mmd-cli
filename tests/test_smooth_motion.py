@@ -191,9 +191,10 @@ class KeysTest(unittest.TestCase):
             for got, want in zip(track[frame].position, pos):
                 self.assertAlmostEqual(got, want, delta=1e-4, msg=frame)
             self.assertLess(angle_between(track[frame].rotation, rot), 1e-4, frame)
-        # the linear one in the middle was replaced: the straight path is not kept there
-        straight = original[15][0]
-        self.assertNotAlmostEqual(track[15].position[0], straight[0], places=3)
+        # the linear one in the middle was replaced: it leaves the authored key at rest, so it lags the straight path
+        straight = original[12][0]
+        self.assertNotAlmostEqual(track[12].position[0], straight[0], places=3)
+        self.assertGreater(track[12].position[0], straight[0])
         self.assertEqual(report["bones"][0]["segments"], {"linear": 1, "authored": 2, "flat": 0})
 
     def test_tracks_with_one_key_or_one_frame_pass_through_unchanged(self):
@@ -248,10 +249,25 @@ class KeysTest(unittest.TestCase):
         self.assertEqual(sum(b["segments"]["authored"] for b in report["bones"]), 0)
 
 
+EASE_LAG = 4.0 / 27.0           # an eased segment lags or leads the linear one by at most this part of its arc
+
+
+def off_arc(qa, qb, q):
+    """degrees of q off the geodesic a -> b, read in the log chart at a"""
+    e = smooth_motion.log_map(smooth_motion.relative(qa, qb))
+    v = smooth_motion.log_map(smooth_motion.relative(qa, q))
+    n2 = sum(c * c for c in e)
+    if n2 < 1e-18:
+        return math.degrees(math.sqrt(sum(c * c for c in v)))
+    t = sum(x * y for x, y in zip(v, e)) / n2
+    return math.degrees(math.sqrt(sum((x - t * y) ** 2 for x, y in zip(v, e))))
+
+
 def deviation_from_mmd_path(before, after):
-    """per frame inside the linear segments of 2+ frames: (angle in degrees, position distance) between what MMD
-    showed for the original keys and what it shows for the output; returns ((max, p99) of each)"""
-    angles, dists = [], []
+    """per frame inside the linear, non-flat segments of 2+ frames, against what MMD shows for the original keys:
+    {"angle": total degrees, "lateral": degrees off the segment's arc, "excess": total minus the timing bound
+    EASE_LAG * arc, "position": distance}, each as (max, p99)"""
+    rows = {"angle": [], "lateral": [], "excess": [], "position": []}
     tb, ta = smooth_motion.tracks_of(before), smooth_motion.tracks_of(after)
     for name, keys in tb.items():
         if len(keys) < 2 or name not in ta:
@@ -260,18 +276,24 @@ def deviation_from_mmd_path(before, after):
         out = ta[name]
         out_frames = [k.frame for k in out]
         for a, b in zip(keys, keys[1:]):
-            if b.frame - a.frame < 2 or not all(smooth_motion.is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
+            if b.frame - a.frame < 2 or smooth_motion.is_flat(a, b) or \
+                    not all(smooth_motion.is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
                 continue
+            qa, qb = smooth_motion._normalized(a.rotation), smooth_motion._normalized(b.rotation)
+            arc = angle_between(qa, qb)
             for f in range(a.frame + 1, b.frame):
                 p0, q0 = smooth_motion.sample(keys, f, frames)
                 p1, q1 = smooth_motion.sample(out, f, out_frames)
-                angles.append(angle_between(q0, q1))
-                dists.append(math.sqrt(sum((x - y) ** 2 for x, y in zip(p0, p1))))
+                d = angle_between(q0, q1)
+                rows["angle"].append(d)
+                rows["lateral"].append(off_arc(qa, qb, q1))
+                rows["excess"].append(d - EASE_LAG * arc)
+                rows["position"].append(math.sqrt(sum((x - y) ** 2 for x, y in zip(p0, p1))))
 
     def stats(v):
         v = sorted(v)
         return (v[-1], v[int(round(0.99 * (len(v) - 1)))]) if v else (0.0, 0.0)
-    return stats(angles), stats(dists)
+    return {k: stats(v) for k, v in rows.items()}
 
 
 class HoldTest(unittest.TestCase):
@@ -328,18 +350,41 @@ class OvershootTest(unittest.TestCase):
         self.assertLessEqual(max(angles[4:43]), 130.0 + 1e-6)
         self.assertGreaterEqual(min(angles[4:43]), 20.0 - 1e-6)
         self.assertEqual(angles[4:43], sorted(angles[4:43]))
+        # a fast turn (10 deg/frame) followed by a crawl (0.1 deg/frame): the tangent at the joint must follow the
+        # crawl, else the slow segment shoots past its 4-degree arc and comes back
+        keys = [bone("右手捩", 0, rot=IDENTITY), bone("右手捩", 4, rot=about((1.0, 0.0, 0.0), 40.0)), bone("右手捩", 44, rot=about((1.0, 0.0, 0.0), 44.0))]
+        out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        angles = [math.degrees(math.sqrt(sum(v * v for v in smooth_motion.log_map(smooth_motion._normalized(k.rotation))))) for k in track_of(out, "右手捩")]
+        self.assertLessEqual(max(angles[4:]), 44.0 + 1e-6, max(angles[4:]))
+        self.assertEqual(angles[4:], sorted(angles[4:]))
+
+    def test_a_corner_between_two_arcs_60_degrees_apart_stays_within_3_degrees_of_each_arc(self):
+        # 90 degrees about x, then 90 about an axis 60 degrees from x, both at 9 deg/frame: the uncapped tangent
+        # between the axes would bulge 9 * sin(30) * 10 * 4/27 = 6.7 degrees off each arc; the lateral cap holds it to 3
+        second = mathutil.quat_multiply(about((1.0, 0.0, 0.0), 90.0), about((0.5, math.sqrt(0.75), 0.0), 90.0))
+        keys = [bone("上半身", 0, rot=IDENTITY), bone("上半身", 10, rot=about((1.0, 0.0, 0.0), 90.0)),
+                bone("上半身", 20, rot=second), bone("上半身", 30, rot=second)]
+        before = vmd.Motion(model_name="m", bones=keys)
+        after, _ = smooth_motion.smooth(before)
+        dev = deviation_from_mmd_path(before, after)
+        self.assertLess(dev["lateral"][0], 3.5, dev)
+        self.assertGreater(dev["lateral"][0], 1.0, dev)                        # ... and the corner is rounded, not a kink
 
     def test_the_tangent_of_a_mid_key_between_two_large_arcs_is_the_segment_rate(self):
         # M2: 0 -> 100 -> 200 degrees about one axis: MMD turns 100 degrees per segment (the short way each time);
         # the neighbour-to-neighbour short way would be -160 degrees and give a tangent of 1 deg/frame instead of 10
-        keys = [bone("右手捩", 0, rot=IDENTITY), bone("右手捩", 10, rot=about((1.0, 0.0, 0.0), 100.0)), bone("右手捩", 20, rot=about((1.0, 0.0, 0.0), 200.0))]
+        keys = [bone("右手捩", 10 * i, rot=about((1.0, 0.0, 0.0), 100.0 * i)) for i in range(4)]      # 0, 100, 200, 300
         slopes = smooth_motion.tangents(keys, 0.5)
-        rate = math.degrees(math.sqrt(sum(v * v for v in slopes[1][1])))
-        self.assertAlmostEqual(rate, 10.0, places=6)
+        for i in (1, 2):
+            rate = math.degrees(math.sqrt(sum(v * v for v in slopes[i][1])))
+            self.assertAlmostEqual(rate, 10.0, places=6)
         out, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
         track = track_of(out, "右手捩")
-        for k in track:                                                       # a steady turn stays a steady turn
+        for k in track[10:21]:                                                # the middle segment: a steady turn stays steady
             self.assertLess(angle_between(k.rotation, about((1.0, 0.0, 0.0), 10.0 * k.frame)), 1e-5, k.frame)
+        for k in track:                                                       # the eased ends stay on the axis
+            self.assertLess(abs(k.rotation[1]) + abs(k.rotation[2]), 1e-9, k.frame)
+        self.assertLess(angle_between(track[1].rotation, IDENTITY), 10.0)     # ... and start at rest
 
     def test_a_three_axis_track_stays_close_to_the_mmd_path(self):
         # kills the mutants that mix up the frame of the tangent (world instead of body: 93 degrees off)
@@ -349,8 +394,9 @@ class OvershootTest(unittest.TestCase):
         keys = [bone("上半身", f, rot=r) for f, r in zip(gaps, rots)]
         before = vmd.Motion(model_name="m", bones=keys)
         after, _ = smooth_motion.smooth(before)
-        (worst, _), _ = deviation_from_mmd_path(before, after)
-        self.assertLess(worst, 8.0, worst)
+        dev = deviation_from_mmd_path(before, after)
+        self.assertLess(dev["lateral"][0], 8.0, dev)                          # off the arc: bounded by the lateral cap
+        self.assertLess(dev["excess"][0], 3.0, dev)                           # along the arc: only the ease's timing
 
 
 class FlatTest(unittest.TestCase):
@@ -548,10 +594,11 @@ class RealDanceTest(unittest.TestCase):
         for name in ("右足ＩＫ", "左足ＩＫ"):
             floor = min(k.position[1] for k in tb[name])
             self.assertGreaterEqual(min(k.position[1] for k in ta[name]), floor, name.encode("ascii", "backslashreplace"))
-        (worst, p99), (worst_pos, _) = deviation_from_mmd_path(before, back)
-        self.assertLess(worst, 8.0, worst)
-        self.assertLess(p99, 3.0, p99)
-        self.assertLess(worst_pos, 1.0, worst_pos)
+        dev = deviation_from_mmd_path(before, back)
+        self.assertLess(dev["lateral"][0], 8.0, dev)                          # off the arc, max
+        self.assertLess(dev["lateral"][1], 3.0, dev)                          # off the arc, p99
+        self.assertLess(dev["excess"][0], 8.0, dev)                           # beyond the ease's timing bound, max
+        self.assertLess(dev["position"][0], 1.0, dev)
         self.assertLess(len(data), 50 * 1024 * 1024, len(data))
 
 
