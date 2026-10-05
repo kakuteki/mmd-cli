@@ -75,5 +75,15 @@ class AviHeaderTest(unittest.TestCase):
         self.assertIsNone(app._avi_info(path)["fps"])
 
 
+class ExpectedFramesTest(unittest.TestCase):
+    def test_a_60_fps_render_writes_two_frames_per_motion_frame(self):
+        # the motion's frames are 30 fps units: from 2400 to 2820 at 60 fps MMD wrote 842 frames (measured 2026-10-05)
+        from mmd_cli import app
+        self.assertEqual(app.expected_avi_frames(2400, 2820, 30), 421)
+        self.assertEqual(app.expected_avi_frames(2400, 2820, 60), 842)
+        self.assertEqual(app.expected_avi_frames(0, 7742, 30), 7743)
+        self.assertEqual(app.expected_avi_frames(0, 7742, 60), 15486)
+
+
 if __name__ == "__main__":
     unittest.main()

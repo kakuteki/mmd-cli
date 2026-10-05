@@ -1388,7 +1388,7 @@ class Mmd:
                 raise MmdError(problem[0])
             self._closed_by_writer(path)        # the frame count goes into the header when MMD closes the file
             header = _avi_info(path)
-            asked = {"frames": end - start + 1, "fps": int(fps)}
+            asked = {"frames": expected_avi_frames(start, end, fps), "fps": int(fps)}
             if size is not None:
                 asked["size"] = [int(size[0]), int(size[1])]
             wrong = {k: (asked[k], header.get(k)) for k in asked if header.get(k) != asked[k]}
@@ -1648,6 +1648,12 @@ def _riff_chunks(data):
         tag, size = data[pos:pos + 4], struct.unpack_from("<I", data, pos + 4)[0]
         yield tag, data[pos + 8:pos + 8 + size]
         pos += 8 + size + (size & 1)
+
+
+def expected_avi_frames(start, end, fps):
+    """how many frames MMD writes for motion frames start..end at `fps`: the motion's frames are 30 fps
+    units, so 60 fps gives two per motion frame (measured: 2400..2820 at 60 fps gave 842)"""
+    return int(round((end - start + 1) * int(fps) / 30.0))
 
 
 def _avi_info(path):
