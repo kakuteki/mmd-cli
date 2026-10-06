@@ -716,7 +716,7 @@ class DenoiseTest(unittest.TestCase):
             cap_deg, cap_units = cap or smooth_motion.DENOISE_CAP
             for name in ("右腕", "左腕"):
                 rot = max(angle_between(a[1], b[1]) for a, b in zip(path(plain, name), path(denoised, name)))
-                self.assertLessEqual(rot, cap_deg + 1e-5, name.encode("ascii", "backslashreplace"))
+                self.assertLessEqual(rot, cap_deg + 1e-9, name.encode("ascii", "backslashreplace"))
                 self.assertGreater(rot, cap_deg - 1e-3)                     # the jitter is larger: the cap binds
             pos = max(abs(x - y) for a, b in zip(path(plain, "センター"), path(denoised, "センター")) for x, y in zip(a[0], b[0]))
             self.assertLessEqual(pos, cap_units + 1e-9)
@@ -817,9 +817,16 @@ class DenoiseTest(unittest.TestCase):
         self.addCleanup(setattr, smooth_motion, "ROUNDS", saved)
         keys = [bone("左腕", f, rot=about((0.0, 0.0, 1.0), 20.0 * math.sin(2.0 * math.pi * 2.0 * f / 30.0) + f / 9.0 * (-1) ** f))
                 for f in range(0, 91)]
+        keys += [bone("センター", f, pos=(0.5 * math.sin(2.0 * math.pi * f / 30.0) + f / 300.0 * (-1) ** f, 0.0, 0.0)) for f in range(0, 91)]
         plain, denoised, _ = plain_and_denoised(keys)
         worst = max(angle_between(a[1], b[1]) for a, b in zip(path(plain, "左腕"), path(denoised, "左腕")))
-        self.assertLessEqual(worst, smooth_motion.DENOISE_CAP[0] + 1e-5)
+        self.assertLessEqual(worst, smooth_motion.DENOISE_CAP[0] + 1e-9)
+        # ... and the correction is still a whole: zero mean and slope over the zone (frames 2-88), inside the cap
+        p, d = path(plain, "センター"), path(denoised, "センター")
+        delta = [d[f][0][0] - p[f][0][0] for f in range(2, 89)]
+        self.assertLessEqual(max(abs(v) for v in delta), smooth_motion.DENOISE_CAP[1] + 1e-12)
+        self.assertLess(abs(sum(delta)), 1e-9)
+        self.assertLess(abs(sum((f - 45.0) * v for f, v in zip(range(2, 89), delta))), 1e-9)
 
     def test_a_zone_of_three_frames_is_left_as_the_plain_curve(self):
         # review 9 M2: hold, one key 2 frames later, hold.  The zone is frames 12-14; with its mean and slope at 0 the only
