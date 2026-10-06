@@ -549,12 +549,13 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
         x = [[rot[i][c] for i in window] for c in range(4)]
         if any(rot[i] != rot[window[0]] for i in window):
             def bound_rotation(j, v, x=x):
-                q = _normalized(v)
                 xq = (x[0][j], x[1][j], x[2][j], x[3][j])
-                c = abs(sum(p * r for p, r in zip(q, xq)))
-                if 2.0 * math.acos(min(1.0, c)) <= cap_rad:
+                turn = log_map(relative(xq, v))                             # from the plain frame, the short way
+                angle = math.sqrt(sum(c * c for c in turn))
+                if angle <= cap_rad:
                     return None
-                return list(slerp(xq, q, cap_rad / (2.0 * math.acos(min(1.0, c)))))
+                # back along that arc to the cap, exactly (slerp blends linearly below 3.6 degrees and misses it)
+                return list(_normalized(mathutil.quat_multiply(xq, exp_map(tuple(c * cap_rad / angle for c in turn)))))
             values = _settle(x, inside, lam, bound_rotation)
             for j, i in enumerate(window):
                 if inside[j]:
