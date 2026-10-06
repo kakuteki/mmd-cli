@@ -717,6 +717,8 @@ def real_file(*parts):
 
 REAL_DANCE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_smooth_twist.vmd")
 REAL_CAMERA = real_file("_spike", "out", "hibikase", "variants", "camera_D_generated.vmd")
+FINAL_DANCE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_smooth_dn_twist.vmd")
+HANDHELD = real_file("_spike", "out", "hibikase", "variants", "camera_D_handheld.vmd")
 RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
 
 
@@ -748,6 +750,30 @@ class RealSongTest(unittest.TestCase):
             pitch = math.degrees(math.asin(max(-1.0, min(1.0, gaze[1]))))
             self.assertLessEqual(pitch, eye_gaze.MAX_UP + 1e-3)
             self.assertGreaterEqual(pitch, -eye_gaze.MAX_DOWN - 1e-3)
+
+
+@unittest.skipUnless(FINAL_DANCE and HANDHELD and os.path.isfile(RIN), "the final dance, the handheld camera or Rin is not here")
+class FinalSongTest(unittest.TestCase):
+    def test_the_final_dance_with_the_handheld_camera(self):
+        # the handheld camera has a key on every frame and shakes by about 0.3 degrees: the same 20 cuts, and the
+        # shake starts no saccades (review 8)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        out, report = os.path.join(folder, "eyes.vmd"), os.path.join(folder, "r.json")
+        started = time.time()
+        code, result = run([FINAL_DANCE, HANDHELD, RIN, out, "--report", report])
+        self.assertEqual(code, 0, result)
+        self.assertLess(time.time() - started, 60.0)
+        self.assertEqual((result["frames"], result["cuts"]), ([0, 7742], 20))
+        with open(report, encoding="ascii") as f:
+            full = json.load(f)
+        self.assertEqual(sum(full["counts"].values()), 7743)
+        self.assertLess(full["saccades"]["count"], 100)                          # 132 before review 8
+        self.assertLess(full["round_trips"]["count"], 25)                        # 46 before review 8
+        for key in vmd.load(out).bones:
+            yaw, pitch = eye_gaze.angles_of(fk.rotate(fk.applied(key.rotation), FORWARD))
+            self.assertLessEqual(abs(yaw), eye_gaze.MAX_YAW + 1e-3)
+            self.assertTrue(-eye_gaze.MAX_DOWN - 1e-3 <= pitch <= eye_gaze.MAX_UP + 1e-3, (key.frame, pitch))
 
 
 if __name__ == "__main__":
