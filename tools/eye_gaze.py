@@ -67,9 +67,13 @@ mmd_cli/fk.py (KEY_ROTATION_SIGNS).  Keys the dance has on 右目 or 左目 woul
 MV's dance holds one zero key each).
 
 The report (--report, and in short on stdout): the shares of frames on the camera (within SACCADE_THRESHOLD of it
-and inside the limits), at a limit, neutral, in a saccade, and reacting (waiting out the reaction time after a cut
-or a move, more than SACCADE_THRESHOLD off): they add up to 1.  The saccades with their causes and amplitudes, the
-cuts.  --debug writes, for --debug-frames (default: every DEBUG_STEP-th frame), the camera's and the eye center's
+and inside the limits), at a limit (the camera beyond one: the eyes held towards it, at or near the limit), neutral,
+in a saccade, and reacting (waiting out the reaction time after a cut or a move, more than SACCADE_THRESHOLD off):
+they add up to 1.  The saccades with their causes and amplitudes, the fixations moved without one (reanchored), the
+cuts, the error on the camera and under the soft limit, the round trips to neutral (how many, how many short:
+SHORT_STAY frames or less in neutral) and the share of frames with the eyes near each limit (within NEAR_LIMIT of it,
+before the drift: near_limit up, down, side, any).  --debug writes, for --debug-frames (default: every
+DEBUG_STEP-th frame), the camera's and the eye center's
 world position, the head's forward direction, where the camera is (yaw, pitch), the eye's yaw and pitch and the
 window angles written, the state and the remaining error.
 
@@ -106,6 +110,8 @@ PATIENCE = 20                         # frames the camera must stay beyond GIVE_
 COME_BACK = 8.0                       # degrees beyond the limits within which neutral eyes go back to the camera
 SACCADE_THRESHOLD = 4.0               # degrees between where the eyes hold and the camera that start a saccade
 MIN_SACCADE = 0.5                     # degrees: a smaller move is no saccade, only the fixation moves (review 8, F1)
+SHORT_STAY = 15                       # frames: a round trip with at most this much time in neutral is short (report)
+NEAR_LIMIT = 0.9                      # share of a limit from which the eyes count as at it (report: near_limit)
 LONG_SACCADE = 20.0                   # degrees: a longer saccade takes 3 frames instead of 2
 REACTION = (3, 5)                     # frames from the cause to the start of the saccade (both included)
 MIN_FIXATION = 6                      # frames from the landing of a saccade to the earliest start of the next
@@ -265,6 +271,8 @@ class Look:
     state: str                      # one of STATES
     target: Tuple[float, float]     # where the camera is (yaw, pitch), not clamped
     error: float                    # degrees between the gaze written and the camera
+    mode: str = "camera"            # what the eyes hold after this frame: "camera" or "neutral"
+    base: Tuple[float, float] = (0.0, 0.0)     # the eye angles before the drift is added
 
 
 @dataclass(frozen=True)
@@ -434,7 +442,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
             state = "on_camera"
         else:
             state = "reacting"
-        looks.append(Look(sight.frame, final[0] + 0.0, final[1] + 0.0, state, target, _apart(final, target)))
+        looks.append(Look(sight.frame, final[0] + 0.0, final[1] + 0.0, state, target, _apart(final, target), mode, base))
     return looks, [{"frame": s["frame"], "frames": s["frames"], "reason": s["reason"], "amplitude": s["amplitude"]}
                    for s in saccades], quiet
 
@@ -551,6 +559,8 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                                "amplitude": _r(s["amplitude"], 3)} for s in saccades]},
         # fixations moved without a saccade, the move being under MIN_SACCADE (not counted among the saccades)
         "reanchored": {"count": len(quiet), "by_reason": _count(q["reason"] for q in quiet)},
+        "round_trips": round_trips(looks),
+        "near_limit": near_limit(looks, limits),
         "cuts": cuts,
         "error_on_camera": _error_summary([look.error for look in looks if look.state == "on_camera"]),
         # how far from the camera the eyes are while the soft limit holds them short of it (the camera inside the
@@ -562,6 +572,32 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         "dance_eye_keys": dance_eye_keys(dance),
     }
     return Gaze(looks, saccades, cuts, eye_motion(looks, dance.model_name), report, seen, forward)
+
+
+def round_trips(looks):
+    """the stays in neutral between two stretches on the camera (the neutral start of a song is none): how many, how
+    many short (SHORT_STAY frames or less in neutral) and the frames in neutral of each"""
+    stays, current, counts, seen_camera = [], None, False, False
+    for look in looks:
+        if look.mode == "neutral":
+            if current is None:
+                current, counts = 0, seen_camera
+            current += look.state == "neutral"
+        else:
+            if current is not None and counts:
+                stays.append(current)
+            current, seen_camera = None, True
+    return {"count": len(stays), "short": sum(1 for s in stays if s <= SHORT_STAY), "neutral_frames": stays}
+
+
+def near_limit(looks, limits):
+    """the share of frames with the eyes (before the drift) within NEAR_LIMIT of a limit: up, down, to a side, any"""
+    up = [look.base[1] >= NEAR_LIMIT * limits.up for look in looks]
+    down = [look.base[1] <= -NEAR_LIMIT * limits.down for look in looks]
+    side = [abs(look.base[0]) >= NEAR_LIMIT * limits.yaw for look in looks]
+    n = float(len(looks))
+    return {"up": sum(up) / n, "down": sum(down) / n, "side": sum(side) / n,
+            "any": sum(1 for a, b, c in zip(up, down, side) if a or b or c) / n}
 
 
 def _error_summary(values):
@@ -663,7 +699,9 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
                "eye": report["eye"], "convention": report["convention"], "cuts": len(report["cuts"]),
                "counts": report["counts"], "shares": {k: _r(v) for k, v in report["shares"].items()},
                "saccades": {k: report["saccades"][k] for k in ("count", "by_reason", "by_frames", "amplitude")},
-               "reanchored": report["reanchored"], "error_on_camera": report["error_on_camera"],
+               "reanchored": report["reanchored"], "round_trips": report["round_trips"],
+               "near_limit": {k: _r(v) for k, v in report["near_limit"].items()},
+               "error_on_camera": report["error_on_camera"],
                "soft_limit": report["soft_limit"]}
     if report_path:
         full = os.path.abspath(report_path)

@@ -517,6 +517,33 @@ class OutputTest(unittest.TestCase):
             self.assertEqual(vmd.bone_curves(k.interpolation), {c: vmd.LINEAR_CURVE for c in vmd.BONE_CHANNELS})
             self.assertEqual(k.position, (0.0, 0.0, 0.0))
 
+    def test_round_trips_to_neutral_and_the_short_ones_are_counted(self):
+        # out of reach for 50 frames (21..70): a round trip with about 25 frames in neutral; for 30 frames (21..50): one
+        # with less than SHORT_STAY (0.5 s) in neutral
+        self.assertEqual(eye_gaze.SHORT_STAY, 15)
+        aside = camera(cam(0, (0.0, 8.0, 0.0)), cam(LAST, (0.0, 8.0, 0.0)))     # off centre: coming back is a saccade
+        for last_far, short in ((70, 0), (50, 1)):
+            result = run_gaze(dance=head_turn({0: 0.0, 20: 0.0, 21: 60.0, last_far: 60.0, last_far + 1: 0.0}),
+                              cam_motion=aside)
+            self.assertEqual([s["reason"] for s in result.saccades], ["to_neutral", "to_camera"], last_far)
+            trips = result.report["round_trips"]
+            self.assertEqual((trips["count"], trips["short"]), (1, short), last_far)
+            stay = sum(1 for look in result.looks if look.state == "neutral")
+            self.assertEqual(trips["neutral_frames"], [stay])
+            self.assertEqual(stay <= eye_gaze.SHORT_STAY, bool(short))
+        self.assertEqual(run_gaze().report["round_trips"], {"count": 0, "short": 0, "neutral_frames": []})
+
+    def test_time_near_each_limit_is_reported(self):
+        # within 10 % of a limit, on the eye angle before the drift
+        above = run_gaze(cam_motion=camera(cam(0, (10.0, 0.0, 0.0)), cam(LAST, (10.0, 0.0, 0.0))), life=True)
+        self.assertEqual(above.report["near_limit"], {"up": 1.0, "down": 0.0, "side": 0.0, "any": 1.0})
+        side = run_gaze(cam_motion=camera(cam(0, (0.0, -25.0, 0.0)), cam(LAST, (0.0, -25.0, 0.0))))
+        self.assertEqual(side.report["near_limit"], {"up": 0.0, "down": 0.0, "side": 1.0, "any": 1.0})
+        ahead = run_gaze(life=True)
+        self.assertEqual(ahead.report["near_limit"], {"up": 0.0, "down": 0.0, "side": 0.0, "any": 0.0})
+        half = run_gaze(cam_motion=cut_at_60(0.0, -25.0))                         # at the side limit after the cut
+        self.assertTrue(0.4 < half.report["near_limit"]["side"] < 0.6)
+
     def test_frames_that_do_not_change_get_no_key(self):
         result = run_gaze(life=False)
         self.assertEqual([k.frame for k in result.motion.bones], [0, LAST])
@@ -575,6 +602,8 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(len(full["saccades"]["list"]), full["saccades"]["count"])
         self.assertEqual(full["reanchored"], result["reanchored"])
         self.assertEqual(set(full["reanchored"]), {"count", "by_reason"})
+        self.assertEqual(full["round_trips"], result["round_trips"])
+        self.assertEqual(set(result["near_limit"]), {"up", "down", "side", "any"})
         self.assertEqual(full["eye"]["center"], ["右目", "左目"])
         self.assertEqual(full["eye"]["forward"], [0.0, 0.0, -1.0])
         with open(debug, encoding="ascii") as f:
