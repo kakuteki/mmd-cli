@@ -191,6 +191,10 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **2026-10-06 真の最終を描画中**（`render_final.ps1`）: 手ぶれ除去は査読 9 の直しを取り込み（9770fb1、ジグザグ 0・1 フレームの突起 0、
+     指は除外）、**上限は 6 度/0.05 を採用**（既定 3 度/0.05 と足・センターは同じで、右ひじ p99 −25.7 %（3 度は −16.9 %）、速さの揺り返し
+     5,305（平滑だけ 5,480））。モーション = 原文 → 腕補正 → `smooth_motion --denoise --denoise-cap 6 0.05` → `fix_twist`
+     = `variants/dance_final_dn6_twist.vmd`（main の道具で下請けの出力とバイト一致）。視線 `gaze_final_dn6.vmd`（目線 28 %）。
    - **2026-10-06 試写版が出来た**（29 分、21 区間すべて枚数どおり、7,743 枚・258.1 秒・30 fps、境目は文字の位置も連続）:
      `Desktop/ヒビカセMV_20261005/hibikase_mv_30fps_blur_試写_20261006.mp4`。Discord に 480p 版・一覧・目線の図を送付。
      hinata の区間の出力と試験の作業フォルダは片付けた。
