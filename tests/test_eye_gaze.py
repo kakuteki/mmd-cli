@@ -32,9 +32,9 @@ EYE_CENTER = (0.0, 17.2, -0.56)
 FORWARD = (0.0, 0.0, -1.0)
 
 
-def rin_like_bytes():
+def rin_like_bytes(tip=(0.0, 19.4, -0.83)):
     """a body, a neck and a head with the eye bones laid out as on Sour's Rin: 両目 a handle above the head with its
-    tip straight ahead, the eyes lower, each turning with 両目 (append ratio 1)"""
+    tip (両目先) straight ahead unless `tip` says otherwise, the eyes lower, each turning with 両目 (append ratio 1)"""
     w = Writer(bone=2)
     bones = [("全ての親", -1, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", 0, (0.0, 8.0, 0.0), {"flags": NORMAL | TRANSLATE}),
@@ -44,7 +44,7 @@ def rin_like_bytes():
              ("両目", 4, (0.0, 19.4, -0.26), {"flags": NORMAL | TAIL_IS_BONE, "tail": 8}),
              ("左目", 4, (0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
              ("右目", 4, (-0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
-             ("両目先", 5, (0.0, 19.4, -0.83), {})]
+             ("両目先", 5, tuple(tip), {})]
     return w.build(name="rin-like", bones=[w.bone(n, parent=p, position=pos, **kw) for n, p, pos, kw in bones])
 
 
@@ -143,6 +143,23 @@ class WhereSheLooksTest(unittest.TestCase):
         self.assertAlmostEqual(result.looks[10].yaw, 0.0, places=6)
         key = [k for k in result.motion.bones if k.frame == LAST][0]
         self.assertGreater(fk.rotate(fk.applied(key.rotation), FORWARD)[1], math.sin(math.radians(2.5)))
+
+    def test_a_rest_gaze_that_is_not_straight_ahead_is_where_the_angles_start(self):
+        # review 8, F5: 両目先 10 degrees above 両目, so the eyes at rest look 10 degrees up.  A camera on that line needs
+        # no turn at all; one 5 degrees below it needs a pitch of -5
+        up = math.radians(10.0)
+        model = pmx.loads(rin_like_bytes(tip=(0.0, 19.4 + 0.57 * math.sin(up), -0.26 - 0.57 * math.cos(up))))
+        for below, pitch in ((0.0, 0.0), (5.0, -5.0)):
+            a = math.radians(10.0 - below)
+            look_at = (0.0, 17.2 + 30.0 * math.sin(a), -0.56 - 30.0 * math.cos(a) + 30.0)    # camera at angles 0, d 30
+            result = eye_gaze.gaze(model, STILL, camera(cam(0, distance=30.0, look_at=look_at),
+                                                        cam(LAST, distance=30.0, look_at=look_at)), life=False)
+            self.assertEqual(result.report["eye"]["forward_from"], "両目先")
+            self.assertAlmostEqual(result.report["eye"]["forward"][1], math.sin(up), places=4)
+            for look in result.looks:
+                self.assertAlmostEqual(look.yaw, 0.0, places=4)
+                self.assertAlmostEqual(look.pitch, pitch, places=3)
+                self.assertEqual(look.state, "on_camera")
 
     def test_a_camera_behind_her_leaves_the_eyes_neutral(self):
         result = run_gaze(cam_motion=camera(cam(0, (0.0, 180.0, 0.0)), cam(LAST, (0.0, 180.0, 0.0))))
@@ -339,6 +356,17 @@ class SaccadeTest(unittest.TestCase):
         self.assertEqual(result.cuts, [60])
         self.assertEqual([s["reason"] for s in result.saccades], ["cut"])
         self.assertTrue(60 + eye_gaze.REACTION[0] <= result.saccades[0]["frame"] <= 60 + eye_gaze.REACTION[1])
+
+    def test_a_camera_that_only_turns_is_a_cut_too(self):
+        # review 8, F4: a camera at distance 0 turns 40 degrees on one frame without moving; that is a cut (by
+        # CUT_TURN, the line of sight), though the eyes need not move (it stays where it was: no saccade)
+        spot = (0.0, 17.2, -30.0)
+        keys = camera(cam(0, (0.0, 0.0, 0.0), 0.0, spot), cam(59, (0.0, 0.0, 0.0), 0.0, spot),
+                      cam(60, (0.0, 40.0, 0.0), 0.0, spot), cam(LAST, (0.0, 40.0, 0.0), 0.0, spot))
+        result = run_gaze(cam_motion=keys)
+        self.assertEqual(result.cuts, [60])
+        self.assertEqual(result.saccades, [])
+        self.assertEqual(result.report["reanchored"], {"count": 1, "by_reason": {"cut": 1}})
 
     def test_a_slowly_moving_camera_is_followed_by_refixations(self):
         keys = [cam(0, (0.0, -12.0, 0.0)), cam(LAST, (0.0, 12.0, 0.0))]

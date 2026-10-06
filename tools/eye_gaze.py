@@ -238,7 +238,7 @@ def sights(model, dance, camera, first=0, last=None):
         head = track[parent][i][1] if parent is not None else fk.IDENTITY
         state = fk.camera_at(keys, frame, frames)
         position = fk.camera_position(state)
-        sight_line = tuple(a - b for a, b in zip(state.look_at, position))
+        sight_line = fk.camera_direction(state)             # from the angles: a camera turning on the spot cuts too
         cut = previous is not None and (math.sqrt(sum((a - b) ** 2 for a, b in zip(position, previous[0]))) > CUT_JUMP
                                         or degrees_between(sight_line, previous[1]) > CUT_TURN)
         previous = (position, sight_line)

@@ -176,7 +176,8 @@ class AppendTest(unittest.TestCase):
             ("頭", -1, (0.0, 16.0, 0.0), {}),
             ("両目", 4, (0.0, 19.0, -0.3), {}),
             ("左目", 4, (0.4, 17.0, -0.5), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
-            ("右目", 4, (-0.4, 17.0, -0.5), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}))
+            ("右目", 4, (-0.4, 17.0, -0.5), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
+            ("chain", -1, (0.0, 0.0, 0.0), {"flags": NORMAL | APPEND_ROTATE, "append": (1, 0.5)}))     # appends "half"
 
     def world(self, keys, name):
         return fk.Pose(self.model, motion(*keys), [name]).at(0)[name]
@@ -191,6 +192,17 @@ class AppendTest(unittest.TestCase):
         rotation = self.world([key("A", 0, about(Y, 90.0)), key("half", 0, about(X, 90.0))], "half")[1]
         same_rotation(self, rotation, fk.multiply(about(X, 90.0), about(Y, 45.0)))
         close(self, fk.rotate(rotation, (0.0, 0.0, -1.0)), (-math.sqrt(0.5), math.sqrt(0.5), 0.0))
+
+    def test_a_chain_of_appends_takes_the_whole_local_rotation_of_its_append_parent(self):
+        # review 8, F3: "chain" appends "half", which has a key of its own and appends A.  What "chain" takes is the
+        # local rotation of "half": its key and its appended part, (key_half * A^0.5)^0.5; the key of "half" alone
+        # would be about(X, 30)^0.5
+        keys = [key("A", 0, about(Y, 60.0)), key("half", 0, about(X, 30.0))]
+        local_half = fk.multiply(about(X, 30.0), about(Y, 30.0))
+        same_rotation(self, self.world(keys, "half")[1], local_half)
+        same_rotation(self, self.world(keys, "chain")[1], fk.power(local_half, 0.5))
+        dot = abs(sum(a * b for a, b in zip(self.world(keys, "chain")[1], about(X, 15.0))))
+        self.assertLess(dot, math.cos(math.radians(5.0) / 2.0))                  # more than 5 degrees from that
 
     def test_an_appended_translation_adds_the_parents_key_times_the_ratio(self):
         position, _ = self.world([key("A", 0, pos=(2.0, 4.0, 6.0))], "moved")
@@ -291,6 +303,21 @@ class CameraTest(unittest.TestCase):
         self.assertAlmostEqual(state.look_at[0], 5.0)                         # x is linear
         self.assertAlmostEqual(state.distance, 30.0 + 20.0 * eased)            # the distance eases in
         close(self, state.angles, (20.0 * eased, 40.0 * eased, 0.0))           # one curve for the three angles
+
+    def test_the_line_of_sight_comes_from_the_angles_at_any_distance(self):
+        def direction(rot, distance=45.0):
+            keys = fk.camera_keys(vmd.Motion.for_camera(cameras=[camera_key(0, (1.0, 10.0, 2.0), distance, rot)]))
+            return fk.camera_direction(fk.camera_at(keys, 0))
+        close(self, direction((0.0, 0.0, 0.0)), (0.0, 0.0, 1.0))                           # along +Z, at her face
+        s30, c30 = math.sin(math.radians(30.0)), math.cos(math.radians(30.0))
+        close(self, direction((30.0, 0.0, 0.0)), (0.0, -s30, c30))                          # from above, down
+        close(self, direction((0.0, 90.0, 0.0)), (-1.0, 0.0, 0.0))                          # from +X, towards -X
+        close(self, direction((30.0, 90.0, 0.0), distance=0.0), (-c30, -s30, 0.0))          # distance 0 too
+        # it points from the camera to the look-at point
+        keys = fk.camera_keys(vmd.Motion.for_camera(cameras=[camera_key(0, (1.0, 10.0, 2.0), 45.0, (20.0, -35.0, 0.0))]))
+        state = fk.camera_at(keys, 0)
+        to_look_at = tuple((a - b) / 45.0 for a, b in zip(state.look_at, fk.camera_position(state)))
+        close(self, fk.camera_direction(state), to_look_at)
 
     def test_held_before_the_first_and_after_the_last_key(self):
         keys = [camera_key(10, (0.0, 10.0, 0.0), 30.0, (0.0, 0.0, 0.0)), camera_key(20, (5.0, 10.0, 0.0), 30.0, (0.0, 0.0, 0.0))]

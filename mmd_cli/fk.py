@@ -360,3 +360,11 @@ def camera_position(state):
     d = state.distance
     lx, ly, lz = state.look_at
     return (lx + d * math.sin(ay) * math.cos(ax), ly + d * math.sin(ax), lz - d * math.cos(ay) * math.cos(ax))
+
+
+def camera_direction(state):
+    """the unit vector the camera looks along, from its angles alone, so that it is defined at distance 0 too (a
+    camera turning on the spot): from the camera to the look-at point for a positive distance.  For a negative
+    distance (the camera beyond the look-at point) it is taken to be the same (not measured)."""
+    ax, ay = math.radians(state.angles[0]), math.radians(state.angles[1])
+    return (-math.sin(ay) * math.cos(ax), -math.sin(ax), math.cos(ay) * math.cos(ax))
