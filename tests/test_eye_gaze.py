@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from mmd_cli import fk, mathutil, motion_edit
 from mmd_cli.formats import pmx, vmd
@@ -108,8 +109,9 @@ class WhereSheLooksTest(unittest.TestCase):
         result = run_gaze()
         self.assertEqual(len(result.looks), LAST + 1)
         for look in result.looks:
-            self.assertAlmostEqual(look.yaw, 0.0, places=6)
-            self.assertAlmostEqual(look.pitch, 0.0, places=6)
+            # 17.2 as float32 in the model is 7.6e-7 above the camera's 17.2: a pitch of 1.5e-6 degrees
+            self.assertAlmostEqual(look.yaw, 0.0, places=4)
+            self.assertAlmostEqual(look.pitch, 0.0, places=4)
             self.assertEqual(look.state, "on_camera")
         key = [k for k in result.motion.bones if k.frame == 0][0]
         self.assertEqual(key.name, "両目")
@@ -123,7 +125,7 @@ class WhereSheLooksTest(unittest.TestCase):
         self.assertAlmostEqual(look.yaw, yaw, places=4)                 # + : toward +X, the model's left
         self.assertAlmostEqual(look.pitch, pitch, places=4)
         # the written key, applied by the convention of mmd_cli/fk.py, turns the gaze onto the camera
-        key = [k for k in result.motion.bones if k.frame == 30][0]
+        key = [k for k in result.motion.bones if k.frame == 0][0]        # still: keys on the first and last frame
         gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
         self.assertLess(degrees_between(gaze, direction(yaw, pitch)), 0.01)
         self.assertGreater(gaze[0], 0.1)
@@ -139,7 +141,7 @@ class WhereSheLooksTest(unittest.TestCase):
         result = run_gaze(cam_motion=camera(cam(0, (8.0, 0.0, 0.0)), cam(LAST, (8.0, 0.0, 0.0))))
         self.assertAlmostEqual(result.looks[10].pitch, pitch, places=4)
         self.assertAlmostEqual(result.looks[10].yaw, 0.0, places=6)
-        key = [k for k in result.motion.bones if k.frame == 10][0]
+        key = [k for k in result.motion.bones if k.frame == LAST][0]
         self.assertGreater(fk.rotate(fk.applied(key.rotation), FORWARD)[1], 0.1)
 
     def test_a_camera_behind_her_leaves_the_eyes_neutral(self):
@@ -178,11 +180,55 @@ class FixationTest(unittest.TestCase):
         self.assertEqual([s["reason"] for s in result.saccades], ["to_neutral"])
         self.assertEqual(result.looks[-1].state, "neutral")
         self.assertEqual((result.looks[-1].yaw, result.looks[-1].pitch), (0.0, 0.0))
-        # it lets go only once the camera is GIVE_UP beyond the limit, and then after the reaction time
+        # it lets go only once the camera has stayed GIVE_UP beyond the limit for PATIENCE frames, and then after
+        # the reaction time
         start = result.saccades[0]["frame"]
         trigger = min(look.frame for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
-        self.assertGreaterEqual(start - trigger, eye_gaze.REACTION[0])
-        self.assertLessEqual(start - trigger, eye_gaze.REACTION[1])
+        self.assertGreaterEqual(start - trigger, eye_gaze.PATIENCE - 1 + eye_gaze.REACTION[0])
+        self.assertLessEqual(start - trigger, eye_gaze.PATIENCE - 1 + eye_gaze.REACTION[1])
+
+    def test_a_saccade_whose_cause_is_gone_when_it_is_due_does_not_happen(self):
+        # out of reach for exactly PATIENCE frames (32..41), so the eyes decide to let go on 41; the camera is back
+        # in reach on 42, before the reaction time is over: nothing moves
+        p = eye_gaze.PATIENCE
+        result = run_gaze(dance=head_turn({0: 0.0, 30: 0.0, 32: 50.0, 31 + p: 50.0, 33 + p: 0.0}))
+        far = [look.frame for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP]
+        self.assertEqual(far, list(range(32, 32 + p)))
+        self.assertEqual(result.saccades, [])
+        self.assertNotIn("neutral", {look.state for look in result.looks})
+
+    def test_every_saccade_lands_where_it_set_out_for(self):
+        # a restless head (a new random angle every 7 frames, often out of reach) and a camera that cuts: whatever the
+        # eyes want on the frame a saccade lands, it lands where it was going (neutral only for to_neutral)
+        import random
+        rng = random.Random(7)
+        keys = [vmd.BoneKey("全ての親", 0, (0.0, 0.0, 0.0), fk.IDENTITY), vmd.BoneKey("全ての親", 600, (0.0, 0.0, 0.0), fk.IDENTITY)]
+        for frame in range(0, 601, 7):
+            keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(rng.uniform(-25, 25), rng.uniform(-60, 60), 0.0)))
+        cams = []
+        for start in range(0, 600, 90):
+            rot = (rng.uniform(-10, 10), rng.uniform(-20, 20), 0.0)
+            cams += [cam(start, rot), cam(start + 89, rot)]
+        landings = 0
+        for seed in range(5):
+            result = run_gaze(dance=vmd.Motion(model_name="dancer", bones=keys), cam_motion=camera(*cams), life=True, seed=seed)
+            reasons = {s["reason"] for s in result.saccades}
+            self.assertTrue({"to_neutral", "to_camera", "cut"} <= reasons, reasons)
+            for s in result.saccades:
+                after = s["frame"] + s["frames"]
+                if after < len(result.looks):
+                    landings += 1
+                    self.assertEqual(result.looks[after].state == "neutral", s["reason"] == "to_neutral", (seed, s))
+        self.assertGreater(landings, 50)
+
+    def test_a_short_excursion_out_of_reach_only_holds_the_limit(self):
+        # a quick look away: 50 degrees (out of reach) for fewer frames than PATIENCE, then back
+        swing = {0: 0.0, 30: 0.0, 32: 50.0, 30 + eye_gaze.PATIENCE - 2: 50.0, 30 + eye_gaze.PATIENCE: 0.0}
+        result = run_gaze(dance=head_turn(swing))
+        self.assertGreater(max(abs(look.target[0]) for look in result.looks), eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
+        self.assertNotIn("neutral", {look.state for look in result.looks})
+        self.assertEqual(result.saccades, [])
+        self.assertEqual(max(abs(look.yaw) for look in result.looks), eye_gaze.MAX_YAW)
 
 
 class SaccadeTest(unittest.TestCase):
@@ -220,6 +266,23 @@ class SaccadeTest(unittest.TestCase):
         shares = [(result.looks[start + k].yaw - old) / (new - old) for k in range(3)]
         for share, t in zip(shares, (1 / 3.0, 2 / 3.0, 1.0)):
             self.assertAlmostEqual(share, 10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5, places=6)
+
+    def test_a_new_saccade_waits_for_the_shortest_fixation(self):
+        # two cuts 8 frames apart: the first saccade has landed by frame 66, the second cut comes on 68
+        keys = camera(cam(0, (0.0, -8.0, 0.0)), cam(59, (0.0, -8.0, 0.0)), cam(60, (0.0, 8.0, 0.0)), cam(67, (0.0, 8.0, 0.0)),
+                      cam(68, (0.0, -6.0, 0.0)), cam(LAST, (0.0, -6.0, 0.0)))
+        result = run_gaze(cam_motion=keys)
+        self.assertEqual(result.cuts, [60, 68])
+        first, second = result.saccades
+        landed = first["frame"] + first["frames"] - 1
+        self.assertLessEqual(landed, 66)
+        self.assertGreaterEqual(second["frame"] - landed, eye_gaze.MIN_FIXATION)
+        with mock.patch.object(eye_gaze, "MIN_FIXATION", 20):
+            result = run_gaze(cam_motion=keys)
+        first, second = result.saccades
+        self.assertEqual(second["frame"] - (first["frame"] + first["frames"] - 1), 20)
+        self.assertEqual(second["reason"], "cut")
+        self.assertAlmostEqual(result.looks[-1].yaw, expected_yaw((0.0, -6.0, 0.0))[0], places=3)
 
     def test_a_slowly_moving_camera_is_followed_by_refixations(self):
         keys = [cam(0, (0.0, -12.0, 0.0)), cam(LAST, (0.0, 12.0, 0.0))]
