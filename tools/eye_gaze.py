@@ -45,11 +45,14 @@ How the eyes move (plan: a small state machine, frame by frame):
   frames (drawn from the seed: 100 to 167 ms), but never sooner than MIN_FIXATION frames (200 ms) after the last
   one landed, the shortest fixation of a person looking around.  The cause is read again on every frame while the
   saccade waits: when it is gone (the camera came back within reach, the error fell back), the saccade does not
-  happen; a cut stays a cause until its saccade.
+  happen.  A cut stays a cause until its saccade, also through a frame or two on which the eyes meant to give up,
+  so that saccade is still named a cut (review 8, F2).
 * A saccade takes 2 frames, 3 when longer than LONG_SACCADE degrees (the main sequence, about 21 ms + 2.2 ms per
   degree, gives 43 ms for 10 degrees and 87 ms for 30), along a minimum-jerk profile.  Where it goes, the camera or
   neutral, is fixed when it starts (a change of mind waits for the next saccade); the camera's place is read again
-  on every frame of it, clamped to the limits, so it lands exactly on the camera as it is then.
+  on every frame of it, softened to the limits, so it lands exactly where the eyes then hold.  A move under
+  MIN_SACCADE (0.5 degrees: the eyes at the same limit on both sides of a cut) is no saccade; the fixation alone moves
+  to where it was going, the camera as it is now (the report counts these as reanchored, review 8 F1).
 * Life: a slow drift (a random walk of up to DRIFT_STEP per frame and axis, kept within DRIFT_LIMIT) and a
   microsaccade every MICRO_INTERVAL frames that jumps back to within MICRO_SIZE of the center are added on top; well
   under a degree, and only from the seed (random.Random(seed).random()), so the same seed gives the same file.  The
@@ -102,6 +105,7 @@ GIVE_UP = 12.0                        # degrees beyond a limit at which the eyes
 PATIENCE = 20                         # frames the camera must stay beyond GIVE_UP (or behind) before they do
 COME_BACK = 8.0                       # degrees beyond the limits within which neutral eyes go back to the camera
 SACCADE_THRESHOLD = 4.0               # degrees between where the eyes hold and the camera that start a saccade
+MIN_SACCADE = 0.5                     # degrees: a smaller move is no saccade, only the fixation moves (review 8, F1)
 LONG_SACCADE = 20.0                   # degrees: a longer saccade takes 3 frames instead of 2
 REACTION = (3, 5)                     # frames from the cause to the start of the saccade (both included)
 MIN_FIXATION = 6                      # frames from the landing of a saccade to the earliest start of the next
@@ -339,15 +343,16 @@ def drift_track(frames, rng):
 
 
 def plan(seen, forward, limits=Limits(), seed=0, life=True):
-    """(a Look per sight, the saccades): see the module docstring"""
+    """(a Look per sight, the saccades, the fixations moved without a saccade): see the module docstring"""
     check_limits(limits)
     rest = angles_of(forward)
     drift = drift_track(len(seen), random.Random(2 * seed)) if life else [(0.0, 0.0)] * len(seen)
     reaction = random.Random(2 * seed + 1)
-    looks, saccades = [], []
+    looks, saccades, quiet = [], [], []
     mode, fixation, base, pending, saccade = None, None, (0.0, 0.0), None, None
     away, landed = 0, None          # frames in a row the camera has been out of reach; the frame of the last landing
     held_yaw = None                 # the held point's yaw on the frame before, followed through +-180 (not wrapped)
+    cut_pending = False             # a cut happened and its saccade (or quiet move) has not come yet
     for i, sight in enumerate(seen):
         target, behind = _seen(sight, sight.camera, forward, rest)
         excess = _excess(target, limits)
@@ -370,14 +375,15 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
                 (yaw, pitch), _ = _seen(sight, fixation, forward, rest)
                 held_yaw += (yaw - held_yaw + 180.0) % 360.0 - 180.0
                 base = soften((held_yaw, pitch), limits)
+                cut_pending = cut_pending or sight.cut
             else:
                 base = (0.0, 0.0)
-            # the cause is read on every frame: a pending saccade whose cause is gone does not happen (a cut stays a
-            # cause until its saccade)
+            # the cause is read on every frame: a pending saccade whose cause is gone does not happen.  A cut stays a
+            # cause until its saccade, also through a frame or two on which the eyes meant to give up (review 8, F2)
             cause = None
             if want != mode:
                 cause = "to_" + want
-            elif mode == "camera" and (sight.cut or (pending is not None and pending[1] == "cut")):
+            elif mode == "camera" and cut_pending:
                 cause = "cut"
             elif mode == "camera" and _apart(base, on_camera) > SACCADE_THRESHOLD:
                 cause = "refixation"
@@ -391,11 +397,20 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
             if pending is not None and sight.frame >= max(pending[0], landed + MIN_FIXATION):
                 # where it goes is fixed now (the camera or neutral); the camera's place is read on every frame of it
                 to = "neutral" if pending[1] == "to_neutral" else "camera"
-                amplitude = _apart(base, on_camera if to == "camera" else (0.0, 0.0))
-                saccade = {"frame": sight.frame, "frames": 2 if amplitude <= LONG_SACCADE else 3, "reason": pending[1],
-                           "amplitude": amplitude, "origin": base, "to": to}
-                saccades.append(saccade)
-                pending = None
+                goal = on_camera if to == "camera" else (0.0, 0.0)
+                amplitude = _apart(base, goal)
+                if amplitude < MIN_SACCADE:
+                    # no visible move (eyes at the same limit on both sides of a cut, review 8 F1): no saccade, the
+                    # fixation alone moves to where it was going (the camera as it is now)
+                    quiet.append({"frame": sight.frame, "reason": pending[1], "amplitude": amplitude})
+                    mode, base = to, goal
+                    fixation = sight.camera if to == "camera" else None
+                    held_yaw = target[0]
+                else:
+                    saccade = {"frame": sight.frame, "frames": 2 if amplitude <= LONG_SACCADE else 3,
+                               "reason": pending[1], "amplitude": amplitude, "origin": base, "to": to}
+                    saccades.append(saccade)
+                pending, cut_pending = None, False
         moving = saccade is not None
         if moving:
             goal = on_camera if saccade["to"] == "camera" else (0.0, 0.0)
@@ -421,7 +436,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
             state = "reacting"
         looks.append(Look(sight.frame, final[0] + 0.0, final[1] + 0.0, state, target, _apart(final, target)))
     return looks, [{"frame": s["frame"], "frames": s["frames"], "reason": s["reason"], "amplitude": s["amplitude"]}
-                   for s in saccades]
+                   for s in saccades], quiet
 
 
 # ---- the motion and the report --------------------------------------------------------------
@@ -516,7 +531,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     eyes, center, parent = eye_bones(model)
     forward, forward_from = rest_forward(model, eyes)
     seen = sights(model, dance, camera)
-    looks, saccades = plan(seen, forward, limits, seed, life)
+    looks, saccades, quiet = plan(seen, forward, limits, seed, life)
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -534,6 +549,8 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                                    "max": _r(max(amplitudes), 3) if amplitudes else 0.0},
                      "list": [{"frame": s["frame"], "frames": s["frames"], "reason": s["reason"],
                                "amplitude": _r(s["amplitude"], 3)} for s in saccades]},
+        # fixations moved without a saccade, the move being under MIN_SACCADE (not counted among the saccades)
+        "reanchored": {"count": len(quiet), "by_reason": _count(q["reason"] for q in quiet)},
         "cuts": cuts,
         "error_on_camera": _error_summary([look.error for look in looks if look.state == "on_camera"]),
         # how far from the camera the eyes are while the soft limit holds them short of it (the camera inside the
@@ -646,7 +663,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
                "eye": report["eye"], "convention": report["convention"], "cuts": len(report["cuts"]),
                "counts": report["counts"], "shares": {k: _r(v) for k, v in report["shares"].items()},
                "saccades": {k: report["saccades"][k] for k in ("count", "by_reason", "by_frames", "amplitude")},
-               "error_on_camera": report["error_on_camera"], "soft_limit": report["soft_limit"]}
+               "reanchored": report["reanchored"], "error_on_camera": report["error_on_camera"],
+               "soft_limit": report["soft_limit"]}
     if report_path:
         full = os.path.abspath(report_path)
         write_json(full, dict({"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full,

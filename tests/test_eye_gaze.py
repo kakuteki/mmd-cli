@@ -310,6 +310,36 @@ class SaccadeTest(unittest.TestCase):
         self.assertEqual(second["reason"], "cut")
         self.assertAlmostEqual(result.looks[-1].yaw, expected_yaw((0.0, -6.0, 0.0))[0], places=3)
 
+    def test_a_cut_that_does_not_move_the_eyes_only_moves_the_fixation(self):
+        # review 8, F1: both cameras lie beyond the yaw limit on the same side, so the eyes stay near the limit
+        # across the cut.  That is no saccade (the move is under MIN_SACCADE); the held point still moves to the new
+        # camera, which the eyes then find exactly when her head turns towards it
+        self.assertEqual(eye_gaze.MIN_SACCADE, 0.5)
+        before, after = expected_yaw((0.0, 25.0, 0.0))[0], expected_yaw((0.0, 28.0, 0.0))[0]
+        self.assertLess(abs(eye_gaze.soft(after, 18.0) - eye_gaze.soft(before, 18.0)), eye_gaze.MIN_SACCADE)
+        if fk.KEY_ROTATION_SIGNS != (1.0, 1.0, 1.0):
+            self.skipTest("the head turn below is to her left under the default convention")
+        dance = head_turn({0: 0.0, 80: 0.0, 100: 25.0})             # turns to her left, towards the camera
+        result = run_gaze(dance=dance, cam_motion=cut_at_60(25.0, 28.0))
+        self.assertEqual(result.cuts, [60])
+        self.assertEqual(result.saccades, [])
+        self.assertEqual(result.report["reanchored"], {"count": 1, "by_reason": {"cut": 1}})
+        self.assertEqual(result.looks[-1].state, "on_camera")
+        self.assertLess(result.looks[-1].error, 0.2)               # on the new camera, not the old one (3 degrees off)
+
+    def test_a_cut_keeps_its_name_when_the_eyes_nearly_give_up_while_it_waits(self):
+        # review 8, F2 (cut 1334 of the song): the head is turned away when the camera cuts; the patience runs out
+        # one frame later (the eyes decide to let go), and one frame after that the head is back.  The saccade that
+        # follows is the cut's, and is named so
+        p = eye_gaze.PATIENCE
+        dance = head_turn({0: 0.0, 60 - p + 1: 0.0, 60 - p + 2: 60.0, 61: 60.0, 62: 0.0})
+        result = run_gaze(dance=dance, cam_motion=cut_at_60(-5.0, 5.0))
+        far = [look.frame for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP]
+        self.assertEqual(far, list(range(60 - p + 2, 62)))                    # p frames, the last one is 61
+        self.assertEqual(result.cuts, [60])
+        self.assertEqual([s["reason"] for s in result.saccades], ["cut"])
+        self.assertTrue(60 + eye_gaze.REACTION[0] <= result.saccades[0]["frame"] <= 60 + eye_gaze.REACTION[1])
+
     def test_a_slowly_moving_camera_is_followed_by_refixations(self):
         keys = [cam(0, (0.0, -12.0, 0.0)), cam(LAST, (0.0, 12.0, 0.0))]
         result = run_gaze(cam_motion=camera(*keys))
@@ -515,6 +545,8 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(sum(full["counts"].values()), LAST + 1)
         self.assertEqual(full["cuts"], [60])
         self.assertEqual(len(full["saccades"]["list"]), full["saccades"]["count"])
+        self.assertEqual(full["reanchored"], result["reanchored"])
+        self.assertEqual(set(full["reanchored"]), {"count", "by_reason"})
         self.assertEqual(full["eye"]["center"], ["右目", "左目"])
         self.assertEqual(full["eye"]["forward"], [0.0, 0.0, -1.0])
         with open(debug, encoding="ascii") as f:
