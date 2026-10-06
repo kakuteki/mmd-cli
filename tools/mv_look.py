@@ -21,6 +21,11 @@ ffmpeg (the compositing), from back to front:
 * at every time in `flares` (a hook, a chorus) the camera punches in a little and comes back, and red and
   blue part for those frames (`camera`): the stage and the dancer move, the text in front does not;
 * the lens: darker corners and a fine grain over all of that (`lens`);
+* motion blur (--subframes N --shutter S): MMD renders genuine in-between poses at higher rates (measured: 120 fps
+  gives 4 different poses per 30 fps frame), so the dancer can be rendered at N times the output rate and every
+  output frame made from the average of the first round(S * N) of its N subframes, like a film camera whose
+  shutter is open for S of the frame time (0.5 is the film standard).  The average is taken on premultiplied
+  colours, since a transparent pixel of MMD's output has colour 0;
 * the text cues of the "front" layer;
 * a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
@@ -242,11 +247,12 @@ def _visible(start, frames, fps, clip_start, clip_duration):
 
 
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
-                   start=None, duration=None, offset=0.0):
+                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
     rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song"""
     w, h = size
+    taken = check_shutter(subframes, shutter)
     offset = float(offset or 0.0)
     if start is not None and start < offset - 1e-9:
         raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
@@ -259,7 +265,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
-    argv += ["-r", str(fps), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
+    argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
              "-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
     next_input = 3
     overlays = {"back": [], "front": [], "flare": []}
@@ -302,7 +308,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if glow["strength"] > 0 and glow["radius"] > 0:
         t = int(glow["threshold"])
         curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
-        parts += ["[0:v]format=rgba,split=2[fg][fgb]",
+        parts += ["[0:v]%sformat=rgba,split=2[fg][fgb]" % _fold(subframes, taken, fps),
                   "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
                   "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
                   "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
@@ -310,7 +316,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["[0:v]format=rgba[fg]", "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
+        parts += ["[0:v]%sformat=rgba[fg]" % _fold(subframes, taken, fps),
+                  "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
     camera = look["camera"]
     span = camera["punch_frames"] / float(fps)
@@ -343,6 +350,31 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps),
              "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
+
+
+def check_shutter(subframes, shutter):
+    """how many of every `subframes` dancer frames one output frame averages (the shutter is open for that
+    share of the frame time); 1 subframe is no blur"""
+    if int(subframes) != subframes or subframes < 1:
+        raise ValueError("--subframes is a whole number from 1, not %r" % (subframes,))
+    if not 0 < shutter <= 1:
+        raise ValueError("--shutter is the share of a frame the shutter is open, above 0 up to 1, not %r" % (shutter,))
+    if subframes == 1:
+        return 1                                   # no blur: the shutter does not matter
+    taken = int(math.floor(shutter * subframes + 0.5))
+    if taken < 1:
+        raise ValueError("--shutter %r takes no subframe of %d: open it to at least %.3f" % (shutter, subframes, 0.5 / subframes))
+    return taken
+
+
+def _fold(subframes, taken, fps):
+    """the filters that fold `subframes` dancer frames into one output frame: the first `taken` of each are
+    averaged (motion blur, a shutter open for taken / subframes of the frame time).  The alpha is straight, and a
+    transparent pixel has colour 0, so the colours are premultiplied for the average and divided back after."""
+    if subframes == 1:
+        return ""
+    return ("format=rgba,premultiply=inplace=1,tmix=frames=%d,select='eq(mod(n,%d),%d)',setpts=N/(%s*TB),"
+            "unpremultiply=inplace=1," % (taken, subframes, taken - 1, _number(fps)))
 
 
 def _number(value):
@@ -419,6 +451,11 @@ def render(args):
     size, fps = probe(fg) if not (args.size and args.fps) else (None, None)
     size = parse_size(args.size) if args.size else size
     fps = args.fps or fps
+    check_shutter(args.subframes, args.shutter)
+    if args.subframes > 1:
+        # the dancer's file runs at `subframes` times the output rate
+        out_fps = fps / float(args.subframes)
+        fps = int(round(out_fps)) if abs(out_fps - round(out_fps)) < 1e-3 else out_fps
     work = os.path.abspath(args.work or out + ".work")
     layers = write_layers(look, work, size, fps)
     plan = text_plan(args.cues, work, size, fps) if args.cues else None
@@ -431,9 +468,11 @@ def render(args):
         os.makedirs(folder, exist_ok=True)
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
-                          start=start, duration=duration, offset=args.offset)
+                          start=start, duration=duration, offset=args.offset, subframes=args.subframes,
+                          shutter=args.shutter)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "work": work, "light_frames": layers["light_frames"],
+    result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
+              "shutter": args.shutter, "work": work, "light_frames": layers["light_frames"],
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
               "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
               "ffmpeg": done.returncode}
@@ -460,6 +499,10 @@ def main(argv=None):
     s.add_argument("--work", help="where the layers go (default: OUT.work)")
     s.add_argument("--offset", type=float, default=0.0,
                    help="the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame)")
+    s.add_argument("--subframes", type=int, default=1,
+                   help="the dancer was rendered at this many times the output rate: fold them into one frame (motion blur)")
+    s.add_argument("--shutter", type=float, default=0.5,
+                   help="with --subframes: the share of a frame the shutter is open (default 0.5, the film standard)")
     s.add_argument("--from", dest="start", type=float, help="start of an excerpt, in seconds of the song")
     s.add_argument("--to", type=float, help="end of an excerpt, in seconds of the song")
     s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
