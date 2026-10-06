@@ -2,7 +2,8 @@
 while her head moves, and quick saccades, written as a 両目 track to load after the dance.
 
     python tools/eye_gaze.py DANCE.vmd CAMERA.vmd MODEL.pmx OUT.vmd [--report r.json] [--debug d.json]
-                             [--debug-frames F ...] [--probe P.vmd] [--max-yaw 18] [--max-pitch 10] [--seed 0]
+                             [--debug-frames F ...] [--probe P.vmd] [--max-yaw 18] [--max-up 6] [--max-down 10]
+                             [--max-pitch P (sets up and down to P)] [--seed 0]
 
 Why: the dance of the MV keys 両目, 右目 and 左目 once each, on frame 0, for the whole 258 seconds: her eyes never
 move.  On Sour's Rin 両目 turns both eyes (右目 and 左目 take its rotation by append, ratio 1), so one track does it.
@@ -19,10 +20,11 @@ Where the camera is, seen from her eyes (sights; mmd_cli/fk.py does the forward 
 
 How the eyes move (plan: a small state machine, frame by frame):
 
-* The eyes are either on the camera or neutral (along the head's forward direction).  The camera is reachable when
-  it is less than 90 degrees off the rest gaze and its yaw and pitch exceed the limits (--max-yaw, --max-pitch) by
-  at most GIVE_UP degrees.  A camera beyond a limit but reachable holds the eyes at that limit (each axis is
-  clamped on its own).  Once it has been out of reach (beyond that, or behind her) for PATIENCE frames in a row,
+* The eyes are either on the camera or neutral (along the head's forward direction).  The limits are --max-yaw to
+  either side, --max-up and --max-down (6 up and 10 down by default: at +10 degrees the upper lid of Sour's Rin
+  covers 17 % more of the iris, review 8; --max-pitch sets both to one value).  The camera is reachable when it is
+  less than 90 degrees off the rest gaze and lies beyond the limits by at most GIVE_UP degrees.  A camera beyond a
+  limit but reachable holds the eyes at that limit (each axis on its own).  Once it has been out of reach (beyond that, or behind her) for PATIENCE frames in a row,
   the eyes return to neutral instead of pinning at the limit; a shorter excursion, a nod with the beat, only holds
   the limit.  Neutral eyes come back once the camera is within COME_BACK degrees of the limits (a hysteresis, so
   that they do not flicker at the border).  On the MV's dance the camera is beyond the default limits on about 40 %
@@ -85,7 +87,9 @@ from mmd_cli.formats import pmd, pmx, vmd  # noqa: E402
 EYES = "両目"
 EYE_TIP = "両目先"
 EYE_PAIR = ("右目", "左目")
-MAX_YAW, MAX_PITCH = 18.0, 10.0       # degrees: how far the eyes turn (defaults of --max-yaw and --max-pitch)
+MAX_YAW = 18.0                        # degrees the eyes turn sideways (default of --max-yaw)
+MAX_UP, MAX_DOWN = 6.0, 10.0          # degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the
+                                      # upper lid of Sour's Rin covers 17 % more of the iris)
 LIMIT_MAX = 45.0                      # degrees: the most a limit may be
 GIVE_UP = 12.0                        # degrees beyond a limit at which the eyes stop trying and go neutral
 PATIENCE = 10                         # frames the camera must stay beyond GIVE_UP (or behind) before they do
@@ -252,14 +256,31 @@ class Look:
     error: float                    # degrees between the gaze written and the camera
 
 
-def check_limits(max_yaw, max_pitch):
-    for name, value in (("--max-yaw", max_yaw), ("--max-pitch", max_pitch)):
+@dataclass(frozen=True)
+class Limits:
+    """how far the eyes turn from the rest gaze, in degrees: sideways (both ways), up, down (all positive)"""
+    yaw: float = MAX_YAW
+    up: float = MAX_UP
+    down: float = MAX_DOWN
+
+    def to_json(self):
+        return {"yaw": self.yaw, "up": self.up, "down": self.down}
+
+
+def check_limits(limits):
+    for name, value in (("--max-yaw", limits.yaw), ("--max-up", limits.up), ("--max-down", limits.down)):
         if not 0.0 < value <= LIMIT_MAX:
             raise ValueError("%s is how far the eyes turn, above 0 and at most %g degrees, not %r" % (name, LIMIT_MAX, value))
 
 
-def _clamp(angles, max_yaw, max_pitch):
-    return (min(max(angles[0], -max_yaw), max_yaw), min(max(angles[1], -max_pitch), max_pitch))
+def _clamp(angles, limits):
+    return (min(max(angles[0], -limits.yaw), limits.yaw), min(max(angles[1], -limits.down), limits.up))
+
+
+def _excess(target, limits):
+    """degrees by which a direction (yaw, pitch) lies beyond the limits (0 inside them)"""
+    yaw, pitch = target
+    return max(abs(yaw) - limits.yaw, pitch - limits.up, -pitch - limits.down, 0.0)
 
 
 def _profile(t):
@@ -284,9 +305,9 @@ def drift_track(frames, rng):
     return out
 
 
-def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True):
+def plan(seen, forward, limits=Limits(), seed=0, life=True):
     """(a Look per sight, the saccades): see the module docstring"""
-    check_limits(max_yaw, max_pitch)
+    check_limits(limits)
     rest = angles_of(forward)
     drift = drift_track(len(seen), random.Random(2 * seed)) if life else [(0.0, 0.0)] * len(seen)
     reaction = random.Random(2 * seed + 1)
@@ -296,14 +317,14 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
     held_yaw = None                 # the held point's yaw on the frame before, followed through +-180 (not wrapped)
     for i, sight in enumerate(seen):
         target, behind = _seen(sight, sight.camera, forward, rest)
-        excess = max(abs(target[0]) - max_yaw, abs(target[1]) - max_pitch, 0.0)
+        excess = _excess(target, limits)
         if mode == "neutral":
             away = 0
             want = "camera" if not behind and excess <= COME_BACK else "neutral"
         else:
             away = 0 if not behind and excess <= GIVE_UP else away + 1
             want = "neutral" if away >= (1 if mode is None else PATIENCE) else "camera"
-        on_camera = _clamp(target, max_yaw, max_pitch)
+        on_camera = _clamp(target, limits)
         if mode is None:                                    # the first frame: the eyes are already where they want
             mode, landed = want, sight.frame
             base = on_camera if want == "camera" else (0.0, 0.0)
@@ -315,7 +336,7 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
                 # at one limit stay there instead of jumping to the other (only a saccade moves them across)
                 (yaw, pitch), _ = _seen(sight, fixation, forward, rest)
                 held_yaw += (yaw - held_yaw + 180.0) % 360.0 - 180.0
-                base = _clamp((held_yaw, pitch), max_yaw, max_pitch)
+                base = _clamp((held_yaw, pitch), limits)
             else:
                 base = (0.0, 0.0)
             # the cause is read on every frame: a pending saccade whose cause is gone does not happen (a cut stays a
@@ -354,7 +375,7 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
                 fixation = sight.camera if mode == "camera" else None
                 held_yaw = target[0]
                 saccade = None
-        final = _clamp((base[0] + drift[i][0], base[1] + drift[i][1]), max_yaw, max_pitch)
+        final = _clamp((base[0] + drift[i][0], base[1] + drift[i][1]), limits)
         if moving:
             state = "in_saccade"
         elif mode == "neutral":
@@ -453,15 +474,16 @@ class Gaze:
     forward: Tuple[float, float, float]
 
 
-def gaze(model, dance, camera, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True):
+def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN, seed=0, life=True):
     """the 両目 motion for `dance` seen by `camera` on `model`, with the per-frame plan and the report"""
-    check_limits(max_yaw, max_pitch)
+    limits = Limits(float(max_yaw), float(max_up), float(max_down))
+    check_limits(limits)
     if not dance.bones:
         raise ValueError("the dance has no bone keys")
     eyes, center, parent = eye_bones(model)
     forward, forward_from = rest_forward(model, eyes)
     seen = sights(model, dance, camera)
-    looks, saccades = plan(seen, forward, max_yaw, max_pitch, seed, life)
+    looks, saccades = plan(seen, forward, limits, seed, life)
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -469,7 +491,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, lif
     amplitudes = [s["amplitude"] for s in saccades]
     report = {
         "frames": [seen[0].frame, seen[-1].frame], "seed": seed,
-        "limits": {"yaw": max_yaw, "pitch": max_pitch, "give_up": GIVE_UP, "come_back": COME_BACK},
+        "limits": dict(limits.to_json(), give_up=GIVE_UP, come_back=COME_BACK),
         "eye": {"bone": EYES, "center": center, "head": parent, "forward": _vec(forward, 6), "forward_from": forward_from},
         "convention": {"key_rotation_signs": list(fk.KEY_ROTATION_SIGNS)},
         "counts": counts, "shares": {state: counts[state] / float(len(looks)) for state in STATES},
@@ -550,17 +572,29 @@ def load_model(path):
     return (pmd if path.lower().endswith(".pmd") else pmx).load(path)
 
 
+def resolve_limits(max_yaw=None, max_up=None, max_down=None, max_pitch=None):
+    """the limits from the options: --max-pitch sets up and down together and goes with neither of them"""
+    if max_pitch is not None:
+        if max_up is not None or max_down is not None:
+            raise ValueError("--max-pitch sets both --max-up and --max-down: give it or them, not both")
+        max_up = max_down = max_pitch
+    limits = Limits(MAX_YAW if max_yaw is None else float(max_yaw), MAX_UP if max_up is None else float(max_up),
+                    MAX_DOWN if max_down is None else float(max_down))
+    check_limits(limits)
+    return limits
+
+
 def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_path=None, debug_frames=None,
-        probe_path=None, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0):
+        probe_path=None, limits=Limits(), seed=0):
     """read, plan, write; the summary is what main prints"""
     started = time.time()
-    check_limits(max_yaw, max_pitch)
+    check_limits(limits)
     check_distinct(dance_path, camera_path, model_path, out_path, report_path, debug_path, probe_path)
     dance_full, camera_full, model_full, out_full = (os.path.abspath(p) for p in (dance_path, camera_path, model_path, out_path))
     dance = vmd.load(dance_full)
     camera = vmd.load(camera_full)
     model = load_model(model_full)
-    result = gaze(model, dance, camera, max_yaw, max_pitch, seed)
+    result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed)
     report = result.report
     rows = None
     if debug_path:
@@ -569,7 +603,7 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     write_bytes(out_full, vmd.dumps(result.motion))
     back = vmd.load(out_full)
     summary = {"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full, "frames": report["frames"],
-               "keys": len(back.bones), "seed": seed, "limits": {"yaw": max_yaw, "pitch": max_pitch},
+               "keys": len(back.bones), "seed": seed, "limits": report["limits"],
                "eye": report["eye"], "convention": report["convention"], "cuts": len(report["cuts"]),
                "counts": report["counts"], "shares": {k: _r(v) for k, v in report["shares"].items()},
                "saccades": {k: report["saccades"][k] for k in ("count", "by_reason", "by_frames", "amplitude")}}
@@ -600,13 +634,16 @@ def main(argv=None):
     p.add_argument("--debug", help="write the geometry of some frames to this JSON")
     p.add_argument("--debug-frames", type=int, nargs="+", help="the frames for --debug (default every %d)" % DEBUG_STEP)
     p.add_argument("--probe", help="also write the convention probe (a short 両目 motion) to this .vmd")
-    p.add_argument("--max-yaw", type=float, default=MAX_YAW, help="degrees the eyes turn sideways (default %g)" % MAX_YAW)
-    p.add_argument("--max-pitch", type=float, default=MAX_PITCH, help="degrees the eyes turn up and down (default %g)" % MAX_PITCH)
+    p.add_argument("--max-yaw", type=float, help="degrees the eyes turn sideways (default %g)" % MAX_YAW)
+    p.add_argument("--max-up", type=float, help="degrees the eyes turn up (default %g)" % MAX_UP)
+    p.add_argument("--max-down", type=float, help="degrees the eyes turn down (default %g)" % MAX_DOWN)
+    p.add_argument("--max-pitch", type=float, help="sets --max-up and --max-down to one value (not with either of them)")
     p.add_argument("--seed", type=int, default=0, help="the drift, the microsaccades and the reaction times (default 0)")
     args = p.parse_args(argv)
     try:
+        limits = resolve_limits(args.max_yaw, args.max_up, args.max_down, args.max_pitch)
         result = run(args.dance, args.camera, args.model, args.out, args.report, args.debug, args.debug_frames,
-                     args.probe, args.max_yaw, args.max_pitch, args.seed)
+                     args.probe, limits, args.seed)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

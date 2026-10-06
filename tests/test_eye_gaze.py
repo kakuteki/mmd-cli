@@ -136,13 +136,13 @@ class WhereSheLooksTest(unittest.TestCase):
             self.assertAlmostEqual(ui[0], pitch, places=3)
 
     def test_a_camera_above_turns_the_eyes_up(self):
-        yaw, pitch = expected_yaw((8.0, 0.0, 0.0))
-        self.assertGreater(pitch, 7.0)
-        result = run_gaze(cam_motion=camera(cam(0, (8.0, 0.0, 0.0)), cam(LAST, (8.0, 0.0, 0.0))))
+        yaw, pitch = expected_yaw((3.0, 0.0, 0.0))
+        self.assertGreater(pitch, 2.5)
+        result = run_gaze(cam_motion=camera(cam(0, (3.0, 0.0, 0.0)), cam(LAST, (3.0, 0.0, 0.0))))
         self.assertAlmostEqual(result.looks[10].pitch, pitch, places=4)
         self.assertAlmostEqual(result.looks[10].yaw, 0.0, places=6)
         key = [k for k in result.motion.bones if k.frame == LAST][0]
-        self.assertGreater(fk.rotate(fk.applied(key.rotation), FORWARD)[1], 0.1)
+        self.assertGreater(fk.rotate(fk.applied(key.rotation), FORWARD)[1], math.sin(math.radians(2.5)))
 
     def test_a_camera_behind_her_leaves_the_eyes_neutral(self):
         result = run_gaze(cam_motion=camera(cam(0, (0.0, 180.0, 0.0)), cam(LAST, (0.0, 180.0, 0.0))))
@@ -320,30 +320,49 @@ class LimitTest(unittest.TestCase):
         self.assertEqual({look.yaw for look in result.looks}, {eye_gaze.MAX_YAW})
 
     def test_pitch_beyond_the_limit_is_held_at_the_limit(self):
-        pitch = expected_yaw((18.0, 0.0, 0.0))[1]
-        self.assertTrue(eye_gaze.MAX_PITCH < pitch < eye_gaze.MAX_PITCH + eye_gaze.GIVE_UP)
-        result = run_gaze(cam_motion=camera(cam(0, (18.0, 0.0, 0.0)), cam(LAST, (18.0, 0.0, 0.0))))
-        self.assertEqual({look.pitch for look in result.looks}, {eye_gaze.MAX_PITCH})
+        pitch = expected_yaw((10.0, 0.0, 0.0))[1]
+        self.assertTrue(eye_gaze.MAX_UP < pitch < eye_gaze.MAX_UP + eye_gaze.GIVE_UP)
+        result = run_gaze(cam_motion=camera(cam(0, (10.0, 0.0, 0.0)), cam(LAST, (10.0, 0.0, 0.0))))
+        self.assertEqual({look.state for look in result.looks}, {"at_limit"})
+        self.assertEqual({look.pitch for look in result.looks}, {eye_gaze.MAX_UP})
+
+    def test_up_and_down_have_their_own_limits(self):
+        # review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris, so the eyes look up less
+        # far than down (defaults: up 6, down 10)
+        self.assertEqual((eye_gaze.MAX_UP, eye_gaze.MAX_DOWN), (6.0, 10.0))
+        above = run_gaze(cam_motion=camera(cam(0, (10.0, 0.0, 0.0)), cam(LAST, (10.0, 0.0, 0.0))))
+        self.assertTrue(all(0.9 * eye_gaze.MAX_UP <= look.pitch <= eye_gaze.MAX_UP for look in above.looks))
+        pitch = expected_yaw((-8.0, 0.0, 0.0))[1]
+        self.assertTrue(-eye_gaze.MAX_DOWN < pitch < -eye_gaze.MAX_UP)
+        below = run_gaze(cam_motion=camera(cam(0, (-8.0, 0.0, 0.0)), cam(LAST, (-8.0, 0.0, 0.0))))
+        self.assertEqual({look.state for look in below.looks}, {"on_camera"})
+        self.assertTrue(all(look.pitch < -eye_gaze.MAX_UP for look in below.looks))
+        # other limits: up 3, down 12
+        result = run_gaze(cam_motion=camera(cam(0, (10.0, 0.0, 0.0)), cam(LAST, (10.0, 0.0, 0.0))), max_up=3.0, max_down=12.0)
+        self.assertTrue(all(look.pitch <= 3.0 for look in result.looks))
 
     def test_other_limits_are_respected_with_life_on(self):
         moving = camera(cam(0, (-15.0, -40.0, 0.0)), cam(40, (12.0, 30.0, 0.0)), cam(80, (-5.0, 10.0, 0.0)),
                         cam(LAST, (15.0, -20.0, 0.0)))
         dance = head_turn({0: 0.0, 30: 25.0, 70: -30.0, 110: 10.0})
-        for max_yaw, max_pitch in ((18.0, 10.0), (8.0, 4.0), (30.0, 20.0)):
-            result = run_gaze(dance=dance, cam_motion=moving, life=True, max_yaw=max_yaw, max_pitch=max_pitch)
+        for max_yaw, max_up, max_down in ((18.0, 6.0, 10.0), (8.0, 4.0, 3.0), (30.0, 20.0, 25.0)):
+            result = run_gaze(dance=dance, cam_motion=moving, life=True, max_yaw=max_yaw, max_up=max_up, max_down=max_down)
             self.assertLessEqual(max(abs(look.yaw) for look in result.looks), max_yaw + 1e-9)
-            self.assertLessEqual(max(abs(look.pitch) for look in result.looks), max_pitch + 1e-9)
+            self.assertLessEqual(max(look.pitch for look in result.looks), max_up + 1e-9)
+            self.assertGreaterEqual(min(look.pitch for look in result.looks), -max_down - 1e-9)
             for key in result.motion.bones:
                 gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
                 yaw = math.degrees(math.atan2(gaze[0], -gaze[2]))
                 pitch = math.degrees(math.atan2(gaze[1], math.hypot(gaze[0], gaze[2])))
                 self.assertLessEqual(abs(yaw), max_yaw + 1e-3)
-                self.assertLessEqual(abs(pitch), max_pitch + 1e-3)
+                self.assertLessEqual(pitch, max_up + 1e-3)
+                self.assertGreaterEqual(pitch, -max_down - 1e-3)
 
     def test_limits_outside_0_to_45_are_errors(self):
-        for max_yaw, max_pitch in ((0.0, 10.0), (18.0, -1.0), (50.0, 10.0), (18.0, 46.0)):
+        for max_yaw, max_up, max_down in ((0.0, 6.0, 10.0), (18.0, -1.0, 10.0), (18.0, 6.0, 0.0), (50.0, 6.0, 10.0),
+                                          (18.0, 46.0, 10.0), (18.0, 6.0, 46.0)):
             with self.assertRaises(ValueError):
-                run_gaze(max_yaw=max_yaw, max_pitch=max_pitch)
+                run_gaze(max_yaw=max_yaw, max_up=max_up, max_down=max_down)
 
 
 class LifeTest(unittest.TestCase):
@@ -449,6 +468,18 @@ class CommandTest(unittest.TestCase):
         self.assertAlmostEqual(row["head_forward"][2], -1.0, places=3)
         self.assertEqual(os.listdir(os.path.dirname(out)), ["eyes.vmd"])
 
+    def test_up_and_down_limits_and_the_pitch_shortcut(self):
+        out = os.path.join(self.folder, "o.vmd")
+        code, result = run([self.dance, self.camera, self.model, out])
+        self.assertEqual(code, 0, result)
+        self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 18.0, "up": 6.0, "down": 10.0})
+        code, result = run([self.dance, self.camera, self.model, out, "--max-up", "4", "--max-down", "12", "--max-yaw", "20"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 20.0, "up": 4.0, "down": 12.0})
+        code, result = run([self.dance, self.camera, self.model, out, "--max-pitch", "8"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual({k: result["limits"][k] for k in ("up", "down")}, {"up": 8.0, "down": 8.0})
+
     def test_debug_frames_can_be_chosen(self):
         debug = os.path.join(self.folder, "d.json")
         code, result = run([self.dance, self.camera, self.model, os.path.join(self.folder, "o.vmd"), "--debug", debug,
@@ -496,6 +527,8 @@ class CommandTest(unittest.TestCase):
                       "--debug", os.path.join(self.folder, "r.json")],
                      [self.dance, self.camera, self.model, out, "--max-yaw", "0"],
                      [self.dance, self.camera, self.model, out, "--max-pitch", "60"],
+                     [self.dance, self.camera, self.model, out, "--max-down", "0"],
+                     [self.dance, self.camera, self.model, out, "--max-pitch", "8", "--max-up", "4"],   # one or the other
                      [self.dance, self.dance, self.model, out],                       # the camera is the dance
                      [self.dance, no_camera, self.model, out],                        # no camera keys
                      [self.dance, self.camera, self.dance, out],                      # not a model
@@ -557,7 +590,9 @@ class RealSongTest(unittest.TestCase):
         for key in back.bones:
             gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
             self.assertLessEqual(abs(math.degrees(math.atan2(gaze[0], -gaze[2]))), eye_gaze.MAX_YAW + 1e-3)
-            self.assertLessEqual(abs(math.degrees(math.asin(max(-1.0, min(1.0, gaze[1]))))), eye_gaze.MAX_PITCH + 1e-3)
+            pitch = math.degrees(math.asin(max(-1.0, min(1.0, gaze[1]))))
+            self.assertLessEqual(pitch, eye_gaze.MAX_UP + 1e-3)
+            self.assertGreaterEqual(pitch, -eye_gaze.MAX_DOWN - 1e-3)
 
 
 if __name__ == "__main__":
