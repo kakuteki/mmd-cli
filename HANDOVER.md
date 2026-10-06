@@ -191,7 +191,14 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
-   - **2026-10-06 区間描画の道具 `tools/mv_chunks.py`（枝 mv-chunks、未マージ）**: 最終版を作った `_spike/.../make_chunks.py` を道具にした。
+   - **2026-10-07 02:22 最終版 v2 を届けた**: `Desktop/ヒビカセMV_20261005/hibikase_mv_最終_音あり_v2_20261007.mp4`
+     （FINAL.md の頭に v2 の節）。直した mv_look（パンチを中心に・光をカットで続ける）で、main の `tools/mv_chunks.py`
+     （e4fb672）から tag final2 で描き直した。hinata で 32 分、21 区間すべて枚数一致、音のずれ 0 ms。
+     フレア直後のコマで v1 は v2 より右へ 12〜20 px・下へ 5〜11 px ずれていた（頭のまわりの領域で探した最小差のずれ。
+     計算では 21・12 px。フレアの無いコマは 0）。比べの図は受け渡しフォルダの `v2とv1の比べ_フレア直後.jpg`。
+     Discord に 480p と図を送付。hinata の区間の出力 84 個と作業フォルダ（1 万 4 千ファイル）を消した。正本 `hibikase_mv_final2.mp4` は残す。
+     査読 12 の直し（枝 mv-chunks-r12、`__pycache__` を印から外す等）は、短い査読 13 の後に main へ。
+   - **2026-10-06 区間描画の道具 `tools/mv_chunks.py`（2026-10-07 に main へ取り込み済み、e4fb672）**: 最終版を作った `_spike/.../make_chunks.py` を道具にした。
      査読 10（`docs/reviews/2026-10-06-review-10-mv-chunks.md`、高 0・中 4・低 7）を直した（e6475e4）。直した点は次のとおり。
      - `-Resume` は枚数＋作り方の印（`<mp4>.recipe`）が合うときだけ飛ばす
      - 全角の ’ も PowerShell の引用符として二重にする
