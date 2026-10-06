@@ -2,7 +2,7 @@
 velocity jump at every key, and bake it to a key on every frame.
 
     python tools/smooth_motion.py DANCE.vmd OUT.vmd [--report r.json] [--bones NAME ...] [--skip NAME ...]
-                                  [--tension 0.5]
+                                  [--tension 0.5] [--denoise [HZ]] [--denoise-cap DEG UNITS] [--denoise-fingers]
 
 Why: a traced dance holds sparse keys with the linear curve.  The distributed motion of ヒビカセ has 39,451 of
 its 39,660 bone keys on the curve (20, 20, 107, 107), a median gap of 3 to 6 frames and 100 to 200 gaps of
@@ -55,6 +55,54 @@ What the tool does, per bone track (keys sorted by frame; of two keys on one fra
   `--skip`, every bone not named when `--bones` is given, morphs, camera, lights, shadows, IK, the model
   name.  The input file is never written over.  The report lists every bone with its keys before and
   after and its segments (linear / authored / flat).
+
+--denoise [HZ] (default off; HZ 7.5 when given bare; docs/reviews/2026-10-06-batch-h-denoise.md, review 9).  Passing
+exactly through every key keeps the tracer's jitter where the keys are 1 or 2 frames apart.  The keys of the traced
+ヒビカセ sit on the grid the tracer edited with: of the body's angles in the MMD angle boxes that are not exactly 0,
+78 % are multiples of 6 degrees (89 % with the many zeros; the fingers only 3 %), and 96.5 % of the non-zero positions
+are multiples of 0.3 units, so a key misses the pose by up to 3 degrees per angle and the speed of a fast passage jumps
+between multiples of 6 degrees per frame.  The denoise takes that frame-scale jitter out of the baked curve and
+nothing else:
+
+* A dense key is a key joined to a neighbour by a gap of at most 2 frames (DENSE_GAP).  An error that alternates on
+  keys 1 or 2 frames apart is a 15 or 7.5 Hz pattern, above the beat (1 to 4 Hz); 3 frames apart it is 5 Hz and
+  cannot be told from the choreography, so longer gaps are left alone.
+* The zone: the frames within 2 frames (DENOISE_MARGIN) of a dense key, minus the pinned frames: every frame of a
+  hold or of an authored segment, the frame just before and just after a hold and the frame next to the track's
+  first and last key (so the step that touches a still stretch is the plain one; the steps 2 to 4 frames from it may
+  change within the bounds), every key that is not dense, the first and last key, and, when the track's height
+  varies, every key at its lowest height (a foot on the floor stays where it was traced).  The zone frames that lie
+  within 3 frames of each other make one part; a part of fewer than 4 frames (MIN_ZONE) is left alone, since with
+  its mean and slope at 0 (below) 3 frames can only take a zigzag c (1, -2, 1) (review 9: it turned a smooth
+  deceleration of 6.5, 7.4, 6.9 degrees per frame into 11.0, 3.0, 8.4).
+* Fingers (a bone whose name holds 指) are smoothed but not denoised unless --denoise-fingers: they are not on the
+  grid and gained nothing measurable.
+* On a part (with the 3 frames on either side held) the correction d of the baked curve x minimizes
+  sum |d|^2 + lam * sum |third difference of (x + d)|^2, a penalized least-squares (Whittaker) smoother of order 3,
+  the discrete minimum-jerk path near x.  lam = (2 sin(pi HZ / 30))^-6: on a curve keyed at every frame the response
+  is 1 / (1 + lam (2 sin(pi f / 30))^6), a zero-phase low-pass that halves a sine of HZ.  At 7.5 Hz a frame-to-frame
+  alternation keeps 1/9, a 7.5 Hz one 1/2, a 4 Hz accent 96 % and a 2 Hz swing 99.9 %.  Every zone frame counts
+  with weight 1, keys and the frames between them alike (the plain curve is the data): leaving the frames between keys
+  free let the correction spread into slow bumps, measured as removed energy below 6 Hz.
+* The correction of a part has zero mean and zero slope (two linear constraints, per channel): a run is never shifted
+  or tilted as a whole, only its frame-to-frame irregularity is redistributed.  Exact for positions and for the
+  quaternion components; renormalized, a fast turn can leave the rotation vectors slightly off zero on average.
+* Bounds on every zone frame: at most 3 degrees from the plain curve (the angle of the turn between them), at most
+  0.05 units per position component (DENOISE_CAP, --denoise-cap DEG UNITS), and never below the track's lowest
+  original height (the floor of a foot, the deepest crouch of the center, whatever the bone's spelling).  A frame that
+  leaves its bounds is held at the bound and the others solved again (ROUNDS).  When that would leave fewer than
+  MIN_ZONE frames free, or the rounds run out, the first correction is scaled down as a whole until it fits (one
+  factor, so its mean and slope stay 0 and no frame moves alone: review 9 had single frames at 3 degrees with their
+  neighbours fixed).  So the bounds always hold, and a corrected frame passes a traced key's value by at most the
+  bound (the plain curve never passes one).
+* Rotations are smoothed as quaternion components (one sign all along the track) and renormalized, the bound is
+  applied along the geodesic, the written quaternion keeps the stored sign of the frame.  Positions per component.
+  The system is banded (a key's jerk terms reach 3 frames): an L D L^T of half-bandwidth 3, stdlib only.
+* Everything else is the plain output byte for byte: every frame farther than 2 frames from a dense key, every key
+  that is not dense, every hold, every authored segment, every part of fewer than 4 frames, the fingers.  The report
+  gives per bone the keys and frames moved, the frames at a bound and the largest moves.  On its own output (a key on
+  every frame) --denoise would take every key for dense and move keys that were sparse in the tracing: when 90 % or
+  more of a track's key gaps are 1 frame the result's "warnings" say so.  Give it the traced keys.
 """
 import argparse
 import bisect
@@ -276,15 +324,21 @@ def smooth_segment(a, b, ma, mb):
     return out
 
 
-def smooth_track(keys, tension):
-    """(the new keys, {"linear": n, "authored": n, "flat": n}) for a track with keys on 2 or more frames:
-    a key per frame where the value moves, the two keys alone where it does not"""
+def dedupe(keys):
+    """the keys of a track (sorted by frame) with one key per frame: of two keys on one frame the last one counts"""
     deduped = []
     for k in keys:
         if deduped and deduped[-1].frame == k.frame:
             deduped[-1] = k
         else:
             deduped.append(k)
+    return deduped
+
+
+def smooth_track(keys, tension):
+    """(the new keys, {"linear": n, "authored": n, "flat": n}) for a track with keys on 2 or more frames:
+    a key per frame where the value moves, the two keys alone where it does not"""
+    deduped = dedupe(keys)
     frames = [k.frame for k in deduped]
     slopes = tangents(deduped, tension)
     straight = vmd.LINEAR_CURVE
@@ -315,22 +369,343 @@ def is_constant(keys):
     return all(is_flat(keys[0], k) for k in keys[1:])
 
 
-def smooth(motion, tension=0.5, bones=None, skip=()):
-    """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring"""
+# ---- the denoise (--denoise) ------------------------------------------------------------------
+
+FPS = 30.0                              # MMD's frame rate
+DENOISE_HZ = 7.5                        # the cutoff of --denoise when none is given
+DENOISE_CAP = (3.0, 0.05)               # how far the denoise may move a frame: degrees, model units per position component
+DENSE_GAP = 2                           # keys at most this many frames apart make a dense run
+DENOISE_MARGIN = 2                      # the frames on either side of a dense key the correction may use
+MIN_ZONE = 4                            # a zone of fewer frames is left alone: with its mean and slope at 0 the only
+                                        # correction of 3 frames is c(1, -2, 1), a zigzag (review 9 M2)
+FINGER = "指"                           # a bone whose name holds it is a finger: smoothed, not denoised unless asked
+BAKED_SHARE = 0.9                       # a track with this share of its key gaps 1 frame long looks already baked
+JERK = (-1.0, 3.0, -3.0, 1.0)           # the third difference: the penalty is on the jerk
+ROUNDS = 12                             # rounds of holding the frames that leave their bounds
+
+
+def smoothing_weight(hz):
+    """the weight of the jerk penalty for a cutoff of `hz`: on keys at every frame the smoother halves a sine of hz
+    (its response is 1 / (1 + weight * (2 sin(pi f / FPS))^6), a zero-phase low-pass of order 3)"""
+    return (2.0 * math.sin(math.pi * hz / FPS)) ** -6
+
+
+def check_denoise(hz, cap):
+    """(hz, (degrees, units)) as floats, or ValueError"""
+    if isinstance(hz, bool) or not isinstance(hz, (int, float)) or not 0.0 < hz < FPS / 2.0:
+        raise ValueError("--denoise is a cutoff in Hz above 0 and below %g (half of %g fps), not %r" % (FPS / 2.0, FPS, hz))
+    cap = tuple(cap)
+    if len(cap) != 2 or not all(not isinstance(c, bool) and isinstance(c, (int, float)) and math.isfinite(c) and c > 0.0
+                                for c in cap):
+        raise ValueError("--denoise-cap is two positive numbers, degrees and model units, not %r" % (cap,))
+    return float(hz), (float(cap[0]), float(cap[1]))
+
+
+def dense_plan(keys):
+    """(the frames the denoise may move, the frames of the dense keys, the track's floor) of a deduped track.
+
+    A key is dense when a gap of at most DENSE_GAP frames joins it to a neighbour.  Pinned (never moved) are: every frame
+    of a hold or of an authored segment (their keys too), the frame just before and just after a hold and the frame next
+    to the track's first and last key (so the motion enters and leaves every still stretch as the plain curve does),
+    every key that is not dense, the track's first and last key and, when the track's height varies, every key at its
+    lowest height (a foot on the floor stays where it was traced).  The frames that may move are those within
+    DENOISE_MARGIN of a dense key that are not pinned."""
+    n = len(keys)
+    ys = [k.position[1] for k in keys]
+    floor = min(ys)
+    lifts = max(ys) > floor
+    pinned = {keys[0].frame + 1, keys[-1].frame - 1}
+    for a, b in zip(keys, keys[1:]):
+        if is_flat(a, b):
+            pinned.update(range(a.frame - 1, b.frame + 2))
+        elif not all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
+            pinned.update(range(a.frame, b.frame + 1))
+    dense = set()
+    for i, k in enumerate(keys):
+        if 0 < i < n - 1 and k.frame not in pinned and not (lifts and k.position[1] == floor) and \
+                min(k.frame - keys[i - 1].frame, keys[i + 1].frame - k.frame) <= DENSE_GAP:
+            dense.add(k.frame)
+        else:
+            pinned.add(k.frame)
+    zone = set()
+    for f in dense:
+        for g in range(max(keys[0].frame, f - DENOISE_MARGIN), min(keys[-1].frame, f + DENOISE_MARGIN) + 1):
+            if g not in pinned:
+                zone.add(g)
+    return zone, dense, floor
+
+
+def _ldl(bands):
+    """L D L^T of a symmetric positive definite matrix of half-bandwidth 3, given by rows [A(i,i), A(i,i+1), A(i,i+2),
+    A(i,i+3)]; L as rows [L(i,i-1), L(i,i-2), L(i,i-3)]"""
+    n = len(bands)
+    low, diag = [[0.0, 0.0, 0.0] for _ in range(n)], [0.0] * n
+    for i in range(n):
+        row = low[i]
+        for k in (3, 2, 1):                                                 # L(i, j) for j = i-3, i-2, i-1 in turn
+            j = i - k
+            if j < 0:
+                continue
+            s = bands[j][k]
+            for kk in range(k + 1, 4):                                      # the columns m = i-kk < j already done
+                m = i - kk
+                if m < 0:
+                    break
+                s -= row[kk - 1] * low[j][kk - k - 1] * diag[m]
+            row[k - 1] = s / diag[j]
+        d = bands[i][0]
+        for k in (1, 2, 3):
+            if i - k >= 0:
+                d -= row[k - 1] * row[k - 1] * diag[i - k]
+        diag[i] = d
+    return low, diag
+
+
+def _ldl_solve(low, diag, b):
+    n = len(b)
+    z = list(b)
+    for i in range(n):
+        row = low[i]
+        for k in (1, 2, 3):
+            if i - k >= 0:
+                z[i] -= row[k - 1] * z[i - k]
+    for i in range(n):
+        z[i] /= diag[i]
+    for i in range(n - 1, -1, -1):
+        for k in (1, 2, 3):
+            if i + k < n:
+                z[i] -= low[i + k][k - 1] * z[i + k]
+    return z
+
+
+def _solve(columns, active, zone, fixed, lam):
+    """the correction of every channel (columns: values per window frame) on the active frames: minimize
+    sum(d^2) + lam * |JERK * (x + d)|^2 with d fixed where not active, and the zone's mean and slope of d at 0"""
+    n = len(columns[0])
+    free = [j for j in range(n) if active[j]]
+    out = [list(fx) for fx in fixed]
+    if not free:
+        return out
+    index = {j: a for a, j in enumerate(free)}
+    m = len(free)
+    bands = [[1.0, 0.0, 0.0, 0.0] for _ in free]
+    rhs = [[0.0] * m for _ in columns]
+    base = [[x[j] + fx[j] for j in range(n)] for x, fx in zip(columns, fixed)]
+    for r in range(n - 3):
+        idx = [index.get(r + s) for s in range(4)]
+        if idx[0] is None and idx[1] is None and idx[2] is None and idx[3] is None:
+            continue
+        for c, b in enumerate(base):
+            v = JERK[0] * b[r] + JERK[1] * b[r + 1] + JERK[2] * b[r + 2] + JERK[3] * b[r + 3]
+            if v:
+                for s in range(4):
+                    if idx[s] is not None:
+                        rhs[c][idx[s]] -= lam * JERK[s] * v
+        for s in range(4):
+            if idx[s] is not None:
+                for t in range(s, 4):
+                    if idx[t] is not None:
+                        bands[idx[s]][idx[t] - idx[s]] += lam * JERK[s] * JERK[t]
+    low, diag = _ldl(bands)
+    z = [_ldl_solve(low, diag, b) for b in rhs]
+    # the run is not moved as a whole: the zone's mean and slope of d stay 0 (the held frames count with their d)
+    if m <= 2:
+        z = [[0.0] * m for _ in columns]
+    else:
+        frames = [j for j in range(n) if zone[j]]
+        mid, scale = sum(frames) / float(len(frames)), float(len(frames))
+        rows = [[1.0 if zone[j] else 0.0 for j in range(n)], [(j - mid) / scale if zone[j] else 0.0 for j in range(n)]]
+        cf = [[row[j] for j in free] for row in rows]
+        w = [_ldl_solve(low, diag, c) for c in cf]
+        s00 = sum(a * b for a, b in zip(cf[0], w[0]))
+        s01 = sum(a * b for a, b in zip(cf[0], w[1]))
+        s11 = sum(a * b for a, b in zip(cf[1], w[1]))
+        det = s00 * s11 - s01 * s01
+        if det <= 1e-12 * s00 * s11:
+            z = [[0.0] * m for _ in columns]
+        else:
+            for c in range(len(columns)):
+                held = [-sum(row[j] * fixed[c][j] for j in range(n) if zone[j] and not active[j]) for row in rows]
+                r0 = sum(a * b for a, b in zip(cf[0], z[c])) - held[0]
+                r1 = sum(a * b for a, b in zip(cf[1], z[c])) - held[1]
+                mu0, mu1 = (s11 * r0 - s01 * r1) / det, (s00 * r1 - s01 * r0) / det
+                z[c] = [v - w[0][a] * mu0 - w[1][a] * mu1 for a, v in enumerate(z[c])]
+    for c in range(len(columns)):
+        for a, j in enumerate(free):
+            out[c][j] = z[c][a]
+    return out
+
+
+def _shrink(columns, zone, d, project):
+    """d times the largest factor in [0, 1] that keeps every zone frame inside its bounds (bisection: the bounds of a
+    frame hold on an interval of factors that contains 0, the plain curve).  A common factor keeps the mean and the
+    slope of d at 0 and its shape whole."""
+    low, high = 0.0, 1.0
+    for _ in range(50):
+        t = (low + high) / 2.0
+        if all(project(j, [x[j] + t * dd[j] for x, dd in zip(columns, d)]) is None for j in range(len(zone)) if zone[j]):
+            low = t
+        else:
+            high = t
+    return [[low * v for v in dd] for dd in d]
+
+
+def _settle(columns, zone, lam, project):
+    """the new values of the window's frames: _solve, then hold every zone frame that leaves its bounds at its bound
+    (project(j, values) gives the bounded values, or None when inside) and solve again.  When holding would leave fewer
+    than MIN_ZONE frames free (then the mean and slope could only be kept by a zigzag, or not at all: a held frame alone,
+    review 9 M1), or the rounds run out, the first correction is scaled down as a whole into the bounds instead."""
+    n = len(columns[0])
+    fixed = [[0.0] * n for _ in columns]
+    active = list(zone)
+    first = None
+    for _ in range(ROUNDS):
+        d = _solve(columns, active, zone, fixed, lam)
+        if first is None:
+            first = d
+        held = []
+        for j in range(n):
+            if active[j]:
+                bound = project(j, [x[j] + dd[j] for x, dd in zip(columns, d)])
+                if bound is not None:
+                    held.append((j, bound))
+        if not held:
+            break
+        if sum(active) - len(held) < MIN_ZONE:
+            d = _shrink(columns, zone, first, project)
+            break
+        for j, bound in held:
+            for c, x in enumerate(columns):
+                fixed[c][j] = bound[c] - x[j]
+            active[j] = False
+    else:
+        d = _shrink(columns, zone, first, project)
+    values = []
+    for j in range(n):
+        v = [x[j] + dd[j] for x, dd in zip(columns, d)]
+        if zone[j]:
+            v = project(j, v) or v
+        values.append(v)
+    return values
+
+
+def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
+    """(the baked keys with the frame-scale jitter of the dense runs taken out, what was moved): keys is the deduped
+    track, baked what smooth_track made of it.  See the module docstring."""
+    stats = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0}
+    zone, dense, floor = dense_plan(keys)
+    if not zone:
+        return baked, stats
+    cap_deg, cap_units = cap
+    cap_rad = math.radians(cap_deg)
+    lam = smoothing_weight(hz)
+    f0, f1 = keys[0].frame, keys[-1].frame
+    at = {k.frame: k for k in baked}
+    pos, rot, last = [], [], None
+    for f in range(f0, f1 + 1):                                             # the baked path at every frame (a hold keeps its value)
+        last = at.get(f, last)
+        pos.append(tuple(last.position))
+        q = _normalized(last.rotation)
+        if rot and sum(a * b for a, b in zip(q, rot[-1])) < 0.0:
+            q = tuple(-v for v in q)                                        # one sign all along: the components are smooth
+        rot.append(q)
+    new_pos, new_rot = list(pos), list(rot)
+    frames = sorted(zone)
+    groups, start = [], frames[0]
+    for prev, f in zip(frames, frames[1:]):
+        if f - prev > 3:                                                    # no jerk term reaches across 3 pinned frames
+            groups.append((start, prev))
+            start = f
+    groups.append((start, frames[-1]))
+    for a, b in groups:
+        lo, hi = max(f0, a - 3), min(f1, b + 3)
+        window = range(lo - f0, hi - f0 + 1)
+        inside = [lo + j in zone for j in range(len(window))]
+        if sum(inside) < MIN_ZONE:
+            continue                                                        # too short to shape: left as the plain curve
+        x = [[rot[i][c] for i in window] for c in range(4)]
+        if any(rot[i] != rot[window[0]] for i in window):
+            def bound_rotation(j, v, x=x):
+                xq = (x[0][j], x[1][j], x[2][j], x[3][j])
+                turn = log_map(relative(xq, v))                             # from the plain frame, the short way
+                angle = math.sqrt(sum(c * c for c in turn))
+                if angle <= cap_rad:
+                    return None
+                # back along that arc to the cap, exactly (slerp blends linearly below 3.6 degrees and misses it)
+                return list(_normalized(mathutil.quat_multiply(xq, exp_map(tuple(c * cap_rad / angle for c in turn)))))
+            values = _settle(x, inside, lam, bound_rotation)
+            for j, i in enumerate(window):
+                if inside[j]:
+                    new_rot[i] = _normalized(values[j])
+        for c in range(3):
+            xc = [pos[i][c] for i in window]
+            if all(v == xc[0] for v in xc):
+                continue
+
+            def bound_position(j, v, xc=xc, c=c):
+                low, high = xc[j] - cap_units, xc[j] + cap_units
+                if c == 1:
+                    low = max(low, floor)
+                return [low] if v[0] < low else [high] if v[0] > high else None
+            values = _settle([xc], inside, lam, bound_position)
+            for j, i in enumerate(window):
+                if inside[j]:
+                    p = list(new_pos[i])
+                    p[c] = values[j][0]
+                    new_pos[i] = tuple(p)
+    out = []
+    for k in baked:
+        i = k.frame - f0
+        if k.frame not in zone or (new_pos[i] == pos[i] and new_rot[i] == rot[i]):
+            out.append(k)
+            continue
+        q = new_rot[i] if new_rot[i] != rot[i] else tuple(k.rotation)
+        if sum(a * b for a, b in zip(q, k.rotation)) < 0.0:
+            q = tuple(-v for v in q)                                        # the stored sign of the baked frame
+        out.append(vmd.BoneKey(k.name, k.frame, new_pos[i], q, k.interpolation, k.raw_name))
+        degrees = math.degrees(2.0 * math.acos(min(1.0, abs(sum(a * b for a, b in zip(new_rot[i], rot[i]))))))
+        units = max(abs(a - b) for a, b in zip(new_pos[i], pos[i]))
+        stats["frames"] += 1
+        stats["keys"] += k.frame in dense
+        stats["at_cap"] += degrees >= cap_deg - 1e-6 or units >= cap_units - 1e-9
+        stats["max_deg"] = max(stats["max_deg"], degrees)
+        stats["max_units"] = max(stats["max_units"], units)
+    return out, stats
+
+
+def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None, denoise_fingers=False):
+    """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring.  denoise is the
+    cutoff in Hz of the denoise of the dense runs (None: no denoise), denoise_cap its (degrees, units), denoise_fingers
+    takes the finger bones in too.  report["warnings"] lists what looks wrong with the input (an already baked file)."""
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
+    if denoise is None and (denoise_cap is not None or denoise_fingers):
+        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
+    if denoise is not None:
+        denoise, denoise_cap = check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     tracks = tracks_of(motion)
     skip = set(skip)
     chosen = set(tracks) if bones is None else set(bones)
     chosen -= skip
-    new_bones, report = [], []
+    new_bones, report, denoised, looks_baked = [], [], 0, []
     for name in tracks:                                                      # the file's order of first appearance
         keys = tracks[name]
         entry = {"name": name, "keys_before": len(keys), "keys_after": len(keys),
                  "frames": [keys[0].frame, keys[-1].frame], "segments": {"linear": 0, "authored": 0, "flat": 0},
                  "changed": False}
         if name in chosen and keys[0].frame != keys[-1].frame and not is_constant(keys):
-            keys, counts = smooth_track(keys, tension)
+            baked, counts = smooth_track(keys, tension)
+            if denoise is not None:
+                if FINGER in name and not denoise_fingers:
+                    entry["denoise"] = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0, "skipped": "finger"}
+                else:
+                    traced = dedupe(keys)
+                    gaps = [b.frame - a.frame for a, b in zip(traced, traced[1:])]
+                    if len(gaps) >= 10 and sum(g == 1 for g in gaps) >= BAKED_SHARE * len(gaps):
+                        looks_baked.append(name)
+                    denoised += 1
+                    baked, entry["denoise"] = denoise_track(traced, baked, denoise, denoise_cap)
+            keys = baked
             entry.update(keys_after=len(keys), segments=counts, changed=True)
         new_bones += keys
         report.append(entry)
@@ -339,7 +714,16 @@ def smooth(motion, tension=0.5, bones=None, skip=()):
         if isinstance(value, list):
             setattr(out, field, list(value))
     out.bones = new_bones
-    return out, {"tension": tension, "skipped": sorted(skip & set(tracks)),
+    settings = None if denoise is None else {"hz": denoise, "cap_deg": denoise_cap[0], "cap_units": denoise_cap[1],
+                                             "max_gap": DENSE_GAP, "margin": DENOISE_MARGIN, "min_zone": MIN_ZONE,
+                                             "fingers": bool(denoise_fingers)}
+    warnings = []
+    if looks_baked:
+        warnings.append("%d of the %d denoised tracks have a key on 90 %% or more of their frames (%s%s): an already baked "
+                        "file?  --denoise takes all their keys for dense and moves keys that were sparse in the tracing; "
+                        "give it the traced keys" % (len(looks_baked), denoised, ", ".join(looks_baked[:3]),
+                                                     ", ..." if len(looks_baked) > 3 else ""))
+    return out, {"tension": tension, "denoise": settings, "warnings": warnings, "skipped": sorted(skip & set(tracks)),
                  "bones_requested_but_absent": sorted(set(bones or ()) - set(tracks)), "bones": report}
 
 
@@ -372,17 +756,28 @@ def check_distinct(*paths):
         seen[key] = path
 
 
-def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None):
+def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None, denoise=None, denoise_cap=None,
+        denoise_fingers=False):
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
     check_distinct(dance_full, out_full, report_path)
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
+    if denoise is None and (denoise_cap is not None or denoise_fingers):
+        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
+    if denoise is not None:
+        check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     motion = vmd.load(dance_full)
-    smoothed, report = smooth(motion, tension, bones, skip)
+    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap, denoise_fingers)
     write_bytes(out_full, vmd.dumps(smoothed))
     back = vmd.load(out_full)
     changed = [b for b in report["bones"] if b["changed"]]
-    result = {"in": dance_full, "out": out_full, "tension": tension, "bone_keys_before": len(motion.bones),
+    summary = None
+    if report["denoise"] is not None:
+        moved = [b["denoise"] for b in changed]
+        summary = dict(report["denoise"], **{kind: sum(m[kind] for m in moved) for kind in ("keys", "frames", "at_cap")})
+        summary.update({kind: max([m[kind] for m in moved] or [0.0]) for kind in ("max_deg", "max_units")})
+    result = {"in": dance_full, "out": out_full, "tension": tension, "denoise": summary, "warnings": report["warnings"],
+              "bone_keys_before": len(motion.bones),
               "bone_keys": len(back.bones), "bones_changed": len(changed), "skipped": report["skipped"],
               "segments": {kind: sum(b["segments"][kind] for b in changed) for kind in ("linear", "authored", "flat")},
               "bones": report["bones"]}
@@ -401,9 +796,17 @@ def main(argv=None):
     p.add_argument("--bones", nargs="+", help="smooth only these bones")
     p.add_argument("--skip", nargs="+", default=[], help="leave these bones as they are")
     p.add_argument("--tension", type=float, default=0.5, help="scale of the tangents, 0 to 1 (default 0.5 = Catmull-Rom)")
+    p.add_argument("--denoise", nargs="?", type=float, const=DENOISE_HZ, default=None, metavar="HZ",
+                   help="also take the frame-scale jitter out of the runs of keys 1-2 frames apart; HZ is the cutoff "
+                        "(default %g)" % DENOISE_HZ)
+    p.add_argument("--denoise-cap", nargs=2, type=float, default=None, metavar=("DEG", "UNITS"),
+                   help="how far --denoise may move a frame (default %g degrees, %g units)" % DENOISE_CAP)
+    p.add_argument("--denoise-fingers", action="store_true",
+                   help="let --denoise take the finger bones in too (left out by default)")
     args = p.parse_args(argv)
     try:
-        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report)
+        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap,
+                     args.denoise_fingers)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
