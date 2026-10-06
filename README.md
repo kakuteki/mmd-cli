@@ -421,7 +421,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   モーションの一覧）`camera` `look` `out`（AVI と mp4 の置き場）`scripts`（OUTDIR の中身を写す先）`mmd_cli`（このリポジトリの
   置き場）。任意は `accessories` `cues` `menu`（既定の 215 off・221 off・282 on に重ねる。282 の背景黒化は alpha のために外せない）
   `size` `codec` `avi_bytes_per_pixel`（未圧縮なら 4。ほかのコーデックでは 1 本の AVI で測った値が要る）`mmd_cli_home` `python`
-  `name`（繋いだ動画は `out/<name>_<tag>.mp4`）。知らない項目は誤りにする（綴りの誤りが黙って無視されないように）。
+  `name`（繋いだ動画は `out/<name>_<tag>.mp4`）。`size` は縦横とも偶数（動画は yuv420p）。知らない項目は誤りにする
+  （綴りの誤りが黙って無視されないように）。
   `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。
 - `--shots` は `tools/make_camera.py --report` の報告で、描くカメラと同じショットのもの（`--handheld` はショットを変えない）。
   ショットに抜けや重なりがあれば誤り。区間は 3 枚以上（1〜2 枚の区間は `-c copy` の連結で時刻が乱れる）。`--fps` は MMD が書く
@@ -432,14 +433,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   （と `.mmdcli-failed*`）を消す → 空き容量（GetDiskFreeSpaceEx。UNC も可）を AVI の見積もり＋2 GiB と比べる → 台本を流す →
   `mv_look.py render`（答えは `<mp4>.look.json`）→ mp4 の枚数を数える → 作り方の印（`<mp4>.recipe`）を書く → AVI を消す。
   どこかで失敗すると止まり（終了コード 1、容量不足と空きを測れないときは 3。走らなかったコマンドは「did not run」と言う）、AVI は残す。消せない残り（ほかのプログラムが
-  開いている等）や、AVI の名前のフォルダがあっても止まる。外部コマンドは毎回、終了コードを空にしてから呼ぶ（見つからない
+  開いている等）や、AVI の名前のフォルダがあっても止まる。バッチ・mv_look・連結のコマンドは毎回、終了コードを空にしてから呼ぶ（見つからない
   コマンドで前の 0 が残らないように）。繋いだ動画の枚数も数える。
-- `-Resume` は、枚数が合い、作り方の印が同じ区間だけを飛ばす。印はバッチ・look・畳みの引数の SHA-256 と、見ているファイルの
+- `-Resume` は、枚数が合い、作り方の印が同じ区間だけを飛ばす。印はバッチの本文・look のパス・畳みの引数の SHA-256 と、見ているファイルの
   大きさと更新時刻: モーション・カメラ・look・cues・MMD 本体、モデルとアクセサリのフォルダの中身全部（テクスチャ・トゥーン・
   スフィア）、描画機の `mmd_cli/` と `tools/`（隠しファイルも。Python が書く `__pycache__` は除く）。フォント（mv_text が描画機で
   探す）・MMD の設定・Python とその部品・ffmpeg・見ているフォルダの外のファイル（モデルが別の場所から読むテクスチャ）や中の
   ジャンクションの先は見ないので、それらを変えたら `-Resume` なしで流す。時刻を保たない写し方で入力を写し直すと、中身が同じでも
-  描き直しになる（安全側）。`size` は縦横とも偶数（動画は yuv420p）。
+  描き直しになる（安全側）。
 - ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。
 
 ### 袖口のつぶれを直す（`tools/fix_twist.py`、MMD なし）

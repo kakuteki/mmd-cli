@@ -298,6 +298,10 @@ if (-not $env:STUB_NO_FFMPEG) { function ffmpeg {
 """
 
 
+PARSE_FIRST = ("$parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile(%s, [ref]$null, [ref]$parseErrors)\n"
+               "if ($parseErrors) { 'WRAPPER: the driver does not parse: ' + (($parseErrors | ForEach-Object { $_.Message }) -join '; '); exit 98 }")
+
+
 def run_powershell(script, env=None, timeout=300):
     r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
                        capture_output=True, stdin=subprocess.DEVNULL, env=dict(os.environ, **(env or {})),
@@ -351,7 +355,10 @@ class DriverTest(unittest.TestCase):
     def run_driver(self, switches="", before="", **env):
         wrapper = os.path.join(self.tmp, "wrapper.ps1")
         with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
-            f.write(STUBS + "\n%s\n& %s %s\nexit $LASTEXITCODE\n" % (before, mv_chunks._ps(self.summary["driver"]), switches))
+            # review 13: a driver that does not parse leaves $LASTEXITCODE as it was, so the wrapper parses it first (exit 98).
+            # Not try/catch around the call: that would also stop at a command that is not found, which -File does not
+            f.write(STUBS + "\n%s\n%s\n& %s %s\nexit $LASTEXITCODE\n"
+                    % (before, PARSE_FIRST % mv_chunks._ps(self.summary["driver"]), mv_chunks._ps(self.summary["driver"]), switches))
         open(self.log, "w").close()
         code, text = run_powershell(wrapper, dict(env, STUB_LOG=self.log))
         with open(self.log, encoding="utf-8-sig") as f:
@@ -614,6 +621,14 @@ class DriverTest(unittest.TestCase):
         self.assertIn("did not run", text)                         # review 12: not "the look does not work"
         self.assertNotIn("the look does not work", text)
 
+    def test_a_python_path_with_a_typographic_quote_still_parses(self):
+        # review 13: the "did not run" line doubled the ASCII quote only, so a ' in the path broke the whole driver
+        self.write(python="C:/no/Don\u2019t/python.exe")
+        code, text, calls = self.run_driver(before="cmd /c exit 0")
+        self.assertEqual(code, 1, text)
+        self.assertIn("did not run", text)
+        self.assertNotIn("WRAPPER", text)
+
     def test_a_join_command_that_is_not_found_stops_the_run(self):
         # review 12: the join called without Invoke-Native kept the exit code 0 of the fold before it
         self.write()
@@ -678,6 +693,9 @@ class DriverTest(unittest.TestCase):
             self.put("tools/__pycache__/mv_text.cpython-312.pyc", "bytecode")
             self.put("mmd_cli/__pycache__/app.cpython-312.pyc", "bytecode")
             self.assertEqual(renders("pycache"), 0)
+        with self.subTest(changed="a texture whose name holds __pycache__"):          # review 13: only the folder is bytecode
+            self.put("model/tex/skin__pycache__.png", "a texture all the same")
+            self.assertEqual(renders("texture named like the cache"), 3)
         with self.subTest(changed="the second motion"):
             self.put("lips.vmd", "lips changed")
             self.assertEqual(renders("second motion"), 3)
@@ -819,7 +837,8 @@ class EndToEndTest(unittest.TestCase):
         summary = mv_chunks.write(plan, mv_chunks.plan_chunks(spans, lead=30), self.base + "/scripts", "t", 240, 0.5)
         wrapper = os.path.join(self.tmp, "run.ps1")
         with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
-            f.write("& %s %s\nexit $LASTEXITCODE\n" % (mv_chunks._ps(summary["driver"]), switches))
+            f.write("%s\n& %s %s\nexit $LASTEXITCODE\n"
+                    % (PARSE_FIRST % mv_chunks._ps(summary["driver"]), mv_chunks._ps(summary["driver"]), switches))
         code, text = run_powershell(wrapper, timeout=600)
         self.assertEqual(code, 0, text)
         return summary["joined"], text

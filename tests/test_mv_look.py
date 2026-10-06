@@ -253,6 +253,12 @@ class GraphTest(unittest.TestCase):
         self.assertIn("-stream_loop", argv[argv.index("W/plate.png"):argv.index("W/light_%05d.png")])
         self.assertIn("[2:v]trim=start_frame=3,setpts=PTS-STARTPTS,", self.filter_of(argv))
 
+    def test_a_chunk_time_written_with_six_decimals_finds_its_frame_of_the_loop(self):
+        # review 13: mv_chunks writes --from as %.6f, so a cut at frame 256 comes as 8.533333 s (255.99999 frames);
+        # rounded it is frame 256 (16 of a 30 frame loop), cut down it would be 255 (15)
+        argv = self.graph(start=8.533333, light_frames=30)
+        self.assertIn("[2:v]trim=start_frame=16,", self.filter_of(argv))
+
     def test_a_chunk_on_a_whole_loop_reads_the_loop_from_its_start(self):
         argv = self.graph(start=2.0, light_frames=30)
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-i"][:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])

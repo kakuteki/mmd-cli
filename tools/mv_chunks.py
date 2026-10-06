@@ -30,13 +30,14 @@ For each chunk the driver checks that the batch is the one it was written with, 
 the chunk, checks the free space for the AVI, runs the batch, folds the AVI (keeping mv_look's answer as
 <mp4>.look.json), counts the frames of the mp4, notes the recipe of the chunk beside it (<mp4>.recipe) and only then
 deletes the AVI.  A failure stops the run (exit 1; 3 for the disk) and keeps the AVI.  The joined video is counted too.
--Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the same batch, look and fold,
-and the same size and time of every file it watches: the motions, camera, look and cues, everything under the folders of
-the model and of the accessories (textures, toons, spheres), mmd_cli and tools/ on the render machine, and MMD itself.
-It does not see fonts (mv_text finds them on the render machine), MMD's settings, Python and its libraries, ffmpeg,
-files outside those folders (a texture the model reads from elsewhere) or behind a junction inside them, nor the
-bytecode Python writes under __pycache__: after changing any of those, render without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver checks the
-look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
+-Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the SHA-256 of its batch text,
+the look's path and its fold arguments, and the size and time of every file it watches: the motions, camera, look and
+cues, everything under the folders of the model and of the accessories (textures, toons, spheres; a __pycache__ folder
+is left out, its bytecode is no input), mmd_cli and tools/ on the render machine, and MMD itself.  It does not see
+fonts (mv_text finds them on the render machine), MMD's settings, Python and its libraries, ffmpeg, or files outside
+those folders (a texture the model reads from elsewhere) or behind a junction inside them: after changing any of those,
+render without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver
+checks the look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
 The summary is one line of JSON; an error is {"ok": false, "error": ...} with exit code 2.
 """
@@ -304,11 +305,12 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "$files = @($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue; "
               "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } })",
               "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
-              "Where-Object { $_.FullName -notmatch '__pycache__' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
+              "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
               "$stamp = $files -join \"`n\"",
               "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps 30" % (py, _ps(work), plan["size"][0], plan["size"][1]),
-              "if ($null -eq $LASTEXITCODE) { 'STOP: %s did not run for the look check (not found?)'; exit 1 }" % plan["python"].replace("'", "''"),
-              "if ($LASTEXITCODE -ne 0) { 'STOP: the look does not work: {0} (mv_look layers, {1})' -f $look, (Why $LASTEXITCODE); $check; exit 1 }",
+              # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
+              "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the look check (not found?)' -f %s; exit 1 }" % _ps(plan["python"]),
+              "if ($LASTEXITCODE -ne 0) { 'STOP: mv_look layers failed on the look {0} ({1}):' -f $look, (Why $LASTEXITCODE); $check; exit 1 }",
               "function Count-Frames($path) {",
               "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
               "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
