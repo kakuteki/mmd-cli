@@ -667,9 +667,11 @@ class DenoiseTest(unittest.TestCase):
             self.assertEqual(rot, smooth_motion._normalized(held))
         self.assertNotEqual(path(denoised, "右腕", 5, 25), path(plain, "右腕", 5, 25))      # not vacuous
         self.assertNotEqual(path(denoised, "右腕", 50, 65), path(plain, "右腕", 50, 65))
-        # left at rest: the first step out of the hold is no larger than without the denoise
-        step = lambda m: angle_between(path(m, "右腕", 45, 45)[0][1], path(m, "右腕", 46, 46)[0][1])   # noqa: E731
-        self.assertLessEqual(step(denoised), step(plain) + 0.05)
+        # entered and left at rest as without the denoise: the frames next to the hold keep their values (frame 29 is a
+        # dense key, 46 lies within the margin of the dense key 48), and so do the frames next to the first and last key
+        for f in (29, 46, 1, 68):
+            self.assertEqual(path(denoised, "右腕", f, f), path(plain, "右腕", f, f), f)
+        self.assertNotEqual(path(denoised, "右腕", 47, 47), path(plain, "右腕", 47, 47))
 
     def test_a_foot_never_goes_below_its_floor_keeps_its_contacts_and_does_not_slide_in_a_hold(self):
         for name in ("右足ＩＫ", "左足IK"):                                   # any spelling: the rule is the track's own floor
