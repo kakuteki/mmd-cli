@@ -30,8 +30,12 @@ For each chunk the driver checks that the batch is the one it was written with, 
 the chunk, checks the free space for the AVI, runs the batch, folds the AVI (keeping mv_look's answer as
 <mp4>.look.json), counts the frames of the mp4, notes the recipe of the chunk beside it (<mp4>.recipe) and only then
 deletes the AVI.  A failure stops the run (exit 1; 3 for the disk) and keeps the AVI.  The joined video is counted too.
--Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the same batch and fold, and
-input files of the same size and time (the model, motions, camera, accessories, look, cues, and mv_look itself).
+-Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the same batch, look and fold,
+and the same size and time of every file it watches: the motions, camera, look and cues, everything under the folders of
+the model and of the accessories (textures, toons, spheres), mmd_cli and tools/ on the render machine, and MMD itself.
+It does not see fonts (mv_text finds them on the render machine) or MMD's settings: after changing those, render
+without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver checks the
+look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
 The summary is one line of JSON; an error is {"ok": false, "error": ...} with exit code 2.
 """
@@ -55,6 +59,7 @@ DISK_MARGIN = 2 * 1024 ** 3
 PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell takes each of these for a single quote
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 ABSOLUTE = re.compile(r"([A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
+MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithmetic finite
 
 
 def _whole(value):
@@ -63,6 +68,27 @@ def _whole(value):
 
 def _absolute(value):
     return isinstance(value, str) and ABSOLUTE.match(value) is not None
+
+
+def _folder_of(path):
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[0]
+
+
+def watched_folders(plan):
+    """the folders -Resume reads through: the model's and the accessories' (what they load: textures, toons, spheres),
+    and mmd_cli's code"""
+    folders = [_folder_of(plan["model"])] + [_folder_of(a) for a in plan["accessories"]]
+    folders += ["%s/%s" % (plan["mmd_cli"].replace("\\", "/").rstrip("/"), name) for name in ("mmd_cli", "tools")]
+    unique = []
+    for f in folders:
+        if f not in unique:
+            unique.append(f)
+    return unique
+
+
+def _inside(path, folder):
+    a, b = path.replace("\\", "/").rstrip("/").lower(), folder.replace("\\", "/").rstrip("/").lower()
+    return a == b or a.startswith(b + "/")
 
 
 def spans_from_report(report):
@@ -163,14 +189,19 @@ def check_plan(plan):
                              "height), measured on one): the free space is checked against it" % full["codec"])
         full["avi_bytes_per_pixel"] = 4
     bpp = full["avi_bytes_per_pixel"]
-    if isinstance(bpp, bool) or not isinstance(bpp, (int, float)) or not 0 < bpp < float("inf"):
-        raise ValueError("avi_bytes_per_pixel is a number above 0, not %r" % (bpp,))
+    if isinstance(bpp, bool) or not isinstance(bpp, (int, float)) or not 0 < bpp <= MAX_BYTES_PER_PIXEL:
+        raise ValueError("avi_bytes_per_pixel is a number above 0 and up to %g, not %r" % (MAX_BYTES_PER_PIXEL, bpp))
     full.setdefault("python", "python")
     if not isinstance(full["python"], str) or not full["python"]:
         raise ValueError("python is the command or the path of the Python on the render machine")
     full.setdefault("name", "mv")
     if not isinstance(full["name"], str) or not NAME.fullmatch(full["name"]):
         raise ValueError("name goes into a file name: letters, digits, _ and - only")
+    for key in ("out", "scripts"):
+        for folder in watched_folders(full):
+            if _inside(full[key], folder):
+                raise ValueError("%s (%s) is inside %s, which -Resume watches: every chunk written there would look like a "
+                                 "changed input.  Put it elsewhere" % (key, full[key], folder))
     return full
 
 
@@ -225,13 +256,14 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
     joined = "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)
     concat = "%s/concat_%s.txt" % (plan["scripts"], tag)
     py = "python" if plan["python"] == "python" else _ps(plan["python"])
-    inputs = [plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
+    inputs = [plan["mmd"], plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
     inputs += [plan["cues"]] if plan["cues"] else []
-    inputs += ["%s/tools/%s" % (plan["mmd_cli"], name) for name in ("mv_look.py", "mv_text.py")]
+    work = "%s/look_work_%s" % (plan["out"], tag)
     lines = ["# %d chunks at %d fps folded to 30 fps (%d subframes, shutter %s), %d frames, joined to %s."
              % (len(chunks), fps, sub, shutter, total, joined),
              "# Written by tools/mv_chunks.py.  -Resume skips a chunk whose mp4 has its frame count and was made from the",
-             "# same recipe (batch, look and fold) and the same input files (size and time): see <mp4>.recipe beside it.",
+             "# same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
+             "# It does not see fonts or MMD's settings: after changing those, run without -Resume.",
              "param([switch]$Resume)",
              "$ErrorActionPreference = 'Continue'",
              "Set-Location -LiteralPath %s" % _ps(plan["mmd_cli"])]
@@ -240,8 +272,16 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
     lines += ["$out = %s" % _ps(plan["out"]),
               "$look = %s" % _ps(plan["look"]),
               "$inputs = @(%s)" % ", ".join(_ps(i) for i in inputs),
+              "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan)),
               "New-Item -ItemType Directory -Force -Path $out | Out-Null",
+              "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }",
               "$sw = [Diagnostics.Stopwatch]::StartNew()",
+              "function Invoke-Native {",
+              "    # an external command, with the last exit code cleared first: one that is not found leaves it as it was",
+              "    $global:LASTEXITCODE = $null",
+              "    $exe, $rest = $args",
+              "    & $exe @rest",
+              "}",
               "if (-not ('MvChunks.Disk' -as [type])) {",
               "    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition '[DllImport(\"kernel32.dll\", CharSet = CharSet.Unicode, "
               "SetLastError = true)] public static extern bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, "
@@ -253,8 +293,13 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "    if ([MvChunks.Disk]::GetDiskFreeSpaceEx($folder, [ref]$a, [ref]$t, [ref]$f)) { return $a }",
               "    return -1",
               "}",
-              "$stamp = ($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -ErrorAction SilentlyContinue; "
-              "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } }) -join \"`n\"",
+              "$files = @($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue; "
+              "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } })",
+              "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
+              "Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
+              "$stamp = $files -join \"`n\"",
+              "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps 30" % (py, _ps(work), plan["size"][0], plan["size"][1]),
+              "if ($LASTEXITCODE -ne 0) { 'STOP: the look does not work: {0} (mv_look layers, exit {1})' -f $look, $LASTEXITCODE; $check; exit 1 }",
               "function Count-Frames($path) {",
               "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
               "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
@@ -264,7 +309,8 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
               "    $made = \"$recipe`n$stamp\"",
               "    $kept = ''",
-              "    if (Test-Path -LiteralPath \"$mp4.recipe\") { $kept = (Get-Content -LiteralPath \"$mp4.recipe\" -Raw).Trim() }",
+              "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
+              "    if ($raw) { $kept = $raw.Trim() }",
               "    if ($Resume -and $kept -eq $made -and (Count-Frames $mp4) -eq $want) {",
               "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue",
               "        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want",
@@ -276,16 +322,19 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "    }",
               "    $left = @(Get-ChildItem -LiteralPath $out -Filter ($name + '.avi.mmdcli-failed*') | ForEach-Object { $_.FullName })",
               "    foreach ($old in @($avi) + $left) {",
-              "        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old; '{0}: removed {1} (an earlier attempt)' -f $name, $old }",
+              "        if (Test-Path -LiteralPath $old -PathType Container) { '{0} STOP: {1} is a folder, not an earlier attempt' -f $name, $old; exit 1 }",
+              "        if (-not (Test-Path -LiteralPath $old)) { continue }",
+              "        try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }",
+              "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
+              "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
               "    }",
-              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -ErrorAction SilentlyContinue }",
+              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }",
               "    $free = Get-FreeBytes $out",
+              "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
               "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
-              "    $global:LASTEXITCODE = $null",
-              "    & %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
+              "    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
               "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed (exit {1}), see {2}' -f $name, $LASTEXITCODE, $json; exit 1 }",
-              "    $global:LASTEXITCODE = $null",
-              "    & %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
+              "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
               "    if ($LASTEXITCODE -ne 0) {",
               "        '{0} STOP: mv_look failed (exit {1}); the AVI is kept: {2}' -f $name, $LASTEXITCODE, $avi",
               "        Get-Content -LiteralPath \"$mp4.look.json\" -ErrorAction SilentlyContinue",
@@ -305,8 +354,7 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
             c["frames"], avi_bytes(c, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
             ", ".join(_ps(a) for a in fold_args(plan, tag, c, fps, shutter))))
     lines += ["Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue" % _ps(joined),
-              "$global:LASTEXITCODE = $null",
-              "& ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
+              "Invoke-Native ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
               "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed (exit {0})' -f $LASTEXITCODE; exit 1 }",
               "$n = Count-Frames %s" % _ps(joined),
               "if ($n -ne %d) { 'STOP: the joined video has {0} frames, want {1}' -f $n, %d; exit 1 }" % (total, total),
@@ -381,7 +429,7 @@ def main(argv=None):
                 raise ValueError("--cuts needs --last (the last frame of the song)")
             spans = spans_from_cuts(args.cuts, args.last)
         result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter)
-    except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         return 2
     print(json.dumps(dict({"ok": True}, **result), ensure_ascii=True))

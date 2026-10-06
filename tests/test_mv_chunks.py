@@ -38,7 +38,7 @@ PLAN = {
     "model": "C:/MMD/UserFile/Model/Rin/White.pmx",
     "motions": ["C:/work/song/dance.vmd", LIPS],
     "camera": "C:/work/song/camera.vmd",
-    "accessories": ["C:/work/song/stage_floor.x"],
+    "accessories": ["C:/work/song/stage/stage_floor.x"],
     "look": "C:/work/song/look.json",
     "cues": "C:/work/song/cues.json",
     "out": "C:/work/song/out",
@@ -152,6 +152,14 @@ class PlanTest(unittest.TestCase):
         plan = mv_chunks.check_plan(dict(PLAN, menu={215: "on", "0298": "off"}))
         self.assertEqual(plan["menu"], {"215": "on", "221": "off", "282": "on", "298": "off"})
 
+    def test_the_output_may_not_sit_in_a_folder_that_resume_watches(self):
+        # review 11: -Resume watches the folders of the model and the accessories; its own output inside one of them
+        # would change the stamp with every chunk
+        for change in ({"out": "C:/MMD/UserFile/Model/Rin/out"}, {"scripts": "C:/work/song/stage/mv"},
+                       {"out": r"c:\work\song\stage\out"}):
+            self.assertIn("inside", self.refused(**change), change)
+        mv_chunks.check_plan(dict(PLAN, out="C:/MMD/UserFile/Model/Rin2/out"))   # a neighbour of the folder is fine
+
     def test_a_compressed_codec_needs_its_bytes_per_pixel(self):
         self.assertIn("avi_bytes_per_pixel", self.refused(codec="UT Video"))
         plan = mv_chunks.check_plan(dict(PLAN, codec="UT Video", avi_bytes_per_pixel=1.2))
@@ -179,7 +187,7 @@ class BatchTest(unittest.TestCase):
             ["motion", "load", LIPS, "--frame", "0"],
             ["model", "select", "camera"],
             ["motion", "load", PLAN["camera"], "--frame", "0"],
-            ["accessory", "load", "C:/work/song/stage_floor.x"],
+            ["accessory", "load", "C:/work/song/stage/stage_floor.x"],
             ["render", "avi", self.AVI, "--from", "0", "--to", "249", "--fps", "240", "--size", "1280", "720", "--codec", "未圧縮"],
             ["quit"]])
 
@@ -241,6 +249,14 @@ function python {
         $global:LASTEXITCODE = 0
         return
     }
+    if ($args[1] -eq 'layers') {
+        # tools/mv_look.py layers LOOK WORK ...: the look must be JSON
+        try { $null = Get-Content -LiteralPath $args[2] -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch { '{"ok": false, "error": "the look is not JSON"}'; $global:LASTEXITCODE = 2; return }
+        '{"ok": true}'
+        $global:LASTEXITCODE = 0
+        return
+    }
     # tools/mv_look.py render AVI LOOK MP4 ...: refuse what the real one refuses, then write the frames it would
     $avi = $args[2]; $look = $args[3]; $mp4 = $args[4]
     $from = [double]$args[[array]::IndexOf($args, '--from') + 1]
@@ -287,6 +303,11 @@ class DriverTest(unittest.TestCase):
     would: the batch writes its AVI, the fold refuses a missing AVI or look and writes an mp4 of (to - from) * 30
     frames, the join adds the frames of the listed mp4s up"""
 
+    FILES = {"MMD/MikuMikuDance.exe": "mmd", "model/White.pmx": "pmx", "model/tex/skin.png": "skin",
+             "dance.vmd": "dance", "lips.vmd": "lips", "camera.vmd": "camera", "stage/floor.x": "floor",
+             "stage/floor_tex.png": "floor texture", "cues.json": "{}", "look.json": '{"glow": {"strength": 0}}',
+             "mmd_cli/__init__.py": "", "mmd_cli/app.py": "app", "tools/mv_look.py": "look", "tools/mv_text.py": "text"}
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -294,23 +315,34 @@ class DriverTest(unittest.TestCase):
         self.out = self.base + "/out"
         self.scripts = self.base + "/scripts"
         os.makedirs(self.out)
+        for rel, text in self.FILES.items():           # the inputs exist, so that the stamp of -Resume can see them change
+            self.put(rel, text)
         self.look = self.base + "/look.json"
-        with open(self.look, "w", encoding="utf-8") as f:
-            json.dump({"glow": {"strength": 0}}, f)
+        self.cues = self.base + "/cues.json"
         self.log = os.path.join(self.tmp, "calls.log")
 
-    def write(self, **plan):
-        full = dict(PLAN, out=self.out, scripts=self.scripts, mmd_cli=self.base, look=self.look)
+    def put(self, rel, text):
+        path = os.path.join(self.tmp, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def write(self, shutter=0.5, **plan):
+        b = self.base
+        full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
+                "camera": b + "/camera.vmd", "accessories": [b + "/stage/floor.x"], "look": self.look, "cues": self.cues,
+                "out": self.out, "scripts": self.scripts, "mmd_cli": b}
         full.update(plan)
         self.plan = mv_chunks.check_plan(full)
         self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240,
-                                       shutter=0.5)
+                                       shutter=shutter)
         return self.summary
 
-    def run_driver(self, switches="", **env):
+    def run_driver(self, switches="", before="", **env):
         wrapper = os.path.join(self.tmp, "wrapper.ps1")
         with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
-            f.write(STUBS + "\n& %s %s\nexit $LASTEXITCODE\n" % (mv_chunks._ps(self.summary["driver"]), switches))
+            f.write(STUBS + "\n%s\n& %s %s\nexit $LASTEXITCODE\n" % (before, mv_chunks._ps(self.summary["driver"]), switches))
         open(self.log, "w").close()
         code, text = run_powershell(wrapper, dict(env, STUB_LOG=self.log))
         with open(self.log, encoding="utf-8-sig") as f:
@@ -339,11 +371,11 @@ class DriverTest(unittest.TestCase):
         code, text, calls = self.run_driver()
         self.assertEqual(code, 0, text)
         folds = [c[c.index("--cues"):c.index(" home=")] for c in calls if "mv_look.py render" in c]
-        work = self.out + "/look_work_t"
+        work, cues = self.out + "/look_work_t", self.cues
         self.assertEqual(folds, [
-            "--cues C:/work/song/cues.json --work %s --subframes 8 --shutter 0.5 --offset 0.000000 --from 0.000000 --to 3.333333" % work,
-            "--cues C:/work/song/cues.json --work %s --subframes 8 --shutter 0.5 --offset 0.000000 --from 3.333333 --to 8.333333" % work,
-            "--cues C:/work/song/cues.json --work %s --subframes 8 --shutter 0.5 --offset 4.333333 --from 8.333333 --to 10.000000" % work])
+            "--cues %s --work %s --subframes 8 --shutter 0.5 --offset 0.000000 --from 0.000000 --to 3.333333" % (cues, work),
+            "--cues %s --work %s --subframes 8 --shutter 0.5 --offset 0.000000 --from 3.333333 --to 8.333333" % (cues, work),
+            "--cues %s --work %s --subframes 8 --shutter 0.5 --offset 4.333333 --from 8.333333 --to 10.000000" % (cues, work)])
         for i, c in enumerate(c for c in calls if "mv_look.py render" in c):
             self.assertIn("render %s/t_%02d.avi %s %s/t_%02d.mp4" % (self.out, i, self.look, self.out, i), c)
 
@@ -449,21 +481,22 @@ class DriverTest(unittest.TestCase):
     def test_resume_is_decided_before_the_disk_is_measured(self):
         self.write()
         self.assertEqual(self.run_driver()[0], 0)
-        self.write(avi_bytes_per_pixel=1e9)                          # the same chunks, but no disk is ever enough
+        self.write(avi_bytes_per_pixel=1e6)                          # the same chunks, but no disk is ever enough
         code, text, calls = self.run_driver("-Resume")
         self.assertEqual(code, 0, text)
         self.assertEqual(self.batches(calls), [])
         self.assertEqual(self.run_driver()[0], 3)
-        self.write(avi_bytes_per_pixel=1e9, menu={"215": "on"})     # with -Resume, a chunk to render still needs the disk
+        self.write(avi_bytes_per_pixel=1e6, menu={"215": "on"})     # with -Resume, a chunk to render still needs the disk
         code, text, calls = self.run_driver("-Resume")
         self.assertEqual(code, 3, text)
         self.assertEqual(self.batches(calls), [])
 
     def test_too_little_disk_for_the_avi_stops_before_rendering(self):
-        self.write(avi_bytes_per_pixel=1e9)
+        self.write(avi_bytes_per_pixel=1e6)
         code, text, calls = self.run_driver()
         self.assertEqual(code, 3, text)
-        self.assertEqual(calls, [])
+        self.assertEqual(self.batches(calls), [])                      # only the look was checked: nothing was rendered
+        self.assertFalse(any("mv_look.py render" in c for c in calls), calls)
 
     def test_the_disk_must_hold_the_avi_and_two_gibibytes_more(self):
         self.write()
@@ -494,12 +527,130 @@ class DriverTest(unittest.TestCase):
 
     def test_leftovers_of_an_earlier_attempt_are_removed_before_the_chunk_is_rendered(self):
         self.write()
-        for name in ("t_00.avi", "t_00.avi.mmdcli-failed"):
+        for name in ("t_00.avi", "t_00.avi.mmdcli-failed", "t_00.avi.mmdcli-failed.1", "t_00.avi.mmdcli-old",
+                     "t_000.avi.mmdcli-failed"):
             with open(os.path.join(self.out, name), "w") as f:
                 f.write("old")
+        os.chmod(os.path.join(self.out, "t_00.avi.mmdcli-failed.1"), 0o444)             # read-only goes too
         code, text, calls = self.run_driver()
         self.assertEqual(code, 0, text)
-        self.assertFalse(os.path.exists(os.path.join(self.out, "t_00.avi.mmdcli-failed")))
+        left = sorted(n for n in os.listdir(self.out) if "mmdcli" in n)
+        self.assertEqual(left, ["t_00.avi.mmdcli-old", "t_000.avi.mmdcli-failed"])      # somebody's original; not this chunk
+
+    def test_a_leftover_held_open_by_another_program_stops_the_run_and_says_so(self):
+        # review 11: a leftover that could not be removed was reported as removed
+        self.write()
+        held = open(self.put("out/t_00.avi.mmdcli-failed", "held"), "a")
+        try:
+            code, text, calls = self.run_driver()
+        finally:
+            held.close()
+        self.assertEqual(code, 1, text)
+        self.assertIn("could not remove", text)
+        self.assertNotIn("t_00: removed", text)
+        self.assertEqual(self.batches(calls), [])
+
+    def test_a_folder_where_the_avi_goes_stops_the_run(self):
+        self.write()
+        self.put("out/t_00.avi/inside.txt", "a folder where the AVI goes")
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("is a folder", text)
+        self.assertTrue(os.path.exists(os.path.join(self.out, "t_00.avi", "inside.txt")))
+        self.assertEqual(self.batches(calls), [])
+
+    def test_an_output_folder_that_cannot_be_made_stops_the_run_before_anything_else(self):
+        free = [d for d in "QRSTUVWXYZ" if not os.path.exists(d + ":/")]
+        if not free:
+            self.skipTest("no unused drive letter")
+        self.out = free[0] + ":/no/such/out"
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("could not make the output folder", text)
+        self.assertEqual(calls, [])
+
+    def test_the_avi_of_a_skipped_chunk_is_removed(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        self.put("out/t_01.avi", "left by hand")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.batches(calls), [])
+        self.assertFalse(os.path.exists(os.path.join(self.out, "t_01.avi")))
+
+    def test_an_empty_recipe_means_render_again_without_an_error(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        self.put("out/t_00.mp4.recipe", "")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual([("chunk_t_00" in c) for c in self.batches(calls)], [True])
+        self.assertNotIn("null", text.lower())
+
+    def test_a_look_that_does_not_work_stops_the_run_before_mmd_renders(self):
+        # review 11: a wrong look was found by mv_look only after MMD had rendered chunk 0 (some minutes at 240 fps)
+        self.put("look.json", "{not json")
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("the look is not JSON", text)
+        self.assertEqual(self.batches(calls), [])
+
+    def test_a_command_that_is_not_found_stops_the_run_even_after_an_exit_code_of_0(self):
+        # review 10 and 11: a command that is not found leaves $LASTEXITCODE as it was; the driver clears it first
+        self.write(python="C:/no/such/folder/python.exe")
+        code, text, calls = self.run_driver(before="cmd /c exit 0")
+        self.assertEqual(code, 1, text)
+        self.assertIn("the look does not work", text)
+
+    def test_resume_renders_again_after_any_input_it_watches_changes(self):
+        # review 11: the stamp watched the eight named files only; a texture, mmd_cli or MMD itself went unseen
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+
+        def renders(label):
+            code, text, calls = self.run_driver("-Resume")
+            self.assertEqual(code, 0, (label, text))
+            return len(self.batches(calls))
+        self.assertEqual(renders("nothing changed"), 0)
+        for rel in ("model/tex/skin.png", "stage/floor_tex.png", "mmd_cli/app.py", "tools/mv_text.py", "tools/mv_look.py",
+                    "MMD/MikuMikuDance.exe", "cues.json"):
+            with self.subTest(changed=rel):
+                self.put(rel, self.FILES[rel] + " changed")
+                self.assertEqual(renders(rel), 3)
+        with self.subTest(changed="a motion of the same size"):                  # smooth_motion keeps the number of keys
+            path = os.path.join(self.tmp, "dance.vmd")
+            old = os.stat(path)
+            self.put("dance.vmd", "DANCE")
+            os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns + 10 ** 9))
+            self.assertEqual(renders("motion"), 3)
+        with self.subTest(changed="a size, at the old time"):
+            path = os.path.join(self.tmp, "camera.vmd")
+            old = os.stat(path)
+            self.put("camera.vmd", "camera, longer")
+            os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
+            self.assertEqual(renders("camera"), 3)
+        with self.subTest(changed="the size of a texture, at the old time"):
+            path = os.path.join(self.tmp, "model", "tex", "skin.png")
+            old = os.stat(path)
+            self.put("model/tex/skin.png", "a much longer skin texture")
+            os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
+            self.assertEqual(renders("texture size"), 3)
+        with self.subTest(changed="a hidden look"):
+            path = os.path.join(self.tmp, "look.json")
+            subprocess.run(["attrib", "+h", path], check=True, capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.assertEqual(renders("hidden"), 0)                               # seen as it was (it read as missing before)
+            subprocess.run(["attrib", "-h", path], check=True, capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.put("look.json", '{"glow": {"strength": 0.2}}')
+            subprocess.run(["attrib", "+h", path], check=True, capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.assertEqual(renders("hidden, changed"), 3)
+        with self.subTest(changed="the shutter alone"):
+            self.write(shutter=0.75)
+            self.assertEqual(renders("shutter"), 3)
 
     def test_a_batch_that_is_not_the_one_the_driver_was_written_with_stops_the_run(self):
         self.write()
@@ -520,8 +671,8 @@ class DriverTest(unittest.TestCase):
         self.write(python="C:/Program Files/Python 3/python.exe")
         with open(self.summary["driver"], encoding="utf-8-sig") as f:
             text = f.read()
-        self.assertIn("& 'C:/Program Files/Python 3/python.exe' -m mmd_cli", text)
-        self.assertIn("& 'C:/Program Files/Python 3/python.exe' tools/mv_look.py render", text)
+        self.assertIn("Invoke-Native 'C:/Program Files/Python 3/python.exe' -m mmd_cli", text)
+        self.assertIn("Invoke-Native 'C:/Program Files/Python 3/python.exe' tools/mv_look.py render", text)
 
 
 FAKE_MMD = r'''"""tests/test_mv_chunks.py: `python -m mmd_cli --out JSON batch FILE` without MMD (after review 10).  It reads the
@@ -706,6 +857,12 @@ class CliTest(unittest.TestCase):
             code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report)
             self.assertEqual(code, 2, plan)
             self.assertFalse(res["ok"])
+
+    def test_an_absurd_number_of_bytes_per_pixel_is_an_error_in_json(self):
+        self.save(dict(PLAN, avi_bytes_per_pixel=1e300))
+        code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report)
+        self.assertEqual(code, 2)
+        self.assertIn("avi_bytes_per_pixel", res["error"])
 
     def test_a_report_of_the_wrong_type_is_an_error_in_json(self):
         with open(self.report, "w", encoding="utf-8") as f:

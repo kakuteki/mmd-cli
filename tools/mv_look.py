@@ -216,15 +216,25 @@ def write_layers(look, work, size, fps):
     os.makedirs(light_dir, exist_ok=True)
     small = (max(2, size[0] // LIGHT_SCALE), max(2, size[1] // LIGHT_SCALE))
     count = light_frame_count(look, fps)
+    _clear_frames(light_dir, "light_")
     for i in range(count):
         light_frame(small, look, i, count).save(os.path.join(light_dir, "light_%05d.png" % i))
     flare_dir = os.path.join(work, "flare")
     os.makedirs(flare_dir, exist_ok=True)
     flare_frames = max(1, int(look["flare"]["frames"]))
+    _clear_frames(flare_dir, "flare_")
     for i in range(flare_frames):
         flare_frame(small, look["flare"], i).save(os.path.join(flare_dir, "flare_%05d.png" % i))
     return {"plate": plate_path, "light_pattern": _slashes(os.path.join(light_dir, "light_%05d.png")), "light_frames": count,
             "flare_pattern": _slashes(os.path.join(flare_dir, "flare_%05d.png")), "flare_frames": flare_frames}
+
+
+def _clear_frames(folder, prefix):
+    """the frames an earlier look left in the work folder: ffmpeg reads a numbered sequence until a number is missing, so
+    a longer loop or flare of before would come back (review 11; mv_text clears its cue frames the same way)"""
+    for name in os.listdir(folder):
+        if name.startswith(prefix) and name.endswith(".png"):
+            os.remove(os.path.join(folder, name))
 
 
 def _slashes(path):
@@ -269,13 +279,11 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
     argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path]
-    # the light is one loop repeated over the whole song: an excerpt begins at the loop's frame for its song time,
-    # plays to the end of the loop and then repeats the loop from its start (two inputs, joined in the graph)
+    # the light is one loop repeated over the whole song: an excerpt drops the loop's first frames up to its song time
+    # (one input, trimmed in the graph; two inputs joined with concat came out a frame off for a first part of 1 or 3)
     phase = int(round(clip_start * fps)) % int(light_frames) if light_frames else 0
-    if phase:
-        argv += ["-framerate", str(fps), "-start_number", str(phase), "-i", light_pattern]
     argv += ["-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
-    next_input = 4 if phase else 3
+    next_input = 3
     overlays = {"back": [], "front": [], "flare": []}
     for cue in (plan or {}).get("cues", []):
         seen = _visible(cue["start"], cue["frames"], fps, clip_start, duration)
@@ -287,17 +295,23 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         overlays[layer].append((next_input, offset, cue["x"], cue["y"], None))
         next_input += 1
     flare_starts = []                  # seconds from the excerpt's start; below 0 for a flare that began before it
+    punch_span = look["camera"]["punch_frames"] / float(fps)
     for at in look["flares"]:
-        seen = _visible(float(at), flare_frames, fps, clip_start, duration) if flare_pattern else None
+        if not flare_pattern:
+            continue
+        # the punch runs for punch_frames whether or not the flare's picture (flare.frames) is still on
+        since = float(at) - clip_start
+        if since > -punch_span and (duration is None or since < duration):
+            flare_starts.append(since)
+        seen = _visible(float(at), flare_frames, fps, clip_start, duration)
         if seen is None:
             continue
         offset, skip = seen
         argv += ["-framerate", str(fps), "-start_number", str(skip), "-i", flare_pattern]
         overlays["flare"].append((next_input, offset, 0, 0, (w, h)))
-        flare_starts.append(float(at) - clip_start)
         next_input += 1
 
-    light_in = "[2:v][3:v]concat=n=2:v=1:a=0," if phase else "[2:v]"
+    light_in = "[2:v]trim=start_frame=%d,setpts=PTS-STARTPTS," % phase if phase else "[2:v]"
     parts = ["[1:v]scale=%d:%d,format=gbrp[plate]" % (w, h),
              "%sscale=%d:%d:flags=bilinear,format=gbrp[light]" % (light_in, w, h),
              "[plate][light]blend=all_mode=screen[stage]"]
@@ -337,8 +351,11 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         # 1 + punch * (1 - (t - T) / span)^2 from each flare time T on; the picture is scaled about its centre
         amount = "+".join("%s*pow(max(0,1-(%s)/%.3f),2)*gte(t,%.3f)" % (_number(camera["punch"]), _since(at), span, at)
                           for at in hits)
-        parts.append("[%s]scale=w='trunc(%d*(1+%s)/2)*2':h='trunc(%d*(1+%s)/2)*2':eval=frame:flags=bilinear,"
-                     "crop=%d:%d:(iw-%d)/2:(ih-%d)/2[punch]" % (state["label"], w, amount, h, amount, w, h, w, h))
+        sw, sh = "trunc(%d*(1+%s)/2)*2" % (w, amount), "trunc(%d*(1+%s)/2)*2" % (h, amount)
+        # crop keeps iw and ih of the first frame it sees, so its x and y come from the same expression of t as the
+        # scale: the picture is cut out of the middle of every scaled frame (review 11: (iw-W)/2 left it at the top left)
+        parts.append("[%s]scale=w='%s':h='%s':eval=frame:flags=bilinear,crop=%d:%d:x='(%s-%d)/2':y='(%s-%d)/2'[punch]"
+                     % (state["label"], sw, sh, w, h, sw, w, sh, h))
         state["label"] = "punch"
     shift = int(round(camera["aberration"] * scale))
     if hits and shift > 0:

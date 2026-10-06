@@ -243,22 +243,39 @@ class GraphTest(unittest.TestCase):
         self.assertIn("rgbashift=rh=-2:bh=2", f)                          # 8 px of a 720 line picture, at 180 lines
         self.assertIn("between(t,1.000,1.300)", f)
 
-    def test_a_chunk_reads_the_light_loop_from_its_song_time_on(self):
-        # review 10: a chunk that begins at 1.1 s shows light frame 33 mod 30 = 3 first, then the loop from 0 again
+    def test_a_chunk_drops_the_head_of_the_looped_light_up_to_its_song_time(self):
+        # review 10: a chunk that begins at 1.1 s shows light frame 33 mod 30 = 3 first.  Review 11: one looped input with
+        # its first frames dropped (two inputs joined with concat came out a frame off when the first part was 1 or 3)
         argv = self.graph(start=1.1, light_frames=30)
         inputs = [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
-        self.assertEqual(inputs[:4], ["fg.avi", "W/plate.png", "W/light_%05d.png", "W/light_%05d.png"])
-        first, loop = [i for i, a in enumerate(argv) if a == "W/light_%05d.png"]
-        self.assertEqual(argv[argv.index("-start_number", argv.index("W/plate.png")) + 1], "3")
-        self.assertLess(argv.index("-start_number", argv.index("W/plate.png")), first)
-        self.assertNotIn("-stream_loop", argv[argv.index("W/plate.png"):first])
-        self.assertIn("-stream_loop", argv[first:loop])
-        self.assertIn("[2:v][3:v]concat=n=2:v=1:a=0", self.filter_of(argv))
+        self.assertEqual(inputs[:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])
+        self.assertEqual(inputs.count("W/light_%05d.png"), 1)
+        self.assertIn("-stream_loop", argv[argv.index("W/plate.png"):argv.index("W/light_%05d.png")])
+        self.assertIn("[2:v]trim=start_frame=3,setpts=PTS-STARTPTS,", self.filter_of(argv))
 
-    def test_a_chunk_on_a_whole_loop_reads_the_loop_alone(self):
+    def test_a_chunk_on_a_whole_loop_reads_the_loop_from_its_start(self):
         argv = self.graph(start=2.0, light_frames=30)
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-i"][:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])
+        self.assertNotIn("trim=", self.filter_of(argv))
         self.assertNotIn("concat=", self.filter_of(argv))
+
+    def test_the_punch_is_cut_out_of_the_middle_of_the_scaled_picture(self):
+        # review 11: crop keeps the size of the first frame for iw and ih, so (iw-W)/2 left the punch at the top left
+        f = self.filter_of(self.graph(look={"flares": [1.0], "camera": {"punch": 0.05, "punch_frames": 9}}))
+        scale = f[f.index("scale=w='") + len("scale=w='"):]
+        width = scale[:scale.index("'")]
+        self.assertIn("crop=320:180:x='(%s-320)/2'" % width, f)
+
+    def test_a_punch_outlives_a_flare_picture_that_ended_before_the_chunk(self):
+        # review 11: the flare at 1.0 s has 4 frames of picture (over at 1.133 s) and 10 of punch (until 1.333 s)
+        look = mv_look.merge_look({"flares": [1.0], "flare": {"frames": 4},
+                                   "camera": {"punch": 0.05, "punch_frames": 10, "aberration": 8}})
+        argv = mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", look, SIZE, 30,
+                                      flare_pattern="W/flare_%05d.png", flare_frames=4, start=1.2, light_frames=30)
+        self.assertNotIn("W/flare_%05d.png", argv)                       # no picture left to lay over
+        f = self.filter_of(argv)
+        self.assertIn("(t+0.200)", f)
+        self.assertIn("between(t,-0.200,0.133)", f)
 
     def test_a_flare_that_began_before_the_chunk_has_its_punch_part_spent(self):
         # review 10: the flare at 1.0 s seen from a chunk that begins at 1.1 s began 0.1 s before the chunk
@@ -411,7 +428,9 @@ class RenderTest(unittest.TestCase):
         plain = self.frame(0.5, self.plain)
         near = (201, 90, 205, 110)                                       # just right of the box (x 200 is its edge)
         far = (290, 90, 300, 110)
-        self.assertGreater(sum(mean(frame, near)), sum(mean(plain, near)) + 30)       # her glow reaches out
+        # her glow reaches out: it adds some 30 there; x264 moves the box by 1 or 2 when other frames of the clip change
+        # (review 11 measured the old margin at 5.5, and the centred punch of frames 30-36 took 1.5 of it), so 20
+        self.assertGreater(sum(mean(frame, near)), sum(mean(plain, near)) + 20)
         self.assertLess(abs(sum(mean(frame, far)) - sum(mean(plain, far))), 12)       # and has faded 90 px away
 
     def test_no_frame_of_the_dancer_is_lost(self):
@@ -530,11 +549,117 @@ class ChunkLightRenderTest(unittest.TestCase):
         for j, g in enumerate(greys):
             self.assertAlmostEqual(g, 20 * (j % 10), delta=8, msg=(j, [round(x) for x in greys]))
 
-    def test_a_chunk_goes_on_with_the_loop_from_its_song_time(self):
-        greys = self.greys(13 / 30.0, 12)
-        self.assertEqual(len(greys), 12)
-        for j, g in enumerate(greys):
-            self.assertAlmostEqual(g, 20 * ((13 + j) % 10), delta=8, msg=(j, [round(x) for x in greys]))
+    def test_a_chunk_goes_on_with_the_loop_from_its_song_time_at_every_phase(self):
+        # review 11: joining two inputs put the light a frame off when the loop's first part was 1 or 3 frames long
+        for first in range(10, 20):
+            greys = self.greys(first / 30.0, 12)
+            self.assertEqual(len(greys), 12, first)
+            for j, g in enumerate(greys):
+                self.assertAlmostEqual(g, 20 * ((first + j) % 10), delta=8, msg=(first, j, [round(x) for x in greys]))
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class StaleLayersTest(unittest.TestCase):
+    def test_a_shorter_loop_or_flare_leaves_none_of_the_earlier_frames(self):
+        # review 11: ffmpeg reads a numbered sequence until a number is missing, so frames of an earlier, longer look in
+        # the same work folder came back into the loop and the flare
+        work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, work, True)
+        for seconds, flare in ((2, 12), (1, 4)):
+            look = mv_look.merge_look({"beams": {"loop_seconds": seconds}, "flare": {"frames": flare}})
+            layers = mv_look.write_layers(look, work, SIZE, 30)
+        self.assertEqual(layers["light_frames"], 30)
+        self.assertEqual(len([n for n in os.listdir(os.path.join(work, "light")) if n.startswith("light_")]), 30)
+        self.assertEqual(len([n for n in os.listdir(os.path.join(work, "flare")) if n.startswith("flare_")]), 4)
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class PunchCentreRenderTest(unittest.TestCase):
+    """review 11: a white line 60 px above the middle of a 180 line picture, punched in by 0.3 at 1.0 s: zoomed about the
+    middle it goes up to 90 - 60 * 1.3 = 12 at the flare; zoomed about the top left it went down to 30 * 1.3 = 39"""
+
+    def test_the_punch_zooms_about_the_middle_of_the_picture(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        plate = os.path.join(folder, "plate.png")
+        image = Image.new("RGB", SIZE, (0, 0, 0))
+        image.paste((255, 255, 255), (0, 29, SIZE[0], 31))
+        image.save(plate)
+        light = os.path.join(folder, "light")
+        os.makedirs(light)
+        Image.new("RGB", SIZE, (0, 0, 0)).save(os.path.join(light, "light_00000.png"))
+        flare = os.path.join(folder, "flare")
+        os.makedirs(flare)
+        Image.new("RGBA", SIZE, (0, 0, 0, 0)).save(os.path.join(flare, "flare_00000.png"))   # a flare frame is see-through
+        fg = os.path.join(folder, "fg.avi")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black@0.0:s=%dx%d:r=30,format=rgba" % SIZE,
+                        "-frames:v", "45", "-c:v", "rawvideo", "-pix_fmt", "bgra", fg], check=True, stdin=subprocess.DEVNULL)
+        look = mv_look.merge_look({"flares": [1.0], "glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0},
+                                   "flare": {"frames": 1, "strength": 0}, "camera": {"punch": 0.3, "punch_frames": 10, "aberration": 0}})
+        out = os.path.join(folder, "out.mp4")
+        argv = mv_look.ffmpeg_command(fg, out, plate, os.path.join(light, "light_%05d.png").replace("\\", "/"), look, SIZE, 30,
+                                      flare_pattern=os.path.join(flare, "flare_%05d.png").replace("\\", "/"), flare_frames=1,
+                                      light_frames=1)
+        subprocess.run(argv, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        w, h = SIZE
+
+        def line_row(frame):
+            column = [raw[frame * w * h + y * w + w // 2] for y in range(h)]
+            bright = [y for y in range(h) if column[y] > 128]
+            return sum(bright) / float(len(bright))
+        self.assertAlmostEqual(line_row(20), 29.5, delta=1.5)            # before the flare
+        self.assertLess(line_row(30), 16, [round(line_row(f), 1) for f in range(28, 36)])
+        self.assertAlmostEqual(line_row(42), 29.5, delta=1.5)            # and back after it
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class ExcerptRenderTest(unittest.TestCase):
+    """review 10 and 11, through the command line mv_chunks uses: an excerpt from 1.9 s shows what the whole song shows
+    at the same time.  The light loop is 30 frames, so the excerpt starts in it at frame 27 (a first part of 3 frames,
+    which two joined inputs got wrong); a flare at frame 53 has 4 frames of picture, over before the excerpt, and 10 of
+    punch, still running at its start"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg.avi")
+        source = ("color=c=black@0.0:s=%dx%d:r=30,format=rgba,"
+                  "drawbox=x=40:y=30:w=60:h=40:color=white@1.0:t=fill:replace=1" % SIZE)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "90",
+                        "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        look = os.path.join(cls.folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"count": 6, "opacity": 0.9, "sway": 25, "loop_seconds": 1}, "bokeh": {"count": 0},
+                       "glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0}, "flares": [53 / 30.0],
+                       "flare": {"frames": 4}, "camera": {"punch": 0.3, "punch_frames": 10, "aberration": 3}}, f)
+        cls.codes = []
+        for name, extra in (("whole", []), ("part", ["--from", "1.9", "--to", "2.7"])):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                cls.codes.append(mv_look.main(["render", cls.fg, look, os.path.join(cls.folder, name + ".mp4"),
+                                               "--work", os.path.join(cls.folder, "work_" + name)] + extra))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def frames(self, name):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", os.path.join(self.folder, name + ".mp4"), "-f", "rawvideo",
+                              "-pix_fmt", "rgb24", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1] * 3
+        return [numpy.frombuffer(raw[i * n:(i + 1) * n], dtype=numpy.uint8).astype(numpy.int16) for i in range(len(raw) // n)]
+
+    def test_the_excerpt_shows_the_whole_song_at_the_same_time(self):
+        self.assertEqual(self.codes, [0, 0])
+        whole, part = self.frames("whole"), self.frames("part")
+        self.assertEqual(len(part), 24)
+        gaps = [float(numpy.abs(part[j] - whole[57 + j]).mean()) for j in range(24)]
+        self.assertLess(max(gaps), 1.5, [round(g, 2) for g in gaps])
+        # and the test can see a difference: the light moves from frame to frame, and the punch is on at the start
+        self.assertGreater(float(numpy.abs(whole[57] - whole[58]).mean()), 3 * max(gaps) + 0.5)
+        self.assertGreater(float(numpy.abs(whole[57] - whole[65]).mean()), 3 * max(gaps) + 0.5)
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
