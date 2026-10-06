@@ -841,6 +841,37 @@ class DenoiseTest(unittest.TestCase):
         self.assertEqual(moved, [12, 13, 14, 15])
         self.assertLess(max(angle_between(a[1], b[1]) for a, b in zip(path(plain, "右腕"), path(denoised, "右腕"))), 2.9)
 
+    def test_a_capped_zone_keeps_zero_mean_and_slope_and_has_no_lone_frame(self):
+        # review 9 M1: every frame of the zone (12-18) wants to move about 0.35, seven times the 0.05 cap.  Holding the
+        # frames at the cap one by one left too few free frames for the mean and slope; they were set to 0 and the held
+        # frames kept their correction.  The correction must stay a whole: zero mean, zero slope, inside the cap.
+        keys = [bone("センター", 0), bone("センター", 10)]
+        keys += [bone("センター", f, pos=(0.5 + 0.4 * (-1) ** f, 0.0, 0.0)) for f in range(13, 18)]
+        keys += [bone("センター", 20, pos=(1.0, 0.0, 0.0)), bone("センター", 30, pos=(1.0, 0.0, 0.0))]
+        plain, denoised, _ = plain_and_denoised(keys)
+        p, d = path(plain, "センター"), path(denoised, "センター")
+        moved = [f for f in range(31) if p[f] != d[f]]
+        self.assertEqual(moved, list(range(12, 19)))                       # all of the zone moves: no lone frame
+        delta = [d[f][0][0] - p[f][0][0] for f in moved]
+        self.assertLessEqual(max(abs(v) for v in delta), 0.05 + 1e-12)
+        self.assertGreater(max(abs(v) for v in delta), 0.04)               # the largest one is at the cap
+        self.assertLess(abs(sum(delta)), 1e-9)
+        self.assertLess(abs(sum((f - 15.0) * v for f, v in zip(moved, delta))), 1e-9)
+
+    def test_a_rotation_zone_whose_frames_hit_the_cap_moves_as_a_whole(self):
+        # a sharp stop at frame 12 and a reversal at 13: frames 12 and 13 hit the cap, which left 14 and 15 alone free
+        # (set back to 0), a two-frame bump with nothing around it.  All four frames move now, within the cap.
+        keys = [bone("右腕", 0), bone("右腕", 10), bone("右腕", 12, rot=about((1.0, 0.0, 0.0), 40.0)),
+                bone("右腕", 13, rot=about((1.0, 0.0, 0.0), 33.0)), bone("右腕", 21, rot=about((1.0, 0.0, 0.0), 70.0)),
+                bone("右腕", 30, rot=about((1.0, 0.0, 0.0), 70.0))]
+        plain, denoised, _ = plain_and_denoised(keys)
+        p, d = x_degrees(track_of(plain, "右腕"), 0, 30), x_degrees(track_of(denoised, "右腕"), 0, 30)
+        moved = [f for f in range(31) if abs(p[f] - d[f]) > 1e-9]
+        self.assertEqual(moved, [12, 13, 14, 15])
+        delta = [d[f] - p[f] for f in moved]
+        self.assertLessEqual(max(abs(v) for v in delta), 3.0 + 1e-6)
+        self.assertLess(abs(sum(delta)), 0.02 * sum(abs(v) for v in delta))     # zero mean (quaternion components: ~)
+
     def test_the_result_is_deterministic(self):
         keys = swing(jitter=4.0) + [bone("センター", f, pos=(0.2 * (-1) ** f, 0.05 * f, 0.0)) for f in range(0, 61)]
         motion = vmd.Motion(model_name="m", bones=keys)
@@ -1022,6 +1053,21 @@ class RealDanceTest(unittest.TestCase):
                 # against the rotation the stored quaternion stands for (a stored key is unit only to ~1e-6)
                 self.assertLessEqual(angle_between(smooth_motion._normalized(a.rotation), b.rotation), cap_deg + 1e-4)
         self.assertGreater(moved, 10000)
+        # review 9 M1: no lone corrected frame (moved frames grouped where they are at most 3 frames apart)
+        lone = []
+        for name, keys in tp.items():
+            frames = [a.frame for a, b in zip(keys, ta[name]) if (a.position, a.rotation) != (b.position, b.rotation)]
+            groups = []
+            for f in frames:
+                if groups and f - groups[-1][-1] <= 3:
+                    groups[-1].append(f)
+                else:
+                    groups.append([f])
+            by_p, by_a = {k.frame: k for k in keys}, {k.frame: k for k in ta[name]}
+            for g in groups:
+                if len(g) == 1 and angle_between(smooth_motion._normalized(by_p[g[0]].rotation), by_a[g[0]].rotation) > 1.0:
+                    lone.append((name.encode("ascii", "backslashreplace"), g[0]))
+        self.assertEqual(lone, [])
         for name in ("右足ＩＫ", "左足ＩＫ", "センター"):
             floor = min(k.position[1] for k in tb[name])
             self.assertGreaterEqual(min(k.position[1] for k in ta[name]), floor, name.encode("ascii", "backslashreplace"))
