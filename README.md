@@ -400,6 +400,29 @@ mmd accessory load stage_floor.x
 MMD はアクセサリをファイルの数値の 10 倍で表示するので、ファイルには MMD 単位の 1/10 を書く。色は自己発光だけに入れる
 （拡散色にも入れると照明分が足されて飽和し、色相が転ぶ）。
 
+### 全曲を区間に分けて描いて繋ぐ（`tools/mv_chunks.py`）
+
+240 fps の alpha つき AVI は全曲だと 200 GB を超えるので、カメラのカットごとの区間に分けて描き、区間ごとに `mv_look.py` で
+ぼかしと見た目を付けて 30 fps にしてから繋ぐ。境目はカットに隠れる。MMD の物理は描き始めのフレームで休み姿勢から始まるので、
+各区間はカットの `--lead` フレーム手前から描き（髪やスカートがカットまでに落ち着く）、その助走は捨てる。
+
+```
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json [--lead 120] [--fps 240] [--shutter 0.5] [--tag final]
+python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60      # カメラの報告が無いとき
+powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
+```
+
+- `plan.json` は描画機の上のファイルの場所: `mmd` `model` `motions`（モデルに読むモーションの一覧）`camera` `accessories`
+  `look` `cues`、`out`（AVI と mp4 の置き場）`scripts`（OUTDIR の中身を写す先）`mmd_cli`（このリポジトリの置き場）。
+  任意で `menu`（既定の 215 off・221 off・282 on に重ねる。282 の背景黒化は alpha のために外せない）`size` `codec`
+  `mmd_cli_home` `python` `name`（繋いだ動画は `out/<name>_<tag>.mp4`）。
+- `--shots` は `tools/make_camera.py --report` の書く報告。ショットに抜けや重なりがあれば誤りにする。
+- OUTDIR に区間ごとの `mmd batch` の台本、ffmpeg の連結の一覧、駆動台本（Windows PowerShell 5.1 用、BOM つき）を書く。
+- 駆動台本は区間ごとに、空き容量を AVI の大きさ＋2 GB と比べる → 台本を流す → `mv_look.py render`（`--subframes` `--shutter`
+  `--offset` `--from` `--to`）→ mp4 の枚数を数える → 合っていたら AVI を消す。どこかで失敗すると止まり（終了コード 1、
+  容量不足は 3）、AVI は残す。繋いだ動画の枚数も数える。`-Resume` は枚数の合った mp4 がある区間を飛ばす（同じ入力での描き直し専用）。
+- ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。
+
 ### 袖口のつぶれを直す（`tools/fix_twist.py`、MMD なし）
 
 別モデル向けのダンスは手捩（前腕の捩り）を 180 度まで回すことがある。段階的な捩りボーンを持たないモデルでは前腕のブレンドが
