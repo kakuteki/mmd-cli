@@ -221,6 +221,19 @@ class FixationTest(unittest.TestCase):
                     self.assertEqual(result.looks[after].state == "neutral", s["reason"] == "to_neutral", (seed, s))
         self.assertGreater(landings, 50)
 
+    def test_eyes_pinned_at_a_limit_do_not_jump_sides_when_she_spins(self):
+        # a fast spin to 200 degrees and back (100 degrees a key, 50 a frame): the camera passes behind her, its
+        # yaw wraps from -180 to +180, and the eyes must stay at the limit they were at (a jump is a saccade)
+        result = run_gaze(dance=head_turn({0: 0.0, 30: 0.0, 32: 100.0, 34: 200.0, 36: 100.0, 38: 0.0}))
+        far = [look for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP]
+        self.assertEqual([look.frame for look in far], list(range(31, 38)))
+        self.assertGreater(max(look.target[0] for look in far), 150.0)            # both sides of 180 are seen
+        self.assertLess(min(look.target[0] for look in far), -150.0)
+        self.assertEqual(len({look.yaw for look in far}), 1)
+        self.assertEqual(abs(far[0].yaw), eye_gaze.MAX_YAW)
+        self.assertEqual(result.saccades, [])
+        self.assertAlmostEqual(result.looks[38].yaw, 0.0, places=4)
+
     def test_a_short_excursion_out_of_reach_only_holds_the_limit(self):
         # a quick look away: 50 degrees (out of reach) for fewer frames than PATIENCE, then back
         swing = {0: 0.0, 30: 0.0, 32: 50.0, 30 + eye_gaze.PATIENCE - 2: 50.0, 30 + eye_gaze.PATIENCE: 0.0}

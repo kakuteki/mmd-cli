@@ -29,7 +29,9 @@ How the eyes move (plan: a small state machine, frame by frame):
   of the frames in yaw and as many in pitch, mostly for a fraction of a second at a time, which without the
   patience made the eyes flip between the camera and neutral about once a second.
 * Fixation: when a saccade lands on the camera, the eyes hold the camera's world position of that frame, and as
-  the head moves they counter-rotate to keep pointing at it (like the vestibulo-ocular reflex).  When the camera
+  the head moves they counter-rotate to keep pointing at it (like the vestibulo-ocular reflex).  The held point's
+  yaw is followed through +-180 degrees, so when she spins and it passes behind her, eyes pinned at one limit stay
+  there instead of jumping to the other (only a saccade takes them across).  When the camera
   has moved away from that point by more than SACCADE_THRESHOLD degrees (both after the clamp), or the camera cuts,
   or the camera becomes unreachable (or reachable again), a saccade follows after a reaction time of REACTION
   frames (drawn from the seed: 100 to 167 ms), but never sooner than MIN_FIXATION frames (200 ms) after the last
@@ -291,6 +293,7 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
     looks, saccades = [], []
     mode, fixation, base, pending, saccade = None, None, (0.0, 0.0), None, None
     away, landed = 0, None          # frames in a row the camera has been out of reach; the frame of the last landing
+    held_yaw = None                 # the held point's yaw on the frame before, followed through +-180 (not wrapped)
     for i, sight in enumerate(seen):
         target, behind = _seen(sight, sight.camera, forward, rest)
         excess = max(abs(target[0]) - max_yaw, abs(target[1]) - max_pitch, 0.0)
@@ -305,8 +308,16 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
             mode, landed = want, sight.frame
             base = on_camera if want == "camera" else (0.0, 0.0)
             fixation = sight.camera if want == "camera" else None
+            held_yaw = target[0]
         elif saccade is None:
-            base = _clamp(_seen(sight, fixation, forward, rest)[0], max_yaw, max_pitch) if mode == "camera" else (0.0, 0.0)
+            if mode == "camera":
+                # the held point's yaw is followed continuously: when she spins and it passes behind her, eyes pinned
+                # at one limit stay there instead of jumping to the other (only a saccade moves them across)
+                (yaw, pitch), _ = _seen(sight, fixation, forward, rest)
+                held_yaw += (yaw - held_yaw + 180.0) % 360.0 - 180.0
+                base = _clamp((held_yaw, pitch), max_yaw, max_pitch)
+            else:
+                base = (0.0, 0.0)
             # the cause is read on every frame: a pending saccade whose cause is gone does not happen (a cut stays a
             # cause until its saccade)
             cause = None
@@ -341,6 +352,7 @@ def plan(seen, forward, max_yaw=MAX_YAW, max_pitch=MAX_PITCH, seed=0, life=True)
             if step >= saccade["frames"]:
                 mode, landed = saccade["to"], sight.frame
                 fixation = sight.camera if mode == "camera" else None
+                held_yaw = target[0]
                 saccade = None
         final = _clamp((base[0] + drift[i][0], base[1] + drift[i][1]), max_yaw, max_pitch)
         if moving:
