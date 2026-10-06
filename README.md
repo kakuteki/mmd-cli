@@ -379,6 +379,9 @@ python tools/mv_look.py layers look.json WORK --size WxH --fps N
 - `--cues` は `tools/mv_text.py` の合図。`layer` が back の合図は人物の後ろ、front は前に載る。
 - `--from` / `--to` は曲の中の秒で抜粋を作る（合図とフレアの時刻もずれる）。`--offset` は人物のファイルの先頭が曲の何秒か
   （途中のフレームから描いた区間を、曲の時計のまま合成するため。全曲を区間に分けて描いて `ffmpeg -f concat` で繋ぐときに使う）。
+  `--from` が曲の頭より後なら、光のループはその時刻の位相から続き（ループの頭を落とす）、それより前に始まったフレアの
+  パンチと色ずれは、絵が終わっていても途中から入る。パンチは絵の中心に寄せる。作業フォルダの光とフレアの連番は書く前に
+  消す（前の look の長いループやフレアが残って混ざらないように）。
 - `--subframes N --shutter S`: 人物を出力の N 倍の fps で描いたとき、各出力コマを先頭 round(S×N) 枚の平均にする
   （シャッターが S だけ開いている映画のカメラと同じぼけ方。S=0.5 が標準）。MMD v9.32 は 120・240 fps でも中間の姿勢を全部
   別に描く（物理だけは 60 Hz で更新）。120 fps の 2 枚平均は速い手が二重に写るので、30 fps 出力なら 240 fps で描いて
@@ -399,6 +402,43 @@ mmd accessory load stage_floor.x
 
 MMD はアクセサリをファイルの数値の 10 倍で表示するので、ファイルには MMD 単位の 1/10 を書く。色は自己発光だけに入れる
 （拡散色にも入れると照明分が足されて飽和し、色相が転ぶ）。
+
+### 全曲を区間に分けて描いて繋ぐ（`tools/mv_chunks.py`）
+
+240 fps の alpha つき AVI は全曲だと 228 GB（4 分 18 秒・1280x720）になるので、カメラのカットごとの区間に分けて描き、
+区間ごとに `mv_look.py` でぼかしと見た目を付けて 30 fps にしてから繋ぐ。境目はカットに隠れる。MMD の物理は描き始めのフレームで
+休み姿勢から始まるので、各区間はカットの `--lead` フレーム手前から描き（髪やスカートがカットまでに落ち着く）、その助走は捨てる。
+光のループとフレアのパンチは、区間の頭でも曲の時刻のまま続く（mv_look が `--from` から位相を取り、区間より前に
+始まったパンチは途中から入る）。
+
+```
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json [--lead 120] [--fps 240] [--shutter 0.5] [--tag final]
+python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60      # カメラの報告が無いとき
+powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
+```
+
+- `plan.json` は描画機の上のファイルの場所（絶対パス。`C:/...` か `//host/...`）。必須は `mmd` `model` `motions`（モデルに読む
+  モーションの一覧）`camera` `look` `out`（AVI と mp4 の置き場）`scripts`（OUTDIR の中身を写す先）`mmd_cli`（このリポジトリの
+  置き場）。任意は `accessories` `cues` `menu`（既定の 215 off・221 off・282 on に重ねる。282 の背景黒化は alpha のために外せない）
+  `size` `codec` `avi_bytes_per_pixel`（未圧縮なら 4。ほかのコーデックでは 1 本の AVI で測った値が要る）`mmd_cli_home` `python`
+  `name`（繋いだ動画は `out/<name>_<tag>.mp4`）。知らない項目は誤りにする（綴りの誤りが黙って無視されないように）。
+  `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。
+- `--shots` は `tools/make_camera.py --report` の報告で、描くカメラと同じショットのもの（`--handheld` はショットを変えない）。
+  ショットに抜けや重なりがあれば誤り。区間は 3 枚以上（1〜2 枚の区間は `-c copy` の連結で時刻が乱れる）。`--fps` は MMD が書く
+  30・60・120・240・480 のどれかで、`--shutter` は mv_look と同じく 1 枚以上のサブフレームを取る値だけを通す。
+- OUTDIR に区間ごとの `mmd batch` の台本、ffmpeg の連結の一覧、駆動台本（Windows PowerShell 5.1 用、BOM つき）を書く。中身は
+  まとめて写す（駆動台本はバッチの SHA-256 を持っていて、描く直前に違うバッチと分かれば止まる）。
+- 駆動台本は最初に `mv_look.py layers` で look を確かめる（誤りなら MMD が描く前に止まる）。そのあと区間ごとに、前の試みの AVI
+  （と `.mmdcli-failed*`）を消す → 空き容量（GetDiskFreeSpaceEx。UNC も可）を AVI の見積もり＋2 GiB と比べる → 台本を流す →
+  `mv_look.py render`（答えは `<mp4>.look.json`）→ mp4 の枚数を数える → 作り方の印（`<mp4>.recipe`）を書く → AVI を消す。
+  どこかで失敗すると止まり（終了コード 1、容量不足と空きを測れないときは 3）、AVI は残す。消せない残り（ほかのプログラムが
+  開いている等）や、AVI の名前のフォルダがあっても止まる。外部コマンドは毎回、終了コードを空にしてから呼ぶ（見つからない
+  コマンドで前の 0 が残らないように）。繋いだ動画の枚数も数える。
+- `-Resume` は、枚数が合い、作り方の印が同じ区間だけを飛ばす。印はバッチ・look・畳みの引数の SHA-256 と、見ているファイルの
+  大きさと更新時刻: モーション・カメラ・look・cues・MMD 本体、モデルとアクセサリのフォルダの中身全部（テクスチャ・トゥーン・
+  スフィア）、描画機の `mmd_cli/` と `tools/`（隠しファイルも）。フォント（mv_text が描画機で探す）と MMD の設定は見ないので、
+  それらを変えたら `-Resume` なしで流す。時刻を保たない写し方で入力を写し直すと、中身が同じでも描き直しになる（安全側）。
+- ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。
 
 ### 袖口のつぶれを直す（`tools/fix_twist.py`、MMD なし）
 
