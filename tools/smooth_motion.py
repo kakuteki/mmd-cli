@@ -365,6 +365,8 @@ DENOISE_HZ = 7.5                        # the cutoff of --denoise when none is g
 DENOISE_CAP = (3.0, 0.05)               # how far the denoise may move a frame: degrees, model units per position component
 DENSE_GAP = 2                           # keys at most this many frames apart make a dense run
 DENOISE_MARGIN = 2                      # the frames on either side of a dense key the correction may use
+MIN_ZONE = 4                            # a zone of fewer frames is left alone: with its mean and slope at 0 the only
+                                        # correction of 3 frames is c(1, -2, 1), a zigzag (review 9 M2)
 JERK = (-1.0, 3.0, -3.0, 1.0)           # the third difference: the penalty is on the jerk
 ROUNDS = 12                             # rounds of holding the frames that leave their bounds
 
@@ -583,6 +585,8 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
         lo, hi = max(f0, a - 3), min(f1, b + 3)
         window = range(lo - f0, hi - f0 + 1)
         inside = [lo + j in zone for j in range(len(window))]
+        if sum(inside) < MIN_ZONE:
+            continue                                                        # too short to shape: left as the plain curve
         x = [[rot[i][c] for i in window] for c in range(4)]
         if any(rot[i] != rot[window[0]] for i in window):
             def bound_rotation(j, v, x=x):
