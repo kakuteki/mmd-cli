@@ -298,8 +298,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 今夜 5 回以上くり返した手順。CLI 化・MCP 化は勝手にやらない決まりなので、候補として挙げるだけ:
 1. 「hinata で `mmd batch` の台本を流し、結果 JSON の各行の ok/失敗を ASCII で要約して読む」（8 回）。ssh → python -m mmd_cli --out →
    json を cp932 の端末向けに整形。`remote-ssh/remote_ps.py` に `--mmd-batch` の形で足せる。
-2. 「mp4 から時刻を指定して数コマ抜き、ラベルつきの一覧 PNG にして自分の目で見る」（10 回超）。ffmpeg -ss + PIL の格子。
-   `files/` か新しい `video/` に `contact_sheet.py`。
+2. 済（2026-10-06、claude-tools 2e5067a）: `video/contact_sheet.py`（時刻・フレーム番号・間隔・等分でコマを抜いてラベル付きの一覧に。
+   `--also` で版の横並び比較、`--crop`/`--zoom` で拡大）。selftest に試しあり。claude-tools の selftest は help・streaming・
+   claude_tabs が変更前から不合格（自分の変更とは無関係、クリーンな HEAD で確認）。
 3. 「図を JPEG に縮めて Discord に投げる」（PNG 1 MB 超で書き込みがタイムアウトした）。`discord/notify.py` に `--shrink` を足す。
 
 ## 振り返り（方針の見直しの記録）
