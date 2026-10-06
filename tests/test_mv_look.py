@@ -243,6 +243,32 @@ class GraphTest(unittest.TestCase):
         self.assertIn("rgbashift=rh=-2:bh=2", f)                          # 8 px of a 720 line picture, at 180 lines
         self.assertIn("between(t,1.000,1.300)", f)
 
+    def test_a_chunk_reads_the_light_loop_from_its_song_time_on(self):
+        # review 10: a chunk that begins at 1.1 s shows light frame 33 mod 30 = 3 first, then the loop from 0 again
+        argv = self.graph(start=1.1, light_frames=30)
+        inputs = [argv[i + 1] for i, a in enumerate(argv) if a == "-i"]
+        self.assertEqual(inputs[:4], ["fg.avi", "W/plate.png", "W/light_%05d.png", "W/light_%05d.png"])
+        first, loop = [i for i, a in enumerate(argv) if a == "W/light_%05d.png"]
+        self.assertEqual(argv[argv.index("-start_number", argv.index("W/plate.png")) + 1], "3")
+        self.assertLess(argv.index("-start_number", argv.index("W/plate.png")), first)
+        self.assertNotIn("-stream_loop", argv[argv.index("W/plate.png"):first])
+        self.assertIn("-stream_loop", argv[first:loop])
+        self.assertIn("[2:v][3:v]concat=n=2:v=1:a=0", self.filter_of(argv))
+
+    def test_a_chunk_on_a_whole_loop_reads_the_loop_alone(self):
+        argv = self.graph(start=2.0, light_frames=30)
+        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-i"][:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])
+        self.assertNotIn("concat=", self.filter_of(argv))
+
+    def test_a_flare_that_began_before_the_chunk_has_its_punch_part_spent(self):
+        # review 10: the flare at 1.0 s seen from a chunk that begins at 1.1 s began 0.1 s before the chunk
+        look = {"flares": [1.0], "camera": {"punch": 0.05, "punch_frames": 9, "aberration": 8}}
+        f = self.filter_of(self.graph(look=look, start=1.1, light_frames=30))
+        self.assertIn("(t+0.100)", f)
+        self.assertIn("gte(t,-0.100)", f)
+        self.assertNotIn("(t-0.000)", f)
+        self.assertIn("between(t,-0.100,0.200)", f)
+
     def test_no_camera_effect_without_a_flare_or_when_it_is_zero(self):
         for look in ({}, {"flares": [1.0], "camera": {"punch": 0, "aberration": 0}}):
             f = self.filter_of(self.graph(look=look))
@@ -461,6 +487,54 @@ class RenderTest(unittest.TestCase):
         self.assertGreater(sum(mean(during, (0, 0, 40, 40))), sum(mean(before, (0, 0, 40, 40))) + 20)
         after = self.frame(1.45)
         self.assertLess(sum(mean(after, (0, 0, 40, 40))), sum(mean(during, (0, 0, 40, 40))))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class ChunkLightRenderTest(unittest.TestCase):
+    """review 10: rendered for real, a chunk of the song shows the light loop as the whole song shows it at that time
+    (a loop of 10 frames whose frame i is a flat grey of 20 * i, nobody on the stage, a black plate)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        light = os.path.join(cls.folder, "light")
+        os.makedirs(light)
+        for i in range(10):
+            Image.new("RGB", SIZE, (20 * i,) * 3).save(os.path.join(light, "light_%05d.png" % i))
+        cls.pattern = os.path.join(light, "light_%05d.png").replace("\\", "/")
+        cls.plate = os.path.join(cls.folder, "plate.png")
+        Image.new("RGB", SIZE, (0, 0, 0)).save(cls.plate)
+        cls.fg = os.path.join(cls.folder, "fg.avi")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black@0.0:s=%dx%d:r=30,format=rgba" % SIZE,
+                        "-frames:v", "60", "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        cls.look = mv_look.merge_look({"glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0},
+                                       "camera": {"punch": 0, "aberration": 0}, "flares": []})
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def greys(self, start, frames):
+        out = os.path.join(self.folder, "out_%s.mp4" % start)
+        argv = mv_look.ffmpeg_command(self.fg, out, self.plate, self.pattern, self.look, SIZE, 30, start=start,
+                                      duration=frames / 30.0, offset=0.0, light_frames=10)
+        subprocess.run(argv, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1]
+        return [sum(raw[i * n:(i + 1) * n]) / float(n) for i in range(len(raw) // n)]
+
+    def test_the_whole_song_starts_the_loop_at_its_first_frame(self):
+        greys = self.greys(None, 12)
+        self.assertEqual(len(greys), 12)
+        for j, g in enumerate(greys):
+            self.assertAlmostEqual(g, 20 * (j % 10), delta=8, msg=(j, [round(x) for x in greys]))
+
+    def test_a_chunk_goes_on_with_the_loop_from_its_song_time(self):
+        greys = self.greys(13 / 30.0, 12)
+        self.assertEqual(len(greys), 12)
+        for j, g in enumerate(greys):
+            self.assertAlmostEqual(g, 20 * ((13 + j) % 10), delta=8, msg=(j, [round(x) for x in greys]))
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")

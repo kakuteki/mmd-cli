@@ -247,10 +247,13 @@ def _visible(start, frames, fps, clip_start, clip_duration):
 
 
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
-                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0):
+                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
-    rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song"""
+    rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
+    `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it at that time,
+    and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
+    (tools/mv_chunks.py) then hide in the cuts (review 10)"""
     w, h = size
     taken = check_shutter(subframes, shutter)
     offset = float(offset or 0.0)
@@ -265,9 +268,14 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
-    argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path,
-             "-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
-    next_input = 3
+    argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path]
+    # the light is one loop repeated over the whole song: an excerpt begins at the loop's frame for its song time,
+    # plays to the end of the loop and then repeats the loop from its start (two inputs, joined in the graph)
+    phase = int(round(clip_start * fps)) % int(light_frames) if light_frames else 0
+    if phase:
+        argv += ["-framerate", str(fps), "-start_number", str(phase), "-i", light_pattern]
+    argv += ["-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
+    next_input = 4 if phase else 3
     overlays = {"back": [], "front": [], "flare": []}
     for cue in (plan or {}).get("cues", []):
         seen = _visible(cue["start"], cue["frames"], fps, clip_start, duration)
@@ -278,6 +286,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         layer = "back" if cue.get("layer") == "back" else "front"
         overlays[layer].append((next_input, offset, cue["x"], cue["y"], None))
         next_input += 1
+    flare_starts = []                  # seconds from the excerpt's start; below 0 for a flare that began before it
     for at in look["flares"]:
         seen = _visible(float(at), flare_frames, fps, clip_start, duration) if flare_pattern else None
         if seen is None:
@@ -285,10 +294,12 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         offset, skip = seen
         argv += ["-framerate", str(fps), "-start_number", str(skip), "-i", flare_pattern]
         overlays["flare"].append((next_input, offset, 0, 0, (w, h)))
+        flare_starts.append(float(at) - clip_start)
         next_input += 1
 
+    light_in = "[2:v][3:v]concat=n=2:v=1:a=0," if phase else "[2:v]"
     parts = ["[1:v]scale=%d:%d,format=gbrp[plate]" % (w, h),
-             "[2:v]scale=%d:%d:flags=bilinear,format=gbrp[light]" % (w, h),
+             "%sscale=%d:%d:flags=bilinear,format=gbrp[light]" % (light_in, w, h),
              "[plate][light]blend=all_mode=screen[stage]"]
     state = {"label": "stage", "n": 0}
 
@@ -321,10 +332,10 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         state["label"] = "lit"
     camera = look["camera"]
     span = camera["punch_frames"] / float(fps)
-    hits = [offset for _, offset, _, _, _ in overlays["flare"]] if span > 0 else []
+    hits = flare_starts if span > 0 else []
     if hits and camera["punch"] > 0:
         # 1 + punch * (1 - (t - T) / span)^2 from each flare time T on; the picture is scaled about its centre
-        amount = "+".join("%s*pow(max(0,1-(t-%.3f)/%.3f),2)*gte(t,%.3f)" % (_number(camera["punch"]), at, span, at)
+        amount = "+".join("%s*pow(max(0,1-(%s)/%.3f),2)*gte(t,%.3f)" % (_number(camera["punch"]), _since(at), span, at)
                           for at in hits)
         parts.append("[%s]scale=w='trunc(%d*(1+%s)/2)*2':h='trunc(%d*(1+%s)/2)*2':eval=frame:flags=bilinear,"
                      "crop=%d:%d:(iw-%d)/2:(ih-%d)/2[punch]" % (state["label"], w, amount, h, amount, w, h, w, h))
@@ -350,6 +361,11 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps),
              "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
+
+
+def _since(at):
+    """the seconds since T as an ffmpeg expression: t-1.000, or t+0.100 for a T before the excerpt (T = -0.1)"""
+    return "t-%.3f" % at if at >= 0 else "t+%.3f" % -at
 
 
 def check_shutter(subframes, shutter):
@@ -469,7 +485,7 @@ def render(args):
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
                           start=start, duration=duration, offset=args.offset, subframes=args.subframes,
-                          shutter=args.shutter)
+                          shutter=args.shutter, light_frames=layers["light_frames"])
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
               "shutter": args.shutter, "work": work, "light_frames": layers["light_frames"],
