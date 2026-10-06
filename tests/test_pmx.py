@@ -56,8 +56,9 @@ class Writer:
         return b"".join(out)
 
     def bone(self, name, name_en="", parent=-1, layer=0, flags=NORMAL, tail=(0.0, 1.0, 0.0), append=(0, 1.0),
-             axis=(0.0, 1.0, 0.0), local_axes=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)), external_key=0, ik=None):
-        out = [self.text(name), self.text(name_en), struct.pack("<3f", 0, 0, 0), self.index(parent, "bone"),
+             axis=(0.0, 1.0, 0.0), local_axes=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)), external_key=0, ik=None,
+             position=(0.0, 0.0, 0.0)):
+        out = [self.text(name), self.text(name_en), struct.pack("<3f", *position), self.index(parent, "bone"),
                struct.pack("<iH", layer, flags)]
         out.append(self.index(tail, "bone") if flags & TAIL_IS_BONE else struct.pack("<3f", *tail))
         if flags & (APPEND_ROTATE | APPEND_TRANSLATE):
@@ -281,6 +282,55 @@ class BoneTest(unittest.TestCase):
         self.assertEqual(m.bones[0].append, {"parent": 1, "ratio": 0.25})
         self.assertEqual(m.bones[1].parent, 0)
 
+    def test_rest_position_tail_fixed_axis_and_local_axes_are_kept(self):
+        # the values are exact in float32, so they come back as written
+        for bone_size in (1, 2, 4):
+            w = Writer(bone=bone_size)
+            everything = TAIL_IS_BONE | NORMAL | TRANSLATE | IK | APPEND_ROTATE | FIXED_AXIS | LOCAL_AXIS | EXTERNAL
+            ik = {"target": 1, "loops": 3, "angle": 0.5, "links": [(1, ((0, 0, 0), (1, 1, 1)))]}
+            bones = [w.bone("頭", position=(0.5, 15.25, -0.75), tail=(0.0, 1.5, -0.25)),
+                     w.bone("両目", parent=0, position=(0.0, 16.5, -1.0), flags=NORMAL | TAIL_IS_BONE, tail=2),
+                     w.bone("両目先", parent=1, position=(0.0, 16.5, -2.0), flags=NORMAL | TAIL_IS_BONE, tail=-1),
+                     w.bone("捩", flags=NORMAL | FIXED_AXIS, axis=(0.75, -0.5, 0.25), position=(-4.0, 12.0, 0.0)),
+                     w.bone("軸", flags=NORMAL | LOCAL_AXIS, local_axes=((0.0, 1.0, 0.0), (0.0, 0.0, -1.0))),
+                     w.bone("全部", flags=everything, tail=0, axis=(1.0, 0.0, 0.0), position=(1.0, 2.0, 3.0),
+                            local_axes=((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)), append=(0, 0.5), ik=ik),
+                     w.bone("次", parent=5, position=(-1.0, -2.0, -3.0))]
+            m = pmx.loads(w.build(bones=bones))
+            self.assertEqual([b.position for b in m.bones],
+                             [(0.5, 15.25, -0.75), (0.0, 16.5, -1.0), (0.0, 16.5, -2.0), (-4.0, 12.0, 0.0), (0.0, 0.0, 0.0),
+                              (1.0, 2.0, 3.0), (-1.0, -2.0, -3.0)], bone_size)
+            self.assertEqual(m.bones[0].tail, {"offset": (0.0, 1.5, -0.25)})
+            self.assertEqual(m.bones[1].tail, {"bone": 2})
+            self.assertEqual(m.bones[2].tail, {"bone": None})                       # -1: a tail that points nowhere
+            self.assertEqual(m.bones[3].tail, {"offset": (0.0, 1.0, 0.0)})          # the writer's default tail
+            self.assertEqual(m.bones[3].fixed_axis, (0.75, -0.5, 0.25))
+            self.assertEqual(m.bones[4].local_axes, {"x": (0.0, 1.0, 0.0), "z": (0.0, 0.0, -1.0)})
+            self.assertEqual((m.bones[5].tail, m.bones[5].fixed_axis), ({"bone": 0}, (1.0, 0.0, 0.0)))
+            self.assertEqual(m.bones[5].local_axes, {"x": (1.0, 0.0, 0.0), "z": (0.0, 0.0, 1.0)})
+            self.assertEqual(m.bones[5].append, {"parent": 0, "ratio": 0.5})
+            self.assertEqual(m.bones[5].ik["links"], [1])
+            self.assertEqual(m.bones[6].parent, 5)                                  # everything after was read in place
+            for b in (m.bones[0], m.bones[1], m.bones[2], m.bones[4], m.bones[6]):
+                self.assertIsNone(b.fixed_axis, b.name)
+            for b in (m.bones[0], m.bones[1], m.bones[2], m.bones[3], m.bones[6]):
+                self.assertIsNone(b.local_axes, b.name)
+
+    def test_the_new_fields_are_plain_json(self):
+        import json
+        w = Writer()
+        m = pmx.loads(w.build(bones=[w.bone("a", position=(1.0, 2.0, 3.0), flags=NORMAL | FIXED_AXIS | LOCAL_AXIS),
+                                     w.bone("b", flags=NORMAL | TAIL_IS_BONE, tail=0)]))
+        bones = json.loads(json.dumps(m.to_json()))["bones"]
+        self.assertEqual(bones[0]["position"], [1.0, 2.0, 3.0])
+        self.assertEqual(bones[0]["tail"], {"offset": [0.0, 1.0, 0.0]})
+        self.assertEqual(bones[0]["fixed_axis"], [0.0, 1.0, 0.0])
+        self.assertEqual(bones[0]["local_axes"], {"x": [1.0, 0.0, 0.0], "z": [0.0, 0.0, 1.0]})
+        self.assertEqual(bones[1]["tail"], {"bone": 0})
+        self.assertEqual((bones[1]["fixed_axis"], bones[1]["local_axes"]), (None, None))
+        # the flags keep their names: fixed_axis there is still the bit
+        self.assertIs(bones[0]["flags"]["fixed_axis"], True)
+
 
 class MorphAndFrameTest(unittest.TestCase):
     def test_panels_and_kinds(self):
@@ -445,6 +495,22 @@ class SourRinTest(unittest.TestCase):
         self.assertEqual([self.model.bones[i].name for i in ik["links"]], ["左ひざ", "左足"])
         self.assertEqual(self.model.bones[ik["target"]].name, "左足首")
         self.assertEqual(bones["左目"].append, {"parent": bones["両目"].index, "ratio": 1.0})
+
+    def test_rest_positions_of_the_head_and_the_eyes(self):
+        bones = {b.name: b for b in self.model.bones}
+
+        def at(name):
+            return tuple(round(v, 4) for v in bones[name].position)
+        self.assertEqual(at("頭"), (0.0, 16.2431, 0.0))
+        # 両目 is a handle above the head (its top, 頭先, is at 18.77); the eyes themselves sit lower, the left
+        # one on +X: the model's left is +X, as in every MMD model
+        self.assertEqual(at("両目"), (0.0, 19.3736, -0.2599))
+        self.assertEqual(at("左目"), (0.4101, 17.2143, -0.562))
+        self.assertEqual(at("右目"), (-0.4101, 17.2143, -0.562))
+        self.assertEqual(bones["両目"].tail, {"bone": bones["両目先"].index})
+        self.assertEqual(at("両目先"), (0.0, 19.3736, -0.8273))             # straight ahead of 両目: -Z
+        self.assertAlmostEqual(bones["頭"].tail["offset"][1], 1.96, places=5)
+        self.assertIsNone(bones["頭"].fixed_axis)
 
     def test_the_whole_file_is_read(self):
         with open(RIN, "rb") as f:
