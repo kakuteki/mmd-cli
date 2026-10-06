@@ -638,16 +638,23 @@ class DenoiseTest(unittest.TestCase):
         self.assertGreater(max(abs(v) for v in removed), 1.0)
         self.assertGreater(high_share(removed, 6.0), 0.9)
 
-    def test_keys_two_frames_apart_lose_their_alternation_too(self):
-        plain, denoised, _ = plain_and_denoised(swing(step=2))              # the alternation is a 7.5 Hz pattern
+    def test_keys_two_frames_apart_lose_half_their_alternation_as_the_cutoff_says(self):
+        # the alternation of keys 2 frames apart is a 7.5 Hz pattern, and 7.5 Hz is where the default cutoff halves a
+        # sine: 1 / (1 + 8 * weight) with weight = 1/8 (the frames between the keys carry no data and cost nothing here)
+        plain, denoised, _ = plain_and_denoised(swing(step=2))
         before = x_degrees(track_of(plain, "右腕"), 0, 90)
         after = x_degrees(track_of(denoised, "右腕"), 0, 90)
         on_keys = lambda f: (-1) ** (f // 2) if f % 2 == 0 else 0           # noqa: E731  the keys' frames only
         error_before = [a - c for a, c in zip(before, self.CLEAN)]
         error_after = [a - c for a, c in zip(after, self.CLEAN)]
         self.assertAlmostEqual(alternation(error_before, 14, 74, on_keys) * 2.0, 1.5, places=6)
-        self.assertLessEqual(alternation(error_after, 14, 74, on_keys) * 2.0, 1.5 / 2.0)
+        ratio = alternation(error_after, 14, 74, on_keys) * 2.0 / 1.5
+        self.assertTrue(0.4 <= ratio <= 0.6, ratio)
         self.assertLess(abs(self.amplitude_2hz(after) - 30.0), 3.0)
+        # a lower cutoff takes more of it: 6.5 Hz puts the response at 7.5 Hz near 1/3
+        _, lower, _ = plain_and_denoised(swing(step=2), hz=6.5)
+        ratio = alternation([a - c for a, c in zip(x_degrees(track_of(lower, "右腕"), 0, 90), self.CLEAN)], 14, 74, on_keys) * 2.0 / 1.5
+        self.assertLess(ratio, 0.4, ratio)
 
     def test_a_hold_stays_exactly_still_and_is_left_at_rest(self):
         held = about((1.0, 0.0, 0.0), 20.0)
@@ -888,7 +895,8 @@ class RealDanceTest(unittest.TestCase):
                     continue
                 moved += 1
                 self.assertLessEqual(max(abs(x - y) for x, y in zip(a.position, b.position)), cap_units + 1e-9)
-                self.assertLessEqual(angle_between(a.rotation, b.rotation), cap_deg + 1e-4)
+                # against the rotation the stored quaternion stands for (a stored key is unit only to ~1e-6)
+                self.assertLessEqual(angle_between(smooth_motion._normalized(a.rotation), b.rotation), cap_deg + 1e-4)
         self.assertGreater(moved, 10000)
         for name in ("右足ＩＫ", "左足ＩＫ", "センター"):
             floor = min(k.position[1] for k in tb[name])
