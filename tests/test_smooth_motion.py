@@ -821,6 +821,26 @@ class DenoiseTest(unittest.TestCase):
         worst = max(angle_between(a[1], b[1]) for a, b in zip(path(plain, "左腕"), path(denoised, "左腕")))
         self.assertLessEqual(worst, smooth_motion.DENOISE_CAP[0] + 1e-5)
 
+    def test_a_zone_of_three_frames_is_left_as_the_plain_curve(self):
+        # review 9 M2: hold, one key 2 frames later, hold.  The zone is frames 12-14; with its mean and slope at 0 the only
+        # correction left is c(1, -2, 1), which turned a smooth deceleration into steps (6.5, 7.4, 6.9 -> 11.0, 3.0, 8.4 deg)
+        keys = [bone("右腕", 0), bone("右腕", 10), bone("右腕", 12, rot=about((1.0, 0.0, 0.0), 68.0)),
+                bone("右腕", 17, rot=about((1.0, 0.0, 0.0), 96.0)), bone("右腕", 30, rot=about((1.0, 0.0, 0.0), 96.0))]
+        plain, denoised, report = plain_and_denoised(keys)
+        self.assertEqual(vmd.dumps(denoised), vmd.dumps(plain))
+        self.assertEqual(report["bones"][0]["denoise"]["frames"], 0)
+        self.assertEqual(smooth_motion.MIN_ZONE, 4)
+
+    def test_a_zone_of_four_frames_is_corrected(self):
+        # hold to frame 10, dense keys 12 and 13 (a small hesitation), the next key 8 frames on: the zone is frames 12-15
+        keys = [bone("右腕", 0), bone("右腕", 10), bone("右腕", 12, rot=about((1.0, 0.0, 0.0), 4.0)),
+                bone("右腕", 13, rot=about((1.0, 0.0, 0.0), 3.5)), bone("右腕", 21, rot=about((1.0, 0.0, 0.0), 10.0)),
+                bone("右腕", 30, rot=about((1.0, 0.0, 0.0), 10.0))]
+        plain, denoised, report = plain_and_denoised(keys)
+        moved = [f for f, (a, b) in enumerate(zip(path(plain, "右腕"), path(denoised, "右腕"))) if a != b]
+        self.assertEqual(moved, [12, 13, 14, 15])
+        self.assertLess(max(angle_between(a[1], b[1]) for a, b in zip(path(plain, "右腕"), path(denoised, "右腕"))), 2.9)
+
     def test_the_result_is_deterministic(self):
         keys = swing(jitter=4.0) + [bone("センター", f, pos=(0.2 * (-1) ** f, 0.05 * f, 0.0)) for f in range(0, 61)]
         motion = vmd.Motion(model_name="m", bones=keys)
