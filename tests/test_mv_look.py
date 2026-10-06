@@ -259,6 +259,35 @@ class GraphTest(unittest.TestCase):
         self.assertNotIn("vignette", plain)
         self.assertNotIn("noise", plain)
 
+    def test_subframes_are_averaged_into_one_output_frame(self):
+        # the dancer rendered at 4 times the output rate; a half-open shutter averages the first 2 of every 4,
+        # with straight alpha turned into premultiplied for the average (a transparent pixel has colour 0)
+        argv = self.graph(subframes=4, shutter=0.5)
+        self.assertEqual(argv[argv.index("fg.avi") - 3:argv.index("fg.avi") - 1], ["-r", "120"])
+        f = self.filter_of(argv)
+        parts = ["premultiply=inplace=1", "tmix=frames=2", "select='eq(mod(n,4),1)'", "setpts=N/(30*TB)",
+                 "unpremultiply=inplace=1"]
+        at = [f.index(p) for p in parts]
+        self.assertEqual(at, sorted(at), f)
+        self.assertLess(at[-1], f.index("[fg]overlay"))
+        self.assertLess(f.index("[0:v]"), at[0])
+        full = self.filter_of(self.graph(subframes=4, shutter=1.0))
+        self.assertIn("tmix=frames=4", full)
+        self.assertIn("select='eq(mod(n,4),3)'", full)
+
+    def test_no_subframes_no_blur(self):
+        f = self.filter_of(self.graph())
+        for part in ("tmix", "premultiply", "select="):
+            self.assertNotIn(part, f)
+        argv = self.graph()
+        self.assertEqual(argv[argv.index("fg.avi") - 3:argv.index("fg.avi") - 1], ["-r", "30"])
+
+    def test_a_shutter_must_open_and_subframes_must_be_whole(self):
+        for kw in ({"subframes": 0}, {"subframes": 4, "shutter": 0.0}, {"subframes": 4, "shutter": 1.5},
+                   {"subframes": 4, "shutter": 0.1}):
+            with self.assertRaises(ValueError, msg=kw):
+                self.graph(**kw)
+
     def test_an_excerpt_shifts_the_cues_and_drops_the_ones_outside(self):
         argv = self.graph(plan=PLAN, start=0.4, duration=0.3)             # 0.4 .. 0.7 s of the song
         f = self.filter_of(argv)
@@ -433,6 +462,63 @@ class RenderTest(unittest.TestCase):
         after = self.frame(1.45)
         self.assertLess(sum(mean(after, (0, 0, 40, 40))), sum(mean(during, (0, 0, 40, 40))))
 
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class SubframeRenderTest(unittest.TestCase):
+    """a white box moving 4 px per subframe at 120 fps, folded into 30 fps with a half-open shutter: each output
+    frame shows it at two positions 4 px apart, so its two 4 px edges are half covered"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        frames = os.path.join(cls.folder, "src")
+        os.makedirs(frames)
+        for i in range(48):
+            im = Image.new("RGBA", SIZE, (0, 0, 0, 0))
+            im.paste((255, 255, 255, 255), (40 + 4 * i, 40, 120 + 4 * i, 160))
+            im.save(os.path.join(frames, "f%05d.png" % i))
+        cls.fg = os.path.join(cls.folder, "fg120.avi")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-framerate", "120", "-i", os.path.join(frames, "f%05d.png"),
+                        "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        look = os.path.join(cls.folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                       "lens": {"vignette": 0, "grain": 0}}, f)
+        cls.out = os.path.join(cls.folder, "out.mp4")
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            cls.code = mv_look.main(["render", cls.fg, look, cls.out, "--work", os.path.join(cls.folder, "work"),
+                                     "--subframes", "4", "--shutter", "0.5"])
+        cls.result = json.loads(stream.getvalue())
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def test_the_output_runs_at_a_quarter_of_the_rate(self):
+        self.assertEqual(self.code, 0, self.result)
+        self.assertEqual((self.result["fps"], self.result["subframes"], self.result["shutter"]), (30, 4, 0.5))
+        probe = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                "stream=nb_read_frames,r_frame_rate", "-of", "csv=p=0", self.out],
+                               check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        rate, count = probe.stdout.strip().strip(",").split(",")
+        self.assertEqual((rate, int(count)), ("30/1", 12))
+
+    def test_the_box_is_smeared_over_two_positions_with_half_covered_edges(self):
+        for k in (2, 5):
+            path = os.path.join(self.folder, "k%d.png" % k)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", self.out, "-vf", "select='eq(n,%d)'" % k, "-frames:v", "1",
+                            path], check=True, stdin=subprocess.DEVNULL)
+            with Image.open(path) as image:
+                row = [sum(image.convert("RGB").getpixel((x, 100))) / 3.0 for x in range(SIZE[0])]
+            left, right = 40 + 16 * k, 124 + 16 * k                     # the union of the two positions
+            core = [x for x in range(SIZE[0]) if row[x] > 225]
+            self.assertTrue(abs(len(core) - 76) <= 3, (k, len(core)))
+            self.assertTrue(abs(core[0] - (left + 4)) <= 2 and abs(core[-1] - (right - 5)) <= 2, (k, core[0], core[-1]))
+            edges = [row[x] for x in list(range(left, left + 4)) + list(range(right - 4, right))]
+            # white at half cover over the dark stage is about (255 + stage) / 2; an average of straight alpha
+            # (without premultiplying) would give about a quarter of white instead
+            self.assertTrue(all(95 < v < 200 for v in edges[1:3] + edges[5:7]), (k, [round(v) for v in edges]))
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")
 class CommandTest(unittest.TestCase):

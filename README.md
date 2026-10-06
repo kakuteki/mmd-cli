@@ -251,6 +251,10 @@ python tools/make_camera.py dance.vmd camera.vmd --report shots.json --analysis 
 始点と終点、注視点、強さ）、`--analysis` はフレームごとの強さと閾値・山と谷の区間。出来た vmd は `motion keys --camera` で見られ、
 `motion edit` で直せる。
 
+`--handheld S`（既定 0 = 無し）で、人が持つカメラのようなごくゆっくりした揺れを足す: 強さ 1 で表示角 X・Y が最大 0.3 度、
+注視点が 0.03、距離が 0.1 だけ、0.13・0.31・0.57 Hz の正弦の和で漂う（揺れではなく漂い。`--seed` で決まる）。
+このときカメラは毎フレームにキーを持つ（カットの先頭は段差の曲線のまま）。
+
 ### ダンスを滑らかにする（`tools/smooth_motion.py`・`tools/motion_jerk.py`、MMD なし）
 
 トレースしたダンスは直線補間のまばらなキーでできていて、MMD はキーの間を直線で動かし、キーの所で速さが跳ぶ。
@@ -344,6 +348,75 @@ python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
 標準出力は 1 行の ASCII の JSON（`ok`・`out`・`cues`・`frames`・`size`・`fps`・`work`・`warnings`・`ffmpeg`）。終了コードは 0 成功 /
 1 ffmpeg の失敗 / 2 引数や合図ファイルの誤り。ただし引数の書式の誤り（必要な引数が無い・知らないオプション・知らないコマンド）は
 `mmd` 本体と同じく argparse が扱い、usage を標準エラーに出して終了コード 2 で終わる（標準出力は空）。
+
+### 人物に舞台・光・グローを付ける（`tools/mv_look.py`、MMD なし）
+
+MMD は背景黒化（メニュー 282、`mmd menu set 282 on`）を入れると、`render image` の PNG と `render avi --codec 未圧縮` の AVI を
+alpha つき（BGRA。何も描かれていない所は alpha 0）で書く。これを使って、人物の後ろに舞台と光を置き、人物にグローを付ける。
+層は Pillow と numpy で作り、合成は ffmpeg の 1 本のグラフで行う（後ろから: 舞台の板 → 光条と玉ボケ → 後ろの文字 → 人物 →
+人物だけから作るグロー → フレアの時刻のカメラのパンチと色ずれ → 周辺減光と粒子 → 前の文字 → フレア）。
+人物を高い fps で描けば、出力の 1 コマに入る複数の姿勢を平均して本物の動きのぼかし（モーションブラー）にもできる。
+
+```
+python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR] [--from 秒] [--to 秒]
+                          [--offset 秒] [--subframes N --shutter S]
+python tools/mv_look.py layers look.json WORK --size WxH --fps N
+```
+
+- `look.json` は既定（`DEFAULT_LOOK`）との差分だけを書く。知らない名前は誤りにする。空の `{}` で既定のまま。
+  `plate`（舞台の色・地平の位置・周辺の暗さ）/ `beams`（光条の本数・広がり・揺れ・ループ秒数）/ `bokeh`（玉ボケ）/
+  `glow`（しきい値・半径・強さ）/ `flares`（フレアを出す時刻の一覧、秒）/ `flare` / `camera`（パンチの量と長さ・色ずれ）/
+  `lens`（周辺減光・粒子）。長さは高さ 720 のときの画素で、画面の高さに比例する。
+- `--cues` は `tools/mv_text.py` の合図。`layer` が back の合図は人物の後ろ、front は前に載る。
+- `--from` / `--to` は曲の中の秒で抜粋を作る（合図とフレアの時刻もずれる）。`--offset` は人物のファイルの先頭が曲の何秒か
+  （途中のフレームから描いた区間を、曲の時計のまま合成するため。全曲を区間に分けて描いて `ffmpeg -f concat` で繋ぐときに使う）。
+- `--subframes N --shutter S`: 人物を出力の N 倍の fps で描いたとき、各出力コマを先頭 round(S×N) 枚の平均にする
+  （シャッターが S だけ開いている映画のカメラと同じぼけ方。S=0.5 が標準）。MMD v9.32 は 120・240 fps でも中間の姿勢を全部
+  別に描く（物理だけは 60 Hz で更新）。120 fps の 2 枚平均は速い手が二重に写るので、30 fps 出力なら 240 fps で描いて
+  `--subframes 8 --shutter 0.5`（4 枚平均）にする。alpha の平均は乗算済みにしてから取る。
+- 出力は無音（libx264、crf 16）。全曲 7,743 枚・1280x720 で約 70 秒（hinata 実測）。粒子を入れると大きさは約 2 倍になる。
+  240 fps・1280x720 の alpha つき AVI はモーション 1 フレームあたり約 29.5 MB（全曲なら 228 GB）なので、区間に分けて描く。
+- MMD の AVI は 30 fps を 10000000/333333 で書くので、人物は `-r` で層と同じ時計に載せている（載せないと最後の 1 枚が落ちる）。
+
+床は `tools/make_stage.py` で作る（座標軸の格子は軸線ごと消すしかないため）:
+
+```
+python tools/make_stage.py stage_floor.x [--half 60] [--step 5] [--line 0.06] [--accent-every 4]
+mmd menu set 215 off        # 座標軸と標準の格子
+mmd menu set 221 off        # 地面影（暗い舞台では明るいしみに見える）
+mmd menu set 282 on         # 背景黒化 = alpha つきで書き出す
+mmd accessory load stage_floor.x
+```
+
+MMD はアクセサリをファイルの数値の 10 倍で表示するので、ファイルには MMD 単位の 1/10 を書く。色は自己発光だけに入れる
+（拡散色にも入れると照明分が足されて飽和し、色相が転ぶ）。
+
+### 袖口のつぶれを直す（`tools/fix_twist.py`、MMD なし）
+
+別モデル向けのダンスは手捩（前腕の捩り）を 180 度まで回すことがある。段階的な捩りボーンを持たないモデルでは前腕のブレンドが
+幅を失い、袖口が絞られる。手の向きは「手捩 × 手首」の積で決まるので、手捩を T^k に、手首を T^(1-k) × W にすれば手は同じ向きの
+まま前腕の捩りだけ減る。
+
+```
+python tools/fix_twist.py dance.vmd dance_fixed.vmd [--share 0.5] [--report r.json]
+```
+
+- 前腕に残す量は 90 度まで `--share` 倍、そこから 180 度で 0 に戻す（既定 0.5 で最大 45 度）。180 度は右回りと左回りが出会う
+  点なので、そこで前腕が休んでいないと通過時に跳ぶ。
+- 手捩と手首はキーのフレームも補間も別々なので、対の全フレームに MMD が見せていた回転を焼き、直線補間にする。
+- 他のボーンと表情はそのまま。入力と同じファイルへは書かない。
+
+### リップモーションから歌の時刻を読む（`tools/lip_timing.py`、MMD なし）
+
+リップモーションは あ い う え お のモーフを曲に合わせて打ってあるので、モーフが開き切るフレームが発声になる。音源が手元に
+無くても、歌い出し・句の切れ目・ある歌詞の行が歌われる位置が分かる（ダンスとリップが同じ音源の 0 フレームに合わせてある場合）。
+
+```
+python tools/lip_timing.py lips.vmd [--out timing.json] [--gap 24] [--find かなの行 ...] [--errors N]
+```
+
+- `--find` は行を母音の並びに直して探す（かな・ローマ字。きょ = o、っ・ん は無音、ー は直前の母音。漢字は読めないので誤り）。
+  `--errors N` で抜け・余り・違いを N 個まで許す。結果は発声ごとのフレームなので、文字を 1 つずつ歌に合わせて出せる。
 
 ## 出力
 

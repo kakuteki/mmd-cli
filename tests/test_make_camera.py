@@ -615,6 +615,73 @@ class OutputTest(unittest.TestCase):
         self.assertGreater(len({tuple(k) for k in kinds.values()}), 1)        # the seed does choose
 
 
+
+class HandheldTest(unittest.TestCase):
+    """a camera held by a person drifts a little: --handheld adds a slow sway, well under a degree"""
+
+    def setUp(self):
+        self.shots = make_camera.plan_shots(synthetic_dance(), seed=0)
+
+    def base(self):
+        """the window values on the frames where the plain camera has keys"""
+        return {k.frame: motion_edit.camera_to_ui(k) for k in read_back(self.shots).cameras}
+
+    def test_no_handheld_leaves_the_camera_as_it_was(self):
+        plain = vmd.dumps(make_camera.camera_motion(self.shots))
+        self.assertEqual(vmd.dumps(make_camera.camera_motion(self.shots, handheld=0.0, seed=4)), plain)
+
+    def test_a_key_on_every_frame_and_a_step_on_every_cut(self):
+        keys = make_camera.camera_motion(self.shots, handheld=1.0, seed=0).cameras
+        self.assertEqual([k.frame for k in keys], list(range(0, LAST + 1)))
+        starts = {s.start for s in self.shots}
+        step = {c: make_camera.CUT_CURVE for c in vmd.CAMERA_CHANNELS}
+        linear = {c: vmd.LINEAR_CURVE for c in vmd.CAMERA_CHANNELS}
+        for k in keys:
+            self.assertEqual(vmd.camera_curves(k.interpolation), step if k.frame in starts else linear, k.frame)
+
+    def test_the_sway_stays_small(self):
+        base = self.base()
+        keys = {k.frame: motion_edit.camera_to_ui(k) for k in make_camera.camera_motion(self.shots, handheld=1.0, seed=0).cameras}
+        amp = make_camera.HANDHELD
+        biggest = {"angle": 0.0, "look_at": 0.0, "distance": 0.0}
+        for frame, want in base.items():
+            got = keys[frame]
+            angle = max(abs(got["rot"][i] - want["rot"][i]) for i in (0, 1))
+            look = max(abs(got["pos"][i] - want["pos"][i]) for i in (0, 1))
+            dist = abs(got["distance"] - want["distance"])
+            self.assertLessEqual(angle, amp["angle"] + 0.01, frame)
+            self.assertLessEqual(look, amp["look_at"] + 0.001, frame)
+            self.assertLessEqual(dist, amp["distance"] + 0.001, frame)
+            self.assertEqual(got["rot"][2], want["rot"][2])                       # no roll
+            biggest = {"angle": max(biggest["angle"], angle), "look_at": max(biggest["look_at"], look),
+                       "distance": max(biggest["distance"], dist)}
+        for name, value in biggest.items():
+            self.assertGreater(value, 0.3 * amp[name], name)                      # it does sway
+        half = {k.frame: motion_edit.camera_to_ui(k) for k in make_camera.camera_motion(self.shots, handheld=0.5, seed=0).cameras}
+        for frame, want in base.items():
+            self.assertLessEqual(abs(half[frame]["rot"][1] - want["rot"][1]), 0.5 * amp["angle"] + 0.01)
+
+    def test_the_sway_is_slow_and_smooth(self):
+        # no shake: the sway is a sum of slow sines (under SWAY_MAX_HZ), so its second difference per frame is
+        # bounded by amplitude * (2 pi f / fps)^2
+        for channel in range(5):
+            values = [make_camera.sway(channel, f, seed=0) for f in range(0, 600)]
+            self.assertLessEqual(max(abs(v) for v in values), 1.0 + 1e-9)
+            bound = (2 * math.pi * make_camera.SWAY_MAX_HZ / make_camera.FPS) ** 2
+            second = max(abs(a - 2 * b + c) for a, b, c in zip(values, values[1:], values[2:]))
+            self.assertLessEqual(second, bound * 1.01)
+            self.assertGreater(max(values) - min(values), 0.8)                     # the whole range is used
+        self.assertLess(make_camera.SWAY_MAX_HZ, 1.0)
+
+    def test_the_same_seed_sways_the_same_way(self):
+        a = vmd.dumps(make_camera.camera_motion(self.shots, handheld=1.0, seed=2))
+        self.assertEqual(a, vmd.dumps(make_camera.camera_motion(self.shots, handheld=1.0, seed=2)))
+        self.assertNotEqual(a, vmd.dumps(make_camera.camera_motion(self.shots, handheld=1.0, seed=3)))
+
+    def test_a_negative_strength_is_an_error(self):
+        with self.assertRaises(ValueError):
+            make_camera.camera_motion(self.shots, handheld=-0.5)
+
 def run(argv):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -703,6 +770,13 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("bone", result["error"]["message"])
         self.assertFalse(os.path.exists(self.out))
+
+    def test_handheld_reaches_the_camera(self):
+        code, result = run([self.dance, self.out, "--handheld", "1"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["keys"], result["handheld"]), (LAST + 1, 1.0))
+        code, result = run([self.dance, self.out, "--handheld", "-1"])
+        self.assertEqual(code, 2)
 
     def test_other_limits_reach_the_plan(self):
         code, result = run([self.dance, self.out, "--min-shot", "90", "--max-shot", "200"])

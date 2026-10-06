@@ -66,6 +66,10 @@ How the shots are cut (cut_shots) and what each one does (plan_shots):
   moves the point in straight lines between them.  Distance, angles and fov ease over the whole shot
   on one S curve (S_CURVE), cut into a piece per key; the first key of a shot carries the step curve
   (CUT_CURVE), so a render at 60 fps draws nothing between two shots.
+* --handheld S (default 0, off) gives the camera the slow sway of a person holding it: on every frame the
+  window angles X and Y drift by up to 0.3 * S degrees, the look-at point by 0.03 * S units and the
+  distance by 0.1 * S, each a sum of three slow sines (0.13, 0.31 and 0.57 Hz) with phases from the seed.
+  The camera then has a key on every frame (straight lines between them, the step curve on each cut).
 """
 import argparse
 import bisect
@@ -120,6 +124,13 @@ S_CURVE = (64, 0, 64, 127)       # ease in and out over a whole shot, on distanc
 CUT_CURVE = (127, 0, 127, 0)     # on the first key of a shot: the step, so nothing is drawn between two shots
 LOOK_AT_STEP = 90                # frames: at most this far between two keys of a shot (the look-at point follows)
 LOOK_AT_WINDOW = 90              # frames: the look-at point is the center averaged over this window
+
+# --handheld: a person holding the camera sways it a little.  Amplitudes at strength 1 (window units:
+# degrees, model units); the sway of each channel is a sum of slow sines, so it drifts and never shakes
+HANDHELD = {"angle": 0.3, "look_at": 0.03, "distance": 0.1}
+SWAY_HZ = (0.13, 0.31, 0.57)
+SWAY_WEIGHTS = (0.5, 0.3, 0.2)
+SWAY_MAX_HZ = max(SWAY_HZ)
 
 CENTER_BONES = ("全ての親", "センター", "グルーブ")       # the chain that carries the whole body
 
@@ -635,8 +646,60 @@ def camera_keys(shot):
     return out
 
 
-def camera_motion(shots):
-    return vmd.Motion.for_camera(cameras=[k for shot in shots for k in camera_keys(shot)])
+def sway(channel, frame, seed=0):
+    """the handheld sway of one channel at `frame`, from -1 to 1: slow sines (SWAY_HZ, weighted by
+    SWAY_WEIGHTS) with phases drawn from the seed, so the same seed sways the same way.  A sum of slow sines
+    has no shake: its change from frame to frame is bounded by its slowest-to-fastest frequencies."""
+    rng = random.Random(seed * 1009 + channel * 7 + 1)
+    total = 0.0
+    for hz, weight in zip(SWAY_HZ, SWAY_WEIGHTS):
+        total += weight * math.sin(2.0 * math.pi * hz * frame / FPS + 2.0 * math.pi * rng.random())
+    return total
+
+
+def _shot_values_at(shot, frame):
+    """distance, look-at point and window angles of a shot at `frame`, as the plain keys draw them: the S
+    curve over the whole shot for distance and angles, straight lines between the track's keys for the
+    look-at point"""
+    length = float(shot.end - shot.start)
+    t = _t_at_x(S_CURVE, (frame - shot.start) / length) if length > 0 else 1.0
+    at = _bezier(S_CURVE, t)[0][1]
+    distance = shot.distance[0] + (shot.distance[1] - shot.distance[0]) * at
+    rot = tuple(a + (b - a) * at for a, b in zip(shot.rot[0], shot.rot[1]))
+    pos = shot.track[-1][1]
+    for (f0, p0), (f1, p1) in zip(shot.track, shot.track[1:]):
+        if f0 <= frame <= f1:
+            u = (frame - f0) / float(f1 - f0) if f1 > f0 else 0.0
+            pos = tuple(a + (b - a) * u for a, b in zip(p0, p1))
+            break
+    return distance, pos, rot
+
+
+def handheld_keys(shot, strength, seed):
+    """a key on every frame of a shot: the plain camera's values with the sway added (HANDHELD at strength
+    1), the step curve on the cut and straight lines between frames"""
+    step = _interpolation({c: CUT_CURVE for c in vmd.CAMERA_CHANNELS})
+    linear = _interpolation({c: vmd.LINEAR_CURVE for c in vmd.CAMERA_CHANNELS})
+    out = []
+    for frame in range(shot.start, shot.end + 1):
+        distance, pos, rot = _shot_values_at(shot, frame)
+        k = [sway(c, frame, seed) * strength for c in range(5)]
+        values = {"distance": distance + HANDHELD["distance"] * k[4],
+                  "pos": (pos[0] + HANDHELD["look_at"] * k[2], pos[1] + HANDHELD["look_at"] * k[3], pos[2]),
+                  "rot": (rot[0] + HANDHELD["angle"] * k[0], rot[1] + HANDHELD["angle"] * k[1], rot[2]),
+                  "fov": FOV, "perspective": True}
+        key = motion_edit.camera_key_from_ui(values, frame=frame)
+        out.append(dataclasses.replace(key, interpolation=step if frame == shot.start else linear))
+    return out
+
+
+def camera_motion(shots, handheld=0.0, seed=0):
+    """the camera motion of the shots; with `handheld` above 0 a key on every frame carries the sway"""
+    if handheld < 0:
+        raise ValueError("--handheld is a strength from 0 (none) up, not %r" % (handheld,))
+    if handheld == 0:
+        return vmd.Motion.for_camera(cameras=[k for shot in shots for k in camera_keys(shot)])
+    return vmd.Motion.for_camera(cameras=[k for shot in shots for k in handheld_keys(shot, handheld, seed)])
 
 
 def _count(items):
@@ -700,20 +763,23 @@ def check_distinct(*paths):
         seen[key] = path
 
 
-def run(dance_path, out_path, seed=0, min_shot=MIN_SHOT, max_shot=MAX_SHOT, analysis_path=None, report_path=None):
+def run(dance_path, out_path, seed=0, min_shot=MIN_SHOT, max_shot=MAX_SHOT, analysis_path=None, report_path=None,
+        handheld=0.0):
     """read the dance, plan, write the camera, read it back; the summary is what main prints"""
     check_limits(min_shot, max_shot)
+    if handheld < 0:
+        raise ValueError("--handheld is a strength from 0 (none) up, not %r" % (handheld,))
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
     check_distinct(dance_full, out_full, analysis_path, report_path)
     motion = vmd.load(dance_full)
     analysis = analyze(motion)
     shots = plan_shots(motion, min_shot, max_shot, seed, analysis)
-    write_bytes(out_full, vmd.dumps(camera_motion(shots)))
+    write_bytes(out_full, vmd.dumps(camera_motion(shots, handheld, seed)))
     back = vmd.load(out_full)
     result = {"in": dance_full, "out": out_full, "seed": seed, "min_shot": min_shot, "max_shot": max_shot,
               "frames": [0, analysis.last], "shots": len(shots), "keys": len(back.cameras),
               "key_frames": [back.cameras[0].frame, back.cameras[-1].frame],
-              "kinds": _count(s.kind for s in shots), "levels": _count(s.level for s in shots)}
+              "kinds": _count(s.kind for s in shots), "levels": _count(s.level for s in shots), "handheld": handheld}
     if analysis_path:
         full = os.path.abspath(analysis_path)
         write_json(full, dict({"in": dance_full}, **analysis_json(analysis)), None)
@@ -735,9 +801,12 @@ def main(argv=None):
     p.add_argument("--min-shot", type=int, default=MIN_SHOT, help="shortest shot in frames (default %d)" % MIN_SHOT)
     p.add_argument("--max-shot", type=int, default=MAX_SHOT,
                    help="longest shot in frames (default %d; at least twice --min-shot)" % MAX_SHOT)
+    p.add_argument("--handheld", type=float, default=0.0,
+                   help="a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame")
     args = p.parse_args(argv)
     try:
-        result = run(args.dance, args.out, args.seed, args.min_shot, args.max_shot, args.analysis, args.report)
+        result = run(args.dance, args.out, args.seed, args.min_shot, args.max_shot, args.analysis, args.report,
+                     args.handheld)
     except (ValueError, OSError) as e:
         print(json.dumps({"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}, ensure_ascii=True))
         return 2
