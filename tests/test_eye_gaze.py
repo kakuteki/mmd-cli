@@ -229,8 +229,10 @@ class FixationTest(unittest.TestCase):
         self.assertEqual([look.frame for look in far], list(range(31, 38)))
         self.assertGreater(max(look.target[0] for look in far), 150.0)            # both sides of 180 are seen
         self.assertLess(min(look.target[0] for look in far), -150.0)
-        self.assertEqual(len({look.yaw for look in far}), 1)
-        self.assertEqual(abs(far[0].yaw), eye_gaze.MAX_YAW)
+        self.assertEqual(len({look.yaw > 0 for look in far}), 1)                   # one side all through
+        for look in far:
+            self.assertTrue(0.99 * eye_gaze.MAX_YAW < abs(look.yaw) <= eye_gaze.MAX_YAW, look)  # at or near the limit
+        self.assertLess(max(abs(a.yaw - b.yaw) for a, b in zip(far, far[1:])), 0.5)
         self.assertEqual(result.saccades, [])
         self.assertAlmostEqual(result.looks[38].yaw, 0.0, places=4)
 
@@ -241,13 +243,13 @@ class FixationTest(unittest.TestCase):
         self.assertGreater(max(abs(look.target[0]) for look in result.looks), eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
         self.assertNotIn("neutral", {look.state for look in result.looks})
         self.assertEqual(result.saccades, [])
-        self.assertEqual(max(abs(look.yaw) for look in result.looks), eye_gaze.MAX_YAW)
+        self.assertTrue(0.99 * eye_gaze.MAX_YAW < max(abs(look.yaw) for look in result.looks) <= eye_gaze.MAX_YAW)
 
 
 class SaccadeTest(unittest.TestCase):
     def check_one_saccade(self, before, after, frames):
         result = run_gaze(cam_motion=cut_at_60(before, after))
-        old, new = expected_yaw((0.0, before, 0.0))[0], expected_yaw((0.0, after, 0.0))[0]
+        old, new = (eye_gaze.soft(expected_yaw((0.0, y, 0.0))[0], eye_gaze.MAX_YAW) for y in (before, after))
         self.assertEqual(result.cuts, [60])
         self.assertEqual(len(result.saccades), 1)
         saccade = result.saccades[0]
@@ -274,7 +276,8 @@ class SaccadeTest(unittest.TestCase):
 
     def test_a_saccade_follows_the_minimum_jerk_profile(self):
         result = run_gaze(cam_motion=cut_at_60(-14.0, 14.0))
-        old, new = expected_yaw((0.0, -14.0, 0.0))[0], expected_yaw((0.0, 14.0, 0.0))[0]
+        old, new = (eye_gaze.soft(expected_yaw((0.0, y, 0.0))[0], eye_gaze.MAX_YAW) for y in (-14.0, 14.0))
+        self.assertLess(abs(new), expected_yaw((0.0, 14.0, 0.0))[0])               # 14.3 is in the soft part
         start = result.saccades[0]["frame"]
         shares = [(result.looks[start + k].yaw - old) / (new - old) for k in range(3)]
         for share, t in zip(shares, (1 / 3.0, 2 / 3.0, 1.0)):
@@ -311,20 +314,66 @@ class SaccadeTest(unittest.TestCase):
         self.assertLess(max(look.error for look in result.looks), eye_gaze.SACCADE_THRESHOLD + 2.0)
 
 
+class SoftLimitTest(unittest.TestCase):
+    """review 8, R2: the last part of the range is approached along tanh, so the eyes do not stop dead at a limit"""
+
+    def test_the_same_up_to_the_soft_part_then_tanh_towards_the_limit(self):
+        self.assertEqual(eye_gaze.SOFT_FROM, 0.6)
+        for value in (0.0, 5.0, -5.0, 10.8, -10.8):
+            self.assertEqual(eye_gaze.soft(value, 18.0), value)
+        self.assertAlmostEqual(eye_gaze.soft(18.0, 18.0), 18.0 * (0.6 + 0.4 * math.tanh(1.0)), places=12)   # 90.5 %
+        self.assertAlmostEqual(eye_gaze.soft(-18.0, 18.0), -eye_gaze.soft(18.0, 18.0), places=12)
+        values = [eye_gaze.soft(v / 10.0, 18.0) for v in range(0, 541)]                  # up to 3 times the limit
+        self.assertTrue(all(b > a for a, b in zip(values, values[1:])))                  # rises all the way
+        self.assertLess(max(values), 18.0)                                               # short of the limit
+        self.assertGreater(eye_gaze.soft(60.0, 18.0), 17.99)
+        # far beyond, tanh is 1.0 in floating point: the eyes are then at the limit, never past it
+        self.assertEqual(eye_gaze.soft(150.0, 18.0), 18.0)
+        self.assertEqual(eye_gaze.soft(-1e6, 18.0), -18.0)
+        h = 1e-6
+        self.assertAlmostEqual((eye_gaze.soft(10.8 + h, 18.0) - eye_gaze.soft(10.8, 18.0)) / h, 1.0, places=4)   # C1
+
+    def test_up_and_down_soften_against_their_own_limits(self):
+        limits = eye_gaze.Limits(18.0, 6.0, 10.0)
+        self.assertEqual(eye_gaze.soften((5.0, 3.0), limits), (5.0, 3.0))
+        self.assertAlmostEqual(eye_gaze.soften((0.0, 6.0), limits)[1], eye_gaze.soft(6.0, 6.0), places=12)
+        self.assertAlmostEqual(eye_gaze.soften((0.0, -6.0), limits)[1], -6.0, places=12)          # inside 0.6 x 10
+        self.assertAlmostEqual(eye_gaze.soften((0.0, -10.0), limits)[1], -eye_gaze.soft(10.0, 10.0), places=12)
+
+    def test_a_camera_in_the_soft_part_is_looked_at_a_little_short_and_the_report_says_by_how_much(self):
+        yaw = expected_yaw((0.0, 15.0, 0.0))[0]
+        self.assertTrue(0.6 * eye_gaze.MAX_YAW < yaw < eye_gaze.MAX_YAW)
+        result = run_gaze(cam_motion=camera(cam(0, (0.0, 15.0, 0.0)), cam(LAST, (0.0, 15.0, 0.0))))
+        short = yaw - eye_gaze.soft(yaw, eye_gaze.MAX_YAW)
+        self.assertGreater(short, 0.3)
+        for look in result.looks:
+            self.assertAlmostEqual(look.yaw, eye_gaze.soft(yaw, eye_gaze.MAX_YAW), places=6)
+            self.assertEqual(look.state, "on_camera")
+        soft_part = result.report["soft_limit"]
+        self.assertEqual(soft_part["from"], eye_gaze.SOFT_FROM)
+        self.assertEqual(soft_part["frames"], LAST + 1)
+        self.assertAlmostEqual(soft_part["error"]["max"], short, places=2)
+        self.assertAlmostEqual(result.report["error_on_camera"]["max"], short, places=2)    # it is in the error too
+
+
 class LimitTest(unittest.TestCase):
-    def test_yaw_beyond_the_limit_is_held_at_the_limit(self):
+    def test_yaw_beyond_the_limit_is_held_near_the_limit(self):
         yaw = expected_yaw((0.0, 25.0, 0.0))[0]
         self.assertTrue(eye_gaze.MAX_YAW < yaw < eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
         result = run_gaze(cam_motion=camera(cam(0, (0.0, 25.0, 0.0)), cam(LAST, (0.0, 25.0, 0.0))))
         self.assertEqual({look.state for look in result.looks}, {"at_limit"})
-        self.assertEqual({look.yaw for look in result.looks}, {eye_gaze.MAX_YAW})
+        self.assertEqual({round(look.yaw, 9) for look in result.looks}, {round(eye_gaze.soft(yaw, eye_gaze.MAX_YAW), 9)})
+        self.assertTrue(0.98 * eye_gaze.MAX_YAW < result.looks[0].yaw < eye_gaze.MAX_YAW)
 
-    def test_pitch_beyond_the_limit_is_held_at_the_limit(self):
+    def test_pitch_beyond_the_limit_is_held_near_the_limit(self):
         pitch = expected_yaw((10.0, 0.0, 0.0))[1]
         self.assertTrue(eye_gaze.MAX_UP < pitch < eye_gaze.MAX_UP + eye_gaze.GIVE_UP)
         result = run_gaze(cam_motion=camera(cam(0, (10.0, 0.0, 0.0)), cam(LAST, (10.0, 0.0, 0.0))))
         self.assertEqual({look.state for look in result.looks}, {"at_limit"})
-        self.assertEqual({look.pitch for look in result.looks}, {eye_gaze.MAX_UP})
+        self.assertEqual(len({look.pitch for look in result.looks}), 1)
+        # the model's float32 positions move the pitch by about 1e-6 degrees: compared to 6 places
+        self.assertAlmostEqual(result.looks[0].pitch, eye_gaze.soft(pitch, eye_gaze.MAX_UP), places=6)
+        self.assertTrue(0.98 * eye_gaze.MAX_UP < result.looks[0].pitch < eye_gaze.MAX_UP)
 
     def test_up_and_down_have_their_own_limits(self):
         # review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris, so the eyes look up less
@@ -473,6 +522,8 @@ class CommandTest(unittest.TestCase):
         code, result = run([self.dance, self.camera, self.model, out])
         self.assertEqual(code, 0, result)
         self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 18.0, "up": 6.0, "down": 10.0})
+        self.assertEqual(result["limits"]["soft_from"], 0.6)
+        self.assertEqual(set(result["soft_limit"]), {"from", "frames", "error"})
         code, result = run([self.dance, self.camera, self.model, out, "--max-up", "4", "--max-down", "12", "--max-yaw", "20"])
         self.assertEqual(code, 0, result)
         self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 20.0, "up": 4.0, "down": 12.0})

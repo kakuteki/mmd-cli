@@ -24,7 +24,11 @@ How the eyes move (plan: a small state machine, frame by frame):
   either side, --max-up and --max-down (6 up and 10 down by default: at +10 degrees the upper lid of Sour's Rin
   covers 17 % more of the iris, review 8; --max-pitch sets both to one value).  The camera is reachable when it is
   less than 90 degrees off the rest gaze and lies beyond the limits by at most GIVE_UP degrees.  A camera beyond a
-  limit but reachable holds the eyes at that limit (each axis on its own).  Once it has been out of reach (beyond that, or behind her) for PATIENCE frames in a row,
+  limit but reachable holds the eyes at that limit (each axis on its own).  The last part of each range is soft
+  (soft(), review 8 R2): up to SOFT_FROM of a limit the eyes follow exactly, beyond it they approach the limit along
+  tanh, so they slow down before it instead of stopping dead in the corner when the head swings; a camera exactly
+  at the limit is looked at with 90.5 % of it.  The report says how far from the camera this leaves the eyes
+  (soft_limit; those frames are in error_on_camera too).  Once it has been out of reach (beyond that, or behind her) for PATIENCE frames in a row,
   the eyes return to neutral instead of pinning at the limit; a shorter excursion, a nod with the beat, only holds
   the limit.  Neutral eyes come back once the camera is within COME_BACK degrees of the limits (a hysteresis, so
   that they do not flicker at the border).  On the MV's dance the camera is beyond the default limits on about 40 %
@@ -91,6 +95,7 @@ MAX_YAW = 18.0                        # degrees the eyes turn sideways (default 
 MAX_UP, MAX_DOWN = 6.0, 10.0          # degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the
                                       # upper lid of Sour's Rin covers 17 % more of the iris)
 LIMIT_MAX = 45.0                      # degrees: the most a limit may be
+SOFT_FROM = 0.6                       # share of a limit up to which the eyes follow exactly; beyond, tanh towards it
 GIVE_UP = 12.0                        # degrees beyond a limit at which the eyes stop trying and go neutral
 PATIENCE = 10                         # frames the camera must stay beyond GIVE_UP (or behind) before they do
 COME_BACK = 8.0                       # degrees beyond the limits within which neutral eyes go back to the camera
@@ -277,6 +282,32 @@ def _clamp(angles, limits):
     return (min(max(angles[0], -limits.yaw), limits.yaw), min(max(angles[1], -limits.down), limits.up))
 
 
+def soft(value, limit):
+    """the eye angle for a wanted angle `value` against `limit` (review 8, R2): the same up to SOFT_FROM of the limit,
+    beyond it limit * (SOFT_FROM + (1 - SOFT_FROM) tanh((x - SOFT_FROM) / (1 - SOFT_FROM))) with x = |value| / limit.
+    It joins with slope 1 (C1), keeps rising, and approaches the limit: a camera exactly at the limit is looked at
+    with 90.5 % of it, one 1.4 times as far with 98.6 %, one 3 times as far with 99.9995 %; far beyond that tanh is
+    1.0 in floating point and the eyes are at the limit, never past it."""
+    x = abs(value) / limit
+    if x <= SOFT_FROM:
+        return value
+    span = 1.0 - SOFT_FROM
+    out = limit * (SOFT_FROM + span * math.tanh((x - SOFT_FROM) / span))
+    return out if value > 0 else -out
+
+
+def soften(angles, limits):
+    """soft() on each axis: yaw against limits.yaw, pitch against limits.up above and limits.down below"""
+    yaw, pitch = angles
+    return soft(yaw, limits.yaw), soft(pitch, limits.up if pitch > 0 else limits.down)
+
+
+def _in_soft_part(angles, limits):
+    yaw, pitch = angles
+    return (abs(yaw) > SOFT_FROM * limits.yaw or pitch > SOFT_FROM * limits.up
+            or -pitch > SOFT_FROM * limits.down)
+
+
 def _excess(target, limits):
     """degrees by which a direction (yaw, pitch) lies beyond the limits (0 inside them)"""
     yaw, pitch = target
@@ -324,7 +355,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
         else:
             away = 0 if not behind and excess <= GIVE_UP else away + 1
             want = "neutral" if away >= (1 if mode is None else PATIENCE) else "camera"
-        on_camera = _clamp(target, limits)
+        on_camera = soften(target, limits)
         if mode is None:                                    # the first frame: the eyes are already where they want
             mode, landed = want, sight.frame
             base = on_camera if want == "camera" else (0.0, 0.0)
@@ -336,7 +367,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True):
                 # at one limit stay there instead of jumping to the other (only a saccade moves them across)
                 (yaw, pitch), _ = _seen(sight, fixation, forward, rest)
                 held_yaw += (yaw - held_yaw + 180.0) % 360.0 - 180.0
-                base = _clamp((held_yaw, pitch), limits)
+                base = soften((held_yaw, pitch), limits)
             else:
                 base = (0.0, 0.0)
             # the cause is read on every frame: a pending saccade whose cause is gone does not happen (a cut stays a
@@ -491,7 +522,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     amplitudes = [s["amplitude"] for s in saccades]
     report = {
         "frames": [seen[0].frame, seen[-1].frame], "seed": seed,
-        "limits": dict(limits.to_json(), give_up=GIVE_UP, come_back=COME_BACK),
+        "limits": dict(limits.to_json(), soft_from=SOFT_FROM, give_up=GIVE_UP, come_back=COME_BACK),
         "eye": {"bone": EYES, "center": center, "head": parent, "forward": _vec(forward, 6), "forward_from": forward_from},
         "convention": {"key_rotation_signs": list(fk.KEY_ROTATION_SIGNS)},
         "counts": counts, "shares": {state: counts[state] / float(len(looks)) for state in STATES},
@@ -503,6 +534,12 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                                "amplitude": _r(s["amplitude"], 3)} for s in saccades]},
         "cuts": cuts,
         "error_on_camera": _error_summary([look.error for look in looks if look.state == "on_camera"]),
+        # how far from the camera the eyes are while the soft limit holds them short of it (the camera inside the
+        # limits but past SOFT_FROM of one): these frames are part of error_on_camera too
+        "soft_limit": {"from": SOFT_FROM,
+                       "frames": sum(1 for look in looks if look.state == "on_camera" and _in_soft_part(look.target, limits)),
+                       "error": _error_summary([look.error for look in looks
+                                                if look.state == "on_camera" and _in_soft_part(look.target, limits)])},
         "dance_eye_keys": dance_eye_keys(dance),
     }
     return Gaze(looks, saccades, cuts, eye_motion(looks, dance.model_name), report, seen, forward)
@@ -606,7 +643,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
                "keys": len(back.bones), "seed": seed, "limits": report["limits"],
                "eye": report["eye"], "convention": report["convention"], "cuts": len(report["cuts"]),
                "counts": report["counts"], "shares": {k: _r(v) for k, v in report["shares"].items()},
-               "saccades": {k: report["saccades"][k] for k in ("count", "by_reason", "by_frames", "amplitude")}}
+               "saccades": {k: report["saccades"][k] for k in ("count", "by_reason", "by_frames", "amplitude")},
+               "error_on_camera": report["error_on_camera"], "soft_limit": report["soft_limit"]}
     if report_path:
         full = os.path.abspath(report_path)
         write_json(full, dict({"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full,
