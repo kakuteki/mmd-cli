@@ -916,7 +916,8 @@ class DenoiseTest(unittest.TestCase):
 
     def test_the_report_tells_what_was_moved(self):
         plain, denoised, report = plain_and_denoised(swing(jitter=10.0))
-        self.assertEqual(report["denoise"], {"hz": DENOISE, "cap_deg": 3.0, "cap_units": 0.05, "max_gap": 2, "margin": 2})
+        self.assertEqual(report["denoise"], {"hz": DENOISE, "cap_deg": 3.0, "cap_units": 0.05, "max_gap": 2, "margin": 2,
+                                             "min_zone": 4, "fingers": False})
         entry = report["bones"][0]["denoise"]
         self.assertEqual(entry["keys"], 87)                                 # 91 keys: all but the first two and the last two
         self.assertEqual(entry["frames"], 87)
@@ -973,14 +974,21 @@ class DenoiseCommandTest(unittest.TestCase):
     def test_fingers_and_the_warning_of_a_baked_file(self):
         code, result = run(smooth_motion, [self.dance, self.out, "--denoise", "--denoise-fingers"])
         self.assertEqual(code, 0, result)
-        self.assertEqual((result["denoise"]["fingers"], result["warnings"]), (True, []))
+        self.assertEqual(result["denoise"]["fingers"], True)
+        traced = os.path.join(self.folder, "traced.vmd")                   # keys 3 frames apart and one dense run, as traced
+        frames = list(range(0, 40, 3)) + list(range(40, 46)) + list(range(48, 90, 3))
+        with open(traced, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion(model_name="dancer", bones=[
+                bone("右腕", g, rot=about((0.0, 1.0, 0.0), 10.0 * math.sin(g / 5.0) + 2.0 * (-1) ** g)) for g in frames])))
+        code, result = run(smooth_motion, [traced, self.out, "--denoise"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["denoise"]["fingers"], result["warnings"]), (False, []))
         again = os.path.join(self.folder, "again.vmd")
         code, result = run(smooth_motion, [self.out, again, "--denoise"])     # the output again: a key on every frame
         self.assertEqual(code, 0, result)
-        self.assertEqual(result["denoise"]["fingers"], False)
         self.assertEqual(len(result["warnings"]), 1)
         self.assertIn("baked", result["warnings"][0])
-        code, result = run(smooth_motion, [self.dance, self.out])
+        code, result = run(smooth_motion, [self.out, again])
         self.assertEqual(result["warnings"], [])
 
     def test_bad_denoise_arguments_exit_2(self):

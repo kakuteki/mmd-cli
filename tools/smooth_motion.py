@@ -367,6 +367,8 @@ DENSE_GAP = 2                           # keys at most this many frames apart ma
 DENOISE_MARGIN = 2                      # the frames on either side of a dense key the correction may use
 MIN_ZONE = 4                            # a zone of fewer frames is left alone: with its mean and slope at 0 the only
                                         # correction of 3 frames is c(1, -2, 1), a zigzag (review 9 M2)
+FINGER = "指"                           # a bone whose name holds it is a finger: smoothed, not denoised unless asked
+BAKED_SHARE = 0.9                       # a track with this share of its key gaps 1 frame long looks already baked
 JERK = (-1.0, 3.0, -3.0, 1.0)           # the third difference: the penalty is on the jerk
 ROUNDS = 12                             # rounds of holding the frames that leave their bounds
 
@@ -660,20 +662,21 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
     return out, stats
 
 
-def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None):
+def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None, denoise_fingers=False):
     """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring.  denoise is the
-    cutoff in Hz of the denoise of the dense runs (None: no denoise), denoise_cap its (degrees, units)."""
+    cutoff in Hz of the denoise of the dense runs (None: no denoise), denoise_cap its (degrees, units), denoise_fingers
+    takes the finger bones in too.  report["warnings"] lists what looks wrong with the input (an already baked file)."""
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
-    if denoise is None and denoise_cap is not None:
-        raise ValueError("--denoise-cap bounds --denoise: give --denoise too")
+    if denoise is None and (denoise_cap is not None or denoise_fingers):
+        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
     if denoise is not None:
         denoise, denoise_cap = check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     tracks = tracks_of(motion)
     skip = set(skip)
     chosen = set(tracks) if bones is None else set(bones)
     chosen -= skip
-    new_bones, report = [], []
+    new_bones, report, denoised, looks_baked = [], [], 0, []
     for name in tracks:                                                      # the file's order of first appearance
         keys = tracks[name]
         entry = {"name": name, "keys_before": len(keys), "keys_after": len(keys),
@@ -682,7 +685,15 @@ def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=N
         if name in chosen and keys[0].frame != keys[-1].frame and not is_constant(keys):
             baked, counts = smooth_track(keys, tension)
             if denoise is not None:
-                baked, entry["denoise"] = denoise_track(dedupe(keys), baked, denoise, denoise_cap)
+                if FINGER in name and not denoise_fingers:
+                    entry["denoise"] = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0, "skipped": "finger"}
+                else:
+                    traced = dedupe(keys)
+                    gaps = [b.frame - a.frame for a, b in zip(traced, traced[1:])]
+                    if len(gaps) >= 10 and sum(g == 1 for g in gaps) >= BAKED_SHARE * len(gaps):
+                        looks_baked.append(name)
+                    denoised += 1
+                    baked, entry["denoise"] = denoise_track(traced, baked, denoise, denoise_cap)
             keys = baked
             entry.update(keys_after=len(keys), segments=counts, changed=True)
         new_bones += keys
@@ -693,8 +704,15 @@ def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=N
             setattr(out, field, list(value))
     out.bones = new_bones
     settings = None if denoise is None else {"hz": denoise, "cap_deg": denoise_cap[0], "cap_units": denoise_cap[1],
-                                             "max_gap": DENSE_GAP, "margin": DENOISE_MARGIN}
-    return out, {"tension": tension, "denoise": settings, "skipped": sorted(skip & set(tracks)),
+                                             "max_gap": DENSE_GAP, "margin": DENOISE_MARGIN, "min_zone": MIN_ZONE,
+                                             "fingers": bool(denoise_fingers)}
+    warnings = []
+    if looks_baked:
+        warnings.append("%d of the %d denoised tracks have a key on 90 %% or more of their frames (%s%s): an already baked "
+                        "file?  --denoise takes all their keys for dense and moves keys that were sparse in the tracing; "
+                        "give it the traced keys" % (len(looks_baked), denoised, ", ".join(looks_baked[:3]),
+                                                     ", ..." if len(looks_baked) > 3 else ""))
+    return out, {"tension": tension, "denoise": settings, "warnings": warnings, "skipped": sorted(skip & set(tracks)),
                  "bones_requested_but_absent": sorted(set(bones or ()) - set(tracks)), "bones": report}
 
 
@@ -727,17 +745,18 @@ def check_distinct(*paths):
         seen[key] = path
 
 
-def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None, denoise=None, denoise_cap=None):
+def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None, denoise=None, denoise_cap=None,
+        denoise_fingers=False):
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
     check_distinct(dance_full, out_full, report_path)
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
-    if denoise is None and denoise_cap is not None:
-        raise ValueError("--denoise-cap bounds --denoise: give --denoise too")
+    if denoise is None and (denoise_cap is not None or denoise_fingers):
+        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
     if denoise is not None:
         check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     motion = vmd.load(dance_full)
-    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap)
+    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap, denoise_fingers)
     write_bytes(out_full, vmd.dumps(smoothed))
     back = vmd.load(out_full)
     changed = [b for b in report["bones"] if b["changed"]]
@@ -746,7 +765,8 @@ def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None
         moved = [b["denoise"] for b in changed]
         summary = dict(report["denoise"], **{kind: sum(m[kind] for m in moved) for kind in ("keys", "frames", "at_cap")})
         summary.update({kind: max([m[kind] for m in moved] or [0.0]) for kind in ("max_deg", "max_units")})
-    result = {"in": dance_full, "out": out_full, "tension": tension, "denoise": summary, "bone_keys_before": len(motion.bones),
+    result = {"in": dance_full, "out": out_full, "tension": tension, "denoise": summary, "warnings": report["warnings"],
+              "bone_keys_before": len(motion.bones),
               "bone_keys": len(back.bones), "bones_changed": len(changed), "skipped": report["skipped"],
               "segments": {kind: sum(b["segments"][kind] for b in changed) for kind in ("linear", "authored", "flat")},
               "bones": report["bones"]}
@@ -770,9 +790,12 @@ def main(argv=None):
                         "(default %g)" % DENOISE_HZ)
     p.add_argument("--denoise-cap", nargs=2, type=float, default=None, metavar=("DEG", "UNITS"),
                    help="how far --denoise may move a frame (default %g degrees, %g units)" % DENOISE_CAP)
+    p.add_argument("--denoise-fingers", action="store_true",
+                   help="let --denoise take the finger bones in too (left out by default)")
     args = p.parse_args(argv)
     try:
-        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap)
+        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap,
+                     args.denoise_fingers)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
