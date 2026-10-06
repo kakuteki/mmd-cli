@@ -1,0 +1,488 @@
+"""tools/eye_gaze.py: a natural gaze toward the camera (fixations, saccades) as a 両目 track to load after the dance."""
+import contextlib
+import importlib.util
+import io
+import json
+import math
+import os
+import shutil
+import tempfile
+import time
+import unittest
+
+from mmd_cli import fk, mathutil, motion_edit
+from mmd_cli.formats import pmx, vmd
+from tests.test_pmx import APPEND_ROTATE, NORMAL, TAIL_IS_BONE, TRANSLATE, Writer
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_tool():
+    """tools/ is not a package: the module is loaded from its file"""
+    spec = importlib.util.spec_from_file_location("eye_gaze", os.path.join(ROOT, "tools", "eye_gaze.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+eye_gaze = load_tool()
+LAST = 120
+EYE_CENTER = (0.0, 17.2, -0.56)
+FORWARD = (0.0, 0.0, -1.0)
+
+
+def rin_like_bytes():
+    """a body, a neck and a head with the eye bones laid out as on Sour's Rin: 両目 a handle above the head with its
+    tip straight ahead, the eyes lower, each turning with 両目 (append ratio 1)"""
+    w = Writer(bone=2)
+    bones = [("全ての親", -1, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
+             ("センター", 0, (0.0, 8.0, 0.0), {"flags": NORMAL | TRANSLATE}),
+             ("上半身", 1, (0.0, 12.0, 0.0), {}),
+             ("首", 2, (0.0, 15.5, 0.0), {}),
+             ("頭", 3, (0.0, 16.2, 0.0), {}),
+             ("両目", 4, (0.0, 19.4, -0.26), {"flags": NORMAL | TAIL_IS_BONE, "tail": 8}),
+             ("左目", 4, (0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
+             ("右目", 4, (-0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
+             ("両目先", 5, (0.0, 19.4, -0.83), {})]
+    return w.build(name="rin-like", bones=[w.bone(n, parent=p, position=pos, **kw) for n, p, pos, kw in bones])
+
+
+MODEL = pmx.loads(rin_like_bytes())
+
+
+def head_turn(degrees_by_frame, axis="y"):
+    """a still dance (keys at 0 and LAST) whose head turns by the window angles given as {frame: degrees}"""
+    keys = [vmd.BoneKey("全ての親", 0, (0.0, 0.0, 0.0), fk.IDENTITY), vmd.BoneKey("全ての親", LAST, (0.0, 0.0, 0.0), fk.IDENTITY),
+            vmd.BoneKey("両目", 0, (0.0, 0.0, 0.0), fk.IDENTITY)]
+    for frame, degrees in sorted(degrees_by_frame.items()):
+        ui = (0.0, degrees, 0.0) if axis == "y" else (degrees, 0.0, 0.0)
+        keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(*ui)))
+    return vmd.Motion(model_name="dancer", bones=keys)
+
+
+STILL = head_turn({0: 0.0})
+
+
+def cam(frame, rot=(0.0, 0.0, 0.0), distance=30.0, look_at=(0.0, 17.2, 0.0)):
+    return motion_edit.camera_key_from_ui({"pos": look_at, "distance": distance, "rot": rot, "fov": 30, "perspective": True},
+                                          frame=frame)
+
+
+def camera(*keys):
+    return vmd.Motion.for_camera(cameras=list(keys))
+
+
+IN_FRONT = camera(cam(0), cam(LAST))
+
+
+def cut_at_60(before, after):
+    """a camera at window Y `before` until frame 59 that cuts to Y `after` on frame 60"""
+    return camera(cam(0, (0.0, before, 0.0)), cam(59, (0.0, before, 0.0)), cam(60, (0.0, after, 0.0)),
+                  cam(LAST, (0.0, after, 0.0)))
+
+
+def direction(yaw, pitch):
+    y, p = math.radians(yaw), math.radians(pitch)
+    return (math.cos(p) * math.sin(y), math.sin(p), -math.cos(p) * math.cos(y))
+
+
+def degrees_between(a, b):
+    na = math.sqrt(sum(v * v for v in a))
+    nb = math.sqrt(sum(v * v for v in b))
+    return math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(a, b)) / (na * nb)))))
+
+
+def expected_yaw(camera_rot, distance=30.0, look_at=(0.0, 17.2, 0.0)):
+    state = fk.CameraState(0, look_at, distance, camera_rot, 30.0)
+    c = fk.camera_position(state)
+    v = tuple(a - b for a, b in zip(c, EYE_CENTER))
+    return math.degrees(math.atan2(v[0], -v[2])), math.degrees(math.atan2(v[1], math.hypot(v[0], v[2])))
+
+
+def run_gaze(dance=STILL, cam_motion=IN_FRONT, life=False, **kw):
+    return eye_gaze.gaze(MODEL, dance, cam_motion, life=life, **kw)
+
+
+class WhereSheLooksTest(unittest.TestCase):
+    def test_a_camera_straight_ahead_gives_zero_angles(self):
+        result = run_gaze()
+        self.assertEqual(len(result.looks), LAST + 1)
+        for look in result.looks:
+            self.assertAlmostEqual(look.yaw, 0.0, places=6)
+            self.assertAlmostEqual(look.pitch, 0.0, places=6)
+            self.assertEqual(look.state, "on_camera")
+        key = [k for k in result.motion.bones if k.frame == 0][0]
+        self.assertEqual(key.name, "両目")
+        self.assertAlmostEqual(abs(key.rotation[3]), 1.0, places=9)
+
+    def test_a_camera_on_the_plus_x_side_turns_the_eyes_to_her_left(self):
+        yaw, pitch = expected_yaw((0.0, 10.0, 0.0))
+        self.assertGreater(yaw, 9.0)
+        result = run_gaze(cam_motion=camera(cam(0, (0.0, 10.0, 0.0)), cam(LAST, (0.0, 10.0, 0.0))))
+        look = result.looks[30]
+        self.assertAlmostEqual(look.yaw, yaw, places=4)                 # + : toward +X, the model's left
+        self.assertAlmostEqual(look.pitch, pitch, places=4)
+        # the written key, applied by the convention of mmd_cli/fk.py, turns the gaze onto the camera
+        key = [k for k in result.motion.bones if k.frame == 30][0]
+        gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
+        self.assertLess(degrees_between(gaze, direction(yaw, pitch)), 0.01)
+        self.assertGreater(gaze[0], 0.1)
+        if fk.KEY_ROTATION_SIGNS == (1.0, 1.0, 1.0):
+            # under the default convention the window shows yaw as Y and pitch as X
+            ui = mathutil.quat_to_ui(key.rotation)
+            self.assertAlmostEqual(ui[1], yaw, places=3)
+            self.assertAlmostEqual(ui[0], pitch, places=3)
+
+    def test_a_camera_above_turns_the_eyes_up(self):
+        yaw, pitch = expected_yaw((8.0, 0.0, 0.0))
+        self.assertGreater(pitch, 7.0)
+        result = run_gaze(cam_motion=camera(cam(0, (8.0, 0.0, 0.0)), cam(LAST, (8.0, 0.0, 0.0))))
+        self.assertAlmostEqual(result.looks[10].pitch, pitch, places=4)
+        self.assertAlmostEqual(result.looks[10].yaw, 0.0, places=6)
+        key = [k for k in result.motion.bones if k.frame == 10][0]
+        self.assertGreater(fk.rotate(fk.applied(key.rotation), FORWARD)[1], 0.1)
+
+    def test_a_camera_behind_her_leaves_the_eyes_neutral(self):
+        result = run_gaze(cam_motion=camera(cam(0, (0.0, 180.0, 0.0)), cam(LAST, (0.0, 180.0, 0.0))))
+        self.assertEqual({look.state for look in result.looks}, {"neutral"})
+        self.assertEqual({(look.yaw, look.pitch) for look in result.looks}, {(0.0, 0.0)})
+
+
+class FixationTest(unittest.TestCase):
+    def test_the_eyes_keep_pointing_at_the_camera_while_the_head_turns(self):
+        dance = head_turn({0: 0.0, 60: 12.0, 120: -6.0})
+        result = run_gaze(dance=dance)
+        sights = eye_gaze.sights(MODEL, dance, IN_FRONT)
+        heads = fk.world_track(MODEL, dance, ["頭"])["頭"]
+        for look, sight, (_, head) in zip(result.looks, sights, heads):
+            gaze = fk.rotate(head, fk.rotate(eye_gaze.eye_rotation(look.yaw, look.pitch), FORWARD))
+            to_camera = tuple(c - e for c, e in zip(sight.camera, sight.eye))
+            self.assertLess(degrees_between(gaze, to_camera), 0.3, look.frame)
+        # the head turned by 12 degrees at frame 60 (to her left under the default convention), the eyes against it
+        head_x = fk.rotate(heads[60][1], FORWARD)[0]
+        self.assertGreater(abs(head_x), math.sin(math.radians(11.0)))
+        self.assertLess(result.looks[60].yaw * head_x, 0.0)
+        self.assertGreater(abs(result.looks[60].yaw), 10.0)
+        self.assertEqual(result.saccades, [])
+
+    def test_a_head_turned_away_returns_the_eyes_to_neutral(self):
+        result = run_gaze(dance=head_turn({0: 90.0}))
+        self.assertEqual({look.state for look in result.looks}, {"neutral"})
+        self.assertEqual({(look.yaw, look.pitch) for look in result.looks}, {(0.0, 0.0)})
+
+    def test_a_head_turning_away_holds_the_limit_then_lets_go(self):
+        result = run_gaze(dance=head_turn({0: 0.0, 40: 60.0}))
+        yaws = [look.yaw for look in result.looks]
+        self.assertLessEqual(max(abs(y) for y in yaws), eye_gaze.MAX_YAW + 1e-9)
+        self.assertIn("at_limit", {look.state for look in result.looks})
+        self.assertEqual([s["reason"] for s in result.saccades], ["to_neutral"])
+        self.assertEqual(result.looks[-1].state, "neutral")
+        self.assertEqual((result.looks[-1].yaw, result.looks[-1].pitch), (0.0, 0.0))
+        # it lets go only once the camera is GIVE_UP beyond the limit, and then after the reaction time
+        start = result.saccades[0]["frame"]
+        trigger = min(look.frame for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
+        self.assertGreaterEqual(start - trigger, eye_gaze.REACTION[0])
+        self.assertLessEqual(start - trigger, eye_gaze.REACTION[1])
+
+
+class SaccadeTest(unittest.TestCase):
+    def check_one_saccade(self, before, after, frames):
+        result = run_gaze(cam_motion=cut_at_60(before, after))
+        old, new = expected_yaw((0.0, before, 0.0))[0], expected_yaw((0.0, after, 0.0))[0]
+        self.assertEqual(result.cuts, [60])
+        self.assertEqual(len(result.saccades), 1)
+        saccade = result.saccades[0]
+        self.assertEqual((saccade["reason"], saccade["frames"]), ("cut", frames))
+        start = saccade["frame"]
+        self.assertGreaterEqual(start - 60, eye_gaze.REACTION[0])
+        self.assertLessEqual(start - 60, eye_gaze.REACTION[1])
+        yaws = [look.yaw for look in result.looks]
+        for f in range(0, start):                                   # held on the old place until the saccade
+            self.assertAlmostEqual(yaws[f], old, places=3, msg=f)
+        for f in range(start + frames - 1, LAST + 1):               # on the new camera from the landing on
+            self.assertAlmostEqual(yaws[f], new, places=3, msg=f)
+        between = [f for f in range(LAST + 1) if min(abs(yaws[f] - old), abs(yaws[f] - new)) > 0.01]
+        self.assertEqual(between, list(range(start, start + frames - 1)))
+        self.assertEqual([look.state for look in result.looks[start:start + frames]], ["in_saccade"] * frames)
+        self.assertEqual({look.state for look in result.looks[60:start]}, {"reacting"})
+        return result
+
+    def test_a_camera_cut_gives_one_quick_saccade(self):
+        self.check_one_saccade(-8.0, 8.0, 2)
+
+    def test_a_long_saccade_takes_three_frames(self):
+        self.check_one_saccade(-14.0, 14.0, 3)
+
+    def test_a_saccade_follows_the_minimum_jerk_profile(self):
+        result = run_gaze(cam_motion=cut_at_60(-14.0, 14.0))
+        old, new = expected_yaw((0.0, -14.0, 0.0))[0], expected_yaw((0.0, 14.0, 0.0))[0]
+        start = result.saccades[0]["frame"]
+        shares = [(result.looks[start + k].yaw - old) / (new - old) for k in range(3)]
+        for share, t in zip(shares, (1 / 3.0, 2 / 3.0, 1.0)):
+            self.assertAlmostEqual(share, 10 * t ** 3 - 15 * t ** 4 + 6 * t ** 5, places=6)
+
+    def test_a_slowly_moving_camera_is_followed_by_refixations(self):
+        keys = [cam(0, (0.0, -12.0, 0.0)), cam(LAST, (0.0, 12.0, 0.0))]
+        result = run_gaze(cam_motion=camera(*keys))
+        self.assertEqual(result.cuts, [])
+        reasons = [s["reason"] for s in result.saccades]
+        self.assertGreaterEqual(len(reasons), 3)
+        self.assertEqual(set(reasons), {"refixation"})
+        for s in result.saccades:
+            self.assertGreater(s["amplitude"], eye_gaze.SACCADE_THRESHOLD)
+            self.assertLess(s["amplitude"], eye_gaze.SACCADE_THRESHOLD + 2.0)
+        # between saccades the eyes stay within a few degrees of the camera
+        self.assertLess(max(look.error for look in result.looks), eye_gaze.SACCADE_THRESHOLD + 2.0)
+
+
+class LimitTest(unittest.TestCase):
+    def test_yaw_beyond_the_limit_is_held_at_the_limit(self):
+        yaw = expected_yaw((0.0, 25.0, 0.0))[0]
+        self.assertTrue(eye_gaze.MAX_YAW < yaw < eye_gaze.MAX_YAW + eye_gaze.GIVE_UP)
+        result = run_gaze(cam_motion=camera(cam(0, (0.0, 25.0, 0.0)), cam(LAST, (0.0, 25.0, 0.0))))
+        self.assertEqual({look.state for look in result.looks}, {"at_limit"})
+        self.assertEqual({look.yaw for look in result.looks}, {eye_gaze.MAX_YAW})
+
+    def test_pitch_beyond_the_limit_is_held_at_the_limit(self):
+        pitch = expected_yaw((18.0, 0.0, 0.0))[1]
+        self.assertTrue(eye_gaze.MAX_PITCH < pitch < eye_gaze.MAX_PITCH + eye_gaze.GIVE_UP)
+        result = run_gaze(cam_motion=camera(cam(0, (18.0, 0.0, 0.0)), cam(LAST, (18.0, 0.0, 0.0))))
+        self.assertEqual({look.pitch for look in result.looks}, {eye_gaze.MAX_PITCH})
+
+    def test_other_limits_are_respected_with_life_on(self):
+        moving = camera(cam(0, (-15.0, -40.0, 0.0)), cam(40, (12.0, 30.0, 0.0)), cam(80, (-5.0, 10.0, 0.0)),
+                        cam(LAST, (15.0, -20.0, 0.0)))
+        dance = head_turn({0: 0.0, 30: 25.0, 70: -30.0, 110: 10.0})
+        for max_yaw, max_pitch in ((18.0, 10.0), (8.0, 4.0), (30.0, 20.0)):
+            result = run_gaze(dance=dance, cam_motion=moving, life=True, max_yaw=max_yaw, max_pitch=max_pitch)
+            self.assertLessEqual(max(abs(look.yaw) for look in result.looks), max_yaw + 1e-9)
+            self.assertLessEqual(max(abs(look.pitch) for look in result.looks), max_pitch + 1e-9)
+            for key in result.motion.bones:
+                gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
+                yaw = math.degrees(math.atan2(gaze[0], -gaze[2]))
+                pitch = math.degrees(math.atan2(gaze[1], math.hypot(gaze[0], gaze[2])))
+                self.assertLessEqual(abs(yaw), max_yaw + 1e-3)
+                self.assertLessEqual(abs(pitch), max_pitch + 1e-3)
+
+    def test_limits_outside_0_to_45_are_errors(self):
+        for max_yaw, max_pitch in ((0.0, 10.0), (18.0, -1.0), (50.0, 10.0), (18.0, 46.0)):
+            with self.assertRaises(ValueError):
+                run_gaze(max_yaw=max_yaw, max_pitch=max_pitch)
+
+
+class LifeTest(unittest.TestCase):
+    def test_drift_and_microsaccades_stay_well_under_a_degree(self):
+        result = run_gaze(life=True)
+        yaws = [look.yaw for look in result.looks]
+        pitches = [look.pitch for look in result.looks]
+        self.assertLessEqual(max(abs(v) for v in yaws + pitches), eye_gaze.DRIFT_LIMIT + 1e-9)
+        self.assertLess(eye_gaze.DRIFT_LIMIT, 0.5)
+        self.assertGreater(len({round(v, 6) for v in yaws}), LAST // 2)            # it moves
+        self.assertEqual({look.state for look in result.looks}, {"on_camera"})
+
+    def test_the_same_seed_gives_the_same_motion_and_another_seed_another(self):
+        dance = head_turn({0: 0.0, 60: 30.0, 120: 0.0})
+        moving = camera(cam(0, (0.0, -5.0, 0.0)), cam(59, (0.0, -5.0, 0.0)), cam(60, (0.0, 8.0, 0.0)), cam(LAST))
+        a = run_gaze(dance=dance, cam_motion=moving, life=True, seed=4)
+        b = run_gaze(dance=dance, cam_motion=moving, life=True, seed=4)
+        c = run_gaze(dance=dance, cam_motion=moving, life=True, seed=5)
+        self.assertEqual(vmd.dumps(a.motion), vmd.dumps(b.motion))
+        self.assertNotEqual(vmd.dumps(a.motion), vmd.dumps(c.motion))
+        self.assertEqual([s["reason"] for s in a.saccades], [s["reason"] for s in c.saccades])
+
+
+class OutputTest(unittest.TestCase):
+    def test_only_the_eyes_track_with_linear_curves_and_the_dance_model_name(self):
+        result = run_gaze(dance=head_turn({0: 0.0, 60: 12.0, 120: -6.0}), life=True)
+        m = result.motion
+        self.assertEqual(m.model_name, "dancer")
+        self.assertEqual({k.name for k in m.bones}, {"両目"})
+        self.assertEqual((m.morphs, m.cameras), ([], []))
+        frames = [k.frame for k in m.bones]
+        self.assertEqual(frames, sorted(set(frames)))
+        self.assertEqual((frames[0], frames[-1]), (0, LAST))
+        for k in m.bones:
+            self.assertEqual(vmd.bone_curves(k.interpolation), {c: vmd.LINEAR_CURVE for c in vmd.BONE_CHANNELS})
+            self.assertEqual(k.position, (0.0, 0.0, 0.0))
+
+    def test_frames_that_do_not_change_get_no_key(self):
+        result = run_gaze(life=False)
+        self.assertEqual([k.frame for k in result.motion.bones], [0, LAST])
+
+    def test_the_shares_add_up_to_one(self):
+        result = run_gaze(dance=head_turn({0: 0.0, 40: 60.0}), cam_motion=cut_at_60(-8.0, 8.0), life=True)
+        counts = result.report["counts"]
+        self.assertEqual(sum(counts.values()), LAST + 1)
+        self.assertEqual(set(counts), {"on_camera", "at_limit", "neutral", "in_saccade", "reacting"})
+        self.assertAlmostEqual(sum(result.report["shares"].values()), 1.0, places=9)
+
+
+def run(argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = eye_gaze.main(argv)
+    text = out.getvalue()
+    text.encode("ascii")
+    return code, json.loads(text)
+
+
+class CommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        self.camera = os.path.join(self.folder, "camera.vmd")
+        self.model = os.path.join(self.folder, "model.pmx")
+        for path, data in ((self.dance, vmd.dumps(head_turn({0: 0.0, 60: 30.0, 120: 0.0}))),
+                           (self.camera, vmd.dumps(cut_at_60(-6.0, 6.0))),
+                           (self.model, rin_like_bytes())):
+            with open(path, "wb") as f:
+                f.write(data)
+
+    def test_writes_the_eyes_the_report_and_the_debug(self):
+        out = os.path.join(self.folder, "sub", "eyes.vmd")
+        report, debug = os.path.join(self.folder, "r.json"), os.path.join(self.folder, "d.json")
+        code, result = run([self.dance, self.camera, self.model, out, "--report", report, "--debug", debug, "--seed", "3"])
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["out"], os.path.abspath(out))
+        back = vmd.load(out)
+        self.assertEqual(result["keys"], len(back.bones))
+        self.assertEqual({k.name for k in back.bones}, {"両目"})
+        self.assertEqual(back.model_name, "dancer")
+        self.assertEqual(result["frames"], [0, LAST])
+        self.assertEqual(result["cuts"], 1)
+        self.assertAlmostEqual(sum(result["shares"].values()), 1.0, places=3)
+        self.assertEqual(result["seed"], 3)
+        self.assertEqual(result["convention"], {"key_rotation_signs": list(fk.KEY_ROTATION_SIGNS)})
+        with open(report, encoding="ascii") as f:
+            full = json.load(f)
+        self.assertEqual(full["counts"], result["counts"])
+        self.assertEqual(sum(full["counts"].values()), LAST + 1)
+        self.assertEqual(full["cuts"], [60])
+        self.assertEqual(len(full["saccades"]["list"]), full["saccades"]["count"])
+        self.assertEqual(full["eye"]["center"], ["右目", "左目"])
+        self.assertEqual(full["eye"]["forward"], [0.0, 0.0, -1.0])
+        with open(debug, encoding="ascii") as f:
+            rows = json.load(f)["frames"]
+        self.assertEqual([row["frame"] for row in rows], [0, 30, 60, 90, 120])
+        row = rows[0]
+        self.assertEqual(sorted(row), sorted(["frame", "camera", "eye_center", "head_forward", "to_camera", "eye", "window",
+                                              "state", "error"]))
+        self.assertAlmostEqual(row["eye_center"][1], 17.2, places=3)
+        self.assertAlmostEqual(row["head_forward"][2], -1.0, places=3)
+        self.assertEqual(os.listdir(os.path.dirname(out)), ["eyes.vmd"])
+
+    def test_debug_frames_can_be_chosen(self):
+        debug = os.path.join(self.folder, "d.json")
+        code, result = run([self.dance, self.camera, self.model, os.path.join(self.folder, "o.vmd"), "--debug", debug,
+                            "--debug-frames", "61", "5", "999"])
+        self.assertEqual(code, 0, result)
+        with open(debug, encoding="ascii") as f:
+            self.assertEqual([row["frame"] for row in json.load(f)["frames"]], [5, 61])
+
+    def test_the_probe_and_what_it_should_show(self):
+        probe = os.path.join(self.folder, "probe.vmd")
+        code, result = run([self.dance, self.camera, self.model, os.path.join(self.folder, "o.vmd"), "--probe", probe])
+        self.assertEqual(code, 0, result)
+        back = vmd.load(probe)
+        self.assertEqual({k.name for k in back.bones}, {"両目"})
+        self.assertEqual(back.model_name, "dancer")
+        ui = {k.frame: tuple(round(v, 3) for v in mathutil.quat_to_ui(k.rotation)) for k in back.bones}
+        self.assertEqual(ui[0], (0.0, 0.0, 0.0))
+        self.assertEqual(ui[29], (0.0, 0.0, 0.0))
+        self.assertEqual((ui[30], ui[59]), ((0.0, 15.0, 0.0), (0.0, 15.0, 0.0)))
+        self.assertEqual((ui[60], ui[89]), ((0.0, -15.0, 0.0), (0.0, -15.0, 0.0)))
+        self.assertEqual((ui[90], ui[119]), ((10.0, 0.0, 0.0), (10.0, 0.0, 0.0)))
+        self.assertEqual((ui[120], ui[149]), ((-10.0, 0.0, 0.0), (-10.0, 0.0, 0.0)))
+        self.assertEqual(ui[150], (0.0, 0.0, 0.0))
+        segments = result["probe"]["segments"]
+        self.assertEqual([s["frames"] for s in segments], [[0, 29], [30, 59], [60, 89], [90, 119], [120, 149], [150, 150]])
+        if fk.KEY_ROTATION_SIGNS == (1.0, 1.0, 1.0):
+            looks = [s["looks"] for s in segments]
+            self.assertEqual(looks[0], "straight ahead")
+            self.assertTrue(looks[1].startswith("to her left"), looks[1])
+            self.assertIn("viewer's right", looks[1])
+            self.assertTrue(looks[2].startswith("to her right"), looks[2])
+            self.assertEqual((looks[3], looks[4]), ("up", "down"))
+
+    def test_errors_exit_2_before_anything_is_written(self):
+        out = os.path.join(self.folder, "o.vmd")
+        with open(self.dance, "rb") as f:
+            original = f.read()
+        no_camera = os.path.join(self.folder, "no_camera.vmd")
+        with open(no_camera, "wb") as f:
+            f.write(original)
+        for argv in ([self.dance, self.camera, self.model, self.dance],
+                     [self.dance, self.camera, self.model, out, "--report", self.camera],
+                     [self.dance, self.camera, self.model, out, "--probe", self.model],
+                     [self.dance, self.camera, self.model, out, "--report", os.path.join(self.folder, "r.json"),
+                      "--debug", os.path.join(self.folder, "r.json")],
+                     [self.dance, self.camera, self.model, out, "--max-yaw", "0"],
+                     [self.dance, self.camera, self.model, out, "--max-pitch", "60"],
+                     [self.dance, self.dance, self.model, out],                       # the camera is the dance
+                     [self.dance, no_camera, self.model, out],                        # no camera keys
+                     [self.dance, self.camera, self.dance, out],                      # not a model
+                     [os.path.join(self.folder, "none.vmd"), self.camera, self.model, out]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"])
+            self.assertFalse(os.path.exists(out), argv)
+            self.assertFalse(os.path.exists(os.path.join(self.folder, "r.json")), argv)
+        with open(self.dance, "rb") as f:
+            self.assertEqual(f.read(), original)
+
+    def test_a_model_without_the_eye_bones_is_an_error(self):
+        w = Writer()
+        with open(self.model, "wb") as f:
+            f.write(w.build(bones=[w.bone("頭")]))
+        code, result = run([self.dance, self.camera, self.model, os.path.join(self.folder, "o.vmd")])
+        self.assertEqual(code, 2)
+        self.assertIn("両目", result["error"]["message"])
+
+
+def real_file(*parts):
+    folder = ROOT
+    for _ in range(4):
+        path = os.path.join(folder, *parts)
+        if os.path.isfile(path):
+            return path
+        folder = os.path.dirname(folder)
+    return None
+
+
+REAL_DANCE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_smooth_twist.vmd")
+REAL_CAMERA = real_file("_spike", "out", "hibikase", "variants", "camera_D_generated.vmd")
+RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
+
+
+@unittest.skipUnless(REAL_DANCE and REAL_CAMERA and os.path.isfile(RIN), "the dance, the camera or Sour's Rin is not here")
+class RealSongTest(unittest.TestCase):
+    def test_the_whole_song(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        out, report = os.path.join(folder, "eyes.vmd"), os.path.join(folder, "r.json")
+        started = time.time()
+        code, result = run([REAL_DANCE, REAL_CAMERA, RIN, out, "--report", report])
+        seconds = time.time() - started
+        self.assertEqual(code, 0, result)
+        self.assertLess(seconds, 60.0)
+        back = vmd.load(out)
+        self.assertEqual({k.name for k in back.bones}, {"両目"})
+        self.assertGreater(len(back.bones), 1000)
+        self.assertEqual(back.model_name, vmd.load(REAL_DANCE).model_name)
+        self.assertEqual(result["frames"], [0, 7742])
+        self.assertEqual(result["cuts"], 20)                         # camera_D cuts 21 shots
+        with open(report, encoding="ascii") as f:
+            full = json.load(f)
+        self.assertEqual(sum(full["counts"].values()), 7743)
+        self.assertAlmostEqual(sum(full["shares"].values()), 1.0, places=9)
+        self.assertEqual(full["eye"]["forward"], [0.0, 0.0, -1.0])
+        for key in back.bones:
+            gaze = fk.rotate(fk.applied(key.rotation), FORWARD)
+            self.assertLessEqual(abs(math.degrees(math.atan2(gaze[0], -gaze[2]))), eye_gaze.MAX_YAW + 1e-3)
+            self.assertLessEqual(abs(math.degrees(math.asin(max(-1.0, min(1.0, gaze[1]))))), eye_gaze.MAX_PITCH + 1e-3)
+
+
+if __name__ == "__main__":
+    unittest.main()
