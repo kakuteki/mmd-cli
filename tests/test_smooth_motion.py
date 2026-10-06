@@ -872,6 +872,41 @@ class DenoiseTest(unittest.TestCase):
         self.assertLessEqual(max(abs(v) for v in delta), 3.0 + 1e-6)
         self.assertLess(abs(sum(delta)), 0.02 * sum(abs(v) for v in delta))     # zero mean (quaternion components: ~)
 
+    def test_fingers_are_left_out_unless_asked_for(self):
+        # review 9 low 3: the traced fingers are not on the 6-degree grid (3 % of their non-zero angles) and gained
+        # nothing measurable from the denoise; a bone whose name holds 指 is smoothed but not denoised by default
+        keys = swing("右人指１", jitter=4.0) + swing("右腕", jitter=4.0)
+        plain, denoised, report = plain_and_denoised(keys)
+        self.assertEqual(track_of(denoised, "右人指１"), track_of(plain, "右人指１"))
+        self.assertNotEqual(track_of(denoised, "右腕"), track_of(plain, "右腕"))
+        entries = {b["name"]: b["denoise"] for b in report["bones"]}
+        self.assertEqual((entries["右人指１"]["frames"], entries["右人指１"]["skipped"]), (0, "finger"))
+        self.assertEqual(report["denoise"]["fingers"], False)
+        _, with_fingers, report = plain_and_denoised(keys, denoise_fingers=True)
+        self.assertNotEqual(track_of(with_fingers, "右人指１"), track_of(plain, "右人指１"))
+        self.assertEqual(report["denoise"]["fingers"], True)
+        with self.assertRaises(ValueError):                                 # without the denoise it would do nothing
+            smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys), denoise_fingers=True)
+
+    def test_keys_three_frames_apart_are_not_dense(self):
+        # review 9 low 5: a run of keys 3 frames apart is left alone (its alternation is 5 Hz, inside the beat)
+        keys = swing(step=3, jitter=4.0)
+        plain, denoised, report = plain_and_denoised(keys)
+        self.assertEqual(vmd.dumps(denoised), vmd.dumps(plain))
+        self.assertEqual(report["bones"][0]["denoise"]["frames"], 0)
+
+    def test_an_already_baked_file_is_warned_about(self):
+        # review 9 low 6: given its own output (a key on every frame), --denoise takes every key for dense
+        keys = [bone("右腕", 4 * i, rot=about((0.0, 1.0, 0.0), 10.0 * math.sin(i))) for i in range(30)]
+        baked, _ = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys))
+        _, report = smooth_motion.smooth(baked, denoise=DENOISE)
+        self.assertEqual(len(report["warnings"]), 1)
+        self.assertIn("baked", report["warnings"][0])
+        _, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=keys), denoise=DENOISE)
+        self.assertEqual(report["warnings"], [])
+        _, report = smooth_motion.smooth(baked)
+        self.assertEqual(report["warnings"], [])                            # only the denoise is misled by it
+
     def test_the_result_is_deterministic(self):
         keys = swing(jitter=4.0) + [bone("センター", f, pos=(0.2 * (-1) ** f, 0.05 * f, 0.0)) for f in range(0, 61)]
         motion = vmd.Motion(model_name="m", bones=keys)
@@ -935,8 +970,22 @@ class DenoiseCommandTest(unittest.TestCase):
         code, result = run(smooth_motion, [self.dance, self.out])
         self.assertIsNone(result["denoise"])
 
+    def test_fingers_and_the_warning_of_a_baked_file(self):
+        code, result = run(smooth_motion, [self.dance, self.out, "--denoise", "--denoise-fingers"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["denoise"]["fingers"], result["warnings"]), (True, []))
+        again = os.path.join(self.folder, "again.vmd")
+        code, result = run(smooth_motion, [self.out, again, "--denoise"])     # the output again: a key on every frame
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["denoise"]["fingers"], False)
+        self.assertEqual(len(result["warnings"]), 1)
+        self.assertIn("baked", result["warnings"][0])
+        code, result = run(smooth_motion, [self.dance, self.out])
+        self.assertEqual(result["warnings"], [])
+
     def test_bad_denoise_arguments_exit_2(self):
-        for argv in (["--denoise-cap", "2", "0.03"], ["--denoise", "16"], ["--denoise", "0"], ["--denoise", "7.5", "--denoise-cap", "0", "1"]):
+        for argv in (["--denoise-cap", "2", "0.03"], ["--denoise", "16"], ["--denoise", "0"], ["--denoise", "7.5", "--denoise-cap", "0", "1"],
+                     ["--denoise-fingers"]):
             code, result = run(smooth_motion, [self.dance, self.out] + argv)
             self.assertEqual(code, 2, argv)
             self.assertFalse(result["ok"])
