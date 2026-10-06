@@ -1,6 +1,6 @@
 """Read PMX (Polygon Model eXtended, versions 2.0 and 2.1) model files: the names, the element counts,
-the bone table with its flags, append and IK links, the morph list with panels and kinds, and the
-display frames.
+the bone table with its rest positions, tails, flags, append and IK links, fixed and local axes, the
+morph list with panels and kinds, and the display frames.
 
 The geometry (vertices, faces, textures, materials), rigid bodies, joints and soft bodies are walked
 over to reach the tables behind them and are only counted.  Values are kept as stored: IK angles are
@@ -10,7 +10,7 @@ morphs, joint kinds, soft bodies).  formats.pmd fills the same Model from PMD fi
 """
 import struct
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 MAGIC = b"PMX "
 ENCODINGS = {0: "utf-16-le", 1: "utf-8"}
@@ -24,6 +24,7 @@ _TAIL_IS_BONE = 0x0001
 _INDEX = {1: struct.Struct("<b"), 2: struct.Struct("<h"), 4: struct.Struct("<i")}
 _I32 = struct.Struct("<i")
 _F32 = struct.Struct("<f")
+_VEC3 = struct.Struct("<3f")
 _U16 = struct.Struct("<H")
 
 
@@ -45,6 +46,11 @@ class Bone:
     flags: Dict[str, bool]
     append: Optional[dict] = None       # {"parent": index, "ratio": float}
     ik: Optional[dict] = None           # {"target": index, "loops": int, "angle": float, "links": [index, ...]}
+    # the rest pose, in model coordinates as stored (X to the model's left, Y up, the model facing -Z)
+    position: Optional[Tuple[float, float, float]] = None
+    tail: Optional[dict] = None         # {"bone": index or None} or {"offset": (x, y, z)} from the bone's position
+    fixed_axis: Optional[Tuple[float, float, float]] = None     # the vector, when flags["fixed_axis"]
+    local_axes: Optional[dict] = None   # {"x": (x, y, z), "z": (x, y, z)} when flags["local_axis"]
 
 
 @dataclass
@@ -134,6 +140,9 @@ class _Reader:
 
     def f32(self):
         return self.unpack(_F32)[0]
+
+    def vec3(self):
+        return self.unpack(_VEC3)
 
     def plausible(self, n, item_size, what, at):
         """an element count read at `at`, refused before anything is read when the elements could not fit"""
@@ -228,22 +237,20 @@ def _skip_materials(r, texture_size):
 
 def _bone(r, index, size):
     name, name_en = r.text(), r.text()
-    r.skip(12)                                  # position
+    position = r.vec3()
     parent = _optional(r.index(size))
     layer = r.i32()
     bits = r.u16()
     flags = {name: bool(bits & bit) for name, bit in FLAG_BITS}
     if bits & _TAIL_IS_BONE:
-        r.skip(size)
+        tail = {"bone": _optional(r.index(size))}
     else:
-        r.skip(12)
+        tail = {"offset": r.vec3()}
     append = None
     if flags["append_rotate"] or flags["append_translate"]:
         append = {"parent": _optional(r.index(size)), "ratio": r.f32()}
-    if flags["fixed_axis"]:
-        r.skip(12)
-    if flags["local_axis"]:
-        r.skip(24)
+    fixed_axis = r.vec3() if flags["fixed_axis"] else None
+    local_axes = {"x": r.vec3(), "z": r.vec3()} if flags["local_axis"] else None
     if flags["external_parent"]:
         r.i32()
     ik = None
@@ -253,7 +260,7 @@ def _bone(r, index, size):
             ik["links"].append(_optional(r.index(size)))
             if r.u8():
                 r.skip(24)                      # angle limits
-    return Bone(index, name, name_en, parent, layer, flags, append, ik)
+    return Bone(index, name, name_en, parent, layer, flags, append, ik, position, tail, fixed_axis, local_axes)
 
 
 def _morph(r, index, sizes):

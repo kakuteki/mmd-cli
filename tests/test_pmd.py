@@ -17,8 +17,8 @@ def fixed(text, size):
     return text.encode("cp932").ljust(size, b"\x00")
 
 
-def bone(name, parent=-1, tail=-1, kind=0, ik_parent=0):
-    return struct.pack("<20shhBH3f", fixed(name, 20), parent, tail, kind, ik_parent, 0.0, 1.0, 0.0)
+def bone(name, parent=-1, tail=-1, kind=0, ik_parent=0, position=(0.0, 1.0, 0.0)):
+    return struct.pack("<20shhBH3f", fixed(name, 20), parent, tail, kind, ik_parent, *position)
 
 
 def ik(bone_index, target, loops, weight, links):
@@ -128,6 +128,11 @@ class BoneTest(unittest.TestCase):
         self.assertEqual(m.bones[2].ik, {"target": 6, "loops": 40, "angle": 0.5, "links": [4, 1]})
         self.assertEqual([b.ik for b in m.bones if b.index != 2], [None] * 11)
         self.assertIsNone(m.bones[0].name_en)
+
+    def test_the_rest_position_is_kept_and_the_pmx_only_fields_are_none(self):
+        m = pmd.loads(build(bones=[bone("センター", kind=1, position=(0.5, 8.25, -0.75)), bone("頭", 0, position=(0.0, 16.5, 0.0))]))
+        self.assertEqual([b.position for b in m.bones], [(0.5, 8.25, -0.75), (0.0, 16.5, 0.0)])
+        self.assertEqual([(b.tail, b.fixed_axis, b.local_axes) for b in m.bones], [(None, None, None)] * 2)
 
     def test_an_ik_record_marks_its_bone_even_when_the_type_says_otherwise(self):
         m = pmd.loads(build(bones=[bone("a", kind=0), bone("b", kind=0)], iks=[ik(1, 0, 3, 1.0, [0])]))

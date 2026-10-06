@@ -3,7 +3,8 @@
 Strings are cp932, cut at the first NUL, bytes that do not decode become U+FFFD.  The geometry is
 only counted (counts["textures"] is the number of distinct texture file names the materials use).
 Values are kept as stored; in particular the IK angle is the file's value, which PMX stores times 4
-as radians (the standard leg IK is 0.5 here and 2.0 in PMX files, the toe IK 1.0 and 4.0).
+as radians (the standard leg IK is 0.5 here and 2.0 in PMX files, the toe IK 1.0 and 4.0).  A bone
+keeps its rest position; its tail, fixed axis and local axes (PMX fields) stay None.
 
 Bone types (one byte per bone) and the PMX-style flags they become.  Measured on the 13 models
 shipped with MMD 9.32: bones of types 0, 1, 2, 4, 5 and 8 are the ones that appear in the bone
@@ -108,7 +109,7 @@ def _bone(index, raw, ik, name_en):
         append = {"parent": ik_parent, "ratio": 1.0}
     elif kind == 9:
         append = {"parent": tail, "ratio": ik_parent / 100.0}
-    return Bone(index, name, name_en, None if parent < 0 else parent, 0, flags, append, ik)
+    return Bone(index, name, name_en, None if parent < 0 else parent, 0, flags, append, ik, position=tuple(raw[5:8]))
 
 
 def loads(data):
