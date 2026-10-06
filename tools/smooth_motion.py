@@ -523,27 +523,50 @@ def _solve(columns, active, zone, fixed, lam):
     return out
 
 
+def _shrink(columns, zone, d, project):
+    """d times the largest factor in [0, 1] that keeps every zone frame inside its bounds (bisection: the bounds of a
+    frame hold on an interval of factors that contains 0, the plain curve).  A common factor keeps the mean and the
+    slope of d at 0 and its shape whole."""
+    low, high = 0.0, 1.0
+    for _ in range(50):
+        t = (low + high) / 2.0
+        if all(project(j, [x[j] + t * dd[j] for x, dd in zip(columns, d)]) is None for j in range(len(zone)) if zone[j]):
+            low = t
+        else:
+            high = t
+    return [[low * v for v in dd] for dd in d]
+
+
 def _settle(columns, zone, lam, project):
     """the new values of the window's frames: _solve, then hold every zone frame that leaves its bounds at its bound
-    (project(j, values) gives the bounded values, or None when inside) and solve again; the last values are projected"""
+    (project(j, values) gives the bounded values, or None when inside) and solve again.  When holding would leave fewer
+    than MIN_ZONE frames free (then the mean and slope could only be kept by a zigzag, or not at all: a held frame alone,
+    review 9 M1), or the rounds run out, the first correction is scaled down as a whole into the bounds instead."""
     n = len(columns[0])
     fixed = [[0.0] * n for _ in columns]
     active = list(zone)
+    first = None
     for _ in range(ROUNDS):
         d = _solve(columns, active, zone, fixed, lam)
-        held = 0
+        if first is None:
+            first = d
+        held = []
         for j in range(n):
             if active[j]:
                 bound = project(j, [x[j] + dd[j] for x, dd in zip(columns, d)])
                 if bound is not None:
-                    for c, x in enumerate(columns):
-                        fixed[c][j] = bound[c] - x[j]
-                    active[j] = False
-                    held += 1
+                    held.append((j, bound))
         if not held:
             break
+        if sum(active) - len(held) < MIN_ZONE:
+            d = _shrink(columns, zone, first, project)
+            break
+        for j, bound in held:
+            for c, x in enumerate(columns):
+                fixed[c][j] = bound[c] - x[j]
+            active[j] = False
     else:
-        d = _solve(columns, active, zone, fixed, lam)
+        d = _shrink(columns, zone, first, project)
     values = []
     for j in range(n):
         v = [x[j] + dd[j] for x, dd in zip(columns, d)]
