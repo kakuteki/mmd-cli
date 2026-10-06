@@ -191,6 +191,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - 2026-10-06 視線（batch G、枝 worktree-agent-a96e57779ecac18c9、査読 8 中）: 向きの約束は **描画で確認済み**（`--probe` を顔の
+     接写で描き、両目の表示 Y+15 = 見る人の右・Y-15 = 左・X+10 = 上・X-10 = 下が予測どおり。`_spike/out/hibikase/mv/eye/probe_sheet.png`）。
+     **カメラは各 `frame set` の後で `camera set` し直さないと元に戻る**（未登録の値）。実際のダンス＋手持ちカメラで 6 コマを 1920x1080 で
+     描いて顔を拡大（`gaze_faces.png`）: カメラを見ている所は目線が合う。端に寄せたまま（全体の 46 %）の所も、頭を回したまま横目・
+     上目で見る形で、この絵柄では不自然でない。手持ちカメラでの saccade は 132 回（固定カメラ 127 回）で揺れによる増加は小さい。
    - 2026-10-06 追記: 最速の回転（63 秒付近、腕が 1/240 秒に約 25 px 動く）では 4 枚平均でも腕が 4 本に分かれて写る
      （`_spike/out/hibikase/mv/blur/ghosting_240fps_spin.png`）。MMD は **480 fps も書ける**（160 枚が全部別、物理は 60 Hz）ので
      8 枚平均にすれば隙間は半分になるが、1 モーションフレーム 59 MB で最長のショット（578 フレーム）は 34 GB と hinata の空き 28 GB を
