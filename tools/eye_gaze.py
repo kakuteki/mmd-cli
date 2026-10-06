@@ -540,6 +540,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     forward, forward_from = rest_forward(model, eyes)
     seen = sights(model, dance, camera)
     looks, saccades, quiet = plan(seen, forward, limits, seed, life)
+    softened = [look for look in looks if look.state == "on_camera" and _in_soft_part(look.target, limits)]
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -564,11 +565,11 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         "cuts": cuts,
         "error_on_camera": _error_summary([look.error for look in looks if look.state == "on_camera"]),
         # how far from the camera the eyes are while the soft limit holds them short of it (the camera inside the
-        # limits but past SOFT_FROM of one): these frames are part of error_on_camera too
-        "soft_limit": {"from": SOFT_FROM,
-                       "frames": sum(1 for look in looks if look.state == "on_camera" and _in_soft_part(look.target, limits)),
-                       "error": _error_summary([look.error for look in looks
-                                                if look.state == "on_camera" and _in_soft_part(look.target, limits)])},
+        # limits but past SOFT_FROM of one): error is all of it (these frames are part of error_on_camera too), pull
+        # the part the soft limit itself takes (the rest is the fixation's lag and the drift)
+        "soft_limit": {"from": SOFT_FROM, "frames": len(softened),
+                       "error": _error_summary([look.error for look in softened]),
+                       "pull": _error_summary([_apart(soften(look.target, limits), look.target) for look in softened])},
         "dance_eye_keys": dance_eye_keys(dance),
     }
     return Gaze(looks, saccades, cuts, eye_motion(looks, dance.model_name), report, seen, forward)

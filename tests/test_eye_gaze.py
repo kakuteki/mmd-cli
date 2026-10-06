@@ -421,7 +421,12 @@ class SoftLimitTest(unittest.TestCase):
         self.assertEqual(soft_part["from"], eye_gaze.SOFT_FROM)
         self.assertEqual(soft_part["frames"], LAST + 1)
         self.assertAlmostEqual(soft_part["error"]["max"], short, places=2)
+        self.assertAlmostEqual(soft_part["pull"]["max"], short, places=2)                  # here all of it
         self.assertAlmostEqual(result.report["error_on_camera"]["max"], short, places=2)    # it is in the error too
+        # with life on, the drift adds to the error but not to what the soft limit itself takes away
+        lively = run_gaze(cam_motion=camera(cam(0, (0.0, 15.0, 0.0)), cam(LAST, (0.0, 15.0, 0.0))), life=True)
+        self.assertAlmostEqual(lively.report["soft_limit"]["pull"]["mean"], short, places=2)
+        self.assertNotAlmostEqual(lively.report["soft_limit"]["error"]["max"], short, places=2)
 
 
 class LimitTest(unittest.TestCase):
@@ -622,7 +627,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 0, result)
         self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 18.0, "up": 6.0, "down": 10.0})
         self.assertEqual(result["limits"]["soft_from"], 0.6)
-        self.assertEqual(set(result["soft_limit"]), {"from", "frames", "error"})
+        self.assertEqual(set(result["soft_limit"]), {"from", "frames", "error", "pull"})
         code, result = run([self.dance, self.camera, self.model, out, "--max-up", "4", "--max-down", "12", "--max-yaw", "20"])
         self.assertEqual(code, 0, result)
         self.assertEqual({k: result["limits"][k] for k in ("yaw", "up", "down")}, {"yaw": 20.0, "up": 4.0, "down": 12.0})
