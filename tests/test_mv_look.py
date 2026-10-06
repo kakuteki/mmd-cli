@@ -656,7 +656,7 @@ class ExcerptRenderTest(unittest.TestCase):
         whole, part = self.frames("whole"), self.frames("part")
         self.assertEqual(len(part), 24)
         gaps = [float(numpy.abs(part[j] - whole[57 + j]).mean()) for j in range(24)]
-        self.assertLess(max(gaps), 1.5, [round(g, 2) for g in gaps])
+        self.assertLess(max(gaps), 2.0, [round(g, 2) for g in gaps])         # x264 noise: 1.1 (review 12); a wrong phase 4 to 19
         # and the test can see a difference: the light moves from frame to frame, and the punch is on at the start
         self.assertGreater(float(numpy.abs(whole[57] - whole[58]).mean()), 3 * max(gaps) + 0.5)
         self.assertGreater(float(numpy.abs(whole[57] - whole[65]).mean()), 3 * max(gaps) + 0.5)

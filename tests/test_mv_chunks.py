@@ -140,6 +140,11 @@ class PlanTest(unittest.TestCase):
         for size in ("12", [1280, "720"], [1280.5, 720], [True, 720], [1280], [0, 720]):
             self.refused(size=size)
 
+    def test_the_size_is_even_for_the_video(self):
+        # review 12: yuv420p takes even sizes only; an odd one failed in ffmpeg after MMD had rendered chunk 0
+        for size in ([1281, 720], [1280, 721]):
+            self.assertIn("even", self.refused(size=size))
+
     def test_the_name_goes_into_a_file_name(self):
         self.refused(name="my mv")
         self.refused(name="")
@@ -276,7 +281,10 @@ function python {
     $global:LASTEXITCODE = 0
 }
 function ffprobe { $p = $args[-1]; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p } }
-function ffmpeg {
+if ($env:STUB_NO_DISK) {
+    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition 'public static bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, out ulong free) { available = 0; total = 0; free = 0; return false; }'
+}
+if (-not $env:STUB_NO_FFMPEG) { function ffmpeg {
     Add-Content -LiteralPath $log -Value ('ffmpeg ' + ($args -join ' ')) -Encoding UTF8
     if ($env:STUB_JOIN_FAILS) { $global:LASTEXITCODE = 1; return }
     $sum = 0
@@ -286,7 +294,7 @@ function ffmpeg {
     if ($env:STUB_JOIN_SHORT) { $sum = $sum - 1 }
     Set-Content -LiteralPath $args[-1] -Value $sum
     $global:LASTEXITCODE = 0
-}
+} }
 """
 
 
@@ -305,7 +313,8 @@ class DriverTest(unittest.TestCase):
 
     FILES = {"MMD/MikuMikuDance.exe": "mmd", "model/White.pmx": "pmx", "model/tex/skin.png": "skin",
              "dance.vmd": "dance", "lips.vmd": "lips", "camera.vmd": "camera", "stage/floor.x": "floor",
-             "stage/floor_tex.png": "floor texture", "cues.json": "{}", "look.json": '{"glow": {"strength": 0}}',
+             "stage/floor_tex.png": "floor texture", "stage2/prop.x": "prop", "stage2/prop_tex.png": "prop texture",
+             "cues.json": "{}", "look.json": '{"glow": {"strength": 0}}',
              "mmd_cli/__init__.py": "", "mmd_cli/app.py": "app", "tools/mv_look.py": "look", "tools/mv_text.py": "text"}
 
     def setUp(self):
@@ -331,7 +340,7 @@ class DriverTest(unittest.TestCase):
     def write(self, shutter=0.5, **plan):
         b = self.base
         full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
-                "camera": b + "/camera.vmd", "accessories": [b + "/stage/floor.x"], "look": self.look, "cues": self.cues,
+                "camera": b + "/camera.vmd", "accessories": [b + "/stage/floor.x", b + "/stage2/prop.x"], "look": self.look, "cues": self.cues,
                 "out": self.out, "scripts": self.scripts, "mmd_cli": b}
         full.update(plan)
         self.plan = mv_chunks.check_plan(full)
@@ -602,7 +611,41 @@ class DriverTest(unittest.TestCase):
         self.write(python="C:/no/such/folder/python.exe")
         code, text, calls = self.run_driver(before="cmd /c exit 0")
         self.assertEqual(code, 1, text)
-        self.assertIn("the look does not work", text)
+        self.assertIn("did not run", text)                         # review 12: not "the look does not work"
+        self.assertNotIn("the look does not work", text)
+
+    def test_a_join_command_that_is_not_found_stops_the_run(self):
+        # review 12: the join called without Invoke-Native kept the exit code 0 of the fold before it
+        self.write()
+        path = os.pathsep.join(os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), p)
+                               for p in ("System32", "System32\\WindowsPowerShell\\v1.0", ""))
+        code, text, calls = self.run_driver(STUB_NO_FFMPEG="1", PATH=path)
+        self.assertEqual(code, 1, text)
+        self.assertIn("joining failed", text)
+        self.assertIn("did not run", text)
+
+    def test_a_disk_whose_free_space_cannot_be_measured_is_named_as_such(self):
+        # review 12: a stand-in for the kernel call that always fails
+        self.write()
+        code, text, calls = self.run_driver(STUB_NO_DISK="1")
+        self.assertEqual(code, 3, text)
+        self.assertIn("could not measure the free space", text)
+        self.assertEqual(self.batches(calls), [])
+
+    def test_one_argument_reaches_the_command_whole(self):
+        # review 12: `$exe, $rest = $args` and `@rest` split a single argument into its characters
+        self.write()
+        with open(self.summary["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        start = driver.index("function Invoke-Native {")
+        helper = driver[start:driver.index("\n}\n", start) + 3]           # read as text: the CRLF are LF here
+        probe = os.path.join(self.tmp, "probe.ps1")
+        with open(probe, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write(helper + "\nfunction probe { 'count ' + $args.Count; foreach ($a in $args) { 'arg [' + $a + ']' } }\n"
+                    "Invoke-Native probe 'one argument'\nInvoke-Native probe\nInvoke-Native probe a 'b c'\n")
+        code, text = run_powershell(probe)
+        lines = [l.strip() for l in text.splitlines() if l.strip().startswith(("count", "arg"))]
+        self.assertEqual(lines[:6], ["count 1", "arg [one argument]", "count 0", "count 2", "arg [a]", "arg [b c]"], text)
 
     def test_resume_renders_again_after_any_input_it_watches_changes(self):
         # review 11: the stamp watched the eight named files only; a texture, mmd_cli or MMD itself went unseen
@@ -631,6 +674,34 @@ class DriverTest(unittest.TestCase):
             self.put("camera.vmd", "camera, longer")
             os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns))
             self.assertEqual(renders("camera"), 3)
+        with self.subTest(changed="nothing but the bytecode python writes"):          # review 12
+            self.put("tools/__pycache__/mv_text.cpython-312.pyc", "bytecode")
+            self.put("mmd_cli/__pycache__/app.cpython-312.pyc", "bytecode")
+            self.assertEqual(renders("pycache"), 0)
+        with self.subTest(changed="the second motion"):
+            self.put("lips.vmd", "lips changed")
+            self.assertEqual(renders("second motion"), 3)
+        with self.subTest(changed="a texture of the second accessory"):
+            self.put("stage2/prop_tex.png", "prop texture changed")
+            self.assertEqual(renders("second accessory"), 3)
+        with self.subTest(changed="a texture of the same size, later"):
+            path = os.path.join(self.tmp, "model", "tex", "skin.png")
+            text = open(path, encoding="utf-8").read()
+            old = os.stat(path)
+            self.put("model/tex/skin.png", text.upper())
+            os.utime(path, ns=(old.st_atime_ns, old.st_mtime_ns + 10 ** 9))
+            self.assertEqual(renders("texture time"), 3)
+        with self.subTest(changed="a hidden texture"):
+            path = os.path.join(self.tmp, "model", "tex", "skin.png")
+            hide = lambda flag: subprocess.run(["attrib", flag, path], check=True, capture_output=True,
+                                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            hide("+h")
+            self.assertEqual(renders("texture hidden"), 0)
+            hide("-h")
+            self.put("model/tex/skin.png", "skin, hidden and changed")
+            hide("+h")
+            self.assertEqual(renders("hidden texture changed"), 3)
+            hide("-h")
         with self.subTest(changed="the size of a texture, at the old time"):
             path = os.path.join(self.tmp, "model", "tex", "skin.png")
             old = os.stat(path)
