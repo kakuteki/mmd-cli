@@ -329,7 +329,6 @@ DENOISE_CAP = (3.0, 0.05)               # how far the denoise may move a frame: 
 DENSE_GAP = 2                           # keys at most this many frames apart make a dense run
 DENOISE_MARGIN = 2                      # the frames on either side of a dense key the correction may use
 JERK = (-1.0, 3.0, -3.0, 1.0)           # the third difference: the penalty is on the jerk
-QUIET = 1e-6                            # the data weight of a corrected frame that is not a dense key
 ROUNDS = 12                             # rounds of holding the frames that leave their bounds
 
 
@@ -427,9 +426,9 @@ def _ldl_solve(low, diag, b):
     return z
 
 
-def _solve(columns, active, zone, weights, fixed, lam):
+def _solve(columns, active, zone, fixed, lam):
     """the correction of every channel (columns: values per window frame) on the active frames: minimize
-    sum(weights * d^2) + lam * |JERK * (x + d)|^2 with d fixed where not active, and the zone's mean and slope of d at 0"""
+    sum(d^2) + lam * |JERK * (x + d)|^2 with d fixed where not active, and the zone's mean and slope of d at 0"""
     n = len(columns[0])
     free = [j for j in range(n) if active[j]]
     out = [list(fx) for fx in fixed]
@@ -437,7 +436,7 @@ def _solve(columns, active, zone, weights, fixed, lam):
         return out
     index = {j: a for a, j in enumerate(free)}
     m = len(free)
-    bands = [[weights[j], 0.0, 0.0, 0.0] for j in free]
+    bands = [[1.0, 0.0, 0.0, 0.0] for _ in free]
     rhs = [[0.0] * m for _ in columns]
     base = [[x[j] + fx[j] for j in range(n)] for x, fx in zip(columns, fixed)]
     for r in range(n - 3):
@@ -485,14 +484,14 @@ def _solve(columns, active, zone, weights, fixed, lam):
     return out
 
 
-def _settle(columns, zone, weights, lam, project):
+def _settle(columns, zone, lam, project):
     """the new values of the window's frames: _solve, then hold every zone frame that leaves its bounds at its bound
     (project(j, values) gives the bounded values, or None when inside) and solve again; the last values are projected"""
     n = len(columns[0])
     fixed = [[0.0] * n for _ in columns]
     active = list(zone)
     for _ in range(ROUNDS):
-        d = _solve(columns, active, zone, weights, fixed, lam)
+        d = _solve(columns, active, zone, fixed, lam)
         held = 0
         for j in range(n):
             if active[j]:
@@ -505,7 +504,7 @@ def _settle(columns, zone, weights, lam, project):
         if not held:
             break
     else:
-        d = _solve(columns, active, zone, weights, fixed, lam)
+        d = _solve(columns, active, zone, fixed, lam)
     values = []
     for j in range(n):
         v = [x[j] + dd[j] for x, dd in zip(columns, d)]
@@ -547,7 +546,6 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
         lo, hi = max(f0, a - 3), min(f1, b + 3)
         window = range(lo - f0, hi - f0 + 1)
         inside = [lo + j in zone for j in range(len(window))]
-        weights = [1.0 if lo + j in dense else QUIET for j in range(len(window))]
         x = [[rot[i][c] for i in window] for c in range(4)]
         if any(rot[i] != rot[window[0]] for i in window):
             def bound_rotation(j, v, x=x):
@@ -557,7 +555,7 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
                 if 2.0 * math.acos(min(1.0, c)) <= cap_rad:
                     return None
                 return list(slerp(xq, q, cap_rad / (2.0 * math.acos(min(1.0, c)))))
-            values = _settle(x, inside, weights, lam, bound_rotation)
+            values = _settle(x, inside, lam, bound_rotation)
             for j, i in enumerate(window):
                 if inside[j]:
                     new_rot[i] = _normalized(values[j])
@@ -571,7 +569,7 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
                 if c == 1:
                     low = max(low, floor)
                 return [low] if v[0] < low else [high] if v[0] > high else None
-            values = _settle([xc], inside, weights, lam, bound_position)
+            values = _settle([xc], inside, lam, bound_position)
             for j, i in enumerate(window):
                 if inside[j]:
                     p = list(new_pos[i])
