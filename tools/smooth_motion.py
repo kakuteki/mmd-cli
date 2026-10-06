@@ -354,16 +354,20 @@ def dense_plan(keys):
     """(the frames the denoise may move, the frames of the dense keys, the track's floor) of a deduped track.
 
     A key is dense when a gap of at most DENSE_GAP frames joins it to a neighbour.  Pinned (never moved) are: every frame
-    of a hold or of an authored segment (their keys too), every key that is not dense, the track's first and last key and,
-    when the track's height varies, every key at its lowest height (a foot on the floor stays where it was traced).  The
-    frames that may move are those within DENOISE_MARGIN of a dense key that are not pinned."""
+    of a hold or of an authored segment (their keys too), the frame just before and just after a hold and the frame next
+    to the track's first and last key (so the motion enters and leaves every still stretch as the plain curve does),
+    every key that is not dense, the track's first and last key and, when the track's height varies, every key at its
+    lowest height (a foot on the floor stays where it was traced).  The frames that may move are those within
+    DENOISE_MARGIN of a dense key that are not pinned."""
     n = len(keys)
     ys = [k.position[1] for k in keys]
     floor = min(ys)
     lifts = max(ys) > floor
-    pinned = set()
+    pinned = {keys[0].frame + 1, keys[-1].frame - 1}
     for a, b in zip(keys, keys[1:]):
-        if is_flat(a, b) or not all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
+        if is_flat(a, b):
+            pinned.update(range(a.frame - 1, b.frame + 2))
+        elif not all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
             pinned.update(range(a.frame, b.frame + 1))
     dense = set()
     for i, k in enumerate(keys):

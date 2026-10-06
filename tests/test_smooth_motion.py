@@ -774,8 +774,8 @@ class DenoiseTest(unittest.TestCase):
         plain, denoised, report = plain_and_denoised(swing(jitter=10.0))
         self.assertEqual(report["denoise"], {"hz": DENOISE, "cap_deg": 3.0, "cap_units": 0.05, "max_gap": 2, "margin": 2})
         entry = report["bones"][0]["denoise"]
-        self.assertEqual(entry["keys"], 89)                                 # 91 keys on every frame but the first and the last
-        self.assertEqual(entry["frames"], 89)
+        self.assertEqual(entry["keys"], 87)                                 # 91 keys: all but the first two and the last two
+        self.assertEqual(entry["frames"], 87)
         self.assertGreater(entry["at_cap"], 0)
         self.assertAlmostEqual(entry["max_deg"], 3.0, places=6)
         self.assertEqual(entry["max_units"], 0.0)
@@ -810,7 +810,7 @@ class DenoiseCommandTest(unittest.TestCase):
         self.assertEqual(code, 0, result)
         summary = result["denoise"]
         self.assertEqual((summary["hz"], summary["cap_deg"], summary["cap_units"]), (7.5, 3.0, 0.05))
-        self.assertEqual((summary["keys"], summary["frames"]), (89, 89))
+        self.assertEqual((summary["keys"], summary["frames"]), (87, 87))
         self.assertAlmostEqual(summary["max_deg"], 3.0, places=6)
         report = os.path.join(self.folder, "r.json")
         code, result = run(smooth_motion, [self.dance, self.out, "--denoise", "6", "--denoise-cap", "2", "0.03", "--report", report])
