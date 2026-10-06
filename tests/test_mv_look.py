@@ -253,6 +253,12 @@ class GraphTest(unittest.TestCase):
         self.assertIn("-stream_loop", argv[argv.index("W/plate.png"):argv.index("W/light_%05d.png")])
         self.assertIn("[2:v]trim=start_frame=3,setpts=PTS-STARTPTS,", self.filter_of(argv))
 
+    def test_a_chunk_time_written_with_six_decimals_finds_its_frame_of_the_loop(self):
+        # review 13: mv_chunks writes --from as %.6f, so a cut at frame 256 comes as 8.533333 s (255.99999 frames);
+        # rounded it is frame 256 (16 of a 30 frame loop), cut down it would be 255 (15)
+        argv = self.graph(start=8.533333, light_frames=30)
+        self.assertIn("[2:v]trim=start_frame=16,", self.filter_of(argv))
+
     def test_a_chunk_on_a_whole_loop_reads_the_loop_from_its_start(self):
         argv = self.graph(start=2.0, light_frames=30)
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-i"][:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])
@@ -656,7 +662,7 @@ class ExcerptRenderTest(unittest.TestCase):
         whole, part = self.frames("whole"), self.frames("part")
         self.assertEqual(len(part), 24)
         gaps = [float(numpy.abs(part[j] - whole[57 + j]).mean()) for j in range(24)]
-        self.assertLess(max(gaps), 1.5, [round(g, 2) for g in gaps])
+        self.assertLess(max(gaps), 2.0, [round(g, 2) for g in gaps])         # x264 noise: 1.1 (review 12); a wrong phase 4 to 19
         # and the test can see a difference: the light moves from frame to frame, and the punch is on at the start
         self.assertGreater(float(numpy.abs(whole[57] - whole[58]).mean()), 3 * max(gaps) + 0.5)
         self.assertGreater(float(numpy.abs(whole[57] - whole[65]).mean()), 3 * max(gaps) + 0.5)

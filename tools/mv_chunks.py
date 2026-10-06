@@ -30,12 +30,14 @@ For each chunk the driver checks that the batch is the one it was written with, 
 the chunk, checks the free space for the AVI, runs the batch, folds the AVI (keeping mv_look's answer as
 <mp4>.look.json), counts the frames of the mp4, notes the recipe of the chunk beside it (<mp4>.recipe) and only then
 deletes the AVI.  A failure stops the run (exit 1; 3 for the disk) and keeps the AVI.  The joined video is counted too.
--Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the same batch, look and fold,
-and the same size and time of every file it watches: the motions, camera, look and cues, everything under the folders of
-the model and of the accessories (textures, toons, spheres), mmd_cli and tools/ on the render machine, and MMD itself.
-It does not see fonts (mv_text finds them on the render machine) or MMD's settings: after changing those, render
-without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver checks the
-look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
+-Resume skips a chunk whose mp4 has its frame count and was made from the same recipe: the SHA-256 of its batch text,
+the look's path and its fold arguments, and the size and time of every file it watches: the motions, camera, look and
+cues, everything under the folders of the model and of the accessories (textures, toons, spheres; a __pycache__ folder
+is left out, its bytecode is no input), mmd_cli and tools/ on the render machine, and MMD itself.  It does not see
+fonts (mv_text finds them on the render machine), MMD's settings, Python and its libraries, ffmpeg, or files outside
+those folders (a texture the model reads from elsewhere) or behind a junction inside them: after changing any of those,
+render without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver
+checks the look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
 The summary is one line of JSON; an error is {"ok": false, "error": ...} with exit code 2.
 """
@@ -180,6 +182,9 @@ def check_plan(plan):
     full.setdefault("size", [1280, 720])
     if not isinstance(full["size"], list) or len(full["size"]) != 2 or not all(_whole(v) and v > 0 for v in full["size"]):
         raise ValueError("size is [width, height] in whole pixels, not %r" % (full["size"],))
+    if any(v % 2 for v in full["size"]):
+        raise ValueError("size is even in both ways: the video is yuv420p, which ffmpeg refuses for an odd size "
+                         "(found only after MMD has rendered chunk 0), not %r" % (full["size"],))
     full.setdefault("codec", UNCOMPRESSED)
     if not isinstance(full["codec"], str) or not full["codec"]:
         raise ValueError("codec is the name of a codec MMD offers for the AVI")
@@ -263,7 +268,8 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
              % (len(chunks), fps, sub, shutter, total, joined),
              "# Written by tools/mv_chunks.py.  -Resume skips a chunk whose mp4 has its frame count and was made from the",
              "# same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
-             "# It does not see fonts or MMD's settings: after changing those, run without -Resume.",
+             "# It does not see fonts, MMD's settings, Python, ffmpeg or files outside the watched folders: after changing",
+             "# any of those, run without -Resume.",
              "param([switch]$Resume)",
              "$ErrorActionPreference = 'Continue'",
              "Set-Location -LiteralPath %s" % _ps(plan["mmd_cli"])]
@@ -277,11 +283,14 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }",
               "$sw = [Diagnostics.Stopwatch]::StartNew()",
               "function Invoke-Native {",
-              "    # an external command, with the last exit code cleared first: one that is not found leaves it as it was",
+              "    # an external command, with the last exit code cleared first: one that is not found leaves it as it was.",
+              "    # The rest is an array even for one argument (splatting a lone string passes its characters)",
               "    $global:LASTEXITCODE = $null",
-              "    $exe, $rest = $args",
+              "    $exe = $args[0]",
+              "    $rest = @($args | Select-Object -Skip 1)",
               "    & $exe @rest",
               "}",
+              "function Why($code) { if ($null -eq $code) { 'did not run' } else { 'exit ' + $code } }",
               "if (-not ('MvChunks.Disk' -as [type])) {",
               "    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition '[DllImport(\"kernel32.dll\", CharSet = CharSet.Unicode, "
               "SetLastError = true)] public static extern bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, "
@@ -296,10 +305,12 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "$files = @($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue; "
               "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } })",
               "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
-              "Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
+              "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
               "$stamp = $files -join \"`n\"",
               "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps 30" % (py, _ps(work), plan["size"][0], plan["size"][1]),
-              "if ($LASTEXITCODE -ne 0) { 'STOP: the look does not work: {0} (mv_look layers, exit {1})' -f $look, $LASTEXITCODE; $check; exit 1 }",
+              # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
+              "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the look check (not found?)' -f %s; exit 1 }" % _ps(plan["python"]),
+              "if ($LASTEXITCODE -ne 0) { 'STOP: mv_look layers failed on the look {0} ({1}):' -f $look, (Why $LASTEXITCODE); $check; exit 1 }",
               "function Count-Frames($path) {",
               "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
               "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
@@ -333,10 +344,10 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
               "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
               "    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
-              "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed (exit {1}), see {2}' -f $name, $LASTEXITCODE, $json; exit 1 }",
+              "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
               "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
               "    if ($LASTEXITCODE -ne 0) {",
-              "        '{0} STOP: mv_look failed (exit {1}); the AVI is kept: {2}' -f $name, $LASTEXITCODE, $avi",
+              "        '{0} STOP: mv_look failed ({1}); the AVI is kept: {2}' -f $name, (Why $LASTEXITCODE), $avi",
               "        Get-Content -LiteralPath \"$mp4.look.json\" -ErrorAction SilentlyContinue",
               "        exit 1",
               "    }",
@@ -355,7 +366,7 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
             ", ".join(_ps(a) for a in fold_args(plan, tag, c, fps, shutter))))
     lines += ["Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue" % _ps(joined),
               "Invoke-Native ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
-              "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed (exit {0})' -f $LASTEXITCODE; exit 1 }",
+              "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed ({0})' -f (Why $LASTEXITCODE); exit 1 }",
               "$n = Count-Frames %s" % _ps(joined),
               "if ($n -ne %d) { 'STOP: the joined video has {0} frames, want {1}' -f $n, %d; exit 1 }" % (total, total),
               "'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, [int]$sw.Elapsed.TotalSeconds, %s" % (total, _ps(joined))]
