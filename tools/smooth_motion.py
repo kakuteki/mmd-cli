@@ -2,7 +2,7 @@
 velocity jump at every key, and bake it to a key on every frame.
 
     python tools/smooth_motion.py DANCE.vmd OUT.vmd [--report r.json] [--bones NAME ...] [--skip NAME ...]
-                                  [--tension 0.5] [--denoise [HZ]] [--denoise-cap DEG UNITS]
+                                  [--tension 0.5] [--denoise [HZ]] [--denoise-cap DEG UNITS] [--denoise-fingers]
 
 Why: a traced dance holds sparse keys with the linear curve.  The distributed motion of ヒビカセ has 39,451 of
 its 39,660 bone keys on the curve (20, 20, 107, 107), a median gap of 3 to 6 frames and 100 to 200 gaps of
@@ -56,42 +56,53 @@ What the tool does, per bone track (keys sorted by frame; of two keys on one fra
   name.  The input file is never written over.  The report lists every bone with its keys before and
   after and its segments (linear / authored / flat).
 
---denoise [HZ] (default off; HZ 7.5 when given bare; docs/reviews/2026-10-06-batch-h-denoise.md).  Passing exactly
-through every key keeps the tracer's jitter where the keys are 1 or 2 frames apart.  The keys of the traced ヒビカセ
-sit on the grid the tracer edited with: 89 % of the body's angles are multiples of 6 degrees in the MMD angle boxes and
-97 % of the positions multiples of 0.3 units, so a key misses the pose by up to 3 degrees per angle and the speed of a
-fast passage jumps between multiples of 6 degrees per frame.  The denoise takes that frame-scale jitter out of the
-baked curve and nothing else:
+--denoise [HZ] (default off; HZ 7.5 when given bare; docs/reviews/2026-10-06-batch-h-denoise.md, review 9).  Passing
+exactly through every key keeps the tracer's jitter where the keys are 1 or 2 frames apart.  The keys of the traced
+ヒビカセ sit on the grid the tracer edited with: of the body's angles in the MMD angle boxes that are not exactly 0,
+78 % are multiples of 6 degrees (89 % with the many zeros; the fingers only 3 %), and 96.5 % of the non-zero positions
+are multiples of 0.3 units, so a key misses the pose by up to 3 degrees per angle and the speed of a fast passage jumps
+between multiples of 6 degrees per frame.  The denoise takes that frame-scale jitter out of the baked curve and
+nothing else:
 
 * A dense key is a key joined to a neighbour by a gap of at most 2 frames (DENSE_GAP).  An error that alternates on
   keys 1 or 2 frames apart is a 15 or 7.5 Hz pattern, above the beat (1 to 4 Hz); 3 frames apart it is 5 Hz and
   cannot be told from the choreography, so longer gaps are left alone.
 * The zone: the frames within 2 frames (DENOISE_MARGIN) of a dense key, minus the pinned frames: every frame of a
   hold or of an authored segment, the frame just before and just after a hold and the frame next to the track's
-  first and last key (so the motion enters and leaves every still stretch exactly as without the denoise), every key
-  that is not dense, the first and last key, and, when the track's height varies, every key at its lowest height (a
-  foot on the floor stays where it was traced).
-* On a zone (with the 3 frames on either side held) the correction d of the baked curve x minimizes
+  first and last key (so the step that touches a still stretch is the plain one; the steps 2 to 4 frames from it may
+  change within the bounds), every key that is not dense, the first and last key, and, when the track's height
+  varies, every key at its lowest height (a foot on the floor stays where it was traced).  The zone frames that lie
+  within 3 frames of each other make one part; a part of fewer than 4 frames (MIN_ZONE) is left alone, since with
+  its mean and slope at 0 (below) 3 frames can only take a zigzag c (1, -2, 1) (review 9: it turned a smooth
+  deceleration of 6.5, 7.4, 6.9 degrees per frame into 11.0, 3.0, 8.4).
+* Fingers (a bone whose name holds 指) are smoothed but not denoised unless --denoise-fingers: they are not on the
+  grid and gained nothing measurable.
+* On a part (with the 3 frames on either side held) the correction d of the baked curve x minimizes
   sum |d|^2 + lam * sum |third difference of (x + d)|^2, a penalized least-squares (Whittaker) smoother of order 3,
   the discrete minimum-jerk path near x.  lam = (2 sin(pi HZ / 30))^-6: on a curve keyed at every frame the response
   is 1 / (1 + lam (2 sin(pi f / 30))^6), a zero-phase low-pass that halves a sine of HZ.  At 7.5 Hz a frame-to-frame
   alternation keeps 1/9, a 7.5 Hz one 1/2, a 4 Hz accent 96 % and a 2 Hz swing 99.9 %.  Every zone frame counts
   with weight 1, keys and the frames between them alike (the plain curve is the data): leaving the frames between keys
   free let the correction spread into slow bumps, measured as removed energy below 6 Hz.
-* The correction of a zone has zero mean and zero slope (two linear constraints, per channel): a run is never shifted
-  or tilted as a whole, only its frame-to-frame irregularity is redistributed.
+* The correction of a part has zero mean and zero slope (two linear constraints, per channel): a run is never shifted
+  or tilted as a whole, only its frame-to-frame irregularity is redistributed.  Exact for positions and for the
+  quaternion components; renormalized, a fast turn can leave the rotation vectors slightly off zero on average.
 * Bounds on every zone frame: at most 3 degrees from the plain curve (the angle of the turn between them), at most
   0.05 units per position component (DENOISE_CAP, --denoise-cap DEG UNITS), and never below the track's lowest
   original height (the floor of a foot, the deepest crouch of the center, whatever the bone's spelling).  A frame that
-  leaves its bounds is held at the bound and the others solved again (ROUNDS), and the last values are put back onto
-  the bounds, so the bounds always hold.
+  leaves its bounds is held at the bound and the others solved again (ROUNDS).  When that would leave fewer than
+  MIN_ZONE frames free, or the rounds run out, the first correction is scaled down as a whole until it fits (one
+  factor, so its mean and slope stay 0 and no frame moves alone: review 9 had single frames at 3 degrees with their
+  neighbours fixed).  So the bounds always hold, and a corrected frame passes a traced key's value by at most the
+  bound (the plain curve never passes one).
 * Rotations are smoothed as quaternion components (one sign all along the track) and renormalized, the bound is
   applied along the geodesic, the written quaternion keeps the stored sign of the frame.  Positions per component.
   The system is banded (a key's jerk terms reach 3 frames): an L D L^T of half-bandwidth 3, stdlib only.
 * Everything else is the plain output byte for byte: every frame farther than 2 frames from a dense key, every key
-  that is not dense, every hold, every authored segment.  The report gives per bone the keys and frames moved, the
-  frames at a bound and the largest moves.  Running --denoise on its own output (a key on every frame) takes every
-  frame for dense and smooths the whole curve again: give it the traced keys.
+  that is not dense, every hold, every authored segment, every part of fewer than 4 frames, the fingers.  The report
+  gives per bone the keys and frames moved, the frames at a bound and the largest moves.  On its own output (a key on
+  every frame) --denoise would take every key for dense and move keys that were sparse in the tracing: when 90 % or
+  more of a track's key gaps are 1 frame the result's "warnings" say so.  Give it the traced keys.
 """
 import argparse
 import bisect
