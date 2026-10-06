@@ -191,6 +191,12 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む**（e61a743 の `mv_look --subframes 8 --shutter 0.5`）。
+     120 fps の 2 枚平均は速い手が二重に写る（拡大で確認、`_spike/out/hibikase/mv/fps/blur_compare_3.png`）、240 fps の 4 枚平均は
+     なめらかに流れる。240 fps でも中間 8 枚は全部別の姿勢（物理は 60 Hz で更新: 4 枚ごとに差が大きい）。80〜94 秒の試しは
+     MMD 37 秒・12.4 GB・後処理 18 秒。全曲は **カメラのショットごとに 21 区間**（継ぎ目はカットで隠れる、物理の助走 120 フレーム、
+     最大 17 GB。hinata の空きは 28 GB）: `_spike/out/hibikase/mv/production/make_chunks.py` が区間の台本と `render_<tag>.ps1` を書く。
+     試しの動画は Discord に送付。hinata の試験用 AVI（約 8 GB）は片付けた。
    - **2026-10-06 実測: MMD は 120 fps で書き出せ、中間フレームは全部別の姿勢**（2400〜2409 を 120 fps で 40 枚、隣接差 0 の対は 0）
      → 本物の動きのぼかし（サブフレームの平均）ができる。**えぬたの読み物は「動画ファイルは30fpsで出力ください、30fps以外は
      未対応です（※重要）」**（逐語）。60 fps 版はこれに沿わない。公開用は 120 fps で描いて 30 fps にぼかしで畳む
