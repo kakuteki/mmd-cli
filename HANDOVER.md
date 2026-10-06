@@ -191,6 +191,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **2026-10-06 16:07 最終版（音あり）完成**: `Desktop/ヒビカセMV_20261005/hibikase_mv_最終_音あり_20261006.mp4`
+     （1280x720・30 fps・258.1 秒・AAC 256k、286 MB）。描画 29 分 22 秒、21 区間すべて枚数一致・計 7,743 枚。試写版とは目で見て同じ
+     （横並び `_spike/out/report/final_vs_preview.jpg`）。音の結合後も開始時刻 0・元の音との差 0 ms。Discord に 480p（音あり 19.8 MB）と一覧を送付。
+     受け渡しフォルダの FINAL.md の頭に最終版の節（音源の出所・作り方・公開時の条件）、音源の写しも同じフォルダ。
+     hinata の区間の mp4/json 42 個と look_work_final・look_work_60（計 0.9 GB）を消した。hinata の正本 `C:/work/hibikase/out/hibikase_mv_final.mp4`（無音）は残す。
    - **2026-10-06 音源**: 加賀さんの指示で yt-dlp により YouTube の公式アップロード（「【初音ミク】ヒビカセ【オリジナル】」、
      Reol Official、https://www.youtube.com/watch?v=TkroHwQYpFE）から音声だけを取得: `_spike/out/hibikase/audio/hibikase_yt_TkroHwQYpFE.webm`
      （Opus 48 kHz・256.0 秒）。**時刻はそのままで合う**: 声の立ち上がり（300〜3500 Hz のスペクトル流束）とリップの母音 622 個の
