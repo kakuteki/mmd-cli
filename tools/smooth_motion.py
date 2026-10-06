@@ -276,15 +276,21 @@ def smooth_segment(a, b, ma, mb):
     return out
 
 
-def smooth_track(keys, tension):
-    """(the new keys, {"linear": n, "authored": n, "flat": n}) for a track with keys on 2 or more frames:
-    a key per frame where the value moves, the two keys alone where it does not"""
+def dedupe(keys):
+    """the keys of a track (sorted by frame) with one key per frame: of two keys on one frame the last one counts"""
     deduped = []
     for k in keys:
         if deduped and deduped[-1].frame == k.frame:
             deduped[-1] = k
         else:
             deduped.append(k)
+    return deduped
+
+
+def smooth_track(keys, tension):
+    """(the new keys, {"linear": n, "authored": n, "flat": n}) for a track with keys on 2 or more frames:
+    a key per frame where the value moves, the two keys alone where it does not"""
+    deduped = dedupe(keys)
     frames = [k.frame for k in deduped]
     slopes = tangents(deduped, tension)
     straight = vmd.LINEAR_CURVE
@@ -315,10 +321,287 @@ def is_constant(keys):
     return all(is_flat(keys[0], k) for k in keys[1:])
 
 
-def smooth(motion, tension=0.5, bones=None, skip=()):
-    """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring"""
+# ---- the denoise (--denoise) ------------------------------------------------------------------
+
+FPS = 30.0                              # MMD's frame rate
+DENOISE_HZ = 7.5                        # the cutoff of --denoise when none is given
+DENOISE_CAP = (3.0, 0.05)               # how far the denoise may move a frame: degrees, model units per position component
+DENSE_GAP = 2                           # keys at most this many frames apart make a dense run
+DENOISE_MARGIN = 2                      # the frames on either side of a dense key the correction may use
+JERK = (-1.0, 3.0, -3.0, 1.0)           # the third difference: the penalty is on the jerk
+QUIET = 1e-6                            # the data weight of a corrected frame that is not a dense key
+ROUNDS = 12                             # rounds of holding the frames that leave their bounds
+
+
+def smoothing_weight(hz):
+    """the weight of the jerk penalty for a cutoff of `hz`: on keys at every frame the smoother halves a sine of hz
+    (its response is 1 / (1 + weight * (2 sin(pi f / FPS))^6), a zero-phase low-pass of order 3)"""
+    return (2.0 * math.sin(math.pi * hz / FPS)) ** -6
+
+
+def check_denoise(hz, cap):
+    """(hz, (degrees, units)) as floats, or ValueError"""
+    if isinstance(hz, bool) or not isinstance(hz, (int, float)) or not 0.0 < hz < FPS / 2.0:
+        raise ValueError("--denoise is a cutoff in Hz above 0 and below %g (half of %g fps), not %r" % (FPS / 2.0, FPS, hz))
+    cap = tuple(cap)
+    if len(cap) != 2 or not all(not isinstance(c, bool) and isinstance(c, (int, float)) and math.isfinite(c) and c > 0.0
+                                for c in cap):
+        raise ValueError("--denoise-cap is two positive numbers, degrees and model units, not %r" % (cap,))
+    return float(hz), (float(cap[0]), float(cap[1]))
+
+
+def dense_plan(keys):
+    """(the frames the denoise may move, the frames of the dense keys, the track's floor) of a deduped track.
+
+    A key is dense when a gap of at most DENSE_GAP frames joins it to a neighbour.  Pinned (never moved) are: every frame
+    of a hold or of an authored segment (their keys too), every key that is not dense, the track's first and last key and,
+    when the track's height varies, every key at its lowest height (a foot on the floor stays where it was traced).  The
+    frames that may move are those within DENOISE_MARGIN of a dense key that are not pinned."""
+    n = len(keys)
+    ys = [k.position[1] for k in keys]
+    floor = min(ys)
+    lifts = max(ys) > floor
+    pinned = set()
+    for a, b in zip(keys, keys[1:]):
+        if is_flat(a, b) or not all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
+            pinned.update(range(a.frame, b.frame + 1))
+    dense = set()
+    for i, k in enumerate(keys):
+        if 0 < i < n - 1 and k.frame not in pinned and not (lifts and k.position[1] == floor) and \
+                min(k.frame - keys[i - 1].frame, keys[i + 1].frame - k.frame) <= DENSE_GAP:
+            dense.add(k.frame)
+        else:
+            pinned.add(k.frame)
+    zone = set()
+    for f in dense:
+        for g in range(max(keys[0].frame, f - DENOISE_MARGIN), min(keys[-1].frame, f + DENOISE_MARGIN) + 1):
+            if g not in pinned:
+                zone.add(g)
+    return zone, dense, floor
+
+
+def _ldl(bands):
+    """L D L^T of a symmetric positive definite matrix of half-bandwidth 3, given by rows [A(i,i), A(i,i+1), A(i,i+2),
+    A(i,i+3)]; L as rows [L(i,i-1), L(i,i-2), L(i,i-3)]"""
+    n = len(bands)
+    low, diag = [[0.0, 0.0, 0.0] for _ in range(n)], [0.0] * n
+    for i in range(n):
+        row = low[i]
+        for k in (3, 2, 1):                                                 # L(i, j) for j = i-3, i-2, i-1 in turn
+            j = i - k
+            if j < 0:
+                continue
+            s = bands[j][k]
+            for kk in range(k + 1, 4):                                      # the columns m = i-kk < j already done
+                m = i - kk
+                if m < 0:
+                    break
+                s -= row[kk - 1] * low[j][kk - k - 1] * diag[m]
+            row[k - 1] = s / diag[j]
+        d = bands[i][0]
+        for k in (1, 2, 3):
+            if i - k >= 0:
+                d -= row[k - 1] * row[k - 1] * diag[i - k]
+        diag[i] = d
+    return low, diag
+
+
+def _ldl_solve(low, diag, b):
+    n = len(b)
+    z = list(b)
+    for i in range(n):
+        row = low[i]
+        for k in (1, 2, 3):
+            if i - k >= 0:
+                z[i] -= row[k - 1] * z[i - k]
+    for i in range(n):
+        z[i] /= diag[i]
+    for i in range(n - 1, -1, -1):
+        for k in (1, 2, 3):
+            if i + k < n:
+                z[i] -= low[i + k][k - 1] * z[i + k]
+    return z
+
+
+def _solve(columns, active, zone, weights, fixed, lam):
+    """the correction of every channel (columns: values per window frame) on the active frames: minimize
+    sum(weights * d^2) + lam * |JERK * (x + d)|^2 with d fixed where not active, and the zone's mean and slope of d at 0"""
+    n = len(columns[0])
+    free = [j for j in range(n) if active[j]]
+    out = [list(fx) for fx in fixed]
+    if not free:
+        return out
+    index = {j: a for a, j in enumerate(free)}
+    m = len(free)
+    bands = [[weights[j], 0.0, 0.0, 0.0] for j in free]
+    rhs = [[0.0] * m for _ in columns]
+    base = [[x[j] + fx[j] for j in range(n)] for x, fx in zip(columns, fixed)]
+    for r in range(n - 3):
+        idx = [index.get(r + s) for s in range(4)]
+        if idx[0] is None and idx[1] is None and idx[2] is None and idx[3] is None:
+            continue
+        for c, b in enumerate(base):
+            v = JERK[0] * b[r] + JERK[1] * b[r + 1] + JERK[2] * b[r + 2] + JERK[3] * b[r + 3]
+            if v:
+                for s in range(4):
+                    if idx[s] is not None:
+                        rhs[c][idx[s]] -= lam * JERK[s] * v
+        for s in range(4):
+            if idx[s] is not None:
+                for t in range(s, 4):
+                    if idx[t] is not None:
+                        bands[idx[s]][idx[t] - idx[s]] += lam * JERK[s] * JERK[t]
+    low, diag = _ldl(bands)
+    z = [_ldl_solve(low, diag, b) for b in rhs]
+    # the run is not moved as a whole: the zone's mean and slope of d stay 0 (the held frames count with their d)
+    if m <= 2:
+        z = [[0.0] * m for _ in columns]
+    else:
+        frames = [j for j in range(n) if zone[j]]
+        mid, scale = sum(frames) / float(len(frames)), float(len(frames))
+        rows = [[1.0 if zone[j] else 0.0 for j in range(n)], [(j - mid) / scale if zone[j] else 0.0 for j in range(n)]]
+        cf = [[row[j] for j in free] for row in rows]
+        w = [_ldl_solve(low, diag, c) for c in cf]
+        s00 = sum(a * b for a, b in zip(cf[0], w[0]))
+        s01 = sum(a * b for a, b in zip(cf[0], w[1]))
+        s11 = sum(a * b for a, b in zip(cf[1], w[1]))
+        det = s00 * s11 - s01 * s01
+        if det <= 1e-12 * s00 * s11:
+            z = [[0.0] * m for _ in columns]
+        else:
+            for c in range(len(columns)):
+                held = [-sum(row[j] * fixed[c][j] for j in range(n) if zone[j] and not active[j]) for row in rows]
+                r0 = sum(a * b for a, b in zip(cf[0], z[c])) - held[0]
+                r1 = sum(a * b for a, b in zip(cf[1], z[c])) - held[1]
+                mu0, mu1 = (s11 * r0 - s01 * r1) / det, (s00 * r1 - s01 * r0) / det
+                z[c] = [v - w[0][a] * mu0 - w[1][a] * mu1 for a, v in enumerate(z[c])]
+    for c in range(len(columns)):
+        for a, j in enumerate(free):
+            out[c][j] = z[c][a]
+    return out
+
+
+def _settle(columns, zone, weights, lam, project):
+    """the new values of the window's frames: _solve, then hold every zone frame that leaves its bounds at its bound
+    (project(j, values) gives the bounded values, or None when inside) and solve again; the last values are projected"""
+    n = len(columns[0])
+    fixed = [[0.0] * n for _ in columns]
+    active = list(zone)
+    for _ in range(ROUNDS):
+        d = _solve(columns, active, zone, weights, fixed, lam)
+        held = 0
+        for j in range(n):
+            if active[j]:
+                bound = project(j, [x[j] + dd[j] for x, dd in zip(columns, d)])
+                if bound is not None:
+                    for c, x in enumerate(columns):
+                        fixed[c][j] = bound[c] - x[j]
+                    active[j] = False
+                    held += 1
+        if not held:
+            break
+    else:
+        d = _solve(columns, active, zone, weights, fixed, lam)
+    values = []
+    for j in range(n):
+        v = [x[j] + dd[j] for x, dd in zip(columns, d)]
+        if zone[j]:
+            v = project(j, v) or v
+        values.append(v)
+    return values
+
+
+def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
+    """(the baked keys with the frame-scale jitter of the dense runs taken out, what was moved): keys is the deduped
+    track, baked what smooth_track made of it.  See the module docstring."""
+    stats = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0}
+    zone, dense, floor = dense_plan(keys)
+    if not zone:
+        return baked, stats
+    cap_deg, cap_units = cap
+    cap_rad = math.radians(cap_deg)
+    lam = smoothing_weight(hz)
+    f0, f1 = keys[0].frame, keys[-1].frame
+    at = {k.frame: k for k in baked}
+    pos, rot, last = [], [], None
+    for f in range(f0, f1 + 1):                                             # the baked path at every frame (a hold keeps its value)
+        last = at.get(f, last)
+        pos.append(tuple(last.position))
+        q = _normalized(last.rotation)
+        if rot and sum(a * b for a, b in zip(q, rot[-1])) < 0.0:
+            q = tuple(-v for v in q)                                        # one sign all along: the components are smooth
+        rot.append(q)
+    new_pos, new_rot = list(pos), list(rot)
+    frames = sorted(zone)
+    groups, start = [], frames[0]
+    for prev, f in zip(frames, frames[1:]):
+        if f - prev > 3:                                                    # no jerk term reaches across 3 pinned frames
+            groups.append((start, prev))
+            start = f
+    groups.append((start, frames[-1]))
+    for a, b in groups:
+        lo, hi = max(f0, a - 3), min(f1, b + 3)
+        window = range(lo - f0, hi - f0 + 1)
+        inside = [lo + j in zone for j in range(len(window))]
+        weights = [1.0 if lo + j in dense else QUIET for j in range(len(window))]
+        x = [[rot[i][c] for i in window] for c in range(4)]
+        if any(rot[i] != rot[window[0]] for i in window):
+            def bound_rotation(j, v, x=x):
+                q = _normalized(v)
+                xq = (x[0][j], x[1][j], x[2][j], x[3][j])
+                c = abs(sum(p * r for p, r in zip(q, xq)))
+                if 2.0 * math.acos(min(1.0, c)) <= cap_rad:
+                    return None
+                return list(slerp(xq, q, cap_rad / (2.0 * math.acos(min(1.0, c)))))
+            values = _settle(x, inside, weights, lam, bound_rotation)
+            for j, i in enumerate(window):
+                if inside[j]:
+                    new_rot[i] = _normalized(values[j])
+        for c in range(3):
+            xc = [pos[i][c] for i in window]
+            if all(v == xc[0] for v in xc):
+                continue
+
+            def bound_position(j, v, xc=xc, c=c):
+                low, high = xc[j] - cap_units, xc[j] + cap_units
+                if c == 1:
+                    low = max(low, floor)
+                return [low] if v[0] < low else [high] if v[0] > high else None
+            values = _settle([xc], inside, weights, lam, bound_position)
+            for j, i in enumerate(window):
+                if inside[j]:
+                    p = list(new_pos[i])
+                    p[c] = values[j][0]
+                    new_pos[i] = tuple(p)
+    out = []
+    for k in baked:
+        i = k.frame - f0
+        if k.frame not in zone or (new_pos[i] == pos[i] and new_rot[i] == rot[i]):
+            out.append(k)
+            continue
+        q = new_rot[i] if new_rot[i] != rot[i] else tuple(k.rotation)
+        if sum(a * b for a, b in zip(q, k.rotation)) < 0.0:
+            q = tuple(-v for v in q)                                        # the stored sign of the baked frame
+        out.append(vmd.BoneKey(k.name, k.frame, new_pos[i], q, k.interpolation, k.raw_name))
+        degrees = math.degrees(2.0 * math.acos(min(1.0, abs(sum(a * b for a, b in zip(new_rot[i], rot[i]))))))
+        units = max(abs(a - b) for a, b in zip(new_pos[i], pos[i]))
+        stats["frames"] += 1
+        stats["keys"] += k.frame in dense
+        stats["at_cap"] += degrees >= cap_deg - 1e-6 or units >= cap_units - 1e-9
+        stats["max_deg"] = max(stats["max_deg"], degrees)
+        stats["max_units"] = max(stats["max_units"], units)
+    return out, stats
+
+
+def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None):
+    """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring.  denoise is the
+    cutoff in Hz of the denoise of the dense runs (None: no denoise), denoise_cap its (degrees, units)."""
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
+    if denoise is None and denoise_cap is not None:
+        raise ValueError("--denoise-cap bounds --denoise: give --denoise too")
+    if denoise is not None:
+        denoise, denoise_cap = check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     tracks = tracks_of(motion)
     skip = set(skip)
     chosen = set(tracks) if bones is None else set(bones)
@@ -330,7 +613,10 @@ def smooth(motion, tension=0.5, bones=None, skip=()):
                  "frames": [keys[0].frame, keys[-1].frame], "segments": {"linear": 0, "authored": 0, "flat": 0},
                  "changed": False}
         if name in chosen and keys[0].frame != keys[-1].frame and not is_constant(keys):
-            keys, counts = smooth_track(keys, tension)
+            baked, counts = smooth_track(keys, tension)
+            if denoise is not None:
+                baked, entry["denoise"] = denoise_track(dedupe(keys), baked, denoise, denoise_cap)
+            keys = baked
             entry.update(keys_after=len(keys), segments=counts, changed=True)
         new_bones += keys
         report.append(entry)
@@ -339,7 +625,9 @@ def smooth(motion, tension=0.5, bones=None, skip=()):
         if isinstance(value, list):
             setattr(out, field, list(value))
     out.bones = new_bones
-    return out, {"tension": tension, "skipped": sorted(skip & set(tracks)),
+    settings = None if denoise is None else {"hz": denoise, "cap_deg": denoise_cap[0], "cap_units": denoise_cap[1],
+                                             "max_gap": DENSE_GAP, "margin": DENOISE_MARGIN}
+    return out, {"tension": tension, "denoise": settings, "skipped": sorted(skip & set(tracks)),
                  "bones_requested_but_absent": sorted(set(bones or ()) - set(tracks)), "bones": report}
 
 
@@ -372,17 +660,26 @@ def check_distinct(*paths):
         seen[key] = path
 
 
-def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None):
+def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None, denoise=None, denoise_cap=None):
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
     check_distinct(dance_full, out_full, report_path)
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
+    if denoise is None and denoise_cap is not None:
+        raise ValueError("--denoise-cap bounds --denoise: give --denoise too")
+    if denoise is not None:
+        check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     motion = vmd.load(dance_full)
-    smoothed, report = smooth(motion, tension, bones, skip)
+    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap)
     write_bytes(out_full, vmd.dumps(smoothed))
     back = vmd.load(out_full)
     changed = [b for b in report["bones"] if b["changed"]]
-    result = {"in": dance_full, "out": out_full, "tension": tension, "bone_keys_before": len(motion.bones),
+    summary = None
+    if report["denoise"] is not None:
+        moved = [b["denoise"] for b in changed]
+        summary = dict(report["denoise"], **{kind: sum(m[kind] for m in moved) for kind in ("keys", "frames", "at_cap")})
+        summary.update({kind: max([m[kind] for m in moved] or [0.0]) for kind in ("max_deg", "max_units")})
+    result = {"in": dance_full, "out": out_full, "tension": tension, "denoise": summary, "bone_keys_before": len(motion.bones),
               "bone_keys": len(back.bones), "bones_changed": len(changed), "skipped": report["skipped"],
               "segments": {kind: sum(b["segments"][kind] for b in changed) for kind in ("linear", "authored", "flat")},
               "bones": report["bones"]}
@@ -401,9 +698,14 @@ def main(argv=None):
     p.add_argument("--bones", nargs="+", help="smooth only these bones")
     p.add_argument("--skip", nargs="+", default=[], help="leave these bones as they are")
     p.add_argument("--tension", type=float, default=0.5, help="scale of the tangents, 0 to 1 (default 0.5 = Catmull-Rom)")
+    p.add_argument("--denoise", nargs="?", type=float, const=DENOISE_HZ, default=None, metavar="HZ",
+                   help="also take the frame-scale jitter out of the runs of keys 1-2 frames apart; HZ is the cutoff "
+                        "(default %g)" % DENOISE_HZ)
+    p.add_argument("--denoise-cap", nargs=2, type=float, default=None, metavar=("DEG", "UNITS"),
+                   help="how far --denoise may move a frame (default %g degrees, %g units)" % DENOISE_CAP)
     args = p.parse_args(argv)
     try:
-        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report)
+        result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
