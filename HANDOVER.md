@@ -191,6 +191,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      音源は正規の配布元が無い（SoundCloud は DL 不可、piapro の同名は別人の曲、公式サイトに無し。動画サイトからの取得はしない）。
      加賀さんが音源ファイルを置いたら `ffmpeg -i mp4 -i 音源 -c:v copy -c:a aac -shortest` で結合。
      hinata の 28.5 GB の alpha AVI と旧版 AVI は消した（作り直しは `mv_full2.txt` から 9 分）。
+   - **2026-10-06 音源**: 加賀さんの指示で yt-dlp により YouTube の公式アップロード（「【初音ミク】ヒビカセ【オリジナル】」、
+     Reol Official、https://www.youtube.com/watch?v=TkroHwQYpFE）から音声だけを取得: `_spike/out/hibikase/audio/hibikase_yt_TkroHwQYpFE.webm`
+     （Opus 48 kHz・256.0 秒）。**時刻はそのままで合う**: 声の立ち上がり（300〜3500 Hz のスペクトル流束）とリップの母音 622 個の
+     相互相関の山が +0.03 秒（約 1 フレーム）。最初の歌い出しは声 32.64 秒・口が開き切る 32.73 秒。映像は 258.1 秒なので
+     音の後ろに無音を足して結合する（`-af apad -shortest`、映像は copy、音は AAC 256k）。
    - **2026-10-06 真の最終を描画中**（`render_final.ps1`）: 手ぶれ除去は査読 9 の直しを取り込み（9770fb1、ジグザグ 0・1 フレームの突起 0、
      指は除外）、**上限は 6 度/0.05 を採用**（既定 3 度/0.05 と足・センターは同じで、右ひじ p99 −25.7 %（3 度は −16.9 %）、速さの揺り返し
      5,305（平滑だけ 5,480））。モーション = 原文 → 腕補正 → `smooth_motion --denoise --denoise-cap 6 0.05` → `fix_twist`
