@@ -556,6 +556,273 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 2)
 
 
+# ---- --denoise (batch H) -------------------------------------------------------------------
+
+DENOISE = 7.5
+
+
+def swing(name="右腕", step=1, last=90, amplitude=30.0, jitter=1.5, hz=2.0, axis=(1.0, 0.0, 0.0)):
+    """a sine swing about one axis, keyed every `step` frames, each key off by +jitter and -jitter degrees in turn"""
+    keys = []
+    for i, f in enumerate(range(0, last + 1, step)):
+        angle = amplitude * math.sin(2.0 * math.pi * hz * f / 30.0) + jitter * (-1) ** i
+        keys.append(bone(name, f, rot=about(axis, angle)))
+    return keys
+
+
+def x_degrees(track, first, last):
+    """the angle about X, at every frame of the span, of a track that turns about X only"""
+    frames = [k.frame for k in track]
+    out = []
+    for f in range(first, last + 1):
+        q = smooth_motion.sample(track, f, frames)[1]
+        out.append(math.degrees(2.0 * math.atan2(q[0], q[3])))
+    return out
+
+
+def plain_and_denoised(keys, hz=DENOISE, **options):
+    motion = vmd.Motion(model_name="m", bones=keys)
+    plain, _ = smooth_motion.smooth(motion)
+    denoised, report = smooth_motion.smooth(motion, denoise=hz, **options)
+    return plain, denoised, report
+
+
+def path(motion, name, first=None, last=None):
+    return per_frame(track_of(motion, name), first, last)
+
+
+def high_share(signal, above):
+    """the share of the energy of a sequence sampled at 30 fps that lies above `above` Hz (plain DFT)"""
+    n = len(signal)
+    total = high = 0.0
+    for k in range(n // 2 + 1):
+        re = sum(v * math.cos(2.0 * math.pi * k * i / n) for i, v in enumerate(signal))
+        im = sum(v * math.sin(2.0 * math.pi * k * i / n) for i, v in enumerate(signal))
+        e = (re * re + im * im) * (1.0 if k == 0 or 2 * k == n else 2.0)
+        total += e
+        if k * 30.0 / n > above:
+            high += e
+    return high / total
+
+
+def alternation(values, first, last, sign_of=lambda f: (-1) ** f):
+    """the amplitude of the +-pattern in values[first:last]"""
+    return abs(sum(sign_of(f) * values[f] for f in range(first, last))) / float(last - first)
+
+
+class DenoiseTest(unittest.TestCase):
+    """batch H: --denoise takes the frame-scale jitter out of runs of keys 1-2 frames apart, within caps"""
+
+    CLEAN = [30.0 * math.sin(2.0 * math.pi * 2.0 * f / 30.0) for f in range(0, 91)]
+
+    def amplitude_2hz(self, angles):
+        w = 2.0 * math.pi * 2.0 / 30.0                                      # frames 15..74: four whole periods
+        a = sum(angles[f] * math.sin(w * f) for f in range(15, 75)) * 2.0 / 60.0
+        b = sum(angles[f] * math.cos(w * f) for f in range(15, 75)) * 2.0 / 60.0
+        return math.hypot(a, b)
+
+    def test_alternating_jitter_on_a_2_hz_swing_drops_3x_and_the_swing_stays(self):
+        plain, denoised, _ = plain_and_denoised(swing())                    # a key on every frame, +-1.5 degrees in turn
+        before = x_degrees(track_of(plain, "右腕"), 0, 90)
+        after = x_degrees(track_of(denoised, "右腕"), 0, 90)
+        error_before = [a - c for a, c in zip(before, self.CLEAN)]
+        error_after = [a - c for a, c in zip(after, self.CLEAN)]
+        self.assertAlmostEqual(alternation(error_before, 15, 75), 1.5, places=6)
+        self.assertLessEqual(alternation(error_after, 15, 75), 1.5 / 3.0)
+        self.assertAlmostEqual(self.amplitude_2hz(before), 30.0, delta=0.01)
+        self.assertLess(abs(self.amplitude_2hz(after) - 30.0), 3.0)         # within 10 %
+
+    def test_what_is_removed_from_the_swing_lies_above_6_hz(self):
+        plain, denoised, _ = plain_and_denoised(swing())
+        removed = [a - b for a, b in zip(x_degrees(track_of(plain, "右腕"), 0, 90), x_degrees(track_of(denoised, "右腕"), 0, 90))]
+        self.assertGreater(max(abs(v) for v in removed), 1.0)
+        self.assertGreater(high_share(removed, 6.0), 0.9)
+
+    def test_keys_two_frames_apart_lose_their_alternation_too(self):
+        plain, denoised, _ = plain_and_denoised(swing(step=2))              # the alternation is a 7.5 Hz pattern
+        before = x_degrees(track_of(plain, "右腕"), 0, 90)
+        after = x_degrees(track_of(denoised, "右腕"), 0, 90)
+        on_keys = lambda f: (-1) ** (f // 2) if f % 2 == 0 else 0           # noqa: E731  the keys' frames only
+        error_before = [a - c for a, c in zip(before, self.CLEAN)]
+        error_after = [a - c for a, c in zip(after, self.CLEAN)]
+        self.assertAlmostEqual(alternation(error_before, 14, 74, on_keys) * 2.0, 1.5, places=6)
+        self.assertLessEqual(alternation(error_after, 14, 74, on_keys) * 2.0, 1.5 / 2.0)
+        self.assertLess(abs(self.amplitude_2hz(after) - 30.0), 3.0)
+
+    def test_a_hold_stays_exactly_still_and_is_left_at_rest(self):
+        held = about((1.0, 0.0, 0.0), 20.0)
+        keys = [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 10.0 + 0.3 * f + 1.5 * (-1) ** f)) for f in range(0, 30)]
+        keys += [bone("右腕", 30, rot=held), bone("右腕", 45, rot=held)]
+        keys += [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 20.0 + 2.0 * (f - 47) + 1.5 * (-1) ** f)) for f in range(48, 70)]
+        plain, denoised, _ = plain_and_denoised(keys)
+        self.assertEqual(path(denoised, "右腕", 30, 45), path(plain, "右腕", 30, 45))
+        for pos, rot in path(denoised, "右腕", 30, 45):
+            self.assertEqual(rot, smooth_motion._normalized(held))
+        self.assertNotEqual(path(denoised, "右腕", 5, 25), path(plain, "右腕", 5, 25))      # not vacuous
+        self.assertNotEqual(path(denoised, "右腕", 50, 65), path(plain, "右腕", 50, 65))
+        # left at rest: the first step out of the hold is no larger than without the denoise
+        step = lambda m: angle_between(path(m, "右腕", 45, 45)[0][1], path(m, "右腕", 46, 46)[0][1])   # noqa: E731
+        self.assertLessEqual(step(denoised), step(plain) + 0.05)
+
+    def test_a_foot_never_goes_below_its_floor_keeps_its_contacts_and_does_not_slide_in_a_hold(self):
+        for name in ("右足ＩＫ", "左足IK"):                                   # any spelling: the rule is the track's own floor
+            keys = []
+            for f in range(0, 31):
+                if 10 < f < 20:
+                    continue                                                # 10 -> 20: a hold on the floor
+                phase = f if f <= 10 else f - 20
+                lift = 0.6 * math.sin(math.pi * phase / 10.0)
+                y = lift + 0.04 * (-1) ** f if lift > 0.05 else 0.0
+                x = 0.1 * phase + 0.03 * (-1) ** phase + (0.0 if f <= 10 else 1.0)
+                keys.append(bone(name, f, pos=(x, y, 1.0)))
+            self.assertEqual(keys[10].position, keys[11].position)
+            plain, denoised, _ = plain_and_denoised(keys)
+            track = track_of(denoised, name)
+            self.assertGreaterEqual(min(k.position[1] for k in track), 0.0, name.encode("ascii", "backslashreplace"))
+            by = {k.frame: k for k in track}
+            for k in keys:
+                if k.position[1] == 0.0:
+                    self.assertEqual(by[k.frame].position, k.position, k.frame)        # a contact stays where it was
+            for pos, rot in path(denoised, name, 10, 20):
+                self.assertEqual(pos, keys[10].position)                                # no slide in the hold
+            self.assertNotEqual(track, track_of(plain, name))
+
+    def test_the_center_is_never_lowered_below_its_lowest_key(self):
+        keys = [bone("センター", f, pos=(0.0, -2.0 + 0.5 * math.cos(2.0 * math.pi * 2.0 * f / 30.0) + 0.08 * (-1) ** f, 0.0))
+                for f in range(0, 61)]
+        floor = min(k.position[1] for k in keys)
+        plain, denoised, _ = plain_and_denoised(keys)
+        self.assertGreaterEqual(min(k.position[1] for k in track_of(denoised, "センター")), floor)
+        self.assertNotEqual(track_of(denoised, "センター"), track_of(plain, "センター"))
+
+    def test_every_frame_stays_within_the_caps_of_the_plain_curve(self):
+        keys = swing(jitter=10.0) + [bone("センター", f, pos=(0.3 * (-1) ** f, 0.01 * f, 0.0)) for f in range(0, 61)]
+        for cap in (None, (1.0, 0.01)):
+            options = {} if cap is None else {"denoise_cap": cap}
+            plain, denoised, _ = plain_and_denoised(keys, **options)
+            cap_deg, cap_units = cap or smooth_motion.DENOISE_CAP
+            rot = max(angle_between(a[1], b[1]) for a, b in zip(path(plain, "右腕"), path(denoised, "右腕")))
+            self.assertLessEqual(rot, cap_deg + 1e-5)
+            self.assertGreater(rot, cap_deg - 1e-3)                         # the jitter is larger: the cap binds
+            pos = max(abs(x - y) for a, b in zip(path(plain, "センター"), path(denoised, "センター")) for x, y in zip(a[0], b[0]))
+            self.assertLessEqual(pos, cap_units + 1e-9)
+            self.assertGreater(pos, cap_units - 1e-6)
+        self.assertEqual(smooth_motion.DENOISE_CAP, (3.0, 0.05))
+
+    def test_sparse_keys_and_every_frame_away_from_a_dense_key_are_untouched(self):
+        sparse = [bone("右腕", 4 * i, rot=about((0.0, 1.0, 0.0), 10.0 * math.sin(i) + 3.0 * (-1) ** i)) for i in range(20)]
+        plain, denoised, report = plain_and_denoised(sparse)
+        self.assertEqual(vmd.dumps(denoised), vmd.dumps(plain))
+        mixed = [k for k in sparse if k.frame <= 36]
+        mixed += [bone("右腕", f, rot=about((0.0, 1.0, 0.0), 2.0 * (f - 36) + 2.0 * (-1) ** f)) for f in range(37, 46)]
+        mixed += [bone("右腕", f, rot=about((0.0, 1.0, 0.0), 20.0 - (f - 49))) for f in range(49, 80, 4)]
+        plain, denoised, _ = plain_and_denoised(mixed)
+        p, d = path(plain, "右腕"), path(denoised, "右腕")
+        margin = smooth_motion.DENOISE_MARGIN
+        self.assertEqual(margin, 2)
+        for f in list(range(0, 36 - margin)) + list(range(45 + margin + 1, 78)):   # the run is keys 36..45
+            self.assertEqual(d[f], p[f], f)
+        self.assertNotEqual(d[36:46], p[36:46])
+        by = {k.frame: k for k in track_of(denoised, "右腕")}
+        for k in mixed:
+            if k.frame not in range(36, 46):
+                self.assertEqual(by[k.frame].rotation, k.rotation, k.frame)
+
+    def test_an_authored_segment_next_to_a_dense_run_is_untouched(self):
+        keys = swing(last=30) + [bone("右腕", 40, rot=about((1.0, 0.0, 0.0), 50.0), curve=EASE)]
+        keys += [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 50.0 + f - 40 + 1.5 * (-1) ** f)) for f in range(41, 60)]
+        plain, denoised, report = plain_and_denoised(keys)
+        self.assertEqual(path(denoised, "右腕", 30, 40), path(plain, "右腕", 30, 40))
+        self.assertNotEqual(path(denoised, "右腕", 5, 25), path(plain, "右腕", 5, 25))
+        self.assertEqual(report["bones"][0]["segments"]["authored"], 1)
+
+    def test_rotations_stay_unit_and_turn_the_short_way(self):
+        keys = swing(jitter=2.0, axis=(0.0, 0.6, 0.8))
+        keys = [vmd.BoneKey(k.name, k.frame, k.position, tuple((-1.0) ** i * v for v in k.rotation), k.interpolation)
+                for i, k in enumerate(keys)]                                # the stored sign flips at every key
+        plain, denoised, _ = plain_and_denoised(keys)
+        p, d = track_of(plain, "右腕"), track_of(denoised, "右腕")
+        self.assertEqual([k.frame for k in d], [k.frame for k in p])
+        cap = smooth_motion.DENOISE_CAP[0]
+        moved = 0
+        for a, b in zip(p, d):
+            if a.rotation != b.rotation:
+                moved += 1
+                self.assertAlmostEqual(sum(v * v for v in b.rotation), 1.0, places=9)
+                self.assertGreaterEqual(sum(x * y for x, y in zip(a.rotation, b.rotation)), 0.0)   # the stored sign is kept
+        self.assertGreater(moved, 80)
+        for a, a2, b, b2 in zip(p, p[1:], d, d[1:]):
+            self.assertLessEqual(angle_between(b.rotation, b2.rotation), angle_between(a.rotation, a2.rotation) + 2.0 * cap + 1e-5)
+
+    def test_the_result_is_deterministic(self):
+        keys = swing(jitter=4.0) + [bone("センター", f, pos=(0.2 * (-1) ** f, 0.05 * f, 0.0)) for f in range(0, 61)]
+        motion = vmd.Motion(model_name="m", bones=keys)
+        first = vmd.dumps(smooth_motion.smooth(motion, denoise=DENOISE)[0])
+        second = vmd.dumps(smooth_motion.smooth(motion, denoise=DENOISE)[0])
+        self.assertEqual(first, second)
+
+    def test_the_report_tells_what_was_moved(self):
+        plain, denoised, report = plain_and_denoised(swing(jitter=10.0))
+        self.assertEqual(report["denoise"], {"hz": DENOISE, "cap_deg": 3.0, "cap_units": 0.05, "max_gap": 2, "margin": 2})
+        entry = report["bones"][0]["denoise"]
+        self.assertEqual(entry["keys"], 89)                                 # 91 keys on every frame but the first and the last
+        self.assertEqual(entry["frames"], 89)
+        self.assertGreater(entry["at_cap"], 0)
+        self.assertAlmostEqual(entry["max_deg"], 3.0, places=6)
+        self.assertEqual(entry["max_units"], 0.0)
+        _, report = smooth_motion.smooth(vmd.Motion(model_name="m", bones=swing()))
+        self.assertIsNone(report["denoise"])
+        self.assertNotIn("denoise", report["bones"][0])
+
+    def test_bad_parameters_are_refused(self):
+        motion = vmd.Motion(model_name="m", bones=swing())
+        for hz in (0.0, -1.0, 15.0, 20.0, float("nan")):
+            with self.assertRaises(ValueError):
+                smooth_motion.smooth(motion, denoise=hz)
+        for cap in ((0.0, 0.05), (3.0, 0.0), (-1.0, 0.05), (float("inf"), 0.05), (3.0,)):
+            with self.assertRaises(ValueError):
+                smooth_motion.smooth(motion, denoise=DENOISE, denoise_cap=cap)
+        with self.assertRaises(ValueError):                                 # a cap without the denoise does nothing: refused
+            smooth_motion.smooth(motion, denoise_cap=(1.0, 0.01))
+
+
+class DenoiseCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        keys = swing(jitter=10.0) + zigzag()
+        with open(self.dance, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion(model_name="dancer", bones=keys)))
+        self.out = os.path.join(self.folder, "out.vmd")
+
+    def test_denoise_with_and_without_a_cutoff(self):
+        code, result = run(smooth_motion, [self.dance, self.out, "--denoise"])
+        self.assertEqual(code, 0, result)
+        summary = result["denoise"]
+        self.assertEqual((summary["hz"], summary["cap_deg"], summary["cap_units"]), (7.5, 3.0, 0.05))
+        self.assertEqual((summary["keys"], summary["frames"]), (89, 89))
+        self.assertAlmostEqual(summary["max_deg"], 3.0, places=6)
+        report = os.path.join(self.folder, "r.json")
+        code, result = run(smooth_motion, [self.dance, self.out, "--denoise", "6", "--denoise-cap", "2", "0.03", "--report", report])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["denoise"]["hz"], result["denoise"]["cap_deg"], result["denoise"]["cap_units"]), (6.0, 2.0, 0.03))
+        self.assertAlmostEqual(result["denoise"]["max_deg"], 2.0, places=5)
+        with open(report, encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["denoise"]["hz"], 6.0)
+        self.assertIn("denoise", [b for b in saved["bones"] if b["name"] == "右腕"][0])
+        code, result = run(smooth_motion, [self.dance, self.out])
+        self.assertIsNone(result["denoise"])
+
+    def test_bad_denoise_arguments_exit_2(self):
+        for argv in (["--denoise-cap", "2", "0.03"], ["--denoise", "16"], ["--denoise", "0"], ["--denoise", "7.5", "--denoise-cap", "0", "1"]):
+            code, result = run(smooth_motion, [self.dance, self.out] + argv)
+            self.assertEqual(code, 2, argv)
+            self.assertFalse(result["ok"])
+            self.assertFalse(os.path.exists(self.out), argv)
+
+
 def real_dance():
     for folder in (ROOT, os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))):
         for rel in (("_spike", "dance_original.vmd"), ("_spike", "out", "hibikase", "variants", "dance_original.vmd")):
@@ -600,6 +867,46 @@ class RealDanceTest(unittest.TestCase):
         self.assertLess(dev["excess"][0], 8.0, dev)                           # beyond the ease's timing bound, max
         self.assertLess(dev["position"][0], 1.0, dev)
         self.assertLess(len(data), 50 * 1024 * 1024, len(data))
+
+    def test_the_denoise_of_the_whole_dance_keeps_its_guarantees_and_is_quick(self):
+        before = vmd.load(REAL)
+        plain, _ = smooth_motion.smooth(before)
+        started = time.perf_counter()
+        after, report = smooth_motion.smooth(before, denoise=smooth_motion.DENOISE_HZ)
+        data = vmd.dumps(after)
+        elapsed = time.perf_counter() - started
+        self.assertLess(elapsed, 60.0, elapsed)
+        self.assertEqual(len(vmd.loads(data).bones), len(plain.bones))     # the denoise moves values, never frames
+        cap_deg, cap_units = smooth_motion.DENOISE_CAP
+        tp, ta, tb = smooth_motion.tracks_of(plain), smooth_motion.tracks_of(after), smooth_motion.tracks_of(before)
+        moved = 0
+        for name, keys in tp.items():
+            got = ta[name]
+            self.assertEqual([k.frame for k in got], [k.frame for k in keys])
+            for a, b in zip(keys, got):
+                if a is b or (a.position == b.position and a.rotation == b.rotation):
+                    continue
+                moved += 1
+                self.assertLessEqual(max(abs(x - y) for x, y in zip(a.position, b.position)), cap_units + 1e-9)
+                self.assertLessEqual(angle_between(a.rotation, b.rotation), cap_deg + 1e-4)
+        self.assertGreater(moved, 10000)
+        for name in ("右足ＩＫ", "左足ＩＫ", "センター"):
+            floor = min(k.position[1] for k in tb[name])
+            self.assertGreaterEqual(min(k.position[1] for k in ta[name]), floor, name.encode("ascii", "backslashreplace"))
+        for name, keys in tb.items():                                       # every hold of the dance is still a hold
+            by = {k.frame: k for k in ta[name]}
+            last = {}
+            for k in keys:
+                last[k.frame] = k                                           # of two keys on one frame the last one counts
+            keys = [last[f] for f in sorted(last)]
+            for a, b in zip(keys, keys[1:]):
+                if smooth_motion.is_flat(a, b) and a.frame in by:
+                    self.assertEqual((by[a.frame].position, by[a.frame].rotation), (by[b.frame].position, by[b.frame].rotation))
+        jerk_plain = motion_jerk.measure(plain, ["右腕", "左腕"])["bones"]
+        jerk_after = motion_jerk.measure(after, ["右腕", "左腕"])["bones"]
+        for name in ("右腕", "左腕"):
+            self.assertLess(jerk_after[name]["p99"], 0.85 * jerk_plain[name]["p99"], name.encode("ascii", "backslashreplace"))
+        self.assertEqual(report["denoise"]["hz"], smooth_motion.DENOISE_HZ)
 
 
 if __name__ == "__main__":
