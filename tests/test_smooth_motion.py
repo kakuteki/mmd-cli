@@ -1,4 +1,5 @@
 """tools/smooth_motion.py: C1 curves through the keys of a dance, baked to a key per frame; tools/motion_jerk.py: the acceleration."""
+import cmath
 import contextlib
 import importlib.util
 import io
@@ -832,6 +833,48 @@ class DenoiseCommandTest(unittest.TestCase):
             self.assertFalse(os.path.exists(self.out), argv)
 
 
+def fft(values):
+    """radix-2 FFT of a list of complex numbers whose length is a power of 2"""
+    n = len(values)
+    a = list(values)
+    j = 0
+    for i in range(1, n):
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j |= bit
+        if i < j:
+            a[i], a[j] = a[j], a[i]
+    size = 2
+    while size <= n:
+        w = cmath.exp(-2j * math.pi / size)
+        half = size // 2
+        for start in range(0, n, size):
+            t = 1.0
+            for k in range(start, start + half):
+                u, v = a[k], a[k + half] * t
+                a[k], a[k + half] = u + v, u - v
+                t *= w
+        size *= 2
+    return a
+
+
+def energy_bands(signal):
+    """(total, above 6 Hz, 1 to 4 Hz) energy of a real sequence sampled at 30 fps, zero padded to a power of 2"""
+    n = 1
+    while n < len(signal):
+        n *= 2
+    spectrum = fft([complex(v) for v in signal] + [0j] * (n - len(signal)))
+    total = high = low = 0.0
+    for k in range(n // 2 + 1):
+        e = abs(spectrum[k]) ** 2 * (1.0 if k == 0 or 2 * k == n else 2.0)
+        total += e
+        high += e if k * 30.0 / n > 6.0 else 0.0
+        low += e if 1.0 <= k * 30.0 / n <= 4.0 else 0.0
+    return total, high, low
+
+
 def real_dance():
     for folder in (ROOT, os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))):
         for rel in (("_spike", "dance_original.vmd"), ("_spike", "out", "hibikase", "variants", "dance_original.vmd")):
@@ -917,6 +960,26 @@ class RealDanceTest(unittest.TestCase):
         for name in ("右腕", "左腕"):
             self.assertLess(jerk_after[name]["p99"], 0.85 * jerk_plain[name]["p99"], name.encode("ascii", "backslashreplace"))
         self.assertEqual(report["denoise"]["hz"], smooth_motion.DENOISE_HZ)
+        # what is taken out is high frequency: the energy of the removed signal (plain minus denoised, per channel) lies
+        # mostly above 6 Hz and little of it in the 1-4 Hz of the beat
+        rotation = [0.0, 0.0, 0.0]
+        for name in ("センター", "上半身", "右腕", "左腕", "右ひじ", "頭"):
+            p, d = {k.frame: k for k in tp[name]}, {k.frame: k for k in ta[name]}
+            removed = []
+            for f in range(tp[name][0].frame, tp[name][-1].frame + 1):
+                same = f not in p or p[f].rotation == d[f].rotation
+                removed.append((0.0, 0.0, 0.0) if same else smooth_motion.log_map(smooth_motion.relative(d[f].rotation, p[f].rotation)))
+            for c in range(3):
+                rotation = [x + y for x, y in zip(rotation, energy_bands([math.degrees(v[c]) for v in removed]))]
+        self.assertGreater(rotation[1] / rotation[0], 0.8, rotation)
+        self.assertLess(rotation[2] / rotation[0], 0.1, rotation)
+        p, d = {k.frame: k for k in tp["センター"]}, {k.frame: k for k in ta["センター"]}
+        position = [0.0, 0.0, 0.0]
+        for c in range(3):
+            removed = [p[f].position[c] - d[f].position[c] if f in p else 0.0 for f in range(min(p), max(p) + 1)]
+            position = [x + y for x, y in zip(position, energy_bands(removed))]
+        self.assertGreater(position[1] / position[0], 0.8, position)
+        self.assertLess(position[2] / position[0], 0.1, position)
 
 
 if __name__ == "__main__":
