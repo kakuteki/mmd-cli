@@ -28,12 +28,14 @@ How the eyes move (plan: a small state machine, frame by frame):
   (soft(), review 8 R2): up to SOFT_FROM of a limit the eyes follow exactly, beyond it they approach the limit along
   tanh, so they slow down before it instead of stopping dead in the corner when the head swings; a camera exactly
   at the limit is looked at with 90.5 % of it.  The report says how far from the camera this leaves the eyes
-  (soft_limit; those frames are in error_on_camera too).  Once it has been out of reach (beyond that, or behind her) for PATIENCE frames in a row,
-  the eyes return to neutral instead of pinning at the limit; a shorter excursion, a nod with the beat, only holds
-  the limit.  Neutral eyes come back once the camera is within COME_BACK degrees of the limits (a hysteresis, so
-  that they do not flicker at the border).  On the MV's dance the camera is beyond the default limits on about 40 %
-  of the frames in yaw and as many in pitch, mostly for a fraction of a second at a time, which without the
-  patience made the eyes flip between the camera and neutral about once a second.
+  (soft_limit; those frames are in error_on_camera too).
+* Once the camera has been out of reach (beyond that, or behind her) for PATIENCE frames in a row (20, 0.67 s), the
+  eyes return to neutral instead of pinning at the limit; a shorter excursion, a nod or a turn with the beat, only
+  holds the limit.  Neutral eyes come back once the camera is within COME_BACK degrees of the limits (a hysteresis,
+  so that they do not flicker at the border).  On the MV's dance the camera is beyond the 18 / 10 limits on about
+  40 % of the frames in yaw and as many in pitch, mostly for a fraction of a second at a time: without a patience
+  the eyes flipped between the camera and neutral about once a second, with 10 frames they still made 42 round
+  trips (28 of them 0.5 s or less in neutral; review 8, R3).
 * Fixation: when a saccade lands on the camera, the eyes hold the camera's world position of that frame, and as
   the head moves they counter-rotate to keep pointing at it (like the vestibulo-ocular reflex).  The held point's
   yaw is followed through +-180 degrees, so when she spins and it passes behind her, eyes pinned at one limit stay
@@ -97,7 +99,7 @@ MAX_UP, MAX_DOWN = 6.0, 10.0          # degrees they turn up and down (--max-up,
 LIMIT_MAX = 45.0                      # degrees: the most a limit may be
 SOFT_FROM = 0.6                       # share of a limit up to which the eyes follow exactly; beyond, tanh towards it
 GIVE_UP = 12.0                        # degrees beyond a limit at which the eyes stop trying and go neutral
-PATIENCE = 10                         # frames the camera must stay beyond GIVE_UP (or behind) before they do
+PATIENCE = 20                         # frames the camera must stay beyond GIVE_UP (or behind) before they do
 COME_BACK = 8.0                       # degrees beyond the limits within which neutral eyes go back to the camera
 SACCADE_THRESHOLD = 4.0               # degrees between where the eyes hold and the camera that start a saccade
 LONG_SACCADE = 20.0                   # degrees: a longer saccade takes 3 frames instead of 2

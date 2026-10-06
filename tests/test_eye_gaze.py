@@ -219,7 +219,7 @@ class FixationTest(unittest.TestCase):
                 if after < len(result.looks):
                     landings += 1
                     self.assertEqual(result.looks[after].state == "neutral", s["reason"] == "to_neutral", (seed, s))
-        self.assertGreater(landings, 50)
+        self.assertGreater(landings, 30)                # 45 with a patience of 20 (more than 50 with 10)
 
     def test_eyes_pinned_at_a_limit_do_not_jump_sides_when_she_spins(self):
         # a fast spin to 200 degrees and back (100 degrees a key, 50 a frame): the camera passes behind her, its
@@ -235,6 +235,16 @@ class FixationTest(unittest.TestCase):
         self.assertLess(max(abs(a.yaw - b.yaw) for a, b in zip(far, far[1:])), 0.5)
         self.assertEqual(result.saccades, [])
         self.assertAlmostEqual(result.looks[38].yaw, 0.0, places=4)
+
+    def test_a_look_away_of_half_a_second_only_holds_the_limit(self):
+        # review 8, R3: 15 frames out of reach (a nod or a turn with the beat) is no reason to give up; with a patience
+        # of 10 the eyes went neutral and came back, 42 round trips on the song
+        self.assertEqual(eye_gaze.PATIENCE, 20)
+        result = run_gaze(dance=head_turn({0: 0.0, 30: 0.0, 31: 60.0, 45: 60.0, 46: 0.0}))
+        far = [look.frame for look in result.looks if abs(look.target[0]) > eye_gaze.MAX_YAW + eye_gaze.GIVE_UP]
+        self.assertEqual(far, list(range(31, 46)))
+        self.assertNotIn("neutral", {look.state for look in result.looks})
+        self.assertEqual(result.saccades, [])
 
     def test_a_short_excursion_out_of_reach_only_holds_the_limit(self):
         # a quick look away: 50 degrees (out of reach) for fewer frames than PATIENCE, then back
