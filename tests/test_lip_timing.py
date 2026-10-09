@@ -114,6 +114,56 @@ class FindTest(unittest.TestCase):
         self.assertEqual(len(lip_timing.find(onsets, "iiae", span=600)), 1)
 
 
+def onsets_of(*runs):
+    """the onsets of runs of (vowels, start) sung one every 6 frames"""
+    morphs = []
+    for vowels, start in runs:
+        morphs += sung(vowels, start)
+    return lip_timing.onsets(vmd.Motion(model_name="m", morphs=morphs))
+
+
+class AlignTest(unittest.TestCase):
+    """all the lines of a song are placed at once, in their order, each key going to one line at most"""
+
+    def test_a_line_does_not_take_the_last_vowels_of_the_line_before(self):
+        # the second line begins with "ou" like the end of the first, but the mouth skipped its o: searched alone (with
+        # one error) it begins on the last u of the first line (the fault of lyric lines 01 and 26 of the MV)
+        onsets = onsets_of(("aoaiou", 100), ("uaeii", 160))
+        alone = lip_timing.find(onsets, "ouaeii", errors=1)
+        self.assertEqual(alone[0]["frames"][0], 130)                    # the last u of the first line
+        first, second = lip_timing.align(onsets, ["aoaiou", "ouaeii"])
+        self.assertEqual(first["frames"], [100, 106, 112, 118, 124, 130])
+        self.assertEqual((second["frames"], second["errors"]), ([160, 166, 172, 178, 184], 1))
+
+    def test_the_same_line_sung_again_is_placed_at_each_of_its_times_in_order(self):
+        onsets = onsets_of(("iiae", 100), ("aaa", 200), ("iiae", 300))
+        placed = lip_timing.align(onsets, ["iiae", "aaa", "iiae"])
+        self.assertEqual([p["frames"][0] for p in placed], [100, 200, 300])
+        self.assertEqual([p["errors"] for p in placed], [0, 0, 0])
+
+    def test_keys_before_between_and_after_the_lines_are_left_out(self):
+        onsets = onsets_of(("o", 10), ("aiu", 100), ("e", 150), ("ie", 200), ("u", 400))
+        placed = lip_timing.align(onsets, ["aiu", "ie"])
+        self.assertEqual([p["frames"] for p in placed], [[100, 106, 112], [200, 206]])
+
+    def test_a_line_does_not_run_on_over_a_long_pause(self):
+        # "aiua" could end on the a sung after a pause of 6 s, but a line is sung in one breath: its last a is missing
+        onsets = onsets_of(("aiu", 100), ("aeo", 300))
+        first, second = lip_timing.align(onsets, ["aiua", "eo"])
+        self.assertEqual((first["frames"], first["errors"]), ([100, 106, 112], 1))
+        self.assertEqual(second["frames"], [306, 312])
+
+    def test_a_line_with_no_key_left_is_placed_nowhere(self):
+        onsets = onsets_of(("aiu", 100))
+        first, second = lip_timing.align(onsets, ["aiu", "eee"])
+        self.assertEqual(first["frames"], [100, 106, 112])
+        self.assertEqual((second["frames"], second["errors"]), ([], 3))
+
+    def test_a_line_without_vowels_is_an_error(self):
+        with self.assertRaises(ValueError):
+            lip_timing.align(onsets_of(("aiu", 100)), ["aiu", ""])
+
+
 def run(argv):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -137,17 +187,86 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 0, result)
         self.assertTrue(result["ok"])
         self.assertEqual((result["onsets"], result["phrases"], result["first"], result["last"]), (9, 2, 100, 218))
-        self.assertEqual(result["found"], [{"line": "iiae", "frames": [200, 206, 212, 218], "seconds": [6.667, 7.267], "errors": 0}])
+        self.assertEqual(result["found"], [{"index": 0, "line": "iiae", "frames": [200, 206, 212, 218], "seconds": [6.667, 7.267],
+                                            "errors": 0}])
         with open(out, encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(len(data["onsets"]), 9)
         self.assertEqual(data["phrases"][1], {"start": 200, "end": 218, "seconds": [6.667, 7.267], "vowels": "iiae"})
+        self.assertEqual(data["found"], result["found"])
+
+    def test_the_lines_are_placed_together_in_their_order(self):
+        code, result = run([self.lips, "--find", "あいうえお", "--find", "ひびかせ", "--find", "おおお"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual([(f["index"], f["line"], f["frames"][:1], f["errors"]) for f in result["found"]],
+                         [(0, "aiueo", [100], 0), (1, "iiae", [200], 0), (2, "ooo", [], 3)])
+        self.assertIsNone(result["found"][2]["seconds"])
+
+    def test_the_lines_can_come_from_a_file(self):
+        lines = os.path.join(self.folder, "lines.txt")
+        with open(lines, "w", encoding="utf-8") as f:
+            f.write("あいうえお\n\nひびかせ\n")                             # a blank row is no line
+        code, result = run([self.lips, "--lines", lines])
+        self.assertEqual(code, 0, result)
+        self.assertEqual([(f["index"], f["frames"][0]) for f in result["found"]], [(0, 100), (1, 200)])
+
+    def test_search_finds_every_place_a_line_is_sung(self):
+        morphs = sung("iiae", 100) + sung("aaa", 200) + sung("iiae", 300)
+        with open(self.lips, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion(model_name="m", morphs=morphs)))
+        code, result = run([self.lips, "--search", "ひびかせ"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual([(s["line"], s["frames"][0]) for s in result["searched"]], [("iiae", 100), ("iiae", 300)])
+        self.assertEqual(result["found"], [])
 
     def test_errors_exit_2(self):
-        for argv in ([os.path.join(self.folder, "none.vmd")], [self.lips, "--find", "響かせ"], [self.lips, "--gap", "0"]):
+        lines = os.path.join(self.folder, "lines.txt")
+        with open(lines, "w", encoding="utf-8") as f:
+            f.write("ひびかせ\n")
+        for argv in ([os.path.join(self.folder, "none.vmd")], [self.lips, "--find", "響かせ"], [self.lips, "--gap", "0"],
+                     [self.lips, "--find", "ひびかせ", "--lines", lines], [self.lips, "--lines", os.path.join(self.folder, "no.txt")],
+                     [self.lips, "--find", "ん"]):
             code, result = run(argv)
             self.assertEqual(code, 2, argv)
             self.assertFalse(result["ok"])
+
+
+def real_file(*parts):
+    """a file of the real song under _spike/ of this tree or of a tree up to 4 folders above (a worktree)"""
+    folder = ROOT
+    for _ in range(4):
+        path = os.path.join(folder, *parts)
+        if os.path.isfile(path):
+            return path
+        folder = os.path.dirname(folder)
+    return None
+
+
+REAL_LIPS = real_file("_spike", "out", "hibikase", "kazusa", "ヒビカセ（Choreography by ATY）", "ヒビカセ　Face&Lips 歌ってる方.vmd")
+REAL_LINES = real_file("_spike", "out", "hibikase", "mv", "lyrics", "kana_lines.txt")
+
+
+@unittest.skipUnless(REAL_LIPS and REAL_LINES, "needs the lip motion and the lyric lines of the MV under _spike/")
+class RealSongTest(unittest.TestCase):
+    """the 49 lines of ヒビカセ on KAZUSA's lip motion (622 vowel keys)"""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(REAL_LINES, encoding="utf-8") as f:
+            lines = [lip_timing.vowels_of(line) for line in f if line.strip()]
+        cls.placed = lip_timing.align(lip_timing.onsets(vmd.load(REAL_LIPS)), lines)
+
+    def test_every_line_is_placed_and_no_key_is_in_two_lines(self):
+        self.assertEqual(len(self.placed), 49)
+        frames = [f for p in self.placed for f in p["frames"]]
+        self.assertTrue(all(p["frames"] for p in self.placed))
+        self.assertEqual(frames, sorted(set(frames)))                  # in time order, each key once
+
+    def test_the_four_lines_the_search_put_off_begin_where_they_are_sung(self):
+        # a19: 01 and 26 took the last vowels of the line before (1062 こ, 4055 ル); 10 and 11 were filled a vowel late
+        firsts = {i: self.placed[i]["frames"][0] for i in (1, 10, 11, 26)}
+        self.assertEqual(firsts, {1: 1085, 10: 2011, 11: 2104, 26: 4068})
+        self.assertEqual((self.placed[0]["frames"][-1], self.placed[25]["frames"][-1]), (1072, 4055))
 
 
 if __name__ == "__main__":
