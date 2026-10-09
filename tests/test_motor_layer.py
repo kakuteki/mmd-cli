@@ -277,6 +277,26 @@ class JumpTest(unittest.TestCase):
         self.assertTrue(any(s["first"] <= 40 and s["last"] >= 41 and "左手首" in s["bones"] for s in spans), spans)
 
 
+class UnsolvedTest(unittest.TestCase):
+    def test_a_hand_left_far_behind_goes_back_to_the_input_and_is_reported(self):
+        # a layer far too soft for a 6-frame swing: the hand ends up 10 cm and more from where the input has it
+        p = motor_layer.default_params()
+        for c in p["classes"].values():
+            if not c.get("kinematic"):
+                c.update(fn=1.5, zeta=0.6, ff=0.0)
+        p["floor"] = False
+        p["lead"] = 0.0
+        result = motor_layer.layer(MODEL, swing_dance(), p)
+        spans = [s for s in result.report["fallback"] if s["reason"] == "unsolved"]
+        self.assertTrue(spans)
+        self.assertTrue(any("左腕" in s["bones"] for s in spans), spans)
+        self.assertEqual([r for r in result.report["floor_residual"] if r["reason"] == "unsolved"], [])
+        a, b = result.world_in["左手首"][0], result.world_out["左手首"][0]
+        best = np.min(np.stack([np.linalg.norm(b[1 + d:LAST - 3 + d] - a[1:LAST - 3], axis=1) for d in range(-1, 4)]),
+                      axis=0) * 8.0
+        self.assertLessEqual(float(best.max()), motor_layer.DEVIATION_CM + 1e-6)
+
+
 class FingerTest(unittest.TestCase):
     """the fingers: kinematic, a short delay after the wrist; in a snap (faster than 2,000 deg/s) no delay of their own:
     they ride the hand's timing"""

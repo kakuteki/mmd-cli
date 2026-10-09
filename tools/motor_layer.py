@@ -3,7 +3,7 @@ stop on the same frame, and a hand runs on a little past a stop and settles.
 
     python tools/motor_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--beats beats.json]
                                 [--key-frames TRACE.vmd] [--lead L] [--delay-scale 1] [--finger-delay 0.25]
-                                [--substeps 16]
+                                [--substeps 16] [--world w.npz] [--verbose]
 
 Why (the analysis of 2026-10-07, a09): in the trace 91 to 100 % of the keys of the arm's joints sit on the same frame, the
 joints' timing differs by 0 frames (95 % interval +-0.1), and the wrist stops after the upper arm before 0 to 8 % of the
@@ -31,7 +31,7 @@ The layer (numbers: the constants and default_params below):
   correction only, never the feed-forward (the research, 4.3 rule 3: a total limit of a small woman's strength rounds the
   fast swings).  The child keeps its world rotation until its joint turns it, so a parent's acceleration drags it and a
   parent's stop lets it run on; there is no reaction on the parent (a one-way chain).  Semi-implicit Euler, SUBSTEPS per
-  frame (Tan 2011: coarse explicit steps diverge).
+  frame at least, more when the stiffest bone's wn dt would pass STEP_WN_DT (Tan 2011: coarse explicit steps diverge).
 * Delays d (frames, at 30 fps), proximal to distal and centred on the elbow so that the hand arrives about when the key
   says (the research, 4.2): 肩 and 腕 -0.5, ひじ 0, 手首 +0.5 in a fast stretch; doubled where the arm moves slowly (the
   input's upper arm under SLOW_DEG_S[0] deg/s at its fastest within SLOW_WINDOW frames, a smoothstep to SLOW_DEG_S[1]).
@@ -40,25 +40,35 @@ The layer (numbers: the constants and default_params below):
   and it runs again with that lead.
 * Fingers: the spike's dynamic fingers missed the shape at the trace's keys by 47 to 62 degrees (p95), the fingers
   changing shape in 2 frames.  Here they are kinematic: their input turn relative to the wrist, read FINGER_DELAY frames
-  after the wrist's time (a short delay; 0 makes them pass through on the hand's own timing).  They need no mass.
+  after the wrist's time (a short delay; 0 makes them pass through on the hand's own timing).  They need no mass.  Where
+  the input's fingers (手首 -> 中指３) turn faster than FINGER_SNAP_DEG_S (a smoothstep; spread FINGER_SNAP_PAD frames),
+  that short delay goes too: a snap rides the hand's own timing.  (On the input's own frame instead, the fingers would
+  lead the wrist: the a09 lag wrist -> finger went to -0.54 frames on the right, the reversed order the research warns
+  against.)
 * Where a pose must be met, the arm's delays go to 0 and it stiffens (the research, 4.2):
   - a hold (the a09 rest: the shoulder, elbow and wrist joints all under 5 deg/s, HOLD_MIN frames or more): from
     HOLD_SETTLE frames after its start (the run-on and settling happen first) to HOLD_EXIT frames before its end, delay 0
     and s up by HOLD_STIFF.  The target stands still there, so the delay's change is not seen.
   - a beat hold (--beats: a hold starting within KIME_BEAT frames of a beat): from KIME_LEAD frames before its start,
     delay 0, s up by KIME_STIFF and ff up by KIME_FF, so the hand arrives with the beat.
-  - a hand near the face or the body (the input's middle finger tip within CONTACT_MM of the eyes or of the line
-    上半身 - 首, spread CONTACT_PAD frames): delay 0, ff -> 1, s up by CONTACT_STIFF: the input there.
-* One-frame jumps of the input (a target turning JUMP_DEG or more in one frame and JUMP_RATIO times as much as in the
-  frames next to it; the spike: 右腕 1,899 -> 1,900 by 91 degrees, 左手首 5,963 -> 5,964 by 145, the right fingers 3,888 ->
-  3,889): found first and passed through.  The target is a step there (no interpolation, no velocity), the bone and its
+  - a hand at the face or the body (the input's middle finger tip within CONTACT_FACE_MM of the eyes or CONTACT_BODY_MM
+    of the line 上半身 - 首, smoothsteps, spread CONTACT_PAD frames): delay 0, ff -> 1, s up by CONTACT_STIFF: the input
+    there.
+* One-frame jumps of the input (a target turning JUMP_DEG or more in one frame, JUMP_RATIO times the median step of the
+  JUMP_WINDOW frames each way, and either JUMP_BIG_DEG or JUMP_NEXT_RATIO times either step next to it; the spike: 右腕
+  1,899 -> 1,900 by 91 degrees, 左手首 5,963 -> 5,964 by 145, the right fingers 3,888 -> 3,889): found first and passed
+  through.  The target is a step there (no interpolation, no velocity), the bone and its
   simulated descendants are put onto their targets when their target time crosses the jump, and the keys of that bone and
   its descendants go back to the input's over the frames around it (FALLBACK_RAMP frames in and out).
 * Not solved, not rounded: where a dynamic bone stays far from its target (UNSOLVED_DEG with the torque limit binding for
-  UNSOLVED_RUN frames, or UNSOLVED_HARD_DEG at all), its keys and its descendants' go back to the input's there.  Where a
-  hand's tip ends up closer to the eyes or to the body line than the input had it by more than FLOOR_MM (wherever the
-  input is within FLOOR_RANGE_MM), that arm and 上半身..頭 go back to the input's around it, widening until the floor holds
-  (FLOOR_ROUNDS).  The report lists every stretch given back (fallback) and what is left (floor_residual).
+  UNSOLVED_RUN frames, or UNSOLVED_HARD_DEG at all), its keys and its descendants' go back to the input's there.  Then the
+  hands in the world, in rounds (FLOOR_ROUNDS), each widening what it gives back by 2 frames:
+  - the floor: where a hand's tip comes closer to the eyes (input within FLOOR_RANGE_MM) or to the body line (within
+    FLOOR_BODY_RANGE_MM) than floor_of(the input's distance) (FLOOR_MM closer within FLOOR_KNEE_MM, a FLOOR_SLOPE share
+    of the rest further out), that arm and 上半身..頭 go back to the input's around it;
+  - a lost hand: where a wrist is more than DEVIATION_CM from the input's even at its best within frames f-1 .. f+3 (late
+    is allowed), that arm goes back (from the second round with 上半身..頭).
+  The report lists every stretch given back (fallback) and what is left after the last round (floor_residual).
 * Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  The body's height is measured on the
   bones (頭先 above the floor: 1 unit = 8 cm), the body mass and the joints' strength are those of Holzbaur's subject F1
   (157.5 cm, 49.9 kg) scaled by (height / 1.575)^3 (geometric similarity: mass and torque as length^3).  Each segment's
@@ -161,7 +171,8 @@ JUMP_HOLD = (1, 2)              # frames before and after a jump's interval that
 UNSOLVED_DEG = 10.0
 UNSOLVED_RUN = 2                # frames
 UNSOLVED_HARD_DEG = 45.0
-FLOOR_MM = 8.0                  # the hand may come this much closer than the input had it, within FLOOR_KNEE_MM,
+DEVIATION_CM = 8.0              # a wrist further than this from the input's, late allowed (the layer's p95: 4 cm)
+FLOOR_MM = 8.0                 # the hand may come this much closer than the input had it, within FLOOR_KNEE_MM,
 FLOOR_KNEE_MM = 100.0
 FLOOR_SLOPE = 0.25              # and further out this share of the distance beyond the knee more
 FLOOR_RANGE_MM = 200.0          # (the face; the body FLOOR_BODY_RANGE_MM): no floor further out
@@ -1054,34 +1065,44 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
                                            100.0 * float(clip[a:b + 1, j].mean()))})
     key_rot = blend(plan, key_layer, fb)
     world_out = world_with(plan, key_rot)
+    # the hands in the world: the floor at the face and the body, and a hand far from where the input has it (even
+    # allowing it to be late); given back around it, widening (and from the second round with 上半身..頭 too)
     residual = []
+    checks = []
     if params.get("floor", True):
-        axial = [j for j in range(nb) if plan.cls[j] in AXIAL]
-        pad = FLOOR_PAD
-        for rnd in range(FLOOR_ROUNDS):
-            found = False
+        checks.append(("floor", floor_violations, "%s hand closer to the face or the body than the floor"))
+    if params.get("unsolved", True):
+        checks.append(("unsolved", hand_deviation, "%s hand more than " + "%g cm from the input" % DEVIATION_CM))
+    axial = [j for j in range(nb) if plan.cls[j] in AXIAL]
+    pad = FLOOR_PAD
+    for rnd in range(FLOOR_ROUNDS if checks else 0):
+        found = False
+        for reason, check, text in checks:
             for s in SIDES:
-                bad = floor_violations(plan, world_out, s)
+                bad = check(plan, world_out, s)
                 if bad is None or not bad.any():
                     continue
                 found = True
-                bones = sorted(set(axial) | {j for j in range(nb) if plan.side[j] == s})
+                bones = {j for j in range(nb) if plan.side[j] == s}
+                if reason == "floor" or rnd > 0:
+                    bones |= set(axial)
+                bones = sorted(bones)
                 for a, b in runs(bad):
                     a2, b2 = a - pad, b + pad
                     w = ramp_weight(F, [(a2 - FALLBACK_RAMP, a2, b2, b2 + FALLBACK_RAMP)])
                     fb[:, bones] = np.maximum(fb[:, bones], w[:, None])
-                    spans.append({"reason": "floor", "first": max(0, int(a2)), "last": min(F - 1, int(b2)),
-                                  "bones": [plan.names[c] for c in bones], "round": rnd + 1,
-                                  "detail": "%s hand closer to the face or the body than the floor" % s})
-            if not found:
-                break
-            key_rot = blend(plan, key_layer, fb)
-            world_out = world_with(plan, key_rot)
-            pad += 2
+                    spans.append({"reason": reason, "first": max(0, int(a2)), "last": min(F - 1, int(b2)),
+                                  "bones": [plan.names[c] for c in bones], "round": rnd + 1, "detail": text % s})
+        if not found:
+            break
+        key_rot = blend(plan, key_layer, fb)
+        world_out = world_with(plan, key_rot)
+        pad += 2
+    for reason, check, _ in checks:
         for s in SIDES:
-            bad = floor_violations(plan, world_out, s)
+            bad = check(plan, world_out, s)
             if bad is not None and bad.any():
-                residual += [{"side": s, "first": a, "last": b} for a, b in runs(bad)]
+                residual += [{"reason": reason, "side": s, "first": a, "last": b} for a, b in runs(bad)]
     out = build(plan, key_rot)
     info = {"leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
             "residual": residual, "seconds": time.time() - started}
@@ -1100,6 +1121,24 @@ def floor_violations(plan, world_out, side):
             continue
         bad |= (d_in < reach) & (d_out < floor_of(d_in))
     return bad
+
+
+def hand_deviation(plan, world_out, side):
+    """frames where the side's wrist is more than DEVIATION_CM from the input's, even at its best within frames
+    f-1 .. f+3 of the output (late is allowed, not lost)"""
+    out = None
+    for n in (side + "手首",):
+        if n is None or n not in world_out:
+            continue
+        a, b = plan.world_in[n][0], world_out[n][0]
+        F = plan.F
+        best = np.full(F, np.inf)
+        for d in range(-1, 4):
+            lo, hi = max(0, -d), min(F, F - d)
+            best[lo:hi] = np.minimum(best[lo:hi], np.linalg.norm(b[lo + d:hi + d] - a[lo:hi], axis=1))
+        bad = best * UNIT_MM / 10.0 > DEVIATION_CM
+        out = bad if out is None else out | bad
+    return out
 
 
 def build(plan, key_rot):
