@@ -150,6 +150,18 @@ class LightLoopTest(unittest.TestCase):
         look["bokeh"]["cycles"] = [2, 3]
         self.assertGreater(difference(mv_look.light_frame(SIZE, look, 0, count), mv_look.light_frame(SIZE, look, count // 2, count)), 0.2)
 
+    def test_the_specks_twinkle_their_own_number_of_times(self):
+        # review (mutants M10, M14): the second bokeh count is the twinkle, apart from the drift and not fixed at 2
+        look = mv_look.merge_look({"beams": {"count": 0, "loop_seconds": 2}})
+        count = mv_look.light_frame_count(look, 30)
+        frames = {}
+        for cycles in ([1, 2], [1, 3], [3, 3]):
+            look["bokeh"]["cycles"] = cycles
+            frames[tuple(cycles)] = mv_look.light_frame(SIZE, look, 7, count)
+        self.assertGreater(difference(frames[(1, 2)], frames[(1, 3)]), 0.05)     # the twinkle count alone changes it
+        look["bokeh"]["cycles"] = [3, 1]
+        self.assertGreater(difference(mv_look.light_frame(SIZE, look, 7, count), frames[(3, 3)]), 0.05)
+
     def test_cycles_are_whole_numbers_from_one(self):
         # a motion with a part of a period per loop would jump where the loop starts again
         for bad in ({"beams": {"cycles": [1.5, 2]}}, {"beams": {"cycles": [0, 2]}}, {"bokeh": {"cycles": [1, -2]}},

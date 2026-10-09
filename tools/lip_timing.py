@@ -24,6 +24,8 @@ for the same recording both start at frame 0 of it).
 * --search LINE looks one line up everywhere it is sung (find), say a word sung in every chorus.  With --errors N
   a place still counts when N of its vowels are missing, extra or different, since a mouth does not shape
   every syllable.  A place may not be longer than a second per vowel; places do not overlap.
+  --errors without --search is an error.  (Before 2026-10-09 --find was this search: --find ひびかせ for every
+  chorus is now --search ひびかせ, and a single --find line gets a warning in the summary.)
 
 The summary is one line of JSON; --out writes every onset and phrase (frames, and seconds at 30 fps).
 """
@@ -276,6 +278,9 @@ def run(lips_path, out_path=None, gap=GAP, lines=(), errors=0, search=()):
               "first": points[0].frame if points else None, "last": points[-1].frame if points else None, "found": found}
     if search:
         result["searched"] = searched
+    if len(lines) == 1:
+        result["warning"] = ("--find places the lines of the whole song at once, so one line is placed once; to find every "
+                             "place one line is sung (a word of every chorus), use --search")
     if out_path:
         out_full = os.path.abspath(out_path)
         if os.path.normcase(out_full) == os.path.normcase(full):
@@ -310,6 +315,9 @@ def main(argv=None):
             raise ValueError("--errors cannot be negative")
         if args.find and args.lines:
             raise ValueError("give the lines with --find or with --lines, not both")
+        if args.errors and not args.search:
+            raise ValueError("--errors goes with --search (every place one line is sung); --find places all the lines of "
+                             "the song at once and has no limit of errors")
         lines = read_lines(args.lines) if args.lines else args.find
         result = run(args.lips, args.out, args.gap, lines, args.errors, args.search)
     except (ValueError, OSError) as exc:

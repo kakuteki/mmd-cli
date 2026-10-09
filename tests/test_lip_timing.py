@@ -153,6 +153,10 @@ class AlignTest(unittest.TestCase):
         self.assertEqual((first["frames"], first["errors"]), ([100, 106, 112], 1))
         self.assertEqual(second["frames"], [306, 312])
 
+    def test_an_extra_key_inside_a_line_is_an_error_of_the_line(self):
+        first, = lip_timing.align(onsets_of(("aeiu", 100)), ["aiu"])
+        self.assertEqual((first["frames"], first["errors"]), ([100, 112, 118], 1))
+
     def test_a_line_with_no_key_left_is_placed_nowhere(self):
         onsets = onsets_of(("aiu", 100))
         first, second = lip_timing.align(onsets, ["aiu", "eee"])
@@ -229,6 +233,25 @@ class CommandTest(unittest.TestCase):
             code, result = run(argv)
             self.assertEqual(code, 2, argv)
             self.assertFalse(result["ok"])
+
+    def test_errors_without_search_is_an_error(self):
+        # review: --errors used to go with --find; with all lines placed at once it has no meaning there, and leaving it
+        # out silently would hide that --find ひびかせ no longer finds every chorus
+        for argv in ([self.lips, "--find", "ひびかせ", "--errors", "1"], [self.lips, "--errors", "1"]):
+            code, result = run(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertIn("--search", result["error"]["message"])
+        code, result = run([self.lips, "--search", "ひびかせ", "--errors", "1"])
+        self.assertEqual(code, 0, result)
+
+    def test_one_line_to_find_is_placed_once_with_a_warning(self):
+        # the old use, --find ひびかせ for every chorus, now places the word once: the summary says to use --search
+        code, result = run([self.lips, "--find", "ひびかせ"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(result["found"]), 1)
+        self.assertIn("--search", result["warning"])
+        code, result = run([self.lips, "--find", "あいうえお", "--find", "ひびかせ"])
+        self.assertNotIn("warning", result)
 
 
 def real_file(*parts):
