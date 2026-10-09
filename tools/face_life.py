@@ -152,7 +152,8 @@ SHOWN = 0.1875                  # frames: the MV shows frame f at f + 0.1875 (to
 
 LEAD = 15                       # frames the eyes are open before the body moves
 WAKE_BEFORE, WAKE_AFTER, WAKE_OPEN = 15, 45, 10
-BODY_MOVES = (1.0, 0.05)        # degrees / model units the head has moved from frame 0 when the body starts
+BODY_MOVES = (3.0, 0.1)         # degrees / model units the head has moved from frame 0 when the body starts (more
+                                # than breathing at rest moves it)
 MEASURE_SEED = 1234             # the circular shifts of the chance levels
 SHIFTS = 2000
 
