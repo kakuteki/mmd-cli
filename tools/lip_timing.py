@@ -1,6 +1,7 @@
 """When is the song sung?  Read it from the vowels of a lip motion (.vmd), without the sound.
 
-    python tools/lip_timing.py LIPS.vmd [--out timing.json] [--gap 24] [--find LINE ...] [--errors N]
+    python tools/lip_timing.py LIPS.vmd [--out timing.json] [--gap 24] [--find LINE ... | --lines FILE]
+                                        [--search LINE ...] [--errors N]
 
 A lip motion opens the mouth with the morphs あ い う え お, keyed to the song.  Where such a morph reaches a
 peak a vowel is sung, so the motion holds the rhythm of the lyrics: when the singing starts, where the lines
@@ -11,11 +12,20 @@ for the same recording both start at frame 0 of it).
 * An onset (onsets) is a key of a vowel morph of at least MIN_WEIGHT whose weight is above the key before
   it and not below the key after it: the first frame at which the mouth is fully open.
 * A phrase (phrases) is a run of onsets with less than --gap frames (0.8 s) between neighbours.
-* --find LINE looks the line up among the onsets (find).  LINE is written in kana or in Latin letters
-  (vowels_of: か is a, きょ is o, っ and ん sound no vowel, ー repeats the vowel before it; a kanji cannot be
-  read and is an error).  With --errors N a line still counts when N of its vowels are missing, extra or
-  different, since a mouth does not shape every syllable.  A match may not be longer than a second per
-  vowel; matches do not overlap.
+* --find LINE (repeated, or --lines FILE with one line per row) places the lyrics of the song: all the lines at
+  once, in their order, each onset going to one line at most (align).  A line is written in kana or in Latin
+  letters (vowels_of: か is a, きょ is o, っ and ん sound no vowel, ー repeats the vowel before it; a kanji cannot
+  be read and is an error).  The vowels of all the lines are aligned to the onsets in one pass (an edit
+  distance, dynamic programming): a vowel without an onset, an onset of another vowel and an extra onset inside
+  a line cost 1 each; an onset between two lines (an ad lib, a breath, the intro) costs 0.05; a line that runs
+  on over a pause of PAUSE frames (1.5 s) costs 3 more.  Each line gets the frames of its onsets and its
+  errors (the edits inside it).  Lines looked up one by one take each other's vowels where a line begins as
+  the one before ends: one pass cannot.
+* --search LINE looks one line up everywhere it is sung (find), say a word sung in every chorus.  With --errors N
+  a place still counts when N of its vowels are missing, extra or different, since a mouth does not shape
+  every syllable.  A place may not be longer than a second per vowel; places do not overlap.
+  --errors without --search is an error.  (Before 2026-10-09 --find was this search: --find ひびかせ for every
+  chorus is now --search ひびかせ, and a single --find line gets a warning in the summary.)
 
 The summary is one line of JSON; --out writes every onset and phrase (frames, and seconds at 30 fps).
 """
@@ -37,6 +47,10 @@ VOWEL_MORPHS = {"あ": "a", "い": "i", "う": "u", "え": "e", "お": "o"}
 MIN_WEIGHT = 0.3
 GAP = 24
 SPAN_PER_VOWEL = 30              # frames: a match is at most this long per vowel of its line
+EDIT = 1.0                       # align: a vowel without an onset, an onset of another vowel, an extra onset in a line
+BETWEEN = 0.05                   # align: an onset between two lines (an ad lib, a breath, the intro)
+PAUSE = 45                       # align: frames between two onsets that make a pause (1.5 s) ...
+PAUSE_COST = 3.0                 # ... which a line costs this much more to run on over
 _GLIDES = ("YA", "YU", "YO", "A", "I", "U", "E", "O", "WA")       # small kana that change the vowel before them
 
 
@@ -148,6 +162,73 @@ def find(points, line, errors=0, span=None):
     return [match for _, match in sorted(out, key=lambda item: item[0])]
 
 
+def align(points, lines, pause=PAUSE):
+    """where each of `lines` (runs of vowels, in the order they are sung) is sung, all placed at once:
+    [{"frames": the frames of the line's onsets, "errors": n}] for every line, in order.  The onsets taken by the
+    lines are in time order and none is in two lines; a line left without an onset has no frames.  The costs are
+    in the module docstring; on a tie a match goes before a missing vowel, and that before an extra onset."""
+    seq, line_of, first_of = [], [], []
+    for k, line in enumerate(lines):
+        if not line:
+            raise ValueError("line %d has no vowel to place" % (k + 1))
+        for p, vowel in enumerate(line):
+            seq.append(vowel)
+            line_of.append(k)
+            first_of.append(p == 0)
+    n, m = len(seq), len(points)
+    sung = [p.vowel for p in points]
+    # paused[j]: onset j comes a pause after onset j - 1
+    paused = [False] + [points[j].frame - points[j - 1].frame >= pause for j in range(1, m)]
+    # inside[i]: after i vowels the alignment is inside a line (between two of its vowels)
+    inside = [0 < i < n and line_of[i - 1] == line_of[i] for i in range(n + 1)]
+    inf = float("inf")
+    cost = [[inf] * (m + 1) for _ in range(n + 1)]
+    move = [bytearray(m + 1) for _ in range(n + 1)]         # 1 match, 2 vowel without onset, 3 onset without vowel
+    cost[0][0] = 0.0
+    for i in range(n + 1):
+        row, here = cost[i], move[i]
+        above = cost[i - 1] if i else None
+        extra = EDIT if inside[i] else BETWEEN
+        for j in range(m + 1):
+            if i == 0 and j == 0:
+                continue
+            best, how = inf, 0
+            if i and j:
+                c = above[j - 1] + (0.0 if seq[i - 1] == sung[j - 1] else EDIT)
+                if paused[j - 1] and not first_of[i - 1]:
+                    c += PAUSE_COST
+                if c < best:
+                    best, how = c, 1
+            if i:
+                c = above[j] + EDIT
+                if c < best:
+                    best, how = c, 2
+            if j:
+                c = row[j - 1] + extra + (PAUSE_COST if inside[i] and paused[j - 1] else 0.0)
+                if c < best:
+                    best, how = c, 3
+            row[j], here[j] = best, how
+    out = [{"frames": [], "errors": 0} for _ in lines]
+    i, j = n, m
+    while i or j:
+        how = move[i][j]
+        if how == 1:
+            line = out[line_of[i - 1]]
+            line["frames"].append(points[j - 1].frame)
+            line["errors"] += seq[i - 1] != sung[j - 1]
+            i, j = i - 1, j - 1
+        elif how == 2:
+            out[line_of[i - 1]]["errors"] += 1
+            i -= 1
+        else:
+            if inside[i]:
+                out[line_of[i]]["errors"] += 1
+            j -= 1
+    for line in out:
+        line["frames"].reverse()
+    return out
+
+
 def _seconds(first, last):
     return [round(first / FPS, 3), round(last / FPS, 3)]
 
@@ -167,18 +248,39 @@ def write_bytes(path, data):
             os.remove(part)
 
 
-def run(lips_path, out_path=None, gap=GAP, lines=(), errors=0):
+def read_lines(path):
+    """the lines of lyrics in a UTF-8 text file, one per row; blank rows are no lines"""
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            return [row.strip() for row in f if row.strip()]
+    except OSError as exc:
+        raise ValueError("cannot read the lines %s: %s" % (path, exc))
+
+
+def run(lips_path, out_path=None, gap=GAP, lines=(), errors=0, search=()):
     full = os.path.abspath(lips_path)
     points = onsets(vmd.load(full))
     runs = phrases(points, gap)
     found = []
-    for line in lines:
+    if lines:
+        vowels = [vowels_of(line) for line in lines]
+        for index, (line, placed) in enumerate(zip(vowels, align(points, vowels))):
+            frames = placed["frames"]
+            found.append({"index": index, "line": line, "frames": frames,
+                          "seconds": _seconds(frames[0], frames[-1]) if frames else None, "errors": placed["errors"]})
+    searched = []
+    for line in search:
         vowels = vowels_of(line)
         for match in find(points, vowels, errors):
-            found.append({"line": vowels, "frames": match["frames"], "seconds": _seconds(match["frames"][0], match["frames"][-1]),
-                          "errors": match["errors"]})
+            searched.append({"line": vowels, "frames": match["frames"], "seconds": _seconds(match["frames"][0], match["frames"][-1]),
+                             "errors": match["errors"]})
     result = {"in": full, "onsets": len(points), "phrases": len(runs),
               "first": points[0].frame if points else None, "last": points[-1].frame if points else None, "found": found}
+    if search:
+        result["searched"] = searched
+    if len(lines) == 1:
+        result["warning"] = ("--find places the lines of the whole song at once, so one line is placed once; to find every "
+                             "place one line is sung (a word of every chorus), use --search")
     if out_path:
         out_full = os.path.abspath(out_path)
         if os.path.normcase(out_full) == os.path.normcase(full):
@@ -187,6 +289,8 @@ def run(lips_path, out_path=None, gap=GAP, lines=(), errors=0):
                 "onsets": [[p.frame, p.vowel, p.weight] for p in points],
                 "phrases": [{"start": r.start, "end": r.end, "seconds": _seconds(r.start, r.end), "vowels": r.vowels} for r in runs],
                 "found": found}
+        if search:
+            data["searched"] = searched
         write_bytes(out_full, (json.dumps(data, ensure_ascii=True, indent=1) + "\n").encode("ascii"))
         result["out"] = out_full
     return result
@@ -197,13 +301,25 @@ def main(argv=None):
     p.add_argument("lips", help="the lip motion (.vmd with the morphs あ い う え お)")
     p.add_argument("--out", help="write every onset and phrase to this JSON")
     p.add_argument("--gap", type=int, default=GAP, help="frames of silence that end a phrase (default %d)" % GAP)
-    p.add_argument("--find", action="append", default=[], metavar="LINE", help="a line of lyrics in kana or Latin letters; may repeat")
-    p.add_argument("--errors", type=int, default=0, help="vowels of a line that may be missing, extra or different (default 0)")
+    p.add_argument("--find", action="append", default=[], metavar="LINE",
+                   help="a line of lyrics in kana or Latin letters; repeat it for every line of the song, in order: "
+                        "the lines are placed together")
+    p.add_argument("--lines", metavar="FILE", help="the lines of lyrics, one per row of a UTF-8 text file (instead of --find)")
+    p.add_argument("--search", action="append", default=[], metavar="LINE",
+                   help="a line to look up everywhere it is sung (say a word of every chorus); may repeat")
+    p.add_argument("--errors", type=int, default=0,
+                   help="with --search: vowels of a line that may be missing, extra or different (default 0)")
     args = p.parse_args(argv)
     try:
         if args.errors < 0:
             raise ValueError("--errors cannot be negative")
-        result = run(args.lips, args.out, args.gap, args.find, args.errors)
+        if args.find and args.lines:
+            raise ValueError("give the lines with --find or with --lines, not both")
+        if args.errors and not args.search:
+            raise ValueError("--errors goes with --search (every place one line is sung); --find places all the lines of "
+                             "the song at once and has no limit of errors")
+        lines = read_lines(args.lines) if args.lines else args.find
+        result = run(args.lips, args.out, args.gap, lines, args.errors, args.search)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

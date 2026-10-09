@@ -116,6 +116,59 @@ class LightLoopTest(unittest.TestCase):
         frame = mv_look.light_frame(SIZE, look, 3, mv_look.light_frame_count(look, 30))
         self.assertEqual(frame.getextrema(), ((0, 0), (0, 0), (0, 0)))
 
+    def test_a_look_file_sets_part_of_the_beams_and_keeps_the_rest(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "look.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"loop_seconds": 27.4286, "cycles": [2, 3]}, "bokeh": {"cycles": [2, 3]}}, f)
+        look = mv_look.load_look(path)
+        self.assertEqual((look["beams"]["loop_seconds"], look["beams"]["cycles"], look["bokeh"]["cycles"]), (27.4286, [2, 3], [2, 3]))
+        self.assertEqual(look["beams"]["sway"], mv_look.DEFAULT_LOOK["beams"]["sway"])
+        self.assertEqual(look["bokeh"]["count"], mv_look.DEFAULT_LOOK["bokeh"]["count"])
+        self.assertEqual(mv_look.light_frame_count(look, 30), 823)            # 16 bars at 140 BPM, 822.86 frames
+
+    def test_the_default_sways_once_and_twice_per_loop(self):
+        self.assertEqual(mv_look.DEFAULT_LOOK["beams"]["cycles"], [1, 2])
+        self.assertEqual(mv_look.DEFAULT_LOOK["bokeh"]["cycles"], [1, 2])
+
+    def test_every_motion_closes_the_loop_whatever_its_cycles(self):
+        for cycles in ([2, 3], [3, 5]):
+            look, count = self.frames(cycles=cycles)
+            look["bokeh"]["cycles"] = cycles
+            first = mv_look.light_frame(SIZE, look, 0, count)
+            self.assertEqual(first.tobytes(), mv_look.light_frame(SIZE, look, count, count).tobytes())
+            self.assertLess(difference(first, mv_look.light_frame(SIZE, look, count - 1, count)),
+                            difference(first, mv_look.light_frame(SIZE, look, count // 3, count)))
+
+    def test_the_cycles_set_how_often_the_picture_repeats_within_the_loop(self):
+        # every motion twice per loop: the picture of half the loop is the first one again; with 2 and 3 it is not
+        look, count = self.frames(cycles=[2, 4])
+        look["bokeh"]["cycles"] = [2, 4]
+        self.assertEqual(mv_look.light_frame(SIZE, look, 0, count).tobytes(), mv_look.light_frame(SIZE, look, count // 2, count).tobytes())
+        look, count = self.frames(cycles=[2, 3])
+        look["bokeh"]["cycles"] = [2, 3]
+        self.assertGreater(difference(mv_look.light_frame(SIZE, look, 0, count), mv_look.light_frame(SIZE, look, count // 2, count)), 0.2)
+
+    def test_the_specks_twinkle_their_own_number_of_times(self):
+        # review (mutants M10, M14): the second bokeh count is the twinkle, apart from the drift and not fixed at 2
+        look = mv_look.merge_look({"beams": {"count": 0, "loop_seconds": 2}})
+        count = mv_look.light_frame_count(look, 30)
+        frames = {}
+        for cycles in ([1, 2], [1, 3], [3, 3]):
+            look["bokeh"]["cycles"] = cycles
+            frames[tuple(cycles)] = mv_look.light_frame(SIZE, look, 7, count)
+        self.assertGreater(difference(frames[(1, 2)], frames[(1, 3)]), 0.05)     # the twinkle count alone changes it
+        look["bokeh"]["cycles"] = [3, 1]
+        self.assertGreater(difference(mv_look.light_frame(SIZE, look, 7, count), frames[(3, 3)]), 0.05)
+
+    def test_cycles_are_whole_numbers_from_one(self):
+        # a motion with a part of a period per loop would jump where the loop starts again
+        for bad in ({"beams": {"cycles": [1.5, 2]}}, {"beams": {"cycles": [0, 2]}}, {"bokeh": {"cycles": [1, -2]}},
+                    {"beams": {"cycles": [1]}}, {"bokeh": {"cycles": [True, 2]}}):
+            with self.assertRaises(ValueError):
+                mv_look.merge_look(bad)
+
     def test_the_same_look_gives_the_same_frames(self):
         look, count = self.frames()
         a = mv_look.light_frame(SIZE, look, 11, count)
@@ -264,6 +317,14 @@ class GraphTest(unittest.TestCase):
         self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == "-i"][:3], ["fg.avi", "W/plate.png", "W/light_%05d.png"])
         self.assertNotIn("trim=", self.filter_of(argv))
         self.assertNotIn("concat=", self.filter_of(argv))
+
+    def test_a_chunk_finds_its_frame_of_a_loop_of_16_bars(self):
+        # the loop of the MV v3 is 823 frames: a chunk from the cut at frame 4983 (166.1 s) starts at 4983 - 6 * 823 = 45
+        look = {"beams": {"loop_seconds": 27.428571, "cycles": [2, 3]}}
+        count = mv_look.light_frame_count(mv_look.merge_look(look), 30)
+        self.assertEqual(count, 823)
+        argv = self.graph(look=look, start=4983 / 30.0, light_frames=count)
+        self.assertIn("[2:v]trim=start_frame=45,setpts=PTS-STARTPTS,", self.filter_of(argv))
 
     def test_the_punch_is_cut_out_of_the_middle_of_the_scaled_picture(self):
         # review 11: crop keeps the size of the first frame for iw and ih, so (iw-W)/2 left the punch at the top left
