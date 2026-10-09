@@ -924,7 +924,7 @@ class DenoiseTest(unittest.TestCase):
     def test_the_report_tells_what_was_moved(self):
         plain, denoised, report = plain_and_denoised(swing(jitter=10.0))
         self.assertEqual(report["denoise"], {"hz": DENOISE, "cap_deg": 3.0, "cap_units": 0.05, "max_gap": 2, "margin": 2,
-                                             "min_zone": 4, "fingers": False})
+                                             "min_zone": 4, "fingers": False, "straight": False})
         entry = report["bones"][0]["denoise"]
         self.assertEqual(entry["keys"], 87)                                 # 91 keys: all but the first two and the last two
         self.assertEqual(entry["frames"], 87)
@@ -1007,6 +1007,155 @@ class DenoiseCommandTest(unittest.TestCase):
             self.assertFalse(os.path.exists(self.out), argv)
 
 
+def turns(motion, name, first, last):
+    """degrees the bone turns from each frame to the next, frames first..last"""
+    q = [rot for _, rot in path(motion, name, first, last)]
+    return [angle_between(a, b) for a, b in zip(q, q[1:])]
+
+
+def straight_and_curve(keys, hz=DENOISE, **options):
+    """(the curve with the denoise as before, the straight path low-passed, its report)"""
+    motion = vmd.Motion(model_name="m", bones=keys)
+    curve, _ = smooth_motion.smooth(motion, denoise=hz, **options)
+    straight, report = smooth_motion.smooth(motion, denoise=hz, straight=True, **options)
+    return curve, straight, report
+
+
+class StraightTest(unittest.TestCase):
+    """stage 2: --straight low-passes MMD's straight path at every key instead of running a curve through the keys, so a
+    motion that goes on through a key does not slow down there (the speed dips of review a02)"""
+
+    def corner(self, name="右腕"):
+        """3 degrees a frame about X for 20 frames, then about Y for 20: keys every 4 frames, a 90 degree corner at 20"""
+        keys = []
+        for f in range(0, 41, 4):
+            if f <= 20:
+                rot = about((1.0, 0.0, 0.0), 3.0 * f)
+            else:
+                rot = mathutil.quat_multiply(about((1.0, 0.0, 0.0), 60.0), about((0.0, 1.0, 0.0), 3.0 * (f - 20)))
+            keys.append(bone(name, f, rot=rot))
+        return keys
+
+    def test_a_corner_of_a_running_motion_is_rounded_not_stopped(self):
+        curve, straight, report = straight_and_curve(self.corner())
+        around = (sum(turns(straight, "右腕", 10, 15)) + sum(turns(straight, "右腕", 25, 30))) / 10.0
+        self.assertAlmostEqual(around, 3.0, delta=0.3)
+        at = min(turns(straight, "右腕", 18, 22))
+        self.assertGreater(at, 0.5 * around, turns(straight, "右腕", 16, 24))
+        # the curve (the monotone tangent is 0 on a turn of 90 degrees or more) stops at the corner: the dip of a02
+        self.assertLess(min(turns(curve, "右腕", 18, 22)), 0.5 * around)
+        self.assertTrue(report["denoise"]["straight"])
+
+    def test_uneven_key_spacing_is_not_turned_into_pulses(self):
+        # keys 4 frames apart turning 8 and 16 degrees in turn (2 and 4 degrees a frame): the curve through the keys
+        # swells the fast segments to 5 degrees a frame mid-way; the straight path never runs faster than its keys
+        keys, angle = [], 0.0
+        for i, f in enumerate(range(0, 81, 4)):
+            keys.append(bone("右腕", f, rot=about((1.0, 0.0, 0.0), angle)))
+            angle += 8.0 if i % 2 == 0 else 16.0
+        curve, straight, _ = straight_and_curve(keys)
+        fast = max(turns(straight, "右腕", 12, 68))
+        slow = min(turns(straight, "右腕", 12, 68))
+        self.assertLessEqual(fast, 4.0 * 1.05)
+        self.assertGreaterEqual(slow, 2.0 * 0.9)                    # the low-pass rounds the square speed pattern a little
+        self.assertGreater(max(turns(curve, "右腕", 12, 68)), 4.0 * 1.15)               # not vacuous: 4.75
+
+    def test_every_frame_stays_within_the_cap_of_the_straight_path_and_keys_too(self):
+        keys = self.corner() + zigzag(rotate=True, name="右ひじ", gap=4, n=11) + zigzag(gap=3, n=14)
+        for cap in ((3.0, 0.05), (1.0, 0.02)):
+            _, straight, report = straight_and_curve(keys, denoise_cap=cap)
+            moved = 0
+            for name in ("右腕", "右ひじ", "センター"):
+                original = per_frame(track_of(vmd.Motion(model_name="m", bones=keys), name))
+                for (p0, q0), (p1, q1) in zip(original, path(straight, name)):
+                    self.assertLessEqual(angle_between(q0, q1), cap[0] + 1e-4)
+                    self.assertLessEqual(max(abs(x - y) for x, y in zip(p0, p1)), cap[1] + 1e-9)
+                    moved += (p0, q0) != (p1, q1)
+            self.assertGreater(moved, 40)
+            self.assertGreater(sum(b["denoise"]["frames"] for b in report["bones"] if "denoise" in b), 40)
+
+    def test_a_zigzag_turns_round_over_frames_not_in_one(self):
+        keys = zigzag(gap=6, n=10)                                          # reversals at 6, 12, ... (a 2.5 Hz pattern)
+        _, straight, _ = straight_and_curve(keys, denoise_cap=(3.0, 1.0))
+        xs = [p[0] for p, _ in path(straight, "センター")]
+        jumps = [abs(a - 2.0 * b + c) for a, b, c in zip(xs, xs[1:], xs[2:])]
+        # MMD's straight path changes its speed by 2 * 10/6 in one frame at each reversal
+        self.assertLess(max(jumps[2:-2]), 0.6 * 2.0 * 10.0 / 6.0, jumps)
+
+    def test_a_hold_stays_exactly_still_and_a_foot_keeps_its_floor(self):
+        held = about((1.0, 0.0, 0.0), 20.0)
+        keys = [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 2.0 * f + 1.5 * (-1) ** (f // 4))) for f in range(0, 9, 4)]
+        keys += [bone("右腕", 10, rot=held), bone("右腕", 24, rot=held)]
+        keys += [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 20.0 - 3.0 * (f - 24))) for f in range(28, 49, 4)]
+        foot = []
+        for f in range(0, 41, 4):
+            lift = 0.0 if 12 <= f <= 24 else 0.5 + 0.2 * (-1) ** (f // 4)
+            x = 0.3 * f if f < 12 else (3.6 if f <= 24 else 3.6 + 0.3 * (f - 24))
+            foot.append(bone("右足ＩＫ", f, pos=(x, lift, 1.0)))
+        _, straight, _ = straight_and_curve(keys + foot)
+        for _, rot in path(straight, "右腕", 10, 24):
+            self.assertEqual(rot, smooth_motion._normalized(held))
+        self.assertNotEqual(path(straight, "右腕", 2, 7), per_frame(keys[:3], 2, 7))     # not vacuous
+        track = track_of(straight, "右足ＩＫ")
+        self.assertGreaterEqual(min(k.position[1] for k in track), 0.0)
+        for pos, _ in path(straight, "右足ＩＫ", 12, 24):
+            self.assertEqual(pos, (3.6, 0.0, 1.0))                                       # planted: no slide
+        self.assertNotEqual(path(straight, "右足ＩＫ", 26, 38), per_frame(foot, 26, 38))
+
+    def test_a_foot_sliding_on_its_floor_slides_as_traced(self):
+        # keys on the floor 2 frames apart that creep sideways (a traced foot that is down, with the tracer's jitter):
+        # pinning only those keys would let the frames between them wobble and the foot skate further than traced
+        foot = [bone("右足ＩＫ", f, pos=(0.5 * f, 0.6 + 0.1 * (-1) ** (f // 4), 1.0)) for f in range(0, 9, 4)]
+        foot += [bone("右足ＩＫ", f, pos=(4.0 + 0.05 * (f - 10) + 0.03 * (-1) ** (f // 2), 0.0, 1.0 + 0.02 * (-1) ** (f // 2)))
+                 for f in range(10, 31, 2)]
+        foot += [bone("右足ＩＫ", f, pos=(5.0 + 0.5 * (f - 30), 0.6 + 0.1 * (-1) ** (f // 4), 1.0)) for f in range(34, 51, 4)]
+        _, straight, _ = straight_and_curve(foot)
+        self.assertEqual(path(straight, "右足ＩＫ", 10, 30), per_frame(foot, 10, 30))
+        self.assertNotEqual(path(straight, "右足ＩＫ", 36, 46), per_frame(foot, 36, 46))   # not vacuous
+
+    def test_an_authored_segment_and_the_fingers_keep_their_curves(self):
+        keys = zigzag(gap=4, n=8) + [bone("センター", 32, pos=(5.0, 0.0, 0.0), curve=EASE)]
+        fingers = self.corner("右中指１")
+        motion = vmd.Motion(model_name="m", bones=keys + fingers)
+        plain, _ = smooth_motion.smooth(motion)
+        straight, report = smooth_motion.smooth(motion, denoise=DENOISE, straight=True)
+        self.assertEqual(path(straight, "センター", 28, 32), per_frame(keys, 28, 32))   # authored: as MMD shows it
+        self.assertEqual(track_of(straight, "右中指１"), track_of(plain, "右中指１"))    # not denoised: the curve
+        both, _ = smooth_motion.smooth(motion, denoise=DENOISE, straight=True, denoise_fingers=True)
+        self.assertGreater(min(turns(both, "右中指１", 18, 22)), 1.5)                   # denoised: straight, no stop
+
+    def test_straight_goes_with_the_denoise(self):
+        motion = vmd.Motion(model_name="m", bones=self.corner())
+        with self.assertRaises(ValueError):
+            smooth_motion.smooth(motion, straight=True)
+        _, report = smooth_motion.smooth(motion, denoise=DENOISE)
+        self.assertFalse(report["denoise"]["straight"])
+
+
+class StraightCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        with open(self.dance, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion(model_name="dancer", bones=StraightTest.corner(None) + zigzag())))
+        self.out = os.path.join(self.folder, "out.vmd")
+
+    def test_straight_on_the_command_line(self):
+        code, result = run(smooth_motion, [self.dance, self.out, "--denoise", "--denoise-cap", "6", "0.05", "--straight"])
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["denoise"]["straight"])
+        self.assertEqual(result["denoise"]["cap_deg"], 6.0)
+        code, result = run(smooth_motion, [self.dance, self.out, "--denoise"])
+        self.assertFalse(result["denoise"]["straight"])
+
+    def test_straight_without_the_denoise_exits_2(self):
+        code, result = run(smooth_motion, [self.dance, self.out, "--straight"])
+        self.assertEqual(code, 2, result)
+        self.assertFalse(result["ok"])
+        self.assertFalse(os.path.exists(self.out))
+
+
 def fft(values):
     """radix-2 FFT of a list of complex numbers whose length is a power of 2"""
     n = len(values)
@@ -1050,7 +1199,10 @@ def energy_bands(signal):
 
 
 def real_dance():
-    for folder in (ROOT, os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))):
+    folders = [ROOT, os.path.dirname(os.path.dirname(os.path.dirname(ROOT)))]
+    if os.environ.get("MMD_CLI_DATA"):                                     # a checkout kept away from the data
+        folders.append(os.environ["MMD_CLI_DATA"])
+    for folder in folders:
         for rel in (("_spike", "dance_original.vmd"), ("_spike", "out", "hibikase", "variants", "dance_original.vmd")):
             path = os.path.join(folder, *rel)
             if os.path.exists(path):
@@ -1169,6 +1321,62 @@ class RealDanceTest(unittest.TestCase):
             position = [x + y for x, y in zip(position, energy_bands(removed))]
         self.assertGreater(position[1] / position[0], 0.8, position)
         self.assertLess(position[2] / position[0], 0.1, position)
+
+    def test_the_straight_denoise_of_the_whole_dance_keeps_its_guarantees_and_has_fewer_dips(self):
+        before = vmd.load(REAL)
+        cap = (6.0, 0.05)
+        curve, _ = smooth_motion.smooth(before, denoise=smooth_motion.DENOISE_HZ, denoise_cap=cap)
+        started = time.perf_counter()
+        after, report = smooth_motion.smooth(before, denoise=smooth_motion.DENOISE_HZ, denoise_cap=cap, straight=True)
+        data = vmd.dumps(after)
+        self.assertLess(time.perf_counter() - started, 90.0)
+        self.assertLess(len(data), 50 * 1024 * 1024, len(data))
+        tb, ta, tc = smooth_motion.tracks_of(before), smooth_motion.tracks_of(after), smooth_motion.tracks_of(curve)
+        for name in ("右足ＩＫ", "左足ＩＫ", "センター"):
+            floor = min(k.position[1] for k in tb[name])
+            self.assertGreaterEqual(min(k.position[1] for k in ta[name]), floor, name.encode("ascii", "backslashreplace"))
+        worst = (0.0, 0.0)
+        for name, keys in tb.items():
+            keys = smooth_motion.dedupe(keys)
+            if len(keys) < 2 or smooth_motion.is_constant(keys) or smooth_motion.FINGER in name:
+                continue
+            frames, out = [k.frame for k in keys], ta[name]
+            out_frames = [k.frame for k in out]
+            for a, b in zip(keys, keys[1:]):
+                if smooth_motion.is_flat(a, b):                             # every hold of the dance is still a hold
+                    for f in range(a.frame, b.frame + 1):
+                        p, q = smooth_motion.sample(out, f, out_frames)
+                        self.assertEqual(p, tuple(a.position))
+                        self.assertTrue(same_quaternion(q, smooth_motion._normalized(a.rotation), 1e-7))
+            for f in range(keys[0].frame, keys[-1].frame + 1):              # every frame, keys too, near MMD's path
+                p0, q0 = smooth_motion.sample(keys, f, frames)
+                p1, q1 = smooth_motion.sample(out, f, out_frames)
+                worst = (max(worst[0], angle_between(q0, q1)), max(worst[1], max(abs(x - y) for x, y in zip(p0, p1))))
+        self.assertLessEqual(worst[0], cap[0] + 1e-3, worst)
+        self.assertLessEqual(worst[1], cap[1] + 1e-6, worst)
+        self.assertTrue(report["denoise"]["straight"])
+
+        def deep_dips(track):
+            """a02: minima of the turn per frame below half the lower neighbouring peak, both peaks moving"""
+            frames = [k.frame for k in track]
+            q = [smooth_motion.sample(track, f, frames)[1] for f in range(600, 7601)]
+            s = [angle_between(a, b) for a, b in zip(q, q[1:])]
+            moving = sorted(v for v in s if v > 0.05 * sorted(s)[int(0.9 * len(s))])
+            moving = moving[len(moving) // 2]
+            count = 0
+            for i in range(1, len(s) - 1):
+                if s[i] <= s[i - 1] and s[i] < s[i + 1]:
+                    j, k = i, i
+                    while j > 0 and s[j - 1] >= s[j]:
+                        j -= 1
+                    while k < len(s) - 1 and s[k + 1] >= s[k]:
+                        k += 1
+                    ref = min(s[j], s[k])
+                    count += ref >= moving and s[i] < 0.5 * ref
+            return count
+        for name in ("右腕", "左腕", "右ひじ", "左ひじ", "頭"):
+            fewer, before_dips = deep_dips(ta[name]), deep_dips(tc[name])
+            self.assertLess(fewer, 0.8 * before_dips, (name.encode("ascii", "backslashreplace"), fewer, before_dips))
 
 
 if __name__ == "__main__":

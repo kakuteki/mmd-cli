@@ -265,6 +265,7 @@ python tools/make_camera.py dance.vmd camera.vmd --report shots.json --analysis 
 ```
 python tools/smooth_motion.py dance.vmd smooth.vmd --report r.json        # 曲線に描き直して焼く
 python tools/smooth_motion.py dance.vmd smooth.vmd --denoise              # 密なキーの手ぶれも取る（7.5 Hz）
+python tools/smooth_motion.py dance.vmd smooth.vmd --denoise --denoise-cap 6 0.05 --straight   # 直線の経路を均す（速さの谷を作らない）
 python tools/motion_jerk.py smooth.vmd --bones センター 上半身 右腕 左腕 右ひじ 頭
 ```
 
@@ -290,6 +291,18 @@ python tools/motion_jerk.py smooth.vmd --bones センター 上半身 右腕 左
 密でない所（センター・上半身・頭）にある。自分の出力（全フレームにキー）にかけると全部を密とみなして疎なキーまで動かすので、
 トレースのキーにかける（キーの間隔の 9 割以上が 1 フレームの軌跡があれば結果の JSON の `warnings` に出る）。
 実測と判断は `docs/reviews/2026-10-06-batch-h-denoise.md`。
+
+`--straight`（`--denoise` と一緒に使う。既定は切）は、キーを通る曲線を使わず、MMD の直線の経路そのものを全部のキーで
+同じ低域通過にかける。曲線は、保持の端と 90 度以上の向きの変化で速さを 0 にし、遅い方の区間の速さに合わせるので、
+動きが続いているキーで速さが落ちる（分析 a02: 腕・ひじ・頭・上半身のキーの 59〜72% で前後の平均の半分未満）。直線の経路には
+この落ち込みが無く、キーの所の速さの段だけを低域通過がならす。止まり（と直前直後の 1 フレーム）、作者の曲線の区間、最初と
+最後のキー、最低の高さのキー、最低の高さのキー同士の区間（床に着いた足はトレースどおりにだけ滑る）は動かさない。
+どのフレームも MMD の直線の経路から上限（`--denoise-cap`）まで。指は `--denoise-fingers` が無ければ曲線のまま。
+ヒビカセ（`dance_arms_open6.vmd`、`--denoise --denoise-cap 6 0.05 --straight` → `fix_twist`）では、動いている最中の深い谷
+（a02 の定義）が 右手首 1.04 → 0.65・左手首 1.07 → 0.61・頭 1.53 → 0.63 回/秒（平滑化の前 0.63・0.58・0.57）。
+3〜6 Hz の割合は 14.8 → 13.4%・16.3 → 14.2%・12.0 → 12.3%（平滑化の前 13.1・13.9・12.1%）。手の止まり（a08 の 80→20%）は
+60・57 ms で変わらず、頭とセンターの止まりは 50 → 40 ms と鋭くなる。キーの 65% が最大 6 度・0.05 動く（曲線は 22%）。
+実測と判断は `_spike/out/stage2/smooth/NOTES.md`。
 
 ### 動画に文字を重ねる（`tools/mv_text.py`、MMD なし）
 
