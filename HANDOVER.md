@@ -371,6 +371,13 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      a13 の v_sac では頭に運ばれる視線が 37 % 残る、目線の合計は 40 % → 10 %。描き比べの候補: `--min-fixation 9`、breath `--strength 1.5`。
      次は加賀さんの見比べの回答を見て、第 2 段（重心・腕の連なり・平滑化）へ進むかを決める。
 
+   - **2026-10-10 第 2 段（加賀さん「トルク制御や遅延をいれると良いらしい、MMDを拡張してより人間っぽくしていって」）**:
+     調査 `_spike/out/stage2/research/RESEARCH.md`（素のトルク上限・神経の遅れは拍に遅れるだけ。効くのは近位→遠位の時刻のずらしと
+     手先ほど柔らかい追従、ずれを直す力にだけ上限）、試作 `stage2/spike/`。本番: `tools/motor_layer.py`（新規、--preset default|strong）と
+     `smooth_motion --straight`（速さの深い谷 手首 1.04→0.70・頭 1.53→0.79 回/秒、止めの出入りは曲線）。どちらも査読→直し→main（166d680）。
+     組み立て `stage2/build_v4.py`（v4s → 呼吸 → motor → 視線 → 表情）。v4（既定）と v4x（強め）を hinata で描画中。
+     注意: 下請けを claude-tools を cwd にして起こすと worktree が claude-tools に出来る（2 体とも中に mmd-cli を clone して作業した）。
+
 ## 道具化の候補（claude-tools へ。着手は加賀さんの指示があってから）
 
 今夜 5 回以上くり返した手順。CLI 化・MCP 化は勝手にやらない決まりなので、候補として挙げるだけ:
