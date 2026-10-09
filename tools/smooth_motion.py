@@ -115,10 +115,12 @@ and every frame that is not pinned may move, within the same caps of what was ba
 step at each key over a few frames and adds no slowing down of its own.
 * A segment that touches a still key (a hold's first or last key, the track's first or last key) is not baked straight:
   the straight path would stop dead at the hold in one frame, as the traced dance did (review smooth, item 1: the head
-  and the center came to rest or set off in one frame as often as before smoothing).  It is the Hermite segment of the
-  curve with a zero tangent at the still end and the segment's own chord rate (along its arc) at the other: it joins the
-  straight path at its speed and comes to rest over its length.  That ease lags or leads the straight path by at most
-  4/27 of the segment's arc; every other frame stays within --denoise-cap of MMD's straight path.
+  and the center came to rest or set off in one frame as often as before smoothing).  It runs along the straight path at its
+  own speed and comes to rest over its last EASE_SPAN (4) frames, or sets off over its first, by a Hermite from that
+  speed to 0 (a segment of at most 8 frames between two still keys eases in and out over its whole length).  Easing the
+  whole of a long segment instead swelled its middle and made a long slow approach, a dip among the other bones: on
+  ヒビカセ the deep dips of the head were 0.89 a second against 0.79.  The ease lags or leads the straight path by at
+  most 4/27 of the eased part of the arc; every other frame stays within --denoise-cap of MMD's straight path.
 * Pinned as for --denoise (holds and the frame on either side, authored segments, the first and last key and the frame
   next to them, every key at the track's lowest height, a lone floor key of a landing too) and also every segment between
   two keys at the lowest height: a foot that is down slides exactly as traced, the frames between its contacts cannot
@@ -347,15 +349,39 @@ def smooth_segment(a, b, ma, mb):
     return out
 
 
-def eased_ends(a, b, rest_a, rest_b):
-    """the end tangents of a segment of --straight that touches a still key: 0 at the still end, the segment's own chord
-    rate (its straight speed, along its arc) at the other.  The segment then leaves or joins the straight path at its
-    speed and comes to rest over its length, never in one frame (review smooth item 1)"""
+EASE_SPAN = 4                           # --straight: the frames over which a segment comes to rest at a still key
+
+
+def eased_segment(a, b, rest_a, rest_b, span=EASE_SPAN):
+    """[(position, rotation)] for the frames strictly between a and b of a segment of --straight that touches a still key
+    (rest_a / rest_b: that end is one).  Along the straight path (the part s of the way, s from 0 to 1: a straight line
+    per position channel and the arc of the turn) at its own speed, except the last `span` frames before a still end and
+    the first after one: there s runs a Hermite from the straight path's speed to 0, so the segment comes to rest over
+    `span` frames, never in one (review smooth item 1), and no slower or longer than that (easing the whole of a long
+    segment made a slow approach, a dip among the other bones).  A segment of at most 2 * span frames between two still
+    keys eases in and out over its whole length."""
     h = float(b.frame - a.frame)
-    chord = (tuple((pb - pa) / h for pa, pb in zip(a.position, b.position)),
-             tuple(c / h for c in log_map(relative(a.rotation, b.rotation))))   # the same vector in a's and b's frames
-    rest = (ZERO, ZERO)
-    return (rest if rest_a else chord), (rest if rest_b else chord)
+    qa = _normalized(a.rotation)
+    e = log_map(relative(qa, b.rotation))
+    turning = any(c != 0.0 for c in e)
+    width = min(float(span), h)
+    out = []
+    for frame in range(a.frame + 1, b.frame):
+        t = frame - a.frame
+        if rest_a and rest_b and h <= 2 * span:
+            s = _hermite(t / h)[2]
+        elif rest_b and t > h - width:
+            h00, h10, h01, _ = _hermite((t - (h - width)) / width)
+            s = h00 * (h - width) / h + h10 * width / h + h01                # from the straight path at its rate, to rest
+        elif rest_a and t < width:
+            _, _, h01, h11 = _hermite(t / width)
+            s = (h01 + h11) * width / h                                       # from rest, to the straight path at its rate
+        else:
+            s = t / h
+        pos = tuple(pa + s * (pb - pa) for pa, pb in zip(a.position, b.position))
+        rot = _normalized(mathutil.quat_multiply(qa, exp_map(tuple(c * s for c in e)))) if turning else qa
+        out.append((pos, rot))
+    return out
 
 
 def dedupe(keys):
@@ -394,7 +420,7 @@ def smooth_track(keys, tension, straight=False):
         if all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
             counts["linear"] += 1
             if straight and (a.frame in still or b.frame in still):
-                between = smooth_segment(a, b, *eased_ends(a, b, a.frame in still, b.frame in still))
+                between = eased_segment(a, b, a.frame in still, b.frame in still)
             elif straight:
                 between = [sample(deduped, f, frames) for f in range(a.frame + 1, b.frame)]
             else:

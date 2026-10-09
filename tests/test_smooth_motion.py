@@ -1141,6 +1141,24 @@ class StraightTest(unittest.TestCase):
         off = [angle_between(a[1], b[1]) for a, b in zip(path(straight, "右腕", 8, 28), per_frame(self.run_into_a_hold(), 8, 28))]
         self.assertLess(max(off), 0.05, off)
 
+    def test_a_long_segment_into_a_hold_runs_straight_and_eases_only_at_its_end(self):
+        # easing the whole of a long segment swells its middle (a third faster) and makes the approach long and slow: a
+        # dip of the hand's speed among the other bones; only the last EASE_SPAN frames ease, as a short stop
+        keys = [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 2.0 * f)) for f in (0, 4, 8)]
+        held = about((1.0, 0.0, 0.0), 40.0)
+        keys += [bone("右腕", 20, rot=held), bone("右腕", 30, rot=held)]               # 8 -> 20: 12 frames into the hold
+        baked, _ = smooth_motion.smooth_track(keys, 0.5, True)
+        steps = turns(vmd.Motion(model_name="m", bones=baked), "右腕", 8, 20)
+        span = smooth_motion.EASE_SPAN
+        self.assertEqual(span, 4)
+        for s in steps[:12 - span]:
+            self.assertAlmostEqual(s, 2.0, places=6)                                     # straight, at its own speed
+        eased = steps[12 - span:]
+        self.assertAlmostEqual(sum(eased), 2.0 * span, places=6)
+        for fast, slow in zip(eased, eased[1:]):
+            self.assertGreater(slow, 0.25 * fast, eased)
+        self.assertLess(eased[-1], 1.0, eased)
+
     def test_the_frame_next_to_a_hold_is_the_eased_curve_as_baked(self):
         # the denoise pins the frame just before and after a hold (and its keys): the step that touches the hold is the
         # eased one even where the keys around are dense and jittery and the low-pass moves their neighbours
@@ -1440,7 +1458,7 @@ class RealDanceTest(unittest.TestCase):
             return count
         for name in ("右腕", "左腕", "右ひじ", "左ひじ", "頭"):
             fewer, before_dips = deep_dips(ta[name]), deep_dips(tc[name])
-            # the eased segments at the holds keep some dips (review smooth item 1): the left elbow is at 0.85 of the curve
+            # the eases at the holds keep some dips (review smooth item 1): a margin of 0.9, not 0.8
             self.assertLess(fewer, 0.9 * before_dips, (name.encode("ascii", "backslashreplace"), fewer, before_dips))
 
 
