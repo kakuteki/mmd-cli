@@ -111,12 +111,21 @@ the motion goes on through: on ヒビカセ 59 to 72 % of the arm, elbow, head a
 the mean speed around them (analysis a02), and the hands and the head dip below half their speed about once a second in
 the middle of a movement, 1.7 to 2.7 times as often as before smoothing.  --straight bakes MMD's own straight path instead (the
 linear segments as MMD shows them) and runs the denoise over the whole of every denoised track: every key counts as dense
-and every frame that is not pinned may move, within the same caps, so a frame never leaves MMD's straight path by more
-than --denoise-cap.  The low-pass rounds the velocity step at each key over a few frames and adds no slowing down of its
-own.  Pinned as for --denoise (holds and the frame on either side, authored segments, the first and last key and the
-frame next to them, every key at the track's lowest height) and also every segment between two keys at the lowest height:
-a foot that is down slides exactly as traced, the frames between its contacts cannot wobble.  Fingers keep the curve
-unless --denoise-fingers.
+and every frame that is not pinned may move, within the same caps of what was baked.  The low-pass rounds the velocity
+step at each key over a few frames and adds no slowing down of its own.
+* A segment that touches a still key (a hold's first or last key, the track's first or last key) is not baked straight:
+  the straight path would stop dead at the hold in one frame, as the traced dance did (review smooth, item 1: the head
+  and the center came to rest or set off in one frame as often as before smoothing).  It is the Hermite segment of the
+  curve with a zero tangent at the still end and the segment's own chord rate (along its arc) at the other: it joins the
+  straight path at its speed and comes to rest over its length.  That ease lags or leads the straight path by at most
+  4/27 of the segment's arc; every other frame stays within --denoise-cap of MMD's straight path.
+* Pinned as for --denoise (holds and the frame on either side, authored segments, the first and last key and the frame
+  next to them, every key at the track's lowest height, a lone floor key of a landing too) and also every segment between
+  two keys at the lowest height: a foot that is down slides exactly as traced, the frames between its contacts cannot
+  wobble.  "At the lowest height" is an exact match of the stored value (a traced floor is one value, 0.0 in ヒビカセ; a
+  floor that wavers by a hair is not seen as one).
+* --tension does nothing on the denoised tracks (there are no curve tangents to scale; the eased segments always use
+  the chord rate); it still shapes the fingers, which keep the curve unless --denoise-fingers.
 """
 import argparse
 import bisect
@@ -338,6 +347,17 @@ def smooth_segment(a, b, ma, mb):
     return out
 
 
+def eased_ends(a, b, rest_a, rest_b):
+    """the end tangents of a segment of --straight that touches a still key: 0 at the still end, the segment's own chord
+    rate (its straight speed, along its arc) at the other.  The segment then leaves or joins the straight path at its
+    speed and comes to rest over its length, never in one frame (review smooth item 1)"""
+    h = float(b.frame - a.frame)
+    chord = (tuple((pb - pa) / h for pa, pb in zip(a.position, b.position)),
+             tuple(c / h for c in log_map(relative(a.rotation, b.rotation))))   # the same vector in a's and b's frames
+    rest = (ZERO, ZERO)
+    return (rest if rest_a else chord), (rest if rest_b else chord)
+
+
 def dedupe(keys):
     """the keys of a track (sorted by frame) with one key per frame: of two keys on one frame the last one counts"""
     deduped = []
@@ -356,6 +376,10 @@ def smooth_track(keys, tension, straight=False):
     deduped = dedupe(keys)
     frames = [k.frame for k in deduped]
     slopes = None if straight else tangents(deduped, tension)
+    still = {deduped[0].frame, deduped[-1].frame}                           # where the motion starts from or comes to rest
+    for a, b in zip(deduped, deduped[1:]):
+        if is_flat(a, b):
+            still.update((a.frame, b.frame))
     line = vmd.LINEAR_CURVE
     out, counts = [], {"linear": 0, "authored": 0, "flat": 0}
     for i, a in enumerate(deduped):
@@ -369,7 +393,9 @@ def smooth_track(keys, tension, straight=False):
             continue
         if all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
             counts["linear"] += 1
-            if straight:
+            if straight and (a.frame in still or b.frame in still):
+                between = smooth_segment(a, b, *eased_ends(a, b, a.frame in still, b.frame in still))
+            elif straight:
                 between = [sample(deduped, f, frames) for f in range(a.frame + 1, b.frame)]
             else:
                 between = smooth_segment(a, b, slopes[i], slopes[i + 1])
@@ -832,7 +858,8 @@ def main(argv=None):
                    help="let --denoise take the finger bones in too (left out by default)")
     p.add_argument("--straight", action="store_true",
                    help="with --denoise: low-pass MMD's straight path at every key instead of running a curve through "
-                        "the keys (no slowing down at a key the motion goes on through)")
+                        "the keys (no slowing down at a key the motion goes on through; the segments next to a hold ease); "
+                        "--tension then only shapes the fingers")
     args = p.parse_args(argv)
     try:
         result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap,

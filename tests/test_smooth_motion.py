@@ -1061,16 +1061,30 @@ class StraightTest(unittest.TestCase):
         self.assertGreater(max(turns(curve, "右腕", 12, 68)), 4.0 * 1.15)               # not vacuous: 4.75
 
     def test_every_frame_stays_within_the_cap_of_the_straight_path_and_keys_too(self):
+        # within the cap of what was baked; off MMD's straight path by at most the cap, plus, in a segment that eases to
+        # or from rest (it touches a hold or the first or last key), the ease's lag of at most 4/27 of its arc
         keys = self.corner() + zigzag(rotate=True, name="右ひじ", gap=4, n=11) + zigzag(gap=3, n=14)
+        motion = vmd.Motion(model_name="m", bones=keys)
         for cap in ((3.0, 0.05), (1.0, 0.02)):
             _, straight, report = straight_and_curve(keys, denoise_cap=cap)
             moved = 0
             for name in ("右腕", "右ひじ", "センター"):
-                original = per_frame(track_of(vmd.Motion(model_name="m", bones=keys), name))
-                for (p0, q0), (p1, q1) in zip(original, path(straight, name)):
-                    self.assertLessEqual(angle_between(q0, q1), cap[0] + 1e-4)
-                    self.assertLessEqual(max(abs(x - y) for x, y in zip(p0, p1)), cap[1] + 1e-9)
-                    moved += (p0, q0) != (p1, q1)
+                track = smooth_motion.dedupe(track_of(motion, name))
+                baked, _ = smooth_motion.smooth_track(track, 0.5, True)
+                lag = {}
+                for i, (a, b) in enumerate(zip(track, track[1:])):
+                    eased = i == 0 or i == len(track) - 2
+                    arc = angle_between(a.rotation, b.rotation) if eased else 0.0
+                    run = max(abs(x - y) for x, y in zip(a.position, b.position)) if eased else 0.0
+                    for f in range(a.frame, b.frame + 1):
+                        lag[f] = max(lag.get(f, (0.0, 0.0))[0], EASE_LAG * arc), max(lag.get(f, (0.0, 0.0))[1], EASE_LAG * run)
+                frames = range(track[0].frame, track[-1].frame + 1)
+                for f, (p0, q0), (pb, qb), (p1, q1) in zip(frames, per_frame(track), per_frame(baked), path(straight, name)):
+                    self.assertLessEqual(angle_between(qb, q1), cap[0] + 1e-4)
+                    self.assertLessEqual(max(abs(x - y) for x, y in zip(pb, p1)), cap[1] + 1e-9)
+                    self.assertLessEqual(angle_between(q0, q1), cap[0] + lag[f][0] + 1e-4, f)
+                    self.assertLessEqual(max(abs(x - y) for x, y in zip(p0, p1)), cap[1] + lag[f][1] + 1e-9, f)
+                    moved += (pb, qb) != (p1, q1)
             self.assertGreater(moved, 40)
             self.assertGreater(sum(b["denoise"]["frames"] for b in report["bones"] if "denoise" in b), 40)
 
@@ -1080,7 +1094,7 @@ class StraightTest(unittest.TestCase):
         xs = [p[0] for p, _ in path(straight, "センター")]
         jumps = [abs(a - 2.0 * b + c) for a, b, c in zip(xs, xs[1:], xs[2:])]
         # MMD's straight path changes its speed by 2 * 10/6 in one frame at each reversal
-        self.assertLess(max(jumps[2:-2]), 0.6 * 2.0 * 10.0 / 6.0, jumps)
+        self.assertLess(max(jumps[7:-7]), 0.6 * 2.0 * 10.0 / 6.0, jumps)   # past the eased first and last segments
 
     def test_a_hold_stays_exactly_still_and_a_foot_keeps_its_floor(self):
         held = about((1.0, 0.0, 0.0), 20.0)
@@ -1101,6 +1115,54 @@ class StraightTest(unittest.TestCase):
         for pos, _ in path(straight, "右足ＩＫ", 12, 24):
             self.assertEqual(pos, (3.6, 0.0, 1.0))                                       # planted: no slide
         self.assertNotEqual(path(straight, "右足ＩＫ", 26, 38), per_frame(foot, 26, 38))
+
+    def run_into_a_hold(self, gap=4, jitter=0.0):
+        """3 degrees a frame about X, keyed every `gap` frames, into a hold 40..60, then out again the other way"""
+        keys = [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 3.0 * f + jitter * (-1) ** (f // gap))) for f in range(0, 40, gap)]
+        held = about((1.0, 0.0, 0.0), 120.0)
+        keys += [bone("右腕", 40, rot=held), bone("右腕", 60, rot=held)]
+        keys += [bone("右腕", f, rot=about((1.0, 0.0, 0.0), 120.0 - 3.0 * (f - 60) + jitter * (-1) ** (f // gap)))
+                 for f in range(60 + gap, 101, gap)]
+        return keys
+
+    def test_a_hold_is_entered_and_left_over_frames_not_in_one(self):
+        # review smooth item 1: the straight path stops dead at a hold (a 1-frame stop: the speed falls by 3/4 or more in
+        # one frame); the segment that touches a hold eases to rest at the hold and leaves the other key at its own rate
+        _, straight, _ = straight_and_curve(self.run_into_a_hold())
+        into, out_of = turns(straight, "右腕", 30, 40), turns(straight, "右腕", 60, 70)
+        for steps in (into, list(reversed(out_of))):                        # both read towards the hold
+            self.assertAlmostEqual(steps[0], 3.0, delta=0.3)                 # running before the eased segment
+            for fast, slow in zip(steps, steps[1:]):
+                self.assertGreater(slow, 0.25 * fast, steps)                 # no 1-frame stop on the way in or out
+            self.assertLess(steps[-1], 0.5 * 3.0, steps)                      # the last step into the hold is a slow one
+        for _, rot in path(straight, "右腕", 40, 60):
+            self.assertEqual(rot, smooth_motion._normalized(about((1.0, 0.0, 0.0), 120.0)))
+        # the segments that do not touch a hold stay on the straight path (the run is steady: little to round)
+        off = [angle_between(a[1], b[1]) for a, b in zip(path(straight, "右腕", 8, 28), per_frame(self.run_into_a_hold(), 8, 28))]
+        self.assertLess(max(off), 0.05, off)
+
+    def test_the_frame_next_to_a_hold_is_the_eased_curve_as_baked(self):
+        # the denoise pins the frame just before and after a hold (and its keys): the step that touches the hold is the
+        # eased one even where the keys around are dense and jittery and the low-pass moves their neighbours
+        keys = self.run_into_a_hold(gap=2, jitter=2.0)
+        motion = vmd.Motion(model_name="m", bones=keys)
+        straight, _ = smooth_motion.smooth(motion, denoise=DENOISE, straight=True)
+        baked, _ = smooth_motion.smooth_track(keys, 0.5, True)
+        for f in (39, 61):
+            self.assertEqual(path(straight, "右腕", f, f), per_frame(baked, f, f), f)
+        self.assertNotEqual(path(straight, "右腕", 33, 37), per_frame(baked, 33, 37))   # not vacuous: the denoise works
+
+    def test_a_landing_on_a_single_floor_key_stays_on_it(self):
+        # a foot that touches the floor on one key only (no floor segment): that key is pinned all the same
+        foot = []
+        for f in range(0, 41, 2):
+            y = 0.0 if f == 20 else abs(f - 20) * 0.05 + 0.03 * (-1) ** (f // 2)
+            foot.append(bone("右足ＩＫ", f, pos=(0.1 * f + 0.02 * (-1) ** (f // 2), max(y, 0.01), 1.0)))
+        _, straight, _ = straight_and_curve(foot)
+        by = {k.frame: k for k in track_of(straight, "右足ＩＫ")}
+        self.assertEqual(by[20].position, foot[10].position)
+        self.assertGreaterEqual(min(k.position[1] for k in by.values()), 0.0)
+        self.assertNotEqual(by[16].position, foot[8].position)                           # not vacuous
 
     def test_a_foot_sliding_on_its_floor_slides_as_traced(self):
         # keys on the floor 2 frames apart that creep sideways (a traced foot that is down, with the tracer's jitter):
@@ -1340,7 +1402,7 @@ class RealDanceTest(unittest.TestCase):
             keys = smooth_motion.dedupe(keys)
             if len(keys) < 2 or smooth_motion.is_constant(keys) or smooth_motion.FINGER in name:
                 continue
-            frames, out = [k.frame for k in keys], ta[name]
+            out = ta[name]
             out_frames = [k.frame for k in out]
             for a, b in zip(keys, keys[1:]):
                 if smooth_motion.is_flat(a, b):                             # every hold of the dance is still a hold
@@ -1348,8 +1410,10 @@ class RealDanceTest(unittest.TestCase):
                         p, q = smooth_motion.sample(out, f, out_frames)
                         self.assertEqual(p, tuple(a.position))
                         self.assertTrue(same_quaternion(q, smooth_motion._normalized(a.rotation), 1e-7))
-            for f in range(keys[0].frame, keys[-1].frame + 1):              # every frame, keys too, near MMD's path
-                p0, q0 = smooth_motion.sample(keys, f, frames)
+            baked, _ = smooth_motion.smooth_track(keys, 0.5, True)
+            baked_frames = [k.frame for k in baked]
+            for f in range(keys[0].frame, keys[-1].frame + 1):              # every frame, keys too, near the baked path
+                p0, q0 = smooth_motion.sample(baked, f, baked_frames)
                 p1, q1 = smooth_motion.sample(out, f, out_frames)
                 worst = (max(worst[0], angle_between(q0, q1)), max(worst[1], max(abs(x - y) for x, y in zip(p0, p1))))
         self.assertLessEqual(worst[0], cap[0] + 1e-3, worst)
@@ -1376,7 +1440,8 @@ class RealDanceTest(unittest.TestCase):
             return count
         for name in ("右腕", "左腕", "右ひじ", "左ひじ", "頭"):
             fewer, before_dips = deep_dips(ta[name]), deep_dips(tc[name])
-            self.assertLess(fewer, 0.8 * before_dips, (name.encode("ascii", "backslashreplace"), fewer, before_dips))
+            # the eased segments at the holds keep some dips (review smooth item 1): the left elbow is at 0.85 of the curve
+            self.assertLess(fewer, 0.9 * before_dips, (name.encode("ascii", "backslashreplace"), fewer, before_dips))
 
 
 if __name__ == "__main__":
