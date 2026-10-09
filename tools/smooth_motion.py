@@ -3,6 +3,7 @@ velocity jump at every key, and bake it to a key on every frame.
 
     python tools/smooth_motion.py DANCE.vmd OUT.vmd [--report r.json] [--bones NAME ...] [--skip NAME ...]
                                   [--tension 0.5] [--denoise [HZ]] [--denoise-cap DEG UNITS] [--denoise-fingers]
+                                  [--straight]
 
 Why: a traced dance holds sparse keys with the linear curve.  The distributed motion of ヒビカセ has 39,451 of
 its 39,660 bone keys on the curve (20, 20, 107, 107), a median gap of 3 to 6 frames and 100 to 200 gaps of
@@ -103,6 +104,30 @@ nothing else:
   gives per bone the keys and frames moved, the frames at a bound and the largest moves.  On its own output (a key on
   every frame) --denoise would take every key for dense and move keys that were sparse in the tracing: when 90 % or
   more of a track's key gaps are 1 frame the result's "warnings" say so.  Give it the traced keys.
+
+--straight (with --denoise; default off; stage 2, _spike/out/stage2/smooth/NOTES.md).  The curve above stops at every hold
+edge and every turn of 90 degrees or more and takes the slower of the two adjacent rates elsewhere, so it slows down at keys
+the motion goes on through: on ヒビカセ 59 to 72 % of the arm, elbow, head and upper body keys are passed at less than half
+the mean speed around them (analysis a02), and the hands and the head dip below half their speed about once a second in
+the middle of a movement, 1.7 to 2.7 times as often as before smoothing.  --straight bakes MMD's own straight path instead (the
+linear segments as MMD shows them) and runs the denoise over the whole of every denoised track: every key counts as dense
+and every frame that is not pinned may move, within the same caps of what was baked.  The low-pass rounds the velocity
+step at each key over a few frames and adds no slowing down of its own.
+* A segment that touches a still key (a hold's first or last key, the track's first or last key) is not baked straight:
+  the straight path would stop dead at the hold in one frame, as the traced dance did (review smooth, item 1: the head
+  and the center came to rest or set off in one frame as often as before smoothing).  It runs along the straight path at its
+  own speed and comes to rest over its last EASE_SPAN (4) frames, or sets off over its first, by a Hermite from that
+  speed to 0 (a segment of at most 8 frames between two still keys eases in and out over its whole length).  Easing the
+  whole of a long segment instead swelled its middle and made a long slow approach, a dip among the other bones: on
+  ヒビカセ the deep dips of the head were 0.89 a second against 0.79.  The ease lags or leads the straight path by at
+  most 4/27 of the eased part of the arc; every other frame stays within --denoise-cap of MMD's straight path.
+* Pinned as for --denoise (holds and the frame on either side, authored segments, the first and last key and the frame
+  next to them, every key at the track's lowest height, a lone floor key of a landing too) and also every segment between
+  two keys at the lowest height: a foot that is down slides exactly as traced, the frames between its contacts cannot
+  wobble.  "At the lowest height" is an exact match of the stored value (a traced floor is one value, 0.0 in ヒビカセ; a
+  floor that wavers by a hair is not seen as one).
+* --tension does nothing on the denoised tracks (there are no curve tangents to scale; the eased segments always use
+  the chord rate); it still shapes the fingers, which keep the curve unless --denoise-fingers.
 """
 import argparse
 import bisect
@@ -324,6 +349,41 @@ def smooth_segment(a, b, ma, mb):
     return out
 
 
+EASE_SPAN = 4                           # --straight: the frames over which a segment comes to rest at a still key
+
+
+def eased_segment(a, b, rest_a, rest_b, span=EASE_SPAN):
+    """[(position, rotation)] for the frames strictly between a and b of a segment of --straight that touches a still key
+    (rest_a / rest_b: that end is one).  Along the straight path (the part s of the way, s from 0 to 1: a straight line
+    per position channel and the arc of the turn) at its own speed, except the last `span` frames before a still end and
+    the first after one: there s runs a Hermite from the straight path's speed to 0, so the segment comes to rest over
+    `span` frames, never in one (review smooth item 1), and no slower or longer than that (easing the whole of a long
+    segment made a slow approach, a dip among the other bones).  A segment of at most 2 * span frames between two still
+    keys eases in and out over its whole length."""
+    h = float(b.frame - a.frame)
+    qa = _normalized(a.rotation)
+    e = log_map(relative(qa, b.rotation))
+    turning = any(c != 0.0 for c in e)
+    width = min(float(span), h)
+    out = []
+    for frame in range(a.frame + 1, b.frame):
+        t = frame - a.frame
+        if rest_a and rest_b and h <= 2 * span:
+            s = _hermite(t / h)[2]
+        elif rest_b and t > h - width:
+            h00, h10, h01, _ = _hermite((t - (h - width)) / width)
+            s = h00 * (h - width) / h + h10 * width / h + h01                # from the straight path at its rate, to rest
+        elif rest_a and t < width:
+            _, _, h01, h11 = _hermite(t / width)
+            s = (h01 + h11) * width / h                                       # from rest, to the straight path at its rate
+        else:
+            s = t / h
+        pos = tuple(pa + s * (pb - pa) for pa, pb in zip(a.position, b.position))
+        rot = _normalized(mathutil.quat_multiply(qa, exp_map(tuple(c * s for c in e)))) if turning else qa
+        out.append((pos, rot))
+    return out
+
+
 def dedupe(keys):
     """the keys of a track (sorted by frame) with one key per frame: of two keys on one frame the last one counts"""
     deduped = []
@@ -335,17 +395,22 @@ def dedupe(keys):
     return deduped
 
 
-def smooth_track(keys, tension):
+def smooth_track(keys, tension, straight=False):
     """(the new keys, {"linear": n, "authored": n, "flat": n}) for a track with keys on 2 or more frames:
-    a key per frame where the value moves, the two keys alone where it does not"""
+    a key per frame where the value moves, the two keys alone where it does not.  straight: the linear segments are
+    baked as MMD shows them (the straight path) instead of the curve, for --straight"""
     deduped = dedupe(keys)
     frames = [k.frame for k in deduped]
-    slopes = tangents(deduped, tension)
-    straight = vmd.LINEAR_CURVE
+    slopes = None if straight else tangents(deduped, tension)
+    still = {deduped[0].frame, deduped[-1].frame}                           # where the motion starts from or comes to rest
+    for a, b in zip(deduped, deduped[1:]):
+        if is_flat(a, b):
+            still.update((a.frame, b.frame))
+    line = vmd.LINEAR_CURVE
     out, counts = [], {"linear": 0, "authored": 0, "flat": 0}
     for i, a in enumerate(deduped):
         out.append(vmd.BoneKey(a.name, a.frame, tuple(a.position), tuple(a.rotation),
-                               vmd.bone_interpolation(straight, keep=a.interpolation), a.raw_name))
+                               vmd.bone_interpolation(line, keep=a.interpolation), a.raw_name))
         if i + 1 == len(deduped):
             break
         b = deduped[i + 1]
@@ -354,11 +419,16 @@ def smooth_track(keys, tension):
             continue
         if all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
             counts["linear"] += 1
-            between = smooth_segment(a, b, slopes[i], slopes[i + 1])
+            if straight and (a.frame in still or b.frame in still):
+                between = eased_segment(a, b, a.frame in still, b.frame in still)
+            elif straight:
+                between = [sample(deduped, f, frames) for f in range(a.frame + 1, b.frame)]
+            else:
+                between = smooth_segment(a, b, slopes[i], slopes[i + 1])
         else:
             counts["authored"] += 1
             between = [sample(deduped, f, frames) for f in range(a.frame + 1, b.frame)]
-        curve = vmd.bone_interpolation(straight, keep=a.interpolation)         # the frames after a key carry its flag
+        curve = vmd.bone_interpolation(line, keep=a.interpolation)             # the frames after a key carry its flag
         for frame, (pos, rot) in zip(range(a.frame + 1, b.frame), between):
             out.append(vmd.BoneKey(a.name, frame, pos, rot, curve, a.raw_name))
     return out, counts
@@ -401,7 +471,7 @@ def check_denoise(hz, cap):
     return float(hz), (float(cap[0]), float(cap[1]))
 
 
-def dense_plan(keys):
+def dense_plan(keys, every=False):
     """(the frames the denoise may move, the frames of the dense keys, the track's floor) of a deduped track.
 
     A key is dense when a gap of at most DENSE_GAP frames joins it to a neighbour.  Pinned (never moved) are: every frame
@@ -409,7 +479,9 @@ def dense_plan(keys):
     to the track's first and last key (so the motion enters and leaves every still stretch as the plain curve does),
     every key that is not dense, the track's first and last key and, when the track's height varies, every key at its
     lowest height (a foot on the floor stays where it was traced).  The frames that may move are those within
-    DENOISE_MARGIN of a dense key that are not pinned."""
+    DENOISE_MARGIN of a dense key that are not pinned.  every (--straight): every key counts as dense whatever its gaps,
+    every frame that is not pinned may move, and a segment between two keys at the lowest height is pinned too (a foot
+    that is down keeps the traced path between its contacts, so the frames between them cannot wobble into a skate)."""
     n = len(keys)
     ys = [k.position[1] for k in keys]
     floor = min(ys)
@@ -420,13 +492,17 @@ def dense_plan(keys):
             pinned.update(range(a.frame - 1, b.frame + 2))
         elif not all(is_linear(c) for c in vmd.bone_curves(b.interpolation).values()):
             pinned.update(range(a.frame, b.frame + 1))
+        elif every and lifts and a.position[1] == floor == b.position[1]:
+            pinned.update(range(a.frame, b.frame + 1))                      # a foot down: it slides as traced, no more
     dense = set()
     for i, k in enumerate(keys):
         if 0 < i < n - 1 and k.frame not in pinned and not (lifts and k.position[1] == floor) and \
-                min(k.frame - keys[i - 1].frame, keys[i + 1].frame - k.frame) <= DENSE_GAP:
+                (every or min(k.frame - keys[i - 1].frame, keys[i + 1].frame - k.frame) <= DENSE_GAP):
             dense.add(k.frame)
         else:
             pinned.add(k.frame)
+    if every:
+        return {f for f in range(keys[0].frame, keys[-1].frame + 1) if f not in pinned}, dense, floor
     zone = set()
     for f in dense:
         for g in range(max(keys[0].frame, f - DENOISE_MARGIN), min(keys[-1].frame, f + DENOISE_MARGIN) + 1):
@@ -589,11 +665,12 @@ def _settle(columns, zone, lam, project):
     return values
 
 
-def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
+def denoise_track(keys, baked, hz, cap=DENOISE_CAP, every=False):
     """(the baked keys with the frame-scale jitter of the dense runs taken out, what was moved): keys is the deduped
-    track, baked what smooth_track made of it.  See the module docstring."""
+    track, baked what smooth_track made of it.  every: all of the track, not only its dense runs (--straight).  See the
+    module docstring."""
     stats = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0}
-    zone, dense, floor = dense_plan(keys)
+    zone, dense, floor = dense_plan(keys, every)
     if not zone:
         return baked, stats
     cap_deg, cap_units = cap
@@ -673,14 +750,15 @@ def denoise_track(keys, baked, hz, cap=DENOISE_CAP):
     return out, stats
 
 
-def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None, denoise_fingers=False):
+def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=None, denoise_fingers=False, straight=False):
     """(a copy of `motion` with every chosen bone track smoothed, a report); see the module docstring.  denoise is the
     cutoff in Hz of the denoise of the dense runs (None: no denoise), denoise_cap its (degrees, units), denoise_fingers
-    takes the finger bones in too.  report["warnings"] lists what looks wrong with the input (an already baked file)."""
+    takes the finger bones in too, straight (--straight) low-passes the straight path at every key of a denoised track
+    instead.  report["warnings"] lists what looks wrong with the input (an already baked file)."""
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
-    if denoise is None and (denoise_cap is not None or denoise_fingers):
-        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
+    if denoise is None and (denoise_cap is not None or denoise_fingers or straight):
+        raise ValueError("--denoise-cap, --denoise-fingers and --straight go with --denoise: give --denoise too")
     if denoise is not None:
         denoise, denoise_cap = check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     tracks = tracks_of(motion)
@@ -694,9 +772,10 @@ def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=N
                  "frames": [keys[0].frame, keys[-1].frame], "segments": {"linear": 0, "authored": 0, "flat": 0},
                  "changed": False}
         if name in chosen and keys[0].frame != keys[-1].frame and not is_constant(keys):
-            baked, counts = smooth_track(keys, tension)
+            denoised_here = denoise is not None and (FINGER not in name or denoise_fingers)
+            baked, counts = smooth_track(keys, tension, straight and denoised_here)
             if denoise is not None:
-                if FINGER in name and not denoise_fingers:
+                if not denoised_here:
                     entry["denoise"] = {"keys": 0, "frames": 0, "at_cap": 0, "max_deg": 0.0, "max_units": 0.0, "skipped": "finger"}
                 else:
                     traced = dedupe(keys)
@@ -704,7 +783,7 @@ def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=N
                     if len(gaps) >= 10 and sum(g == 1 for g in gaps) >= BAKED_SHARE * len(gaps):
                         looks_baked.append(name)
                     denoised += 1
-                    baked, entry["denoise"] = denoise_track(traced, baked, denoise, denoise_cap)
+                    baked, entry["denoise"] = denoise_track(traced, baked, denoise, denoise_cap, straight)
             keys = baked
             entry.update(keys_after=len(keys), segments=counts, changed=True)
         new_bones += keys
@@ -716,7 +795,7 @@ def smooth(motion, tension=0.5, bones=None, skip=(), denoise=None, denoise_cap=N
     out.bones = new_bones
     settings = None if denoise is None else {"hz": denoise, "cap_deg": denoise_cap[0], "cap_units": denoise_cap[1],
                                              "max_gap": DENSE_GAP, "margin": DENOISE_MARGIN, "min_zone": MIN_ZONE,
-                                             "fingers": bool(denoise_fingers)}
+                                             "fingers": bool(denoise_fingers), "straight": bool(straight)}
     warnings = []
     if looks_baked:
         warnings.append("%d of the %d denoised tracks have a key on 90 %% or more of their frames (%s%s): an already baked "
@@ -757,17 +836,17 @@ def check_distinct(*paths):
 
 
 def run(dance_path, out_path, tension=0.5, bones=None, skip=(), report_path=None, denoise=None, denoise_cap=None,
-        denoise_fingers=False):
+        denoise_fingers=False, straight=False):
     dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
     check_distinct(dance_full, out_full, report_path)
     if not 0.0 <= tension <= 1.0:
         raise ValueError("--tension scales the tangents, 0 to 1, not %r" % (tension,))
-    if denoise is None and (denoise_cap is not None or denoise_fingers):
-        raise ValueError("--denoise-cap and --denoise-fingers go with --denoise: give --denoise too")
+    if denoise is None and (denoise_cap is not None or denoise_fingers or straight):
+        raise ValueError("--denoise-cap, --denoise-fingers and --straight go with --denoise: give --denoise too")
     if denoise is not None:
         check_denoise(denoise, DENOISE_CAP if denoise_cap is None else denoise_cap)
     motion = vmd.load(dance_full)
-    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap, denoise_fingers)
+    smoothed, report = smooth(motion, tension, bones, skip, denoise, denoise_cap, denoise_fingers, straight)
     write_bytes(out_full, vmd.dumps(smoothed))
     back = vmd.load(out_full)
     changed = [b for b in report["bones"] if b["changed"]]
@@ -803,10 +882,14 @@ def main(argv=None):
                    help="how far --denoise may move a frame (default %g degrees, %g units)" % DENOISE_CAP)
     p.add_argument("--denoise-fingers", action="store_true",
                    help="let --denoise take the finger bones in too (left out by default)")
+    p.add_argument("--straight", action="store_true",
+                   help="with --denoise: low-pass MMD's straight path at every key instead of running a curve through "
+                        "the keys (no slowing down at a key the motion goes on through; the segments next to a hold ease); "
+                        "--tension then only shapes the fingers")
     args = p.parse_args(argv)
     try:
         result = run(args.dance, args.out, args.tension, args.bones, args.skip, args.report, args.denoise, args.denoise_cap,
-                     args.denoise_fingers)
+                     args.denoise_fingers, args.straight)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
