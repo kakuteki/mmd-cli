@@ -277,6 +277,39 @@ class JumpTest(unittest.TestCase):
         self.assertTrue(any(s["first"] <= 40 and s["last"] >= 41 and "左手首" in s["bones"] for s in spans), spans)
 
 
+class FingerTest(unittest.TestCase):
+    """the fingers: kinematic, a short delay after the wrist; in a snap (faster than 2,000 deg/s) no delay of their own:
+    they ride the hand's timing"""
+
+    def dance(self):
+        dance = swing_dance()
+        dance.bones = [k for k in dance.bones if k.name not in ("左中指１", "左中指２")]
+        snap = axis_angle((0, 0, 1), 150.0)            # 75 deg a frame: 2,250 deg/s
+        slow = axis_angle((0, 0, 1), 40.0)
+        dance.bones += [key("左中指１", 0), key("左中指１", 70), key("左中指１", 72, snap), key("左中指１", 76, snap),
+                        key("左中指２", 0), key("左中指２", 30), key("左中指２", 50, slow), key("左中指２", LAST, slow)]
+        return dance
+
+    def errors(self, params, name, frames):
+        dance = self.dance()
+        result = motor_layer.layer(MODEL, dance, params)
+        got = key_track(result.motion, name)
+        own = sorted([k for k in dance.bones if k.name == name], key=lambda k: k.frame)
+        return [angle_deg(got[f].rotation, fk.sample(own, f)[1]) for f in frames]
+
+    def test_a_snap_drops_the_fingers_own_delay(self):
+        with_snap = max(self.errors(motor_layer.default_params(), "左中指１", range(68, 76)))
+        p = motor_layer.default_params()
+        p["snap"] = False
+        without = max(self.errors(p, "左中指１", range(68, 76)))
+        self.assertLess(with_snap, without - 10.0)
+
+    def test_a_slow_curl_follows_the_wrist_a_little_later(self):
+        errors = self.errors(motor_layer.default_params(), "左中指２", range(32, 48))
+        self.assertGreater(min(errors), 0.3)             # 2 deg/frame read some 0.7 frames late
+        self.assertLess(max(errors), 3.0)
+
+
 class FloorTest(unittest.TestCase):
     """the left hand swings in to rest 6.8 cm in front of the eye, fast, along a path that would go on into the face"""
 
@@ -314,7 +347,8 @@ class FloorTest(unittest.TestCase):
         result = motor_layer.layer(self.model, self.dance, self.weak(True))
         d_in, d_out = self.tip_eye_mm(result.world_in), self.tip_eye_mm(result.world_out)
         near = d_in < 200.0
-        self.assertGreaterEqual(float(np.min((d_out - d_in)[near])), -10.0)
+        # the floor: within 10 cm of the eyes at most 8 mm closer than the input, a quarter of the rest further out
+        self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(any(s["reason"] == "floor" for s in result.report["fallback"]), result.report["fallback"])
 
     def test_the_contact_zone_keeps_the_input_there_by_itself(self):
@@ -409,7 +443,7 @@ class RealDanceTest(unittest.TestCase):
         d_out = np.linalg.norm(result.world_out["左中指３"][0] - eyes_out, axis=1) * 80.0
         near = d_in < 200.0
         self.assertTrue(near.any())
-        self.assertGreaterEqual(float(np.min((d_out - d_in)[near])), -10.0)
+        self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(result.report["untouched"]["identical"])
 
 

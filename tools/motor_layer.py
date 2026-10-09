@@ -134,6 +134,8 @@ STEP_WN_DT = 0.25               # more substeps when the stiffest bone's wn * dt
 SLOW_DEG_S = (200.0, 400.0)     # the upper arm's speed: slow below (delays doubled), fast above (RESEARCH 4.2: ~300)
 SLOW_WINDOW = 15                # frames each way for the fastest speed around a frame
 FINGER_DELAY = 0.25             # frames the fingers read after the wrist
+FINGER_SNAP_DEG_S = (1000.0, 2000.0)  # the input's fingers (手首 -> 中指３) turning faster: on their own frame
+FINGER_SNAP_PAD = 3             # frames each way
 HOLD_DEG_S = 5.0                # a09: a joint is still under this
 HOLD_MIN = 4                    # frames: a hold (the research, 2.0)
 HOLD_SETTLE = 6                 # frames after a hold's start before it stiffens (1 degree within 5-7 frames, 4.2)
@@ -145,7 +147,8 @@ KIME_LEAD = 3                   # frames before the beat hold it is stiff (RESEA
 KIME_RAMP = 4
 KIME_STIFF = 0.5                # wn x 1.5 (RESEARCH 4.2)
 KIME_FF = 0.2                   # beta + 0.2 (RESEARCH 4.2)
-CONTACT_MM = (90.0, 140.0)      # the tip's distance: all contact below, none above
+CONTACT_FACE_MM = (70.0, 100.0)  # the tip to the eyes: all contact below, none above (the input's least is 58 mm)
+CONTACT_BODY_MM = (60.0, 90.0)   # the tip to the line 上半身 - 首 (Rin's chest is about 9 cm deep each way)
 CONTACT_PAD = 4                 # frames (RESEARCH 4.2: "その前後 4 フレーム")
 CONTACT_STIFF = 1.0
 JUMP_DEG = 60.0                 # a jump turns at least this in one frame,
@@ -158,8 +161,11 @@ JUMP_HOLD = (1, 2)              # frames before and after a jump's interval that
 UNSOLVED_DEG = 10.0
 UNSOLVED_RUN = 2                # frames
 UNSOLVED_HARD_DEG = 45.0
-FLOOR_MM = 8.0
-FLOOR_RANGE_MM = 200.0
+FLOOR_MM = 8.0                  # the hand may come this much closer than the input had it, within FLOOR_KNEE_MM,
+FLOOR_KNEE_MM = 100.0
+FLOOR_SLOPE = 0.25              # and further out this share of the distance beyond the knee more
+FLOOR_RANGE_MM = 200.0          # (the face; the body FLOOR_BODY_RANGE_MM): no floor further out
+FLOOR_BODY_RANGE_MM = 150.0
 FLOOR_PAD = 2
 FLOOR_ROUNDS = 5
 LEAD_LIMIT = 2.0
@@ -180,7 +186,7 @@ def default_params():
                         "finger": {"kinematic": True, "delay": None}},     # None: the wrist's
             "finger_delay": FINGER_DELAY, "delay_scale": 1.0, "torque_scale": 1.0, "lead": None,
             "substeps": SUBSTEPS, "slow": True, "holds": True, "kime": True, "contact": True, "floor": True,
-            "unsolved": True, "jumps": True}
+            "unsolved": True, "jumps": True, "snap": True}
 
 
 # ---- quaternions on numpy arrays (x, y, z, w), Hamilton, v' = q v q^-1 (mmd_cli.fk) -------------------
@@ -669,17 +675,19 @@ class Plan:
         scale = float(self.p.get("delay_scale", 1.0))
         fast = np.zeros(nb)
         slow = np.zeros(nb)
+        extra = np.zeros(nb)
         for j, c in enumerate(self.cls):
             d = cp[c].get("delay")
             if c == "finger" and d is None:
                 d = cp["wrist"].get("delay", (0.0, 0.0))
             fd = float(self.p.get("finger_delay", 0.0)) if c == "finger" else 0.0
-            fast[j], slow[j] = (d[0] + fd) * scale, (d[1] + fd) * scale
+            fast[j], slow[j], extra[j] = (d[0] + fd) * scale, (d[1] + fd) * scale, fd * scale
         slowness = np.zeros((F, nb))
         hold = np.zeros((F, nb))
         kime = np.zeros((F, nb))
         contact = np.zeros((F, nb))
-        self.holds, self.kimes, self.contacts = {}, {}, {}
+        snap = np.zeros((F, nb))
+        self.holds, self.kimes, self.contacts, self.snaps = {}, {}, {}, {}
         beat_frames = None
         if self.beats is not None:
             t0, per = self.beats
@@ -710,14 +718,28 @@ class Plan:
                     hold[:, cols] = ramp_weight(F, pieces_h)[:, None]
                 if self.p.get("kime", True):
                     kime[:, cols] = ramp_weight(F, pieces_k)[:, None]
-            dist = self.tip_distance(self.world_in, s)
-            if dist is not None and self.p.get("contact", True):
-                c = falling(dist, *CONTACT_MM)
+            tip = tip_of(self.world_in, s)
+            if tip is not None and self.p.get("contact", True):
+                c = np.zeros(F)
+                for fn, limits in ((face_distance, CONTACT_FACE_MM), (body_distance, CONTACT_BODY_MM)):
+                    dist = fn(self.world_in, tip)
+                    if dist is not None:
+                        c = np.maximum(c, falling(dist, *limits))
                 c = max_filter(c, CONTACT_PAD)
                 c = np.convolve(np.pad(c, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
                 contact[:, cols] = c[:, None]
                 self.contacts[s] = runs(c > 0.5)
+            fcols = [j for j in cols if self.cls[j] == "finger"]
+            if fcols and s + "手首" in self.world_in and s + "中指３" in self.world_in and self.p.get("snap", True):
+                v = angular_speed(rel(self.world_in, s + "手首", s + "中指３"))
+                v = np.concatenate([v, v[-1:]])
+                g = smoothstep((v - FINGER_SNAP_DEG_S[0]) / (FINGER_SNAP_DEG_S[1] - FINGER_SNAP_DEG_S[0]))
+                g = max_filter(g, FINGER_SNAP_PAD)
+                g = np.convolve(np.pad(g, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
+                snap[:, fcols] = g[:, None]
+                self.snaps[s] = runs(g > 0.5)
         base = fast[None, :] + (slow - fast)[None, :] * slowness
+        base = base - extra[None, :] * snap                     # a snap: the fingers on the wrist's own time
         off = np.maximum(np.maximum(hold, kime), contact)
         self.D = base * (1.0 - off)
         self.WS = 1.0 + np.maximum(np.maximum(HOLD_STIFF * hold, KIME_STIFF * kime), CONTACT_STIFF * contact)
@@ -726,20 +748,14 @@ class Plan:
         self.FF = ff + (1.0 - ff) * contact
         self.Dp = np.gradient(self.D, axis=0) if F > 1 else np.zeros_like(self.D)
         self.Dp = np.clip(self.Dp, -0.8, 0.8)
-        self.weights = {"slowness": slowness, "hold": hold, "kime": kime, "contact": contact}
+        self.snap = snap
+        self.weights = {"slowness": slowness, "hold": hold, "kime": kime, "contact": contact, "snap": snap}
 
-    def tip_distance(self, W, side):
-        """per frame the distance (mm) of the side's hand tip to the eyes (else the head) or to the line 上半身 - 首,
-        whichever is nearer; None without the bones"""
-        tip = next((side + t for t in TIPS if side + t in W), None)
-        if tip is None:
-            return None
-        d = [face_distance(W, tip)]
-        body = body_distance(W, tip)
-        if body is not None:
-            d.append(body)
-        d = [x for x in d if x is not None]
-        return np.minimum.reduce(d) if d else None
+
+
+def floor_of(d_in):
+    """the least distance (mm) the output may keep where the input keeps d_in"""
+    return d_in - FLOOR_MM - FLOOR_SLOPE * np.maximum(0.0, d_in - FLOOR_KNEE_MM)
 
 
 def face_point(W):
@@ -1056,8 +1072,7 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
                     fb[:, bones] = np.maximum(fb[:, bones], w[:, None])
                     spans.append({"reason": "floor", "first": max(0, int(a2)), "last": min(F - 1, int(b2)),
                                   "bones": [plan.names[c] for c in bones], "round": rnd + 1,
-                                  "detail": "%s hand closer to the face or the body than the input by more than %g mm"
-                                            % (s, FLOOR_MM)})
+                                  "detail": "%s hand closer to the face or the body than the floor" % s})
             if not found:
                 break
             key_rot = blend(plan, key_layer, fb)
@@ -1079,11 +1094,11 @@ def floor_violations(plan, world_out, side):
     if tip is None:
         return None
     bad = np.zeros(plan.F, bool)
-    for fn in (face_distance, body_distance):
+    for fn, reach in ((face_distance, FLOOR_RANGE_MM), (body_distance, FLOOR_BODY_RANGE_MM)):
         d_in, d_out = fn(plan.world_in, tip), fn(world_out, tip)
         if d_in is None or d_out is None:
             continue
-        bad |= (d_in < FLOOR_RANGE_MM) & (d_out < d_in - FLOOR_MM)
+        bad |= (d_in < reach) & (d_out < floor_of(d_in))
     return bad
 
 
@@ -1584,6 +1599,8 @@ def report_of(plan, world_out, out, info):
     rep["holds"] = {s: len(v) for s, v in plan.holds.items()}
     rep["beat_holds"] = kime_arrivals(plan, W) if plan.beats is not None else None
     rep["contact_stretches"] = plan.contacts
+    rep["finger_snaps"] = plan.snaps
+    rep["weights_share"] = {k: _r(float((v > 0.5).mean()), 4) for k, v in plan.weights.items()}
     rep["a09"] = {"input": measure_a09(Win, Win, Qin, Qin, F), "output": measure_a09(W, Win, Q, Qin, F)}
     rep["a02"] = {"input": measure_a02(Win), "output": measure_a02(W)}
     rep["a04"] = {"input": measure_a04(Win, Win, F, plan.beats), "output": measure_a04(W, Win, F, plan.beats)}
@@ -1655,15 +1672,22 @@ def short(report):
 
 
 def run(dance_path, model_path, out_path, report_path=None, beats_path=None, key_frames_path=None, params=None,
-        log=None):
+        log=None, world_path=None):
     started = time.time()
-    check_distinct(dance_path, model_path, out_path, report_path, beats_path, key_frames_path)
+    check_distinct(dance_path, model_path, out_path, report_path, beats_path, key_frames_path, world_path)
     dance = vmd.load(dance_path)
     model = load_model(model_path)
     beats = read_beats(beats_path) if beats_path else None
     key_frames = read_key_frames(key_frames_path) if key_frames_path else None
     result = layer(model, dance, params, beats, key_frames, log)
     write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
+    if world_path:
+        names = [n for n in result.world_in if n in result.world_out]
+        np.savez_compressed(os.path.abspath(world_path), names=np.array(names),
+                            pos_in=np.stack([result.world_in[n][0] for n in names], 1).astype(np.float32),
+                            rot_in=np.stack([result.world_in[n][1] for n in names], 1).astype(np.float32),
+                            pos_out=np.stack([result.world_out[n][0] for n in names], 1).astype(np.float32),
+                            rot_out=np.stack([result.world_out[n][1] for n in names], 1).astype(np.float32))
     report = dict({"in": os.path.abspath(dance_path), "model": os.path.abspath(model_path),
                    "out": os.path.abspath(out_path), "beats": beats_path and os.path.abspath(beats_path),
                    "key_frames": key_frames_path and os.path.abspath(key_frames_path)}, **result.report)
@@ -1688,6 +1712,7 @@ def main(argv=None):
     p.add_argument("--finger-delay", type=float, default=FINGER_DELAY,
                    help="frames the fingers read after the wrist (default %g; 0: on the hand's timing)" % FINGER_DELAY)
     p.add_argument("--substeps", type=int, default=SUBSTEPS, help="simulation steps per frame (default %d)" % SUBSTEPS)
+    p.add_argument("--world", help="save the world positions and rotations, input and output, to this .npz")
     p.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = p.parse_args(argv)
     params = default_params()
@@ -1696,7 +1721,7 @@ def main(argv=None):
     try:
         if a.substeps < 1:
             raise ValueError("--substeps must be 1 or more")
-        result = run(a.dance, a.model, a.out, a.report, a.beats, a.key_frames, params, log)
+        result = run(a.dance, a.model, a.out, a.report, a.beats, a.key_frames, params, log, a.world)
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
