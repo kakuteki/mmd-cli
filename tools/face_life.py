@@ -35,14 +35,19 @@ What is done (the numbers are the constants below):
   lid between them is held at the level it had (a switch of that level, hidden in an old blink, happens over
   BASE_SWITCH frames; a quick change of it with an expression is stretched like the expression; it never closes slowly
   for more than CREEP_LONGEST frames, which a10 would count as the creep); what still shuts the eyes then (the long
-  closures, closure = まばたき + 笑い >= CLOSED as a10) stays.  New blinks are
-  placed at the start of quick large gaze shifts (GAZE_SHIFT degrees in GAZE_SHIFT_FRAMES frames, head and eyes in the
-  world) with the chance P_GAZE, at the start of large saccades (BIG_SACCADE degrees, from the gaze motion) with
-  P_SACCADE, in the breath after a phrase ends with P_PHRASE, and elsewhere after log-normal waits (FILL_MEDIAN,
-  FILL_SIGMA, and with LONG_PAUSE_CHANCE a pause of LONG_PAUSE seconds), never two within MIN_BETWEEN frames.  Each
-  blink closes in CLOSING_FRAMES, stays shut HOLD_FRAMES and opens in OPENING_FRAMES (drawn per blink; the opening
-  slows down at its end); its peak makes まばたき + 笑い = 1.  The upper lid follows the gaze: LID_DOWN per degree
-  the eyes look down, LID_UP less per degree up, from one fixation to the next (it moves with the saccade).
+  closures, closure = まばたき + 笑い >= CLOSED as a10) stays.  New blinks are placed, at most RATE a minute,
+  never WINDOW_MAX in BLINK_WINDOW frames (the kept closures count) and never two within MIN_BETWEEN frames
+  (Schedule): first at the start of quick large gaze shifts (GAZE_SHIFT degrees in GAZE_SHIFT_FRAMES frames, head and
+  eyes in the world), the largest first, each with the chance P_GAZE, up to GAZE_SHARE of the blinks (a restless gaze
+  would otherwise make her blink 36 times a minute); then in the breath after a phrase ends with P_PHRASE; at the
+  start of large saccades (BIG_SACCADE degrees, from the gaze motion) with P_SACCADE; and elsewhere after log-normal
+  waits (FILL_MEDIAN, FILL_SIGMA, and with LONG_PAUSE_CHANCE a pause of LONG_PAUSE seconds).  Each blink closes in
+  CLOSING_FRAMES, stays shut HOLD_FRAMES and opens in OPENING_FRAMES (drawn per blink; the opening slows down at its
+  end); its peak makes まばたき + 笑い = 1.  The upper lid follows the gaze: LID_DOWN per degree the eyes look down,
+  LID_UP less per degree up, from one fixation to the next (it moves with the saccade).  The finished まばたき is
+  checked for a10's creep once more (without_creep: where the lid's level and its following the gaze meet).  Where
+  a stretched change of 笑い meets a closure (the long closures), 笑い is lowered so that まばたき + 笑い never
+  passes what the author had on that frame, or 1 (cap_smile).
 * Mouth (あいうえお).  The frame on which each vowel is fully open (an onset, tools/lip_timing.py) is kept.  The
   height of each sung vowel (a key of 1.0) is GAIN times as high, more for a loud and long note (the voice: the
   power of the centre of the stereo picture in VOICE_BAND), at least SMALL_FLOOR for い and う, FINAL_FLOOR for the
@@ -53,13 +58,16 @@ What is done (the numbers are the constants below):
   key), and a held vowel eases off by HOLD_RELAX.  The vowels never add up to more than 1.  Where nothing is sung the
   mouth breathes (あ between BREATH[0] and BREATH[1], up to BREATH[2] when the dance is intense, a cycle of
   BREATH_PERIOD seconds, never above BREATH_CAP), and where the voice stops for 100 ms or more between two vowels
-  with at least 4 frames to spare before the next opening, it opens to JOIN_BREATH for a short breath.  No onset
+  with at least 4 frames to spare before the next opening, it opens to JOIN_BREATH for a short breath (not where the
+  lips were shut between them: the closure stays).  No onset
   moves and none is added (the report counts them), except that the wake-up carries its own.
 * The dance's own face keys (the MV's dance keys まばたき on a few frames of the intro) would be merged into the face
   when MMD loads both: OUT holds a key of its own on each of those frames, so that its tracks win.
 
 The report (--report, and in short on stdout) gives, for the expressions, the blinks and the mouth, the measures of
-the analyses a11, a10 and a12 before (FACE) and after (OUT).
+the analyses a11, a10 and a12 before (FACE) and after (OUT).  Read expression.stretched_frames for how long a change of
+the face now takes: a11's ramp_frames counts every pair of neighbouring keys, after the rewrite mostly the keys of the
+envelope.
 """
 import argparse
 import bisect
@@ -119,7 +127,11 @@ SACCADE_SPEED = 1.5             # degrees per frame of the eyes in the head and 
 SACCADE_LONGEST = 5             # frames: a faster stretch than this is no saccade
 PHRASE_PAUSE = 15               # frames between two vowel onsets that end a phrase for the blinks (a10)
 PHRASE_BLINK = (5, 9)           # frames after the last vowel of a phrase the blink starts
-MIN_BETWEEN = 12                # frames between the starts of two blinks
+MIN_BETWEEN = 15                # frames between the starts of two blinks
+RATE = 25.0                     # blinks a minute at most (the KAZUSA motion: 25.6; people talking: 26, 10.5-32.5)
+BLINK_WINDOW, WINDOW_MAX = 300, 7   # at most WINDOW_MAX blinks in any BLINK_WINDOW frames (10 s)
+WINDOW_MARGIN = 4               # frames added to the window when the blinks are chosen
+GAZE_SHARE = 0.7                # the share of the blinks that may go to the gaze shifts (the largest first)
 FILL_MEDIAN, FILL_SIGMA = 3.4, 0.5                            # seconds, log-normal
 LONG_PAUSE_CHANCE, LONG_PAUSE = 0.12, (6.0, 10.0)
 KEEP_CLEAR = 15                 # frames around the long closures and after the eyes open without new blinks
@@ -273,6 +285,11 @@ def gaze_world(head, eyes):
 def gaze_shifts(head, eyes, degrees=GAZE_SHIFT, frames=GAZE_SHIFT_FRAMES):
     """frames where the gaze in the world (head and eyes) starts turning by `degrees` within `frames` (a10: the peaks
     of the change over the window, at least `frames` apart)"""
+    return [f for f, _ in gaze_shift_sizes(head, eyes, degrees, frames)]
+
+
+def gaze_shift_sizes(head, eyes, degrees=GAZE_SHIFT, frames=GAZE_SHIFT_FRAMES):
+    """[(frame, degrees turned within `frames`)] of gaze_shifts"""
     g = gaze_world(head, eyes)
     n = len(g)
     if n <= frames + 2:
@@ -286,7 +303,7 @@ def gaze_shifts(head, eyes, degrees=GAZE_SHIFT, frames=GAZE_SHIFT_FRAMES):
                 keep[-1] = f
         else:
             keep.append(f)
-    return keep
+    return [(f, float(change[f])) for f in keep]
 
 
 def saccades(head, eyes, speed=SACCADE_SPEED, longest=SACCADE_LONGEST):
@@ -400,9 +417,13 @@ def plan(inp, seed=0):
     start = inp.body_start
     keys, intro = wake_up(keys, frames, start)
     env = envelope([(p.start, p.end) for p in phrases], frames, rng)
-    expressions, events = rewrite_expressions(keys, env, speed, frames, rng, has)
+    expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has)
     smile = track(expressions.get(SMILE, keys.get(SMILE, [])), frames)
     blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng)
+    if blink is not None and SMILE in expressions:
+        allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
+        expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
+        blink_info["smile_frames_capped"] = capped
     vowels, mouth_info = rewrite_mouth(keys, frames, onsets, phrases, inp, rng)
     new = dict(keys)
     new.update(expressions)
@@ -419,15 +440,39 @@ def plan(inp, seed=0):
     blink_report = dict(blink_info)
     blink_report["before"] = measure_blinks(original, frames, inp, onsets, original_wake(original, frames))
     blink_report["new"] = dict(measure_blinks(new, frames, inp, onsets, intro["eyes_open"]), list=listed)
+    author = track(original.get(BLINK, []), frames) + track(original.get(SMILE, []), frames)
+    shut_new = track(new.get(BLINK, []), frames) + track(new.get(SMILE, []), frames)
+    blink_report["new"]["closure_max"] = _r(shut_new.max(), 3)
+    blink_report["new"]["closure_over_the_author"] = _r(max(0.0, float(shut_new.max() - max(1.0, author.max()))), 3)
+    blink_report["before"]["closure_max"] = _r(author.max(), 3)
     report = {
         "frames": [0, frames - 1], "seed": seed, "intro": intro,
         "expression": {"before": measure_expressions(original, frames, speed),
                        "new": measure_expressions(new, frames, speed), "changes": len(events),
-                       "moved_to_head": sum(1 for e in events if e["shift"] != 0)},
+                       "moved_to_head": sum(1 for e in events if e["shift"] != 0),
+                       "stretched_frames": _dist([e - s for _, s, e in stretched])},
         "blink": blink_report,
         "mouth": dict(mouth_info, **measure_mouth(original, new, frames, inp, intro)),
     }
     return Result(motion, report)
+
+
+def cap_smile(smile_keys, blink, allowed, frames):
+    """笑い lowered where まばたき + 笑い would close the eye further than the author did (max(1, its sum) on that
+    frame): a key on every frame of those stretches.  (keys, frames lowered)"""
+    s = track(smile_keys, frames)
+    over = blink + s > allowed + 1e-6
+    if not over.any():
+        return smile_keys, 0
+    lowered = np.where(over, np.maximum(0.0, allowed - blink), s)
+    keep = dict(smile_keys)
+    for lo, hi in runs(over):
+        a, z = max(0, lo - 1), min(frames - 1, hi + 1)
+        for f in [f for f in keep if a <= f <= z]:
+            del keep[f]
+        for f in range(a, z + 1):
+            keep[f] = float(lowered[f])
+    return sorted(keep.items()), int(over.sum())
 
 
 def first_open(b, intro):
@@ -587,14 +632,16 @@ def rewrite_expressions(keys, env, speed, frames, rng, has):
             middle = (r[0] + r[2]) / 2.0 + shift + delays[PART[name]]
             s = int(round(middle - length / 2.0))
             plans[(name, i)] = [s, s + length, False]
-    out = {}
+    out, stretched = {}, []
     for name, rs in ramps.items():
         placed = []
         for i, r in enumerate(rs):
             span = plans.get((name, i), [r[0], r[2], True])
             placed.append([span[0], span[1], span[2], r[1], r[3], r[0], r[2]])
-        out[name] = modulate(sources[name], resolve(placed, frames), env, PART[name], frames)
-    return out, events
+        placed = resolve(placed, frames)
+        stretched += [(name, p[0], p[1]) for p in placed if not p[2]]
+        out[name] = modulate(sources[name], placed, env, PART[name], frames)
+    return out, events, stretched
 
 
 def resolve(placed, frames):
@@ -705,24 +752,24 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
     clear[:min(frames, opened + KEEP_CLEAR)] = True
     for e in longs:
         clear[max(0, e["cs"] - KEEP_CLEAR):e["oe"] + KEEP_CLEAR + 1] = True
-    candidates = []
-    for f in gaze_shifts(inp.head, inp.eyes):
-        if rng.random() < P_GAZE:
-            candidates.append((f + rng.randint(0, 1), "gaze_shift"))
-    for s in sacc:
-        if s["amplitude"] >= BIG_SACCADE and rng.random() < P_SACCADE:
-            candidates.append((s["start"] - 1 + rng.randint(0, 1), "saccade"))
+    budget = int(round(RATE * (frames - opened) / FPS / 60.0))
+    plan_ = Schedule(clear, frames, budget, [e["t0"] for e in longs])
+    shifts = sorted(gaze_shift_sizes(inp.head, inp.eyes), key=lambda fs: (-fs[1], fs[0]))      # the largest first
+    quota = int(round(GAZE_SHARE * budget))
+    for f, _ in shifts:
+        if rng.random() < P_GAZE and plan_.count("gaze_shift") < quota:
+            plan_.add(f + rng.randint(0, 1), "gaze_shift")
     starts = [o.frame for o in onsets]
     for a, z in zip(starts, starts[1:]):
         if z - a >= PHRASE_PAUSE and rng.random() < P_PHRASE:
             f = a + rng.randint(*PHRASE_BLINK)
             if f + 10 <= z:
-                candidates.append((f, "phrase_end"))
-    chosen = []
-    for f, cause in sorted(candidates):
-        if 0 <= f < frames - 12 and not clear[f] and (not chosen or f - chosen[-1][0] >= MIN_BETWEEN):
-            chosen.append((f, cause))
-    chosen = fill_blinks(chosen, clear, frames, rng)
+                plan_.add(f, "phrase_end")
+    for s in sorted(sacc, key=lambda x: -x["amplitude"]):
+        if s["amplitude"] >= BIG_SACCADE and rng.random() < P_SACCADE:
+            plan_.add(s["start"] - 1 + rng.randint(0, 1), "saccade")
+    fill_blinks(plan_, clear, frames, rng)
+    chosen = plan_.chosen()
     b = base.copy()
     out = []
     for f, cause in chosen:
@@ -736,16 +783,72 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
             peak = max(base[g], 1.0 - smile[g])
             b[g] = max(b[g], base[g] + (peak - base[g]) * p)
         out.append({"start": int(f), "cause": cause, "closing": closing, "hold": hold, "opening": opening})
+    b = without_creep(b, opened)
     info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out,
             "by_cause": {c: sum(1 for x in out if x["cause"] == c) for c in ("gaze_shift", "saccade", "phrase_end", "fill")},
-            "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE)}
+            "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE),
+            "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
     return bake(b), info
 
 
-def fill_blinks(chosen, clear, frames, rng):
-    """add blinks where none came for a log-normal wait (sometimes a long pause)"""
-    out = list(chosen)
-    taken = sorted(f for f, _ in out)
+class Schedule:
+    """the blinks chosen so far: never two within MIN_BETWEEN frames, never more than WINDOW_MAX in WINDOW frames,
+    never more than the budget, never where the eyes are kept clear"""
+
+    def __init__(self, clear, frames, budget, fixed=()):
+        self.clear, self.frames, self.budget = clear, frames, budget
+        self.frames_taken, self.causes = [], {}
+        self.fixed = sorted(fixed)                 # closures that stay (counted in the window, not in the budget)
+
+    def count(self, cause=None):
+        return len(self.frames_taken) if cause is None else sum(1 for c in self.causes.values() if c == cause)
+
+    def fits(self, f):
+        if not 0 <= f < self.frames - 12 or self.clear[f] or len(self.frames_taken) >= self.budget:
+            return False
+        taken = self.frames_taken
+        i = bisect.bisect_left(taken, f)
+        if (i < len(taken) and taken[i] - f < MIN_BETWEEN) or (i > 0 and f - taken[i - 1] < MIN_BETWEEN):
+            return False
+        span = BLINK_WINDOW + WINDOW_MARGIN               # a blink's first shut frame is 2 or 3 frames after its start
+        for w in range(f - span + 1, f + 1):
+            n = (bisect.bisect_right(taken, w + span - 1) - bisect.bisect_left(taken, w)
+                 + bisect.bisect_right(self.fixed, w + span - 1) - bisect.bisect_left(self.fixed, w))
+            if n + 1 > WINDOW_MAX:
+                return False
+        return True
+
+    def add(self, f, cause):
+        if not self.fits(f):
+            return False
+        bisect.insort(self.frames_taken, f)
+        self.causes[f] = cause
+        return True
+
+    def chosen(self):
+        return [(f, self.causes[f]) for f in self.frames_taken]
+
+
+def without_creep(b, start):
+    """a10's creep (10 frames or more of the lid closing by at most STEEP a frame) taken out: the lid holds and then
+    closes over the last CREEP_LONGEST frames (where the lid's level, its following the gaze and a blink meet)"""
+    b = np.array(b, float)
+    for _ in range(10):
+        found = creep_runs(b, start)
+        if not found:
+            break
+        for s0, e in found:
+            low = b[s0 - 1]
+            top = b[e]
+            cut = e - CREEP_LONGEST
+            b[s0:cut + 1] = low
+            b[cut + 1:e + 1] = low + (top - low) * np.arange(1, CREEP_LONGEST + 1) / float(CREEP_LONGEST)
+    return b
+
+
+def fill_blinks(plan_, clear, frames, rng):
+    """add blinks where none came for a log-normal wait (sometimes a long pause), as the schedule allows"""
+    taken = plan_.frames_taken
     t = int(np.argmax(~clear)) if (~clear).any() else frames
     while t < frames - 20:
         if rng.random() < LONG_PAUSE_CHANCE:
@@ -762,11 +865,8 @@ def fill_blinks(chosen, clear, frames, rng):
             f += 1
         if f >= frames - 20:
             break
-        if all(abs(f - g) >= MIN_BETWEEN for g in taken):
-            bisect.insort(taken, f)
-            out.append((f, "fill"))
+        plan_.add(f, "fill")
         t = f
-    return sorted(out)
 
 
 def base_track(b_keys, longs, frames, intro, events, stretch=True):
@@ -1093,6 +1193,8 @@ def join_breaths(X, onsets, voice, frames):
         a, b = oa.frame, ob.frame
         if not JOIN_GAP[0] <= b - a <= JOIN_GAP[1]:
             continue
+        if X[a + 1:b].sum(axis=1).min() < 0.05:
+            continue                                   # the lips shut there: that stays
         t0, t1 = _seconds(a + 2), _seconds(b)
         i0, i1 = int((t0 - AUDIO_T0) * 100), int((t1 - AUDIO_T0) * 100)
         lo, hi = int((_seconds(a - 90) - AUDIO_T0) * 100), int((_seconds(b + 90) - AUDIO_T0) * 100)
@@ -1245,9 +1347,9 @@ def _coincide(ev, ref, before, after):
 def _shift_test(ev, ref, span, before, after, rng):
     a, z = span
     ev = np.asarray([f for f in ev if a <= f <= z])
-    if not len(ev) or not len(ref):
-        return {"n": int(len(ev))}
     length = z - a + 1
+    if not len(ev) or not len(ref) or length < 100:
+        return {"n": int(len(ev))}
     observed = _coincide(ev, ref, before, after)
     null = np.array([_coincide(np.sort((ev - a + rng.integers(30, length - 30)) % length + a), ref, before, after)
                      for _ in range(SHIFTS)])
@@ -1277,6 +1379,9 @@ def measure_blinks(keys, frames, inp, onsets, opened):
         shapes[k] = shapes.get(k, 0) + 1
         lengths.append(e["oe"] - e["cs"])
     out["shapes"] = dict(sorted(shapes.items(), key=lambda kv: -kv[1]))
+    t0s = np.array(sorted(e["t0"] for e in eps))
+    out["most_in_10s"] = int(max((np.searchsorted(t0s, f + BLINK_WINDOW - 1, side="right") - i for i, f in enumerate(t0s)),
+                                 default=0))
     out["frames_closing_start_to_open"] = _dist(lengths)
     if len(ibi) > 2:
         m = ibi.mean()

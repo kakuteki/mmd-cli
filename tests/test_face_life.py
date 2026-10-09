@@ -1,6 +1,9 @@
 """tools/face_life.py: the face motion (expressions, blinks, mouth) rewritten to move more like a person's."""
+import contextlib
 import importlib.util
+import io
 import json
+import random
 import os
 import shutil
 import tempfile
@@ -37,6 +40,9 @@ def blink_keys():
     for peak in (300, 420, 560, 900, 1150, 1400, 1650):
         keys += [key("まばたき", peak - 1, 0.5), key("まばたき", peak, 1.0), key("まばたき", peak + 1, 1.0),
                  key("まばたき", peak + 3, 0.26)]
+    # a long closure as the smile ends (笑い 0.5 -> 0 over 1500-1505): まばたき + 笑い stays at or under 1
+    keys += [key("まばたき", 1500, 0.3), key("まばたき", 1506, 1.0), key("まばたき", 1520, 1.0),
+             key("まばたき", 1524, 0.26)]
     return keys
 
 
@@ -50,6 +56,7 @@ def lip_keys():
     add("あ", 612, 0.0); add("あ", 614, 1.0); add("あ", 622, 1.0); add("あ", 623, 0.0)      # a, shut 624-625
     add("お", 625, 0.0); add("お", 627, 1.0); add("お", 634, 1.0); add("お", 636, 0.0)      # o (after m)
     add("え", 634, 0.0); add("え", 636, 1.0); add("え", 650, 1.0); add("え", 656, 0.0)      # e, end of phrase
+    add("お", 676, 0.0); add("お", 680, 1.0); add("お", 690, 1.0); add("お", 694, 0.0)      # o after a shut gap
     return k
 
 
@@ -62,7 +69,7 @@ def face_motion():
     return vmd.Motion(model_name="face", morphs=keys + blink_keys() + lip_keys())
 
 
-TURNS = (500, 800, 1200, 1500)          # the head swings by 45 degrees in 6 frames here
+TURNS = (500, 800, 1200, 1600)          # the head swings by 45 degrees in 6 frames here
 
 
 def head_track():
@@ -86,9 +93,18 @@ def still_eyes():
     return out
 
 
+def quiet_gap_voice():
+    """the centre power every 10 ms: loud, but quiet from frame 650 to 676 (the shut gap before the second phrase)"""
+    n = int(F / FPS * 100) + 10
+    voice = np.ones(n)
+    t = np.arange(n) / 100.0 + face_life.AUDIO_T0
+    voice[(t >= (650 + face_life.SHOWN) / FPS) & (t <= (676 + face_life.SHOWN) / FPS)] = 1e-4
+    return voice
+
+
 def inputs(**over):
     values = dict(face=face_motion(), frames=F, head=head_track(), eyes=still_eyes(), body_start=150,
-                  voice=None, lines=[(19.9, 22.0)], morphs=None, dance_morph_keys=[])
+                  voice=quiet_gap_voice(), lines=[(19.9, 23.4)], morphs=None, dance_morph_keys=[])
     values.update(over)
     return face_life.Inputs(**values)
 
@@ -226,6 +242,29 @@ class PlanTest(unittest.TestCase):
         still = np.abs(np.diff(quiet)) < 1e-6
         self.assertLess(still.mean(), 0.2)
 
+    def test_the_eyes_never_close_further_than_the_author_closed_them(self):
+        before = tracks(face_motion())
+        b, s = self.t["まばたき"], self.t["笑い"]
+        allowed = np.maximum(1.0, before["まばたき"] + before["笑い"])
+        self.assertLessEqual(float((b + s - allowed)[150:].max()), 1e-6)
+
+    def test_a_held_vowel_eases_off(self):
+        a = self.t["あ"]
+        held = a[614:621]
+        self.assertTrue(np.all(np.diff(held) < 0), held)
+        self.assertGreater(held[-1], 0.85 * held[0])
+
+    def test_no_onset_is_added(self):
+        lip = face_life.load_lip_timing()
+        before = {(o.frame, o.vowel) for o in lip.onsets(face_motion())}
+        after = {(o.frame, o.vowel) for o in lip.onsets(self.result.motion)}
+        self.assertEqual(after - before, set())
+        self.assertEqual(self.result.report["mouth"]["new"]["onsets_added"], 0)
+
+    def test_a_breath_between_phrases_does_not_open_shut_lips(self):
+        s = sum(self.t[v] for v in "あいうえお")
+        self.assertLess(float(s[660:672].min()), 0.05)
+
     def test_the_report_has_before_and_after(self):
         r = self.result.report
         for part in ("expression", "blink", "mouth"):
@@ -241,6 +280,53 @@ class SeedTest(unittest.TestCase):
         c = vmd.dumps(face_life.plan(inputs(), seed=4).motion)
         self.assertEqual(a, b)
         self.assertNotEqual(a, c)
+
+
+class WakeUpTest(unittest.TestCase):
+    def test_eyes_that_open_after_the_body_starts_open_before_it(self):
+        result = face_life.plan(inputs(body_start=60), seed=0)
+        b = tracks(result.motion)["まばたき"]
+        self.assertLess(int(np.argmax(b < 0.5)), 60)
+        self.assertEqual(result.report["intro"]["moved_by"], 60 - face_life.LEAD - 102)
+
+
+class BlinkRateTest(unittest.TestCase):
+    def test_a_restless_gaze_does_not_make_her_blink_too_often(self):
+        yaw = np.zeros(F)
+        gaps = (37, 71, 52, 89, 44, 63, 58, 76)                          # about 2 s apart (30 a minute), unevenly
+        starts = [200]
+        while starts[-1] + 100 < F:
+            starts.append(starts[-1] + gaps[len(starts) % len(gaps)])
+        for i, start in enumerate(starts):
+            target = 40.0 if i % 2 == 0 else 0.0
+            yaw[start:start + 6] = np.linspace(yaw[start - 1], target, 7)[1:]
+            yaw[start + 6:] = target
+        head = np.zeros((F, 4))
+        head[:, 1], head[:, 3] = np.sin(np.radians(yaw) / 2), np.cos(np.radians(yaw) / 2)
+        result = face_life.plan(inputs(head=head), seed=0)
+        new = result.report["blink"]["new"]
+        self.assertLessEqual(new["rate_per_min"], face_life.RATE + 1.0)
+        self.assertLessEqual(new["most_in_10s"], face_life.WINDOW_MAX)
+        self.assertGreater(new["gaze_shift_33"]["observed"], new["gaze_shift_33"]["chance_p97.5"])
+
+
+class GroupingTest(unittest.TestCase):
+    def test_changes_within_four_frames_are_one_change_of_the_face(self):
+        keys = {"真面目": [(0, 0.0), (400, 0.0), (405, 1.0)], "笑い": [(0, 0.0), (403, 0.0), (408, 0.5)],
+                "困る": [(0, 0.0), (700, 0.0), (705, 1.0)], "怒り": [(0, 0.0), (710, 0.0), (715, 0.5)]}
+        speed = np.zeros(F)
+        for seed in range(5):
+            out, events, stretched = face_life.rewrite_expressions(keys, [(0, 0.5), (F - 1, 0.5)], speed, F,
+                                                                    random.Random(seed),
+                                                                    lambda n: n not in ("口角上げ", "口角下げ"))
+            members = [sorted(n for n, _ in e["members"]) for e in events]
+            self.assertIn(sorted(["真面目", "笑い"]), members)
+            self.assertIn(["困る"], members)
+            self.assertIn(["怒り"], members)
+            length = {n: e - s for n, s, e in stretched}
+            self.assertEqual(length["真面目"], length["笑い"])
+            start = {n: s for n, s, e in stretched}
+            self.assertGreaterEqual(start["笑い"] - start["真面目"], 3 + face_life.DELAY["eye"][0])
 
 
 class DanceKeysTest(unittest.TestCase):
@@ -298,13 +384,16 @@ REAL = all((REAL_FACE, REAL_DANCE, REAL_GAZE, REAL_CUES, REAL_AUDIO)) and os.pat
 
 @unittest.skipUnless(REAL, "the KAZUSA face motion, the dance, the gaze, the cues, the sound or Rin is not here")
 class RealSongTest(unittest.TestCase):
+    dance, gaze = REAL_DANCE, REAL_GAZE
+
     @classmethod
     def setUpClass(cls):
         cls.folder = tempfile.mkdtemp()
         cls.out = os.path.join(cls.folder, "face.vmd")
         cls.report_path = os.path.join(cls.folder, "r.json")
-        cls.code = face_life.main([REAL_FACE, REAL_DANCE, REAL_GAZE, RIN, cls.out, "--audio", REAL_AUDIO,
-                                   "--cues", REAL_CUES, "--report", cls.report_path, "--seed", "0"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.code = face_life.main([REAL_FACE, cls.dance, cls.gaze, RIN, cls.out, "--audio", REAL_AUDIO,
+                                       "--cues", REAL_CUES, "--report", cls.report_path, "--seed", "0"])
         with open(cls.report_path, encoding="ascii") as f:
             cls.report = json.load(f)
 
@@ -343,10 +432,26 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(m["onset_weight_eq1"], 0.5)
         self.assertLessEqual(m["sum_max"], 1.0 + 1e-6)
         self.assertEqual(m["onsets_moved"], 0)
+        self.assertEqual(m["onsets_added"], 0)
+        self.assertLessEqual(b["most_in_10s"], face_life.WINDOW_MAX)
+        self.assertLessEqual(b["closure_over_the_author"], 1e-6)
         self.assertLess(m["outside_still_share"], 0.53)
         self.assertLess(self.report["intro"]["eyes_open"], self.report["intro"]["body_start"])
         lag = self.report["mouth"]["lag_ms"]
         self.assertEqual(lag["before"], lag["new"])
+
+
+STAGE_DANCE = real_file("_spike", "out", "stage1", "breath", "dance_v3_breath.vmd")
+STAGE_GAZE = real_file("_spike", "out", "stage1", "eye", "gaze_v3_on_v2dance.vmd")
+
+
+@unittest.skipUnless(REAL and STAGE_DANCE and STAGE_GAZE, "the stage-1 dance (breath) or gaze (eye) is not here")
+class StageOneInputsTest(RealSongTest):
+    """the same checks on the inputs of stage 1: the dance with breathing and the new, more restless gaze"""
+    dance, gaze = STAGE_DANCE, STAGE_GAZE
+
+    def test_the_before_numbers_are_the_analysts(self):
+        """the analysts measured the MV's inputs, not these"""
 
 
 if __name__ == "__main__":
