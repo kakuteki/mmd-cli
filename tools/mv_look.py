@@ -13,7 +13,10 @@ ffmpeg (the compositing), from back to front:
 * the plate: a dark stage, a band of haze at the horizon and a pool of light behind the dancer (`plate`);
 * the light: soft beams fanning down from above the frame and a few floating specks, drawn on black and
   screened over the plate.  It is a loop of `beams.loop_seconds` that closes (every motion in it is a
-  whole number of sine periods per loop), repeated for the whole song with -stream_loop;
+  whole number of sine periods per loop: `beams.cycles` and `bokeh.cycles`), repeated for the whole song with
+  -stream_loop.  The picture repeats exactly once per loop: a loop of a phrase of the song (16 bars) with
+  cycles of 2 and 3 sways about as fast as the default 12 s loop (periods of 13.7 and 9.1 s for 12 and 6) and
+  repeats every 16 bars only;
 * the text cues of the "back" layer (tools/mv_text.py renders them; a title behind the dancer);
 * the dancer, by her alpha;
 * her glow: the bright parts of the dancer alone (each channel above `glow.threshold` of 255), blurred by
@@ -48,10 +51,12 @@ from PIL import Image, ImageDraw, ImageFilter
 DEFAULT_LOOK = {
     # colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)
     "plate": {"base": [10, 12, 20], "haze": [34, 44, 78], "pool": [70, 86, 140], "horizon": 0.68, "vignette": 0.45},
-    # count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm
-    "beams": {"count": 6, "spread": 76.0, "sway": 3.0, "opacity": 0.55, "loop_seconds": 12,
+    # count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm.  The light is a
+    # loop of `loop_seconds`; the beams sway cycles[0] and cycles[1] whole periods per loop, every other beam
+    "beams": {"count": 6, "spread": 76.0, "sway": 3.0, "opacity": 0.55, "loop_seconds": 12, "cycles": [1, 2],
               "cool": [90, 110, 190], "warm": [200, 150, 80], "warm_every": 5},
-    "bokeh": {"count": 26, "opacity": 0.8, "seed": 7, "warm_share": 0.35},
+    # the specks drift round cycles[0] times per loop and twinkle cycles[1] times
+    "bokeh": {"count": 26, "opacity": 0.8, "seed": 7, "warm_share": 0.35, "cycles": [1, 2]},
     # tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and
     # turned the skin pink; this keeps the folds of the dress and still gives her a soft edge
     "glow": {"threshold": 175, "radius": 14, "strength": 0.45},
@@ -103,6 +108,10 @@ def merge_look(overrides):
         else:
             _check(name, value, look[name])
             look[name] = value
+    for name in ("beams", "bokeh"):
+        # a motion with a part of a period per loop would jump where the loop starts again
+        if not all(int(v) == v and v >= 1 for v in look[name]["cycles"]):
+            raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
     return look
 
 
@@ -144,8 +153,8 @@ def _beams(size, settings, phase):
     warm_every = int(settings["warm_every"])
     for i in range(count):
         centre = -settings["spread"] / 2.0 + settings["spread"] * (i + 0.5) / count
-        # each beam sways one or two whole periods per loop, out of step with its neighbours
-        sway = settings["sway"] * math.sin((1 + i % 2) * phase + 2.0 * math.pi * _unit(i, 1))
+        # each beam sways a whole number of periods per loop (cycles, every other beam), out of step with its neighbours
+        sway = settings["sway"] * math.sin(settings["cycles"][i % 2] * phase + 2.0 * math.pi * _unit(i, 1))
         angle = math.radians(centre + sway)
         half = math.radians(2.0 + 2.5 * _unit(i, 2))
         tone = 0.55 + 0.45 * _unit(i, 3)
@@ -166,11 +175,12 @@ def _bokeh(size, settings, phase):
     layer = Image.new("RGB", size, (0, 0, 0))
     draw = ImageDraw.Draw(layer)
     seed = float(settings["seed"])
+    drift, flicker = (float(c) for c in settings["cycles"])
     for i in range(count):
-        x = _unit(i, seed + 1) * w + 0.02 * w * math.sin(phase + 2.0 * math.pi * _unit(i, seed + 2))
-        y = _unit(i, seed + 3) * h * 0.9 + 0.03 * h * math.sin(phase + 2.0 * math.pi * _unit(i, seed + 4))
+        x = _unit(i, seed + 1) * w + 0.02 * w * math.sin(drift * phase + 2.0 * math.pi * _unit(i, seed + 2))
+        y = _unit(i, seed + 3) * h * 0.9 + 0.03 * h * math.sin(drift * phase + 2.0 * math.pi * _unit(i, seed + 4))
         r = (3.0 + 11.0 * _unit(i, seed + 5)) * h / REFERENCE_HEIGHT * LIGHT_SCALE / 2.0 + 1.0
-        twinkle = 0.7 + 0.3 * math.sin(2.0 * phase + 2.0 * math.pi * _unit(i, seed + 6))
+        twinkle = 0.7 + 0.3 * math.sin(flicker * phase + 2.0 * math.pi * _unit(i, seed + 6))
         tone = (0.25 + 0.55 * _unit(i, seed + 7)) * twinkle
         colour = (255, 214, 150) if _unit(i, seed + 8) < settings["warm_share"] else (150, 180, 255)
         draw.ellipse([x - r, y - r, x + r, y + r], fill=tuple(int(c * tone) for c in colour))
