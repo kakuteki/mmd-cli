@@ -3,7 +3,7 @@ stop on the same frame, and a hand runs on a little past a stop and settles.
 
     python tools/motor_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--beats beats.json]
                                 [--key-frames TRACE.vmd] [--lead L] [--delay-scale 1] [--finger-delay 0.25]
-                                [--substeps 16] [--world w.npz] [--verbose]
+                                [--substeps 16] [--world w.npz] [--preset default|strong] [--verbose]
 
 Why (the analysis of 2026-10-07, a09): in the trace 91 to 100 % of the keys of the arm's joints sit on the same frame, the
 joints' timing differs by 0 frames (95 % interval +-0.1), and the wrist stops after the upper arm before 0 to 8 % of the
@@ -68,8 +68,28 @@ The layer (numbers: the constants and default_params below):
     of the rest further out), that arm and 上半身..頭 go back to the input's around it;
   - a lost hand: where a wrist is more than DEVIATION_CM from the input's even at its best within frames f-1 .. f+3 (late
     is allowed), that arm goes back (from the second round with 上半身..頭).
-  The report lists every stretch given back (fallback) and what is left after the last round (floor_residual).
-* Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  The body's height is measured on the
+  - a wrist more than DEVIATION_SAME_CM from the input's on the same frame is lost too (the review: at 6,393 the
+    right wrist was 10.9 cm off, which the late-allowed measure did not see).
+  Every stretch given back is first widened while the layer's wrist is more than EDGE_DEV_CM from the input's on the
+  same frame (at most EDGE_EXTEND frames each way), so that its ramps blend two trajectories that are close.  Then, up to
+  SEAM_ROUNDS times, every edge where the wrist's step from one frame to the next passes the input's step by more than
+  SEAM_STEP_CM is mended: its ramp doubled (up to SEAM_RAMP_MAX); at that length, where the layer itself steps so, the
+  edge moved past that frame; and a stretch that gives back an arm but still steps inside (the trunk above it moves)
+  gives back 上半身..頭 too.  Without this, the 4-frame ramp at 6,393 made the right wrist step 10.7 cm in one frame
+  where the input moved 3.0 (now 3.0 and 3.0).  The report lists every stretch given back (fallback), every edge's
+  largest step over the input's with the layer's own step there (seams) and what is left after the last round
+  (floor_residual).
+* How much it runs on (the review of 2026-10-10): the run-on past a stop is about (1 - ff) x speed / wn x g(zeta), g
+  0.41 at zeta 0.85 and 0.46 at 0.7.  With ff 0.8 and the elbow at 8 Hz and the wrist at 9 Hz the default is stiff,
+  and the damping is not what keeps it small: 0.85 -> 0.7 gives 1.12 times as much, ff 0.8 -> 0.4 three times, 9 -> 5 Hz
+  1.8 times.  On the screen the hand's run-on is set by the upper arm and the elbow (the arm is 40 cm, the hand 12).
+  --preset strong (PRESETS) softens the upper arm and the elbow to 3.5 Hz and feeds forward less (0.85, 0.75; the
+  wrist 5 Hz, 0.5).
+* Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  As Kp and Kd scale with the
+  inertia, the motion does not depend on it until the torque limit binds: mass and inertia act only through the limit
+  on the angular acceleration (limit / inertia), and that binds on 0.1 to 0.3 % of the substeps of the shoulder and the
+  upper arm on the MV and never on the elbow and the wrist.  The shoulder girdle's limit has NO source (the shoulder's
+  abduction is borrowed); it is what marks 1,893 - 1,898 and 6,395 - 6,396 as not solved on the MV.  The body's height is measured on the
   bones (頭先 above the floor: 1 unit = 8 cm), the body mass and the joints' strength are those of Holzbaur's subject F1
   (157.5 cm, 49.9 kg) scaled by (height / 1.575)^3 (geometric similarity: mass and torque as length^3).  Each segment's
   mass is its de Leva share of the body, its centre of mass and radius of gyration (the mean of the sagittal and the
@@ -172,6 +192,12 @@ UNSOLVED_DEG = 10.0
 UNSOLVED_RUN = 2                # frames
 UNSOLVED_HARD_DEG = 45.0
 DEVIATION_CM = 8.0              # a wrist further than this from the input's, late allowed (the layer's p95: 4 cm)
+DEVIATION_SAME_CM = 12.0        # or further than this on the same frame (the review: 10.9 cm at 6,393, late allowed 2)
+EDGE_DEV_CM = 3.0               # a stretch given back widens while the layer's wrist is further than this (same frame)
+EDGE_EXTEND = 12                # frames each way at most
+SEAM_STEP_CM = 3.0              # an edge whose wrist steps more than the input's by this (cm/frame) gets a longer ramp
+SEAM_RAMP_MAX = 16              # frames (the layer's own excess away from the edges: p99 2.6, p99.9 4.9-5.5)
+SEAM_ROUNDS = 6
 FLOOR_MM = 8.0                 # the hand may come this much closer than the input had it, within FLOOR_KNEE_MM,
 FLOOR_KNEE_MM = 100.0
 FLOOR_SLOPE = 0.25              # and further out this share of the distance beyond the knee more
@@ -184,9 +210,31 @@ SONG = (600, 7600)              # the analysts' frames for a02 (on the MV's 7,74
 ACTIVE = (167, 7661)            # a04's dancing part and the trace's keys (the same)
 
 
-def default_params():
+# A stronger set (--preset strong): the upper arm and the elbow softer and less of their target's acceleration fed
+# forward (the research's table 4.2, the review of 2026-10-10: the run-on is set by ff and wn, hardly by the damping).
+# The review's run of about this set on the MV (its "research"): the hands' run-on past the stops 1.6 to 1.9 times the
+# default's (median), no more 3-6 Hz and no more deep dips (a02); 14.4 % of the bone-frames given back.
+PRESETS = {"default": {},
+           "strong": {"girdle": {"fn": 4.0, "zeta": 0.85, "ff": 0.9},
+                      "upper": {"fn": 3.5, "zeta": 0.85, "ff": 0.85},
+                      "elbow": {"fn": 3.5, "zeta": 0.8, "ff": 0.75},
+                      "wrist": {"fn": 5.0, "zeta": 0.75, "ff": 0.5}}}
+
+
+def default_params(preset="default"):
     """the classes' natural frequency (Hz), damping ratio, share of the target acceleration fed forward and delays
-    (frames: fast, slow).  Mostly the spike's soft_wh with the research's centred delays."""
+    (frames: fast, slow).  The default is mostly the spike's soft_wh with the research's centred delays; a preset
+    (PRESETS) changes some classes' fn, zeta and ff."""
+    if preset not in PRESETS:
+        raise ValueError("no preset %r (there are %s)" % (preset, ", ".join(sorted(PRESETS))))
+    p = _base_params()
+    for c, v in PRESETS[preset].items():
+        p["classes"][c].update(v)
+    p["preset"] = preset
+    return p
+
+
+def _base_params():
     return {"classes": {"trunk": {"fn": 6.0, "zeta": 0.85, "ff": 0.8, "delay": (0.0, 0.0)},
                         "neck": {"fn": 7.0, "zeta": 0.85, "ff": 0.8, "delay": (0.0, 0.0)},
                         "head": {"fn": 7.0, "zeta": 0.85, "ff": 0.8, "delay": (0.0, 0.0), "world": True},
@@ -197,7 +245,7 @@ def default_params():
                         "finger": {"kinematic": True, "delay": None}},     # None: the wrist's
             "finger_delay": FINGER_DELAY, "delay_scale": 1.0, "torque_scale": 1.0, "lead": None,
             "substeps": SUBSTEPS, "slow": True, "holds": True, "kime": True, "contact": True, "floor": True,
-            "unsolved": True, "jumps": True, "snap": True}
+            "unsolved": True, "jumps": True, "snap": True, "seams": True}
 
 
 # ---- quaternions on numpy arrays (x, y, z, w), Hamilton, v' = q v q^-1 (mmd_cli.fk) -------------------
@@ -1009,6 +1057,148 @@ def subtree(plan, j):
     return sorted(out)
 
 
+class Fallback:
+    """the stretches given back to the input.  Each is a span of frames wholly the input's for some bones, with a ramp in
+    and a ramp out (smoothsteps).  With seams on, a span is first widened while the layer's wrist (of a side whose wrist
+    the span moves) is more than EDGE_DEV_CM from the input's on the same frame (at most EDGE_EXTEND frames each way),
+    so that its ramps blend two trajectories that are close; and lengthen() mends every edge where the wrist's step
+    from one frame to the next passes the input's by more than SEAM_STEP_CM (see there)."""
+
+    def __init__(self, plan, key_layer, seams_on):
+        self.plan, self.key_layer, self.seams_on = plan, key_layer, seams_on
+        self.spans = []
+        self.wrists = {}
+        for s in SIDES:
+            w = s + "手首"
+            if w in plan.names:
+                up, j = set(), plan.names.index(w)
+                while j >= 0:
+                    up.add(j)
+                    j = plan.sp[j]
+                self.wrists[s] = up
+        self.dev, self.layer_steps = {}, {}
+        if seams_on:
+            world = world_with(plan, key_layer)
+            for s in self.wrists:
+                n = s + "手首"
+                self.dev[s] = np.linalg.norm(world[n][0] - plan.world_in[n][0], axis=1) * UNIT_MM / 10.0
+                self.layer_steps[s] = np.linalg.norm(np.diff(world[n][0], axis=0), axis=1) * UNIT_MM / 10.0
+        self.key_rot = key_layer
+        self.weights = np.zeros((plan.F, plan.nb))
+
+    def sides_of(self, bones):
+        return [s for s, up in self.wrists.items() if up & set(bones)]
+
+    def add(self, reason, first, last, bones, detail, rnd=None):
+        F = self.plan.F
+        first, last = max(0, int(first)), min(F - 1, int(last))
+        sp = {"reason": reason, "first": first, "last": last, "bones": list(bones), "detail": detail,
+              "ramp_in": FALLBACK_RAMP, "ramp_out": FALLBACK_RAMP, "widened": [0, 0]}
+        if rnd is not None:
+            sp["round"] = rnd
+        if self.seams_on:
+            for s in self.sides_of(bones):
+                d = self.dev[s]
+                while sp["first"] > 0 and first - sp["first"] < EDGE_EXTEND and d[sp["first"] - 1] > EDGE_DEV_CM:
+                    sp["first"] -= 1
+                while sp["last"] < F - 1 and sp["last"] - last < EDGE_EXTEND and d[sp["last"] + 1] > EDGE_DEV_CM:
+                    sp["last"] += 1
+            sp["widened"] = [first - sp["first"], sp["last"] - last]
+        self.spans.append(sp)
+
+    def apply(self):
+        plan = self.plan
+        fb = np.zeros((plan.F, plan.nb))
+        for sp in self.spans:
+            a, b = sp["first"], sp["last"]
+            w = ramp_weight(plan.F, [(a - sp["ramp_in"], a, b, b + sp["ramp_out"])])
+            fb[:, sp["bones"]] = np.maximum(fb[:, sp["bones"]], w[:, None])
+        self.weights = fb
+        self.key_rot = blend(plan, self.key_layer, fb)
+        return world_with(plan, self.key_rot)
+
+    def seams(self, world_out):
+        """per edge of every span (and side whose wrist it moves): the largest step of the output's wrist from one frame
+        to the next within the ramp (and one frame either side) less the input's step there (cm); and the same inside
+        the span ("inside": the arm is the input's there, a step comes from the bones above it)"""
+        plan, F = self.plan, self.plan.F
+        steps = {}
+        for s in self.wrists:
+            n = s + "手首"
+            steps[s] = (np.linalg.norm(np.diff(plan.world_in[n][0], axis=0), axis=1) * UNIT_MM / 10.0,
+                        np.linalg.norm(np.diff(world_out[n][0], axis=0), axis=1) * UNIT_MM / 10.0)
+        out = []
+        for i, sp in enumerate(self.spans):
+            for edge, lo, hi in (("in", sp["first"] - sp["ramp_in"] - 1, sp["first"] + 1),
+                                 ("inside", sp["first"] + 2, sp["last"] - 2),
+                                 ("out", sp["last"] - 1, sp["last"] + sp["ramp_out"] + 1)):
+                lo, hi = max(0, lo), min(F - 2, hi)
+                if hi < lo:
+                    continue
+                sides = self.sides_of(sp["bones"])
+                if edge == "inside":       # only the arms wholly given back there
+                    sides = [s for s in sides if self.plan.names.index(s + "手首") in sp["bones"]]
+                for s in sides:
+                    si, so = steps[s][0][lo:hi + 1], steps[s][1][lo:hi + 1]
+                    k = int(np.argmax(so - si))
+                    x = {"span": i, "reason": sp["reason"], "edge": edge, "side": s, "frame": lo + k,
+                         "ramp": sp.get("ramp_" + edge), "out_cm": _r(so[k], 2), "in_cm": _r(si[k], 2),
+                         "excess_cm": _r(so[k] - si[k], 2)}
+                    if s in self.layer_steps:
+                        x["layer_cm"] = _r(self.layer_steps[s][lo + k], 2)
+                    out.append(x)
+        return out
+
+    def lengthen(self, world_out):
+        """for every edge that steps: a ramp twice as long (up to SEAM_RAMP_MAX); at that length, where the layer itself
+        steps there, the edge moved past that frame (within EDGE_EXTEND more frames); a step inside a span that gives
+        back only an arm gives back 上半身..頭 too.  False when nothing changed"""
+        changed, done = False, set()
+        axial = [j for j in range(self.plan.nb) if self.plan.cls[j] in AXIAL]
+        for x in self.seams(world_out):
+            if x["excess_cm"] <= SEAM_STEP_CM or (x["span"], x["edge"]) in done:
+                continue
+            sp = self.spans[x["span"]]
+            done.add((x["span"], x["edge"]))
+            if x["edge"] == "inside":
+                if not set(axial) <= set(sp["bones"]):
+                    sp["bones"] = sorted(set(sp["bones"]) | set(axial))
+                    changed = True
+                continue
+            key = "ramp_" + x["edge"]
+            side = 0 if x["edge"] == "in" else 1
+            if sp[key] < SEAM_RAMP_MAX:
+                sp[key] = min(SEAM_RAMP_MAX, sp[key] * 2)
+                changed = True
+            elif x.get("layer_cm", 0.0) - x["in_cm"] > SEAM_STEP_CM and sp["widened"][side] < 2 * EDGE_EXTEND:
+                if side == 0 and x["frame"] - 1 < sp["first"]:
+                    sp["widened"][0] += sp["first"] - max(0, x["frame"] - 1)
+                    sp["first"] = max(0, x["frame"] - 1)
+                    changed = True
+                elif side == 1 and x["frame"] + 2 > sp["last"]:
+                    sp["widened"][1] += min(self.plan.F - 1, x["frame"] + 2) - sp["last"]
+                    sp["last"] = min(self.plan.F - 1, x["frame"] + 2)
+                    changed = True
+        return changed
+
+    def report_spans(self):
+        names = self.plan.names
+        return [dict(sp, bones=[names[c] for c in sp["bones"]]) for sp in self.spans]
+
+
+def seam_summary(seams):
+    over = [x for x in seams if x["excess_cm"] > SEAM_STEP_CM]
+    made = [x for x in over if x["out_cm"] - max(x["in_cm"], x.get("layer_cm", x["in_cm"])) > SEAM_STEP_CM]
+    worst = sorted(seams, key=lambda x: -x["excess_cm"])[:12]
+    return {"definition": "per edge of a stretch given back (in, out, and inside where the arm is wholly the input's): "
+                          "the output wrist's largest step (cm/frame) within the ramp and one frame either side, less "
+                          "the input's step on that frame; layer_cm is the layer's own step there (before giving back)",
+            "edges": len(seams), "over_%g_cm" % SEAM_STEP_CM: len(over),
+            "over_%g_cm_beyond_the_layer_too" % SEAM_STEP_CM: len(made),
+            "max_excess_cm": max([x["excess_cm"] for x in seams], default=None),
+            "worst": [{k: v for k, v in x.items() if k != "span"} for x in worst]}
+
+
 def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
     """the dance with the layer and the report (see the module docstring).  beats: (first beat seconds, period
     seconds); key_frames: side -> frames of the trace's keys (the error at the keys)"""
@@ -1029,20 +1219,17 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
     local, err, clip = simulate(plan, leads)
     key_layer = keys_of(plan, local)
     plan.log("simulated (%.0f s)" % (time.time() - started))
-    # given back to the input: the jumps, what the layer could not follow, the floor
-    fb = np.zeros((F, nb))
-    spans = []
+    # given back to the input: the jumps, what the layer could not follow, the floor; each stretch widened while the
+    # layer's wrist is far from the input's at its edges, then its ramps lengthened until no seam steps
+    seams_on = params.get("seams", True)
+    fix = Fallback(plan, key_layer, seams_on)
     jump_zone = np.zeros((F, nb), bool)
     for jp in plan.jumps:
         j, f = plan.names.index(jp["bone"]), jp["frame"]
         bones = subtree(plan, j)
         a, b = f - JUMP_HOLD[0], f + 1 + JUMP_HOLD[1]
-        w = ramp_weight(F, [(a - FALLBACK_RAMP, a, b, b + FALLBACK_RAMP)])
-        fb[:, bones] = np.maximum(fb[:, bones], w[:, None])
         jump_zone[max(0, a - FALLBACK_RAMP):b + FALLBACK_RAMP + 1, bones] = True
-        spans.append({"reason": "jump", "first": max(0, a), "last": min(F - 1, b),
-                      "bones": [plan.names[c] for c in bones], "detail": "%s %d -> %d: %.0f deg" % (
-                          jp["bone"], f, f + 1, jp["deg"])})
+        fix.add("jump", a, b, bones, "%s %d -> %d: %.0f deg" % (jp["bone"], f, f + 1, jp["deg"]))
     if params.get("unsolved", True):
         for j in range(nb):
             if plan.kin[j]:
@@ -1055,26 +1242,22 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
                     mark[a:b + 1] = True
             mark |= hard
             for a, b in runs(mark):
-                bones = subtree(plan, j)
-                w = ramp_weight(F, [(a - FALLBACK_RAMP, a, b, b + FALLBACK_RAMP)])
-                fb[:, bones] = np.maximum(fb[:, bones], w[:, None])
-                spans.append({"reason": "unsolved", "first": int(a), "last": int(b),
-                              "bones": [plan.names[c] for c in bones],
-                              "detail": "%s: tracking error up to %.1f deg, the torque limit binding %.0f %% of the time"
-                                        % (plan.names[j], float(err[a:b + 1, j].max()),
-                                           100.0 * float(clip[a:b + 1, j].mean()))})
-    key_rot = blend(plan, key_layer, fb)
-    world_out = world_with(plan, key_rot)
-    # the hands in the world: the floor at the face and the body, and a hand far from where the input has it (even
-    # allowing it to be late); given back around it, widening (and from the second round with 上半身..頭 too)
+                fix.add("unsolved", a, b, subtree(plan, j),
+                        "%s: tracking error up to %.1f deg, the torque limit binding %.0f %% of the time"
+                        % (plan.names[j], float(err[a:b + 1, j].max()), 100.0 * float(clip[a:b + 1, j].mean())))
+    world_out = fix.apply()
+    # the hands in the world: the floor at the face and the body, and a hand far from where the input has it; given
+    # back around it, widening (and from the second round with 上半身..頭 too)
     residual = []
     checks = []
     if params.get("floor", True):
         checks.append(("floor", floor_violations, "%s hand closer to the face or the body than the floor"))
     if params.get("unsolved", True):
-        checks.append(("unsolved", hand_deviation, "%s hand more than " + "%g cm from the input" % DEVIATION_CM))
+        checks.append(("unsolved", hand_deviation, "%s wrist more than " + "%g cm from the input (late allowed) or %g cm"
+                       % (DEVIATION_CM, DEVIATION_SAME_CM) + " on the same frame"))
     axial = [j for j in range(nb) if plan.cls[j] in AXIAL]
     pad = FLOOR_PAD
+    rounds = 0
     for rnd in range(FLOOR_ROUNDS if checks else 0):
         found = False
         for reason, check, text in checks:
@@ -1086,26 +1269,29 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
                 bones = {j for j in range(nb) if plan.side[j] == s}
                 if reason == "floor" or rnd > 0:
                     bones |= set(axial)
-                bones = sorted(bones)
                 for a, b in runs(bad):
-                    a2, b2 = a - pad, b + pad
-                    w = ramp_weight(F, [(a2 - FALLBACK_RAMP, a2, b2, b2 + FALLBACK_RAMP)])
-                    fb[:, bones] = np.maximum(fb[:, bones], w[:, None])
-                    spans.append({"reason": reason, "first": max(0, int(a2)), "last": min(F - 1, int(b2)),
-                                  "bones": [plan.names[c] for c in bones], "round": rnd + 1, "detail": text % s})
+                    fix.add(reason, a - pad, b + pad, sorted(bones), text % s, rnd + 1)
         if not found:
             break
-        key_rot = blend(plan, key_layer, fb)
-        world_out = world_with(plan, key_rot)
+        rounds += 1
+        world_out = fix.apply()
         pad += 2
+    seam_rounds = 0
+    while seams_on and seam_rounds < SEAM_ROUNDS and fix.lengthen(world_out):
+        seam_rounds += 1
+        world_out = fix.apply()
     for reason, check, _ in checks:
         for s in SIDES:
             bad = check(plan, world_out, s)
             if bad is not None and bad.any():
                 residual += [{"reason": reason, "side": s, "first": a, "last": b} for a, b in runs(bad)]
+    key_rot = fix.key_rot
+    fb = fix.weights
+    spans = fix.report_spans()
     out = build(plan, key_rot)
     info = {"leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
-            "residual": residual, "seconds": time.time() - started}
+            "residual": residual, "seconds": time.time() - started, "check_rounds": rounds, "seam_rounds": seam_rounds,
+            "seams": fix.seams(world_out)}
     report = report_of(plan, world_out, out, info)
     return Result(out, report, plan.world_in, world_out)
 
@@ -1125,7 +1311,7 @@ def floor_violations(plan, world_out, side):
 
 def hand_deviation(plan, world_out, side):
     """frames where the side's wrist is more than DEVIATION_CM from the input's, even at its best within frames
-    f-1 .. f+3 of the output (late is allowed, not lost)"""
+    f-1 .. f+3 of the output (late is allowed, not lost), or more than DEVIATION_SAME_CM on the same frame"""
     out = None
     for n in (side + "手首",):
         if n is None or n not in world_out:
@@ -1137,6 +1323,7 @@ def hand_deviation(plan, world_out, side):
             lo, hi = max(0, -d), min(F, F - d)
             best[lo:hi] = np.minimum(best[lo:hi], np.linalg.norm(b[lo + d:hi + d] - a[lo:hi], axis=1))
         bad = best * UNIT_MM / 10.0 > DEVIATION_CM
+        bad |= np.linalg.norm(b - a, axis=1) * UNIT_MM / 10.0 > DEVIATION_SAME_CM
         out = bad if out is None else out | bad
     return out
 
@@ -1600,11 +1787,12 @@ def merge_spans(spans):
     for s in sorted(spans, key=lambda x: (x["reason"], tuple(x["bones"]), x["first"])):
         last = out[-1] if out else None
         if last and last["reason"] == s["reason"] and last["bones"] == s["bones"] and s["first"] <= last["last"] + 1:
-            last["last"] = max(last["last"], s["last"])
+            if s["last"] >= last["last"]:
+                last["last"], last["ramp_out"] = s["last"], s.get("ramp_out")
             if s["detail"] not in last["detail"]:
                 last["detail"] += "; " + s["detail"]
         else:
-            out.append({k: v for k, v in s.items() if k != "round"})
+            out.append({k: v for k, v in s.items() if k not in ("round", "widened")})
     return sorted(out, key=lambda x: (x["first"], x["reason"]))
 
 
@@ -1633,6 +1821,8 @@ def report_of(plan, world_out, out, info):
                    "lag_after": {k: _r(v) for k, v in measure_lags(plan, W).items()}}
     rep["jumps"] = plan.jumps
     rep["fallback"] = merge_spans(info["spans"])
+    rep["seams"] = seam_summary(info["seams"])
+    rep["rounds"] = {"checks": info["check_rounds"], "seams": info["seam_rounds"]}
     rep["fallback_frames"] = {"share_of_bone_frames": _r(float((info["fallback"] > 0.01).mean()), 4)}
     rep["floor_residual"] = info["residual"]
     rep["holds"] = {s: len(v) for s, v in plan.holds.items()}
@@ -1704,7 +1894,8 @@ def short(report):
     def xc(which):
         x = report["a09"][which]["xcorr"]
         return {k: x[k].get("median") for k in sorted(x)}
-    return {"lead": report["lead"]["frames"], "jumps": len(report["jumps"]),
+    return {"preset": report["params"].get("preset"), "lead": report["lead"]["frames"], "jumps": len(report["jumps"]),
+            "seams_max_excess_cm": report["seams"]["max_excess_cm"],
             "fallback": [[s["reason"], s["first"], s["last"]] for s in report["fallback"]][:40],
             "floor_residual": report["floor_residual"], "a09_lag_in": xc("input"), "a09_lag_out": xc("output"),
             "untouched_identical": report["untouched"]["identical"]}
@@ -1746,6 +1937,8 @@ def main(argv=None):
     p.add_argument("--report", help="write the measures of the input and the output to this JSON")
     p.add_argument("--beats", help="JSON with first_beat_seconds and period_seconds: beat holds and a04's timing")
     p.add_argument("--key-frames", help="a motion whose 左腕 / 右腕 keys are the trace's keys (the error there)")
+    p.add_argument("--preset", default="default", choices=sorted(PRESETS),
+                   help="the strength: default, or strong (softer upper arm and elbow, less fed forward)")
     p.add_argument("--lead", type=float, help="frames the targets are read early (default: measured in a first pass)")
     p.add_argument("--delay-scale", type=float, default=1.0, help="scales every delay (default 1)")
     p.add_argument("--finger-delay", type=float, default=FINGER_DELAY,
@@ -1754,7 +1947,7 @@ def main(argv=None):
     p.add_argument("--world", help="save the world positions and rotations, input and output, to this .npz")
     p.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = p.parse_args(argv)
-    params = default_params()
+    params = default_params(a.preset)
     params.update(lead=a.lead, delay_scale=a.delay_scale, finger_delay=a.finger_delay, substeps=a.substeps)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:

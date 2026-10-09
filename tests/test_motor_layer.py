@@ -380,6 +380,190 @@ class FloorTest(unittest.TestCase):
         self.assertGreaterEqual(float(np.min((d_out - d_in)[near])), -10.0)
 
 
+def wrist_step_excess(result, first, last):
+    """the largest step (cm/frame) of the output's left wrist less the input's, frames first..last"""
+    a, b = result.world_in["左手首"][0], result.world_out["左手首"][0]
+    si = np.linalg.norm(np.diff(a, axis=0), axis=1)[first:last] * 8.0
+    so = np.linalg.norm(np.diff(b, axis=0), axis=1)[first:last] * 8.0
+    return float(np.max(so - si))
+
+
+def soft_params(fn=1.5, ff=0.0, zeta=0.6, seams=None):
+    p = motor_layer.default_params()
+    for c in p["classes"].values():
+        if not c.get("kinematic"):
+            c.update(fn=fn, zeta=zeta, ff=ff)
+    p["floor"] = False
+    p["lead"] = 0.0
+    if seams is not None:
+        p["seams"] = seams
+    return p
+
+
+class SeamTest(unittest.TestCase):
+    """a stretch given back to the input must not make the hand step at its edges (the review: 6,393, 10.7 cm in one
+    frame where the input moved 3.0)"""
+
+    def test_the_edges_do_not_step(self):
+        result = motor_layer.layer(MODEL, swing_dance(), soft_params())
+        spans = [s for s in result.report["fallback"] if s["reason"] == "unsolved"]
+        self.assertTrue(spans)
+        self.assertLessEqual(wrist_step_excess(result, 1, LAST - 1), motor_layer.SEAM_STEP_CM)
+        seams = result.report["seams"]
+        self.assertGreater(seams["edges"], 0)
+        self.assertLessEqual(seams["max_excess_cm"], motor_layer.SEAM_STEP_CM)
+        self.assertEqual(seams["over_%g_cm" % motor_layer.SEAM_STEP_CM], 0)
+
+    def test_without_the_seam_care_they_step(self):
+        result = motor_layer.layer(MODEL, swing_dance(), soft_params(seams=False))
+        self.assertGreater(result.report["seams"]["max_excess_cm"], motor_layer.SEAM_STEP_CM)
+
+    def test_a_wrist_far_on_the_same_frame_is_given_back(self):
+        # late allowed (f-1 .. f+3) the hand may look near; on the same frame it may not be more than 12 cm away
+        result = motor_layer.layer(MODEL, swing_dance(), soft_params(fn=1.0))
+        a, b = result.world_in["左手首"][0], result.world_out["左手首"][0]
+        self.assertLessEqual(float(np.max(np.linalg.norm(b - a, axis=1))) * 8.0, motor_layer.DEVIATION_SAME_CM + 1e-6)
+
+
+class PresetTest(unittest.TestCase):
+    def overshoot(self, params):
+        result = motor_layer.layer(MODEL, swing_dance(), params)
+        q_in = relative(result.world_in, "左ひじ", "左手首")
+        q_out = relative(result.world_out, "左ひじ", "左手首")
+        hold = q_in[30]
+        u = motor_layer.qlog(motor_layer.qnorm(motor_layer.qmul(motor_layer.qconj(hold), q_in[23])))
+        u = -u / np.linalg.norm(u)
+        dev = motor_layer.qlog(motor_layer.qnorm(motor_layer.qmul(motor_layer.qconj(np.broadcast_to(hold, q_out.shape)),
+                                                                   q_out)))
+        return float(np.degrees(dev[26:45] @ u).max()), result
+
+    def test_strong_runs_on_further_and_still_does_not_step(self):
+        base, _ = self.overshoot(motor_layer.default_params())
+        strong, result = self.overshoot(motor_layer.default_params("strong"))
+        self.assertGreater(strong, 1.5 * base)
+        self.assertEqual(result.report["params"]["preset"], "strong")
+        self.assertLessEqual(result.report["seams"]["max_excess_cm"] or 0.0, motor_layer.SEAM_STEP_CM)
+
+    def test_the_presets(self):
+        p = motor_layer.default_params("strong")
+        self.assertEqual(p["classes"]["upper"]["fn"], 3.5)
+        self.assertEqual(p["classes"]["wrist"]["ff"], 0.5)
+        self.assertEqual(motor_layer.default_params()["classes"]["upper"]["fn"], 7.0)    # the default unchanged
+        with self.assertRaises(ValueError):
+            motor_layer.default_params("weird")
+
+
+class MechanismTest(unittest.TestCase):
+    """the parts the review's mutations broke without a test noticing"""
+
+    def test_the_torque_limit_binds_the_correction_only(self):
+        # with the whole target acceleration fed forward and a strength of almost nothing the arm still follows; a
+        # limit on the total torque would leave it standing (the research, 4.3 rule 3)
+        p = stiff_params()
+        for c in p["classes"].values():
+            c.update(fn=8.0, zeta=0.85)
+        p.update(torque_scale=1e-4, unsolved=False, floor=False)
+        result = motor_layer.layer(MODEL, swing_dance(), p)
+        q_in, q_out = relative(result.world_in, "左肩", "左腕"), relative(result.world_out, "左肩", "左腕")
+        # (the parents' acceleration is not fed forward: the drag is what is left uncorrected, about 12 degrees)
+        self.assertLess(float(motor_layer.qangle_deg(q_in, q_out).max()), 20.0)
+        self.assertGreater(result.report["bones"]["左腕"]["torque_limit_share"], 0.5)
+
+    def beat_hold_error(self, kime):
+        p = motor_layer.default_params()
+        p["kime"] = kime
+        result = motor_layer.layer(MODEL, swing_dance(), p, beats=(26.0 / 30.0, 100.0))
+        q_in, q_out = relative(result.world_in, "左ひじ", "左手首"), relative(result.world_out, "左ひじ", "左手首")
+        return float(motor_layer.qangle_deg(q_in[24:30], q_out[24:30]).max()), result
+
+    def test_a_beat_hold_is_met_on_time(self):
+        with_kime, result = self.beat_hold_error(True)
+        without, _ = self.beat_hold_error(False)
+        self.assertGreaterEqual(result.report["beat_holds"]["count"], 1)
+        self.assertLess(with_kime, 0.6 * without)
+
+    def head_world_change(self, world):
+        dance = swing_dance()
+        dance.bones = [k for k in dance.bones if k.name not in ("上半身", "頭")]
+        turn = axis_angle((0, 1, 0), 50.0)
+        back = axis_angle((0, 1, 0), -50.0)
+        dance.bones += [key("上半身", 0), key("上半身", 40), key("上半身", 43, turn), key("上半身", LAST, turn),
+                        key("頭", 0), key("頭", 40), key("頭", 43, back), key("頭", LAST, back)]
+        p = motor_layer.default_params()
+        p["classes"]["head"]["world"] = world
+        result = motor_layer.layer(MODEL, dance, p)
+        return float(motor_layer.qangle_deg(result.world_in["頭"][1], result.world_out["頭"][1]).max())
+
+    def test_the_head_keeps_its_world_direction_while_the_trunk_turns(self):
+        # the input turns the trunk 50 degrees in 3 frames and the head back: the head looks the same way in the world
+        aimed = self.head_world_change(True)
+        self.assertLess(aimed, 2.0)
+        self.assertGreater(self.head_world_change(False), 2.0 * aimed)
+
+    def test_the_delays_slope_enters_the_target_speed(self):
+        p = stiff_params()
+        for c in p["classes"].values():
+            c.update(fn=10.0, zeta=1.0)
+        for k in ("holds", "kime", "contact", "slow", "snap", "jumps"):
+            p[k] = False
+        plan = motor_layer.Plan(MODEL, swing_dance(), p)
+        j = plan.names.index("左手首")
+        ramp = np.clip((np.arange(plan.F) - 18.0) / 8.0, 0.0, 1.0) * 3.0   # 0 -> 3 frames over the swing
+        plan.D[:, j] = ramp
+        plan.Dp = np.clip(np.gradient(plan.D, axis=0), -0.8, 0.8)
+        local, _, _ = motor_layer.simulate(plan, {"arm": 0.0, "axial": 0.0})
+        want, _, _ = motor_layer.target_at(plan, np.full(plan.F, j), np.arange(plan.F) - plan.D[:, j])
+        # (with the slope left out of the target's speed the error rises to 3.1 degrees)
+        self.assertLess(float(motor_layer.qangle_deg(local[:, j], want)[15:40].max()), 2.2)
+
+    def test_a_jump_sets_the_bone_and_carries_its_children(self):
+        dance = swing_dance()
+        dance.bones = [k for k in dance.bones if k.name != "左ひじ"]
+        q = axis_angle((1, 0, 0), 120.0)
+        dance.bones += [key("左ひじ", 0), key("左ひじ", 40), key("左ひじ", 41, q), key("左ひじ", LAST, q)]
+        p = motor_layer.default_params()
+        for c in p["classes"].values():
+            c["delay"] = (0.0, 0.0)
+        plan = motor_layer.Plan(MODEL, dance, p)
+        self.assertIn(("左ひじ", 40), [(x["bone"], x["frame"]) for x in plan.jumps])
+        local, _, _ = motor_layer.simulate(plan, {"arm": 0.0, "axial": 0.0})
+        e, w = plan.names.index("左ひじ"), plan.names.index("左手首")
+        self.assertLess(float(motor_layer.qangle_deg(local[41, e], plan.qt[41, e])), 3.0)    # a step, not a sweep
+        self.assertLess(float(motor_layer.qangle_deg(local[41, w], plan.qt[41, w])), 3.0)    # the wrist came along
+
+    def test_an_inertia_carries_the_segments_below(self):
+        plan = motor_layer.Plan(MODEL, swing_dance(), motor_layer.default_params())
+        j = plan.names.index("左腕")
+        m, com, r, _ = plan.segments[j]
+        joint = plan.skel.rest[plan.bi[j]] * motor_layer.UNIT_M
+        own = m * (float(np.sum((com - joint) ** 2)) + r * r)
+        self.assertGreater(plan.I[j], 1.5 * own)
+
+    def test_far_from_the_target_is_given_back_even_without_the_limit(self):
+        # 150 degrees in 2 frames, a layer of 1 Hz and no strength limit: the tracking error passes 45 degrees
+        dance = swing_dance()
+        dance.bones = [k for k in dance.bones if k.name != "左腕"]
+        q = axis_angle((0, 0, 1), 150.0)
+        dance.bones += [key("左腕", 0), key("左腕", 30), key("左腕", 32, q), key("左腕", LAST, q)]
+        p = soft_params(fn=1.0, zeta=1.0)
+        p["torque_scale"] = 1e6
+        result = motor_layer.layer(MODEL, dance, p)
+        self.assertTrue(any("tracking error" in s["detail"] for s in result.report["fallback"]), result.report["fallback"])
+
+    def test_the_checks_go_round_again_with_the_trunk(self):
+        # the trunk lags a fast turn: giving back the arm alone leaves the hand far, the second round adds the trunk
+        dance = swing_dance()
+        dance.bones = [k for k in dance.bones if k.name != "上半身"]
+        turn = axis_angle((0, 1, 0), 70.0)
+        dance.bones += [key("上半身", 0), key("上半身", 40), key("上半身", 44, turn), key("上半身", LAST, turn)]
+        p = motor_layer.default_params()
+        p["classes"]["trunk"].update(fn=1.0, ff=0.0, zeta=1.0)
+        p["floor"] = False
+        result = motor_layer.layer(MODEL, dance, p)
+        self.assertGreaterEqual(result.report["rounds"]["checks"], 2)
+        self.assertEqual(result.report["floor_residual"], [])
+
+
 class CliTest(unittest.TestCase):
     def test_main_writes_the_motion_and_the_report(self):
         folder = tempfile.mkdtemp()
