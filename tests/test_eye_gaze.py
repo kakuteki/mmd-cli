@@ -351,7 +351,8 @@ class ContactPlanTest(unittest.TestCase):
         self.assertLess(zone.down, 0.9 * LIMITS.down)
         inside = eye_gaze.contact_angles((zone.yaw + eye_gaze.CONTACT_ERROR - 0.5, 0.0), LIMITS)
         self.assertAlmostEqual(inside[0], zone.yaw, places=9)
-        self.assertEqual(eye_gaze.reachable([((zone.yaw + 3.0, 0.0), False), ((zone.yaw + 4.0, 0.0), False),
+        error = eye_gaze.CONTACT_ERROR
+        self.assertEqual(eye_gaze.reachable([((zone.yaw + error - 0.5, 0.0), False), ((zone.yaw + error + 0.5, 0.0), False),
                                              ((0.0, 0.0), True)], LIMITS), [True, False, False])
 
 
@@ -423,6 +424,50 @@ class SaccadeTest(unittest.TestCase):
                 if after["reason"] in ("recentre", "glance"):
                     landed = before["frame"] + before["frames"] - 1
                     self.assertGreaterEqual(after["frame"] - landed, eye_gaze.MIN_FIXATION, (before, after))
+
+    def test_the_shortest_fixation_can_be_chosen(self):
+        # the coordinator renders 6 and 9 frames side by side (review eye, finding 2)
+        self.assertEqual(eye_gaze.MIN_FIXATION, 6)
+        for seed in range(2):
+            dance, cams = restless(seed)
+            six = run_gaze(dance=dance, cam_motion=cams, seed=seed)
+            nine = run_gaze(dance=dance, cam_motion=cams, seed=seed, min_fixation=9)
+            self.assertEqual(nine.report["min_fixation"], 9)
+            self.assertEqual(six.report["min_fixation"], 6)
+            gaps = []
+            for before, after in zip(nine.saccades, nine.saccades[1:]):
+                if after["reason"] in ("recentre", "glance"):
+                    gaps.append(after["frame"] - (before["frame"] + before["frames"] - 1))
+            self.assertGreaterEqual(min(gaps), 9)
+            self.assertLess(len(nine.saccades), len(six.saccades))
+        with self.assertRaises(ValueError):
+            run_gaze(min_fixation=0)
+
+    def test_a_nod_that_comes_back_within_return_frames_moves_nothing(self):
+        # the head turns 14 degrees and back at 140 deg/s (no fast turn): the held point is out of the free zone
+        # (12 degrees) for 3 frames, fewer than RETURN, so the eyes ride it out instead of jumping
+        self.assertEqual(eye_gaze.RETURN, 4)
+        nod = head_turn({0: 0.0, 40: 0.0, 43: 14.0, 45: 14.0, 48: 0.0})
+        for seed in range(3):
+            result = run_gaze(dance=nod, cam_motion=BEHIND, seed=seed)
+            self.assertEqual([s for s in result.saccades if s["reason"] == "recentre"], [], seed)
+            out = [look.frame for look in result.looks if abs(look.base[0]) > eye_gaze.free_zone(LIMITS).yaw]
+            if out:
+                break
+        else:
+            self.fail("the nod never took the point out of the free zone")
+
+    def test_a_long_fixation_ends_with_a_glance(self):
+        # a still head and nowhere to look: the eyes move on their own every GLANCE frames, a few degrees
+        result = run_gaze(dance=head_turn({0: 0.0}, last=300), cam_motion=camera(cam(0, (0.0, 180.0, 0.0)),
+                                                                                   cam(300, (0.0, 180.0, 0.0))))
+        self.assertGreaterEqual(len(result.saccades), 300 // eye_gaze.GLANCE[1])
+        self.assertEqual({s["reason"] for s in result.saccades}, {"glance"})
+        for before, after in zip(result.saccades, result.saccades[1:]):
+            landed = before["frame"] + before["frames"] - 1
+            self.assertTrue(eye_gaze.GLANCE[0] <= after["frame"] - landed <= eye_gaze.GLANCE[1], (before, after))
+        for s in result.saccades:
+            self.assertLess(s["amplitude"], 2 * math.hypot(4.0, 3.0) + 1e-6)
 
     def test_every_saccade_lands_where_it_set_out_for(self):
         landings = 0
@@ -550,12 +595,59 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(eye_gaze.lead_measure(head, [h + e for h, e in zip(head, none)], margins=(15, 0)),
                          {"turns": 1, "led": 0, "share": 0.0})
 
+    def lead_of(self, head, eye, margins=(15, 0)):
+        return eye_gaze.lead_measure(head, [h + e for h, e in zip(head, eye)], margins=margins)
+
+    def test_the_a20_definition_is_held_by_numbers(self):
+        # review eye, finding 6: the real-song test measures with lead_measure itself, so a change of its definition
+        # (s17b.py of a20) would pass unseen.  Each number of the definition is held here.
+        fast = [0.0] * 60 + [10.0 * k for k in range(1, 7)] + [60.0] * 60          # 300 deg/s on frames 60..65
+        steps = lambda first, size: [0.0] * first + [size] * (len(fast) - first)
+        # the window: the 6 frames before the onset (60), eye-in-head at 60 minus at 54
+        self.assertEqual(self.lead_of(fast, steps(55, 8.0))["led"], 1)
+        self.assertEqual(self.lead_of(fast, steps(54, 8.0))["led"], 0)        # moved before the window
+        # more than 3 degrees
+        self.assertEqual(self.lead_of(fast, steps(57, 3.0))["led"], 0)
+        self.assertEqual(self.lead_of(fast, steps(57, 3.2))["led"], 1)
+        # above 200 deg/s, for 3 frames or more
+        for per_frame, turns in ((198.0 / 30.0, 0), (204.0 / 30.0, 1)):
+            head = [0.0] * 60 + [per_frame * k for k in range(1, 7)] + [6 * per_frame] * 60
+            self.assertEqual(self.lead_of(head, [0.0] * len(head))["turns"], turns, per_frame)
+        two = [0.0] * 60 + [10.0, 20.0] + [20.0] * 60
+        self.assertEqual(self.lead_of(two, [0.0] * len(two))["turns"], 0)
+        three = [0.0] * 60 + [10.0, 20.0, 30.0] + [30.0] * 60
+        self.assertEqual(self.lead_of(three, [0.0] * len(three))["turns"], 1)
+        # the onset: the first of the 15 frames before at 30 % of the peak.  A slow start at 75 deg/s (25 % of 300)
+        # is not the onset, so an eye that moves on frame 57 leads
+        ramp = [0.0] * 50 + [2.5 * k for k in range(1, 11)] + [25.0 + 10.0 * k for k in range(1, 7)] + [85.0] * 60
+        self.assertEqual(self.lead_of(ramp, steps(57, 8.0)), {"turns": 1, "led": 1, "share": 1.0})
+        # the margins of the song (a20 left out turns in the first 330 and the last 172 frames)
+        self.assertEqual(eye_gaze.LEAD_MARGINS, (330, 172))
+        self.assertEqual(self.lead_of(fast, steps(57, 8.0), margins=eye_gaze.LEAD_MARGINS)["turns"], 0)
+
     def test_large_gaze_changes_made_by_saccades_or_carried_by_the_head(self):
         # the gaze turns 30 degrees in the world over 10 frames: once inside a listed saccade, once without one
         gaze = [direction(0.0, 0.0)] * 20 + [direction(3.0 * k, 0.0) for k in range(1, 11)] + [direction(30.0, 0.0)] * 30
         listed = [{"frame": 20, "frames": 10}]
         self.assertEqual(eye_gaze.carried_measure(gaze, listed)["head_carried"], 0)
         self.assertEqual(eye_gaze.carried_measure(gaze, [])["head_carried"], 1)
+
+    def test_large_gaze_changes_split_by_the_eyes_own_motion(self):
+        # review eye, finding 1: the list's split counts a whole step as the saccade's when a saccade touches either
+        # end.  a13's v_sac splits without the list: the part of the gaze's step the eye in the head makes the same
+        # way.  The same 30-degree turn: the eye moves in a still head (made by the eye), or the eye rests in a
+        # turning head (carried), whatever the list says
+        yaws = [0.0] * 20 + [3.0 * k for k in range(1, 11)] + [30.0] * 30
+        gaze = [direction(y, 0.0) for y in yaws]
+        listed = [{"frame": 20, "frames": 10}]
+        still = [fk.IDENTITY] * len(yaws)
+        turning = [eye_gaze.eye_rotation(y, 0.0) for y in yaws]
+        by_eye = eye_gaze.carried_measure(gaze, listed, heads=still)["by_eye_motion"]
+        self.assertEqual((by_eye["events"], by_eye["head_carried"]), (1, 0))
+        carried = eye_gaze.carried_measure(gaze, listed, heads=turning)
+        self.assertEqual(carried["head_carried"], 0)                          # the list's split says made
+        self.assertEqual(carried["by_eye_motion"]["head_carried"], 1)          # the eye did not move
+        self.assertNotIn("by_eye_motion", eye_gaze.carried_measure(gaze, listed))
 
 
 class OutputTest(unittest.TestCase):
@@ -644,7 +736,7 @@ class CommandTest(unittest.TestCase):
         out = os.path.join(self.folder, "sub", "eyes.vmd")
         report, debug = os.path.join(self.folder, "r.json"), os.path.join(self.folder, "d.json")
         code, result = run([self.dance, self.camera, self.model, out, "--report", report, "--debug", debug, "--seed", "3",
-                            "--cues", self.cues, "--chorus", "2.0"])
+                            "--cues", self.cues, "--chorus", "2.0", "--min-fixation", "9"])
         self.assertEqual(code, 0, result)
         self.assertTrue(result["ok"])
         self.assertEqual(result["out"], os.path.abspath(out))
@@ -657,6 +749,7 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(result["anchors"], 2)
         self.assertAlmostEqual(sum(result["shares"].values()), 1.0, places=3)
         self.assertEqual(result["seed"], 3)
+        self.assertEqual(result["min_fixation"], 9)
         self.assertEqual(result["convention"], {"key_rotation_signs": list(fk.KEY_ROTATION_SIGNS)})
         with open(report, encoding="ascii") as f:
             full = json.load(f)
@@ -743,6 +836,7 @@ class CommandTest(unittest.TestCase):
                      [self.dance, self.camera, self.model, out, "--max-pitch", "60"],
                      [self.dance, self.camera, self.model, out, "--max-down", "0"],
                      [self.dance, self.camera, self.model, out, "--max-pitch", "8", "--max-up", "4"],   # one or the other
+                     [self.dance, self.camera, self.model, out, "--min-fixation", "0"],
                      [self.dance, self.camera, self.model, out, "--cues", os.path.join(self.folder, "none.json")],
                      [self.dance, self.camera, self.model, out, "--cues", bad_cues],
                      [self.dance, self.camera, self.model, out, "--cues", out],                       # cues is the output
@@ -809,7 +903,7 @@ def measured_from_files(dance_path, camera_path, out_path, report):
     out = eye_gaze.eye_measures(angles, LIMITS)
     out["contact"] = eye_gaze.contact_measures(errors)
     out["lead"] = eye_gaze.lead_measure([yaw(fk.rotate(h, FORWARD)) for h in heads], [yaw(g) for g in gazes])
-    out["head_carried"] = eye_gaze.carried_measure(gazes, report["saccades"]["list"])
+    out["head_carried"] = eye_gaze.carried_measure(gazes, report["saccades"]["list"], heads=heads)
     return out
 
 
@@ -846,6 +940,10 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(m["eccentric_15_share"], 0.10)
         self.assertGreaterEqual(m["contact"]["episode_median_s"], 1.5, m["contact"])
         self.assertLessEqual(m["head_carried"]["share"], 0.20, m["head_carried"])
+        # split by the eye's own motion (a13's v_sac) instead of the list: 97 % before (v2), about 37 % now
+        self.assertLess(m["head_carried"]["by_eye_motion"]["share"], 0.5, m["head_carried"])
+        self.assertAlmostEqual(report["measures"]["head_carried"]["by_eye_motion"]["share"],
+                               m["head_carried"]["by_eye_motion"]["share"], places=1)
         rate = len(report["saccades"]["list"]) / (7743 / 30.0)
         self.assertTrue(1.0 <= rate <= 4.0, rate)
         # the plan's own measures say the same as the files

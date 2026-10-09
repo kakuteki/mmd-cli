@@ -38,7 +38,8 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   the next 0, 4, 8, 12 or 18 frames from the landing, the one that stays inside the free zone longest (at most
   HOLD_MAX frames), kept AVOID degrees off the camera.  When the point will be out of the free zone LOOK_AHEAD
   frames from now (or behind her), the eyes move on (a recentre saccade) unless it is back inside within RETURN
-  frames (a nod with the beat) and still inside the limits.  A fixation lasts at least MIN_FIXATION frames.  After
+  frames (a nod with the beat) and still inside the limits.  A fixation lasts at least MIN_FIXATION frames
+  (--min-fixation; 6, 200 ms, by default: the review found 57 % of the fixations at it, so 9 is offered).  After
   GLANCE frames (drawn from the seed) of one fixation, a glance: a saccade to a new point a few degrees off the face's
   way.  The analysis measured why the point must follow the face: the head turns its forward by 10 degrees in 0.2 s
   (median), so a point held on its own leaves the eyes' range in 5 frames.
@@ -117,7 +118,8 @@ SOFT_FROM = 0.6                       # share of a limit up to which the eyes fo
 EDGE = 0.9                            # share of a limit from which the analysis counts the eyes as at the edge
 FREE_SHARE = (2.0 / 3.0, 2.0 / 3.0, 0.7)      # the free zone, shares of the yaw, up and down limits (12, 4, 7)
 CONTACT_SHARE = (0.889, 0.883, 0.89)          # the contact zone (16, 5.3, 8.9: inside the EDGE lines)
-CONTACT_ERROR = 3.5                   # degrees off the camera at most for a frame to be within reach (a13 counts 4)
+CONTACT_ERROR = 4.0                   # degrees off the camera at most for a frame to be within reach (a13 counts 4;
+                                      # 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye)
 CONTACT_GAP = 2                       # frames out of reach that do not break a run (a13 joins gaps of 2)
 CONTACT_MIN = 48                      # frames: a run this long is always a contact (1.6 s)
 CONTACT_MID = 30                      # frames: a run this long is a contact near an anchor of the song
@@ -344,6 +346,11 @@ def check_limits(limits):
             raise ValueError("%s is how far the eyes turn, above 0 and at most %g degrees, not %r" % (name, LIMIT_MAX, value))
 
 
+def check_min_fixation(frames):
+    if not (isinstance(frames, int) and frames >= 1):
+        raise ValueError("--min-fixation is the shortest fixation in frames, 1 or more, not %r" % (frames,))
+
+
 def _zone(limits, shares):
     return Limits(limits.yaw * shares[0], limits.up * shares[1], limits.down * shares[2])
 
@@ -558,10 +565,11 @@ def free_point(seen, i, fw, rest, zone, offset, camera_dirs):
     return best[1]
 
 
-def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=()):
+def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixation=MIN_FIXATION):
     """(a Look per sight, the saccades, the contacts as (first, last) frame indices, the leads planned): see the module
-    docstring.  `anchors` are frame indices."""
+    docstring.  `anchors` are frame indices; `min_fixation` frames is the shortest fixation (--min-fixation)."""
     check_limits(limits)
+    check_min_fixation(min_fixation)
     rest = angles_of(forward)
     n = len(seen)
     free = free_zone(limits)
@@ -601,7 +609,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=()):
             elif mode == "free" and upcoming is not None and upcoming[0] <= i:
                 want = ("free", upcoming, "lead")
                 lead_i += 1
-            elif mode == "free" and held is None and i - landed >= MIN_FIXATION:
+            elif mode == "free" and held is None and i - landed >= min_fixation:
                 j = min(n - 1, i + LOOK_AHEAD)
                 ahead, behind = _head_angles(seen[j], point, rest)
                 quiet = i <= guard_until or (upcoming is not None and upcoming[0] - i <= QUIET)
@@ -748,10 +756,29 @@ def lead_measure(head_yaw, gaze_yaw, margins=LEAD_MARGINS):
     return {"turns": turns, "led": led, "share": _r(led / float(turns), 3) if turns else 0.0}
 
 
-def carried_measure(gazes, saccades):
+def eye_steps(gazes, heads):
+    """a13's v_sac per frame step (degrees, step i from frame i to i + 1): the part of the gaze's step in the world
+    that the eye makes in the head the same way (not the counter-rotation, which moves the eye but not the gaze, nor
+    a head turn carrying a resting eye, which moves the gaze but not the eye).  Small angles: chords as radians."""
+    out = []
+    for i in range(len(gazes) - 1):
+        a = fk.rotate(fk.conjugate(heads[i]), gazes[i])
+        b = fk.rotate(fk.conjugate(heads[i + 1]), gazes[i + 1])
+        d_eye = tuple(y - x for x, y in zip(a, b))
+        d_gaze = fk.rotate(fk.conjugate(heads[i + 1]), tuple(y - x for x, y in zip(gazes[i], gazes[i + 1])))
+        n_eye = math.sqrt(sum(v * v for v in d_eye))
+        n_gaze = math.sqrt(sum(v * v for v in d_gaze))
+        along = sum(x * y for x, y in zip(d_eye, d_gaze)) / n_gaze if n_gaze > 1e-12 else 0.0
+        out.append(math.degrees(min(max(along, 0.0), min(n_eye, n_gaze))))
+    return out
+
+
+def carried_measure(gazes, saccades, heads=None):
     """a07: the large changes of the gaze in the world (more than LARGE_CHANGE degrees within LARGE_WINDOW frames, one
     per run, at its largest window) and how many the head carried: less than half of the window's path inside the
-    listed saccades (a frame's step counts when the saccade covers either end).  `gazes` are world directions"""
+    listed saccades (a frame's step counts when the saccade covers either end).  `gazes` are world directions.
+    With `heads` (the head's world rotations) also by_eye_motion: the same events split by a13's v_sac instead of
+    the list (eye_steps; review eye, finding 1: with many saccades the list's split counts most steps as theirs)."""
     n = len(gazes)
     moving = [False] * n
     for s in saccades:
@@ -760,7 +787,8 @@ def carried_measure(gazes, saccades):
     steps = [degrees_between(gazes[i], gazes[i + 1]) for i in range(n - 1)]
     w = LARGE_WINDOW
     change = [degrees_between(gazes[i], gazes[i + w]) for i in range(n - w)]
-    events = carried = 0
+    by_eye = eye_steps(gazes, heads) if heads is not None else None
+    events = carried = carried_by_eye = 0
     for a, b in _runs([c > LARGE_CHANGE for c in change]):
         k = max(range(a, b + 1), key=lambda i: (change[i], -i))
         frames = range(k, k + w)
@@ -768,8 +796,14 @@ def carried_measure(gazes, saccades):
         by_saccade = sum(steps[f] for f in frames if moving[f] or moving[f + 1])
         events += 1
         carried += by_saccade < 0.5 * path
-    return {"events": events, "saccade_made": events - carried, "head_carried": carried,
-            "share": _r(carried / float(events), 3) if events else 0.0}
+        if by_eye is not None:
+            carried_by_eye += sum(by_eye[f] for f in frames) < 0.5 * path
+    out = {"events": events, "saccade_made": events - carried, "head_carried": carried,
+           "share": _r(carried / float(events), 3) if events else 0.0}
+    if by_eye is not None:
+        out["by_eye_motion"] = {"events": events, "head_carried": carried_by_eye,
+                                "share": _r(carried_by_eye / float(events), 3) if events else 0.0}
+    return out
 
 
 def plan_measures(seen, looks, saccades, forward, limits):
@@ -781,7 +815,7 @@ def plan_measures(seen, looks, saccades, forward, limits):
     out["contact"] = contact_measures([look.error for look in looks])
     margins = LEAD_MARGINS if len(seen) > 2 * sum(LEAD_MARGINS) else (15, 0)
     out["lead"] = lead_measure([yaw(fk.rotate(s.head, forward)) for s in seen], [yaw(g) for g in gazes], margins)
-    out["head_carried"] = carried_measure(gazes, saccades)
+    out["head_carried"] = carried_measure(gazes, saccades, [s.head for s in seen])
     out["saccades_per_second"] = _r(len(saccades) / (len(seen) / FPS), 3)
     return out
 
@@ -889,7 +923,8 @@ class Gaze:
     contacts: List[Tuple[int, int]]
 
 
-def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN, seed=0, life=True, anchors=()):
+def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN, seed=0, life=True, anchors=(),
+         min_fixation=MIN_FIXATION):
     """the 両目 motion for `dance` seen by `camera` on `model`, with the per-frame plan and the report; `anchors` are
     frames of the song (song_anchors)"""
     limits = Limits(float(max_yaw), float(max_up), float(max_down))
@@ -901,7 +936,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     seen = sights(model, dance, camera)
     first = seen[0].frame
     marks = sorted({a - first for a in anchors if 0 <= a - first < len(seen)})
-    looks, saccades, contacts, leads = plan(seen, forward, limits, seed, life, marks)
+    looks, saccades, contacts, leads = plan(seen, forward, limits, seed, life, marks, min_fixation)
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -913,7 +948,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         near = [m for m in marks if a - ANCHOR_NEAR <= m <= b + ANCHOR_NEAR]
         return near[0] + first if near else None
     report = {
-        "frames": [seen[0].frame, seen[-1].frame], "seed": seed,
+        "frames": [seen[0].frame, seen[-1].frame], "seed": seed, "min_fixation": min_fixation,
         "limits": dict(limits.to_json(), soft_from=SOFT_FROM),
         "zones": {"free": free_zone(limits).to_json(), "contact": contact_zone(limits).to_json(),
                   "contact_error": CONTACT_ERROR},
@@ -1019,7 +1054,7 @@ def resolve_limits(max_yaw=None, max_up=None, max_down=None, max_pitch=None):
 
 
 def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_path=None, debug_frames=None,
-        probe_path=None, limits=Limits(), seed=0, cues_path=None, chorus=()):
+        probe_path=None, limits=Limits(), seed=0, cues_path=None, chorus=(), min_fixation=MIN_FIXATION):
     """read, plan, write; the summary is what main prints"""
     started = time.time()
     check_limits(limits)
@@ -1029,7 +1064,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     dance = vmd.load(dance_full)
     camera = vmd.load(camera_full)
     model = load_model(model_full)
-    result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed, anchors=song_anchors(cues, chorus))
+    result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed, anchors=song_anchors(cues, chorus),
+                  min_fixation=min_fixation)
     report = result.report
     rows = None
     if debug_path:
@@ -1038,7 +1074,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     write_bytes(out_full, vmd.dumps(result.motion))
     back = vmd.load(out_full)
     summary = {"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full, "frames": report["frames"],
-               "keys": len(back.bones), "seed": seed, "limits": report["limits"], "zones": report["zones"],
+               "keys": len(back.bones), "seed": seed, "min_fixation": min_fixation, "limits": report["limits"],
+               "zones": report["zones"],
                "eye": report["eye"], "convention": report["convention"], "cuts": len(report["cuts"]),
                "anchors": len(report["anchors"]), "counts": report["counts"],
                "shares": {k: _r(v) for k, v in report["shares"].items()},
@@ -1082,11 +1119,13 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=0, help="the drift, the microsaccades, the glances, the leads (default 0)")
     p.add_argument("--cues", help="the MV's cues JSON: the ends of the lyric lines and the hooks are anchors for contacts")
     p.add_argument("--chorus", type=float, nargs="+", default=[], help="the heads of the choruses in seconds (anchors)")
+    p.add_argument("--min-fixation", type=int, default=MIN_FIXATION,
+                   help="frames a fixation lasts at least before a recentre or a glance (default %d)" % MIN_FIXATION)
     args = p.parse_args(argv)
     try:
         limits = resolve_limits(args.max_yaw, args.max_up, args.max_down, args.max_pitch)
         result = run(args.dance, args.camera, args.model, args.out, args.report, args.debug, args.debug_frames,
-                     args.probe, limits, args.seed, args.cues, args.chorus)
+                     args.probe, limits, args.seed, args.cues, args.chorus, args.min_fixation)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
