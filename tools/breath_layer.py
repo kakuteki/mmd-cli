@@ -12,7 +12,7 @@ moves the head 3.9 to 14 mm/s (a01) and breathes 12 to 18 times a minute (period
 moving forward 3 to 5 mm per quiet breath (De Groote 1997); a singer breathes in during the 0.5 to 0.7 s before a phrase
 (Salomoni 2016: 0.7 s on average).  Animators call the remedy a moving hold.
 
-What is added (all small turns in each bone's own frame, after the key's rotation: q' = q * d):
+What is added (small turns in each bone's own frame, after the key's rotation: q' = q * d; the arms' in front of it):
 
 * LAYERED bones only: 上半身, 上半身2, 首, 左肩, 右肩, 左腕, 右腕.  センター, the leg and toe IK, 下半身, 頭 and everything
   else are copied byte for byte, so the feet stay where they were traced (moving センター would shift the weight onto a
@@ -36,16 +36,20 @@ What is added (all small turns in each bone's own frame, after the key's rotatio
     seconds into the song): an inhale peaking ANTICIPATE_LEAD before it, and a small sink of the upper body (上半身
     bending forward by SINK degrees just before the move and back up into it): the anticipation of a person about to
     start.
-  - everywhere else, quiet breaths fill the gaps between those: periods drawn from REST_PERIOD, shortened and deepened
-    by the exertion (below) up to AFTER_PERIOD and AFTER_AMP, each depth and inhale share drawn from the seed, the gap
-    divided into whole breaths so that the last one ends where the next line or anticipation begins.
+  - everywhere else, quiet breaths fill the gaps between those, one after the other: periods drawn from REST_PERIOD and
+    shortened by the exertion (below) by up to AFTER_PERIOD, depths from REST_DEPTH deepened by up to AFTER_AMP where the
+    dance is quiet after exertion, inhale shares from INHALE_SHARE; the rest of a gap shorter than one and a half periods
+    is the last breath (shallower when shorter than SHORT_BREATH, none under MIN_BREATH), so that it ends where the next
+    line or anticipation begins.
 * The moving hold: the trunk sways on a slow closed orbit, rolling to the sides (about Z) and twisting (about Y), half in
   上半身 and half in 上半身2, the neck taking back HEAD_ROLL_COUNTER of the roll.  The orbit is an ellipse with semi-axes
   SWAY_ROLL and SWAY_YAW degrees that it runs around at SWAY_HZ, all three wandering slowly (smooth value noise with knots
   every SWAY_KNOT seconds, from the seed).  Going round an orbit, rather than to and fro, the chest never stops turning:
   at least SWAY_HZ * 2 pi * the shorter semi-axis, about 1.1 deg/s, and the breath's opening is at right angles to it, so
   the two never cancel.  To and fro (a breath alone, or a sine) it would stop twice a cycle, and a20's measure would find
-  a frozen torso there.
+  a frozen torso there.  The head also goes round a small orbit of its own on the neck (首 nodding and tilting by
+  NECK_SWAY degrees at NECK_SWAY_HZ, the other way round), so it does not come to rest when the trunk's orbit runs
+  along the twist, which does not move the head.
 * Where the dance itself moves, the layer fades: a quietness q(t) is 1 where the chest turns less than QUIET_TURN[0]
   deg/s and the head moves less than QUIET_HEAD[0] mm/s (both averaged over QUIET_WINDOW frames), 0 above QUIET_TURN[1] or
   QUIET_HEAD[1], a smoothstep between; it is spread QUIET_WINDOW frames both ways (a max filter) and then smoothed over as
@@ -53,10 +57,11 @@ What is added (all small turns in each bone's own frame, after the key's rotatio
   scaled by SWAY_FLOOR + (1 - SWAY_FLOOR) q and the breath by BREATH_FLOOR + (1 - BREATH_FLOOR) q: in the big motions
   (97 % of the MV, a06) it is a trace, in the holds it is whole.
 * The exertion e(t), for the depth and rate of the quiet breaths: 1 - q(t) averaged backwards with a time constant of
-  EXERTION_TAU seconds (times 1.5, at most 1).  After four minutes of dancing the last hold breathes deeper and faster.
+  EXERTION_TAU seconds (times 1.5, at most 1).  After four minutes of dancing the last hold breathes faster and, as it
+  is quiet, deeper.
 * A hand at the face: for each side, where the hand's tip (中指３, else 手首) is within CONTACT_CM of the eyes (a
   smoothstep from the first to the second number of centimetres, spread and smoothed over CONTACT_WINDOW frames), the
-  shoulder's breath on that side and the neck's counter-turns fade to 0.  The hand and the face then both ride the chest
+  shoulder's breath on that side and the neck's turns (counter-turns and its orbit) fade to 0.  The hand and the face then both ride the chest
   rigidly and their distance does not change.
 * A last check: the a20 measure is computed on the result (forward kinematics, mmd_cli.fk); a frame still frozen (the
   dance's own motion cancelling the layer) gets the whole sway, times FIX_BOOST, over FIX_SPREAD frames around it, and
@@ -69,14 +74,16 @@ The report (--report, and in short on stdout), each measure before and after:
 * torso_frozen: a20's measure; frames (whole motion, frames 1..last) and dance_share (frames DANCE_PART, a20's 10 to
   253 s, when the motion is that long, else all frames).
 * head_in_holds: a01's head speed (the fastest of 頭, 左目, 右目, mm/s) on the frames where the input's head stood still
-  (under 1 mm/s): p05, median, p95 and the share in 3 to 9 mm/s.
+  (under 1 mm/s): p05, median, p95 and the share in 3 to 9 mm/s; also without the frames of the anticipation, which is
+  a move of its own (anticipation_frames, after_without_anticipation).
 * lines: count, inhales placed, and per line what the layer alone adds in a06's measure D (the mean of the last 0.2 s
   before the line minus the mean 1.0 to 0.83 s before it): the shoulder joints' height in the chest's frame (mm) and the
   chest's opening against 上半身 (deg); and a06's D of the whole motion (the dance and the layer), before and after.
 * contacts: on the frames where a hand's tip is within 15 cm of the eyes (hand_face) or of 下半身 (hand_hip) in the
   input, the largest change of that distance (mm).
 * intro (the first move and the breaths before it), breaths (counts), bones (keys before and after, the largest turn
-  added), untouched (the bones copied and whether they are byte for byte the input's), fix_rounds.
+  added), untouched (the bones copied and whether they are byte for byte the input's), fix_rounds and fix_frames (the
+  frozen frames found before each round).
 """
 import argparse
 import bisect
@@ -112,8 +119,8 @@ INHALE_SHARE = (0.36, 0.44)             # share of a quiet breath spent breathin
 REST_DEPTH = (0.85, 1.15)               # depth of a quiet breath (1 = CHEST_BREATH and SHOULDER_BREATH)
 SHORT_BREATH = 2.5                      # seconds: a breath squeezed into a shorter gap is shallower in proportion
 MIN_BREATH = 1.2                        # seconds: a shorter gap gets no breath
-AFTER_PERIOD = 0.35                     # the share a breath is shortened by at full exertion
-AFTER_AMP = 0.6                         # and the share it is deepened by
+AFTER_PERIOD = 0.25                     # the share a breath is shortened by at full exertion
+AFTER_AMP = 0.3                         # and the share it is deepened by (where the dance is quiet)
 EXERTION_TAU = 6.0                      # seconds of the backward average of the motion that makes the exertion
 LINE_INHALE = 0.6                       # seconds of the inhale before a line (Salomoni 2016: 0.5 to 0.7)
 LINE_LEAD = 0.0                         # seconds from the cue's start to the top of that inhale
@@ -124,18 +131,20 @@ MIN_INHALE = 0.2                        # seconds: a shorter inhale is dropped
 MOVE_SPEED = 5.0                        # mm/s of the head that is a move
 MOVE_RUN = 10                           # frames the head must keep moving
 ANTICIPATE_MIN = 1.5                    # seconds into the song the first move must be for an anticipation
-ANTICIPATE_LEAD = 0.3                   # seconds from the top of the anticipation's inhale to the move
-ANTICIPATE_INHALE = 0.7                 # seconds of that inhale
-ANTICIPATE_AMP = 1.3
+ANTICIPATE_LEAD = 0.35                  # seconds from the top of the anticipation's inhale to the move
+ANTICIPATE_INHALE = 1.0                 # seconds of that inhale
+ANTICIPATE_AMP = 1.2
 ANTICIPATE_EXHALE = 0.8                 # seconds it breathes out into the move
-SINK = 0.8                              # degrees the upper body bends forward in the anticipation
-SINK_FRAMES = (14, 3, 10)               # frames: the sink starts 14 before the move, is deepest 3 before, gone 10 after
+SINK = 0.6                              # degrees the upper body bends forward in the anticipation
+SINK_FRAMES = (18, 4, 12)               # frames: the sink starts 18 before the move, is deepest 4 before, gone 12 after
 SWAY_ROLL = (0.74, 0.86)                # degrees: semi-axis of the orbit to the sides
 SWAY_YAW = (0.80, 1.00)                 # degrees: semi-axis of the twist
 SWAY_HZ = (0.25, 0.33)                  # rounds per second
 SWAY_KNOT = 3.0                         # seconds between the knots of the orbit's noise
 SWAY_SPINE_SHARE = 0.5                  # share of the sway in 上半身 (the rest in 上半身2)
 HEAD_ROLL_COUNTER = 0.4                 # share of the trunk's roll the neck takes back
+NECK_SWAY = 0.3                         # degrees: radius of the head's own small orbit on the neck (nod and tilt)
+NECK_SWAY_HZ = (0.35, 0.5)              # its rounds per second
 SWAY_FLOOR = 0.25                       # the sway's scale in a big motion
 BREATH_FLOOR = 0.45                     # the breath's scale in a big motion
 QUIET_TURN = (3.0, 15.0)                # deg/s of the chest: quiet below the first, moving above the second
@@ -507,6 +516,12 @@ class Plan:
         for f in range(self.frames):
             self.orbit.append((roll[f] * math.cos(phase), yaw[f] * math.sin(phase)))
             phase += self.sway_sign * 2.0 * math.pi * hz[f] / FPS
+        phase = 2.0 * math.pi * rng.random()
+        hz = value_noise(rng, self.frames, knot, *NECK_SWAY_HZ)
+        self.nod = []
+        for f in range(self.frames):
+            self.nod.append((NECK_SWAY * math.cos(phase), NECK_SWAY * math.sin(phase)))
+            phase -= self.sway_sign * 2.0 * math.pi * hz[f] / FPS
         self.lines = list(lines)
 
         def at(values, t):
@@ -585,7 +600,10 @@ class Plan:
         out = {SPINE: turn(-SINK * self.sink[f] * k, yaw * SWAY_SPINE_SHARE, roll * SWAY_SPINE_SHARE),
                CHEST: turn(chest_open, yaw * (1.0 - SWAY_SPINE_SHARE), roll * (1.0 - SWAY_SPINE_SHARE))}
         if self.has_neck:
-            out[NECK] = turn(-NECK_COUNTER * chest_open * near, 0.0, -HEAD_ROLL_COUNTER * roll * near)
+            quiet = (SWAY_FLOOR + (1.0 - SWAY_FLOOR) * q) * k * near
+            nod, tilt = self.nod[f]
+            out[NECK] = turn(-NECK_COUNTER * chest_open * near + nod * quiet, 0.0,
+                             -HEAD_ROLL_COUNTER * roll * near + tilt * quiet)
         for shoulder, arm, _, _, sign in self.sides:
             d = turn(0.0, 0.0, sign * SHOULDER_BREATH * b * self.contact[shoulder][f])
             out[shoulder] = d
@@ -679,12 +697,13 @@ def breathe(model, motion, lines=(), seed=0, strength=1.0):
     plan = Plan(model, motion, lines, seed, strength)
     deltas = plan.deltas()
     after = plan.compose(deltas)
-    rounds = 0
+    rounds, fixed = 0, []
     while rounds < FIX_ROUNDS and strength > 0.0:
         frozen = frozen_frames(after)
         if not frozen:
             break
         rounds += 1
+        fixed.append(len(frozen))
         mark = [0.0] * plan.frames
         for f in frozen:
             for g in range(max(0, f - FIX_SPREAD), min(plan.frames, f + FIX_SPREAD + 1)):
@@ -695,7 +714,7 @@ def breathe(model, motion, lines=(), seed=0, strength=1.0):
         deltas = plan.deltas()
         after = plan.compose(deltas)
     out = plan.build(deltas)
-    return Result(out, report_of(plan, out, after, rounds))
+    return Result(out, report_of(plan, out, after, rounds, fixed))
 
 
 # ---- the report -------------------------------------------------------------------------------
@@ -739,7 +758,7 @@ def a06_d(values, t0):
     return sum(values[t0 - 6:t0]) / 6.0 - sum(values[t0 - 30:t0 - 24]) / 6.0
 
 
-def report_of(plan, out, after, rounds):
+def report_of(plan, out, after, rounds, fixed=()):
     """the measures before and after (the after pose is the composed one; tests check it against mmd_cli.fk on the
     written motion)"""
     before = plan.before
@@ -749,9 +768,15 @@ def report_of(plan, out, after, rounds):
     report = {"frames": [0, plan.last], "strength": _r(plan.strength),
               "torso_frozen": {"definition": "a20: センター and 上半身2 under 0.5 cm/s and 上半身2 under 1 deg/s",
                                "before": frozen_summary(before, frames), "after": frozen_summary(after, frames)},
-              "fix_rounds": rounds,
+              "fix_rounds": rounds, "fix_frames": list(fixed),
               "head_in_holds": {"frames": len(holds), "before": speed_summary([head_b[f] for f in holds]),
                                 "after": speed_summary([head_a[f] for f in holds])}}
+    lead = [b for b in plan.breaths if b.kind == "anticipation"]
+    if lead:
+        lo, hi = int(math.floor(lead[0].start * FPS)), plan.first_move + SINK_FRAMES[2]
+        rest = [f for f in holds if not lo <= f <= hi]
+        report["head_in_holds"]["anticipation_frames"] = [lo, hi]
+        report["head_in_holds"]["after_without_anticipation"] = speed_summary([head_a[f] for f in rest])
     # lines
     sh_b = [shoulder_height(before, f, plan.sides) for f in range(frames)]
     sh_a = [shoulder_height(after, f, plan.sides) for f in range(frames)]
