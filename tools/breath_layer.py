@@ -23,7 +23,10 @@ What is added (small turns in each bone's own frame, after the key's rotation: q
   + leaning back, CHEST_BREATH degrees per unit: the neck base 15 cm above moves 3 to 4 mm, a06) and lifts the shoulders
   (左肩 / 右肩 about Z, SHOULDER_BREATH degrees: 3 mm at the arm joint of Sour's Rin, whose shoulder bone is 55 mm).  The
   upper arm is turned back by the same amount (through whatever lies between 肩 and 腕, such as 肩C), so the arm keeps
-  its direction against the chest and the hand only rises with the shoulder joint, by millimetres; it is not swung.
+  its direction against the chest: the breath lifts the hand with the shoulder joint by millimetres and does not swing
+  it.  The hand still rides the chest's sway (below) with the whole arm: on the MV's dance a finger tip moves in the
+  world by 3 mm (median), 9 mm (p95) and up to about 2 cm with the arm stretched out, its direction against the chest
+  unchanged.
   The neck takes back NECK_COUNTER of the chest's turn, so the head nods less than the chest opens.
   b(t) is a chain of breaths, each an inhale from a trough to a peak and an exhale back down, every piece a smoothstep
   (zero slope at each turning point: C1):
@@ -47,9 +50,10 @@ What is added (small turns in each bone's own frame, after the key's rotation: q
   every SWAY_KNOT seconds, from the seed).  Going round an orbit, rather than to and fro, the chest never stops turning:
   at least SWAY_HZ * 2 pi * the shorter semi-axis, about 1.1 deg/s, and the breath's opening is at right angles to it, so
   the two never cancel.  To and fro (a breath alone, or a sine) it would stop twice a cycle, and a20's measure would find
-  a frozen torso there.  The head also goes round a small orbit of its own on the neck (首 nodding and tilting by
-  NECK_SWAY degrees at NECK_SWAY_HZ, the other way round), so it does not come to rest when the trunk's orbit runs
-  along the twist, which does not move the head.
+  a frozen torso there.  The twist turns the head about its own axis and hardly moves it, so the head would stop where
+  the orbit runs along the twist; the neck therefore nods by NECK_NOD of the twist, in step with it: the head moves
+  sideways with the roll and to and fro with the nod, one or the other always (a small orbit of its own, in phase with
+  the trunk's, so that the two cannot cancel).
 * Where the dance itself moves, the layer fades: a quietness q(t) is 1 where the chest turns less than QUIET_TURN[0]
   deg/s and the head moves less than QUIET_HEAD[0] mm/s (both averaged over QUIET_WINDOW frames), 0 above QUIET_TURN[1] or
   QUIET_HEAD[1], a smoothstep between; it is spread QUIET_WINDOW frames both ways (a max filter) and then smoothed over as
@@ -61,11 +65,17 @@ What is added (small turns in each bone's own frame, after the key's rotation: q
   is quiet, deeper.
 * A hand at the face: for each side, where the hand's tip (中指３, else 手首) is within CONTACT_CM of the eyes (a
   smoothstep from the first to the second number of centimetres, spread and smoothed over CONTACT_WINDOW frames), the
-  shoulder's breath on that side and the neck's turns (counter-turns and its orbit) fade to 0.  The hand and the face then both ride the chest
-  rigidly and their distance does not change.
-* A last check: the a20 measure is computed on the result (forward kinematics, mmd_cli.fk); a frame still frozen (the
-  dance's own motion cancelling the layer) gets the whole sway, times FIX_BOOST, over FIX_SPREAD frames around it, and
-  the check runs again, FIX_ROUNDS times at most.  The report says how many rounds it took and what remains.
+  shoulder's breath on that side and the neck's turns (counter-turns and nod) fade to 0.  The hand and the face then
+  both ride the chest rigidly and their distance does not change.
+* A last check: the a20 measure is computed on the result (the input's poses re-posed by the layer, the same as
+  mmd_cli.fk on the written file); a frame still frozen gets the whole sway, times FIX_BOOST, over FIX_SPREAD frames
+  around it, coming in and going out over FIX_RAMP frames each way, and the check runs again, FIX_ROUNDS times at most.
+  On the MV's dance the frames it finds are sudden stops inside big motions (the chest turning 100 to 300 deg/s, then
+  exactly 0 for 1 to 13 frames), where the quietness, made over 9-frame windows, leaves only a trace of the layer.  The
+  ramps are long so that the layer's chest turn does not accelerate there much harder than in a long hold (with 5-frame
+  ramps and a boost of 1.4 the p95 was 8.5 times as hard, now about 1.8); the price is that more of the song is raised
+  (on the MV's dance 22 stretches, 1,888 frames, 24 %, by at most the boost, mostly inside big motions).  The report
+  lists those stretches (fix).
 
 The seed (random.Random(seed).random(): the same on every platform and Python) draws every period, depth, inhale share
 and the noise of the orbit: the same input, cues, seed and strength give the same bytes.  --strength scales every angle.
@@ -84,6 +94,10 @@ The report (--report, and in short on stdout), each measure before and after:
 * intro (the first move and the breaths before it), breaths (counts), bones (keys before and after, the largest turn
   added), untouched (the bones copied and whether they are byte for byte the input's), fix_rounds and fix_frames (the
   frozen frames found before each round).
+* fix: the stretches the last check raised ([first, last] frames), their frames and share of the motion, the largest
+  raise, and the acceleration of the layer's own chest turn (deg/s/s; the rotation vectors added to 上半身 and 上半身2,
+  summed, differenced twice) in those stretches and in the long holds (fully quiet, not raised, LONG_HOLD frames or
+  more): median, p95, max.
 """
 import argparse
 import bisect
@@ -143,8 +157,7 @@ SWAY_HZ = (0.25, 0.33)                  # rounds per second
 SWAY_KNOT = 3.0                         # seconds between the knots of the orbit's noise
 SWAY_SPINE_SHARE = 0.5                  # share of the sway in 上半身 (the rest in 上半身2)
 HEAD_ROLL_COUNTER = 0.4                 # share of the trunk's roll the neck takes back
-NECK_SWAY = 0.3                         # degrees: radius of the head's own small orbit on the neck (nod and tilt)
-NECK_SWAY_HZ = (0.35, 0.5)              # its rounds per second
+NECK_NOD = 0.65                         # the head nods on the neck by this share of the trunk's twist, in step with it
 SWAY_FLOOR = 0.25                       # the sway's scale in a big motion
 BREATH_FLOOR = 0.45                     # the breath's scale in a big motion
 QUIET_TURN = (3.0, 15.0)                # deg/s of the chest: quiet below the first, moving above the second
@@ -156,9 +169,11 @@ CONTACT_REPORT_CM = 15.0
 FROZEN = (0.5, 0.5, 1.0)                # a20: cm/s of センター, cm/s of 上半身2, deg/s of 上半身2
 DANCE_PART = (300, 7599)                # a20's dance part (frames)
 FIX_ROUNDS = 4
-FIX_BOOST = 1.4
-FIX_SPREAD = 10                         # frames
+FIX_BOOST = 1.2
+FIX_SPREAD = 3                          # frames around a frozen frame that get the whole raise
+FIX_RAMP = 15                           # frames over which the raise comes in and goes out (each way)
 HOLD_HEAD = 1.0                         # mm/s: the input's head stands still below this (a01)
+LONG_HOLD = 30                          # frames: a quiet stretch at least this long is a long hold (report)
 IDENTITY = fk.IDENTITY
 
 
@@ -516,12 +531,6 @@ class Plan:
         for f in range(self.frames):
             self.orbit.append((roll[f] * math.cos(phase), yaw[f] * math.sin(phase)))
             phase += self.sway_sign * 2.0 * math.pi * hz[f] / FPS
-        phase = 2.0 * math.pi * rng.random()
-        hz = value_noise(rng, self.frames, knot, *NECK_SWAY_HZ)
-        self.nod = []
-        for f in range(self.frames):
-            self.nod.append((NECK_SWAY * math.cos(phase), NECK_SWAY * math.sin(phase)))
-            phase -= self.sway_sign * 2.0 * math.pi * hz[f] / FPS
         self.lines = list(lines)
 
         def at(values, t):
@@ -600,10 +609,7 @@ class Plan:
         out = {SPINE: turn(-SINK * self.sink[f] * k, yaw * SWAY_SPINE_SHARE, roll * SWAY_SPINE_SHARE),
                CHEST: turn(chest_open, yaw * (1.0 - SWAY_SPINE_SHARE), roll * (1.0 - SWAY_SPINE_SHARE))}
         if self.has_neck:
-            quiet = (SWAY_FLOOR + (1.0 - SWAY_FLOOR) * q) * k * near
-            nod, tilt = self.nod[f]
-            out[NECK] = turn(-NECK_COUNTER * chest_open * near + nod * quiet, 0.0,
-                             -HEAD_ROLL_COUNTER * roll * near + tilt * quiet)
+            out[NECK] = turn((-NECK_COUNTER * chest_open + NECK_NOD * yaw) * near, 0.0, -HEAD_ROLL_COUNTER * roll * near)
         for shoulder, arm, _, _, sign in self.sides:
             d = turn(0.0, 0.0, sign * SHOULDER_BREATH * b * self.contact[shoulder][f])
             out[shoulder] = d
@@ -708,13 +714,13 @@ def breathe(model, motion, lines=(), seed=0, strength=1.0):
         for f in frozen:
             for g in range(max(0, f - FIX_SPREAD), min(plan.frames, f + FIX_SPREAD + 1)):
                 mark[g] = 1.0
-        mark = smooth(mark, FIX_SPREAD // 2)
+        mark = smooth(max_filter(mark, FIX_RAMP), FIX_RAMP)
         plan.raise_ = [max(a, b) for a, b in zip(plan.raise_, mark)]
         plan.boost = [b * (1.0 + (FIX_BOOST - 1.0) * m) for b, m in zip(plan.boost, mark)]
         deltas = plan.deltas()
         after = plan.compose(deltas)
     out = plan.build(deltas)
-    return Result(out, report_of(plan, out, after, rounds, fixed))
+    return Result(out, report_of(plan, out, after, deltas, rounds, fixed))
 
 
 # ---- the report -------------------------------------------------------------------------------
@@ -758,7 +764,44 @@ def a06_d(values, t0):
     return sum(values[t0 - 6:t0]) / 6.0 - sum(values[t0 - 30:t0 - 24]) / 6.0
 
 
-def report_of(plan, out, after, rounds, fixed=()):
+def runs_of(frames):
+    """[first, last] of the runs of consecutive frames in a sorted list"""
+    out = []
+    for f in frames:
+        if out and f == out[-1][1] + 1:
+            out[-1][1] = f
+        else:
+            out.append([f, f])
+    return out
+
+
+def layer_turn(deltas):
+    """per frame the speed (deg/s, a vector) of the turn the layer gives the chest: the rotation vectors of what it adds
+    to 上半身 and to 上半身2, summed (the layer's own signal, apart from how the dance turns the bones)"""
+    v = [tuple(a + b for a, b in zip(rotation_vector(d[SPINE]), rotation_vector(d[CHEST]))) for d in deltas]
+    return [(0.0, 0.0, 0.0)] + [tuple((b - a) * FPS for a, b in zip(v[f - 1], v[f])) for f in range(1, len(v))]
+
+
+def fix_summary(plan, deltas):
+    """where the last check raised the sway (the frames whose raise is above 1 %), and how hard the layer's chest turn
+    accelerates there and in the long holds (runs of LONG_HOLD frames or more that are fully quiet and not raised)"""
+    raised = [f for f in range(plan.frames) if plan.raise_[f] > 0.01]
+    turn_ = layer_turn(deltas)
+    accel = [0.0, 0.0] + [math.dist(turn_[f - 1], turn_[f]) * FPS for f in range(2, plan.frames)]
+    quiet = [f for f in range(2, plan.frames) if plan.quiet[f] > 0.999 and plan.raise_[f] <= 0.01]
+    long_ = [f for a, b in runs_of(quiet) if b - a + 1 >= LONG_HOLD for f in range(a, b + 1)]
+
+    def summary(frames):
+        values = [accel[f] for f in frames if f >= 2]
+        return {"frames": len(values), "median": _r(percentile(values, 0.5), 2), "p95": _r(percentile(values, 0.95), 2),
+                "max": _r(max(values), 2) if values else 0.0}
+
+    return {"ranges": runs_of(raised), "frames": len(raised), "share": _r(len(raised) / float(plan.frames)),
+            "most_raised": _r(max([b * 1.0 for b in plan.boost] or [1.0]), 3),
+            "layer_chest_accel": {"unit": "deg/s/s", "raised": summary(raised), "long_holds": summary(long_)}}
+
+
+def report_of(plan, out, after, deltas, rounds, fixed=()):
     """the measures before and after (the after pose is the composed one; tests check it against mmd_cli.fk on the
     written motion)"""
     before = plan.before
@@ -768,7 +811,7 @@ def report_of(plan, out, after, rounds, fixed=()):
     report = {"frames": [0, plan.last], "strength": _r(plan.strength),
               "torso_frozen": {"definition": "a20: センター and 上半身2 under 0.5 cm/s and 上半身2 under 1 deg/s",
                                "before": frozen_summary(before, frames), "after": frozen_summary(after, frames)},
-              "fix_rounds": rounds, "fix_frames": list(fixed),
+              "fix_rounds": rounds, "fix_frames": list(fixed), "fix": fix_summary(plan, deltas),
               "head_in_holds": {"frames": len(holds), "before": speed_summary([head_b[f] for f in holds]),
                                 "after": speed_summary([head_a[f] for f in holds])}}
     lead = [b for b in plan.breaths if b.kind == "anticipation"]

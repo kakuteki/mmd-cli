@@ -274,7 +274,9 @@ class ShoulderTest(unittest.TestCase):
 
     def test_also_through_a_shoulder_parent_and_its_cancel_bone(self):
         model = pmx.loads(rin_like_bytes(shoulder_parent=True))
-        dance = still_dance(extra=[key("左肩P", 0, (0.0, 0.0, 10.0)), key("左肩P", LAST, (0.0, 0.0, 10.0))])
+        # 左肩P turned about X as well: the turn from the shoulder to the arm's parent no longer commutes with the
+        # shoulder's lift about Z, so leaving it out of the arm's counter-turn shows (review, M02)
+        dance = still_dance(extra=[key("左肩P", 0, (15.0, 0.0, 10.0)), key("左肩P", LAST, (15.0, 0.0, 10.0))])
         self.check_arm_follows_the_chest(model, dance)
 
     def test_a_hand_at_the_face_stays_there(self):
@@ -282,8 +284,13 @@ class ShoulderTest(unittest.TestCase):
         dance = still_dance()
         dance.bones = [k for k in dance.bones if k.name not in ("左肩", "左腕", "頭")]      # the hand rests at the face
         result = run_layer(dance, model=model)
-        names = ["左中指３", "左目", "右目", "右中指３"]
+        names = ["左中指３", "左目", "右目", "右中指３", "上半身2", "左腕"]
         before, after = world(model, dance, names), world(model, result.motion, names)
+        # the left shoulder does not breathe while its hand is at the face (review, M06)
+        for f in range(LAST + 1):
+            ab = in_frame(before["上半身2"][f][1], before["上半身2"][f][0], before["左腕"][f][0])
+            aa = in_frame(after["上半身2"][f][1], after["上半身2"][f][0], after["左腕"][f][0])
+            self.assertLess(math.dist(aa, ab) * UNIT_MM, 0.2, f)
 
         def gap(track, f, tip):
             eyes = tuple((a + b) / 2.0 for a, b in zip(track["左目"][f][0], track["右目"][f][0]))
@@ -294,6 +301,40 @@ class ShoulderTest(unittest.TestCase):
         self.assertLess(worst, 1.0)
         far = max(abs(gap(after, f, "右中指３") - gap(before, f, "右中指３")) for f in range(LAST + 1))
         self.assertGreater(far, 1.0)                                  # the other hand is far: its shoulder breathes
+
+
+class NeckTest(unittest.TestCase):
+    def test_the_neck_takes_back_part_of_the_chest_breath(self):
+        # the head nods less than the chest opens: over the frames, the head's added pitch against 上半身 follows the
+        # chest's added pitch with a slope near 1 - NECK_COUNTER, not 1 (review, M11)
+        dance = still_dance()
+        result = run_layer(dance)
+        names = ["上半身", "上半身2", "頭"]
+        before, after = world(MODEL, dance, names), world(MODEL, result.motion, names)
+
+        def added(parent, child, f):
+            rb = fk.multiply(fk.conjugate(before[parent][f][1]), before[child][f][1])
+            ra = fk.multiply(fk.conjugate(after[parent][f][1]), after[child][f][1])
+            return rotation_vector_degrees(fk.multiply(fk.conjugate(rb), ra))[0]
+
+        chest = [added("上半身", "上半身2", f) for f in range(LAST + 1)]
+        head = [added("上半身", "頭", f) for f in range(LAST + 1)]
+        mc, mh = sum(chest) / len(chest), sum(head) / len(head)
+        slope = sum((c - mc) * (h - mh) for c, h in zip(chest, head)) / sum((c - mc) ** 2 for c in chest)
+        self.assertGreater(max(chest) - min(chest), 0.8)
+        self.assertTrue(0.3 < slope < 0.75, slope)
+
+    def test_the_head_keeps_moving_when_the_trunk_orbit_runs_along_the_twist(self):
+        # without breath, the trunk's orbit alone stops moving the head where it runs along the twist (Y), which
+        # turns the head on its own axis; the head's own small orbit on the neck keeps it moving (review, M13)
+        dance = still_dance()
+        plan = breath_layer.Plan(MODEL, dance, [], 0, 1.0)
+        plan.breath = [0.0] * plan.frames
+        plan.sink = [0.0] * plan.frames
+        after = plan.compose(plan.deltas())
+        eyes = [tuple((a + b) / 2.0 for a, b in zip(after["左目"][f][0], after["右目"][f][0])) for f in range(plan.frames)]
+        slowest = min(math.dist(eyes[f - 1], eyes[f]) * FPS * UNIT_MM for f in range(1, plan.frames))
+        self.assertGreater(slowest, 0.8)
 
 
 class LineTest(unittest.TestCase):
@@ -401,6 +442,66 @@ class MotionTest(unittest.TestCase):
         self.assertGreater(chest_pitch(move - 10), chest_pitch(move - 45) + 0.3)
         # the sink: the upper body bends forward (negative X) right before the move, more than a moment earlier
         self.assertLess(spine_pitch(move - 3), spine_pitch(move - 20) - 0.3)
+
+
+def sudden_stops(last=LAST):
+    """still for 4 s (a long hold), then the upper body swings 40 degrees every 10 frames (120 deg/s) with a sudden stop
+    of 4 frames at 6, 8 and 10 seconds (two equal keys right after a fast segment)"""
+    keys = [k for k in still_dance(last).bones if k.name != "上半身"]
+    base = POSE["上半身"]
+    keys += [key("上半身", 0, base), key("上半身", 120, base)]
+    frame, sign = 130, 1.0
+    while frame <= last:
+        ui = (base[0], base[1] + 20.0 * sign, 0.0)
+        keys.append(key("上半身", frame, ui))
+        if frame in (180, 240, 300):
+            keys.append(key("上半身", frame + 4, ui))
+            frame += 4
+        frame += 10
+        sign = -sign
+    return vmd.Motion(model_name="dancer", bones=keys)
+
+
+class FixTest(unittest.TestCase):
+    """the last check: a frame still frozen after the layer (a sudden stop inside a big motion, where the layer is only a
+    trace) gets the whole sway around it"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dance = sudden_stops()
+        cls.result = run_layer(cls.dance)
+
+    def test_the_sudden_stops_are_frozen_in_the_input_and_not_after(self):
+        track = world(MODEL, self.dance, ["センター", "上半身2"])
+        before = breath_layer.frozen_frames(track)
+        self.assertTrue(any(180 <= f <= 186 for f in before), before)
+        after = breath_layer.frozen_frames(world(MODEL, self.result.motion, ["センター", "上半身2"]))
+        self.assertEqual(after, [])
+        self.assertGreaterEqual(self.result.report["fix_rounds"], 1)
+
+    def test_without_the_check_they_would_stay_frozen(self):
+        saved = breath_layer.FIX_ROUNDS
+        breath_layer.FIX_ROUNDS = 0
+        try:
+            result = run_layer(sudden_stops())
+        finally:
+            breath_layer.FIX_ROUNDS = saved
+        self.assertGreater(result.report["torso_frozen"]["after"]["frames"], 0)
+
+    def test_the_report_shows_where_the_sway_was_raised(self):
+        fix = self.result.report["fix"]
+        self.assertGreater(len(fix["ranges"]), 0)
+        self.assertEqual(fix["frames"], sum(b - a + 1 for a, b in fix["ranges"]))
+        for a, b in fix["ranges"]:
+            self.assertTrue(0 <= a <= b <= LAST)
+        self.assertTrue(any(a <= 182 <= b for a, b in fix["ranges"]))
+        self.assertAlmostEqual(fix["share"], fix["frames"] / float(LAST + 1), places=3)
+
+    def test_the_raise_is_gentle(self):
+        # the layer's chest turn accelerates in the raised stretches at most 3 times as much as in the long hold
+        accel = self.result.report["fix"]["layer_chest_accel"]
+        self.assertGreater(accel["long_holds"]["p95"], 0.0)
+        self.assertLess(accel["raised"]["p95"], 3.0 * accel["long_holds"]["p95"], accel)
 
 
 class CommandTest(unittest.TestCase):
