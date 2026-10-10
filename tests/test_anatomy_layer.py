@@ -333,6 +333,25 @@ class GirdleTest(unittest.TestCase):
         self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max(), 0.01)
         self.assertLess(rot_deg(win["左手首"][1], wout["左手首"][1]).max(), 0.05)
 
+    def test_the_rhythm_never_makes_a_straight_arm_s_hand_slide(self):
+        keys = untouched_keys()
+        for f, deg in ((0, 0.0), (30, 70.0), (LAST, 90.0)):
+            keys.append(key("左腕", f, compose(axis_angle((0, 1, 0), 25.0), axis_angle((0, 0, 1), deg))))
+        dance = vmd.Motion(model_name="d", bones=keys)
+        p = anatomy_layer.default_params()
+        p.update(rom=False)
+        result = anatomy_layer.layer(MODEL, dance, p)
+        p.update(girdle=False)
+        bare = anatomy_layer.layer(MODEL, dance, p)
+        # the trunk's split moves the shoulder a little and a straight arm cannot follow: the hand slides by that much
+        # with or without the girdle, the rhythm adds nothing
+        slid, slid_bare = (r.report["girdle"]["左"]["hand_slid_cm"]["max"] for r in (result, bare))
+        self.assertLess(slid, 0.3)
+        self.assertLessEqual(slid, slid_bare + 0.01)
+        self.assertGreater(result.report["girdle_rhythm_reduced_frames"]["左"], 0)
+        win, wout = worlds(dance, ["左手首"]), worlds(result.motion, ["左手首"])
+        self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max() * 8.0, slid + 0.01)
+
     def test_the_rhythm_lifts_the_shoulder_a_little_with_the_arm(self):
         dance = odd_elbow_dance()
         p = anatomy_layer.default_params()
@@ -377,8 +396,12 @@ class RangeTest(unittest.TestCase):
         self.assertGreater(arm["per_angle"]["elbow_extension"]["over_cap_in"], 50)
         self.assertEqual(arm["per_angle"]["elbow_extension"]["over_cap_out"], 0)
         self.assertGreater(arm["angles"]["elbow"]["out"]["min"], -18.0)      # no longer bent back beyond the cap
-        # what the elbow gave up did not go beyond another cap by more than a little
-        self.assertLess(max(v["max_over_cap_out"] for v in arm["per_angle"].values()), 2.0)
+        # what the elbow gave up went beyond another cap by a little at most (the elbow may move about 5 cm), and what
+        # is left is listed by name
+        worst = max(arm["per_angle"].items(), key=lambda kv: kv[1]["max_over_cap_out"])
+        self.assertLess(worst[1]["max_over_cap_out"], 8.0)
+        if worst[1]["max_over_cap_out"] > 0.5:
+            self.assertTrue(any(worst[0] in s["beyond"] for s in arm["beyond_cap_stretches_out"]))
 
     def test_the_trace_keys_where_the_shape_changes_are_listed(self):
         dance = odd_elbow_dance(supinate=-90.0)

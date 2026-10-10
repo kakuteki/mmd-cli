@@ -112,7 +112,8 @@ RELAX_DEG, RELAX_RUN, RELAX_FADE = 0.5, 10, 5
 # ---- the arm's dynamic program --------------------------------------------------------------------------------
 SWIVEL_STEP = 5.0               # degrees between the swivels tried
 SIGMA_MOVE = 3.0                # degrees of the elbow's offset (seen from the shoulder) that cost 1
-MOVE_CAP_DEG = 15.0             # beyond, the offset costs as much as a cap's excess (15 degrees: about 5 cm of elbow)
+MOVE_CAP_DEG = 15.0             # beyond (about 5 cm of elbow), the offset costs (excess / MOVE_HARD_DEG)^2: an excess that
+MOVE_HARD_DEG = 0.25            # would need the elbow moved further is left and listed
 SIGMA_ROLL = 4.0                # degrees per frame of the upper arm's roll beyond the split's own that cost 1
 SIGMA_OFFSET = 1.0              # degrees per frame of change of the elbow's offset that cost 1
 HARD_DEG = 1.0                  # beyond a cap: (degrees / HARD_DEG)^2
@@ -547,7 +548,10 @@ def girdle_targets(S, e_in, p_in, ht, ab, params):
     e1 = np.maximum(e_in, floor_e)
     p1 = np.minimum(p_in, -floor_r)
     lim = params["girdle_limits"]
-    return soft_band(e1, lim["depression"], lim["elevation"]), soft_band(p1, lim["retraction"], lim["protraction"])
+
+    def capped(e, p):
+        return soft_band(e, lim["depression"], lim["elevation"]), soft_band(p, lim["retraction"], lim["protraction"])
+    return capped(e_in, p_in), capped(e1, p1)
 
 
 # ---- step 3: the arm --------------------------------------------------------------------------------------------
@@ -700,7 +704,7 @@ def arm_pairs(st, lim):
 
 def arm_cost(st, lim, move_deg):
     """the unary cost of arm states and how far beyond the caps they are (degrees, summed)"""
-    cost = (move_deg / SIGMA_MOVE) ** 2 + ((np.maximum(move_deg - MOVE_CAP_DEG, 0.0)) / HARD_DEG) ** 2
+    cost = (move_deg / SIGMA_MOVE) ** 2 + ((np.maximum(move_deg - MOVE_CAP_DEG, 0.0)) / MOVE_HARD_DEG) ** 2
     beyond = np.zeros_like(cost)
     beyond_ref = np.zeros_like(cost)
     for _, x, s, c in arm_pairs(st, lim):
@@ -998,20 +1002,26 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         v_in = qrot(qconj(W.q(TRUNK_UP)), qrot(W.q(sh), S.d_sh))
         e_in, p_in = girdle_angles(S, v_in)
         ht, ab = humerothoracic(S, W.q(TRUNK_UP), W.p(s + "腕"), W.p(s + "ひじ"))
-        lam = np.zeros(F)
-        A_rot = np.broadcast_to(IDENTITY, (F, 4))
+        # g in 0..2 walks the girdle from the input (0) to the capped input (1) and on to the capped rhythm (2)
+        g = np.zeros(F)
+        A_cap = A_full = np.broadcast_to(IDENTITY, (F, 4))
         if p["girdle"]:
-            e_t, p_t = girdle_targets(S, e_in, p_in, ht, ab, p)
-            v_t = girdle_direction(S, e_t, p_t)
-            A_rot = arc(v_in, v_t)                    # in the chest's frame
-            lam = np.ones(F)
+            (e_c, p_c), (e_t, p_t) = girdle_targets(S, e_in, p_in, ht, ab, p)
+            A_cap = arc(v_in, girdle_direction(S, e_c, p_c))      # in the chest's frame
+            A_full = arc(v_in, girdle_direction(S, e_t, p_t))
+            g = np.full(F, 2.0)
         loc_s = dict(loc)
         pw = W.p(s + "手首")
         fe, Lf = forearm_vector(S, W, s, local, keypos, p["forearm_twist"] == "keep")
         Dmax, Dmin = hinge_reach(S, fe, Lf)
 
-        def shoulder_world(lmb):
-            Ar = qpow(A_rot, lmb) if np.ndim(lmb) else qpow(A_rot, np.full(F, lmb))
+        def girdle_turn(gg):
+            gg = np.broadcast_to(np.asarray(gg, dtype=float), (F,))
+            first = qpow(A_cap, np.clip(gg, 0.0, 1.0))
+            return np.where((gg > 1.0)[:, None], slerp(A_cap, A_full, np.clip(gg - 1.0, 0.0, 1.0)), first)
+
+        def shoulder_world(gg):
+            Ar = girdle_turn(gg)
             Wsh = qmul(qmul(T, qmul(Ar, qconj(T))), W.q(sh))
             Lsh = qmul(qconj(run_chain(W, [s + "肩P"], loc_s, keypos, world)[s + "肩P"][1]), Wsh)
             loc2 = dict(loc_s)
@@ -1022,41 +1032,50 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         backoff = 0
         slack = p["girdle_hand_slack_cm"] / UNIT_CM
 
-        def deficit(lmb):
-            _, wm = shoulder_world(lmb)
+        def deficit(gg):
+            _, wm = shoulder_world(gg)
             dm = np.linalg.norm(pw - wm[s + "腕"][0], axis=-1)
             return np.maximum(np.maximum(dm - Dmax, Dmin - dm), 0.0)
         if p["girdle"]:
-            bad = deficit(lam) > slack
+            # the cap may make a straight arm's hand slide (within the slack); the rhythm may not make it slide at all
+            d1 = deficit(np.ones(F))
+            limit = np.where(d1 <= slack, d1 + 1e-7, slack)
+
+            def feasible(gg):
+                return deficit(gg) <= np.where(gg > 1.0, limit, slack)
+            bad = ~feasible(g)
             if bad.any():
+                lo_ = np.where(d1 <= slack, 1.0, 0.0)
+                hi_ = np.where(d1 <= slack, 2.0, 1.0)
                 ok0 = deficit(np.zeros(F)) <= slack
-                lo_, hi_ = np.zeros(F), np.ones(F)
                 for _ in range(22):
                     mid = 0.5 * (lo_ + hi_)
-                    good = deficit(np.where(bad, mid, 1.0)) <= slack
+                    good = feasible(np.where(bad, mid, 2.0))
                     lo_ = np.where(bad & good, mid, lo_)
                     hi_ = np.where(bad & ~good, mid, hi_)
-                lam = np.where(bad, np.where(ok0, lo_, 0.0), 1.0)
-                cut = 1.0 - lam
+                g = np.where(bad, np.where(ok0 | (d1 <= slack), lo_, 0.0), 2.0)
+                cut = 2.0 - g
                 r = BACKOFF_PAD
                 dil = np.array([cut[max(0, t - r):t + r + 1].max() for t in range(F)])
                 k = np.hanning(2 * r + 3)[1:-1]
                 k /= k.sum()
                 cut2 = np.convolve(np.concatenate([np.repeat(dil[:1], r), dil, np.repeat(dil[-1:], r)]), k, "valid")
-                lam = np.clip(1.0 - np.maximum(cut2, cut), 0.0, 1.0)
-                backoff = int((lam < 0.999).sum())
-        Lsh, wc = shoulder_world(lam)
+                g = np.clip(2.0 - np.maximum(cut2, cut), 0.0, 2.0)
+                backoff = int((g < 0.999).sum())
+                report.setdefault("girdle_rhythm_reduced_frames", {})[s] = int(((g > 0.999) & (g < 1.999)).sum())
+        Lsh, wc = shoulder_world(g)
         if p["girdle"]:
             loc[sh] = Lsh
             new[sh] = Lsh
         v_out = qrot(qconj(T), qrot(wc[sh][1], S.d_sh))
         e_out, p_out = girdle_angles(S, v_out)
         C = wc[s + "肩C"][1]
-        # where the moved girdle leaves the wrist out of reach, the hand slides along the arm's line (within the slack)
+        # where the moved chest or girdle leaves the wrist out of the hinge arm's reach (a straight arm), the hand slides
+        # along the arm's line by what is missing (the girdle's cap within the slack, the rhythm not at all)
         ps_new = wc[s + "腕"][0]
         dvec = pw - ps_new
         dn = np.linalg.norm(dvec, axis=-1)
-        reach = np.clip(dn, Dmin, Dmax) if p["girdle"] else dn
+        reach = np.clip(dn, Dmin, Dmax)
         pw_t = ps_new + dvec * (reach / np.maximum(dn, 1e-12))[:, None]
         hand_moved = np.linalg.norm(pw_t - pw, axis=-1) * UNIT_CM
         A = ArmInput(ps_new, pw_t, W.p(s + "ひじ"), T, W.q(s + "手首"), fe, Lf)
@@ -1154,6 +1173,21 @@ def girdle_report(e_in, p_in, e_out, p_out, ht, ab, backoff, W, wc, s, T):
             "changed_deg": stats(np.hypot(e_out - e_in, p_out - p_in))}
 
 
+def left_beyond(mask, pairs, limit=80):
+    """the stretches still beyond a cap after the layer, each with the angles beyond and by how much (degrees), the
+    largest first"""
+    out = []
+    for a, b in runs(mask):
+        what = {}
+        for name, x, _, c in pairs:
+            over = float((x[a:b + 1] - c[a:b + 1] if np.ndim(c) else x[a:b + 1] - c).max())
+            if over > 0.5:
+                what[name] = _r(over, 1)
+        out.append({"first": a, "last": b, "beyond": what})
+    out.sort(key=lambda s: -max(s["beyond"].values(), default=0.0))
+    return out[:limit]
+
+
 def arm_report(final, reading_in, A, S, lim):
     def ab(x):
         return float(np.abs(x).max()) if len(x) else 0.0
@@ -1180,7 +1214,7 @@ def arm_report(final, reading_in, A, S, lim):
     return {"pronation_abs": {"in_max": _r(ab(reading_in["pron"])), "out_max": _r(ab(final["pron"]))},
             "angles": rows, "per_angle": per,
             "beyond_cap_frames_in": int(beyond_in.sum()), "beyond_cap_frames_out": int(beyond_out.sum()),
-            "beyond_cap_stretches_out": [[a, b] for a, b in runs(beyond_out)][:60],
+            "beyond_cap_stretches_out": left_beyond(beyond_out, pout),
             "elbow_moved_over_3cm": big[:30],
             "swivel_frames": int((np.abs(np.degrees(final["delta"])) > 0.5).sum()),
             "swivel_deg": stats(np.abs(np.degrees(final["delta"]))),
