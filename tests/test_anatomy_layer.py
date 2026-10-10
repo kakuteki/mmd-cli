@@ -289,6 +289,15 @@ class SplitTest(unittest.TestCase):
         twist = np.degrees(2 * np.arctan2(neck[f, 1], neck[f, 3]))
         self.assertAlmostEqual(abs(twist), 15.0, delta=2.0)
 
+        def flexion(q):
+            up = anatomy_layer.qrot(q, np.array([0.0, 1.0, 0.0]))
+            return abs(np.degrees(np.arctan2(up[..., 2], up[..., 1])))
+        # the head bent 10 degrees: 0.6 of it goes to the neck; the trunk bent 15: 0.25 of it to 上半身2 (under the
+        # saturation that keeps the chest's shift small)
+        self.assertAlmostEqual(flexion(neck[f]), 6.0, delta=1.5)
+        self.assertGreater(flexion(up[f]), 2.0)
+        self.assertLess(flexion(up[f]), 0.25 * 15.0 + 0.5)
+
     def test_a_trunk_turned_half_round_with_the_pelvis_is_split_against_the_pelvis(self):
         # the trace turns 上半身 and 下半身 together by about half a turn on 腰's frame; the spine's own turn is small, and
         # the split must not jump where the half turn passes 180 degrees
@@ -329,9 +338,28 @@ class GirdleTest(unittest.TestCase):
         g = result.report["girdle"]["左"]
         self.assertGreater(g["elevation_in"]["max"], 50.0)
         self.assertLess(g["elevation_out"]["max"], p["girdle_limits"]["elevation"][1] + 0.01)
+        # a stronger shrug stays stronger below the cap
+        self.assertLess(anatomy_layer.soft_limit(np.array([30.0]), *p["girdle_limits"]["elevation"])[0],
+                        anatomy_layer.soft_limit(np.array([50.0]), *p["girdle_limits"]["elevation"])[0] - 2.0)
+        # the elbow keeps its bend; the hand follows the shoulder down by at most the slack, and keeps its rotation
+        self.assertLess(result.report["new_jumps"]["左"]["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5)
         win, wout = worlds(dance, ["左手首"]), worlds(result.motion, ["左手首"])
-        self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max(), 0.01)
+        self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max() * 8.0,
+                        anatomy_layer.GIRDLE_HAND_SLACK_CM + 0.5)
         self.assertLess(rot_deg(win["左手首"][1], wout["左手首"][1]).max(), 0.05)
+
+    def test_a_shoulder_pushed_forward_stays_with_the_arm_down_or_up(self):
+        for arm in (-30.0, 50.0):                                          # hanging, raised to the side
+            keys = untouched_keys()
+            for f, deg in ((0, 0.0), (20, 15.0), (LAST, 15.0)):
+                keys.append(key("左肩", f, axis_angle((0, 1, 0), deg)))   # the 肩 bone swung to the front
+                keys.append(key("左腕", f, axis_angle((0, 0, 1), arm)))
+            dance = vmd.Motion(model_name="d", bones=keys)
+            p = anatomy_layer.default_params()
+            p.update(rom=False)
+            g = anatomy_layer.layer(MODEL, dance, p).report["girdle"]["左"]
+            self.assertGreater(g["protraction_in"]["max"], 10.0)
+            self.assertGreater(g["protraction_out"]["max"], g["protraction_in"]["max"] - 2.0, arm)
 
     def test_the_rhythm_never_makes_a_straight_arm_s_hand_slide(self):
         keys = untouched_keys()
@@ -343,14 +371,26 @@ class GirdleTest(unittest.TestCase):
         result = anatomy_layer.layer(MODEL, dance, p)
         p.update(girdle=False)
         bare = anatomy_layer.layer(MODEL, dance, p)
-        # the trunk's split moves the shoulder a little and a straight arm cannot follow: the hand slides by that much
-        # with or without the girdle, the rhythm adds nothing
+        # the trunk's split moves the shoulder a little; the straight arm stays straight and its hand follows by that
+        # much, with or without the girdle: the rhythm adds nothing
         slid, slid_bare = (r.report["girdle"]["左"]["hand_slid_cm"]["max"] for r in (result, bare))
-        self.assertLess(slid, 0.3)
+        self.assertLess(slid, 0.5)
         self.assertLessEqual(slid, slid_bare + 0.01)
-        self.assertGreater(result.report["girdle_rhythm_reduced_frames"]["左"], 0)
+        for r in (result, bare):
+            self.assertLess(r.report["new_jumps"]["左"]["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5)
         win, wout = worlds(dance, ["左手首"]), worlds(result.motion, ["左手首"])
         self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max() * 8.0, slid + 0.01)
+
+    def test_a_straight_arm_stays_straight_when_the_chest_bends(self):
+        keys = untouched_keys()
+        for f, deg in ((0, 0.0), (30, 35.0), (LAST, 10.0)):
+            keys.append(key("左腕", f, axis_angle((0, 0, 1), 40.0)))
+            keys.append(key("上半身", f, compose(axis_angle((1, 0, 0), deg), axis_angle((0, 0, 1), deg / 2.0))))
+        dance = vmd.Motion(model_name="d", bones=keys)
+        r = anatomy_layer.layer(MODEL, dance, split_only())
+        j = r.report["new_jumps"]["左"]
+        self.assertLess(j["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5)
+        self.assertEqual(j["straight_turned_bent"], 0)
 
     def test_the_rhythm_lifts_the_shoulder_a_little_with_the_arm(self):
         dance = odd_elbow_dance()
@@ -430,8 +470,21 @@ class TenodesisTest(unittest.TestCase):
         result = anatomy_layer.layer(MODEL, dance, p)
         t = result.report["tenodesis"]["左"]
         self.assertGreater(t["frames"], 0)
-        # Su 2005: about 0.30 degree of MP flexion per degree of wrist extension
+        # Su 2005: about 0.30 degree of MP flexion (towards the palm) per degree of wrist extension, the extension read
+        # again from the arm; a wrong sign gives -0.30
         self.assertAlmostEqual(t["slope_mp"], 0.30, delta=0.05)
+
+    def test_a_fist_is_not_a_relaxed_hand(self):
+        keys = [k for k in odd_elbow_dance().bones if "指" not in k.name]
+        for f in (0, LAST):
+            for fn in ("人指", "中指", "薬指", "小指"):
+                for num in ("１", "２", "３"):
+                    keys.append(key("左" + fn + num, f, axis_angle((0, 0, 1), -75.0)))
+        p = split_only()
+        p["tenodesis"] = True
+        result = anatomy_layer.layer(MODEL, vmd.Motion(model_name="d", bones=keys), p)
+        self.assertEqual(result.report["tenodesis"]["左"]["frames"], 0)
+        self.assertEqual(result.report["tenodesis"]["左"]["relaxed_frames"], 0)
 
 
 class CommandTest(unittest.TestCase):
@@ -502,9 +555,18 @@ def real_file(*parts):
     return path if os.path.isfile(path) else None
 
 
-TRACE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_twist.vmd")
-RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
-REAL = TRACE is not None and os.path.isfile(RIN)
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+TRACE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_twist.vmd") or os.environ.get("MMD_CLI_TRACE")
+RIN = rin_path()
+REAL = bool(TRACE) and os.path.isfile(TRACE) and RIN is not None
 
 
 def crop(motion, first, last):
@@ -532,18 +594,37 @@ class RealDanceTest(unittest.TestCase):
         g = result.report["girdle"]["左"]
         self.assertLess(g["protraction_in"]["min"], -50.0)
         self.assertGreater(g["protraction_out"]["min"], -25.5)
-        # the arm is straight there: the hand slides along it by less than the slack, and keeps its rotation
+        # the arm is straight there: the hand follows the shoulder along the arm (the bend kept) by at most the trunk's
+        # share and the slack, and keeps its rotation
         err = result.report["pose_error"]["左手首"]
-        self.assertLess(err["pos_cm"]["max"], anatomy_layer.GIRDLE_HAND_SLACK_CM)
+        self.assertLess(err["pos_cm"]["max"], anatomy_layer.GIRDLE_HAND_SLACK_CM + 3.0)
         self.assertAlmostEqual(err["pos_cm"]["max"], g["hand_slid_cm"]["max"], delta=0.05)
         self.assertLess(err["rot_deg"]["max"], 0.05)
+        self.assertLess(result.report["new_jumps"]["左"]["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5)
 
     def test_the_right_shoulder_up_to_the_ear_at_3240_comes_down(self):
         part = crop(self.dance, 3215, 3260)
         result = anatomy_layer.layer(self.model, part, anatomy_layer.default_params())
         g = result.report["girdle"]["右"]
         self.assertGreater(g["elevation_in"]["max"], 60.0)
-        self.assertLess(g["elevation_out"]["max"], 45.0)
+        self.assertLess(g["elevation_out"]["max"], anatomy_layer.GIRDLE_LIMITS["elevation"][1] + 0.05)
+
+    def test_no_new_one_frame_jumps_where_the_first_version_made_them(self):
+        # the review of 2026-10-10 (H2): the elbow jumped 9 cm in a frame at 4,023 (right), the upper arm's skin turned
+        # 141, 102 and 91 degrees in a frame at 1,482, 4,023 and 7,136 (right); the left elbow jumped at 1,513
+        for first, last, side in ((4005, 4045, "右"), (1465, 1500, "右"), (7120, 7150, "右"), (1500, 1525, "左")):
+            result = anatomy_layer.layer(self.model, crop(self.dance, first, last), anatomy_layer.default_params())
+            j = result.report["new_jumps"][side]
+            self.assertEqual(j["elbow"], 0, (first, j["elbow_frames"]))
+            self.assertEqual(j["upper_arm_roll"], 0, (first, j["upper_arm_roll_frames"]))
+            self.assertLess(j["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5, first)
+
+    def test_an_excess_that_needs_the_elbow_moved_far_is_left(self):
+        # 6,528 - 6,542 (left): the hand is twisted almost half round; the first version moved the elbow 13 cm
+        result = anatomy_layer.layer(self.model, crop(self.dance, 6505, 6565), anatomy_layer.default_params())
+        arm = result.report["arm"]["左"]
+        self.assertLess(arm["elbow_moved_by_rom_cm"]["max"], 7.0)
+        self.assertTrue(any("supination" in s["beyond"] for s in arm["beyond_cap_stretches_out"]))
 
 
 if __name__ == "__main__":

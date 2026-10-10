@@ -4,7 +4,7 @@ between their bones, the shoulder girdle's rhythm, and a soft range of motion, w
     python tools/anatomy_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--key-frames TRACE.vmd]
                                   [--forearm-twist share|keep|handtw] [--upper-twist-share 1] [--tenodesis]
                                   [--trunk-shares 0.25,0.3,0.4] [--neck-shares 0.6,0.7,0.333]
-                                  [--girdle-elevation 20,25] [--girdle-retraction 20,25] [--hand-slack 3]
+                                  [--girdle-elevation 10,25] [--girdle-retraction 10,25] [--hand-slack 4]
                                   [--no-split] [--no-girdle] [--no-rom] [--verbose]
 
 Why (the audit and the research of 2026-10-10, stage3/audit/AUDIT.md and stage3/research/RESEARCH.md): the trace puts
@@ -17,8 +17,9 @@ back 72 degrees (3,882 - 3,899), the right one up to the ear (3,225 - 3,249), th
 
 The steps, in the research's order (5 章: first what does not change the pose, then the limits, then what is added):
 
-1. Split without changing the pose (the world rotation of the hands, the head and the chest stays; their places move
-   a little, the report measures it).
+1. Split without changing the pose: the world rotation of the hands, the head and the chest stays, and the elbow's
+   bend (within BEND_TOL_DEG); the places of the chest and the head move a little, and the hand follows the shoulder
+   where keeping the bend asks for it (step 2; the report measures all of it).
    * Arm: the elbow becomes a hinge.  Its axis h is read from the model: perpendicular to the forearm (ひじ -> 手首) and to
      the elbow helper's local Z (ひじ補助, the model's own front-back axis of the elbow; +Z when the model has none), so
      that a positive turn about h bends the forearm to the front.  With the wrist on the input's place, the elbow on
@@ -32,40 +33,48 @@ The steps, in the research's order (5 章: first what does not change the pose, 
      腰's frame) is split into a part that stays on 上半身 and a part moved onto 上半身2 (in front of what 上半身2 already
      had, the breath).  Shares moved up: flexion 0.25, lateral bend 0.3, axial turn 0.4 (the research's A2: the lower
      thoracic spine takes most of the turn, the lumbar spine most of the bending).  The chest's world rotation is kept;
-     its place moves a little (the pivot of 上半身2 is higher).
+     its place moves (the pivot of 上半身2 is higher).
    * Neck: the part of 頭's rotation moved onto 首: turn 1/3, flexion 0.6, lateral bend 0.7 (C1-C2 take about 2/3 of the
      turn, the upper neck about 4 tenths of the extension, the side bend is spread over the levels; Ishii 2004,
      Zarate-Tejero 2023).  The head's world rotation is kept; its place moves (a neck that bends low carries the head).
    A rotation of an upright segment is read as a swing of its up axis then a twist about Y; the swing's share is set by
-   its direction (flexion about X, lateral bend about Z).
-2. The shoulder girdle (肩) as a function of the arm's humerothoracic elevation HT (read on the input).  The rhythm:
-   Ludewig 2009's clavicle, elevation 0.05 deg/deg and retraction 0.06 (flexion) to 0.18 (abduction) deg/deg above HT
-   25, as a floor (the trace's girdle stays where it is higher: a shrug is the dance's).  The caps: soft limits,
-   elevation, retraction and protraction 20 (the Japanese reference range) saturating to 25, depression 10 to 15.  In
-   this model the girdle is the whole of 肩 (a visible slope of the shoulder), so the scapula's upward rotation (Braman
-   2009, 0.43 deg per degree of glenohumeral elevation) cannot be given its own bone; it is measured, not imitated.  The
-   arm is solved again from the new root (two bones and a hinge) with the wrist on its place.  A straight arm cannot
-   follow a root that moves along it: there the rhythm is given only as far as the wrist stays in reach, the caps as far
-   as the hand slides along the arm's line by at most --hand-slack cm (then the cap is backed off, eased over
-   BACKOFF_PAD frames).  The trunk's split can leave a straight arm short too; its hand slides by what is missing.
+   its direction (flexion about X, lateral bend about Z).  The swing moved to the lower pivot is saturated so that it
+   carries the chest at most TRUNK_SHIFT_CM and the head (against the chest) at most NECK_SHIFT_CM (the review of
+   2026-10-10: unbounded, a look up of 84 degrees carried the head 6.4 cm away from the hands at the face).
+2. The shoulder girdle (肩) as a function of the arm's humerothoracic elevation HT (read on the input).  The rhythm,
+   added to the dance's own girdle above HT 25 (a shrug, a shoulder pushed forward or down stays): elevation 0.05
+   deg/deg (Ludewig 2009's clavicle) and retraction 0.06 (flexion) to 0.18 (abduction) deg/deg (our fit to Ludewig's
+   three-plane mean, see RHYTHM), no retraction where the dance pushes the shoulder forward.  The caps: soft limits from
+   10 degrees saturating to 25 (elevation, retraction, protraction; the Japanese reference is 20) and from 5 to 15
+   (depression), so that a stronger shrug stays stronger.  The girdle walks from the input to the capped pose in its
+   own angles, so no frame passes the cap.  In this model the girdle is the whole of 肩 (a visible slope of the
+   shoulder), so the scapula's upward rotation (Braman 2009, 0.43 deg per degree of glenohumeral elevation) cannot be
+   given its own bone; it is measured, not imitated.  The arm is solved again from the new root (two bones and a
+   hinge).  The elbow's bend is kept (the review of 2026-10-10, H1: with the wrist held in the world a straight arm
+   bent 25 degrees for 1 cm of the shoulder): the shoulder-wrist distance may change only as much as BEND_TOL_DEG of
+   bend allows, and beyond, the hand follows the root along the shoulder-wrist line.  The rhythm is given only where it
+   asks no more of the hand than the trunk's split already does, the caps where they ask at most --hand-slack cm more
+   (else the cap is backed off, eased over BACKOFF_PAD frames).
 3. The range of motion, read from the geometry (never from the keys' X, Y, Z).  With the wrist's place and the hand's
    rotation fixed, the arm has one free turn: the elbow's place on the circle about the shoulder-wrist line (its
    swivel), and two readings of a bent elbow (bent to the front, or back past straight).  A dynamic program over the
    swivel (SWIVEL_STEP degrees) and the reading chooses, frame by frame, the cheapest path: the elbow's distance from
    where the split put it (steep beyond MOVE_CAP_DEG, about 5 cm), soft penalties from the Japanese reference range to
    the research's cap (ARM_LIMITS: the humerus' rotation, pronation and supination, the elbow, the wrist) and steep ones
-   beyond the cap, and the speed of the upper arm's roll and of the elbow's offset between frames.  So the excess is
-   taken by the humerus' rotation against the forearm's twist (a straight arm), or by moving the elbow (a bent one), and
-   only where it pays; a finer search then makes the path continuous (refine), and it stays exactly the split where
-   nothing is beyond.  Where the arm is nearly straight the hinge plane is undefined, and the same program keeps the
-   roll continuous.
+   beyond the cap, and the speed of the upper arm's roll and of the elbow's offset between frames (steep past
+   ROLL_STEP_CAP and OFFSET_STEP_CAP per frame).  So the excess is taken by the humerus' rotation against the forearm's
+   twist (a straight arm), or by moving the elbow (a bent one), and only where it pays; a finer search then makes the
+   path continuous (refine), with the elbow offset's acceleration costed too (steep past ACCEL_CAP: no new one-frame
+   jumps of the elbow, the review's H2), and it stays exactly the split where nothing is beyond.  Where the arm is
+   nearly straight the hinge plane is undefined, and the same program keeps the roll continuous.
    Not fixed, listed: what would need the elbow moved further (the report's beyond_cap_stretches_out names the angles),
    an elbow bent beyond its cap (the wrist would have to move) and the neck and the trunk (beyond the research's caps on
    0 to 0.1 % of the frames; fixing them would turn the face or the chest).  --key-frames: the trace's keys (左腕 /
    右腕) where the shape changed are listed (the elbow moved more than KEY_ELBOW_CM, the girdle turned more than
    KEY_GIRDLE_DEG).
-4. --tenodesis (off by default): where every finger of a hand holds still (RELAX_RUN frames, under RELAX_DEG a frame),
-   the fingers follow the wrist like a relaxed hand (Su 2005, the end values joined by straight lines: per degree of
+4. --tenodesis (off by default): where every finger of a hand holds still (RELAX_RUN frames, under RELAX_DEG a frame)
+   in a relaxed shape (the fingers' mean bend at most RELAX_MAX_DEG: not a fist), the fingers follow the wrist like a
+   relaxed hand (Su 2005, the end values joined by straight lines: per degree of
    wrist extension MP 0.30, PIP 0.43, DIP 0.16 degrees of flexion), about the stretch's mean, faded in and out.
 5. Not touched: センター, 下半身, the legs and their IK, 肩P, the eyes, every other bone and every morph (byte for byte).
    A bone the layer writes gets a key on every frame (the linear curve, the physics bytes of the input's key in force).
@@ -73,7 +82,8 @@ The steps, in the research's order (5 章: first what does not change the pose, 
 The report measures the input and the output: the world pose errors (hands, head, chest, eyes), the hands' distances
 to the eyes and to the body, the girdle by HT bin against Ludewig and Braman, the arm's anatomical angles (beyond the
 reference and beyond the cap, per angle), the twists' placement, the trunk's and the neck's shares, the steps from one
-frame to the next of every written bone, and the listed key frames.
+frame to the next of every written bone, the new one-frame jumps and the elbow's bend against the input's (new_jumps),
+and the listed key frames.
 """
 import argparse
 import json
@@ -115,11 +125,21 @@ ARM_LIMITS = {"external_rotation": ((0.0, 60.0, 110.0), (90.0, 90.0, 131.0), (18
               "elbow_flexion": (145.0, 152.5), "elbow_extension": (5.0, 18.0),
               "wrist_flexion": (90.0, 115.0), "wrist_extension": (70.0, 99.5),
               "wrist_radial": (25.0, 37.0), "wrist_ulnar": (55.0, 60.0)}
-GIRDLE_LIMITS = {"elevation": (20.0, 25.0), "depression": (10.0, 15.0), "protraction": (20.0, 25.0),
-                 "retraction": (20.0, 25.0)}
-RHYTHM = {"start": 25.0, "elevation": 0.05, "retraction_flexion": 0.06, "retraction_abduction": 0.18}  # Ludewig 2009
+# The girdle: the Japanese reference is 20 (10 for depression) and the research has no measured cap; the saturation
+# starts below the reference (10, 5) so that a stronger shrug stays stronger (30 -> 20.9, 50 -> 24.2 degrees) and never
+# passes 25 (15).
+GIRDLE_LIMITS = {"elevation": (10.0, 25.0), "depression": (5.0, 15.0), "protraction": (10.0, 25.0),
+                 "retraction": (10.0, 25.0)}
+# The rhythm added to the input's girdle above HT 25: elevation 0.05 deg/deg is Ludewig 2009's clavicle (+6 over the
+# arc); the retraction is a fit of ours: Ludewig's mean over the three planes (+16 over the arc, about 0.12 deg/deg)
+# spread by the plane, 0.06 in flexion to 0.18 in abduction (the paper: more retraction in abduction, up to 15 degrees
+# more in the mid range).  No retraction is added where the dance pushes the shoulder forward (PROTRACTED_DEG, a
+# smoothstep from 0).
+RHYTHM = {"start": 25.0, "elevation": 0.05, "retraction_flexion": 0.06, "retraction_abduction": 0.18}
+PROTRACTED_DEG = 5.0
 TENODESIS = {"mp": 0.30, "pip": 0.43, "dip": 0.16}            # Su 2005, per degree of wrist extension
 RELAX_DEG, RELAX_RUN, RELAX_FADE = 0.5, 10, 5
+RELAX_MAX_DEG = 60.0            # a relaxed hand: the fingers' mean bend (MP + PIP + DIP) at most this, none over 1.5x
 
 # ---- the arm's dynamic program --------------------------------------------------------------------------------
 SWIVEL_STEP = 5.0               # degrees between the swivels tried
@@ -137,14 +157,22 @@ REFINE_POINTS, REFINE_ROUNDS, REFINE_HALVINGS = 9, 2, 4   # the continuous searc
 FOREARM_SHARE = 0.5             # --forearm-twist share: what 手捩 keeps, as tools/fix_twist.py (at most 45 degrees)
 BACKOFF_PAD = 4                 # frames: a backed-off girdle is eased in and out
 KEY_ELBOW_CM, KEY_GIRDLE_DEG = 2.0, 8.0   # a trace key is listed where the elbow moved or the girdle turned more
-GIRDLE_HAND_SLACK_CM = 3.0      # how far a hand may slide along a straight arm so that the girdle can come back
+BEND_TOL_DEG = 2.0              # the elbow's bend may change this much where the shoulder moves; beyond, the hand moves
+NECK_SHIFT_CM = 1.2             # the head may move this much against the chest by the neck's share (then saturated)
+TRUNK_SHIFT_CM = 1.2            # the chest may move this much by the trunk's share (then saturated)
+OFFSET_STEP_CAP = 6.0           # degrees per frame of change of the elbow's offset (above a grid step), and of the upper
+ROLL_STEP_CAP = 20.0            # arm's roll beyond the split's own, past which a step costs as a cap's excess: no new
+STEP_HARD = 0.1                 # one-frame jumps (the review of 2026-10-10, H2)
+SIGMA_ACCEL, ACCEL_CAP = 1.0, 1.5   # degrees per frame^2 of the elbow's offset (1.5: about 0.7 cm): in the refine
+GIRDLE_HAND_SLACK_CM = 4.0      # how far a hand may slide along a straight arm so that the girdle can come back
 
 
 def default_params():
     return {"split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "share",
             "upper_twist_share": 1.0, "trunk_shares": dict(TRUNK_TO_UPPER), "neck_shares": dict(HEAD_TO_NECK),
             "arm_limits": {k: v for k, v in ARM_LIMITS.items()}, "girdle_limits": dict(GIRDLE_LIMITS),
-            "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM}
+            "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM, "bend_tol_deg": BEND_TOL_DEG,
+            "neck_shift_cm": NECK_SHIFT_CM, "trunk_shift_cm": TRUNK_SHIFT_CM}
 
 
 # ---- vectors and quaternions (x, y, z, w), Hamilton, over arrays ----------------------------------------------
@@ -471,9 +499,10 @@ def run_chain(world, order, local, keypos, base):
 
 # ---- step 1: the trunk and the neck --------------------------------------------------------------------------
 
-def upright_part(q, shares):
+def upright_part(q, shares, swing_cap=None):
     """the part of an upright segment's rotation q given by the shares: the swing of its up axis (flexion about X,
-    lateral bend about Z, the share by the swing's direction) and the twist about Y"""
+    lateral bend about Z, the share by the swing's direction) and the twist about Y.  swing_cap (radians) saturates the
+    part's swing softly (from 0.6 of it)"""
     tw = twist(q, U_)
     T = aa(U_, tw)
     S = qmul(q, qconj(T))
@@ -481,24 +510,36 @@ def upright_part(q, shares):
     s_ax = unit(np.where(S[..., 3:4] < 0, -S[..., :3], S[..., :3]))
     share = shares["flex"] * s_ax[..., 0] ** 2 + shares["lat"] * s_ax[..., 2] ** 2 + \
         0.5 * (shares["flex"] + shares["lat"]) * s_ax[..., 1] ** 2
-    return qmul(aa(s_ax, share * s_ang), aa(U_, shares["rot"] * tw))
+    part = share * s_ang
+    if swing_cap is not None:
+        part = soft_limit(part, 0.6 * swing_cap, swing_cap)
+    return qmul(aa(s_ax, part), aa(U_, shares["rot"] * tw))
+
+
+def shift_cap(world, child, parent, cm):
+    """the swing (radians) that moves `child`'s joint by `cm` about `parent`'s joint"""
+    if child not in world.rest or parent not in world.rest:
+        return None
+    r = float(np.linalg.norm(world.rest[child] - world.rest[parent])) * UNIT_CM
+    return 2.0 * math.asin(min(1.0, cm / (2.0 * max(r, 1e-6))))
 
 
 def split_axial(world, local, params):
-    """(new locals of 上半身, 上半身2, 首, 頭) with the chest's and the head's world rotation kept"""
+    """(new locals of 上半身, 上半身2, 首, 頭) with the chest's and the head's world rotation kept.  The part moved up is
+    swung about a lower pivot, which carries the chest (the head) with it: its swing is saturated so that the chest
+    moves at most trunk_shift_cm and the head (against the chest) at most neck_shift_cm"""
     out = {}
     lo, up = local[TRUNK_LO], local[TRUNK_UP]
     # the trunk's turn is read against the pelvis (下半身, 上半身's sibling under 腰): a trace may turn both by half a
     # turn on 腰's frame, and only the difference is the spine's
     pelvis = local[PELVIS] if PELVIS in local and world.parent.get(PELVIS) == world.parent.get(TRUNK_LO) else None
     rel = qmul(qconj(pelvis), lo) if pelvis is not None else lo
-    keep = {k: 1.0 - v for k, v in params["trunk_shares"].items()}
-    P1 = upright_part(rel, keep)                        # what stays on 上半身
-    E = qmul(qconj(P1), rel)                            # what moves onto 上半身2
+    E = upright_part(rel, params["trunk_shares"], shift_cap(world, TRUNK_UP, TRUNK_LO, params["trunk_shift_cm"]))
+    P1 = qmul(rel, qconj(E))                            # what stays on 上半身; E moves onto 上半身2
     P1 = qmul(pelvis, P1) if pelvis is not None else P1
     out[TRUNK_LO], out[TRUNK_UP] = qnorm(P1), qnorm(qmul(E, up))
     if NECK in local and HEAD in local:
-        P = upright_part(local[HEAD], params["neck_shares"])
+        P = upright_part(local[HEAD], params["neck_shares"], shift_cap(world, HEAD, NECK, params["neck_shift_cm"]))
         out[NECK] = qnorm(qmul(local[NECK], P))
         out[HEAD] = qnorm(qmul(qconj(P), local[HEAD]))
     return out
@@ -544,8 +585,8 @@ def girdle_targets(S, e_in, p_in, ht, ab, params):
     over = np.maximum(ht - RHYTHM["start"], 0.0)
     floor_e = g * RHYTHM["elevation"] * over
     floor_r = g * (RHYTHM["retraction_flexion"] + (RHYTHM["retraction_abduction"] - RHYTHM["retraction_flexion"]) * ab) * over
-    e1 = np.maximum(e_in, floor_e)
-    p1 = np.minimum(p_in, -floor_r)
+    e1 = e_in + floor_e                                 # added to the dance's own girdle, which stays (a shrug, a
+    p1 = p_in - floor_r * (1.0 - smoothstep(p_in, 0.0, PROTRACTED_DEG))   # shoulder pushed forward or down)
     lim = params["girdle_limits"]
 
     def capped(e, p):
@@ -757,13 +798,34 @@ def refine(S, A, a, D, q0, br, dl, rho, unary_of):
                 r_out = roll_pair(st["R_up"], R[ni][:, None], u[ni][:, None])
                 d_in = np.degrees(np.linalg.norm(coff - off[pi][:, None] / S.L_u, axis=-1))
                 d_out = np.degrees(np.linalg.norm(off[ni][:, None] / S.L_u - coff, axis=-1))
-                cost = cost + has_p[:, None] * ((np.degrees(wrap(r_in - rho[idx][:, None])) / SIGMA_ROLL) ** 2
-                                                + (d_in / SIGMA_OFFSET) ** 2)
-                cost = cost + has_n[:, None] * ((np.degrees(wrap(r_out - rho[ni][:, None])) / SIGMA_ROLL) ** 2
-                                                + (d_out / SIGMA_OFFSET) ** 2)
+                cost = cost + has_p[:, None] * step_cost(np.degrees(wrap(r_in - rho[idx][:, None])), d_in)
+                cost = cost + has_n[:, None] * step_cost(np.degrees(wrap(r_out - rho[ni][:, None])), d_out)
+                # the elbow's offset accelerating (its second difference about this frame and the two next to it):
+                # the grid's program sees only steps, and a swivel unwound while the arm bends fast swings the elbow
+                o = off / S.L_u
+                c = coff
+                p2, n2 = np.clip(idx - 2, 0, F - 1), np.clip(idx + 2, 0, F - 1)
+                for ok, acc in ((has_p & has_n, o[ni][:, None] - 2.0 * c + o[pi][:, None]),
+                                (idx - 2 >= 0, c - 2.0 * o[pi][:, None] + o[p2][:, None]),
+                                (idx + 2 < F, o[n2][:, None] - 2.0 * o[ni][:, None] + c)):
+                    cost = cost + ok[:, None] * accel_cost(np.degrees(np.linalg.norm(acc, axis=-1)))
                 dl[idx] = wrap(cand[np.arange(len(idx)), np.argmin(cost, axis=1)])
         width /= 2.0
     return dl
+
+
+def step_cost(roll_deg, offset_deg):
+    """the cost of a step from one frame to the next: the upper arm's roll beyond the split's own (degrees) and the
+    change of the elbow's offset (degrees seen from the shoulder), each quadratic, and steep past its cap (no new
+    one-frame jumps)"""
+    r, o = np.abs(roll_deg), np.abs(offset_deg)
+    return ((r / SIGMA_ROLL) ** 2 + (o / SIGMA_OFFSET) ** 2 + (np.maximum(r - ROLL_STEP_CAP, 0.0) / STEP_HARD) ** 2
+            + (np.maximum(o - OFFSET_STEP_CAP, 0.0) / STEP_HARD) ** 2)
+
+
+def accel_cost(acc_deg):
+    """the cost of the elbow's offset accelerating (degrees per frame per frame, seen from the shoulder)"""
+    return (acc_deg / SIGMA_ACCEL) ** 2 + (np.maximum(acc_deg - ACCEL_CAP, 0.0) / STEP_HARD) ** 2
 
 
 def solve_arm(S, A, params, log=None):
@@ -815,10 +877,10 @@ def solve_arm(S, A, params, log=None):
         roll = roll_between(R_all[t - 1], R_all[t], u_all[t])
         rho = roll_between(R_all[t - 1][zero:zero + 1], R_all[t][zero:zero + 1], u_all[t][zero:zero + 1])[0, 0]
         rho *= min(bent[t], bent[t - 1])
+        rho = float(np.clip(rho, -math.radians(ROLL_STEP_CAP), math.radians(ROLL_STEP_CAP)))
         rho_all[t] = rho
-        trans = (np.degrees(wrap(roll - rho)) / SIGMA_ROLL) ** 2
         doff = np.degrees(np.linalg.norm(off_all[t][None, :, :] - off_all[t - 1][:, None, :], axis=-1))
-        trans += (doff / SIGMA_OFFSET) ** 2
+        trans = step_cost(np.degrees(wrap(roll - rho)), doff)
         tot = total[:, None] + trans
         b = np.argmin(tot, axis=0)
         back[t] = b
@@ -887,7 +949,8 @@ def arm_locals(S, C, final, local_in, params):
 # ---- step 4: the relaxed hand ---------------------------------------------------------------------------------
 
 def tenodesis(S, local, wflex):
-    """new locals of the fingers where every finger holds still, and the report"""
+    """new locals of the fingers where every finger holds still in a relaxed shape (a fist or a pointing hand is held by
+    the muscles, the research 5.3: not there), and the report"""
     bones = [(b, joint, d) for chain in S.fingers.values() for b, joint, d in chain]
     if not bones:
         return {}, {"frames": 0}
@@ -898,6 +961,14 @@ def tenodesis(S, local, wflex):
         q = local[b]
         step = np.degrees(qangle(qmul(q[1:], qconj(q[:-1]))))
         still[1:] &= step < RELAX_DEG
+    # relaxed: the fingers' mean bend (MP + PIP + DIP, against the rest) at most RELAX_MAX_DEG, none over 1.5 times
+    per_finger = {}
+    for b, _, _ in bones:
+        per_finger.setdefault(b[:-1], np.zeros(F))
+        per_finger[b[:-1]] = per_finger[b[:-1]] + np.degrees(qangle(local[b]))
+    sums = np.stack(list(per_finger.values()))
+    relaxed = (sums.mean(axis=0) <= RELAX_MAX_DEG) & (sums.max(axis=0) <= 1.5 * RELAX_MAX_DEG)
+    still &= relaxed
     ext = -wflex                                     # wrist extension (dorsiflexion) positive
     add = np.zeros(F)
     weight = np.zeros(F)
@@ -928,10 +999,15 @@ def tenodesis(S, local, wflex):
             c = qrot(q, d)
             return np.degrees(np.arctan2(c @ mh, c @ d))
         dmp = flex(out[b]) - flex(local[b])
-        x = (add * weight)[used]
+        # against the wrist's extension read again from the arm's angle (palmar flexion negative), not against `add`
+        x = np.zeros(F)
+        for s0, s1 in stretches:
+            x[s0:s1 + 1] = -(wflex[s0:s1 + 1] - wflex[s0:s1 + 1].mean())
+        x = (x * weight)[used]
         if np.ptp(x) > 1e-6:
             slope = float(np.polyfit(x, dmp[used], 1)[0])
     return out, {"frames": int(used.sum()), "stretches": len(stretches), "slope_mp": _r(slope, 3),
+                 "relaxed_frames": int(relaxed.sum()),
                  "max_change_deg": _r(float(np.abs(TENODESIS["pip"] * add * weight).max()) if F else 0.0)}
 
 
@@ -1001,23 +1077,36 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         v_in = qrot(qconj(W.q(TRUNK_UP)), qrot(W.q(sh), S.d_sh))
         e_in, p_in = girdle_angles(S, v_in)
         ht, ab = humerothoracic(S, W.q(TRUNK_UP), W.p(s + "腕"), W.p(s + "ひじ"))
-        # g in 0..2 walks the girdle from the input (0) to the capped input (1) and on to the capped rhythm (2)
+        # g in 0..2 walks the girdle from the input (0) to the capped input (1) and on to the capped rhythm (2), in the
+        # girdle's own angles (so that no step between two capped poses passes the cap)
         g = np.zeros(F)
-        A_cap = A_full = np.broadcast_to(IDENTITY, (F, 4))
+        e_c = e_t = e_in
+        p_c = p_t = p_in
         if p["girdle"]:
             (e_c, p_c), (e_t, p_t) = girdle_targets(S, e_in, p_in, ht, ab, p)
-            A_cap = arc(v_in, girdle_direction(S, e_c, p_c))      # in the chest's frame
-            A_full = arc(v_in, girdle_direction(S, e_t, p_t))
             g = np.full(F, 2.0)
         loc_s = dict(loc)
         pw = W.p(s + "手首")
         fe, Lf = forearm_vector(S, W, s, local, keypos, p["forearm_twist"] == "keep")
         Dmax, Dmin = hinge_reach(S, fe, Lf)
+        # the elbow's bend is kept: the shoulder-wrist distance may change only as much as BEND_TOL_DEG of bend allows
+        # (a straight arm turns 25 degrees bent for 1 cm less), the hand following the root along the arm's line
+        ps_in, pe_in = W.p(s + "腕"), W.p(s + "ひじ")
+        bend_in = np.arccos(np.clip(dot(unit(pe_in - ps_in), unit(pw - pe_in)), -1.0, 1.0))
+        tol = math.radians(p["bend_tol_deg"])
+
+        def distance_at(b):
+            return np.sqrt(S.L_u ** 2 + Lf ** 2 + 2.0 * S.L_u * Lf * np.cos(b))
+        near_hi = np.where(bend_in - tol <= 0.0, Dmax, np.minimum(Dmax, distance_at(np.maximum(bend_in - tol, 0.0))))
+        near_lo = np.maximum(Dmin, distance_at(np.minimum(bend_in + tol, math.pi)))
+        near_lo = np.minimum(near_lo, near_hi)
 
         def girdle_turn(gg):
             gg = np.broadcast_to(np.asarray(gg, dtype=float), (F,))
-            first = qpow(A_cap, np.clip(gg, 0.0, 1.0))
-            return np.where((gg > 1.0)[:, None], slerp(A_cap, A_full, np.clip(gg - 1.0, 0.0, 1.0)), first)
+            a, b = np.clip(gg, 0.0, 1.0), np.clip(gg - 1.0, 0.0, 1.0)
+            e = np.where(gg > 1.0, e_c + (e_t - e_c) * b, e_in + (e_c - e_in) * a)
+            pp = np.where(gg > 1.0, p_c + (p_t - p_c) * b, p_in + (p_c - p_in) * a)
+            return arc(v_in, girdle_direction(S, e, pp))
 
         def shoulder_world(gg):
             Ar = girdle_turn(gg)
@@ -1034,25 +1123,27 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         def deficit(gg):
             _, wm = shoulder_world(gg)
             dm = np.linalg.norm(pw - wm[s + "腕"][0], axis=-1)
-            return np.maximum(np.maximum(dm - Dmax, Dmin - dm), 0.0)
+            return np.maximum(np.maximum(dm - near_hi, near_lo - dm), 0.0)
         if p["girdle"]:
-            # the cap may make a straight arm's hand slide (within the slack); the rhythm may not make it slide at all
+            # the cap may make the hand follow the root (within the slack); the rhythm may not make it move more than the
+            # trunk's split already does
+            base = deficit(np.zeros(F))                 # what the trunk's split alone asks of the hand
             d1 = deficit(np.ones(F))
-            limit = np.where(d1 <= slack, d1 + 1e-7, slack)
+            cap_ok = d1 <= base + slack + 1e-9
+            limit = np.where(cap_ok, d1, base) + 1e-7
 
             def feasible(gg):
-                return deficit(gg) <= np.where(gg > 1.0, limit, slack)
+                return deficit(gg) <= np.where(gg > 1.0, limit, base + slack + 1e-9)
             bad = ~feasible(g)
             if bad.any():
-                lo_ = np.where(d1 <= slack, 1.0, 0.0)
-                hi_ = np.where(d1 <= slack, 2.0, 1.0)
-                ok0 = deficit(np.zeros(F)) <= slack
+                lo_ = np.where(cap_ok, 1.0, 0.0)
+                hi_ = np.where(cap_ok, 2.0, 1.0)
                 for _ in range(22):
                     mid = 0.5 * (lo_ + hi_)
                     good = feasible(np.where(bad, mid, 2.0))
                     lo_ = np.where(bad & good, mid, lo_)
                     hi_ = np.where(bad & ~good, mid, hi_)
-                g = np.where(bad, np.where(ok0 | (d1 <= slack), lo_, 0.0), 2.0)
+                g = np.where(bad, lo_, 2.0)
                 cut = 2.0 - g
                 r = BACKOFF_PAD
                 dil = np.array([cut[max(0, t - r):t + r + 1].max() for t in range(F)])
@@ -1069,12 +1160,12 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         v_out = qrot(qconj(T), qrot(wc[sh][1], S.d_sh))
         e_out, p_out = girdle_angles(S, v_out)
         C = wc[s + "肩C"][1]
-        # where the moved chest or girdle leaves the wrist out of the hinge arm's reach (a straight arm), the hand slides
-        # along the arm's line by what is missing (the girdle's cap within the slack, the rhythm not at all)
+        # where the moved chest or girdle would change the elbow's bend by more than the tolerance, the hand moves along
+        # the shoulder-wrist line by what keeps the bend (the girdle's cap within the slack, the rhythm not at all)
         ps_new = wc[s + "腕"][0]
         dvec = pw - ps_new
         dn = np.linalg.norm(dvec, axis=-1)
-        reach = np.clip(dn, Dmin, Dmax)
+        reach = np.clip(dn, near_lo, near_hi)
         pw_t = ps_new + dvec * (reach / np.maximum(dn, 1e-12))[:, None]
         hand_moved = np.linalg.norm(pw_t - pw, axis=-1) * UNIT_CM
         A = ArmInput(ps_new, pw_t, W.p(s + "ひじ"), T, W.q(s + "手首"), fe, Lf)
@@ -1108,8 +1199,7 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         s_in = np.degrees(qangle(qmul(local[n][1:], qconj(local[n][:-1]))))
         s_out = np.degrees(qangle(qmul(q[1:], qconj(q[:-1]))))
         steps[n] = {"in_p99": _r(np.percentile(s_in, 99), 1), "in_max": _r(s_in.max(), 1),
-                    "out_p99": _r(np.percentile(s_out, 99), 1), "out_max": _r(s_out.max(), 1),
-                    "new_jumps": int(((s_out > 10.0) & (s_out > 3.0 * np.maximum(s_in, 1.0))).sum())}
+                    "out_p99": _r(np.percentile(s_out, 99), 1), "out_max": _r(s_out.max(), 1)}
     report["steps_deg_per_frame"] = steps
     report.update(measure(model, motion, out_motion, W, sides, arm_final, F, key_frames, new, p))
     report["seconds"] = _r(time.time() - started, 1)
@@ -1243,7 +1333,8 @@ def axial_shares(rot_lo, rot_up, whole, threshold):
 
 
 def measure(model, motion, out, W, sides, arm_final, F, key_frames, new, p):
-    names = [n for n in ("左手首", "右手首", "頭", TRUNK_UP, "両目", "左ひじ", "右ひじ", "首", TRUNK_LO, "下半身") if n in W.col]
+    names = [n for n in ("左手首", "右手首", "頭", TRUNK_UP, "両目", "左ひじ", "右ひじ", "首", TRUNK_LO, "下半身",
+                         "左腕", "右腕", "左腕捩", "右腕捩") if n in W.col]
     tips = {s: next((s + t for t in TIPS if s + t in W.col), s + "手首") for s, _ in SIDES}
     names += [t for t in tips.values() if t not in names]
     pose = fk.Pose(model, out, names)
@@ -1280,10 +1371,57 @@ def measure(model, motion, out, W, sides, arm_final, F, key_frames, new, p):
                 d_in = seg_dist(W.p(t), a_in, b_in)
                 d_out = seg_dist(pos[:, col[t]], a_out, b_out)
             near = d_in * UNIT_CM < 15.0
-            ch = np.abs(d_out - d_in) * UNIT_CM
+            signed = (d_out - d_in) * UNIT_CM               # + further away, - closer
+            ch = np.abs(signed)
             dist[s + what] = {"min_in_cm": _r(d_in.min() * UNIT_CM), "min_out_cm": _r(d_out.min() * UNIT_CM),
-                              "near_frames": int(near.sum()), "change_near_cm": stats(ch[near]), "change_cm": stats(ch)}
+                              "near_frames": int(near.sum()), "change_near_cm": stats(ch[near]), "change_cm": stats(ch),
+                              "signed_near_cm": stats(signed[near]),
+                              "near_frames_further_2cm": int((near & (signed > 2.0)).sum()),
+                              "near_frames_closer_2cm": int((near & (signed < -2.0)).sum())}
+        # the fingertip seen from the head (its own frame): how the hand and the face stand to each other
+        if HEAD in col:
+            h_in = qrot(qconj(W.q(HEAD)), W.p(t) - W.p(HEAD))
+            h_out = qrot(qconj(rot[:, col[HEAD]]), pos[:, col[t]] - pos[:, col[HEAD]])
+            near = np.linalg.norm(W.p(t) - eyes_in, axis=-1) * UNIT_CM < 15.0
+            dh = np.linalg.norm(h_out - h_in, axis=-1) * UNIT_CM
+            dist[s + "_tip_in_head_frame"] = {"change_near_cm": stats(dh[near]), "change_cm": stats(dh)}
     rep["distances"] = dist
+    # new one-frame jumps (the review's definition): the elbow's world place, its second difference more than twice the
+    # input's and 1 cm more; the upper arm's world rotation (腕捩, the skin), a step over 45 degrees and twice the input's
+    jumps = {}
+    for s, _ in SIDES:
+        e, u = s + "ひじ", s + "腕捩"
+        row = {}
+        if e in col and F > 2:
+            def acc(x):
+                return np.linalg.norm(x[2:] - 2.0 * x[1:-1] + x[:-2], axis=-1) * UNIT_CM
+            a_in, a_out = acc(W.p(e)), acc(pos[:, col[e]])
+            bad = (a_out > 2.0 * a_in) & (a_out - a_in > 1.0)
+            row["elbow"] = int(bad.sum())
+            row["elbow_frames"] = (np.where(bad)[0] + 1).tolist()[:40]
+        if u in col and F > 1:
+            s_in = np.degrees(qangle(qmul(W.q(u)[1:], qconj(W.q(u)[:-1]))))
+            s_out = np.degrees(qangle(qmul(rot[1:, col[u]], qconj(rot[:-1, col[u]]))))
+            bad = (s_out > 45.0) & (s_out > 2.0 * s_in)
+            row["upper_arm_roll"] = int(bad.sum())
+            row["upper_arm_roll_frames"] = (np.where(bad)[0] + 1).tolist()[:40]
+            row["upper_arm_step_max_deg"] = [_r(s_in.max(), 1), _r(s_out.max(), 1)]
+            row["upper_arm_steps_over_45"] = [int((s_in > 45).sum()), int((s_out > 45).sum())]
+        # the elbow's bend (from the joints' places), input against output
+        if s + "腕" in col and e in col and s + "手首" in col:
+            def bend(ps, pe, pw):
+                return np.degrees(np.arccos(np.clip(dot(unit(pe - ps), unit(pw - pe)), -1, 1)))
+            b_in = bend(W.p(s + "腕"), W.p(e), W.p(s + "手首"))
+            b_out = bend(pos[:, col[s + "腕"]], pos[:, col[e]], pos[:, col[s + "手首"]])
+            db = np.abs(b_out - b_in)
+            row["bend_change_deg"] = stats(db)
+            row["straight_turned_bent"] = int(((b_in < 10.0) & (b_out > 15.0)).sum())
+            row["bent_turned_straight"] = int(((b_in > 20.0) & (b_out < 5.0)).sum())
+            if key_frames and s in key_frames:
+                kf = np.array([f for f in key_frames[s] if f < F], dtype=int)
+                row["bend_change_at_keys_deg"] = stats(db[kf]) if len(kf) else None
+        jumps[s] = row
+    rep["new_jumps"] = jumps
     # trunk and neck shares
     ax = {}
     if TRUNK_LO in col and TRUNK_UP in col and "下半身" in W.col:
@@ -1423,11 +1561,12 @@ def main(argv=None):
                     help="share: fix_twist's rule on the new twist, 手捩 at most 45 degrees, 手首 the rest (default); "
                          "keep: 手捩 keeps the input's key, 手首 takes the rest; handtw: all of it on 手捩")
     ap.add_argument("--upper-twist-share", type=float, default=1.0,
-                    help="the part of the upper arm's roll on 腕捩, the rest on 腕 (default 1)")
+                    help="the part of the upper arm's roll on 腕捩, the rest on 腕 (default 1; on Sour's Rin no vertex "
+                         "is weighted to 腕, so the skin sees the same twist whatever the share)")
     ap.add_argument("--trunk-shares", help="flex,lat,rot moved from 上半身 onto 上半身2 (default 0.25,0.3,0.4)")
     ap.add_argument("--neck-shares", help="flex,lat,rot moved from 頭 onto 首 (default 0.6,0.7,0.333)")
-    ap.add_argument("--girdle-elevation", help="start,cap of the girdle's elevation, degrees (default 20,25)")
-    ap.add_argument("--girdle-retraction", help="start,cap of the girdle's retraction, degrees (default 20,25)")
+    ap.add_argument("--girdle-elevation", help="start,cap of the girdle's elevation, degrees (default 10,25)")
+    ap.add_argument("--girdle-retraction", help="start,cap of the girdle's retraction, degrees (default 10,25)")
     ap.add_argument("--hand-slack", type=float, default=GIRDLE_HAND_SLACK_CM,
                     help="cm a hand may slide along a straight arm so that the girdle can come back (default %g)"
                          % GIRDLE_HAND_SLACK_CM)
