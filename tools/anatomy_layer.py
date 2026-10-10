@@ -53,7 +53,7 @@ The steps, in the research's order (5 章: first what does not change the pose, 
    hinge).  The elbow's bend is kept (the review of 2026-10-10, H1: with the wrist held in the world a straight arm
    bent 25 degrees for 1 cm of the shoulder): the shoulder-wrist distance may change only as much as BEND_TOL_DEG of
    bend allows, and beyond, the hand follows the root along the shoulder-wrist line.  The rhythm is given only where it
-   asks no more of the hand than the trunk's split already does, the caps where they ask at most --hand-slack cm more
+   asks at most RHYTHM_HAND_CM more of the hand than the trunk's split and the caps, the caps at most --hand-slack cm more
    (else the cap is backed off, eased over BACKOFF_PAD frames).
 3. The range of motion, read from the geometry (never from the keys' X, Y, Z).  With the wrist's place and the hand's
    rotation fixed, the arm has one free turn: the elbow's place on the circle about the shoulder-wrist line (its
@@ -164,15 +164,17 @@ OFFSET_STEP_CAP = 6.0           # degrees per frame of change of the elbow's off
 ROLL_STEP_CAP = 20.0            # arm's roll beyond the split's own, past which a step costs as a cap's excess: no new
 STEP_HARD = 0.1                 # one-frame jumps (the review of 2026-10-10, H2)
 SIGMA_ACCEL, ACCEL_CAP = 1.0, 1.5   # degrees per frame^2 of the elbow's offset (1.5: about 0.7 cm): in the refine
+BRANCH_SWITCH_DEG = 1.0         # a change of reading costs (bend / this)^2: only through a nearly straight arm
 GIRDLE_HAND_SLACK_CM = 4.0      # how far a hand may slide along a straight arm so that the girdle can come back
+RHYTHM_HAND_CM = 1.0            # how far the rhythm may move a hand more than the trunk's split and the cap do (the bend kept)
 
 
 def default_params():
     return {"split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "share",
             "upper_twist_share": 1.0, "trunk_shares": dict(TRUNK_TO_UPPER), "neck_shares": dict(HEAD_TO_NECK),
             "arm_limits": {k: v for k, v in ARM_LIMITS.items()}, "girdle_limits": dict(GIRDLE_LIMITS),
-            "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM, "bend_tol_deg": BEND_TOL_DEG,
-            "neck_shift_cm": NECK_SHIFT_CM, "trunk_shift_cm": TRUNK_SHIFT_CM}
+            "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM, "rhythm_hand_cm": RHYTHM_HAND_CM,
+            "bend_tol_deg": BEND_TOL_DEG, "neck_shift_cm": NECK_SHIFT_CM, "trunk_shift_cm": TRUNK_SHIFT_CM}
 
 
 # ---- vectors and quaternions (x, y, z, w), Hamilton, over arrays ----------------------------------------------
@@ -869,6 +871,8 @@ def solve_arm(S, A, params, log=None):
         cost, off = unary_of(st, idx, bb)
         R_all[idx], u_all[idx], off_all[idx], unary[idx] = st["R_up"], st["u"], off, cost
     bent = smoothstep(np.degrees(ref["beta"][:, 0]), *BENT)
+    bend_deg = np.degrees(ref["beta"][:, 0])
+    switch = (branches[:, None] != branches[None, :]).astype(float)
     rho_all = np.zeros(F)
     t0 = time.time()
     total = unary[0].copy()
@@ -881,6 +885,9 @@ def solve_arm(S, A, params, log=None):
         rho_all[t] = rho
         doff = np.degrees(np.linalg.norm(off_all[t][None, :, :] - off_all[t - 1][:, None, :], axis=-1))
         trans = step_cost(np.degrees(wrap(roll - rho)), doff)
+        # the reading changes (bent to the front <-> bent back) only through a straight arm: elsewhere it throws the
+        # elbow across its circle in one frame
+        trans += switch * (min(bend_deg[t], bend_deg[t - 1]) / BRANCH_SWITCH_DEG) ** 2
         tot = total[:, None] + trans
         b = np.argmin(tot, axis=0)
         back[t] = b
@@ -1125,12 +1132,11 @@ def layer(model, motion, params=None, key_frames=None, log=None):
             dm = np.linalg.norm(pw - wm[s + "腕"][0], axis=-1)
             return np.maximum(np.maximum(dm - near_hi, near_lo - dm), 0.0)
         if p["girdle"]:
-            # the cap may make the hand follow the root (within the slack); the rhythm may not make it move more than the
-            # trunk's split already does
+            # the cap may make the hand follow the root (within the slack); the rhythm by at most rhythm_hand_cm more
             base = deficit(np.zeros(F))                 # what the trunk's split alone asks of the hand
             d1 = deficit(np.ones(F))
             cap_ok = d1 <= base + slack + 1e-9
-            limit = np.where(cap_ok, d1, base) + 1e-7
+            limit = np.where(cap_ok, d1, base) + p["rhythm_hand_cm"] / UNIT_CM + 1e-7
 
             def feasible(gg):
                 return deficit(gg) <= np.where(gg > 1.0, limit, base + slack + 1e-9)

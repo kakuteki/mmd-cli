@@ -372,10 +372,9 @@ class GirdleTest(unittest.TestCase):
         p.update(girdle=False)
         bare = anatomy_layer.layer(MODEL, dance, p)
         # the trunk's split moves the shoulder a little; the straight arm stays straight and its hand follows by that
-        # much, with or without the girdle: the rhythm adds nothing
+        # much, with or without the girdle: the rhythm adds at most RHYTHM_HAND_CM
         slid, slid_bare = (r.report["girdle"]["左"]["hand_slid_cm"]["max"] for r in (result, bare))
-        self.assertLess(slid, 0.5)
-        self.assertLessEqual(slid, slid_bare + 0.01)
+        self.assertLessEqual(slid, slid_bare + anatomy_layer.RHYTHM_HAND_CM + 0.01)
         for r in (result, bare):
             self.assertLess(r.report["new_jumps"]["左"]["bend_change_deg"]["max"], anatomy_layer.BEND_TOL_DEG + 0.5)
         win, wout = worlds(dance, ["左手首"]), worlds(result.motion, ["左手首"])
