@@ -85,7 +85,7 @@ X_ = np.array([1.0, 0.0, 0.0])
 U_ = np.array([0.0, 1.0, 0.0])
 D_ = -U_
 F_ = np.array([0.0, 0.0, -1.0])  # the model faces -Z
-TRUNK_LO, TRUNK_UP, NECK, HEAD = "上半身", "上半身2", "首", "頭"
+TRUNK_LO, TRUNK_UP, NECK, HEAD, PELVIS = "上半身", "上半身2", "首", "頭", "下半身"
 ARM = ("肩P", "肩", "肩C", "腕", "腕捩", "ひじ", "手捩", "手首")
 FINGERS = ("人指", "中指", "薬指", "小指")
 JOINTS = (("１", "mp"), ("２", "pip"), ("３", "dip"))
@@ -112,6 +112,7 @@ RELAX_DEG, RELAX_RUN, RELAX_FADE = 0.5, 10, 5
 # ---- the arm's dynamic program --------------------------------------------------------------------------------
 SWIVEL_STEP = 5.0               # degrees between the swivels tried
 SIGMA_MOVE = 3.0                # degrees of the elbow's offset (seen from the shoulder) that cost 1
+MOVE_CAP_DEG = 15.0             # beyond, the offset costs as much as a cap's excess (15 degrees: about 5 cm of elbow)
 SIGMA_ROLL = 4.0                # degrees per frame of the upper arm's roll beyond the split's own that cost 1
 SIGMA_OFFSET = 1.0              # degrees per frame of change of the elbow's offset that cost 1
 HARD_DEG = 1.0                  # beyond a cap: (degrees / HARD_DEG)^2
@@ -119,14 +120,15 @@ FLEX_PREFERENCE = 0.02          # a tie goes to the elbow bent to the front
 BENT = (15.0, 35.0)             # the elbow's bend over which the split's roll is trusted (a smoothstep)
 PLANE_BLEND = (0.05, 0.1)       # degrees of bend: below, the roll is set by the swivel's plane (the hinge's own plane
                                 # is undefined); above, the exact hinge (the wrist on its place)
-SMOOTH_SIGMA = 1.5              # frames: the chosen swivel is smoothed
+REFINE_POINTS, REFINE_ROUNDS, REFINE_HALVINGS = 9, 2, 4   # the continuous search after the grid (see refine)
+FOREARM_SHARE = 0.5             # --forearm-twist share: what 手捩 keeps, as tools/fix_twist.py (at most 45 degrees)
 BACKOFF_PAD = 4                 # frames: a backed-off girdle is eased in and out
-KEY_ELBOW_CM, KEY_GIRDLE_DEG = 1.0, 3.0
+KEY_ELBOW_CM, KEY_GIRDLE_DEG = 2.0, 8.0   # a trace key is listed where the elbow moved or the girdle turned more
 GIRDLE_HAND_SLACK_CM = 3.0      # how far a hand may slide along a straight arm so that the girdle can come back
 
 
 def default_params():
-    return {"split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "keep",
+    return {"split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "share",
             "upper_twist_share": 1.0, "trunk_shares": dict(TRUNK_TO_UPPER), "neck_shares": dict(HEAD_TO_NECK),
             "arm_limits": {k: v for k, v in ARM_LIMITS.items()}, "girdle_limits": dict(GIRDLE_LIMITS),
             "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM}
@@ -394,7 +396,7 @@ def rest_sides(model):
 
 def chain_names(model, sides):
     by = {b.name for b in model.bones}
-    names = [n for n in ("腰", TRUNK_LO, TRUNK_UP, NECK, HEAD, "両目", "左目", "右目", "頭先") if n in by]
+    names = [n for n in ("腰", PELVIS, TRUNK_LO, TRUNK_UP, NECK, HEAD, "両目", "左目", "右目", "頭先") if n in by]
     for s, _ in SIDES:
         names += [s + n for n in ARM if s + n in by]
         for fn, chain in sides[s].fingers.items():
@@ -486,9 +488,14 @@ def split_axial(world, local, params):
     """(new locals of 上半身, 上半身2, 首, 頭) with the chest's and the head's world rotation kept"""
     out = {}
     lo, up = local[TRUNK_LO], local[TRUNK_UP]
+    # the trunk's turn is read against the pelvis (下半身, 上半身's sibling under 腰): a trace may turn both by half a
+    # turn on 腰's frame, and only the difference is the spine's
+    pelvis = local[PELVIS] if PELVIS in local and world.parent.get(PELVIS) == world.parent.get(TRUNK_LO) else None
+    rel = qmul(qconj(pelvis), lo) if pelvis is not None else lo
     keep = {k: 1.0 - v for k, v in params["trunk_shares"].items()}
-    P1 = upright_part(lo, keep)                         # what stays on 上半身
-    E = qmul(qconj(P1), lo)                             # what moves onto 上半身2
+    P1 = upright_part(rel, keep)                        # what stays on 上半身
+    E = qmul(qconj(P1), rel)                            # what moves onto 上半身2
+    P1 = qmul(pelvis, P1) if pelvis is not None else P1
     out[TRUNK_LO], out[TRUNK_UP] = qnorm(P1), qnorm(qmul(E, up))
     if NECK in local and HEAD in local:
         P = upright_part(local[HEAD], params["neck_shares"])
@@ -674,19 +681,29 @@ def limit_band(table, ht):
     return np.interp(ht, hs, st), np.interp(ht, hs, cp)
 
 
-def arm_cost(st, lim, move_deg):
-    """the unary cost of arm states and how far beyond the caps they are (degrees, summed)"""
+ARM_ANGLES = ("external_rotation", "internal_rotation", "pronation", "supination", "elbow_flexion",
+              "elbow_extension", "wrist_flexion", "wrist_extension", "wrist_radial", "wrist_ulnar")
+
+
+def arm_pairs(st, lim):
+    """(name, angle, soft start, cap) of every limited arm angle, each as a positive excursion"""
     es, ec = limit_band(lim["external_rotation"], st["ht"])
     is_, ic = limit_band(lim["internal_rotation"], st["ht"])
-    pairs = [(st["ext"], es, ec), (-st["ext"], is_, ic), (st["pron"], *lim["pronation"]),
-             (-st["pron"], *lim["supination"]), (st["elbow"], *lim["elbow_flexion"]),
-             (-st["elbow"], *lim["elbow_extension"]), (st["wflex"], *lim["wrist_flexion"]),
-             (-st["wflex"], *lim["wrist_extension"]), (st["wradial"], *lim["wrist_radial"]),
-             (-st["wradial"], *lim["wrist_ulnar"])]
-    cost = (move_deg / SIGMA_MOVE) ** 2
+    return [("external_rotation", st["ext"], es, ec), ("internal_rotation", -st["ext"], is_, ic),
+            ("pronation", st["pron"], *lim["pronation"]), ("supination", -st["pron"], *lim["supination"]),
+            ("elbow_flexion", st["elbow"], *lim["elbow_flexion"]),
+            ("elbow_extension", -st["elbow"], *lim["elbow_extension"]),
+            ("wrist_flexion", st["wflex"], *lim["wrist_flexion"]),
+            ("wrist_extension", -st["wflex"], *lim["wrist_extension"]),
+            ("wrist_radial", st["wradial"], *lim["wrist_radial"]), ("wrist_ulnar", -st["wradial"], *lim["wrist_ulnar"])]
+
+
+def arm_cost(st, lim, move_deg):
+    """the unary cost of arm states and how far beyond the caps they are (degrees, summed)"""
+    cost = (move_deg / SIGMA_MOVE) ** 2 + ((np.maximum(move_deg - MOVE_CAP_DEG, 0.0)) / HARD_DEG) ** 2
     beyond = np.zeros_like(cost)
     beyond_ref = np.zeros_like(cost)
-    for x, s, c in pairs:
+    for _, x, s, c in arm_pairs(st, lim):
         cost = cost + penalty(x, s, c)
         beyond = beyond + np.maximum(x - c, 0.0)
         beyond_ref = beyond_ref + np.maximum(x - s, 0.0)
@@ -704,6 +721,48 @@ def roll_between(R_prev, R_cur, axis):
     return wrap(2.0 * np.arctan2(Ssum, W))
 
 
+def roll_pair(R_a, R_b, axis):
+    """the twist (radians) about `axis` of R_b R_a^-1, elementwise"""
+    p = qmul(R_b, qconj(R_a))
+    return wrap(2.0 * np.arctan2(dot(p[..., :3], axis), p[..., 3]))
+
+
+def refine(S, A, a, D, q0, br, dl, rho, unary_of):
+    """the dynamic program's swivel (on a grid of SWIVEL_STEP degrees) made continuous: rounds of a finer search about
+    each frame's swivel against the same costs (the frame's own, and the steps to the frames on either side), odd and
+    even frames in turn, the search's width halved every REFINE_ROUNDS rounds"""
+    F = len(dl)
+    if F < 2:
+        return dl
+    width = SWIVEL_STEP
+    offsets = np.radians(np.linspace(-1.0, 1.0, REFINE_POINTS))
+    for _ in range(REFINE_HALVINGS):
+        for _ in range(REFINE_ROUNDS):
+            for parity in (0, 1):
+                cur = arm_states(S, A, a, D, q0, dl[:, None], br[:, None])
+                R, u = cur["R_up"][:, 0], cur["u"][:, 0]
+                off = (cur["pe"][:, 0] - arm_states(S, A, a, D, q0, np.zeros((F, 1)), br[:, None])["pe"][:, 0])
+                idx = np.arange(parity, F, 2)
+                cand = dl[idx][:, None] + width * offsets[None, :]
+                bb = np.broadcast_to(br[idx][:, None], cand.shape)
+                st = arm_states(S, A, a, D, q0, cand, bb, idx)
+                cost, coff = unary_of(st, idx, bb)
+                prev, nxt = idx - 1, idx + 1
+                has_p, has_n = prev >= 0, nxt < F
+                pi, ni = np.clip(prev, 0, F - 1), np.clip(nxt, 0, F - 1)
+                r_in = roll_pair(R[pi][:, None], st["R_up"], st["u"])
+                r_out = roll_pair(st["R_up"], R[ni][:, None], u[ni][:, None])
+                d_in = np.degrees(np.linalg.norm(coff - off[pi][:, None] / S.L_u, axis=-1))
+                d_out = np.degrees(np.linalg.norm(off[ni][:, None] / S.L_u - coff, axis=-1))
+                cost = cost + has_p[:, None] * ((np.degrees(wrap(r_in - rho[idx][:, None])) / SIGMA_ROLL) ** 2
+                                                + (d_in / SIGMA_OFFSET) ** 2)
+                cost = cost + has_n[:, None] * ((np.degrees(wrap(r_out - rho[ni][:, None])) / SIGMA_ROLL) ** 2
+                                                + (d_out / SIGMA_OFFSET) ** 2)
+                dl[idx] = wrap(cand[np.arange(len(idx)), np.argmin(cost, axis=1)])
+        width /= 2.0
+    return dl
+
+
 def solve_arm(S, A, params, log=None):
     """the swivel and the reading per frame (see the module docstring, step 3) and the final arm"""
     F = len(A.ps)
@@ -715,32 +774,37 @@ def solve_arm(S, A, params, log=None):
     K = len(deltas)
     zero = K2 // 2
     lim = params["arm_limits"]
+    rom = params["rom"]
     # the split's own arm (no swivel), both readings: the reference
     ref = arm_states(S, A, a, D, q0, np.zeros((F, 2)), np.tile([1.0, -1.0], (F, 1)))
-    if not params["rom"]:
-        # step 1 alone: the swivel only where the elbow is too straight for the hinge to set the roll
-        lim = {k: v for k, v in lim.items()}
-        rom_scale = 0.0
-    else:
-        rom_scale = 1.0
+    ref_pe = ref["pe"][:, 0]
+
+    def unary_of(st, idx, br):
+        off = (st["pe"] - ref_pe[idx][:, None]) / S.L_u
+        move = np.degrees(np.linalg.norm(off, axis=-1))
+        if rom:
+            cost, _, _ = arm_cost(st, lim, move)
+        else:
+            # step 1 alone: the elbow stays (it may turn on its circle only where the arm is nearly straight) and is
+            # read bent to the front wherever it is clearly bent
+            cost = (move / SIGMA_MOVE) ** 2 + 1e3 * np.maximum(-st["elbow"] - 0.5, 0.0) ** 2 * \
+                (np.degrees(st["beta"]) > 10.0)
+        return cost + FLEX_PREFERENCE * (br < 0), off
+
     R_all = np.zeros((F, K, 4))
     u_all = np.zeros((F, K, 3))
     off_all = np.zeros((F, K, 3))
     unary = np.zeros((F, K))
     chunk = 1024
     for c0 in range(0, F, chunk):
-        sl = slice(c0, min(F, c0 + chunk))
-        n = sl.stop - sl.start
-        st = arm_states(S, A, a, D, q0, np.broadcast_to(deltas, (n, K)), np.broadcast_to(branches, (n, K)), sl)
-        off = (st["pe"] - ref["pe"][sl][:, :1]) / S.L_u
-        move = np.degrees(np.linalg.norm(off, axis=-1))
-        cost, _, _ = arm_cost(st, lim, move)
-        if rom_scale == 0.0:
-            cost = (move / SIGMA_MOVE) ** 2 + 1e3 * np.maximum(-st["elbow"] - 0.5, 0.0) ** 2 * \
-                (np.degrees(st["beta"]) > 10.0)
-        cost = cost + FLEX_PREFERENCE * (branches < 0)
-        R_all[sl], u_all[sl], off_all[sl], unary[sl] = st["R_up"], st["u"], off, cost
+        idx = np.arange(c0, min(F, c0 + chunk))
+        n = len(idx)
+        bb = np.broadcast_to(branches, (n, K))
+        st = arm_states(S, A, a, D, q0, np.broadcast_to(deltas, (n, K)), bb, idx)
+        cost, off = unary_of(st, idx, bb)
+        R_all[idx], u_all[idx], off_all[idx], unary[idx] = st["R_up"], st["u"], off, cost
     bent = smoothstep(np.degrees(ref["beta"][:, 0]), *BENT)
+    rho_all = np.zeros(F)
     t0 = time.time()
     total = unary[0].copy()
     back = np.zeros((F, K), dtype=np.int16)
@@ -748,6 +812,7 @@ def solve_arm(S, A, params, log=None):
         roll = roll_between(R_all[t - 1], R_all[t], u_all[t])
         rho = roll_between(R_all[t - 1][zero:zero + 1], R_all[t][zero:zero + 1], u_all[t][zero:zero + 1])[0, 0]
         rho *= min(bent[t], bent[t - 1])
+        rho_all[t] = rho
         trans = (np.degrees(wrap(roll - rho)) / SIGMA_ROLL) ** 2
         doff = np.degrees(np.linalg.norm(off_all[t][None, :, :] - off_all[t - 1][:, None, :], axis=-1))
         trans += (doff / SIGMA_OFFSET) ** 2
@@ -763,9 +828,8 @@ def solve_arm(S, A, params, log=None):
         path[t - 1] = back[t, path[t]]
     br = branches[path]
     dl = deltas[path].copy()
-    for s0, s1 in runs(br > 0) + runs(br < 0):
-        seg = np.unwrap(dl[s0:s1 + 1])
-        dl[s0:s1 + 1] = wrap(gaussian(seg, SMOOTH_SIGMA))
+    del R_all, u_all, off_all, unary
+    dl = refine(S, A, a, D, q0, br, dl, rho_all, unary_of)
     final = arm_states(S, A, a, D, q0, dl[:, None], br[:, None])
     final = {k: (v[:, 0] if v.ndim >= 2 else v) for k, v in final.items()}
     # the input read the anatomical way: the split's arm, the reading with less beyond the reference range per frame
@@ -792,14 +856,29 @@ def arm_locals(S, C, final, local_in, params):
            "ひじ": aa(S.h, final["theta"])}
     R_el = final["R_el"]
     H = final["H"]
-    if params["forearm_twist"] == "handtw":
-        tf = np.unwrap(twist(qmul(qconj(R_el), H), S.d_f))
-        out["手捩"] = aa(S.d_f, tf)
-    else:
+    mode = params["forearm_twist"]
+    if mode == "keep":
         out["手捩"] = local_in["手捩"]
+    else:
+        tf = twist(qmul(qconj(R_el), H), S.d_f)        # the forearm's whole twist, -pi .. pi
+        if mode == "handtw":
+            out["手捩"] = aa(S.d_f, np.unwrap(tf))
+        else:
+            # fix_twist's rule on the new twist: 手捩 keeps FOREARM_SHARE of it up to a quarter turn, then less, down
+            # to nothing at a half turn (no jump where the twist passes half a turn); 手首 takes the rest
+            deg = np.degrees(np.abs(tf))
+            kept = FOREARM_SHARE * np.where(deg <= 90.0, deg, 180.0 - deg)
+            out["手捩"] = aa(S.d_f, np.sign(tf) * np.radians(kept))
     out["手首"] = qnorm(qmul(qconj(qmul(R_el, out["手捩"])), H))
     swing_deg = np.degrees(qangle(swing))
-    return out, {"upper_twist_deg": stats(np.abs(np.degrees(k * tau))), "arm_swing_max_deg": _r(swing_deg.max())}
+    rep = {"armtw_twist_deg": stats(np.abs(np.degrees(wrap(k * tau)))),
+           "arm_twist_deg": stats(np.abs(np.degrees(wrap((1.0 - k) * tau)))),
+           "armtw_frames_over_90": int((np.abs(np.degrees(wrap(k * tau))) > 90.0).sum()),
+           "armtw_frames_over_135": int((np.abs(np.degrees(wrap(k * tau))) > 135.0).sum()),
+           "handtw_twist_deg": stats(np.abs(np.degrees(twist(out["手捩"], S.d_f)))),
+           "wrist_twist_deg": stats(np.abs(np.degrees(twist(out["手首"], S.d_f)))),
+           "arm_swing_max_deg": _r(swing_deg.max())}
+    return out, rep
 
 
 # ---- step 4: the relaxed hand ---------------------------------------------------------------------------------
@@ -875,8 +954,8 @@ def key_frames_of(motion):
 def layer(model, motion, params=None, key_frames=None, log=None):
     p = default_params()
     p.update(params or {})
-    if p["forearm_twist"] not in ("keep", "handtw"):
-        raise ValueError("--forearm-twist is keep or handtw, not %r" % (p["forearm_twist"],))
+    if p["forearm_twist"] not in ("share", "keep", "handtw"):
+        raise ValueError("--forearm-twist is share, keep or handtw, not %r" % (p["forearm_twist"],))
     if not 0.0 <= p["upper_twist_share"] <= 1.0:
         raise ValueError("--upper-twist-share is 0 to 1, not %r" % (p["upper_twist_share"],))
     started = time.time()
@@ -995,7 +1074,7 @@ def layer(model, motion, params=None, key_frames=None, log=None):
         report["girdle"][s] = girdle_report(e_in, p_in, e_out, p_out, ht, ab, backoff, W, wc, s, T)
         report["girdle"][s]["hand_slid_cm"] = stats(hand_moved)
         report["girdle"][s]["hand_slid_frames"] = int((hand_moved > 0.05).sum())
-        report["arm"][s] = arm_report(final, reading_in, A, S)
+        report["arm"][s] = arm_report(final, reading_in, A, S, p["arm_limits"])
         report["twist"][s] = twist_rep
         # step 4
         if p["tenodesis"]:
@@ -1004,6 +1083,16 @@ def layer(model, motion, params=None, key_frames=None, log=None):
             loc.update(fl)
             report["tenodesis"][s] = trep
     out_motion = build(motion, W, new, keypos, F)
+    steps = {}
+    for n, q in new.items():
+        if F < 2:
+            break
+        s_in = np.degrees(qangle(qmul(local[n][1:], qconj(local[n][:-1]))))
+        s_out = np.degrees(qangle(qmul(q[1:], qconj(q[:-1]))))
+        steps[n] = {"in_p99": _r(np.percentile(s_in, 99), 1), "in_max": _r(s_in.max(), 1),
+                    "out_p99": _r(np.percentile(s_out, 99), 1), "out_max": _r(s_out.max(), 1),
+                    "new_jumps": int(((s_out > 10.0) & (s_out > 3.0 * np.maximum(s_in, 1.0))).sum())}
+    report["steps_deg_per_frame"] = steps
     report.update(measure(model, motion, out_motion, W, sides, arm_final, F, key_frames, new, p))
     report["seconds"] = _r(time.time() - started, 1)
     return Result(out_motion, report)
@@ -1065,7 +1154,7 @@ def girdle_report(e_in, p_in, e_out, p_out, ht, ab, backoff, W, wc, s, T):
             "changed_deg": stats(np.hypot(e_out - e_in, p_out - p_in))}
 
 
-def arm_report(final, reading_in, A, S):
+def arm_report(final, reading_in, A, S, lim):
     def ab(x):
         return float(np.abs(x).max()) if len(x) else 0.0
     moved = np.linalg.norm(final["pe"] - final["elbow_split"], axis=-1) * UNIT_CM
@@ -1076,10 +1165,23 @@ def arm_report(final, reading_in, A, S):
         rows[label] = {"in": stats(reading_in[key]), "out": stats(final[key])}
     beyond_in = reading_in["beyond"] > 0.5
     beyond_out = final["beyond"] > 0.5
+    per = {}
+    pin, pout = arm_pairs(reading_in, lim), arm_pairs(final, lim)
+    for (name, xi, si, ci), (_, xo, so, co) in zip(pin, pout):
+        per[name] = {"over_start_in": int((xi > si).sum()), "over_start_out": int((xo > so).sum()),
+                     "over_cap_in": int((xi > ci + 0.5).sum()), "over_cap_out": int((xo > co + 0.5).sum()),
+                     "max_over_cap_in": _r(max(float((xi - ci).max()), 0.0), 1),
+                     "max_over_cap_out": _r(max(float((xo - co).max()), 0.0), 1)}
+    big = []
+    for a, b in runs(moved > 3.0):
+        k = a + int(np.argmax(moved[a:b + 1]))
+        big.append({"first": a, "last": b, "peak_frame": k, "peak_cm": _r(moved[k], 1)})
+    big.sort(key=lambda x: -x["peak_cm"])
     return {"pronation_abs": {"in_max": _r(ab(reading_in["pron"])), "out_max": _r(ab(final["pron"]))},
-            "angles": rows,
+            "angles": rows, "per_angle": per,
             "beyond_cap_frames_in": int(beyond_in.sum()), "beyond_cap_frames_out": int(beyond_out.sum()),
             "beyond_cap_stretches_out": [[a, b] for a, b in runs(beyond_out)][:60],
+            "elbow_moved_over_3cm": big[:30],
             "swivel_frames": int((np.abs(np.degrees(final["delta"])) > 0.5).sum()),
             "swivel_deg": stats(np.abs(np.degrees(final["delta"]))),
             "bent_back_frames": int((final["branch"] < 0).sum()),
@@ -1285,11 +1387,18 @@ def main(argv=None):
     ap.add_argument("out", help="the dance with the layer (.vmd)")
     ap.add_argument("--report", help="write the measures of the input and the output to this JSON")
     ap.add_argument("--key-frames", help="a motion whose 左腕 / 右腕 keys are the trace's poses (listed where they change)")
-    ap.add_argument("--forearm-twist", default="keep", choices=("keep", "handtw"),
-                    help="keep: 手捩 keeps the input's key (fix_twist's cuff guard), 手首 takes the rest (default); "
-                         "handtw: all of the forearm's twist on 手捩")
+    ap.add_argument("--forearm-twist", default="share", choices=("share", "keep", "handtw"),
+                    help="share: fix_twist's rule on the new twist, 手捩 at most 45 degrees, 手首 the rest (default); "
+                         "keep: 手捩 keeps the input's key, 手首 takes the rest; handtw: all of it on 手捩")
     ap.add_argument("--upper-twist-share", type=float, default=1.0,
                     help="the part of the upper arm's roll on 腕捩, the rest on 腕 (default 1)")
+    ap.add_argument("--trunk-shares", help="flex,lat,rot moved from 上半身 onto 上半身2 (default 0.25,0.3,0.4)")
+    ap.add_argument("--neck-shares", help="flex,lat,rot moved from 頭 onto 首 (default 0.6,0.7,0.333)")
+    ap.add_argument("--girdle-elevation", help="start,cap of the girdle's elevation, degrees (default 20,25)")
+    ap.add_argument("--girdle-retraction", help="start,cap of the girdle's retraction, degrees (default 20,25)")
+    ap.add_argument("--hand-slack", type=float, default=GIRDLE_HAND_SLACK_CM,
+                    help="cm a hand may slide along a straight arm so that the girdle can come back (default %g)"
+                         % GIRDLE_HAND_SLACK_CM)
     ap.add_argument("--tenodesis", action="store_true", help="relaxed fingers follow the wrist (off by default)")
     ap.add_argument("--no-split", action="store_true", help="leave 上半身 / 上半身2 / 首 / 頭 as they are")
     ap.add_argument("--no-girdle", action="store_true", help="leave 肩 as it is")
@@ -1298,9 +1407,21 @@ def main(argv=None):
     a = ap.parse_args(argv)
     params = default_params()
     params.update(forearm_twist=a.forearm_twist, upper_twist_share=a.upper_twist_share, tenodesis=a.tenodesis,
-                  split=not a.no_split, girdle=not a.no_girdle, rom=not a.no_rom)
+                  split=not a.no_split, girdle=not a.no_girdle, rom=not a.no_rom, girdle_hand_slack_cm=a.hand_slack)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
+        for flag, key in ((a.trunk_shares, "trunk_shares"), (a.neck_shares, "neck_shares")):
+            if flag:
+                v = [float(x) for x in flag.split(",")]
+                if len(v) != 3 or not all(0.0 <= x <= 1.0 for x in v):
+                    raise ValueError("--%s is three shares 0 to 1: flex,lat,rot" % key.replace("_", "-"))
+                params[key] = dict(zip(("flex", "lat", "rot"), v))
+        for flag, key in ((a.girdle_elevation, "elevation"), (a.girdle_retraction, "retraction")):
+            if flag:
+                v = [float(x) for x in flag.split(",")]
+                if len(v) != 2 or not 0.0 < v[0] < v[1]:
+                    raise ValueError("--girdle-%s is start,cap with 0 < start < cap" % key)
+                params["girdle_limits"] = dict(params["girdle_limits"], **{key: tuple(v)})
         result = run(a.dance, a.model, a.out, a.report, a.key_frames, params, log)
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))

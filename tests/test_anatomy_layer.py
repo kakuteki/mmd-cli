@@ -251,10 +251,22 @@ class SplitTest(unittest.TestCase):
         self.assertLess(np.abs(arm[:, :3] @ d_u).max(), 1e-5)              # 腕 has no part about the upper arm's axis
         self.assertGreater(np.degrees(2 * np.arccos(np.clip(np.abs(tw[:, 3]), 0, 1))).max(), 5.0)
 
-    def test_the_forearm_twist_stays_where_fix_twist_put_it_by_default(self):
-        tracks_in, tracks_out = fk.tracks_of(self.dance), fk.tracks_of(self.result.motion)
+    def test_the_forearm_twist_follows_fix_twist_s_rule_by_default(self):
+        d_f = np.array(self.result.report["rest"]["左"]["forearm"])
+        tw = locals_of(self.result.motion, "左手捩")
+        self.assertLess(np.linalg.norm(np.cross(tw[:, :3], d_f), axis=1).max(), 1e-5)      # about the forearm only
+        self.assertLessEqual(np.degrees(2 * np.arccos(np.clip(np.abs(tw[:, 3]), 0, 1))).max(), 45.0 + 1e-6)
+
+    def test_the_forearm_twist_bone_kept_as_it_was_when_asked(self):
+        p = split_only()
+        p["forearm_twist"] = "keep"
+        out = anatomy_layer.layer(MODEL, self.dance, p).motion
+        tracks_in, tracks_out = fk.tracks_of(self.dance), fk.tracks_of(out)
         self.assertEqual([(k.frame, k.rotation) for k in tracks_in["左手捩"]],
                          [(k.frame, k.rotation) for k in tracks_out["左手捩"]])
+        w = worlds(out, ["左手首"])
+        self.assertLess(rot_deg(self.win["左手首"][1], w["左手首"][1]).max(), 0.05)
+        self.assertLess(np.linalg.norm(self.win["左手首"][0] - w["左手首"][0], axis=1).max(), 0.01)
 
     def test_the_forearm_twist_back_on_the_hand_twist_bone_when_asked(self):
         p = split_only()
@@ -276,6 +288,24 @@ class SplitTest(unittest.TestCase):
         # the head turned 45 degrees: about a third of the turn goes to the neck
         twist = np.degrees(2 * np.arctan2(neck[f, 1], neck[f, 3]))
         self.assertAlmostEqual(abs(twist), 15.0, delta=2.0)
+
+    def test_a_trunk_turned_half_round_with_the_pelvis_is_split_against_the_pelvis(self):
+        # the trace turns 上半身 and 下半身 together by about half a turn on 腰's frame; the spine's own turn is small, and
+        # the split must not jump where the half turn passes 180 degrees
+        keys = [k for k in untouched_keys() if k.name != "下半身"]
+        for f, deg in ((0, 170.0), (30, 190.0), (LAST, 200.0)):
+            keys.append(key("下半身", f, axis_angle((0, 1, 0), deg)))
+            keys.append(key("上半身", f, compose(axis_angle((0, 1, 0), deg + 20.0), axis_angle((1, 0, 0), 10.0))))
+        dance = vmd.Motion(model_name="d", bones=keys)
+        out = anatomy_layer.layer(MODEL, dance, split_only())
+        lo = locals_of(out.motion, "上半身")
+        step = rot_deg(lo[1:], lo[:-1])
+        self.assertLess(step.max(), 2.0)
+        up = locals_of(out.motion, "上半身2")
+        turn = np.degrees(2 * np.arctan2(up[:, 1], up[:, 3]))
+        self.assertAlmostEqual(abs(turn[0]), 0.4 * 20.0, delta=1.0)                # 0.4 of the spine's 20 degrees
+        w_in, w_out = worlds(dance, ["上半身2"]), worlds(out.motion, ["上半身2"])
+        self.assertLess(rot_deg(w_in["上半身2"][1], w_out["上半身2"][1]).max(), 0.05)
 
     def test_untouched_bones_and_morphs_are_byte_for_byte_the_same(self):
         self.assertTrue(self.result.report["untouched"]["identical"])
@@ -344,9 +374,11 @@ class RangeTest(unittest.TestCase):
         p.update(girdle=False)
         result = anatomy_layer.layer(MODEL, dance, p)
         arm = result.report["arm"]["左"]
-        self.assertGreater(arm["beyond_cap_frames_in"], 50)
-        self.assertLess(arm["beyond_cap_frames_out"], arm["beyond_cap_frames_in"] / 10)
+        self.assertGreater(arm["per_angle"]["elbow_extension"]["over_cap_in"], 50)
+        self.assertEqual(arm["per_angle"]["elbow_extension"]["over_cap_out"], 0)
         self.assertGreater(arm["angles"]["elbow"]["out"]["min"], -18.0)      # no longer bent back beyond the cap
+        # what the elbow gave up did not go beyond another cap by more than a little
+        self.assertLess(max(v["max_over_cap_out"] for v in arm["per_angle"].values()), 2.0)
 
     def test_the_trace_keys_where_the_shape_changes_are_listed(self):
         dance = odd_elbow_dance(supinate=-90.0)
@@ -397,6 +429,23 @@ class CommandTest(unittest.TestCase):
             self.assertTrue(vmd.load(out).bones)
             with open(rep, encoding="ascii") as f:
                 self.assertIn("pose_error", json.load(f))
+        finally:
+            shutil.rmtree(folder)
+
+    def test_refuses_shares_out_of_range(self):
+        folder = tempfile.mkdtemp()
+        try:
+            src, out = os.path.join(folder, "in.vmd"), os.path.join(folder, "out.vmd")
+            model = os.path.join(folder, "m.pmx")
+            vmd.dump(odd_elbow_dance(), src)
+            with open(model, "wb") as f:
+                f.write(model_bytes())
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = anatomy_layer.main([src, model, out, "--neck-shares", "0.6,1.7,0.3"])
+            self.assertEqual(code, 2)
+            self.assertIn("neck-shares", json.loads(buf.getvalue())["error"]["message"])
+            self.assertFalse(os.path.exists(out))
         finally:
             shutil.rmtree(folder)
 
