@@ -2,7 +2,9 @@
 between their bones, the shoulder girdle's rhythm, and a soft range of motion, with the hands kept where they were.
 
     python tools/anatomy_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--key-frames TRACE.vmd]
-                                  [--forearm-twist keep|handtw] [--upper-twist-share 1] [--tenodesis]
+                                  [--forearm-twist share|keep|handtw] [--upper-twist-share 1] [--tenodesis]
+                                  [--trunk-shares 0.25,0.3,0.4] [--neck-shares 0.6,0.7,0.333]
+                                  [--girdle-elevation 20,25] [--girdle-retraction 20,25] [--hand-slack 3]
                                   [--no-split] [--no-girdle] [--no-rom] [--verbose]
 
 Why (the audit and the research of 2026-10-10, stage3/audit/AUDIT.md and stage3/research/RESEARCH.md): the trace puts
@@ -15,53 +17,63 @@ back 72 degrees (3,882 - 3,899), the right one up to the ear (3,225 - 3,249), th
 
 The steps, in the research's order (5 章: first what does not change the pose, then the limits, then what is added):
 
-1. Split without changing the pose (the world pose of the hands, the head and the chest stays; the report measures it).
+1. Split without changing the pose (the world rotation of the hands, the head and the chest stays; their places move
+   a little, the report measures it).
    * Arm: the elbow becomes a hinge.  Its axis h is read from the model: perpendicular to the forearm (ひじ -> 手首) and to
      the elbow helper's local Z (ひじ補助, the model's own front-back axis of the elbow; +Z when the model has none), so
-     that a positive turn about h bends the forearm to the front.  With the hand's wrist on the input's place, the
-     elbow on the input's place and a pure hinge, the upper arm's roll is set; it goes on 腕捩 (--upper-twist-share of it,
-     the rest stays on 腕 as a twist; 腕 keeps the swing from its rest direction).  The forearm's twist: by default
-     手捩 keeps the input's key (fix_twist's guard of the cuff) and 手首 takes the rest; --forearm-twist handtw puts all
-     of it on 手捩 and leaves 手首 a swing only.
-   * Trunk: 上半身's rotation is split into a part that stays on 上半身 and a part moved onto 上半身2 (in front of what
-     上半身2 already had, the breath).  Shares moved up: flexion 0.25, lateral bend 0.3, axial turn 0.4 (the research's
-     A2: the lower thoracic spine takes most of the turn, the lumbar spine most of the bending).  The chest's world
-     rotation is kept; its place moves a little (the pivot of 上半身2 is higher), the report says how much.
+     that a positive turn about h bends the forearm to the front.  With the wrist on the input's place, the elbow on
+     the input's place and a pure hinge, the upper arm's roll is set; it goes on 腕捩 (--upper-twist-share of it, the
+     rest stays on 腕 as a twist; 腕 keeps the swing from its rest direction).  The forearm's twist (the hand against the
+     hinge's forearm): by default fix_twist's rule (--forearm-twist share: 手捩 keeps half of it up to a quarter turn,
+     then less, nothing at a half turn, so at most 45 degrees; 手首 takes the rest), keep (手捩 keeps the input's key; the
+     trace's keys are up to 3 degrees off the fixed axis, so the forearm's offset is read through the key every frame)
+     or handtw (all of it on 手捩, 手首 a swing only).
+   * Trunk: 上半身's rotation against the pelvis (下半身, its sibling under 腰: a trace may turn both by half a turn on
+     腰's frame) is split into a part that stays on 上半身 and a part moved onto 上半身2 (in front of what 上半身2 already
+     had, the breath).  Shares moved up: flexion 0.25, lateral bend 0.3, axial turn 0.4 (the research's A2: the lower
+     thoracic spine takes most of the turn, the lumbar spine most of the bending).  The chest's world rotation is kept;
+     its place moves a little (the pivot of 上半身2 is higher).
    * Neck: the part of 頭's rotation moved onto 首: turn 1/3, flexion 0.6, lateral bend 0.7 (C1-C2 take about 2/3 of the
      turn, the upper neck about 4 tenths of the extension, the side bend is spread over the levels; Ishii 2004,
-     Zarate-Tejero 2023).  The head's world rotation is kept.
+     Zarate-Tejero 2023).  The head's world rotation is kept; its place moves (a neck that bends low carries the head).
    A rotation of an upright segment is read as a swing of its up axis then a twist about Y; the swing's share is set by
    its direction (flexion about X, lateral bend about Z).
-2. The shoulder girdle (肩) as a function of the arm's humerothoracic elevation HT (read on the input): Ludewig 2009's
-   clavicle, elevation 0.05 deg/deg and retraction 0.06 (flexion) to 0.18 (abduction) deg/deg above HT 25, as a floor
-   (the trace's girdle stays where it is higher: a shrug is the dance's), then soft limits: elevation and retraction,
-   protraction 20 (the Japanese reference range) saturating to 25, depression 10 to 15.  In this model the girdle is the
-   whole of 肩 (a visible slope of the shoulder), so the scapula's upward rotation (Braman 2009, 0.43 deg per degree of
-   glenohumeral elevation) cannot be given its own bone; it is measured, not imitated.  The hand stays: the arm is solved
-   again from the new root (two bones and a hinge).  Where the wrist is then out of reach, the girdle's change is backed
-   off (the report counts the frames).
+2. The shoulder girdle (肩) as a function of the arm's humerothoracic elevation HT (read on the input).  The rhythm:
+   Ludewig 2009's clavicle, elevation 0.05 deg/deg and retraction 0.06 (flexion) to 0.18 (abduction) deg/deg above HT
+   25, as a floor (the trace's girdle stays where it is higher: a shrug is the dance's).  The caps: soft limits,
+   elevation, retraction and protraction 20 (the Japanese reference range) saturating to 25, depression 10 to 15.  In
+   this model the girdle is the whole of 肩 (a visible slope of the shoulder), so the scapula's upward rotation (Braman
+   2009, 0.43 deg per degree of glenohumeral elevation) cannot be given its own bone; it is measured, not imitated.  The
+   arm is solved again from the new root (two bones and a hinge) with the wrist on its place.  A straight arm cannot
+   follow a root that moves along it: there the rhythm is given only as far as the wrist stays in reach, the caps as far
+   as the hand slides along the arm's line by at most --hand-slack cm (then the cap is backed off, eased over
+   BACKOFF_PAD frames).  The trunk's split can leave a straight arm short too; its hand slides by what is missing.
 3. The range of motion, read from the geometry (never from the keys' X, Y, Z).  With the wrist's place and the hand's
    rotation fixed, the arm has one free turn: the elbow's place on the circle about the shoulder-wrist line (its
    swivel), and two readings of a bent elbow (bent to the front, or back past straight).  A dynamic program over the
    swivel (SWIVEL_STEP degrees) and the reading chooses, frame by frame, the cheapest path: the elbow's distance from
-   where the split put it, soft penalties from the Japanese reference range to the research's cap (ARM_LIMITS: the
-   humerus' rotation, pronation and supination, the elbow, the wrist) and steep ones beyond the cap, and the speed of
-   the upper arm's roll and of the elbow's offset between frames.  So the excess is taken by the humerus' rotation
-   against the forearm's twist (a straight arm), or by moving the elbow (a bent one), and only where it pays; the path
-   is smoothed (SMOOTH_SIGMA frames) and stays exactly the split where nothing is beyond.  Where the arm is nearly
-   straight the hinge plane is undefined, and the same program keeps the roll continuous.
-   Not fixed, listed: an elbow bent beyond its cap (the wrist would have to move) and the neck and the trunk (beyond
-   the research's caps on 0 to 0.1 % of the frames; fixing them would turn the face or the chest).  --key-frames: the
-   trace's keys (左腕 / 右腕) where the shape changed are listed (the elbow moved, the girdle turned).
+   where the split put it (steep beyond MOVE_CAP_DEG, about 5 cm), soft penalties from the Japanese reference range to
+   the research's cap (ARM_LIMITS: the humerus' rotation, pronation and supination, the elbow, the wrist) and steep ones
+   beyond the cap, and the speed of the upper arm's roll and of the elbow's offset between frames.  So the excess is
+   taken by the humerus' rotation against the forearm's twist (a straight arm), or by moving the elbow (a bent one), and
+   only where it pays; a finer search then makes the path continuous (refine), and it stays exactly the split where
+   nothing is beyond.  Where the arm is nearly straight the hinge plane is undefined, and the same program keeps the
+   roll continuous.
+   Not fixed, listed: what would need the elbow moved further (the report's beyond_cap_stretches_out names the angles),
+   an elbow bent beyond its cap (the wrist would have to move) and the neck and the trunk (beyond the research's caps on
+   0 to 0.1 % of the frames; fixing them would turn the face or the chest).  --key-frames: the trace's keys (左腕 /
+   右腕) where the shape changed are listed (the elbow moved more than KEY_ELBOW_CM, the girdle turned more than
+   KEY_GIRDLE_DEG).
 4. --tenodesis (off by default): where every finger of a hand holds still (RELAX_RUN frames, under RELAX_DEG a frame),
    the fingers follow the wrist like a relaxed hand (Su 2005, the end values joined by straight lines: per degree of
    wrist extension MP 0.30, PIP 0.43, DIP 0.16 degrees of flexion), about the stretch's mean, faded in and out.
 5. Not touched: センター, 下半身, the legs and their IK, 肩P, the eyes, every other bone and every morph (byte for byte).
+   A bone the layer writes gets a key on every frame (the linear curve, the physics bytes of the input's key in force).
 
 The report measures the input and the output: the world pose errors (hands, head, chest, eyes), the hands' distances
 to the eyes and to the body, the girdle by HT bin against Ludewig and Braman, the arm's anatomical angles (beyond the
-reference and beyond the cap), the elbow's plane, the twists' placement, the trunk's and the neck's shares, and the
-listed key frames.
+reference and beyond the cap, per angle), the twists' placement, the trunk's and the neck's shares, the steps from one
+frame to the next of every written bone, and the listed key frames.
 """
 import argparse
 import json
@@ -282,17 +294,6 @@ def penalty(x, start, cap):
     return np.minimum(e, 1.0) ** 2 + 2.0 * np.maximum(e - 1.0, 0.0) + (over / HARD_DEG) ** 2
 
 
-def gaussian(x, sigma):
-    """x smoothed along axis 0 (the ends held)"""
-    if sigma <= 0 or len(x) < 2:
-        return x.copy()
-    r = int(math.ceil(4 * sigma))
-    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
-    k /= k.sum()
-    pad = np.concatenate([np.repeat(x[:1], r, 0), x, np.repeat(x[-1:], r, 0)])
-    return np.convolve(pad, k, mode="valid")
-
-
 def runs(mask):
     """(start, end inclusive) of the runs of True"""
     m = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]]).astype(int)
@@ -360,7 +361,6 @@ def rest_sides(model):
         z = unit(z)
         m = -unit(z - dot(z, d_f) * d_f)              # the local Z points back; the front is its opposite
         h = unit(np.cross(d_f, m))
-        e3 = h
         alpha, gamma = float(d_u @ d_f), float(d_u @ m)
         rho, phi = math.hypot(alpha, gamma), math.atan2(gamma, alpha)
         rr = P(s + "人指１") - P(s + "小指１")
@@ -389,7 +389,6 @@ def rest_sides(model):
                       float(np.linalg.norm(P(s + "手首") - P(s + "ひじ"))), h, m, n, r_hat, rho, phi,
                       float(np.sign(np.cross(D_, F_) @ L)), float(np.sign(np.cross(d_f, r_hat) @ n)),
                       arc(D_, d_u), z, fingers)
-        del e3
     return out
 
 
@@ -837,7 +836,7 @@ def solve_arm(S, A, params, log=None):
     final = arm_states(S, A, a, D, q0, dl[:, None], br[:, None])
     final = {k: (v[:, 0] if v.ndim >= 2 else v) for k, v in final.items()}
     # the input read the anatomical way: the split's arm, the reading with less beyond the reference range per frame
-    ref_cost, ref_beyond, ref_ref = arm_cost(ref, lim, np.zeros((F, 2)))
+    _, ref_beyond, ref_ref = arm_cost(ref, lim, np.zeros((F, 2)))
     pick = np.argmin(ref_ref + 1e-3 * np.arange(2)[None, :], axis=1)
     reading_in = {k: v[np.arange(F), pick] for k, v in ref.items() if v.ndim >= 2 and v.shape[1] == 2}
     reading_in["beyond"] = ref_beyond[np.arange(F), pick]
@@ -1333,7 +1332,6 @@ def measure(model, motion, out, W, sides, arm_final, F, key_frames, new, p):
     return rep
 
 
-_GIRDLE_CACHE = {}
 
 
 def rep_girdle_change(W, out, s, S, pos, rot, col, model, F):
