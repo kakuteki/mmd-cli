@@ -1,8 +1,8 @@
 """Give a PMX model catchlight bones: each highlight quad of the eyes moves on a bone of its own that turns with the
 gaze by a share of its rotation, as the reflection of a light on the cornea does.
 
-    python tools/pmx_eyes.py MODEL.pmx OUT.pmx [--report r.json] [--share 0.55] [--material HL]
-                             [--reveal HL HL２] [--pupil-morph 瞳大]
+    python tools/pmx_eyes.py MODEL.pmx OUT.pmx [--report r.json] [--share K] [--material HL]
+                             [--reveal HL HL２] [--pupil-morph 瞳大] [--clear 0.06] [--margin 0.008]
 
 Why: on Sour's Rin the highlights (material HL) hang on the iris' bone (右目子 / 左目子) and turn with the eye as if
 painted on it: turned 15 degrees, the eye carries its light along to the same spot of the iris (stage 4 probe, f45 and
@@ -10,8 +10,15 @@ f75).  A real eye's light is a mirror image in the cornea: when the eye turns, t
 (it lies between the eye's centre of rotation and the pupil), but the point of the cornea that faces the half-way
 direction between the light and the viewer does not turn with the eye.  The light therefore moves by
 d / d_p of the pupil's way, d the distance from the centre of rotation to the cornea's centre of curvature and d_p
-that to the (entrance) pupil: about 5.7 / 10.4 = 0.55 for a human eye (Gullstrand-Le Grand: the centre of rotation
-13.5 mm behind the apex of the cornea, its radius 7.8 mm, the entrance pupil 3.05 mm behind the apex).
+that to the (entrance) pupil: about 5.7 / 10.4 = 0.55 for a human eye (HUMAN; Gullstrand-Le Grand: the centre of
+rotation 13.5 mm behind the apex of the cornea, its radius 7.8 mm, the entrance pupil 3.05 mm behind the apex).
+
+The share by default (--share not given): a viewer sees where the light sits on the iris, and an anime iris is
+another size against its eye's turn than a human one (Sour's Rin: half its width 0.1625 over the pupil's depth 0.415
+is 0.39, a human's 5.9 / 10.4 is 0.57, so a turn carries the pupil 1.45 times as far across its iris).  The light's
+lag behind the pupil, 1 - 0.55 of the pupil's way, is scaled by that ratio (model_scale), so that at a gaze angle the
+light sits on the iris where a human eye's would: Sour's Rin 1 - 0.452 x 0.689 = 0.69.  With 0.55 the upper light left
+the iris for the eye white at a 15-degree gaze (stage 5 probe).
 
 What is built (formats.pmx_edit keeps every other byte of the file):
 
@@ -28,8 +35,16 @@ What is built (formats.pmx_edit keeps every other byte of the file):
   in front of the eye's bone, the lower 0.411, the pupil 0.413: one bone at the eye's centre would move the upper
   light 24 % more than the lower).  tools/eye_optics.py keys these bones with the rest of the light's motion (the
   head's turns against the light, the eyes' vergence) and reads --share back from the append ratio.
-* The quad's vertices move wholly onto its bone (BDEF1); no vertex moves, no other weight changes.  The new bones
-  join the display frame that holds 両目.
+* The quad's vertices move wholly onto its bone (BDEF1); no other weight changes.  The new bones join the display
+  frame that holds 両目.
+* A light that no longer turns with the iris slides across it, and Sour's Rin's iris is a dish (its rim 0.1 in front
+  of its centre) with the lights at its rim's depth: turned 15 degrees, the eye hid a light behind its own rim
+  (stage 5 probe).  A real light lies on the cornea, in front of the iris.  So each quad comes out toward -Z, as far as
+  it must to stay --margin in front of the iris and the eye white (materials 瞳 and 目白, rest pose) when slid by up
+  to --clear across X and Y (lift_quads; Sour's Rin: 0.02 to 0.05 for --clear 0.06, about the cap of
+  tools/eye_optics.py plus the lag of a 12-degree gaze), and the morphs that close the lids over an eye (those that
+  lower its upper light by CLOSING_DROP on average: まばたき, 笑い, ウィンク, ...) push its lights back by as much, so a
+  closed lid hides them where it hid them before.
 
 Names: the side's first character and the reveal morph (右HL２, 右HL, 左HL２, 左HL; at most 15 bytes of cp932, the VMD
 limit), English names catchlight_<R|L>_<n> (the upper quad first).  A model that already has them is refused.  The
@@ -47,7 +62,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mmd_cli.formats import pmx_edit  # noqa: E402
 from mmd_cli.formats.pmx import _Reader  # noqa: E402
 
-SHARE = 0.55                    # the share of the eye's turn the light follows: d / d_p (see the docstring)
+HUMAN = {                       # mm, a human eye (Gullstrand-Le Grand; estimates until stage 5's research is in)
+    "cornea_centre": 5.7,       # the centre of rotation to the cornea's centre of curvature (13.5 - 7.8)
+    "pupil": 10.4,              # the centre of rotation to the entrance pupil (13.5 - 3.05)
+    "iris_radius": 5.9,         # half the visible iris (11.8)
+    "cornea_radius": 7.8,       # the cornea's front surface
+}
+SHARE = None                    # the share of the eye's turn the light follows; None: from HUMAN and the model (build)
+IRIS_MATERIAL = "瞳"
 MATERIAL = "HL"
 REVEAL = ("HL", "HL２")
 PUPIL_MORPH = "瞳大"
@@ -58,6 +80,10 @@ EN_PREFIX = "catchlight"
 SIDE_EN = {"右": "R", "左": "L"}
 APPEND_ROTATE = 0x0100
 NAME_BYTES = 15                 # a VMD names a bone in 15 bytes of cp932
+SURFACES = ("瞳", "目白")         # the iris and the eye white: a light stays in front of them
+CLEAR = 0.06                    # model units a light may slide across them and stay in front (see lift_quads)
+MARGIN = 0.008                  # model units it stays in front by at least
+CLOSING_DROP = 0.08             # a morph that lowers an eye's upper light by this much on average closes its lids
 
 
 def _dot(a, b):
@@ -189,6 +215,158 @@ def find_eyes(doc, eyes=EYES, handle=HANDLE):
     return out, names[handle]
 
 
+def eye_surfaces(doc, eye_idx, materials=SURFACES):
+    """{eye index: [(p0, p1, p2)]}: the rest-pose triangles of `materials` (those the model has), by the eye each hangs
+    under"""
+    out = {e: [] for e in eye_idx}
+    for name in materials:
+        for t in material_triangles(doc, name) or []:
+            out[_eye_of(doc, t[0], eye_idx)].append(tuple(doc.vertices[v].position() for v in t))
+    return out
+
+
+def surface_z(triangles, x, y):
+    """the frontmost (smallest) z of the triangles over the point (x, y), seen along Z; None where none lies"""
+    best = None
+    for a, b, c in triangles:
+        d = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1])
+        if abs(d) < 1e-14:
+            continue
+        l1 = ((b[1] - c[1]) * (x - c[0]) + (c[0] - b[0]) * (y - c[1])) / d
+        l2 = ((c[1] - a[1]) * (x - c[0]) + (a[0] - c[0]) * (y - c[1])) / d
+        l3 = 1.0 - l1 - l2
+        if min(l1, l2, l3) < -1e-9:
+            continue
+        z = l1 * a[2] + l2 * b[2] + l3 * c[2]
+        if best is None or z < best:
+            best = z
+    return best
+
+
+def needed_lift(points, triangles, clear=CLEAR, margin=MARGIN, rings=3, spokes=16):
+    """how far toward -Z the points must come so that each, slid by up to `clear` across X and Y in any direction,
+    lies at least `margin` in front of the triangles (0 when they already do)"""
+    import math
+    slides = [(0.0, 0.0)]
+    for r in range(1, rings + 1):
+        for s in range(spokes):
+            a = 2.0 * math.pi * s / spokes
+            slides.append((clear * r / rings * math.cos(a), clear * r / rings * math.sin(a)))
+    lift = 0.0
+    for p in points:
+        for dx, dy in slides:
+            z = surface_z(triangles, p[0] + dx, p[1] + dy)
+            if z is not None:
+                lift = max(lift, p[2] - (z - margin))
+    return lift
+
+
+def _set_position(vertex, position):
+    vertex.head = struct.pack("<3f", *position) + vertex.head[12:]
+
+
+def _rewrite_vertex_morph(doc, morph, offsets):
+    """replace a vertex morph's offsets with {vertex: (dx, dy, dz)} (in vertex order)"""
+    size = doc.sizes["vertex"]
+    fmt = "<" + {1: "B", 2: "H", 4: "i"}[size]
+    morph.body = b"".join(struct.pack(fmt, v) + struct.pack("<3f", *offsets[v]) for v in sorted(offsets))
+    morph.count = len(offsets)
+
+
+def closing_morphs(doc, quads, reveal, drop=CLOSING_DROP):
+    """{morph name: set of eye indices}: the vertex morphs (not the reveal morphs) that lower an eye's upper quad by
+    `drop` or more on average, so closing the lids over that eye's lights"""
+    out = {}
+    for name, offsets in vertex_morphs(doc).items():
+        if name in reveal:
+            continue
+        for q in quads:
+            if q.get("rank") != 1:
+                continue
+            dys = [offsets[v][1] for v in q["vertices"] if v in offsets]
+            if len(dys) == len(q["vertices"]) and sum(dys) / len(dys) <= -drop:
+                out.setdefault(name, set()).add(q["eye_index"])
+    return out
+
+
+def lift_quads(doc, quads, reveal, clear=CLEAR, margin=MARGIN, surfaces=SURFACES):
+    """bring each quad (revealed) out in front of the eye's iris and white for slides up to `clear` (needed_lift),
+    moving its vertices toward -Z, and push it back by as much in the morphs that close the lids over its eye, so the
+    closed lids hide it as before.  Updates the quads' centroid, depth and pivot; returns ({quad name: lift},
+    {morph: [eye names]})"""
+    morphs = vertex_morphs(doc)
+    shown = [morphs[name] for name in reveal if name in morphs]
+    eye_idx = sorted({q["eye_index"] for q in quads})
+    tris = eye_surfaces(doc, eye_idx, surfaces)
+    lifts = {}
+    for q in quads:
+        pts = []
+        for v in q["vertices"]:
+            p = list(doc.vertices[v].position())
+            for offsets in shown:
+                o = offsets.get(v)
+                if o:
+                    p = [a + b for a, b in zip(p, o)]
+            pts.append(tuple(p))
+        pts.append(_centroid(pts))
+        lifts[q["name"]] = needed_lift(pts, tris[q["eye_index"]], clear, margin)
+    closing = closing_morphs(doc, quads, reveal)
+    for q in quads:
+        lift = lifts[q["name"]]
+        if lift <= 0.0:
+            continue
+        for v in q["vertices"]:
+            x, y, z = doc.vertices[v].position()
+            _set_position(doc.vertices[v], (x, y, z - lift))
+        q["centroid"] = (q["centroid"][0], q["centroid"][1], q["centroid"][2] - lift)
+        q["pivot"] = (q["pivot"][0], q["pivot"][1], q["pivot"][2] - lift)
+        q["depth"] += lift
+    by_name = {}
+    for m in doc.morphs:
+        if m.kind == 1:
+            by_name.setdefault(morph_name(doc, m), m)
+    for name, eyes in closing.items():
+        offsets = dict(morphs[name])
+        for q in quads:
+            lift = lifts[q["name"]]
+            if q["eye_index"] in eyes and lift > 0.0:
+                for v in q["vertices"]:
+                    dx, dy, dz = offsets.get(v, (0.0, 0.0, 0.0))
+                    offsets[v] = (dx, dy, dz + lift)
+        _rewrite_vertex_morph(doc, by_name[name], offsets)
+    return lifts, {name: sorted(doc.bones[e].name for e in eyes) for name, eyes in sorted(closing.items())}
+
+
+def model_scale(doc, pupil_morph=PUPIL_MORPH, iris_material=IRIS_MATERIAL):
+    """how the model's eye compares with HUMAN: {"pupil_depth" (the pupil morph's vertices in front of the eye's
+    bone, both eyes' mean), "iris_half_width" (half the X extent of iris_material per eye, the mean), "scale" (the
+    iris' half width over the pupil's depth, against HUMAN's iris radius over its pupil distance)}; scale is 1 when
+    the model lacks the iris material"""
+    eye_idx, _ = find_eyes(doc)
+    pupil = vertex_morphs(doc).get(pupil_morph) or {}
+    depths, widths = [], []
+    iris = sorted({v for t in material_triangles(doc, iris_material) or [] for v in t})
+    for e in eye_idx:
+        mine = [doc.vertices[v].position() for v in pupil if _eye_of(doc, v, eye_idx) == e]
+        if mine:
+            depths.append(_dot(tuple(a - b for a, b in zip(_centroid(mine), doc.bones[e].position)), FORWARD))
+        xs = [doc.vertices[v].position()[0] for v in iris if _eye_of(doc, v, eye_idx) == e]
+        if xs:
+            widths.append((max(xs) - min(xs)) / 2.0)
+    if not depths:
+        raise ValueError("the model has no vertex morph %r: the pupil's depth is measured on its vertices" % pupil_morph)
+    depth = sum(depths) / len(depths)
+    width = sum(widths) / len(widths) if widths else None
+    scale = (width / depth) / (HUMAN["iris_radius"] / HUMAN["pupil"]) if width else 1.0
+    return {"pupil_depth": depth, "iris_half_width": width, "scale": scale}
+
+
+def default_share(scale):
+    """the share that puts the light where a human eye's sits on its iris at the same gaze angle: the human lag
+    1 - d / d_p scaled by the model's iris (model_scale)"""
+    return 1.0 - (1.0 - HUMAN["cornea_centre"] / HUMAN["pupil"]) * scale
+
+
 def plan(doc, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH, eyes=EYES, handle=HANDLE):
     """the quads and their bones, before anything is changed: (quads, pupil depth by eye name, eye indices, handle)"""
     eye_idx, handle_idx = find_eyes(doc, eyes, handle)
@@ -232,6 +410,7 @@ def plan(doc, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH, eyes=EY
         for n, q in enumerate(mine, 1):
             q["name"] = side + (q["reveal"] if q["reveal"] else material + str(n))
             q["name_en"] = "%s_%s_%d" % (EN_PREFIX, SIDE_EN.get(side, str(eye_idx.index(e))), n)
+            q["rank"] = n
             q["pivot"] = tuple(c - depth[e] * f for c, f in zip(q["centroid"], FORWARD))
             ordered.append(q)
     names = [q["name"] for q in ordered]
@@ -243,8 +422,12 @@ def plan(doc, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH, eyes=EY
     return ordered, {doc.bones[e].name: depth[e] for e in eye_idx}, eye_idx, handle_idx
 
 
-def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH):
-    """add the catchlight bones to `doc` (formats.pmx_edit.Document) and move the highlights onto them; returns a report"""
+def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH, clear=CLEAR, margin=MARGIN):
+    """add the catchlight bones to `doc` (formats.pmx_edit.Document), bring the highlights out in front of the iris
+    (lift_quads) and move them onto the bones; returns a report"""
+    scale = model_scale(doc, pupil_morph)
+    if share is None:
+        share = min(1.0, max(0.0, default_share(scale["scale"])))
     if not 0.0 < share <= 1.0:
         raise ValueError("--share is the part of the eye's turn the light follows, above 0 and at most 1, not %r" % share)
     if any(b.name_en.startswith(EN_PREFIX) for b in doc.bones):
@@ -255,6 +438,9 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
     clash = [q["name"] for q in quads if q["name"] in taken]
     if clash:
         raise ValueError("the model already has bones named %s" % ", ".join(clash))
+    if clear < 0.0 or margin < 0.0:
+        raise ValueError("--clear and --margin are distances in model units, 0 or more")
+    lifts, closing = lift_quads(doc, quads, tuple(reveal), clear, margin)
     added = []
     for q in quads:
         eye = doc.bones[q["eye_index"]]
@@ -272,12 +458,16 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
             f.items = f.items + [(0, i) for i in added]
             frame_name = _Reader(f.names, doc.encoding).text()
             break
-    return {"share": float(share), "follows": doc.bones[handle_idx].name, "material": material, "reveal": list(reveal),
+    return {"share": float(share), "share_human": HUMAN["cornea_centre"] / HUMAN["pupil"], "iris_scale": scale["scale"],
+            "iris_half_width": scale["iris_half_width"],
+            "follows": doc.bones[handle_idx].name, "material": material, "reveal": list(reveal),
             "pupil_morph": pupil_morph, "pupil_depth": {k: round(v, 6) for k, v in depth.items()},
             "eyes": {doc.bones[e].name: list(doc.bones[e].position) for e in eye_idx},
             "quads": [{"bone": q["name"], "name_en": q["name_en"], "eye": doc.bones[q["eye_index"]].name,
                        "reveal": q["reveal"], "vertices": q["vertices"], "centroid": [round(c, 6) for c in q["centroid"]],
-                       "depth": round(q["depth"], 6), "pivot": [round(c, 6) for c in q["pivot"]]} for q in quads],
+                       "depth": round(q["depth"], 6), "pivot": [round(c, 6) for c in q["pivot"]],
+                       "lift": round(lifts[q["name"]], 6)} for q in quads],
+            "clear": clear, "margin": margin, "closing": closing,
             "moved_vertices": sum(len(q["vertices"]) for q in quads), "display_frame": frame_name}
 
 
@@ -299,10 +489,14 @@ def main(argv=None):
     ap.add_argument("model", help="the model (.pmx) with 右目 and 左目 turning with 両目 and the highlights' material")
     ap.add_argument("out", help="the model to write (.pmx): next to the model, for its textures")
     ap.add_argument("--report", help="write the quads, their bones and pivots to this JSON")
-    ap.add_argument("--share", type=float, default=SHARE, help="the share of the eye's turn the light follows (default %g)" % SHARE)
+    ap.add_argument("--share", type=float, default=SHARE,
+                    help="the share of the eye's turn the light follows (default: the human eye's, scaled by the model's iris)")
     ap.add_argument("--material", default=MATERIAL, help="the highlights' material (default %s)" % MATERIAL)
     ap.add_argument("--reveal", nargs="+", default=list(REVEAL), help="the morphs that pull the highlights out (default HL HL２)")
     ap.add_argument("--pupil-morph", default=PUPIL_MORPH, help="a morph of the pupil's vertices: their depth (default %s)" % PUPIL_MORPH)
+    ap.add_argument("--clear", type=float, default=CLEAR,
+                    help="model units a light may slide across the iris and stay in front of it (default %g)" % CLEAR)
+    ap.add_argument("--margin", type=float, default=MARGIN, help="how far in front, at least (default %g)" % MARGIN)
     a = ap.parse_args(argv)
     try:
         if os.path.normcase(os.path.abspath(a.model)) == os.path.normcase(os.path.abspath(a.out)):
@@ -310,7 +504,7 @@ def main(argv=None):
         if a.report and os.path.normcase(os.path.abspath(a.report)) in {os.path.normcase(os.path.abspath(p)) for p in (a.model, a.out)}:
             raise ValueError("the report would overwrite a model")
         doc = pmx_edit.load(a.model)
-        report = build(doc, a.share, a.material, a.reveal, a.pupil_morph)
+        report = build(doc, a.share, a.material, a.reveal, a.pupil_morph, a.clear, a.margin)
         _write(a.out, pmx_edit.dumps(doc))
         if a.report:
             _write(a.report, (json.dumps(report, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
@@ -318,8 +512,10 @@ def main(argv=None):
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
     print(json.dumps({"ok": True, "out": os.path.abspath(a.out), "share": report["share"],
+                      "share_human": report["share_human"], "iris_scale": report["iris_scale"],
                       "bones": [q["bone"] for q in report["quads"]], "moved_vertices": report["moved_vertices"],
-                      "pupil_depth": report["pupil_depth"]}, ensure_ascii=True))
+                      "pupil_depth": report["pupil_depth"], "lifts": [q["lift"] for q in report["quads"]],
+                      "closing": sorted(report["closing"])}, ensure_ascii=True))
     return 0
 
 

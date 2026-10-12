@@ -36,11 +36,12 @@ def quad(cx, cy, z, half_x, half_y):
             (cx - half_x, cy - half_y, z)]
 
 
-def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), extra_morphs=()):
+def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), extra_morphs=(), iris_z=None):
     """a head with Sour's Rin's eye bones (両目 the handle, 右目 / 左目 turning with it by append ratio 1, the iris on a
     child bone), per eye a pupil quad and two highlight quads at Rin's depths, the morphs that reveal them, 瞳大 and
     まばたき, and one skin triangle.  `extra_bones` [(name, parent index, position)] come after the eyes' (translatable
-    when they have no parent), `extra_morphs` [(name, kind)] are empty morphs of that kind (1 vertex, 8 material)."""
+    when they have no parent), `extra_morphs` [(name, kind)] are empty morphs of that kind (1 vertex, 8 material).
+    `iris_z` adds an iris (a flat quad of the material 瞳, 0.16 by 0.22 about the pupil) at that depth."""
     w = Writer(bone=2, vertex=2, morph=1, material=1)
     bones = [w.bone("頭", position=(0.0, 16.24, 0.0)),                                                     # 0
              w.bone("両目" if with_handle else "目線", parent=0, position=(0.0, 19.37, -0.26))]              # 1
@@ -54,17 +55,20 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
     for name, parent, position in extra_bones:
         bones.append(w.bone(name, parent=parent, position=position, flags=NORMAL | (TRANSLATE if parent < 0 else 0)))
     positions, weights = [], []
-    pupil, hl2, hl = {}, {}, {}
+    pupil, hl2, hl, iris = {}, {}, {}, {}
     for side, s, bone in (("右", -1.0, 4), ("左", 1.0, 5)):
         if not with_eyes:
             bone = 0
-        for name, corners in (("pupil", quad(s * 0.507, 17.143, PUPIL_Z, 0.041, 0.057)),
-                              ("hl2", quad(s * 0.45, 17.24, HL2_Z, 0.055, 0.045)),
-                              ("hl", quad(s * 0.62, 17.04, HL_Z, 0.065, 0.03))):
+        parts = [("pupil", quad(s * 0.507, 17.143, PUPIL_Z, 0.041, 0.057)),
+                 ("hl2", quad(s * 0.45, 17.24, HL2_Z, 0.055, 0.045)),
+                 ("hl", quad(s * 0.62, 17.04, HL_Z, 0.065, 0.03))]
+        if iris_z is not None:
+            parts.append(("iris", quad(s * 0.507, 17.143, iris_z, 0.16, 0.22)))
+        for name, corners in parts:
             first = len(positions)
             positions += corners
             weights += [bone] * 4
-            {"pupil": pupil, "hl2": hl2, "hl": hl}[name][side] = list(range(first, first + 4))
+            {"pupil": pupil, "hl2": hl2, "hl": hl, "iris": iris}[name][side] = list(range(first, first + 4))
     skin = len(positions)
     positions.append((0.0, 17.0, -1.2))
     weights.append(0)
@@ -75,7 +79,7 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
 
     def tris(q):
         return [q[0], q[1], q[2], q[0], q[2], q[3]]
-    pupil_faces = tris(pupil["右"]) + tris(pupil["左"])
+    pupil_faces = tris(pupil["右"]) + tris(pupil["左"]) + (tris(iris["右"]) + tris(iris["左"]) if iris else [])
     hl_faces = tris(hl2["右"]) + tris(hl["右"]) + tris(hl2["左"]) + tris(hl["左"])
     face_faces = [skin, skin, skin]
     faces = [w.index(i, "vertex") for i in face_faces + pupil_faces + hl_faces]
@@ -99,7 +103,7 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
     morphs.append(w.morph("HL消", kind=8, offsets=1))
     frames = [w.frame("目", items=[("bone", 1)] + ([("bone", 2), ("bone", 3)] if with_eyes else []))]
     return w.build(vertices=vertices, faces=faces, materials=materials, bones=bones, morphs=morphs, frames=frames), \
-        {"pupil": pupil, "hl2": hl2, "hl": hl, "positions": positions}
+        {"pupil": pupil, "hl2": hl2, "hl": hl, "iris": iris, "positions": positions}
 
 
 def turn(yaw=0.0, pitch=0.0):
@@ -128,7 +132,7 @@ class ToyBuildTest(unittest.TestCase):
         data, self.layout = toy_bytes()
         self.before = pmx_edit.loads(data)
         self.doc = pmx_edit.loads(data)
-        self.report = pmx_eyes.build(self.doc, share=0.55)
+        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0)
         self.model = pmx.loads(pmx_edit.dumps(self.doc))
         self.names = [b.name for b in self.model.bones]
 
@@ -210,6 +214,104 @@ class ToyBuildTest(unittest.TestCase):
         self.assertAlmostEqual(quads[1]["depth"], EYE_Z - (HL_Z + HL_PULL), 4)
 
 
+class SurfaceTest(unittest.TestCase):
+    SQUARE = [((-1.0, -1.0, -1.0), (1.0, -1.0, -1.0), (1.0, 1.0, -1.0)),
+              ((-1.0, -1.0, -1.0), (1.0, 1.0, -1.0), (-1.0, 1.0, -1.0))]
+
+    def test_frontmost_surface_under_a_point(self):
+        tilted = [((-1.0, -1.0, -1.2), (1.0, -1.0, -1.2), (0.0, 1.0, -0.8))]
+        self.assertAlmostEqual(pmx_eyes.surface_z(self.SQUARE, 0.2, 0.3), -1.0)
+        self.assertAlmostEqual(pmx_eyes.surface_z(self.SQUARE + tilted, 0.0, -1.0), -1.2)
+        self.assertAlmostEqual(pmx_eyes.surface_z(self.SQUARE + tilted, 0.0, 1.0), -1.0)
+        self.assertIsNone(pmx_eyes.surface_z(self.SQUARE, 1.5, 0.0))
+
+    def test_lift_brings_points_out_in_front(self):
+        self.assertAlmostEqual(pmx_eyes.needed_lift([(0.0, 0.0, -0.97)], self.SQUARE, clear=0.0, margin=0.01), 0.04)
+        self.assertEqual(pmx_eyes.needed_lift([(0.0, 0.0, -1.1)], self.SQUARE, clear=0.5, margin=0.01), 0.0)
+        # a point beside the surface still has to clear it when it may slide over it
+        self.assertEqual(pmx_eyes.needed_lift([(1.05, 0.0, -0.97)], self.SQUARE, clear=0.0, margin=0.01), 0.0)
+        self.assertAlmostEqual(pmx_eyes.needed_lift([(1.05, 0.0, -0.97)], self.SQUARE, clear=0.1, margin=0.01), 0.04)
+
+
+class LiftTest(unittest.TestCase):
+    """an iris at z -0.99: the upper light (revealed at -1.076) lies in front of it, the lower one (-0.973) behind"""
+    IRIS_Z = -0.99
+
+    def setUp(self):
+        data, self.layout = toy_bytes(iris_z=self.IRIS_Z)
+        self.before = pmx_edit.loads(data)
+        self.doc = pmx_edit.loads(data)
+        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0, margin=0.01)
+        self.quads = {q["bone"]: q for q in self.report["quads"]}
+
+    def test_only_the_light_behind_the_iris_comes_out(self):
+        want = (HL_Z + HL_PULL) - (self.IRIS_Z - 0.01)
+        self.assertAlmostEqual(self.quads["右HL"]["lift"], want, 5)
+        self.assertAlmostEqual(self.quads["左HL"]["lift"], want, 5)
+        self.assertEqual(self.quads["右HL２"]["lift"], 0.0)
+        for v in self.layout["hl"]["左"]:
+            a, b = self.before.vertices[v].position(), self.doc.vertices[v].position()
+            self.assertAlmostEqual(b[2], a[2] - want, 5)
+            self.assertEqual(a[:2], b[:2])
+        for v in self.layout["hl2"]["左"] + self.layout["pupil"]["左"] + self.layout["iris"]["左"]:
+            self.assertEqual(self.before.vertices[v].head, self.doc.vertices[v].head)
+        model = pmx.loads(pmx_edit.dumps(self.doc))
+        pivot = [b for b in model.bones if b.name == "左HL"][0].position
+        self.assertAlmostEqual(pivot[2], self.quads["左HL"]["centroid"][2] + (EYE_Z - PUPIL_Z), 5)
+        self.assertAlmostEqual(self.quads["左HL"]["centroid"][2], HL_Z + HL_PULL - want, 5)
+
+    def test_the_closing_morph_takes_the_lift_back(self):
+        self.assertEqual(self.report["closing"], {"まばたき": ["右目", "左目"]})
+        blink = pmx_eyes.vertex_morphs(self.doc)["まばたき"]
+        want = self.quads["左HL"]["lift"]
+        for v in self.layout["hl"]["左"] + self.layout["hl"]["右"]:
+            self.assertEqual(blink[v][:2], (0.0, 0.0))
+            self.assertAlmostEqual(blink[v][2], want, 5)              # a closed lid hides it where it hid before
+        for v in self.layout["hl2"]["左"]:
+            self.assertAlmostEqual(blink[v][1], -0.17, 5)             # the upper light's own offsets stay
+            self.assertAlmostEqual(blink[v][2], 0.05, 5)
+        pmx.loads(pmx_edit.dumps(self.doc))                          # still a valid file
+        reveal = pmx_eyes.vertex_morphs(self.doc)["HL"]
+        self.assertEqual(reveal, pmx_eyes.vertex_morphs(self.before)["HL"])
+
+    def test_sliding_needs_more(self):
+        data, _ = toy_bytes(iris_z=self.IRIS_Z)
+        doc = pmx_edit.loads(data)
+        report = pmx_eyes.build(doc, share=0.55, clear=0.06, margin=0.01)
+        lifts = {q["bone"]: q["lift"] for q in report["quads"]}
+        self.assertGreaterEqual(lifts["左HL"], self.quads["左HL"]["lift"])
+        self.assertEqual(lifts["左HL２"], 0.0)
+
+
+class IrisScaleTest(unittest.TestCase):
+    """the share by default puts the light where a human eye's would sit on its iris at the same gaze angle"""
+
+    def test_default_share_scales_the_human_lag_by_the_iris(self):
+        data, _ = toy_bytes(iris_z=-0.96)
+        doc = pmx_edit.loads(data)
+        report = pmx_eyes.build(doc)
+        h = pmx_eyes.HUMAN
+        scale = (0.16 / (EYE_Z - PUPIL_Z)) / (h["iris_radius"] / h["pupil"])
+        k = h["cornea_centre"] / h["pupil"]
+        self.assertAlmostEqual(report["iris_scale"], scale, 3)
+        self.assertAlmostEqual(report["share_human"], k, 6)
+        self.assertAlmostEqual(report["share"], 1.0 - (1.0 - k) * scale, 4)
+        model = pmx.loads(pmx_edit.dumps(doc))
+        self.assertAlmostEqual(model.bones[-1].append["ratio"], report["share"], 5)
+
+    def test_an_explicit_share_wins(self):
+        data, _ = toy_bytes(iris_z=-0.96)
+        report = pmx_eyes.build(pmx_edit.loads(data), share=0.55)
+        self.assertEqual(report["share"], 0.55)
+        self.assertGreater(report["iris_scale"], 0.5)
+
+    def test_model_scale_reads_the_iris_and_the_pupil(self):
+        data, _ = toy_bytes(iris_z=-0.96)
+        scale = pmx_eyes.model_scale(pmx_edit.loads(data))
+        self.assertAlmostEqual(scale["iris_half_width"], 0.16, 5)
+        self.assertAlmostEqual(scale["pupil_depth"], EYE_Z - PUPIL_Z, 5)
+
+
 class RefusalTest(unittest.TestCase):
     def test_no_highlight_material(self):
         data, _ = toy_bytes(material="光")
@@ -282,6 +384,11 @@ class SourRinTest(unittest.TestCase):
         self.assertEqual(sorted(q["reveal"] for q in report["quads"]), ["HL", "HL", "HL２", "HL２"])
         self.assertAlmostEqual(report["pupil_depth"]["右目"], 0.413, delta=0.005)
         self.assertAlmostEqual(report["pupil_depth"]["左目"], 0.413, delta=0.005)
+        self.assertAlmostEqual(report["iris_half_width"], 0.1625, delta=0.001)     # the iris 0.325 wide
+        self.assertAlmostEqual(report["share"], 0.689, delta=0.002)
+        self.assertTrue(all(0.0 < q["lift"] < 0.06 for q in report["quads"]))
+        self.assertIn("まばたき", report["closing"])
+        self.assertIn("笑い", report["closing"])
 
 
 if __name__ == "__main__":
