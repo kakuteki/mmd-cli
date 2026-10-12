@@ -112,13 +112,21 @@ def bone(name):
     return next(b for b in MODEL.bones if b.name == name)
 
 
-def light_on_screen(motion_list, frame, light_name, eye_name, side):
-    """the light's centre minus the pupil's centre, seen from the front (X right, Y up), in model units"""
+def light_on_screen(motion_list, frame, light_name, eye_name, side, morphs=None):
+    """the light's centre minus the pupil's centre, seen from the front (X right, Y up), in model units; `morphs`
+    {name: weight} move the light's quad before its bone turns it (the mean offset of its vertices)"""
     motion = eye_optics.merge(*motion_list)
     pose = fk.Pose(MODEL, motion, [light_name, eye_name])
     world = pose.at(frame)
     b = bone(light_name)
     quad_rest = tuple(p + t for p, t in zip(b.position, b.tail["offset"]))
+    if morphs:
+        doc = pmx_edit.loads(MODEL_BYTES)
+        offsets = pmx_eyes.vertex_morphs(doc)
+        mine = [v for v, vx in enumerate(doc.vertices) if vx.pairs() and vx.pairs()[0][0] == b.index]
+        for name, w in morphs.items():
+            shift = [sum(offsets[name].get(v, (0.0, 0.0, 0.0))[c] for v in mine) / len(mine) for c in range(3)]
+            quad_rest = tuple(q + w * s for q, s in zip(quad_rest, shift))
     lp, lr = world[light_name]
     q = tuple(p + o for p, o in zip(lp, fk.rotate(lr, tuple(a - c for a, c in zip(quad_rest, b.position)))))
     e = bone(eye_name)
@@ -650,10 +658,26 @@ class LidTest(unittest.TestCase):
         half = run(c=camera(1.0), face=self.face({0: 0.65, 90: 0.65}))
         out = run(c=camera(1.0), face=self.face({0: 0.0, 90: 0.0}))
         self.assertGreater(half.trace["back"][10][0], 0.2)
-        for k in range(4):
+        for name in ("右HL", "左HL"):                  # the lifted ones (the toy's まばたき drags only the upper ones)
+            k = half.trace["lights"].index(name)
             a, b = half.trace["disc"][10][k], out.trace["disc"][10][k]
             self.assertAlmostEqual(a[0], b[0], delta=0.02)
             self.assertAlmostEqual(a[1], b[1], delta=0.02)
+
+    def test_a_lowering_lid_drags_the_upper_light_as_the_model_does(self):
+        """the toy's まばたき moves its upper lights (0, -0.17, 0.05) per unit, as Sour's Rin's drags hers down with the
+        lid: kept (held in place, a lifted light shows in front of the lid); the trace gives the place MMD shows"""
+        held = run(c=camera(1.0), face=self.face({0: 0.4, 90: 0.4}))           # under the back morph's ramp
+        free = run(c=camera(1.0), face=self.face({0: 0.0, 90: 0.0}))
+        self.assertEqual(held.trace["back"][10], [0.0, 0.0])
+        k = held.trace["lights"].index("左HL２")
+        drop = free.trace["disc"][10][k][1] - held.trace["disc"][10][k][1]
+        self.assertAlmostEqual(drop, 0.4 * 0.17 / 0.22, delta=0.03)              # in the iris' half heights
+        lower = held.trace["lights"].index("左HL")                               # the morph leaves it
+        self.assertAlmostEqual(held.trace["disc"][10][lower][1], free.trace["disc"][10][lower][1], delta=0.01)
+        shown = light_on_screen([dance(), gaze(), held.motion], 10, "左HL２", "左目", 1.0, {"まばたき": 0.4})
+        bare = light_on_screen([dance(), gaze(), free.motion], 10, "左HL２", "左目", 1.0)
+        self.assertAlmostEqual(bare[1] - shown[1], 0.4 * 0.17, delta=0.005)
 
     def test_without_a_face_the_lights_stay_out(self):
         result = run()

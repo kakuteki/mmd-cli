@@ -51,8 +51,13 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   lids over lights that pmx_eyes brought out in front of the iris' rim.  Each eye's back morph (pmx_eyes: 光戻し右,
   光戻し左) takes its lights back by their lifts as that eye's most shut closing morph (read from --face) goes from
   light.lid[0] to light.lid[1] (smoothstep; 0.45 to 0.85: the MV holds its lids about 0.3 shut in half its frames,
-  where the lights must stay out, and lifted lights showed through a lid 0.7 shut).  A light taken back lies nearer
-  its bone's pivot and is solved at that depth.  Without --face the lights stay out and a shut lid shows them.
+  where the lights must stay out, and lifted lights showed through a lid 0.7 shut).  Without --face the lights stay
+  out and a shut lid shows them.
+* The face's morphs also move the light quads themselves: Sour's Rin's まばたき and 笑い drag the upper lights down
+  with the lid (at the MV's resting 0.3, by a quarter of the iris' radius), so that a lowering lid never passes behind
+  a light.  That drag is kept: a light held in place while the lid came down showed in front of the lid (blink 0.5,
+  smile 0.6; stage 5 lid probe).  The bones are solved for the lights' places without it; the report and the trace
+  give the places with it (light_drags), as MMD shows them.
 * The light leaves the cornea when the light source lies more than 90 to 100 degrees from the camera (RESEARCH 1.6;
   the coordinator's rule): the morph HL消 (the light material's opacity) goes from 0 at light.hide[0] to 1 at
   light.hide[1] degrees between the light and the camera seen from the eyes, each frame on its own.  (The research's
@@ -399,17 +404,18 @@ def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4):
     line through `target` (seen along `view`): damped least squares over the two turns across `radial`, `damping`
     times depth as the damping, a few Gauss-Newton steps.  Seen from the front it lands on the line; seen side on,
     where a turn hardly moves the light across the line of sight, the damping keeps the turn small."""
-    lam = (damping * depth) ** 2
+    p = _scale(_unit(radial), depth)
+    lam = (damping * math.sqrt(_dot(p, p))) ** 2
     total = fk.IDENTITY
-    r = _unit(radial)
     for _ in range(steps):
+        r = _unit(p)
         a = _cross(r, view)
         if math.sqrt(_dot(a, a)) < 1e-9:
             a = _cross(r, UP)
         a = _unit(a)
         b = _cross(r, a)
-        ja, jb = _across(_scale(_cross(a, r), depth), view), _across(_scale(_cross(b, r), depth), view)
-        e = _across(_sub(target, _add(pivot, _scale(r, depth))), view)
+        ja, jb = _across(_cross(a, p), view), _across(_cross(b, p), view)
+        e = _across(_sub(target, _add(pivot, p)), view)
         aa, ab, bb = _dot(ja, ja) + lam, _dot(ja, jb), _dot(jb, jb) + lam
         ea, eb = _dot(ja, e), _dot(jb, e)
         det = aa * bb - ab * ab
@@ -418,7 +424,7 @@ def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4):
         x, y = (bb * ea - ab * eb) / det, (aa * eb - ab * ea) / det
         step = _about_vector(_add(_scale(a, x), _scale(b, y)))
         total = fk.multiply(step, total)
-        r = fk.rotate(step, r)
+        p = fk.rotate(step, p)
         if abs(x) + abs(y) < 1e-12:
             break
     return total
@@ -660,6 +666,41 @@ def morph_track(motion, name, n):
         else:
             b = keys[j + 1]
             out.append(a.weight + (b.weight - a.weight) * (f - a.frame) / float(b.frame - a.frame))
+    return out
+
+
+def light_drags(doc, face, n, backs, skip=pmx_eyes.REVEAL):
+    """{light quad (bone) name: [(dx, dy, dz) per frame]}: how far the face's morphs move the quad's centre before its
+    bone turns it (each keyed vertex morph that moves its vertices, but the reveal morphs `skip` the model is built
+    with on and the back morphs, by the mean offset of its vertices times the weight)"""
+    quads = pmx_eyes.plan(doc)[0]
+    offsets = pmx_eyes.vertex_morphs(doc)
+    keyed = sorted({k.name for k in face.morphs}) if face is not None else []
+    back_names = {name for name, _ in backs.values()}
+    moving = {}
+    for name in keyed:
+        if name in skip or name in back_names or name not in offsets:
+            continue
+        mine = {}
+        for q in quads:
+            shift = [sum(offsets[name].get(v, (0.0, 0.0, 0.0))[c] for v in q["vertices"]) / len(q["vertices"])
+                     for c in range(3)]
+            if any(abs(c) > 1e-9 for c in shift):
+                mine[q["name"]] = shift
+        if mine:
+            moving[name] = mine
+    tracks = {name: morph_track(face, name, n) for name in moving}
+    out = {}
+    for q in quads:
+        rows = []
+        for i in range(n):
+            d = [0.0, 0.0, 0.0]
+            for name, mine in moving.items():
+                if q["name"] in mine:
+                    w = tracks[name][i]
+                    d = [a + w * b for a, b in zip(d, mine[q["name"]])]
+            rows.append(tuple(d))
+        out[q["name"]] = rows
     return out
 
 
@@ -937,6 +978,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         pushes = lid_track(face, closing, eye_idx, n, lp["lid"])
     else:
         pushes = {e: [0.0] * n for e in eye_idx}
+    drags = light_drags(doc, face, n, backs)
     # the light
     light = toward_light(lp["direction"])
     cornea = lp["cornea_radius_mm"] / lp["iris_radius_mm"]
@@ -1007,7 +1049,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             turn = light_turn(pivot, depth, radial, target, _unit(_sub(cam, target)), lp["damping"])
             key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
             keys_q[c["name"]].append(key)
-            spot = _add(pivot, _scale(fk.rotate(fk.multiply(hr, fk.multiply(key, fallback)), FORWARD), depth))
+            spot = _add(pivot, fk.rotate(fk.multiply(hr, fk.multiply(key, fallback)),     # as MMD shows it
+                                         _add(_scale(FORWARD, depth), drags[c["name"]][i])))
             uv = disc_coordinates(cam, spot, centre, ax, ay, normal, ix, iy)
             discs[c["name"]].append(uv)
             ahead[c["name"]].append(_dot(_sub(spot, centre), normal))
