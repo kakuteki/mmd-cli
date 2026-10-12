@@ -1359,7 +1359,7 @@ class RealSongTest(unittest.TestCase):
     0.70 s, 8 and 0.07, but let the gaze flow with the head between saccades (review gaze-smooth): with the head at
     15 to 120 deg/s the gaze stayed under 10 deg/s on 15 % of the steps (the stage-1 tool 88 %), and with the head
     under 20 deg/s it moved more than 0.1 degree a frame on 73 % (1 %).  The fix keeps the gaze in the world (66 %
-    and 12 %) with 1.44 saccades a second and fixations of 0.47 s.  The head carries a07's large gaze changes 63 %
+    and 13 %) with 1.43 saccades a second and fixations of 0.47 s.  The head carries a07's large gaze changes 62 %
     by the list's split and 82 % by v_sac (2.7 % and 37 % before stage 5); a target of stage 1, not of stage 5"""
 
     def test_the_whole_song_meets_the_targets(self):
@@ -1389,7 +1389,7 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(m["eccentric_15_share"], 0.10)
         self.assertGreaterEqual(m["contact"]["episode_median_s"], 1.5, m["contact"])
         # stage 5 (the coordinator's acceptance of the review fix): fewer saccades, none of one frame, fixations of
-        # 0.4 s or more (median), at most 8 degrees a frame outside saccades, few reversals (0.06 a second, the
+        # 0.4 s or more (median), at most 8 degrees a frame outside saccades, few reversals (0.05 a second, the
         # stage-1 tool 0.76)
         saccades = report["saccades"]["list"]
         rate = len(saccades) / (7743 / 30.0)
@@ -1427,7 +1427,8 @@ class RealSongTest(unittest.TestCase):
 class OlderSongTest(unittest.TestCase):
     """an earlier dance of the same song with the camera before the handheld shake: no cues, so no anchors (only the
     long contacts); the limits hold, the eyes still lead and stay off the edge, and the gaze stays put in the world
-    between saccades (66 % and 13 % by the measures of the MV's dance)"""
+    between saccades (with the head at 15 to 120 deg/s the gaze under 10 deg/s on 66 % of the steps, with the head
+    under 20 deg/s moving more than 0.1 degree a frame on 13 %)"""
 
     def test_the_older_dance_without_cues(self):
         folder = tempfile.mkdtemp()
