@@ -2,7 +2,7 @@
 gaze by a share of its rotation, as the reflection of a light on the cornea does.
 
     python tools/pmx_eyes.py MODEL.pmx OUT.pmx [--report r.json] [--share K] [--material HL]
-                             [--reveal HL HL２] [--pupil-morph 瞳大] [--clear 0.06] [--margin 0.008] [--rim 0.03]
+                             [--reveal HL HL２] [--pupil-morph 瞳大] [--clear D] [--margin 0.008] [--rim D]
 
 Why: on Sour's Rin the highlights (material HL) hang on the iris' bone (右目子 / 左目子) and turn with the eye as if
 painted on it: turned 15 degrees, the eye carries its light along to the same spot of the iris (stage 4 probe, f45 and
@@ -40,22 +40,16 @@ What is built (formats.pmx_edit keeps every other byte of the file):
   tool did not see.
 * The quad's vertices move wholly onto its bone (BDEF1); no other weight changes.  The new bones join the display
   frame that holds 両目.
-* A light that no longer turns with the iris slides across it, and Sour's Rin's iris is a dish (its rim 0.11 in front
-  of its centre) with the lights between its rim's depth and its bottom's: turned 15 degrees, the eye hid a light
-  behind its own rim, and seen at a slant (the far eye of a head turned 25 degrees) the near rim hid the deep lights
-  (stage 5 probes).  A real light lies on the cornea, in front of the iris (about 2 mm in front of it at 0.8 of its
-  radius).  So each quad comes out toward -Z, as far as it must to lie --rim in front of the iris' frontmost point
-  (iris_front, the rim; Sour's Rin: 0.03, 2.4 mm at her scale) and --margin in front of the iris and the eye white
-  (materials 瞳 and 目白, rest pose) when slid by up to --clear across X and Y (lift_quads, the larger of the two;
-  Sour's Rin: 0.05 to 0.15).
-* A shut lid must hide the lights where it hid them before the lift (lifted, they showed through a shut blink or
-  smile: stage 5 lid probe), but a face holds its lids half shut much of the time (the MV's まばたき is above 0.25 in
-  58 % of its frames), and closing morphs that took the lights back in step with their weight put the deep lights
-  behind the rim again.  So the closing morphs (those that lower an eye's upper light by CLOSING_DROP on average:
-  まばたき, 笑い, ウィンク, ...) stay as they were, and one morph per eye, after every morph of the file
-  (add_back_morphs: 光戻し右 and 光戻し左, English catchlight_back_R / _L, in the display frame 表情), takes that eye's
-  lights back by their lifts.  tools/eye_optics.py keys it from the face's closing morphs: 0 while the lid is held
-  half shut, 1 when it is shut.  Without that motion a shut lid shows the lifted lights.
+* The bones can also move (translate): tools/eye_optics.py keys each light along the camera's line onto the iris'
+  surface where the light has come to, at the height above it the light was drawn at.  Sour's Rin's iris is a shallow
+  dish tilted outward (at 0.9 of its radius its nasal side lies 0.1 in front of its temporal side) and each light was
+  drawn 0.01 to 0.04 in front of the dish where it lies: a light that slides across the iris without that hides behind
+  the dish where it rises (turned 15 degrees, the eye hid a light behind its own rim; seen at a slant the near rim hid
+  the deep lights: stage 5 probes).  A lift instead (every light brought out in front of the iris' frontmost point)
+  put the temporal lights 0.1 to 0.15 in front of their own part of the dish, in front of the lids too: the lights
+  showed on the lash line and on the lower lid's skin (stage 5 ray check of the MV, 2.7 % of the lights in frames).
+  So nothing is lifted by default; the closing morphs (まばたき, 笑い, ウィンク, ...) stay as they were and hide the
+  lights where they always did.  lift_quads (--clear, --rim) brings the quads out when asked.
 
 Names: the side's first character and the reveal morph (右HL２, 右HL, 左HL２, 左HL; at most 15 bytes of cp932, the VMD
 limit), English names catchlight_<R|L>_<n> (the upper quad first).  A model that already has them is refused.  The
@@ -93,10 +87,10 @@ SIDE_EN = {"右": "R", "左": "L"}
 APPEND_ROTATE = 0x0100
 NAME_BYTES = 15                 # a VMD names a bone in 15 bytes of cp932
 SURFACES = ("瞳", "目白")         # the iris and the eye white: a light stays in front of them
-CLEAR = 0.06                    # model units a light may slide across them and stay in front (see lift_quads)
+CLEAR = None                    # model units a light may slide across them and stay in front (lift_quads; None: no rule)
 MARGIN = 0.008                  # model units it stays in front by at least
-RIM = 0.03                      # model units a light lies in front of the iris' frontmost point at least (lift_quads)
-BACK = "光戻し"                  # the morphs that take an eye's lights back (add_back_morphs): 光戻し右, 光戻し左
+RIM = None                      # model units a light lies in front of the iris' frontmost point (lift_quads; None: no rule)
+TRANSLATE = 0x0004              # the bone moves: tools/eye_optics.py keeps each light on the iris' surface
 CLOSING_DROP = 0.08             # a morph that lowers an eye's upper light by this much on average closes its lids
 
 
@@ -263,7 +257,7 @@ def surface_z(triangles, x, y):
     return best
 
 
-def needed_lift(points, triangles, clear=CLEAR, margin=MARGIN, rings=3, spokes=16):
+def needed_lift(points, triangles, clear=0.06, margin=MARGIN, rings=3, spokes=16):
     """how far toward -Z the points must come so that each, slid by up to `clear` across X and Y in any direction,
     lies at least `margin` in front of the triangles (0 when they already do)"""
     import math
@@ -317,9 +311,8 @@ def iris_front(doc, eye_idx, material=IRIS_MATERIAL):
 def lift_quads(doc, quads, reveal, clear=CLEAR, margin=MARGIN, surfaces=SURFACES, rim=RIM, iris_material=IRIS_MATERIAL):
     """bring each quad (revealed) out in front of the eye's iris and white for slides up to `clear` (needed_lift) and,
     unless `rim` is None, `rim` in front of the iris' frontmost point (iris_front), moving its vertices toward -Z (the
-    larger of the two lifts).  The morphs that close the lids over an eye (closing_morphs) are left as they were:
-    add_back_morphs takes the lights back for them.  Updates the quads' centroid, depth and pivot; returns
-    ({quad name: lift}, {morph: [eye names]})"""
+    larger of the two lifts).  The morphs that close the lids over an eye (closing_morphs) are left as they were.
+    Updates the quads' centroid, depth and pivot; returns ({quad name: lift}, {morph: [eye names]})"""
     morphs = vertex_morphs(doc)
     shown = [morphs[name] for name in reveal if name in morphs]
     eye_idx = sorted({q["eye_index"] for q in quads})
@@ -335,7 +328,7 @@ def lift_quads(doc, quads, reveal, clear=CLEAR, margin=MARGIN, surfaces=SURFACES
                 if o:
                     p = [a + b for a, b in zip(p, o)]
             pts.append(tuple(p))
-        lift = needed_lift(pts + [_centroid(pts)], tris[q["eye_index"]], clear, margin)
+        lift = needed_lift(pts + [_centroid(pts)], tris[q["eye_index"]], clear, margin) if clear is not None else 0.0
         if q["eye_index"] in front:
             lift = max(lift, max(p[2] for p in pts) - (front[q["eye_index"]] - rim))
         lifts[q["name"]] = lift
@@ -351,42 +344,6 @@ def lift_quads(doc, quads, reveal, clear=CLEAR, margin=MARGIN, surfaces=SURFACES
         q["pivot"] = (q["pivot"][0], q["pivot"][1], q["pivot"][2] - lift)
         q["depth"] += lift
     return lifts, {name: sorted(doc.bones[e].name for e in eyes) for name, eyes in sorted(closing.items())}
-
-
-def back_morph_name(eye_name):
-    """(name, English name) of the morph that takes an eye's lights back: 光戻し右 / catchlight_back_R"""
-    side = eye_name[0]
-    return BACK + side, "%s_back_%s" % (EN_PREFIX, SIDE_EN.get(side, side))
-
-
-def add_back_morphs(doc, quads, lifts, eye_idx, panel=2):
-    """one vertex morph per eye, after every morph of the file (no index moves), that takes the eye's lights back by
-    their lifts (+Z), joined to the display frame that holds the morphs (表情); returns {eye name: morph name}.
-    tools/eye_optics.py keys them as the face's closing morphs shut the lids (a lid held half shut keeps the lights
-    out in front of the rim; a shut lid hides them where it hid them before the lift)."""
-    names = {morph_name(doc, m) for m in doc.morphs}
-    size = doc.sizes["vertex"]
-    fmt = "<" + {1: "B", 2: "H", 4: "i"}[size]
-    frame = next((f for f in doc.frames if f.names[-1:] == b"\x01" and any(k == 1 for k, _ in f.items)), None)
-    out = {}
-    for e in eye_idx:
-        eye = doc.bones[e].name
-        name, name_en = back_morph_name(eye)
-        if name in names:
-            raise ValueError("the model already has a morph named %s" % name)
-        offsets = {}
-        for q in quads:
-            if q["eye_index"] == e and lifts[q["name"]] > 0.0:
-                for v in q["vertices"]:
-                    offsets[v] = (0.0, 0.0, lifts[q["name"]])
-        enc = doc.encoding
-        head = b"".join(struct.pack("<i", len(t.encode(enc))) + t.encode(enc) for t in (name, name_en)) + bytes([panel, 1])
-        body = b"".join(struct.pack(fmt, v) + struct.pack("<3f", *offsets[v]) for v in sorted(offsets))
-        doc.morphs.append(pmx_edit.Morph(head, 1, len(offsets), body))
-        if frame is not None:
-            frame.items = frame.items + [(1, len(doc.morphs) - 1)]
-        out[eye] = name
-    return out
 
 
 def model_scale(doc, pupil_morph=PUPIL_MORPH, iris_material=IRIS_MATERIAL):
@@ -500,17 +457,16 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
     clash = [q["name"] for q in quads if q["name"] in taken]
     if clash:
         raise ValueError("the model already has bones named %s" % ", ".join(clash))
-    if clear < 0.0 or margin < 0.0 or (rim is not None and rim < 0.0):
+    if (clear is not None and clear < 0.0) or margin < 0.0 or (rim is not None and rim < 0.0):
         raise ValueError("--clear, --margin and --rim are distances in model units, 0 or more")
     front = iris_front(doc, eye_idx)
     lifts, closing = lift_quads(doc, quads, tuple(reveal), clear, margin, rim=rim)
-    back = add_back_morphs(doc, quads, lifts, eye_idx)
     added = []
     for q in quads:
         eye = doc.bones[q["eye_index"]]
         bone = pmx_edit.new_bone(q["name"], q["name_en"], q["pivot"], parent=eye.parent, layer=eye.layer,
                                  tail_offset=tuple(depth[eye.name] * f for f in FORWARD))
-        bone.flags |= APPEND_ROTATE
+        bone.flags |= APPEND_ROTATE | TRANSLATE
         bone.append_parent, bone.append_ratio = handle_idx, float(share)
         index = pmx_edit.insert_bone(doc, len(doc.bones), bone)
         for v in q["vertices"]:
@@ -534,7 +490,6 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
                        "lift": round(lifts[q["name"]], 6)} for q in quads],
             "clear": clear, "margin": margin, "rim": rim,
             "iris_front": {doc.bones[e].name: round(z, 6) for e, z in sorted(front.items())}, "closing": closing,
-            "back": back,
             "moved_vertices": sum(len(q["vertices"]) for q in quads), "display_frame": frame_name}
 
 
@@ -562,10 +517,10 @@ def main(argv=None):
     ap.add_argument("--reveal", nargs="+", default=list(REVEAL), help="the morphs that pull the highlights out (default HL HL２)")
     ap.add_argument("--pupil-morph", default=PUPIL_MORPH, help="a morph of the pupil's vertices: their depth (default %s)" % PUPIL_MORPH)
     ap.add_argument("--clear", type=float, default=CLEAR,
-                    help="model units a light may slide across the iris and stay in front of it (default %g)" % CLEAR)
+                    help="model units a light may slide across the iris and stay in front of it (default: no rule)")
     ap.add_argument("--margin", type=float, default=MARGIN, help="how far in front, at least (default %g)" % MARGIN)
     ap.add_argument("--rim", type=float, default=RIM,
-                    help="model units every light lies in front of the iris' frontmost point, at least (default %g)" % RIM)
+                    help="model units every light lies in front of the iris' frontmost point, at least (default: no rule)")
     a = ap.parse_args(argv)
     try:
         if os.path.normcase(os.path.abspath(a.model)) == os.path.normcase(os.path.abspath(a.out)):

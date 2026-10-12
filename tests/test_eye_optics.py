@@ -416,7 +416,7 @@ class OpticsTest(unittest.TestCase):
         result = run(c=camera(1.0))
         m = result.motion
         self.assertEqual({k.name for k in m.bones}, {"右目", "左目", "右HL２", "右HL", "左HL２", "左HL"})
-        self.assertEqual({k.name for k in m.morphs}, {"瞳大", "瞳細", "HL消", "光戻し右", "光戻し左"})
+        self.assertEqual({k.name for k in m.morphs}, {"瞳大", "瞳細", "HL消"})
         rep = result.report
         self.assertEqual(rep["vergence"]["labels"], {"camera": 91})
         self.assertAlmostEqual(rep["model"]["share"], 0.55, 6)
@@ -521,8 +521,7 @@ class OpticsTest(unittest.TestCase):
         rep = result.report["light"]
         self.assertGreater(rep["edge_frames"], 0)
         self.assertLessEqual(rep["disc_r"]["max"], reach + 1e-3)
-        self.assertGreater(rep["ahead"]["min"], 0.0)            # every light in front of its iris' rim
-        self.assertEqual(rep["behind_frames"], 0)
+        self.assertGreater(result.report["ride"]["height"]["min"], 0.0)   # every light in front of its iris' surface
 
     def test_a_small_cap_holds_the_light(self):
         g = gaze(90, {0: (15.0, 0.0)})
@@ -629,48 +628,18 @@ class KeyTest(unittest.TestCase):
 
 
 class LidTest(unittest.TestCase):
-    """pmx_eyes' back morphs take the lifted lights back as the face's closing morphs shut the lids (the toy's まばたき
-    lowers both upper lights: it closes both eyes)"""
+    """the face's closing morphs move the light quads themselves (the toy's まばたき lowers both upper lights: it
+    closes both eyes), as Sour's Rin's drag her upper lights down with the lids"""
 
     @staticmethod
     def face(weights):
         return vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", f, w) for f, w in sorted(weights.items())])
 
-    def test_a_lid_held_half_shut_keeps_the_lights_out_and_a_shut_one_takes_them_back(self):
-        result = run(face=self.face({0: 0.3, 30: 0.3, 40: 1.0, 60: 1.0, 70: 0.3, 90: 0.3}))
-        lo, hi = eye_optics.PARAMS["light"]["lid"]
-        self.assertGreater(lo, 0.3)                                  # the MV's lids rest about 0.3 shut
-        for name in ("光戻し右", "光戻し左"):
-            self.assertEqual(morph_at(result.motion, name, 10), 0.0)
-            self.assertAlmostEqual(morph_at(result.motion, name, 50), 1.0, 3)
-            self.assertEqual(morph_at(result.motion, name, 80), 0.0)
-            for f in range(30, 41):                                  # smoothstep of the blink from lo to hi
-                x = min(1.0, max(0.0, (0.3 + 0.07 * (f - 30) - lo) / (hi - lo)))
-                self.assertAlmostEqual(morph_at(result.motion, name, f), x * x * (3.0 - 2.0 * x), delta=0.002)
-        rep = result.report["lid"]
-        self.assertTrue(rep["face"])
-        self.assertEqual(rep["closing"], {"まばたき": ["右目", "左目"]})
-        self.assertEqual(rep["back"], {"右目": "光戻し右", "左目": "光戻し左"})
-        self.assertEqual(result.trace["back"][50], [1.0, 1.0])
-        self.assertEqual(result.trace["back"][10], [0.0, 0.0])
-
-    def test_a_light_half_taken_back_still_lands_on_its_place(self):
-        """taken back, the light lies nearer its bone's pivot: it is solved at that depth"""
-        half = run(c=camera(1.0), face=self.face({0: 0.65, 90: 0.65}))
-        out = run(c=camera(1.0), face=self.face({0: 0.0, 90: 0.0}))
-        self.assertGreater(half.trace["back"][10][0], 0.2)
-        for name in ("右HL", "左HL"):                  # the lifted ones (the toy's まばたき drags only the upper ones)
-            k = half.trace["lights"].index(name)
-            a, b = half.trace["disc"][10][k], out.trace["disc"][10][k]
-            self.assertAlmostEqual(a[0], b[0], delta=0.02)
-            self.assertAlmostEqual(a[1], b[1], delta=0.02)
-
     def test_a_lowering_lid_drags_the_upper_light_as_the_model_does(self):
         """the toy's まばたき moves its upper lights (0, -0.17, 0.05) per unit, as Sour's Rin's drags hers down with the
         lid: kept (held in place, a lifted light shows in front of the lid); the trace gives the place MMD shows"""
-        held = run(c=camera(1.0), face=self.face({0: 0.4, 90: 0.4}))           # under the back morph's ramp
+        held = run(c=camera(1.0), face=self.face({0: 0.4, 90: 0.4}))
         free = run(c=camera(1.0), face=self.face({0: 0.0, 90: 0.0}))
-        self.assertEqual(held.trace["back"][10], [0.0, 0.0])
         k = held.trace["lights"].index("左HL２")
         drop = free.trace["disc"][10][k][1] - held.trace["disc"][10][k][1]
         self.assertAlmostEqual(drop, 0.4 * 0.17 / 0.22, delta=0.03)              # in the iris' half heights
@@ -709,11 +678,74 @@ class LidTest(unittest.TestCase):
         self.assertLessEqual(max(math.hypot(*row[k]) for row in held.trace["disc"]), reach + 0.01)
         self.assertLess(held.trace["disc"][10][k][1], free.trace["disc"][10][k][1] - 0.05)   # still dragged down
 
-    def test_without_a_face_the_lights_stay_out(self):
-        result = run()
-        self.assertFalse(result.report["lid"]["face"])
-        for name in ("光戻し右", "光戻し左"):
-            self.assertEqual(max(morph_at(result.motion, name, f) for f in range(0, 91, 10)), 0.0)
+class RideTest(unittest.TestCase):
+    """each light rides on its iris at the height it was drawn at: its bone moves along the camera's line (keys with
+    positions), so where the light shows does not change while it follows the iris' surface"""
+    SLOPE = 0.4
+
+    @classmethod
+    def tilted(cls):
+        """the toy with its irises tilted as Sour's Rin's are: the nasal side in front, z falling by SLOPE per unit
+        toward the nose"""
+        data, layout = toy_bytes(extra_bones=[("右人指３先", -1, HAND_REST)], iris_z=-0.96)
+        doc = pmx_edit.loads(data)
+        for side, s in (("右", -1.0), ("左", 1.0)):
+            for v in layout["iris"][side]:
+                x, y, z = doc.vertices[v].position()
+                doc.vertices[v].head = struct.pack("<3f", x, y, z - cls.SLOPE * cls.nasal(x, s)) + doc.vertices[v].head[12:]
+        pmx_eyes.build(doc, share=0.55)
+        return pmx_edit.dumps(doc)
+
+    @staticmethod
+    def nasal(x, s):
+        """how far toward the nose of the eye on side s (-1 right, +1 left) x lies from that iris' centre"""
+        return (x - s * 0.507) * -s
+
+    def height(self, model_bytes, motion_list, frame, name):
+        """the light's height in front of the tilted iris (FK of the written keys, in the iris' rest frame)"""
+        model = pmx.loads(model_bytes)
+        b = next(x for x in model.bones if x.name == name)
+        iris = next(x for x in model.bones if x.name == name[0] + "目子")
+        pose = fk.Pose(model, eye_optics.merge(*motion_list), [name, iris.name])
+        world = pose.at(frame)
+        lp, lr = world[name]
+        q = tuple(p + o for p, o in zip(lp, fk.rotate(lr, b.tail["offset"])))
+        ip, ir = world[iris.name]
+        r = tuple(a + o for a, o in zip(iris.position, fk.rotate(fk.conjugate(ir), tuple(c - d for c, d in zip(q, ip)))))
+        s = -1.0 if name[0] == "右" else 1.0
+        return (-0.96 - self.SLOPE * self.nasal(r[0], s)) - r[2]
+
+    def test_a_sliding_light_keeps_its_height_over_a_tilted_iris(self):
+        model = self.tilted()
+        head = {0: (0.0, 0.0), 10: (0.0, 0.0), 40: (30.0, 0.0), 90: (30.0, 0.0)}
+        d = dance(90, head=head)
+        result = eye_optics.optics(model, d, gaze(), camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET))
+        moved = 0.0
+        for name in ("右HL", "左HL"):                       # the lower lights (the upper ones lie over the pupil)
+            k = result.trace["lights"].index(name)
+            moved = max(moved, math.hypot(*(a - b for a, b in zip(result.trace["disc"][60][k], result.trace["disc"][5][k]))))
+            rest = self.height(model, [d, gaze(), result.motion], 5, name)
+            self.assertGreater(rest, 0.0)
+            for f in (20, 30, 45, 60, 90):
+                self.assertAlmostEqual(self.height(model, [d, gaze(), result.motion], f, name), rest, delta=0.004,
+                                       msg=(name, f))
+        self.assertGreater(moved, 0.2)                      # they did slide across their irises
+        self.assertTrue(any(max(abs(c) for c in k.position) > 1e-3 for k in keys_of(result.motion, "左HL")))
+
+    def test_riding_does_not_move_the_light_on_the_screen(self):
+        model = self.tilted()
+        head = {0: (0.0, 0.0), 10: (0.0, 0.0), 40: (30.0, 0.0), 90: (30.0, 0.0)}
+
+        def go(ride):
+            p = eye_optics.merge_params(eye_optics.PARAMS, {"light": {"ride": ride}, "pupil": {"unrest": {"amplitude": 0.0}}})
+            return eye_optics.optics(model, dance(90, head=head), gaze(), camera(1.0), p)
+        on, off = go(True), go(False)
+        for f in (5, 30, 60):
+            for k in range(4):
+                a, b = on.trace["screen"][f][k], off.trace["screen"][f][k]
+                self.assertAlmostEqual(a[0], b[0], delta=0.01)
+                self.assertAlmostEqual(a[1], b[1], delta=0.01)
+        self.assertFalse(any(max(abs(c) for c in k.position) > 0.0 for k in keys_of(off.motion, "左HL")))
 
 
 class OverlapTest(unittest.TestCase):
@@ -768,21 +800,6 @@ class CommandTest(unittest.TestCase):
         for key in ("label", "vergence", "light", "hide", "pupil", "camera_aside", "disc", "ahead"):
             self.assertEqual(len(data[key]), 91, key)
         self.assertEqual(len(data["disc"][0]), len(data["lights"]))
-
-    def test_refuses_a_face_that_keys_a_back_morph(self):
-        face = os.path.join(self.tmp, "face.vmd")
-        vmd.dump(vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("光戻し右", 10, 0.5)]), face)
-        with contextlib.redirect_stdout(io.StringIO()) as printed:
-            self.assertEqual(eye_optics.main(self.args("--face", face)), 2)
-        self.assertIn("光戻し右", json.loads(printed.getvalue())["error"]["message"])
-
-    def test_the_face_takes_the_lights_back(self):
-        face = os.path.join(self.tmp, "face.vmd")
-        vmd.dump(vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", 0, 1.0)]), face)
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(eye_optics.main(self.args("--face", face)), 0)
-        motion = vmd.load(os.path.join(self.tmp, "out.vmd"))
-        self.assertEqual(morph_at(motion, "光戻し左", 20), 1.0)
 
     def test_refuses_an_output_over_an_input(self):
         with contextlib.redirect_stdout(io.StringIO()) as printed:
