@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -345,6 +346,81 @@ class DanceKeysTest(unittest.TestCase):
             both = np.interp(np.arange(F), fr, [d[f] for f in fr])
             np.testing.assert_allclose(both, alone[name], atol=1e-6)
         self.assertNotIn("ﾏﾆｷｭｱ", alone)
+
+
+class HoldTest(unittest.TestCase):
+    # --hold NAME=WEIGHT: a morph the face motion does not animate, kept at one weight over the whole song (Sour's
+    # Rin: 瞳1off shows the dark pupil, HL２ the catchlight; both are 0 when nothing keys them)
+
+    def test_a_held_morph_stays_at_its_weight_on_every_frame(self):
+        result = face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0, "HL２": 0.5})
+        t = tracks(result.motion)
+        np.testing.assert_allclose(t["瞳1off"], 1.0)
+        np.testing.assert_allclose(t["HL２"], 0.5)
+        self.assertEqual(result.report["held"], {"瞳1off": 1.0, "HL２": 0.5})
+
+    def test_holding_changes_nothing_else(self):
+        plain = tracks(face_life.plan(inputs(), seed=0).motion)
+        held = tracks(face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0}).motion)
+        self.assertEqual(set(held) - set(plain), {"瞳1off"})
+        for name, track in plain.items():
+            np.testing.assert_array_equal(held[name], track)
+
+    def test_a_held_morph_also_wins_on_the_frames_the_dance_keys_it(self):
+        dance = [("瞳1off", 0), ("瞳1off", 400)]
+        result = face_life.plan(inputs(dance_morph_keys=dance), seed=0, hold={"瞳1off": 1.0})
+        merged = {f: 0.0 for _, f in dance}                             # what the dance puts there
+        for k in result.motion.morphs:                                  # the face motion is loaded after the dance
+            if k.name == "瞳1off":
+                merged[k.frame] = k.weight
+        fr = sorted(merged)
+        np.testing.assert_allclose(np.interp(np.arange(F), fr, [merged[f] for f in fr]), 1.0)
+
+    def test_a_morph_the_model_lacks_cannot_be_held(self):
+        with self.assertRaisesRegex(ValueError, "瞳1off"):
+            face_life.plan(inputs(morphs={"まばたき", "あ"}), seed=0, hold={"瞳1off": 1.0})
+
+    def test_a_morph_the_face_motion_animates_cannot_be_held(self):
+        with self.assertRaisesRegex(ValueError, "まばたき"):
+            face_life.plan(inputs(), seed=0, hold={"まばたき": 0.0})
+
+    def test_a_morph_the_tool_itself_animates_cannot_be_held(self):
+        # 口角上げ has only a 0 key in the face motion, but the tool adds it under 笑い (review of 366de78, 1)
+        with self.assertRaisesRegex(ValueError, "口角上げ"):
+            face_life.plan(inputs(), seed=0, hold={"口角上げ": 0.3})
+
+    def test_blinks_the_tool_makes_from_zero_keys_cannot_be_held(self):
+        face = face_motion()
+        face.morphs = [vmd.MorphKey(k.name, k.frame, 0.0) if k.name == "まばたき" else k for k in face.morphs]
+        with self.assertRaisesRegex(ValueError, "まばたき"):
+            face_life.plan(inputs(face=face), seed=0, hold={"まばたき": 0.0})
+
+    def test_a_morph_keyed_only_at_0_is_held_with_exactly_its_two_keys(self):
+        result = face_life.plan(inputs(), seed=0, hold={"ウィンク": 0.4})
+        keys = sorted((k.frame, k.weight) for k in result.motion.morphs if k.name == "ウィンク")
+        self.assertEqual(keys, [(0, 0.4), (F - 1, 0.4)])
+
+    def test_a_half_width_name_points_to_the_full_width_morph(self):
+        with self.assertRaisesRegex(ValueError, "HL２"):
+            face_life.plan(inputs(morphs={"HL２", "まばたき", "あ"}), seed=0, hold={"HL2": 1.0})
+
+    def test_the_command_passes_the_held_morphs_on_and_refuses_a_bad_one(self):
+        argv = ["f.vmd", "d.vmd", "g.vmd", "m.pmx", "o.vmd"]
+        with mock.patch.object(face_life, "run", return_value={}) as run, mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(face_life.main(argv + ["--hold", "瞳1off=1", "--hold", "HL２=0.5"]), 0)
+            self.assertEqual(run.call_args.args[-1], {"瞳1off": 1.0, "HL２": 0.5})
+            self.assertEqual(face_life.main(argv), 0)
+            self.assertEqual(run.call_args.args[-1], {})
+            run.reset_mock()
+            self.assertEqual(face_life.main(argv + ["--hold", "HL２"]), 2)
+            run.assert_not_called()
+
+    def test_the_option_is_name_equals_weight_from_0_to_1(self):
+        self.assertEqual(face_life.parse_hold(["瞳1off=1", "HL２=0.25"]), {"瞳1off": 1.0, "HL２": 0.25})
+        self.assertEqual(face_life.parse_hold(None), {})
+        for bad in (["瞳1off"], ["=1"], ["瞳1off=x"], ["瞳1off=1.5"], ["瞳1off=-0.1"], ["瞳1off=1", "瞳1off=0.5"]):
+            with self.assertRaises(ValueError, msg=bad):
+                face_life.parse_hold(bad)
 
 
 class SaccadeTest(unittest.TestCase):
