@@ -40,10 +40,19 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   further out): beyond the iris the reflection would leave the cornea, and the model's lights would hang over the
   eye white.  The key's turn is held under light.key_cap degrees (soft from 60 % of it).  pmx_eyes brings every
   light out in front of the iris' rim, so the rim does not hide it seen at a slant.
-* When the camera sees her face from the side or behind (more than light.side[0] degrees off the face's forward, both
-  eyes' mean) the eye is seen at a slant and the solve asks for large turns: the turn gives way, by light.side[1]
-  degrees wholly, to the light painted on the iris (the key that adds the rest of the eye's turn to the append; the
-  eye is hardly seen there).
+* Where the camera sees an iris nearly edge on (its line to the iris more than light.side[0] degrees off the iris'
+  forward, each eye on its own) the light's place gives way to its drawn place on that iris, wholly at light.side[1]
+  degrees (84: past about 84 degrees, SEEN_COS, the iris is not seen and has no place to measure on).  The formula's
+  place itself keeps moving toward the near edge as the iris turns away, so the hand-over is kept to the last few
+  degrees, where the iris is a sliver: begun at 45 degrees, a head swinging 17 degrees a frame threw the light back
+  across the iris in one frame (the MV's 111.2 seconds).  Seen from behind, the solve holds the light at its drawn
+  place too (the camera's line runs along the iris' axis there), with small keys.
+* The lids: the face's closing morphs (those that lower an eye's upper light: まばたき, 笑い, ウィンク, ...) shut the
+  lids over lights that pmx_eyes brought out in front of the iris' rim.  Each eye's back morph (pmx_eyes: 光戻し右,
+  光戻し左) takes its lights back by their lifts as that eye's most shut closing morph (read from --face) goes from
+  light.lid[0] to light.lid[1] (smoothstep; 0.45 to 0.85: the MV holds its lids about 0.3 shut in half its frames,
+  where the lights must stay out, and lifted lights showed through a lid 0.7 shut).  A light taken back lies nearer
+  its bone's pivot and is solved at that depth.  Without --face the lights stay out and a shut lid shows them.
 * The light leaves the cornea when the light source lies more than 90 to 100 degrees from the camera (RESEARCH 1.6;
   the coordinator's rule): the morph HL消 (the light material's opacity) goes from 0 at light.hide[0] to 1 at
   light.hide[1] degrees between the light and the camera seen from the eyes, each frame on its own.  (The research's
@@ -124,9 +133,10 @@ PARAMS = {
         "direction": [-0.5, -1.0, 0.5],      # MMD's light, as its window shows it (where the light goes)
         "hide": [90.0, 100.0],               # degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6)
         "cap": 1.0,                          # iris radii the light moves off its drawn place at most (soft)
-        "side": [45.0, 80.0],                # degrees the camera lies off the face's forward: the solve gives way
+        "side": [72.0, 84.0],                # degrees an iris is seen off its forward: its light gives way to its drawn place
+        "lid": [0.45, 0.85],                 # the eye's most shut closing morph: its lights go back from 0 to 1 (smoothstep)
         "damping": 0.15,                     # light_turn's damping, a share of the bone's depth
-        "key_cap": 30.0,                     # degrees a light bone's key turns at most (soft from 60 % of it)
+        "key_cap": 45.0,                     # degrees a light bone's key turns at most (soft from 60 % of it)
         "reach": 0.9,                        # iris radii from the iris' centre a light's centre goes at most (soft)
     },
     "vergence": {
@@ -450,15 +460,16 @@ def keep_on_iris(uv, drawn, reach):
     return tuple(c * kept / n for c in uv)
 
 
-def drawn_on_iris(dx, dy, right, normal, axis_x):
-    """the drawn offset (dx across, dy up, model units) laid on the iris' plane (its unit normal `normal`) along the
-    screen's right turned into that plane, and up in the plane square to it: it shrinks with the iris seen at a slant
-    and does not turn with the head's roll.  `axis_x` (the iris' own X) stands in when the plane is seen edge on."""
-    across = _sub(right, _scale(normal, _dot(right, normal)))
-    if math.sqrt(_dot(across, across)) < 1e-6:
-        across = axis_x
-    across = _unit(across)
-    return _add(_scale(across, dx), _scale(_cross(across, normal), dy))
+def drawn_on_iris(dx, dy, up, normal, axis_y):
+    """the drawn offset (dx across, dy up, model units) laid on the iris' plane (its unit normal `normal`, toward its
+    front): up along the screen's up turned into that plane, across square to it (normal x up, the iris' own +X for an
+    iris facing the camera, seen from in front or behind): it shrinks with the iris seen at a slant and does not turn
+    with the head's roll.  `axis_y` (the iris' own Y) stands in when the screen's up runs along the normal."""
+    rise = _sub(up, _scale(normal, _dot(up, normal)))
+    if math.sqrt(_dot(rise, rise)) < 1e-6:
+        rise = axis_y
+    rise = _unit(rise)
+    return _add(_scale(_cross(normal, rise), dx), _scale(rise, dy))
 
 
 SEEN_COS = 0.1                  # a disc seen more than about 84 degrees off its normal (or from behind) is not seen
@@ -610,6 +621,57 @@ def pupil_scales(doc, big=BIG, thin=THIN, iris_material=pmx_eyes.IRIS_MATERIAL):
         ps = [doc.vertices[v].position()[0] for v in morphs[big] if side[v] == e]
         if xs and ps and max(xs) > min(xs):
             out["ratio"] = (max(ps) - min(ps)) / (max(xs) - min(xs))
+    return out
+
+
+def lid_morphs(doc, eye_idx):
+    """(closing, back): {morph name: set of eye indices} of the morphs that shut an eye's lids (pmx_eyes.closing_morphs
+    on the model's light quads) and {eye index: (its back morph's name, {light quad (bone) name: its lift})} for the
+    eyes that have pmx_eyes' back morph"""
+    quads = pmx_eyes.plan(doc)[0]
+    closing = pmx_eyes.closing_morphs(doc, quads, pmx_eyes.REVEAL)
+    offsets = pmx_eyes.vertex_morphs(doc)
+    back = {}
+    for e in eye_idx:
+        name = pmx_eyes.back_morph_name(doc.bones[e].name)[0]
+        if name not in offsets:
+            continue
+        lifts = {}
+        for q in quads:
+            if q["eye_index"] == e:
+                dz = [offsets[name][v][2] for v in q["vertices"] if v in offsets[name]]
+                lifts[q["name"]] = sum(dz) / len(dz) if dz else 0.0
+        back[e] = (name, lifts)
+    return closing, back
+
+
+def morph_track(motion, name, n):
+    """a morph's weight per frame as MMD shows it: straight between keys, held before the first and after the last"""
+    keys = sorted((k for k in motion.morphs if k.name == name), key=lambda k: k.frame)
+    if not keys:
+        return [0.0] * n
+    out, j = [], 0
+    for f in range(n):
+        while j + 1 < len(keys) and keys[j + 1].frame <= f:
+            j += 1
+        a = keys[j]
+        if f <= a.frame or j + 1 == len(keys):
+            out.append(float(a.weight))
+        else:
+            b = keys[j + 1]
+            out.append(a.weight + (b.weight - a.weight) * (f - a.frame) / float(b.frame - a.frame))
+    return out
+
+
+def lid_track(face, closing, eye_idx, n, lid):
+    """{eye index: [the share of its lights' lift taken back, per frame]}: smoothstep of its most shut closing morph's
+    weight between lid[0] and lid[1]"""
+    tracks = {name: morph_track(face, name, n) for name in closing}
+    out = {}
+    for e in eye_idx:
+        mine = [tracks[name] for name in sorted(closing) if e in closing[name]]
+        out[e] = [_smoothstep((max(t[i] for t in mine) - lid[0]) / (lid[1] - lid[0])) + 0.0 if mine else 0.0
+                  for i in range(n)]
     return out
 
 
@@ -802,7 +864,7 @@ def _cuts(cameras):
     return out
 
 
-def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=None, chorus=(), seed=0):
+def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=None, chorus=(), seed=0, face=None):
     """the eye optics motion and its report for the model (the bytes of a PMX made by pmx_eyes), the dance, the gaze
     (両目) and the camera; `flares` and `chorus` in seconds, `arousal` the loudness per frame from 0 to 1"""
     p = merge_params(PARAMS, {}) if params is None else params
@@ -816,6 +878,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     head_index = heads.pop()
     head = model.bones[head_index].name
     lights = _catchlights(model, handle, eye_idx)
+    closing, backs = lid_morphs(doc, eye_idx)
     geometry = eye_geometry(doc)
     scales = pupil_scales(doc)
     names = {b.name for b in model.bones}
@@ -869,6 +932,11 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     iris_bones = [model.bones[geometry[e]["bone"]].name for e in eye_idx]
     iris_track = fk.world_track(model, merge(dance, gaze, vmd.Motion(model_name=dance.model_name, bones=eye_keys)),
                                 sorted(set(iris_bones)), 0, last)
+    # the lids: pmx_eyes' back morphs take the lights back as the face's closing morphs shut them
+    if face is not None:
+        pushes = lid_track(face, closing, eye_idx, n, lp["lid"])
+    else:
+        pushes = {e: [0.0] * n for e in eye_idx}
     # the light
     light = toward_light(lp["direction"])
     cornea = lp["cornea_radius_mm"] / lp["iris_radius_mm"]
@@ -885,6 +953,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     keys_q = {c["name"]: [] for c in lights}
     discs = {c["name"]: [] for c in lights}
     ahead = {c["name"]: [] for c in lights}
+    screen = {c["name"]: [] for c in lights}
     off_camera, off_axis, sideways = [], [], []
     edge = 0
     for i in range(n):
@@ -892,9 +961,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         inv = fk.conjugate(hr)
         q_handle = fk.applied(fk.sample(handle_track, frames[i], handle_frames)[1]) if handle_track else fk.IDENTITY
         cam = cameras[i][0]
-        face = fk.rotate(hr, FORWARD)
         per_eye = {}
-        alphas, axes_off, sides = [], [], []
+        alphas, axes_off, asides = [], [], []
         for e in eye_idx:
             k = side_of[e]
             eye_local = fk.multiply(turns[i][k], fk.multiply(inv, track[eyes[k]][i][1]))   # the vergence key on top
@@ -906,44 +974,45 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             h = _unit(_add(light, view))
             now = light_offset(h, axis, view, cornea, lag)
             moved = soft_cap((now[0] - rest_offset[0], now[1] - rest_offset[1]), lp["cap"])
-            per_eye[e] = (disc, view, moved)
+            aside = _smoothstep((_degrees_between(view, disc[3]) - lp["side"][0]) / (lp["side"][1] - lp["side"][0]))
+            per_eye[e] = (disc, view, moved, aside)
             alphas.append(_degrees_between(light, view))
             axes_off.append(_degrees_between(h, axis))
-            sides.append(_degrees_between(view, face))
+            asides.append(aside)
         off_camera.append(sum(alphas) / len(alphas))
         off_axis.append(sum(axes_off) / len(axes_off))
-        side = _smoothstep((sum(sides) / len(sides) - lp["side"][0]) / (lp["side"][1] - lp["side"][0]))
-        sideways.append(side)
+        sideways.append(max(asides))
         for c in lights:
-            (centre, ax, ay, normal), view, moved = per_eye[c["eye_index"]]
+            (centre, ax, ay, normal), view, moved, side = per_eye[c["eye_index"]]
             k = side_of[c["eye_index"]]
             ix, iy = geometry[c["eye_index"]]["iris"]
             u0, v0 = drawn[c["name"]]
             fallback = fk.power(q_handle, c["share"])
             pivot = _add(hp, fk.rotate(hr, _sub(c["pivot"], head_rest)))
-            painted = fk.multiply(turns[i][k], fk.power(q_handle, 1.0 - c["share"]))   # turning wholly with the eye
-            key = painted
+            right, up = screen_basis(view)
+            base = _add(centre, drawn_on_iris(u0 * ix, v0 * iy, up, normal, ay))           # its drawn place, on the iris
+            target = base
             if side < 1.0:
-                right, up = screen_basis(view)
-                base = _add(centre, drawn_on_iris(u0 * ix, v0 * iy, right, normal, ax))
-                target = _add(base, _add(_scale(right, moved[0] * ix), _scale(up, moved[1] * iy)))
-                uv = disc_coordinates(cam, target, centre, ax, ay, normal, ix, iy)
+                want = _add(base, _add(_scale(right, moved[0] * ix), _scale(up, moved[1] * iy)))
+                uv = disc_coordinates(cam, want, centre, ax, ay, normal, ix, iy)
                 at = disc_coordinates(cam, base, centre, ax, ay, normal, ix, iy)
                 if uv is not None and at is not None:
                     kept = keep_on_iris(uv, math.hypot(*at), lp["reach"])
                     if kept != tuple(uv):
                         edge += 1
-                    target = _add(centre, _add(_scale(ax, kept[0] * ix), _scale(ay, kept[1] * iy)))
-                radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
-                turn = light_turn(pivot, c["depth"], radial, target, _unit(_sub(cam, target)), lp["damping"])
-                key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
-                if side > 0.0:
-                    key = fk.slerp(key, painted, side)
+                    want = _add(centre, _add(_scale(ax, kept[0] * ix), _scale(ay, kept[1] * iy)))
+                target = _add(_scale(want, 1.0 - side), _scale(base, side))
+            radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
+            depth = c["depth"] - pushes[c["eye_index"]][i] * backs.get(c["eye_index"], ("", {}))[1].get(c["name"], 0.0)
+            turn = light_turn(pivot, depth, radial, target, _unit(_sub(cam, target)), lp["damping"])
+            key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
             keys_q[c["name"]].append(key)
-            spot = _add(pivot, _scale(fk.rotate(fk.multiply(hr, fk.multiply(key, fallback)), FORWARD), c["depth"]))
+            spot = _add(pivot, _scale(fk.rotate(fk.multiply(hr, fk.multiply(key, fallback)), FORWARD), depth))
             uv = disc_coordinates(cam, spot, centre, ax, ay, normal, ix, iy)
             discs[c["name"]].append(uv)
             ahead[c["name"]].append(_dot(_sub(spot, centre), normal))
+            seen_from = _sub(spot, centre)                                 # as the camera sees it, off the iris' centre
+            screen[c["name"]].append((_dot(seen_from, right) / ix, _dot(seen_from, up) / iy))
     hide = hide_track(off_camera, lp["hide"][0], lp["hide"][1])
     # the pupil
     near = [1.0 / (half * unit_m / math.tan(math.radians(a))) if a > 1e-9 else 0.0 for a in angle]
@@ -957,6 +1026,9 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         keys += _bone_keys(c["name"], frames, keys_q[c["name"]], p["keys"]["bone_deg"])
     tol = p["keys"]["morph"]
     morphs = _morph_keys(BIG, frames, big, tol) + _morph_keys(THIN, frames, thin, tol) + _morph_keys(HIDE, frames, hide, tol)
+    for e in eye_idx:
+        if e in backs:
+            morphs += _morph_keys(backs[e][0], frames, pushes[e], tol)
     out = vmd.Motion(model_name=dance.model_name, bones=keys, morphs=morphs)
     # the report
     counts = {}
@@ -991,6 +1063,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                   "disc_r": summary(radii), "edge_frames": edge, "unseen_frames": sum(len(r) for r in discs.values()) - len(radii),
                   "ahead": summary(fronts), "behind_frames": sum(1 for a in fronts if a < 0.0),
                   "offset_step": step_stats(discs[first]), "offset_step_without_cuts": step_stats(discs[first], cuts),
+                  "screen_step_without_cuts": {c["name"]: step_stats(screen[c["name"]], cuts) for c in lights},
                   "key_step": step_stats(key_angles), "key_step_without_cuts": step_stats(key_angles, cuts),
                   "camera_aside": {"frames_partly": sum(1 for s in sideways if s > 0.0),
                                    "frames_fully": sum(1 for s in sideways if s >= 1.0)},
@@ -1006,6 +1079,11 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                   "steps": {"relative": step_stats(pupil["total"]), BIG: step_stats(big), THIN: step_stats(thin),
                             "mm": step_stats([mm0 * r for r in pupil["total"]])},
                   "weights": {BIG: _r(max(big)), THIN: _r(max(thin))}},
+        "lid": {"face": face is not None, "range": lp["lid"],
+                "closing": {name: sorted(model.bones[e].name for e in closing[name]) for name in sorted(closing)},
+                "back": {model.bones[e].name: backs[e][0] for e in eye_idx if e in backs},
+                "frames_back": {model.bones[e].name: sum(1 for v in pushes[e] if v > 0.0) for e in eye_idx},
+                "frames_shut": {model.bones[e].name: sum(1 for v in pushes[e] if v >= 0.999) for e in eye_idx}},
         "keys": {"bones": len(keys), "morphs": len(morphs)},
     }
     names_ = [c["name"] for c in lights]
@@ -1014,8 +1092,10 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         return None if uv is None else [_r(uv[0], 4), _r(uv[1], 4)]
     trace = {"frames": frames, "label": labels, "vergence": [_r(a, 4) for a in angle],
              "light": [_uv(uv) for uv in discs[first]], "lights": names_,
+             "screen": [[_uv(screen[name][i]) for name in names_] for i in range(n)],
              "disc": [[_uv(discs[name][i]) for name in names_] for i in range(n)],
              "ahead": [[_r(ahead[name][i], 5) for name in names_] for i in range(n)], "hide": [_r(h, 4) for h in hide],
+             "back": [[_r(pushes[e][i], 4) for e in eye_idx] for i in range(n)],
              "pupil": [_r(r, 5) for r in pupil["total"]], "camera_aside": [_r(s, 4) for s in sideways],
              "light_off_camera": [_r(a, 2) for a in off_camera], "half_off_axis": [_r(a, 2) for a in off_axis],
              "eye_centre": [[_r(c, 4) for c in _scale(_add(track[eyes[0]][i][0], track[eyes[1]][i][0]), 0.5)]
@@ -1104,13 +1184,14 @@ def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None
     motions = {"dance": dance, "gaze": gaze}
     if face_path:
         motions["face"] = vmd.load(face_path)
-    check_overlaps(motions, eye_names, {BIG, THIN, HIDE})
+    check_overlaps(motions, eye_names, {BIG, THIN, HIDE} | {pmx_eyes.back_morph_name(e)[0] for e in ("右目", "左目")})
     arousal, loud = None, None
     if audio_path:
         n = max(fk.last_frame(dance), fk.last_frame(gaze)) + 1
         ap = params["pupil"]["arousal"]
         arousal, loud = loudness(audio_path, n, low=ap["low"], high=ap["high"])
-    result = optics(model_bytes, dance, gaze, camera, params, all_flares, arousal, [float(c) for c in chorus], seed)
+    result = optics(model_bytes, dance, gaze, camera, params, all_flares, arousal, [float(c) for c in chorus], seed,
+                    motions.get("face"))
     _write(out_path, vmd.dumps(result.motion))
     back = vmd.load(out_path)
     report = dict(result.report)
@@ -1139,7 +1220,8 @@ def main(argv=None):
     ap.add_argument("gaze", help="the 両目 track of tools/eye_gaze.py (.vmd), loaded after the dance")
     ap.add_argument("camera", help="the camera motion (.vmd)")
     ap.add_argument("out", help="the eye optics motion to write (.vmd), to load after the dance, the face and the gaze")
-    ap.add_argument("--face", help="the face motion: refused when it keys the pupil or light morphs")
+    ap.add_argument("--face", help="the face motion: its closing morphs (まばたき, 笑い, ...) take the lights back as "
+                                   "the lids shut; refused when it keys the pupil or light morphs")
     ap.add_argument("--look", help="the MV's look JSON: its \"flares\" (seconds) narrow the pupils")
     ap.add_argument("--flares", type=float, nargs="+", default=[], help="more flare times in seconds")
     ap.add_argument("--audio", help="the song (read with ffmpeg): its loudness widens the pupils")

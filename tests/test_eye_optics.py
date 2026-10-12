@@ -283,6 +283,20 @@ class LightGeometryTest(unittest.TestCase):
         self.assertAlmostEqual(math.hypot(*f((0.55, 0.0), 0.5, 0.9)), 0.55, 4)   # smooth past the knee (0.54)
         self.assertAlmostEqual(math.hypot(*f((1.0, 0.0), 0.95, 0.9)), 0.95, 9)   # drawn beyond the reach: held there
 
+    def test_drawn_place_is_laid_on_the_iris_upright(self):
+        n, y = (0.0, 0.0, -1.0), (0.0, 1.0, 0.0)
+        for view in ((0.0, 0.0, -1.0), (0.0, 0.0, 1.0)):                 # seen from in front, and from behind
+            _, up = eye_optics.screen_basis(view)
+            got = eye_optics.drawn_on_iris(0.1, 0.05, up, n, y)
+            self.assertEqual(tuple(round(c, 9) for c in got), (0.1, 0.05, 0.0))   # +X across: not mirrored
+        t = math.radians(30.0)                                           # an iris turned 30 degrees toward +X
+        slanted = (math.sin(t), 0.0, -math.cos(t))
+        _, up = eye_optics.screen_basis((0.0, 0.0, -1.0))
+        got = eye_optics.drawn_on_iris(0.1, 0.05, up, slanted, y)
+        self.assertAlmostEqual(got[0], 0.1 * math.cos(t), 9)            # shrinks across as the camera sees it
+        self.assertAlmostEqual(got[1], 0.05, 9)
+        self.assertAlmostEqual(eye_optics._dot(got, slanted), 0.0, 9)   # in the iris' plane
+
     def test_disc_coordinates_along_the_camera_ray(self):
         centre, x, y, n = (0.0, 0.0, -1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0)
         cam = (0.0, 0.0, -11.0)
@@ -393,7 +407,7 @@ class OpticsTest(unittest.TestCase):
         result = run(c=camera(1.0))
         m = result.motion
         self.assertEqual({k.name for k in m.bones}, {"右目", "左目", "右HL２", "右HL", "左HL２", "左HL"})
-        self.assertEqual({k.name for k in m.morphs}, {"瞳大", "瞳細", "HL消"})
+        self.assertEqual({k.name for k in m.morphs}, {"瞳大", "瞳細", "HL消", "光戻し右", "光戻し左"})
         rep = result.report
         self.assertEqual(rep["vergence"]["labels"], {"camera": 91})
         self.assertAlmostEqual(rep["model"]["share"], 0.55, 6)
@@ -456,14 +470,25 @@ class OpticsTest(unittest.TestCase):
         # the coordinator's rule is the light against the camera: an eye turned away keeps its light
         self.assertEqual(at(70.0, gaze(90, {0: (-25.0, 0.0)})), 0.0)
 
-    def test_camera_behind_her_leaves_the_light_painted_on_the_iris(self):
+    def test_camera_behind_her_keeps_the_keys_small(self):
         g = gaze(90, {0: (10.0, 0.0)})
         result = run(g=g, c=camera(10.0, yaw=180.0), params=FRONT_LIGHT)
-        share = bone("左HL２").append["ratio"]
-        want = fk.power(turn(10.0, 0.0), 1.0 - share)        # with the append: the whole turn of the eye
-        for k in keys_of(result.motion, "左HL２"):
-            got = fk.applied(k.rotation)
-            self.assertLess(eye_optics._angle(fk.multiply(fk.conjugate(want), got)), 0.06)
+        for name in ("右HL２", "右HL", "左HL２", "左HL"):
+            for k in keys_of(result.motion, name):
+                self.assertLess(eye_optics._angle(k.rotation), 10.0)
+
+    def test_a_fast_head_turn_to_the_side_does_not_flick_the_light(self):
+        """the head swings 80 degrees away in 4 frames and back (the MV's 111.2 seconds, where the first version threw
+        the light across the iris and back): as the camera sees it, the light moves under half an iris radius a frame
+        while the head turns 20 degrees a frame, and the iris seen edge on hands it over to its drawn place"""
+        head = {0: (0.0, 0.0), 30: (0.0, 0.0), 34: (80.0, 0.0), 40: (80.0, 0.0), 44: (0.0, 0.0), 90: (0.0, 0.0)}
+        result = run(d=dance(90, head=head), c=camera(1.0), params=QUIET)
+        self.assertGreater(max(result.trace["camera_aside"]), 0.6)
+        for k, name in enumerate(result.trace["lights"]):
+            steps = [math.hypot(b[k][0] - a[k][0], b[k][1] - a[k][1])
+                     for a, b in zip(result.trace["screen"], result.trace["screen"][1:])]
+            self.assertLess(max(steps), 0.5, name)
+            self.assertAlmostEqual(result.report["light"]["screen_step_without_cuts"][name]["max"], max(steps), delta=1e-3)
 
     def test_at_rest_each_light_sits_on_its_drawn_place_of_the_iris(self):
         result = run(c=camera(10.0), params=FRONT_LIGHT)
@@ -594,6 +619,49 @@ class KeyTest(unittest.TestCase):
         self.assertLess(len(result.motion.morphs), 300)
 
 
+class LidTest(unittest.TestCase):
+    """pmx_eyes' back morphs take the lifted lights back as the face's closing morphs shut the lids (the toy's まばたき
+    lowers both upper lights: it closes both eyes)"""
+
+    @staticmethod
+    def face(weights):
+        return vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", f, w) for f, w in sorted(weights.items())])
+
+    def test_a_lid_held_half_shut_keeps_the_lights_out_and_a_shut_one_takes_them_back(self):
+        result = run(face=self.face({0: 0.3, 30: 0.3, 40: 1.0, 60: 1.0, 70: 0.3, 90: 0.3}))
+        lo, hi = eye_optics.PARAMS["light"]["lid"]
+        self.assertGreater(lo, 0.3)                                  # the MV's lids rest about 0.3 shut
+        for name in ("光戻し右", "光戻し左"):
+            self.assertEqual(morph_at(result.motion, name, 10), 0.0)
+            self.assertAlmostEqual(morph_at(result.motion, name, 50), 1.0, 3)
+            self.assertEqual(morph_at(result.motion, name, 80), 0.0)
+            for f in range(30, 41):                                  # smoothstep of the blink from lo to hi
+                x = min(1.0, max(0.0, (0.3 + 0.07 * (f - 30) - lo) / (hi - lo)))
+                self.assertAlmostEqual(morph_at(result.motion, name, f), x * x * (3.0 - 2.0 * x), delta=0.002)
+        rep = result.report["lid"]
+        self.assertTrue(rep["face"])
+        self.assertEqual(rep["closing"], {"まばたき": ["右目", "左目"]})
+        self.assertEqual(rep["back"], {"右目": "光戻し右", "左目": "光戻し左"})
+        self.assertEqual(result.trace["back"][50], [1.0, 1.0])
+        self.assertEqual(result.trace["back"][10], [0.0, 0.0])
+
+    def test_a_light_half_taken_back_still_lands_on_its_place(self):
+        """taken back, the light lies nearer its bone's pivot: it is solved at that depth"""
+        half = run(c=camera(1.0), face=self.face({0: 0.65, 90: 0.65}))
+        out = run(c=camera(1.0), face=self.face({0: 0.0, 90: 0.0}))
+        self.assertGreater(half.trace["back"][10][0], 0.2)
+        for k in range(4):
+            a, b = half.trace["disc"][10][k], out.trace["disc"][10][k]
+            self.assertAlmostEqual(a[0], b[0], delta=0.02)
+            self.assertAlmostEqual(a[1], b[1], delta=0.02)
+
+    def test_without_a_face_the_lights_stay_out(self):
+        result = run()
+        self.assertFalse(result.report["lid"]["face"])
+        for name in ("光戻し右", "光戻し左"):
+            self.assertEqual(max(morph_at(result.motion, name, f) for f in range(0, 91, 10)), 0.0)
+
+
 class OverlapTest(unittest.TestCase):
     def test_face_keying_a_pupil_morph_is_refused(self):
         face = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("瞳大", 0, 0.5)])
@@ -646,6 +714,21 @@ class CommandTest(unittest.TestCase):
         for key in ("label", "vergence", "light", "hide", "pupil", "camera_aside", "disc", "ahead"):
             self.assertEqual(len(data[key]), 91, key)
         self.assertEqual(len(data["disc"][0]), len(data["lights"]))
+
+    def test_refuses_a_face_that_keys_a_back_morph(self):
+        face = os.path.join(self.tmp, "face.vmd")
+        vmd.dump(vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("光戻し右", 10, 0.5)]), face)
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(eye_optics.main(self.args("--face", face)), 2)
+        self.assertIn("光戻し右", json.loads(printed.getvalue())["error"]["message"])
+
+    def test_the_face_takes_the_lights_back(self):
+        face = os.path.join(self.tmp, "face.vmd")
+        vmd.dump(vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", 0, 1.0)]), face)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(eye_optics.main(self.args("--face", face)), 0)
+        motion = vmd.load(os.path.join(self.tmp, "out.vmd"))
+        self.assertEqual(morph_at(motion, "光戻し左", 20), 1.0)
 
     def test_refuses_an_output_over_an_input(self):
         with contextlib.redirect_stdout(io.StringIO()) as printed:

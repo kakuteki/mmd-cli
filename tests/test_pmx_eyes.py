@@ -168,7 +168,9 @@ class ToyBuildTest(unittest.TestCase):
 
     def test_the_rest_of_the_file_is_kept(self):
         self.assertEqual(self.before.middle, self.doc.middle)
-        self.assertEqual([m.body for m in self.before.morphs], [m.body for m in self.doc.morphs])
+        n = len(self.before.morphs)
+        self.assertEqual([m.body for m in self.before.morphs], [m.body for m in self.doc.morphs[:n]])
+        self.assertEqual([m.count for m in self.doc.morphs[n:]], [0, 0])     # nothing lifted: empty back morphs
         self.assertEqual(self.before.tail, self.doc.tail)
 
     def test_pivot_lies_the_pupil_depth_behind_the_revealed_quad(self):
@@ -261,19 +263,27 @@ class LiftTest(unittest.TestCase):
         self.assertAlmostEqual(pivot[2], self.quads["左HL"]["centroid"][2] + (EYE_Z - PUPIL_Z), 5)
         self.assertAlmostEqual(self.quads["左HL"]["centroid"][2], HL_Z + HL_PULL - want, 5)
 
-    def test_the_closing_morph_takes_the_lift_back(self):
+    def test_a_back_morph_per_eye_takes_the_lift_back(self):
+        """the closing morphs stay as they were (a lid held half shut must not push the lights behind the rim);
+        one morph per eye takes its lights back by their lifts, for eye_optics to key as the lids close"""
         self.assertEqual(self.report["closing"], {"まばたき": ["右目", "左目"]})
-        blink = pmx_eyes.vertex_morphs(self.doc)["まばたき"]
-        want = self.quads["左HL"]["lift"]
-        for v in self.layout["hl"]["左"] + self.layout["hl"]["右"]:
-            self.assertEqual(blink[v][:2], (0.0, 0.0))
-            self.assertAlmostEqual(blink[v][2], want, 5)              # a closed lid hides it where it hid before
-        for v in self.layout["hl2"]["左"]:
-            self.assertAlmostEqual(blink[v][1], -0.17, 5)             # the upper light's own offsets stay
-            self.assertAlmostEqual(blink[v][2], 0.05, 5)
+        self.assertEqual(self.report["back"], {"右目": "光戻し右", "左目": "光戻し左"})
+        morphs = pmx_eyes.vertex_morphs(self.doc)
+        self.assertEqual(morphs["まばたき"], pmx_eyes.vertex_morphs(self.before)["まばたき"])
+        self.assertEqual(morphs["HL"], pmx_eyes.vertex_morphs(self.before)["HL"])
+        for side, name in (("右", "光戻し右"), ("左", "光戻し左")):
+            back = morphs[name]
+            want = self.quads[side + "HL"]["lift"]
+            self.assertEqual(sorted(back), sorted(self.layout["hl"][side]))     # its upper light was not lifted
+            for v in self.layout["hl"][side]:
+                self.assertEqual(back[v][:2], (0.0, 0.0))
+                self.assertAlmostEqual(back[v][2], want, 5)              # all the way back: where the lid hid it
+        n = len(self.before.morphs)
+        self.assertEqual(len(self.doc.morphs), n + 2)                   # after every morph: no index moves
+        self.assertEqual([m.body for m in self.doc.morphs[:n]], [m.body for m in self.before.morphs])
+        names = [pmx_eyes.morph_names(self.doc, m) for m in self.doc.morphs[n:]]
+        self.assertEqual(names, [("光戻し右", "catchlight_back_R"), ("光戻し左", "catchlight_back_L")])
         pmx.loads(pmx_edit.dumps(self.doc))                          # still a valid file
-        reveal = pmx_eyes.vertex_morphs(self.doc)["HL"]
-        self.assertEqual(reveal, pmx_eyes.vertex_morphs(self.before)["HL"])
 
     def test_sliding_needs_more(self):
         data, _ = toy_bytes(iris_z=self.IRIS_Z)
@@ -316,11 +326,11 @@ class RimTest(unittest.TestCase):
         self.assertAlmostEqual(low["左HL"]["lift"], slide["左HL"]["lift"], 9)      # 0.017 < the slide's 0.027
         self.assertAlmostEqual(high["左HL"]["lift"], (HL_Z + HL_PULL) - (self.IRIS_Z - 0.03), 5)
 
-    def test_the_closing_morph_takes_the_whole_lift_back(self):
+    def test_the_back_morph_takes_the_whole_lift_back(self):
         doc, layout, quads, _ = self.build(rim=0.03)
-        blink = pmx_eyes.vertex_morphs(doc)["まばたき"]
+        back = pmx_eyes.vertex_morphs(doc)["光戻し右"]
         for v in layout["hl"]["右"]:
-            self.assertAlmostEqual(blink[v][2], quads["右HL"]["lift"], 5)
+            self.assertAlmostEqual(back[v][2], quads["右HL"]["lift"], 5)
 
     def test_a_negative_rim_is_refused(self):
         data, _ = toy_bytes(iris_z=self.IRIS_Z)
@@ -443,6 +453,13 @@ class SourRinTest(unittest.TestCase):
             self.assertLessEqual(q["centroid"][2], report["iris_front"][q["eye"]] - pmx_eyes.RIM + 1e-6)
         self.assertIn("まばたき", report["closing"])
         self.assertIn("笑い", report["closing"])
+        self.assertEqual(report["back"], {"右目": "光戻し右", "左目": "光戻し左"})
+        back = pmx_eyes.vertex_morphs(doc)
+        for q in report["quads"]:                                                 # each light all the way back
+            name = report["back"][q["eye"]]
+            self.assertTrue(all(abs(back[name][v][2] - q["lift"]) < 1e-5 for v in q["vertices"]))
+        frame = [f for f in doc.frames if any(k == 1 for k, _ in f.items)][0]   # 表情: the morphs' frame
+        self.assertIn((1, len(doc.morphs) - 1), frame.items)
 
 
 if __name__ == "__main__":
