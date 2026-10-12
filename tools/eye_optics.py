@@ -56,8 +56,10 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
 * The face's morphs also move the light quads themselves: Sour's Rin's まばたき and 笑い drag the upper lights down
   with the lid (at the MV's resting 0.3, by a quarter of the iris' radius), so that a lowering lid never passes behind
   a light.  That drag is kept: a light held in place while the lid came down showed in front of the lid (blink 0.5,
-  smile 0.6; stage 5 lid probe).  The bones are solved for the lights' places without it; the report and the trace
-  give the places with it (light_drags), as MMD shows them.
+  smile 0.6; stage 5 lid probe).  It is added to the light's place (light_drags), the iris' boundary holds the
+  light with it (Sour's Rin's drag also runs along the lid, sideways: it carried upper lights 0.36 past the iris'
+  edge, stage 5 ray check of the MV), and each bone is solved with the drag on its quad, turning with it.  The
+  report and the trace give the places as MMD shows them.
 * The light leaves the cornea when the light source lies more than 90 to 100 degrees from the camera (RESEARCH 1.6;
   the coordinator's rule): the morph HL消 (the light material's opacity) goes from 0 at light.hide[0] to 1 at
   light.hide[1] degrees between the light and the camera seen from the eyes, each frame on its own.  (The research's
@@ -399,12 +401,15 @@ def _soft_turn(q, cap):
     return fk.power(q, kept / angle) if kept < angle else q
 
 
-def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4):
-    """the turn (a rotation in the world, about `pivot`) that brings the point pivot + depth radial onto the camera's
-    line through `target` (seen along `view`): damped least squares over the two turns across `radial`, `damping`
-    times depth as the damping, a few Gauss-Newton steps.  Seen from the front it lands on the line; seen side on,
-    where a turn hardly moves the light across the line of sight, the damping keeps the turn small."""
+def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4, offset=None):
+    """the turn (a rotation in the world, about `pivot`) that brings the point pivot + depth radial (+ `offset`, a
+    vector that turns with it: the face's morphs on the light's quad) onto the camera's line through `target` (seen
+    along `view`): damped least squares over the two turns across the line from the pivot to the point, `damping`
+    times that length as the damping, a few Gauss-Newton steps.  Seen from the front it lands on the line; seen side
+    on, where a turn hardly moves the light across the line of sight, the damping keeps the turn small."""
     p = _scale(_unit(radial), depth)
+    if offset is not None:
+        p = _add(p, offset)
     lam = (damping * math.sqrt(_dot(p, p))) ** 2
     total = fk.IDENTITY
     for _ in range(steps):
@@ -1032,21 +1037,22 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             fallback = fk.power(q_handle, c["share"])
             pivot = _add(hp, fk.rotate(hr, _sub(c["pivot"], head_rest)))
             right, up = screen_basis(view)
+            drag = fk.rotate(fk.multiply(hr, fallback), drags[c["name"]][i])     # the face's morphs on its quad
             base = _add(centre, drawn_on_iris(u0 * ix, v0 * iy, up, normal, ay))           # its drawn place, on the iris
-            target = base
+            target = _add(base, drag)
             if side < 1.0:
-                want = _add(base, _add(_scale(right, moved[0] * ix), _scale(up, moved[1] * iy)))
-                uv = disc_coordinates(cam, want, centre, ax, ay, normal, ix, iy)
+                want = _add(_add(base, drag), _add(_scale(right, moved[0] * ix), _scale(up, moved[1] * iy)))
+                uv = disc_coordinates(cam, want, centre, ax, ay, normal, ix, iy)       # as MMD will show it
                 at = disc_coordinates(cam, base, centre, ax, ay, normal, ix, iy)
                 if uv is not None and at is not None:
                     kept = keep_on_iris(uv, math.hypot(*at), lp["reach"])
                     if kept != tuple(uv):
                         edge += 1
                     want = _add(centre, _add(_scale(ax, kept[0] * ix), _scale(ay, kept[1] * iy)))
-                target = _add(_scale(want, 1.0 - side), _scale(base, side))
+                target = _add(_scale(want, 1.0 - side), _scale(target, side))
             radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
             depth = c["depth"] - pushes[c["eye_index"]][i] * backs.get(c["eye_index"], ("", {}))[1].get(c["name"], 0.0)
-            turn = light_turn(pivot, depth, radial, target, _unit(_sub(cam, target)), lp["damping"])
+            turn = light_turn(pivot, depth, radial, target, _unit(_sub(cam, target)), lp["damping"], offset=drag)
             key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
             keys_q[c["name"]].append(key)
             spot = _add(pivot, fk.rotate(fk.multiply(hr, fk.multiply(key, fallback)),     # as MMD shows it

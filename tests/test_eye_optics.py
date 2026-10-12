@@ -7,6 +7,7 @@ import json
 import math
 import os
 import shutil
+import struct
 import tempfile
 import unittest
 
@@ -678,6 +679,35 @@ class LidTest(unittest.TestCase):
         shown = light_on_screen([dance(), gaze(), held.motion], 10, "左HL２", "左目", 1.0, {"まばたき": 0.4})
         bare = light_on_screen([dance(), gaze(), free.motion], 10, "左HL２", "左目", 1.0)
         self.assertAlmostEqual(bare[1] - shown[1], 0.4 * 0.17, delta=0.005)
+
+    @staticmethod
+    def sideways_blink(offset=(-0.12, -0.05, 0.05)):
+        """the toy with its まばたき dragging the upper lights sideways too (Sour's Rin's drags them down and along the
+        lid): offset per unit weight"""
+        doc = pmx_edit.loads(MODEL_BYTES)
+        fmt = "<" + {1: "B", 2: "H", 4: "i"}[doc.sizes["vertex"]]
+        for m in doc.morphs:
+            if pmx_eyes.morph_name(doc, m) == "まばたき":
+                moved = sorted(pmx_eyes.vertex_morphs(doc)["まばたき"])
+                m.body = b"".join(struct.pack(fmt, v) + struct.pack("<3f", *offset) for v in moved)
+                m.count = len(moved)
+        return pmx_edit.dumps(doc)
+
+    def test_the_dragged_light_still_stays_on_the_iris(self):
+        """the iris' boundary holds the light as MMD shows it, the lid's drag included: the head turned 30 degrees
+        pushes the lights to the edge, the lid held 0.4 shut drags the upper ones further out"""
+        head = {0: (30.0, 0.0), 90: (30.0, 0.0)}
+        model = self.sideways_blink()
+
+        def go(weight):
+            return eye_optics.optics(model, dance(90, head=head), gaze(), camera(1.0),
+                                     eye_optics.merge_params(eye_optics.PARAMS, QUIET), face=self.face({0: weight, 90: weight}))
+        held, free = go(0.4), go(0.0)
+        reach = eye_optics.PARAMS["light"]["reach"]
+        k = held.trace["lights"].index("左HL２")
+        self.assertGreater(abs(free.trace["disc"][10][k][0]), 0.7)                   # the head's turn: near the edge
+        self.assertLessEqual(max(math.hypot(*row[k]) for row in held.trace["disc"]), reach + 0.01)
+        self.assertLess(held.trace["disc"][10][k][1], free.trace["disc"][10][k][1] - 0.05)   # still dragged down
 
     def test_without_a_face_the_lights_stay_out(self):
         result = run()
