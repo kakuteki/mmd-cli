@@ -1,7 +1,7 @@
 """Share the trunk's bend between the pelvis and the chest out over the spine bones of a model made by tools/pmx_spine.py
 (上半身, 腰椎上部, 上半身2, 胸椎上部), by the spine's anatomy, with the chest's world pose kept.
 
-    python tools/spine_layer.py DANCE.vmd MODEL.pmx SPINE_MODEL.pmx OUT.vmd [--report r.json] [--place-cap-cm 1.5]
+    python tools/spine_layer.py DANCE.vmd MODEL.pmx SPINE_MODEL.pmx OUT.vmd [--report r.json] [--place-cap-cm 3.0]
 
 DANCE.vmd is a dance for the original MODEL (its 上半身 and 上半身2 keys, e.g. after tools/anatomy_layer.py, which split
 them 0.25 / 0.3 / 0.4); OUT.vmd is for SPINE_MODEL.  This layer goes last: it replaces anatomy_layer's split of the
@@ -97,7 +97,7 @@ def correction_weights():
 
 
 GN_STEPS = 12
-PLACE_CAP_CM = 1.5
+PLACE_CAP_CM = 3.0              # the full song (v5a): 87 frames bent the other way at 3.0, 584 at 1.5, 1,367 at 0
 DAMP = 1e-6
 
 
@@ -117,6 +117,18 @@ def _skew(d):
 def _rotvec_quat(v):
     ang = np.linalg.norm(v, axis=-1)
     return A.aa(A.unit(np.where(ang[..., None] > 1e-12, v, np.array([1.0, 0.0, 0.0]))), ang)
+
+
+def frame_runs(mask, gap=5):
+    """[[first, last], ...] of the frames where mask holds, runs with at most `gap` frames between them merged"""
+    out = []
+    for f in np.flatnonzero(mask):
+        f = int(f)
+        if out and f - out[-1][1] - 1 <= gap:
+            out[-1][1] = f
+        else:
+            out.append([f, f])
+    return out
 
 
 def _track(model, motion, names, F):
@@ -208,6 +220,8 @@ def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
                                             "p95": round(float(np.percentile(size, 95)), 3), "max": round(float(size.max()), 3)},
               "place_cap_cm": place_cap_cm,
               "opposite_bend_frames": int(opposite.sum()),
+              "opposite_runs": frame_runs(opposite),
+              "corrected_runs": [] if place_cap_cm is None else frame_runs(size > place_cap_cm),
               "chest_residual_cm_max": round(float(np.max(residual)) * A.UNIT_CM, 5),
               "max_step_deg": {"in": round(max_step([A.qmul(A.qconj(q_pelvis), q_lo_in), q_up_in]), 3),
                                "out": round(max_step([rel[0]] + rel[1:]), 3)}}

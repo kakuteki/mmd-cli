@@ -82,6 +82,12 @@ class LayerTest(unittest.TestCase):
         self.assertGreater(w[0], w[6])          # flexion: 上半身 (lumbar) moves more easily than 上半身2
         self.assertIn("opposite_bend_frames", self.report)
 
+    def test_runs_listed(self):
+        self.assertEqual(spine_layer.frame_runs(np.array([0, 1, 1, 0, 0, 1, 0, 1], bool), gap=1),
+                         [[1, 2], [5, 7]])
+        self.assertIn("corrected_runs", self.report)
+        self.assertIn("opposite_runs", self.report)
+
     def test_shares_table(self):
         for m in ("flex", "lat", "rot"):
             self.assertAlmostEqual(sum(spine_layer.SHARES[m]), 1.0, 9)
