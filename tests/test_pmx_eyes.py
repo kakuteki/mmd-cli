@@ -284,18 +284,19 @@ class LiftTest(unittest.TestCase):
 
 
 class IrisScaleTest(unittest.TestCase):
-    """the share by default puts the light where a human eye's would sit on its iris at the same gaze angle"""
+    """the share by default keeps the light's lag behind the pupil, in iris radii, a human eye's (formula A)"""
 
-    def test_default_share_scales_the_human_lag_by_the_iris(self):
+    def test_default_share_is_formula_a_across(self):
         data, _ = toy_bytes(iris_z=-0.96)
         doc = pmx_edit.loads(data)
         report = pmx_eyes.build(doc)
         h = pmx_eyes.HUMAN
-        scale = (0.16 / (EYE_Z - PUPIL_Z)) / (h["iris_radius"] / h["pupil"])
-        k = h["cornea_centre"] / h["pupil"]
-        self.assertAlmostEqual(report["iris_scale"], scale, 3)
-        self.assertAlmostEqual(report["share_human"], k, 6)
-        self.assertAlmostEqual(report["share"], 1.0 - (1.0 - k) * scale, 4)
+        lag = h["pupil_to_centre"] / h["iris_radius"]                        # 0.79 (RESEARCH 1.4)
+        depth = EYE_Z - PUPIL_Z
+        self.assertAlmostEqual(report["share"], 1.0 - lag * 0.16 / depth, 4)
+        self.assertAlmostEqual(report["share_a"][1], 1.0 - lag * 0.22 / depth, 4)   # up and down: the iris' half height
+        self.assertAlmostEqual(report["share_b"][0], 1.0 - 4.67 / 11.7, 6)          # a human's, head-relative
+        self.assertAlmostEqual(report["share_b"][1], 1.0 - 4.67 / 8.9, 6)
         model = pmx.loads(pmx_edit.dumps(doc))
         self.assertAlmostEqual(model.bones[-1].append["ratio"], report["share"], 5)
 
@@ -303,13 +304,16 @@ class IrisScaleTest(unittest.TestCase):
         data, _ = toy_bytes(iris_z=-0.96)
         report = pmx_eyes.build(pmx_edit.loads(data), share=0.55)
         self.assertEqual(report["share"], 0.55)
-        self.assertGreater(report["iris_scale"], 0.5)
+        self.assertGreater(report["share_a"][0], 0.6)
 
     def test_model_scale_reads_the_iris_and_the_pupil(self):
         data, _ = toy_bytes(iris_z=-0.96)
         scale = pmx_eyes.model_scale(pmx_edit.loads(data))
         self.assertAlmostEqual(scale["iris_half_width"], 0.16, 5)
+        self.assertAlmostEqual(scale["iris_half_height"], 0.22, 5)
         self.assertAlmostEqual(scale["pupil_depth"], EYE_Z - PUPIL_Z, 5)
+        # a degree carries this pupil across more of its iris than a human's (0.413 / 0.16 against 11.7 / 5.91)
+        self.assertAlmostEqual(scale["degree_share"][0], (0.413 / 0.16) / (11.7 / 5.91), 2)
 
 
 class RefusalTest(unittest.TestCase):
@@ -385,7 +389,7 @@ class SourRinTest(unittest.TestCase):
         self.assertAlmostEqual(report["pupil_depth"]["右目"], 0.413, delta=0.005)
         self.assertAlmostEqual(report["pupil_depth"]["左目"], 0.413, delta=0.005)
         self.assertAlmostEqual(report["iris_half_width"], 0.1625, delta=0.001)     # the iris 0.325 wide
-        self.assertAlmostEqual(report["share"], 0.689, delta=0.002)
+        self.assertAlmostEqual(report["share"], 0.691, delta=0.002)               # formula A: 1 - 0.79 x 0.1625 / 0.415
         self.assertTrue(all(0.0 < q["lift"] < 0.06 for q in report["quads"]))
         self.assertIn("まばたき", report["closing"])
         self.assertIn("笑い", report["closing"])

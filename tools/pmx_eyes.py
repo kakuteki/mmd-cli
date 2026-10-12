@@ -6,19 +6,21 @@ gaze by a share of its rotation, as the reflection of a light on the cornea does
 
 Why: on Sour's Rin the highlights (material HL) hang on the iris' bone (右目子 / 左目子) and turn with the eye as if
 painted on it: turned 15 degrees, the eye carries its light along to the same spot of the iris (stage 4 probe, f45 and
-f75).  A real eye's light is a mirror image in the cornea: when the eye turns, the cornea's centre of curvature moves
-(it lies between the eye's centre of rotation and the pupil), but the point of the cornea that faces the half-way
-direction between the light and the viewer does not turn with the eye.  The light therefore moves by
-d / d_p of the pupil's way, d the distance from the centre of rotation to the cornea's centre of curvature and d_p
-that to the (entrance) pupil: about 5.7 / 10.4 = 0.55 for a human eye (HUMAN; Gullstrand-Le Grand: the centre of
-rotation 13.5 mm behind the apex of the cornea, its radius 7.8 mm, the entrance pupil 3.05 mm behind the apex).
+f75).  (右目補助 / 左目補助, between the eye and the iris' bone, take -0.5 of the eye's turn, but about the iris'
+centre: they keep the iris' disc from turning fully, they do not hold the light back.)  A real eye's light is a mirror
+image in the cornea and moves with the cornea's centre of curvature, K = 4.67 mm behind the entrance pupil
+(stage 5 RESEARCH 1.1 to 1.4): when the eye turns by g, the light lags the pupil's centre by 0.79 proj(g) iris radii
+(0.79 = K over the iris' radius 5.91 mm; the Hirschberg ratio, measured 12.3 to 12.9 degrees/mm).
 
-The share by default (--share not given): a viewer sees where the light sits on the iris, and an anime iris is
-another size against its eye's turn than a human one (Sour's Rin: half its width 0.1625 over the pupil's depth 0.415
-is 0.39, a human's 5.9 / 10.4 is 0.57, so a turn carries the pupil 1.45 times as far across its iris).  The light's
-lag behind the pupil, 1 - 0.55 of the pupil's way, is scaled by that ratio (model_scale), so that at a gaze angle the
-light sits on the iris where a human eye's would: Sour's Rin 1 - 0.452 x 0.689 = 0.69.  With 0.55 the upper light left
-the iris for the eye white at a 15-degree gaze (stage 5 probe).
+The share by default (--share not given) keeps that lag on the model's iris (RESEARCH 5.1, formula A): the model's
+pupil lies D_p in front of the eye's bone and its iris is r wide (half), so a turn by theta moves the pupil
+D_p sin(theta) and the light should follow D_p sin(theta) - 0.79 r sin(theta): share 1 - 0.79 r / D_p.  Sour's Rin:
+r 0.1625 across X, D_p 0.415, 0.69 (its iris crossed 4.5 % of its radius a degree, a human's 3.5 %).  The head-relative
+ratios of a human eye (formula B, 0.60 across and 0.48 up and down, Ohlendorf 2022) would leave the light 30 % further
+behind on this iris: with 0.55 the upper light left the iris for the eye white at a 15-degree gaze (stage 5 probe).
+Up and down formula A gives 0.58 on this iris (its half height 0.222): one append ratio cannot hold both, so the
+append takes the share across (the gaze moves mostly sideways, up to 18 degrees against 6 up and 10 down) and
+tools/eye_optics.py, which keys every frame from formula A, sets the rest.
 
 What is built (formats.pmx_edit keeps every other byte of the file):
 
@@ -33,16 +35,17 @@ What is built (formats.pmx_edit keeps every other byte of the file):
   a turn of the bone then moves the quad sideways as far as the same turn of the eye moves the pupil, so ratio
   --share moves it --share of the pupil's way, whatever the quad's own depth (Sour's Rin's upper quad lies 0.514
   in front of the eye's bone, the lower 0.411, the pupil 0.413: one bone at the eye's centre would move the upper
-  light 24 % more than the lower).  tools/eye_optics.py keys these bones with the rest of the light's motion (the
-  head's turns against the light, the eyes' vergence) and reads --share back from the append ratio.
+  light 24 % more than the lower).  tools/eye_optics.py keys these bones every frame so that each light sits where
+  formula A puts it (the light source, the camera, the eyes' vergence); the append alone stands in for a gaze that
+  tool did not see.
 * The quad's vertices move wholly onto its bone (BDEF1); no other weight changes.  The new bones join the display
   frame that holds 両目.
 * A light that no longer turns with the iris slides across it, and Sour's Rin's iris is a dish (its rim 0.1 in front
   of its centre) with the lights at its rim's depth: turned 15 degrees, the eye hid a light behind its own rim
   (stage 5 probe).  A real light lies on the cornea, in front of the iris.  So each quad comes out toward -Z, as far as
   it must to stay --margin in front of the iris and the eye white (materials 瞳 and 目白, rest pose) when slid by up
-  to --clear across X and Y (lift_quads; Sour's Rin: 0.02 to 0.05 for --clear 0.06, about the cap of
-  tools/eye_optics.py plus the lag of a 12-degree gaze), and the morphs that close the lids over an eye (those that
+  to --clear across X and Y (lift_quads; Sour's Rin: 0.02 to 0.05 for --clear 0.06, a third of the iris' half width:
+  the lag of a 15-degree gaze is 0.21 of it), and the morphs that close the lids over an eye (those that
   lower its upper light by CLOSING_DROP on average: まばたき, 笑い, ウィンク, ...) push its lights back by as much, so a
   closed lid hides them where it hid them before.
 
@@ -62,13 +65,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mmd_cli.formats import pmx_edit  # noqa: E402
 from mmd_cli.formats.pmx import _Reader  # noqa: E402
 
-HUMAN = {                       # mm, a human eye (Gullstrand-Le Grand; estimates until stage 5's research is in)
-    "cornea_centre": 5.7,       # the centre of rotation to the cornea's centre of curvature (13.5 - 7.8)
-    "pupil": 10.4,              # the centre of rotation to the entrance pupil (13.5 - 3.05)
-    "iris_radius": 5.9,         # half the visible iris (11.8)
-    "cornea_radius": 7.8,       # the cornea's front surface
+HUMAN = {                       # mm, a human eye (stage 5 RESEARCH 1.1)
+    "pupil_to_centre": 4.67,    # K: the entrance pupil to the cornea's centre of curvature (7.72 - 3.05)
+    "iris_radius": 5.91,        # half the visible iris (Aguirre 2019)
+    "cornea_radius": 7.72,      # the cornea's front surface (Navarro, via Barsingerhorn 2017)
+    "pupil_across": 11.7,       # d_p, the centre of rotation to the entrance pupil, turning sideways (Ohlendorf 2022)
+    "pupil_up": 8.9,            # the same turning up and down
 }
-SHARE = None                    # the share of the eye's turn the light follows; None: from HUMAN and the model (build)
+SHARE = None                    # the share of the eye's turn the light follows; None: formula A on the model (build)
 IRIS_MATERIAL = "瞳"
 MATERIAL = "HL"
 REVEAL = ("HL", "HL２")
@@ -338,33 +342,42 @@ def lift_quads(doc, quads, reveal, clear=CLEAR, margin=MARGIN, surfaces=SURFACES
 
 
 def model_scale(doc, pupil_morph=PUPIL_MORPH, iris_material=IRIS_MATERIAL):
-    """how the model's eye compares with HUMAN: {"pupil_depth" (the pupil morph's vertices in front of the eye's
-    bone, both eyes' mean), "iris_half_width" (half the X extent of iris_material per eye, the mean), "scale" (the
-    iris' half width over the pupil's depth, against HUMAN's iris radius over its pupil distance)}; scale is 1 when
-    the model lacks the iris material"""
+    """the model's eye against HUMAN: {"pupil_depth" (the pupil morph's vertices in front of the eye's bone, both
+    eyes' mean), "iris_half_width", "iris_half_height" (half the X and Y extents of iris_material per eye, the mean),
+    "share_a" (formula A across and up, see the module docstring), "share_b" (a human eye's head-relative ratios),
+    "degree_share" (how much of its iris' half width the pupil crosses a degree, against a human's)}"""
+    import math
     eye_idx, _ = find_eyes(doc)
     pupil = vertex_morphs(doc).get(pupil_morph) or {}
-    depths, widths = [], []
+    depths, widths, heights = [], [], []
     iris = sorted({v for t in material_triangles(doc, iris_material) or [] for v in t})
     for e in eye_idx:
         mine = [doc.vertices[v].position() for v in pupil if _eye_of(doc, v, eye_idx) == e]
         if mine:
             depths.append(_dot(tuple(a - b for a, b in zip(_centroid(mine), doc.bones[e].position)), FORWARD))
-        xs = [doc.vertices[v].position()[0] for v in iris if _eye_of(doc, v, eye_idx) == e]
-        if xs:
-            widths.append((max(xs) - min(xs)) / 2.0)
+        pts = [doc.vertices[v].position() for v in iris if _eye_of(doc, v, eye_idx) == e]
+        if pts:
+            widths.append((max(p[0] for p in pts) - min(p[0] for p in pts)) / 2.0)
+            heights.append((max(p[1] for p in pts) - min(p[1] for p in pts)) / 2.0)
     if not depths:
         raise ValueError("the model has no vertex morph %r: the pupil's depth is measured on its vertices" % pupil_morph)
+    if not widths:
+        raise ValueError("the model has no %s material: the iris' size is measured on it" % iris_material)
     depth = sum(depths) / len(depths)
-    width = sum(widths) / len(widths) if widths else None
-    scale = (width / depth) / (HUMAN["iris_radius"] / HUMAN["pupil"]) if width else 1.0
-    return {"pupil_depth": depth, "iris_half_width": width, "scale": scale}
+    width, height = sum(widths) / len(widths), sum(heights) / len(heights)
+    lag = HUMAN["pupil_to_centre"] / HUMAN["iris_radius"]
+    k = HUMAN["pupil_to_centre"]
+    per_degree = math.radians(1.0)
+    return {"pupil_depth": depth, "iris_half_width": width, "iris_half_height": height,
+            "share_a": [1.0 - lag * width / depth, 1.0 - lag * height / depth],
+            "share_b": [1.0 - k / HUMAN["pupil_across"], 1.0 - k / HUMAN["pupil_up"]],
+            "degree_share": [depth * per_degree / width / (HUMAN["pupil_across"] * per_degree / HUMAN["iris_radius"]),
+                             depth * per_degree / height / (HUMAN["pupil_up"] * per_degree / HUMAN["iris_radius"])]}
 
 
 def default_share(scale):
-    """the share that puts the light where a human eye's sits on its iris at the same gaze angle: the human lag
-    1 - d / d_p scaled by the model's iris (model_scale)"""
-    return 1.0 - (1.0 - HUMAN["cornea_centre"] / HUMAN["pupil"]) * scale
+    """the append ratio when --share is not given: formula A across (model_scale's share_a[0])"""
+    return scale["share_a"][0]
 
 
 def plan(doc, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_MORPH, eyes=EYES, handle=HANDLE):
@@ -427,7 +440,7 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
     (lift_quads) and move them onto the bones; returns a report"""
     scale = model_scale(doc, pupil_morph)
     if share is None:
-        share = min(1.0, max(0.0, default_share(scale["scale"])))
+        share = min(1.0, max(0.0, default_share(scale)))
     if not 0.0 < share <= 1.0:
         raise ValueError("--share is the part of the eye's turn the light follows, above 0 and at most 1, not %r" % share)
     if any(b.name_en.startswith(EN_PREFIX) for b in doc.bones):
@@ -458,8 +471,9 @@ def build(doc, share=SHARE, material=MATERIAL, reveal=REVEAL, pupil_morph=PUPIL_
             f.items = f.items + [(0, i) for i in added]
             frame_name = _Reader(f.names, doc.encoding).text()
             break
-    return {"share": float(share), "share_human": HUMAN["cornea_centre"] / HUMAN["pupil"], "iris_scale": scale["scale"],
-            "iris_half_width": scale["iris_half_width"],
+    return {"share": float(share), "share_a": scale["share_a"], "share_b": scale["share_b"],
+            "degree_share": scale["degree_share"], "iris_half_width": scale["iris_half_width"],
+            "iris_half_height": scale["iris_half_height"],
             "follows": doc.bones[handle_idx].name, "material": material, "reveal": list(reveal),
             "pupil_morph": pupil_morph, "pupil_depth": {k: round(v, 6) for k, v in depth.items()},
             "eyes": {doc.bones[e].name: list(doc.bones[e].position) for e in eye_idx},
@@ -512,7 +526,7 @@ def main(argv=None):
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
     print(json.dumps({"ok": True, "out": os.path.abspath(a.out), "share": report["share"],
-                      "share_human": report["share_human"], "iris_scale": report["iris_scale"],
+                      "share_a": report["share_a"], "share_b": report["share_b"],
                       "bones": [q["bone"] for q in report["quads"]], "moved_vertices": report["moved_vertices"],
                       "pupil_depth": report["pupil_depth"], "lifts": [q["lift"] for q in report["quads"]],
                       "closing": sorted(report["closing"])}, ensure_ascii=True))
