@@ -143,7 +143,7 @@ PARAMS = {
         "cap": 1.0,                          # iris radii the light moves off its drawn place at most (soft)
         "side": [72.0, 84.0],                # degrees an iris is seen off its forward: its light gives way to its drawn place
         "ride": True,                        # the bones move each light along the camera's line onto its iris' surface
-        "ride_cap": 0.15,                    # model units a light moves so at most
+        "ride_cap": 0.3,                     # model units a light's bone moves at most
         "damping": 0.15,                     # light_turn's damping, a share of the bone's depth
         "key_cap": 45.0,                     # degrees a light bone's key turns at most (soft from 60 % of it)
         "reach": 0.9,                        # iris radii from the iris' centre a light's centre goes at most (soft)
@@ -672,24 +672,24 @@ def surface_at(heights, x, y):
             + (1 - a) * b * rows[j + 1][i] + a * b * rows[j + 1][i + 1])
 
 
-def ride_on_iris(light, camera, heights, bone_position, bone_rotation, bone_rest, height, cap, steps=3):
-    """(the move along the camera's line, in the world, that sets the point `light` `height` in front of its iris'
-    surface where it then lies, at most `cap` long; the height it ends at).  The iris' rest frame is that of the bone
-    it hangs on: at bone_position, turned by bone_rotation, resting at bone_rest."""
+def ride_on_iris(start, direction, heights, bone_position, bone_rotation, bone_rest, height, steps=4):
+    """(the point start + s direction (direction a unit vector: the camera's line) that lies `height` in front of the
+    iris' surface where it lies, the height it ends at).  The iris' rest frame is that of the bone it hangs on: at
+    bone_position, turned by bone_rotation, resting at bone_rest.  s stays within the iris' size (0.5 units) of start."""
     inv = fk.conjugate(bone_rotation)
-    u = _unit(_sub(camera, light))
-    ur = fk.rotate(inv, u)
+    ur = fk.rotate(inv, direction)
 
     def rest(point):
         return _add(bone_rest, fk.rotate(inv, _sub(point, bone_position)))
     s = 0.0
     for _ in range(steps):
-        r = rest(_add(light, _scale(u, s)))
+        r = rest(_add(start, _scale(direction, s)))
         if abs(ur[2]) < 1e-6:
             break
-        s = max(-cap, min(cap, s + (surface_at(heights, r[0], r[1]) - height - r[2]) / ur[2]))
-    r = rest(_add(light, _scale(u, s)))
-    return _scale(u, s), surface_at(heights, r[0], r[1]) - r[2]
+        s = max(-0.5, min(0.5, s + (surface_at(heights, r[0], r[1]) - height - r[2]) / ur[2]))
+    point = _add(start, _scale(direction, s))
+    r = rest(point)
+    return point, surface_at(heights, r[0], r[1]) - r[2]
 
 
 def morph_track(motion, name, n):
@@ -1084,14 +1084,20 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             keys_q[c["name"]].append(key)
             turned = fk.multiply(hr, fk.multiply(key, fallback))
             bare = _add(pivot, _scale(fk.rotate(turned, FORWARD), c["depth"]))        # without the face's morphs
+            dragged = fk.rotate(turned, drags[c["name"]][i])
             shift, height = fk.ZERO, None
-            if lp["ride"] and c["name"] in drawn_height:                  # onto its iris, at the height it was drawn
-                shift, height = ride_on_iris(bare, cam, heights[c["eye_index"]], bp, bq,
-                                             model.bones[geometry[c["eye_index"]]["bone"]].position,
-                                             drawn_height[c["name"]], lp["ride_cap"])
+            if lp["ride"] and c["name"] in drawn_height and side < 1.0:
+                # on the camera's line through its target, at the height it was drawn in front of its iris' surface
+                to_camera = _unit(_sub(cam, target))
+                place, height = ride_on_iris(_sub(target, dragged), to_camera, heights[c["eye_index"]], bp, bq,
+                                             model.bones[geometry[c["eye_index"]]["bone"]].position, drawn_height[c["name"]])
+                shift = _sub(place, bare)
+                size = math.sqrt(_dot(shift, shift))
+                if size > lp["ride_cap"]:
+                    shift = _scale(shift, lp["ride_cap"] / size)
             keys_t[c["name"]].append(fk.rotate(inv, shift))                    # the bone's move, in the head's frame
             rides[c["name"]].append(height)
-            spot = _add(_add(bare, shift), fk.rotate(turned, drags[c["name"]][i]))   # as MMD shows it
+            spot = _add(_add(bare, shift), dragged)                            # as MMD shows it
             uv = disc_coordinates(cam, spot, centre, ax, ay, normal, ix, iy)
             discs[c["name"]].append(uv)
             ahead[c["name"]].append(_dot(_sub(spot, centre), normal))
