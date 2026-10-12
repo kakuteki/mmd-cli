@@ -15,7 +15,11 @@ drifts from its old place.  The drift is let be up to --place-cap-cm (PLACE_CAP_
 rotations are corrected by the smallest turns weighted by the joints' range (correction_weights; Gauss-Newton, the
 weighted minimum-norm step, damped).  Not to 0 by default: the old place came from the old two-bone rig, and matched
 exactly it pulls the bend back onto 上半身 (88 % of a 40 degree flexion).  Everything above the chest (neck, head, arms,
-hands) keeps its world rotation and moves with the chest, by at most the cap.  Per frame the result is a smooth
+hands) keeps its world rotation and moves with the chest, by at most the cap.  The correction is kept within each
+bone's range (ranges(): the degrees of the joints it stands for, flexion+extension, lateral bend, axial turn): where it
+would bend a bone further (the review of 2026-10-13: 上半身2 bent back 21.4 degrees at frame 1268, its range 16), the
+correction is walked back toward the anatomical shares and the rest is left as the chest's drift beyond the cap
+(chest_drift_left_cm).  Per frame the result is a smooth
 function of B, so it is as smooth as the input.
 
 SHARES (one side per joint, degrees; the four bones' joints as in tools/pmx_spine.py):
@@ -23,7 +27,10 @@ SHARES (one side per joint, degrees; the four bones' joints as in tools/pmx_spin
   lateral bend 30, axial turn 15.3; thoracic 48, 30, 47.
   thoracic upper (T1-T7) : lower (T7-L1) halves: axial 9.5 : 11.9 (Fujimori 2012, CT), lateral 6.9 : 10.9 (Fujimori
   2014, CT); flexion: no split found, spread evenly (an assumption).
-  Within a region every joint takes an equal part of its half (an assumption).
+  Within a region every joint takes an equal part of its half (an assumption; the lumbar flexion is really biased to
+  L4/5 and L5/S1, which would give 上半身 more).
+  The ratio of the ranges is used as the ratio in which a dance shares its bend out (an assumption: a range is how far
+  a joint can go, not how a dancer uses it).
 """
 import argparse
 import importlib.util
@@ -97,6 +104,7 @@ def correction_weights():
 
 
 GN_STEPS = 12
+BISECT_STEPS = 20
 PLACE_CAP_CM = 3.0              # the full song (v5a): 87 frames bent the other way at 3.0, 584 at 1.5, 1,367 at 0
 DAMP = 1e-6
 
@@ -117,6 +125,18 @@ def _skew(d):
 def _rotvec_quat(v):
     ang = np.linalg.norm(v, axis=-1)
     return A.aa(A.unit(np.where(ang[..., None] > 1e-12, v, np.array([1.0, 0.0, 0.0]))), ang)
+
+
+def ranges():
+    """per bone of CHAIN: the range its joints allow, degrees (flexion+extension, lateral bend, axial turn; one side)"""
+    return [[round(v, 6) for v in row] for row in _degrees()]
+
+
+def _local_angles(Cs, B):
+    """F x 4 x 3: |flexion|, |lateral bend|, |axial turn| (degrees) of each spine bone against the one below (上半身
+    against the pelvis), from the cumulative rotations C_0..C_2 and the bend B"""
+    rel = [Cs[0]] + [A.qmul(A.qconj(Cs[k - 1]), Cs[k]) for k in (1, 2)] + [A.qmul(A.qconj(Cs[2]), B)]
+    return np.stack([np.abs(np.stack(A.upright_angles(q), -1)) for q in rel], axis=1)
 
 
 def frame_runs(mask, gap=5):
@@ -177,6 +197,7 @@ def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
         kept = drift * np.minimum(1.0, float(place_cap_cm) / np.maximum(size, 1e-12))[:, None]
     t = t - kept                      # the chest may stay this far from its old place; the rest is corrected
     total = [np.zeros((F, 3)) for _ in range(3)]
+    C_anat = list(C)
     Wc = correction_weights()
     for _ in range(GN_STEPS):
         R = [_matrix(c) for c in C]
@@ -190,7 +211,27 @@ def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
             dk = step[:, 3 * k:3 * k + 3]
             total[k] += dk
             C[k] = A.qnorm(A.qmul(C[k], _rotvec_quat(dk)))
+    # the correction is kept within each bone's range: the corrected rotations are walked back toward the anatomical
+    # ones (one fraction per frame, by bisection) until no bone bends past its range (or past what the shares alone
+    # asked, where they ask more); what is given up stays as the chest's drift
+    lim = np.array(ranges())
+    anat_ang = _local_angles(C_anat, B)
+    allowed = np.maximum(lim[None, :, :], anat_ang)                              # F x 4 x 3
+
+    def beyond(Cs):
+        return np.any(_local_angles(Cs, B) > allowed + 1e-6, axis=(1, 2))
+    lo_s, hi_s = np.zeros(F), np.ones(F)
+    over = beyond(C)
+    for _ in range(BISECT_STEPS):
+        mid = np.where(over, (lo_s + hi_s) / 2.0, 1.0)
+        bad = beyond([A.slerp(ca, cf, mid) for ca, cf in zip(C_anat, C)])
+        lo_s = np.where(over & ~bad, mid, lo_s)
+        hi_s = np.where(over & bad, mid, hi_s)
+    frac = np.where(over, lo_s, 1.0)
+    C = [A.slerp(ca, cf, frac) for ca, cf in zip(C_anat, C)]
+    still = beyond(C) & over
     R = [_matrix(c) for c in C]
+    left = np.linalg.norm(t + kept - sum(np.einsum("fij,j->fi", R[k], d[k]) for k in range(3)), axis=1) * A.UNIT_CM
     residual = np.linalg.norm(t - sum(np.einsum("fij,j->fi", R[k], d[k]) for k in range(3)), axis=1)
     worlds = [A.qmul(q_pelvis, c) for c in C] + [q_chest]
     local = {LO: A.qmul(A.qconj(q_waist), worlds[0])}
@@ -220,6 +261,15 @@ def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
                                             "p95": round(float(np.percentile(size, 95)), 3), "max": round(float(size.max()), 3)},
               "place_cap_cm": place_cap_cm,
               "opposite_bend_frames": int(opposite.sum()),
+              "opposite_max_deg": round(max([float(np.max(np.where(opposite & (np.sign(a[0]) != np.sign(flex_all)), np.abs(a[0]), 0.0)))
+                                             for a in ang] + [0.0]), 3),
+              "range_deg": ranges(),
+              "range_limited_frames": int(np.sum(frac < 1.0)),
+              "range_limited_runs": frame_runs(frac < 1.0),
+              "beyond_range_frames": int(still.sum()),
+              "local_max_deg": [[round(float(v), 3) for v in row] for row in _local_angles(C, B).max(axis=0)],
+              "anatomical_local_max_deg": [[round(float(v), 3) for v in row] for row in anat_ang.max(axis=0)],
+              "chest_drift_left_cm": {"p95": round(float(np.percentile(left, 95)), 3), "max": round(float(left.max()), 3)},
               "opposite_runs": frame_runs(opposite),
               "corrected_runs": [] if place_cap_cm is None else frame_runs(size > place_cap_cm),
               "chest_residual_cm_max": round(float(np.max(residual)) * A.UNIT_CM, 5),

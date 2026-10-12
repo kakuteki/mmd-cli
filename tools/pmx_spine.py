@@ -16,7 +16,8 @@ neck, y 15.65, with the lumbar spine a third and the thoracic spine a little ove
 
 Weights: on each vertex the part that sat on 上半身 and 上半身2 is shared out again over the four bones by the vertex's
 height (smoothstep blends BLEND_HALF either side of each joint); the rest of its weights (下半身, 肩, 首, the skirt, the
-legs, ...) stay.  The vertices that also hang on the skirt, a leg or a physics bone are reweighted the same way (left on
+legs, ...) stay, except that a vertex left with more than four bones keeps the four heaviest and is normalized again:
+on Sour's Rin 300 vertices, the other bones' weights changing by at most 0.0038 (the review of 2026-10-13).  The vertices that also hang on the skirt, a leg or a physics bone are reweighted the same way (left on
 the old split they would tear from their neighbours) and counted.  SDEF vertices whose trunk part changes become BDEF (their SDEF centre is for the old pair).  Rigid
 bodies are left on their bones.  The model is changed for this work only and is not to be distributed (Sour's ReadMe
 allows editing; distribution would need the ReadMe and an editor's ReadMe).

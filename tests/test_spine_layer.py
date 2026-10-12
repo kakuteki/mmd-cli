@@ -88,6 +88,19 @@ class LayerTest(unittest.TestCase):
         self.assertIn("corrected_runs", self.report)
         self.assertIn("opposite_runs", self.report)
 
+    def test_correction_kept_within_range(self):
+        bent = vmd.Motion(model_name="toy", bones=[key("上半身", 0), key("上半身", 10, (70, 0, 0)), key("上半身", 20, (-40, 30, 0))])
+        _, rep = spine_layer.layer(self.old, self.new, bent, place_cap_cm=0.0)
+        self.assertEqual(rep["beyond_range_frames"], 0)
+        self.assertLessEqual(rep["opposite_max_deg"], max(r[0] for r in spine_layer.ranges()) + 1e-6)
+        self.assertIn("range_limited_frames", rep)
+        self.assertIn("chest_drift_left_cm", rep)
+        for k, (flex, lat, rot) in enumerate(rep["local_max_deg"]):     # within range, or no more than the shares asked
+            lim = spine_layer.ranges()[k]
+            anat = rep["anatomical_local_max_deg"][k]
+            self.assertLessEqual(flex, max(lim[0], anat[0]) + 1e-3)
+            self.assertLessEqual(lat, max(lim[1], anat[1]) + 1e-3)
+
     def test_shares_table(self):
         for m in ("flex", "lat", "rot"):
             self.assertAlmostEqual(sum(spine_layer.SHARES[m]), 1.0, 9)

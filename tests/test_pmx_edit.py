@@ -14,7 +14,7 @@ def small(w=None, softbodies=None):
              w.bone("b", parent=1, position=(0, 2, 0)),
              w.bone("tw", parent=1, position=(0, 1.5, 0), flags=NORMAL | APPEND_ROTATE, append=(2, 0.5)),
              w.bone("ik", parent=0, position=(0, 0, 0), flags=NORMAL | IK,
-                    ik={"target": 2, "loops": 3, "angle": 0.5, "links": [(1, ((-1, 0, 0), (0, 0, 0))), (0, None)]})]
+                    ik={"target": 2, "loops": 3, "angle": 0.5, "links": [(3, None), (1, ((-1, 0, 0), (0, 0, 0))), (0, None)]})]
     vertices = [w.vertex("BDEF1", (2,)), w.vertex("BDEF2", (1, 2), (0.25,)), w.vertex("BDEF4", (0, 1, 2, 3), (0.1, 0.2, 0.3, 0.4)),
                 w.vertex("SDEF", (1, 2), (0.5,))]
     faces = [w.index(0, "vertex"), w.index(1, "vertex"), w.index(2, "vertex")]     # the count is of indices
@@ -65,7 +65,7 @@ class InsertTest(unittest.TestCase):
         self.assertEqual(model.bones[1].tail, {"bone": 3})
         self.assertEqual(model.bones[4].append["parent"], 3)
         self.assertEqual(model.bones[5].ik["target"], 3)
-        self.assertEqual(model.bones[5].ik["links"], [1, 0])
+        self.assertEqual(model.bones[5].ik["links"], [4, 1, 0])   # 3 lies past the insertion
         self.assertEqual(model.display_frames[0].items[1], {"kind": "bone", "index": 3})
         self.assertEqual(self.doc.vertices[0].bones, [3])
         self.assertEqual(self.doc.vertices[2].bones, [0, 1, 3, 4])
@@ -97,6 +97,9 @@ class InsertTest(unittest.TestCase):
         self.assertAlmostEqual(v.weights[0], 0.75)
         v.set_weights([(0, 0.1), (1, 0.2), (2, 0.3), (3, 0.4)])
         self.assertEqual(v.kind, "BDEF4")
+        v.set_weights([(1, 0.5), (2, 0.5), (3, 0.5)])         # not summing to 1: normalized
+        self.assertAlmostEqual(sum(w for _, w in v.pairs()), 1.0, 6)
+        self.assertAlmostEqual(v.pairs()[0][1], 1.0 / 3.0, 6)
         v.set_weights([(3, 1.0)])
         self.assertEqual(v.kind, "BDEF1")
         pmx.loads(pmx_edit.dumps(self.doc))                 # still a valid file
