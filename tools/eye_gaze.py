@@ -722,12 +722,14 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             flip = (mode == "free" and held is None and bool(looks) and i - landed >= 1
                     and flips(fixate(i, eye, point, offset)[0], origin, raw_before, cameras[i][0], limits))
             start = next((i + k for k in range(1, longest + 2) if i + k < n and contact_start[i + k] == i + k), None)
+            # sized as it will be made (by the camera of this frame), it lands on the contact's first frame or the one
+            # before; once on the camera the eyes stay there until the contact starts
             if mode != "camera" and start is not None and \
-                    i + saccade_frames(_apart(origin, contact_angles(cameras[start][0], limits))) >= start:
-                want = ("camera", None, "contact")             # it lands by the contact's first frame
+                    i + saccade_frames(_apart(origin, soften(contact_angles(cameras[i][0], limits), limits))) >= start:
+                want = ("camera", None, "contact")
             elif mode != "camera" and contact_end[i] is not None and contact_end[i] - i + 1 >= contact_len[i] - 3:
                 want = ("camera", None, "contact")
-            elif mode == "camera" and contact_end[i] is None:
+            elif mode == "camera" and contact_end[i] is None and start is None:
                 want = ("free", None, "look_away")
             elif mode == "free" and upcoming is not None and upcoming[0] <= i:
                 goal = lead_goal(s, upcoming, origin)

@@ -403,7 +403,41 @@ class ContactPlanTest(unittest.TestCase):
                                              ((0.0, 0.0), True)], LIMITS), [True, False, False])
 
 
+def swings(seed, last=400):
+    """a head that looks away (25 to 45 degrees) and back toward the camera in front, again and again, at different
+    speeds, so that contacts are planned with many ways in"""
+    rng = random.Random(seed)
+    keys = [vmd.BoneKey("全ての親", 0, (0.0, 0.0, 0.0), fk.IDENTITY), vmd.BoneKey("全ての親", last, (0.0, 0.0, 0.0), fk.IDENTITY)]
+    frame = 0
+    while frame < last:
+        away = (rng.uniform(25, 45) * rng.choice((-1, 1)), rng.uniform(-10, 10))
+        keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(away[1], away[0], 0.0)))
+        frame += rng.randint(15, 30)
+        keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(away[1], away[0], 0.0)))
+        frame += rng.randint(2, 9)
+        face = (rng.uniform(-6, 6), rng.uniform(-4, 4))
+        keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(face[1], face[0], 0.0)))
+        frame += rng.randint(55, 80)
+        keys.append(vmd.BoneKey("頭", frame, (0.0, 0.0, 0.0), mathutil.ui_to_quat(face[1], face[0], 0.0)))
+        frame += rng.randint(2, 9)
+    return vmd.Motion(model_name="dancer", bones=[k for k in keys if k.frame <= last])
+
+
 class ContactTest(unittest.TestCase):
+    def test_each_contact_has_one_saccade_in_and_one_out(self):
+        # the saccade into a contact lands on the frame before it or later.  It was sized by the camera on the
+        # contact's first frame but made with the camera of its own first frame, so it could land two frames early;
+        # the eyes then looked away and back within 4 frames (frames 3240 and 6680 of the MV v6d, stage 5)
+        for seed in (53, 7, 21):
+            result = eye_gaze.gaze(MODEL, swings(seed), camera(cam(0), cam(400)), life=False, seed=seed)
+            self.assertGreaterEqual(len(result.contacts), 3, seed)
+            ins = [s for s in result.saccades if s["reason"] == "contact"]
+            outs = [s for s in result.saccades if s["reason"] == "look_away"]
+            self.assertEqual(len(ins), len(result.contacts), (seed, ins, result.contacts))
+            self.assertLessEqual(len(outs), len(result.contacts), seed)
+            for (a, b), s in zip(result.contacts, ins):
+                self.assertGreaterEqual(s["frame"] + s["frames"] - 1, a - 1, (seed, a, s))
+
     def test_a_camera_within_reach_too_briefly_gets_no_contact(self):
         # her head faces the camera only from frame 40 to 70 (31 frames), turned 40 degrees away otherwise
         dance = head_turn({0: 40.0, 38: 40.0, 40: 0.0, 70: 0.0, 72: 40.0})
