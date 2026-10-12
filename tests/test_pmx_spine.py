@@ -64,7 +64,7 @@ class BuildTest(unittest.TestCase):
         self.assertEqual(B[su].parent, up)
         self.assertEqual(B[self.idx("首")].parent, su)
         self.assertEqual(B[self.idx("左肩P")].parent, su)
-        self.assertEqual(B[self.idx("スカート_0_0")].parent, lo)      # the skirt stays on 上半身
+        self.assertEqual(B[self.idx("スカート_0_0")].parent, sl)      # the skirt's root (y 13.3) follows 腰椎上部
         self.assertTrue(lo < sl < up < su < self.idx("首"))           # parents before children
         self.assertEqual(B[lo].tail, {"bone": sl})
         self.assertEqual(B[up].tail, {"bone": su})

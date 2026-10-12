@@ -1,7 +1,7 @@
 """Share the trunk's bend between the pelvis and the chest out over the spine bones of a model made by tools/pmx_spine.py
 (上半身, 腰椎上部, 上半身2, 胸椎上部), by the spine's anatomy, with the chest's world pose kept.
 
-    python tools/spine_layer.py DANCE.vmd MODEL.pmx SPINE_MODEL.pmx OUT.vmd [--report r.json]
+    python tools/spine_layer.py DANCE.vmd MODEL.pmx SPINE_MODEL.pmx OUT.vmd [--report r.json] [--place-cap-cm 1.5]
 
 DANCE.vmd is a dance for the original MODEL (its 上半身 and 上半身2 keys, e.g. after tools/anatomy_layer.py, which split
 them 0.25 / 0.3 / 0.4); OUT.vmd is for SPINE_MODEL.  This layer goes last: it replaces anatomy_layer's split of the
@@ -9,11 +9,14 @@ trunk (that split only survives through the chest's pose, which is kept) and lea
 
 The bend B is the chest's (上半身2 in DANCE) rotation against the pelvis (下半身, 上半身's sibling under 腰).  Each spine
 bone k takes the cumulative share c_k of B (upright_part of tools/anatomy_layer.py: the swing of the up axis by its
-direction, flexion about X and lateral bend about Z, and the twist about Y), from SHARES.  Then, so that the chest is
-also where it was (a curved spine ends elsewhere than a straight one with the same end rotation), the three lower
-bones' rotations are corrected by the smallest turns (Gauss-Newton, the minimum-norm step, damped) that bring 胸椎上部 to the
-place of the old chest frame; 胸椎上部's world rotation is the old chest's exactly.  Everything above (neck, head, arms,
-hands) then has its old world pose.  Per frame the result is a smooth function of B, so it is as smooth as the input.
+direction, flexion about X and lateral bend about Z, and the twist about Y), from SHARES.  胸椎上部's world rotation is
+the old chest's exactly.  A curved spine ends elsewhere than a straight one with the same end rotation, so the chest
+drifts from its old place.  The drift is let be up to --place-cap-cm (PLACE_CAP_CM); beyond, the three lower bones'
+rotations are corrected by the smallest turns weighted by the joints' range (correction_weights; Gauss-Newton, the
+weighted minimum-norm step, damped).  Not to 0 by default: the old place came from the old two-bone rig, and matched
+exactly it pulls the bend back onto 上半身 (88 % of a 40 degree flexion).  Everything above the chest (neck, head, arms,
+hands) keeps its world rotation and moves with the chest, by at most the cap.  Per frame the result is a smooth
+function of B, so it is as smooth as the input.
 
 SHARES (one side per joint, degrees; the four bones' joints as in tools/pmx_spine.py):
   regional totals (anatomystandard.com, ROM of the spine, in-vivo healthy young males): lumbar flexion+extension 96,
@@ -69,7 +72,32 @@ def _shares():
 
 
 SHARES = _shares()
+
+
+def _degrees():
+    """per bone of CHAIN: the degrees of its joints, (flexion+extension, lateral bend, axial turn)"""
+    out = []
+    for b in CHAIN:
+        row = []
+        for m in range(3):
+            per = (LUMBAR_TOTAL[m] / 5.0, THORACIC_TOTAL[m] * (1.0 - THORACIC_UPPER[m]) / 6.0, THORACIC_TOTAL[m] * THORACIC_UPPER[m] / 6.0)
+            row.append(sum(n * p for n, p in zip(JOINTS[b], per)))
+        out.append(row)
+    return out
+
+
+def correction_weights():
+    """the weights of the correction's nine turns (the three lower bones, each about X, Y, Z): the square of the joints'
+    range about that axis (X flexion, Y axial turn, Z lateral bend), so that a joint that moves more takes more"""
+    w = []
+    for flex, lat, rot in _degrees()[:3]:
+        w += [flex ** 2, rot ** 2, lat ** 2]
+    w = np.array(w)
+    return w / w.max()
+
+
 GN_STEPS = 12
+PLACE_CAP_CM = 1.5
 DAMP = 1e-6
 
 
@@ -110,7 +138,10 @@ def _rest(model, name):
     raise ValueError("the model has no bone named %r" % name)
 
 
-def layer(old_model, new_model, motion, log=None):
+def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
+    place_cap_cm = PLACE_CAP_CM if place_cap_cm is None else place_cap_cm
+    if place_cap_cm < 0:
+        place_cap_cm = None                                       # no correction at all
     """(the motion for new_model, a report)"""
     F = fk.last_frame(motion) + 1
     pos, rot = _track(old_model, motion, [WAIST, PELVIS, LO, UP], F)
@@ -125,14 +156,24 @@ def layer(old_model, new_model, motion, log=None):
     # where 胸椎上部 must be: the old chest frame carries its rest point; in the pelvis's frame, from 上半身's joint
     target_world = p_chest + A.qrot(q_chest, rest[3] - old_up)
     t = A.qrot(A.qconj(q_pelvis), target_world - p_lo)
+    R = [_matrix(c) for c in C]
+    drift = t - sum(np.einsum("fij,j->fi", R[k], d[k]) for k in range(3))        # where the anatomical shares miss
+    size = np.linalg.norm(drift, axis=1) * A.UNIT_CM
+    if place_cap_cm is None:
+        kept = drift
+    else:
+        kept = drift * np.minimum(1.0, float(place_cap_cm) / np.maximum(size, 1e-12))[:, None]
+    t = t - kept                      # the chest may stay this far from its old place; the rest is corrected
     total = [np.zeros((F, 3)) for _ in range(3)]
+    Wc = correction_weights()
     for _ in range(GN_STEPS):
         R = [_matrix(c) for c in C]
         reach = sum(np.einsum("fij,j->fi", R[k], d[k]) for k in range(3))
         r = t - reach
         J = np.concatenate([-R[k] @ _skew(d[k]) for k in range(3)], axis=2)        # F x 3 x 9
-        JJ = J @ np.swapaxes(J, 1, 2) + DAMP * np.eye(3)    # damped: a straight chain cannot stretch
-        step = np.einsum("fji,fj->fi", J, np.linalg.solve(JJ, r[..., None])[..., 0])
+        JW = J * Wc                                                     # weighted minimum norm: W J^T (J W J^T)^-1 r
+        JJ = JW @ np.swapaxes(J, 1, 2) + DAMP * np.eye(3)    # damped: a straight chain cannot stretch
+        step = np.einsum("fji,fj->fi", JW, np.linalg.solve(JJ, r[..., None])[..., 0])
         for k in range(3):
             dk = step[:, 3 * k:3 * k + 3]
             total[k] += dk
@@ -155,10 +196,18 @@ def layer(old_model, new_model, motion, log=None):
 
     def max_step(qs):
         return max(float(np.degrees(np.max(A.qangle(A.qmul(A.qconj(q[:-1]), q[1:]))))) if len(q) > 1 else 0.0 for q in qs)
+    flex_all = A.upright_angles(B)[0]
+    opposite = np.zeros(F, bool)
+    for a in ang:
+        opposite |= (np.sign(a[0]) != np.sign(flex_all)) & (np.abs(a[0]) > 2.0) & (np.abs(flex_all) > 5.0)
     q_up_in = A.qmul(A.qconj(q_lo_in), q_chest)
     report = {"frames": F, "shares_table": SHARES, "shares_measured": shares,
               "correction_deg": {"p50": round(float(np.degrees(np.median(np.linalg.norm(np.concatenate(total, 1), axis=1)))), 3),
                                  "max": round(float(np.degrees(np.max(np.linalg.norm(np.concatenate(total, 1), axis=1)))), 3)},
+              "chest_drift_anatomical_cm": {"p50": round(float(np.median(size)), 3),
+                                            "p95": round(float(np.percentile(size, 95)), 3), "max": round(float(size.max()), 3)},
+              "place_cap_cm": place_cap_cm,
+              "opposite_bend_frames": int(opposite.sum()),
               "chest_residual_cm_max": round(float(np.max(residual)) * A.UNIT_CM, 5),
               "max_step_deg": {"in": round(max_step([A.qmul(A.qconj(q_pelvis), q_lo_in), q_up_in]), 3),
                                "out": round(max_step([rel[0]] + rel[1:]), 3)}}
@@ -174,15 +223,18 @@ def main(argv=None):
     ap.add_argument("spine_model")
     ap.add_argument("out")
     ap.add_argument("--report")
+    ap.add_argument("--place-cap-cm", type=float, default=PLACE_CAP_CM,
+                    help="how far the chest may move from its old place, cm (0 keeps it; negative: no correction)")
     a = ap.parse_args(argv)
     if os.path.abspath(a.out) in (os.path.abspath(a.dance), os.path.abspath(a.model), os.path.abspath(a.spine_model)):
         raise SystemExit("the output would overwrite an input")
-    out, report = layer(pmx.load(a.model), pmx.load(a.spine_model), vmd.load(a.dance), log=print)
+    out, report = layer(pmx.load(a.model), pmx.load(a.spine_model), vmd.load(a.dance), place_cap_cm=a.place_cap_cm, log=print)
     vmd.dump(out, a.out)
     if a.report:
         with open(a.report, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=1)
-    print(json.dumps({k: report[k] for k in ("shares_measured", "correction_deg", "chest_residual_cm_max", "max_step_deg")},
+    print(json.dumps({k: report[k] for k in ("shares_measured", "correction_deg", "chest_drift_anatomical_cm",
+                                                    "chest_residual_cm_max", "opposite_bend_frames", "max_step_deg")},
                      ensure_ascii=False))
 
 

@@ -11,6 +11,8 @@ neck, y 15.65, with the lumbar spine a third and the thoracic spine a little ove
     上半身2  (y 13.80, about T8/9)  T7/8 .. T10/11
     胸椎上部 (THORACIC_Y, about T4)  T1/2 .. T6/7            new: the chest; 首, 肩P and every other child of 上半身2
                                                               move onto it
+    (the children of 上半身 between 腰椎上部 and 上半身2, the skirt's root ring at y 13.3, move onto 腰椎上部: left on
+    上半身 the waistband tore between the skirt's and the trunk's weights, 47 faces turned over at a 40 degree bend)
 
 Weights: on each vertex the part that sat on 上半身 and 上半身2 is shared out again over the four bones by the vertex's
 height (smoothstep blends BLEND_HALF either side of each joint); the rest of its weights (下半身, 肩, 首, the skirt, the
@@ -76,6 +78,11 @@ def build(doc, lumbar_y=LUMBAR_Y, thoracic_y=THORACIC_Y, half=BLEND_HALF):
     for i, b in enumerate(doc.bones):
         if b.parent == up and i != su:
             b.parent = su
+            moved.append(b.name)
+    # the children of 上半身 within 腰椎上部's stretch (the skirt's root ring, y 13.3) follow 腰椎上部
+    for i, b in enumerate(doc.bones):
+        if b.parent == lo and i not in (sl, up) and lumbar_y <= b.position[1] < doc.bones[up].position[1]:
+            b.parent = sl
             moved.append(b.name)
     for i, tail in ((lo, sl), (sl, up), (up, su), (su, neck)):
         b = doc.bones[i]

@@ -18,7 +18,7 @@ class CheckTest(unittest.TestCase):
         doc = pmx_edit.loads(toy())
         pmx_spine.build(doc)
         new = pmx.loads(pmx_edit.dumps(doc))
-        out, _ = spine_layer.layer(old, new, dance())
+        out, _ = spine_layer.layer(old, new, dance(), place_cap_cm=0.0)
         err = spine_check.pose_error(old, dance(), new, out, ["首", "左肩P"])
         self.assertLess(err["首"]["pos_cm_max"], 1e-3)
         self.assertLess(err["左肩P"]["rot_deg_max"], 1e-3)

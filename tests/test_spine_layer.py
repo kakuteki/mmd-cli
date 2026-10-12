@@ -44,12 +44,24 @@ class LayerTest(unittest.TestCase):
         cls.motion = dance()
         cls.out, cls.report = spine_layer.layer(cls.old, cls.new, cls.motion)
 
-    def test_neck_pose_kept(self):
+    def test_neck_pose_kept_with_cap_zero(self):
+        out, _ = spine_layer.layer(self.old, self.new, self.motion, place_cap_cm=0.0)
         a = chest_frame(self.old, self.motion, "上半身2", 21)
-        b = chest_frame(self.new, self.out, pmx_spine.THORACIC, 21)
+        b = chest_frame(self.new, out, pmx_spine.THORACIC, 21)
         for (pa, qa), (pb, qb) in zip(a, b):
             self.assertLess(np.linalg.norm(np.subtract(pa, pb)), 1e-4)
             self.assertGreater(abs(sum(x * y for x, y in zip(qa, qb))), 1 - 1e-8)
+
+    def test_neck_rotation_kept_place_within_cap(self):
+        a = chest_frame(self.old, self.motion, "上半身2", 21)
+        b = chest_frame(self.new, self.out, pmx_spine.THORACIC, 21)
+        drift = []
+        for (pa, qa), (pb, qb) in zip(a, b):
+            drift.append(np.linalg.norm(np.subtract(pa, pb)) * 8.0)
+            self.assertGreater(abs(sum(x * y for x, y in zip(qa, qb))), 1 - 1e-8)
+        self.assertLess(max(drift), spine_layer.PLACE_CAP_CM + 1e-3)
+        self.assertGreater(max(drift), 0.5)                    # the anatomical curve is let move the chest
+        self.assertIn("chest_drift_anatomical_cm", self.report)
 
     def test_keys_on_all_four(self):
         names = {k.name for k in self.out.bones}
@@ -63,6 +75,12 @@ class LayerTest(unittest.TestCase):
 
     def test_smooth(self):
         self.assertLess(self.report["max_step_deg"]["out"], 2.0 * self.report["max_step_deg"]["in"] + 0.5)
+
+    def test_correction_weighted_by_range(self):
+        w = spine_layer.correction_weights()
+        self.assertEqual(w.shape, (9,))
+        self.assertGreater(w[0], w[6])          # flexion: 上半身 (lumbar) moves more easily than 上半身2
+        self.assertIn("opposite_bend_frames", self.report)
 
     def test_shares_table(self):
         for m in ("flex", "lat", "rot"):
