@@ -7,67 +7,64 @@ dance, the face and the gaze.
 
 MODEL is the model made by tools/pmx_eyes.py (its catchlight bones); GAZE the 両目 track of tools/eye_gaze.py, merged
 over the dance as MMD merges a later motion (its keys replace the dance's on the same bone and frame).  Every frame of
-the dance is computed; everything is smooth (the step measures of the report say how much each channel changes in
-one frame at most and at the 99th percentile).  The numbers are PARAMS, each replaceable with --params (a JSON of the
-same shape; an unknown key is refused).  They are estimates for a human eye until stage 5's research gives its own.
+the dance is computed.  The numbers are PARAMS, each replaceable with --params (a JSON of the same shape; an unknown
+key is refused); they are those of stage 5's research (`_spike/out/stage5/research/RESEARCH.md`, cited by section).
 
-The light (the catchlight bones, keyed in the head's frame, after their append):
+The light (the catchlight bones; RESEARCH 1.4, formula A):
 
-* pmx_eyes makes each light follow the gaze (両目) by append with a share k (a human eye's d / d_p = 5.7 / 10.4 =
-  0.55, its lag 0.45 scaled by the model's iris: Sour's Rin 0.69; the report's model.share is read back from the
-  model).  Turning the eye carries the light only that far.
-* The rest of a corneal reflection's motion comes from the light: the light shines where the cornea's normal is the
-  half-way direction n between the direction to the light and to the viewer.  The light is MMD's (light.direction,
-  the window's numbers: where the light goes; MMD's default -0.5 -1 0.5 comes from above, in front, on her left).  The
-  viewer is taken in front of her face (the head's -Z): in the MV the camera keeps to her face (seen from the head it
-  lies 13 degrees off the face's forward in the median) and its cuts would make the light jump.  So n depends on the
-  head's turn against the light only, and the light moves with the head's speed.  With n0 its direction with the head
-  at rest, the light's way on the cornea is r_c (n - n0) (r_c = 7.8 mm, the cornea's radius), which the pupil would
-  make turning by r_c / d_p = 0.75 times (n - n0) radians on a human eye, scaled like the share by the model's iris
-  (pmx_eyes.model_scale; Sour's Rin 0.52) so that the light crosses the same part of the iris: light.gain, or that
-  when it is null.  The bone turns that far (yaw toward +X by gain (n - n0).x, pitch up by gain (n - n0).y; the
-  bone's pivot lies the pupil's depth behind the light, pmx_eyes).
-* The added turn is held under light.cap degrees (soft: unchanged up to 60 % of it, tanh beyond; at the cap Sour's Rin's
-  upper light has moved 0.06 of the iris' 0.16 half width), changed by at most light.max_step degrees a frame (the
-  coordinator: no jump over a degree), then smoothed with a 1 4 6 4 1 window (which never steps further).
-* Each light also takes the share k of its eye's vergence turn in its key (its append is from 両目, which the
-  vergence keys do not turn).
-* When n leaves the cornea seen from the eye's line of sight (the cornea's edge lies about 48 degrees off its axis),
-  the light fades: the morph HL消 (the HL material's opacity) goes from 0 at light.fade[0] degrees between n and the
-  line of sight to 1 at light.fade[1], at most light.fade_step a frame.  With the viewer in front, that is the light
-  coming from behind the eye's plane (90 to 110 degrees off the line of sight).
+* A light is the mirror image of a light source in the cornea.  Seen by the camera, its centre lies off the pupil's
+  centre by  R proj(H) - K proj(g)  (R = 7.72 mm the cornea's radius, K = 4.67 mm from the entrance pupil back to the
+  cornea's centre of curvature, H the half-way direction between the way to the light and the way to the camera,
+  g the eye's axis, proj the part across the line of sight): in iris radii (5.91 mm)  1.31 proj(H) - 0.79 proj(g).
+  Neither the head's turn nor its roll nor the eye's torsion enter it: only the eye's axis in the world, the light and
+  the camera.
+* The light source is MMD's (light.direction, the window's numbers: where the light goes; the default -0.5 -1 0.5
+  comes from above, in front, on her left); the camera is the camera motion's, seen from each eye's pupil.
+* The model's lights were drawn for the eye at rest, looking at a camera straight in front.  Each light keeps that
+  drawn offset and moves by the change of the formula from that rest view (both lights of an eye by the same change:
+  they keep their spacing, RESEARCH 1.8), the offsets scaled to the model's iris (its half width across X, half
+  height across Y; Sour's Rin's iris is an ellipse, 0.1625 by 0.222).
+* Each light bone (pmx_eyes: the pivot the pupil's depth behind the light) is turned, every frame, so that its light
+  sits on the camera's line through that point, on the camera's side: no smoothing and no delay of its own, the same
+  frame as the pupil (RESEARCH 0.2, items 2 to 4).  The key is that turn in the head's frame after the bone's append
+  from 両目 (pmx_eyes' share, a fallback for a gaze this tool did not see); it has no roll of its own.
+* A light leaves the cornea when H lies more than about 46 to 50 degrees off the eye's axis (with the eye on the
+  camera: the light source more than 90 to 100 degrees from the camera, RESEARCH 1.6).  The morph HL消 (the light
+  material's opacity) goes from 0 at light.fade[0] to 1 at light.fade[1] degrees (the mean of the eyes), each frame
+  on its own.
 
-The pupil (morphs 瞳大 and 瞳細 of Sour's Rin: with 瞳1off at 1 the navy pupil; 瞳大 widens it to (1 + 1.73 w) of its
-radius, 瞳細 narrows it to (1 - 0.67 w); the factors are measured on the model's own morphs):
+The pupil (morphs 瞳大 and 瞳細 of Sour's Rin: with 瞳1off at 1 the navy pupil; 瞳大 widens only it, to (1 + 1.73 w) of
+its radius, 瞳細 narrows only it, to (1 - 0.67 w); the factors are measured on the model's own morphs; 瞳小 would
+shrink the whole iris and is not used).  r, the change of the pupil's diameter against the model's own, sums
 
-* r, the change of the pupil's diameter against the model's own (0 = as the model is made), sums
-  - the light reflex at each flare of the MV's look (--look's "flares", seconds, and --flares): after reflex.latency
-    the pupil narrows by reflex.amplitude, most narrow reflex.rise ln(1 + 2 redilate / rise) later (0.64 s), and comes
-    back with the time constant reflex.redilate (2.4 s: 90 % back in 5.5 s; Pilley & Thompson 1975, 90 % in 5 to 6 s);
-    the shape (1 - e^(-t / rise))^2 e^(-t / redilate) starts with no step and no kink.  Overlapping flares add, held
-    under reflex.most.
-  - arousal: the song's loudness (--audio, RMS read with ffmpeg, 0 at its arousal.low and 1 at its arousal.high
-    percentile) followed with arousal.rise on the way up and arousal.fall on the way down, as a share of
-    arousal.amplitude about its median (the pupil is the model's own at the song's usual loudness).
-  - a dilation at the head of each chorus (--chorus, seconds): the shape of the reflex with chorus.latency, .rise and
-    .fall, chorus.amplitude high.
-  - the near response: per_dioptre narrower for each dioptre the eyes converge nearer than the free distance (from the
-    smoothed vergence).
-  - unrest: unrest.waves sines between unrest.low_hz and high_hz with random phases (from --seed), unrest.amplitude
-    RMS together.
-* r is kept in pupil.range; r > 0 is 瞳大 r / 1.73, r < 0 瞳細 -r / 0.67.
+* the light reflex at each flare of the MV's look (--look's "flares", seconds, and --flares; RESEARCH 2.1): from
+  reflex.latency after the flare, for reflex.hold seconds, the pupil is pulled narrower with the time constant
+  reflex.constrict (0.3 s), then widens again with reflex.redilate (2.4 s, 90 % back in 5.5 s): most narrow about
+  1 s after the flare (latency 0.25 + hold 0.75; the reflex outlasts a 0.4-second flash), scaled so that one flare
+  narrows it by reflex.peak (12 %);
+* arousal: the song's loudness (--audio, RMS read with ffmpeg, 0 at its arousal.low and 1 at its arousal.high
+  percentile) followed with arousal.rise on the way up and arousal.fall on the way down, arousal.amplitude from the
+  quietest to the loudest about its median (music: 1 to 2 %, RESEARCH 2.2);
+* at the head of each chorus (--chorus, seconds) a dilation of chorus.amplitude shaped as the pupil's response to an
+  event, h(t) = (t / t_max)^n e^(n (1 - t / t_max)), n 10.1, t_max chorus.peak (0.93 s; Hoeks & Levelt via Wierda 2012);
+* the near response: near.per_dioptre narrower for each dioptre of the vergence's demand (small; RESEARCH 2.4);
+* unrest: unrest.waves sines between unrest.low_hz and high_hz (under 2 Hz) with random phases (from --seed),
+  unrest.amplitude RMS together (RESEARCH 2.3: small while awake and busy).
+r is kept in pupil.range; r > 0 is 瞳大 r / 1.73, r < 0 瞳細 -r / 0.67.
 
-The vergence (keys on 右目 and 左目, after their append from 両目):
+The vergence (keys on 右目 and 左目, after their append from 両目; RESEARCH 3.2 and 0.2 item 9):
 
-* Where the eyes look (fixation_targets): the camera when the gaze (both eyes' mean, in the world) is within
-  vergence.camera_deg of it for vergence.camera_frames frames on end; one of her hands (the points vergence.hand_points
-  of each side, the nearest to the gaze) when it is within hand_deg of the gaze, between near_m and hand_m away, for
-  hand_frames frames on end (the camera wins when it is nearer the gaze for its tolerance); else something free_m away.
-* The angle per eye is atan((ipd / 2) / distance) (ipd_mm 61.7, unit_mm 80 to the model unit); it follows its demand
-  through a critically damped filter of time constant vergence.time (0.1 s: 10 to 90 % in 0.34 s, no overshoot; the
-  coordinator asked for 0.2 to 0.3 s or more), from the frame after the demand changes.  Each eye then turns from the
-  gaze onto the point at the smoothed distance along it (right eye -X, left eye +X: inward is +yaw for the right eye
-  and -yaw for the left, as the coordinator's vergence probe keys them).
+* The eyes converge on her hands only, not on the camera, however near (large eyes look cross-eyed; a person's line of
+  sight lies about 6 degrees nasal of the eye's axis anyway).  A hand is looked at (fixation_targets) when one of its
+  points (vergence.hand_points) lies within hand_deg of the gaze (both eyes' mean, in the world), between near_m and
+  hand_m away, for hand_frames frames on end; the camera, within camera_deg of the gaze, wins when it is nearer the gaze
+  for its tolerance.
+* The demand during a run on a hand is gain x atan((ipd / 2) / distance) per eye, the distance the run's median
+  (ipd 61.5 mm, Murray 2017; gain 0.75: below the geometric angle, as RESEARCH 0.2 asks); elsewhere 0.
+* It follows the demand (vergence_track) vergence.latency (0.24 s) after each change, along a minimum-jerk curve whose
+  5 to 95 % time is vergence.duration (0.38 s) or longer, so its top speed stays under max_speed (8 deg/s; Tyler 2015).
+* Each eye then turns from the gaze onto the point at that distance along it (right eye -X, left eye +X: inward is
+  +yaw for the right eye and -yaw for the left, as the coordinator's vergence probe keys them).
 
 The eyes' fine motion (drift, microsaccades) is tools/eye_gaze.py's; this tool does not change the gaze.  The VMD keys
 every frame where a value changes, with linear curves, under the dance's model name.  The face's and the dance's keys
@@ -95,38 +92,42 @@ import pmx_eyes  # noqa: E402
 FPS = 30.0
 SHOWN = 0.1875                  # frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py; tools/face_life.py)
 FORWARD = (0.0, 0.0, -1.0)
+UP = (0.0, 1.0, 0.0)
 BIG, THIN, HIDE = "瞳大", "瞳細", "HL消"
-SOFT_FROM = 0.6                 # share of a cap up to which soft_cap passes values unchanged
+CUT_JUMP, CUT_TURN = 1.0, 5.0   # a camera cut: it moves more than this (units) or turns more (degrees) in a frame
+MIN_JERK_5_95 = 0.6162          # the 5 to 95 % time of a minimum-jerk move, as a share of its whole time
+MIN_JERK_TOP = 1.875            # its top speed, times step / time
 
 PARAMS = {
     "light": {
-        "gain": None,                        # None: r_c / d_p (pmx_eyes.HUMAN, 0.75) times the model's iris scale
-        "cap": 8.0,                          # degrees (a turn of the pupil) the added part keeps under
-        "max_step": 1.0,                     # degrees a frame the added part changes at most
+        "cornea_radius_mm": 7.72,            # R (Navarro, via Barsingerhorn 2017)
+        "pupil_to_centre_mm": 4.67,          # K: entrance pupil to the cornea's centre of curvature (RESEARCH 1.1)
+        "iris_radius_mm": 5.91,              # the visible iris (Aguirre 2019)
         "direction": [-0.5, -1.0, 0.5],      # MMD's light, as its window shows it (where the light goes)
-        "fade": [45.0, 55.0],                # degrees between n and the line of sight: HL消 0 .. 1
-        "fade_step": 0.06,                   # HL消 a frame at most
+        "fade": [46.0, 50.0],                # degrees between H and the eye's axis: HL消 0 .. 1 (RESEARCH 1.6)
     },
     "vergence": {
-        "ipd_mm": 61.7,                      # the coordinator's probe (interpupillary distance)
+        "ipd_mm": 61.5,                      # women's mean (Murray 2017)
         "unit_mm": 80.0,                     # one model unit
-        "free_m": 3.0,                       # what she looks at when not the camera or a hand (estimate)
-        "near_m": 0.2,                       # a hand nearer than this is not looked at (estimate)
+        "gain": 0.75,                        # the share of the geometric angle (below it, RESEARCH 0.2 item 9)
+        "near_m": 0.15,                      # a hand nearer than this is not looked at
+        "hand_m": 0.6,
+        "hand_deg": 10.0,
+        "hand_frames": 6,
+        "hand_points": ["人指３先", "中指３先", "親指２先", "手先"],
         "camera_deg": 4.0,                   # tools/eye_gaze.py counts a gaze this near the camera as eye contact
         "camera_frames": 3,
-        "hand_deg": 6.0,
-        "hand_m": 0.7,
-        "hand_frames": 9,
-        "hand_points": ["人指３先", "中指３先", "親指２先", "手先"],
-        "time": 0.1,                         # seconds: the critically damped filter's time constant
+        "latency": 0.24,                     # seconds (Tyler 2015, 2-degree steps)
+        "duration": 0.38,                    # seconds, 5 to 95 %
+        "max_speed": 8.0,                    # degrees a second
     },
     "pupil": {
-        "iris_mm": 11.8,                     # the iris' diameter, to give the pupil in mm
-        "reflex": {"amplitude": 0.15, "latency": 0.25, "rise": 0.2, "redilate": 2.4, "most": 0.3},
-        "arousal": {"amplitude": 0.06, "rise": 1.0, "fall": 3.0, "low": 10.0, "high": 90.0},
-        "chorus": {"amplitude": 0.05, "latency": 0.5, "rise": 0.6, "fall": 3.0},
-        "near": {"per_dioptre": 0.03},
-        "unrest": {"amplitude": 0.02, "low_hz": 0.05, "high_hz": 0.3, "waves": 6},
+        "iris_mm": 11.82,                    # the visible iris' diameter, to give the pupil in mm
+        "reflex": {"peak": 0.12, "latency": 0.25, "hold": 0.75, "constrict": 0.3, "redilate": 2.4},
+        "arousal": {"amplitude": 0.015, "rise": 1.0, "fall": 3.0, "low": 10.0, "high": 90.0},
+        "chorus": {"amplitude": 0.015, "peak": 0.93, "n": 10.1},
+        "near": {"per_dioptre": 0.01},
+        "unrest": {"amplitude": 0.01, "low_hz": 0.1, "high_hz": 0.7, "waves": 6},
         "range": [-0.35, 0.5],
     },
 }
@@ -162,6 +163,18 @@ def _cross(a, b):
     return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
 
 
+def _add(a, b):
+    return tuple(x + y for x, y in zip(a, b))
+
+
+def _sub(a, b):
+    return tuple(x - y for x, y in zip(a, b))
+
+
+def _scale(a, k):
+    return tuple(k * x for x in a)
+
+
 def _degrees_between(a, b):
     return math.degrees(math.acos(max(-1.0, min(1.0, _dot(_unit(a), _unit(b))))))
 
@@ -174,17 +187,6 @@ def _between(a, b):
         return (axis[0], axis[1], axis[2], 0.0)
     c = _cross(a, b)
     return fk.normalized((c[0], c[1], c[2], 1.0 + d))
-
-
-def _about(axis, degrees):
-    half = math.radians(degrees) / 2.0
-    s = math.sin(half)
-    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(half))
-
-
-def eye_rotation(yaw, pitch):
-    """the rotation (as applied, in the head's frame) that turns -Z by yaw toward +X and pitch up (tools/eye_gaze.py)"""
-    return fk.multiply(_about((0.0, 1.0, 0.0), -yaw), _about((1.0, 0.0, 0.0), pitch))
 
 
 def _angle(q):
@@ -206,24 +208,6 @@ def vergence_turns(gaze, distance, half):
     return tuple(_between(g, _unit(tuple(t - e for t, e in zip(target, (x, 0.0, 0.0))))) for x in (-half, half))
 
 
-def damped(values, fps, tau):
-    """a critically damped follower (no overshoot) of time constant tau seconds: each frame moves by the exact solution
-    toward the demand of the frame before, starting at rest on the first value"""
-    if not values:
-        return []
-    w, dt = 1.0 / tau, 1.0 / fps
-    decay = math.exp(-w * dt)
-    x, v = float(values[0]), 0.0
-    out = [x]
-    for u in values[:-1]:
-        e = x - u
-        b = v + w * e
-        x = u + (e + b * dt) * decay
-        v = (v - w * b * dt) * decay
-        out.append(x)
-    return out
-
-
 def _runs(mask):
     out, start = [], None
     for i, m in enumerate(mask):
@@ -238,14 +222,13 @@ def _runs(mask):
 
 
 def fixation_targets(rows, params):
-    """(metres, labels) per frame: what the eyes converge on.  A row is {"camera": (degrees off the gaze, metres),
+    """(metres, labels) per frame: what the eyes look at.  A row is {"camera": (degrees off the gaze, metres),
     "hands": [(degrees off the gaze, metres), ...]}; see the module docstring."""
     p = params
-    n = len(rows)
     cam_ok = [r["camera"][0] <= p["camera_deg"] for r in rows]
     hand = []
     for r in rows:
-        fit = [h for h in r["hands"] if h[0] <= p["hand_deg"] and p["near_m"] <= h[1] <= p["hand_m"]]
+        fit = [h[:2] for h in r["hands"] if h[0] <= p["hand_deg"] and p["near_m"] <= h[1] <= p["hand_m"]]
         hand.append(min(fit) if fit else None)
     labels = []
     for i, r in enumerate(rows):
@@ -264,14 +247,54 @@ def fixation_targets(rows, params):
             for i in range(a, b + 1):
                 labels[i] = "free"
     metres = []
-    for i in range(n):
-        if labels[i] == "camera":
-            metres.append(rows[i]["camera"][1])
-        elif labels[i] == "hand":
-            metres.append(hand[i][1])
-        else:
-            metres.append(p["free_m"])
+    for i, r in enumerate(rows):
+        metres.append(r["camera"][1] if labels[i] == "camera" else hand[i][1] if labels[i] == "hand" else None)
     return metres, labels
+
+
+def _median(values):
+    s = sorted(values)
+    n = len(s)
+    return 0.0 if n == 0 else (s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0)
+
+
+def vergence_demand(labels, metres, params):
+    """degrees per eye wanted per frame: gain x atan((ipd / 2) / distance) through each run on a hand (its median
+    distance), 0 elsewhere (the camera and things far away are looked at with the eyes parallel)"""
+    out = [0.0] * len(labels)
+    for a, b in _runs([lab == "hand" for lab in labels]):
+        d = params["gain"] * vergence_degrees(_median(metres[a:b + 1]), params["ipd_mm"])
+        for i in range(a, b + 1):
+            out[i] = d
+    return out
+
+
+def _min_jerk(s):
+    s = min(1.0, max(0.0, s))
+    return s * s * s * (10.0 + s * (6.0 * s - 15.0))
+
+
+def vergence_track(demands, fps, latency, duration, max_speed):
+    """the vergence per frame: each change of the demand starts, `latency` seconds later, a minimum-jerk move from
+    where the vergence is then to the new demand, whose 5 to 95 % time is `duration` or longer so that its top speed
+    stays under `max_speed` (degrees a second); a change during a move starts the next move from there"""
+    if not demands:
+        return []
+    moves = []                                   # (start in frames, from, to, length in frames)
+
+    def value(t):
+        for t0, v0, v1, length in reversed(moves):
+            if t >= t0:
+                return v0 + (v1 - v0) * _min_jerk((t - t0) / length)
+        return demands[0]
+    for i in range(1, len(demands)):
+        if demands[i] != demands[i - 1]:
+            t0 = i + latency * fps
+            v0 = value(t0)
+            step = abs(demands[i] - v0)
+            seconds = max(duration / MIN_JERK_5_95, MIN_JERK_TOP * step / max_speed)
+            moves.append((t0, v0, demands[i], seconds * fps))
+    return [value(float(f)) + 0.0 for f in range(len(demands))]
 
 
 # ---- the light ------------------------------------------------------------------------------
@@ -281,67 +304,32 @@ def toward_light(direction):
     return tuple(-c for c in _unit(direction))
 
 
-def light_swing(heads, light, gain):
-    """per head rotation (as applied, in the world): the turn (yaw toward +X, pitch up; degrees) that moves the light
-    as far as the half-way direction between the light and the viewer in front of the face has moved from the head
-    at rest, times gain"""
-    n0 = _unit(tuple(a + b for a, b in zip(light, FORWARD)))
-    out = []
-    for q in heads:
-        n = _unit(tuple(a + b for a, b in zip(fk.rotate(fk.conjugate(q), light), FORWARD)))
-        out.append((math.degrees(gain * (n[0] - n0[0])) + 0.0, math.degrees(gain * (n[1] - n0[1])) + 0.0))
-    return out
+def screen_basis(view):
+    """(right, up): the screen's axes for a camera seen along `view` (the unit vector from the eye to the camera),
+    with the world's +Y as up (a camera straight in front gives +X and +Y)"""
+    right = _cross(view, UP)
+    if math.sqrt(_dot(right, right)) < 1e-9:
+        right = _cross(view, (0.0, 0.0, 1.0))
+    right = _unit(right)
+    return right, _cross(right, view)
 
 
-def _soft(x, cap):
-    if x <= SOFT_FROM * cap:
-        return x
-    span = 1.0 - SOFT_FROM
-    return cap * (SOFT_FROM + span * math.tanh((x / cap - SOFT_FROM) / span))
+def light_offset(half, axis, view, cornea, lag):
+    """the light's centre minus the pupil's on the screen, in iris radii (right, up): cornea proj(half) - lag proj(axis),
+    `half` the half-way direction between the light and the camera, `axis` the eye's, `view` toward the camera"""
+    right, up = screen_basis(view)
+    return (cornea * _dot(half, right) - lag * _dot(axis, right), cornea * _dot(half, up) - lag * _dot(axis, up))
 
 
-def soft_cap(vec, cap):
-    """the vector with its length kept under cap: unchanged up to SOFT_FROM of it, along tanh beyond"""
-    n = math.hypot(*vec)
-    if n <= SOFT_FROM * cap or n == 0.0:
-        return tuple(vec)
-    k = _soft(n, cap) / n
-    return tuple(c * k for c in vec)
-
-
-def rate_limited(seq, max_step):
-    """the sequence of 2-vectors followed with at most max_step a frame"""
-    if not seq:
-        return []
-    out = [tuple(seq[0])]
-    cur = tuple(seq[0])
-    for target in seq[1:]:
-        d = (target[0] - cur[0], target[1] - cur[1])
-        n = math.hypot(*d)
-        if n > max_step:
-            cur = (cur[0] + d[0] * max_step / n, cur[1] + d[1] * max_step / n)
-        else:
-            cur = tuple(target)
-        out.append(cur)
-    return out
-
-
-def smoothed(seq):
-    """a 1 4 6 4 1 window over a sequence of 2-vectors (the ends repeated): a mean of neighbouring values, so no step
-    grows"""
-    n = len(seq)
-    if n == 0:
-        return []
-    weights = (1.0, 4.0, 6.0, 4.0, 1.0)
-    out = []
-    for i in range(n):
-        acc = [0.0, 0.0]
-        for k, w in zip(range(-2, 3), weights):
-            v = seq[min(n - 1, max(0, i + k))]
-            acc[0] += w * v[0]
-            acc[1] += w * v[1]
-        out.append((acc[0] / 16.0, acc[1] / 16.0))
-    return out
+def camera_facing(pivot, depth, target, view):
+    """the unit direction u from `pivot` such that pivot + depth u lies on the camera's line through `target` (seen
+    along `view`), on the camera's side"""
+    d = _sub(target, pivot)
+    b = _scale(_sub(d, _scale(view, _dot(d, view))), 1.0 / depth)
+    n = math.sqrt(_dot(b, b))
+    if n > 0.999:
+        b, n = _scale(b, 0.999 / n), 0.999
+    return _add(b, _scale(view, math.sqrt(1.0 - n * n)))
 
 
 def _smoothstep(x):
@@ -349,26 +337,50 @@ def _smoothstep(x):
     return x * x * (3.0 - 2.0 * x)
 
 
-def fade_track(angles, start, end, step):
-    """HL消 per frame: smoothstep from 0 at `start` degrees to 1 at `end`, changed by at most `step` a frame"""
-    out = []
-    for i, a in enumerate(angles):
-        want = _smoothstep((a - start) / (end - start))
-        if i:
-            want = min(out[-1] + step, max(out[-1] - step, want))
-        out.append(want + 0.0)
-    return out
+def hide_track(angles, start, end):
+    """HL消 per frame from the angle between H and the eye's axis: 0 at `start`, 1 at `end`, smoothstep between"""
+    return [_smoothstep((a - start) / (end - start)) + 0.0 for a in angles]
 
 
 # ---- the pupil ------------------------------------------------------------------------------
 
-def reflex_shape(t, rise, fall):
-    """(1 - e^(-t / rise))^2 e^(-t / fall) scaled to a peak of 1; 0 at and before t = 0"""
+def _first_order(targets, fps, narrowing, widening):
+    """a follower of the targets with the time constant `narrowing` on the way down and `widening` on the way up;
+    each frame moves toward that frame's target"""
+    out, x = [], 0.0
+    for t in targets:
+        tau = narrowing if t < x else widening
+        x += (t - x) * (1.0 - math.exp(-1.0 / (tau * fps)))
+        out.append(x)
+    return out
+
+
+def _reflex_drive(n, flares, fps, latency, hold):
+    """-1 through `hold` seconds from each flare's onset (`latency` after it), 0 elsewhere (frames after the onset)"""
+    out = [0.0] * n
+    for at in flares:
+        onset = at + latency * fps
+        for i in range(max(0, int(math.floor(onset)) + 1), min(n, int(math.floor(onset + hold * fps)) + 1)):
+            out[i] = -1.0
+    return out
+
+
+def reflex_track(n, flares, fps, rx):
+    """the pupil's change from the light reflex per frame (0 or below): see the module docstring.  `flares` are
+    frames (floats)."""
+    one = _first_order(_reflex_drive(int(10 * fps), [0.0], fps, rx["latency"], rx["hold"]), fps, rx["constrict"],
+                       rx["redilate"])
+    k = rx["peak"] / -min(one)
+    drive = _reflex_drive(n, flares, fps, rx["latency"], rx["hold"])
+    return [v * k + 0.0 for v in _first_order(drive, fps, rx["constrict"], rx["redilate"])]
+
+
+def event_shape(t, peak, power):
+    """the pupil's response to an event: (t / peak)^power e^(power (1 - t / peak)), 1 at t = peak, 0 at and before 0"""
     if t <= 0.0:
         return 0.0
-    u = rise / (2.0 * fall + rise)
-    peak = (1.0 - u) ** 2 * math.exp(rise * math.log(u) / fall)
-    return (1.0 - math.exp(-t / rise)) ** 2 * math.exp(-t / fall) / peak
+    x = t / peak
+    return math.exp(power * (math.log(x) + 1.0 - x))
 
 
 def _follow(values, rise_frames, fall_frames):
@@ -381,43 +393,30 @@ def _follow(values, rise_frames, fall_frames):
     return out
 
 
-def _median(values):
-    s = sorted(values)
-    n = len(s)
-    return 0.0 if n == 0 else (s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0)
-
-
 def pupil_track(n, flares, arousal, chorus, near, params, seed=0, fps=FPS):
     """the change of the pupil's diameter against the model's own, per frame, with its parts: {"total", "reflex",
     "arousal", "chorus", "near", "unrest"}.  `flares` and `chorus` are frames (floats), `arousal` the loudness per
-    frame from 0 to 1 (or None), `near` dioptres nearer than the free distance per frame."""
+    frame from 0 to 1 (or None), `near` the vergence's demand in dioptres per frame."""
     p = params
-    rx = p["reflex"]
-    reflex = [0.0] * n
-    for at in flares:
-        onset = at + rx["latency"] * fps
-        for i in range(max(0, int(math.floor(onset))), n):
-            reflex[i] += reflex_shape((i - onset) / fps, rx["rise"], rx["redilate"])
-    reflex = [-_soft(rx["amplitude"] * v, rx["most"]) + 0.0 for v in reflex]
+    reflex = reflex_track(n, flares, fps, p["reflex"])
     ar = p["arousal"]
     if arousal:
         env = _follow(list(arousal[:n]) + [arousal[-1]] * max(0, n - len(arousal)), ar["rise"] * fps, ar["fall"] * fps)
+        lo, hi = min(env), max(env)
         mid = _median(env)
-        arousal_part = [ar["amplitude"] * (v - mid) for v in env]
+        span = (hi - lo) if hi > lo else 1.0
+        arousal_part = [ar["amplitude"] * (v - mid) / span for v in env]
     else:
         arousal_part = [0.0] * n
     ch = p["chorus"]
     chorus_part = [0.0] * n
     for at in chorus:
-        onset = at + ch["latency"] * fps
-        for i in range(max(0, int(math.floor(onset))), n):
-            chorus_part[i] += ch["amplitude"] * reflex_shape((i - onset) / fps, ch["rise"], ch["fall"])
+        for i in range(max(0, int(math.floor(at)) + 1), n):
+            chorus_part[i] += ch["amplitude"] * event_shape((i - at) / fps, ch["peak"], ch["n"])
     near_part = [-p["near"]["per_dioptre"] * max(0.0, d) for d in near]
     un = p["unrest"]
     rng = random.Random(seed)
-    waves = []
-    for _ in range(int(un["waves"])):
-        waves.append((rng.uniform(un["low_hz"], un["high_hz"]), rng.uniform(0.0, 2.0 * math.pi)))
+    waves = [(rng.uniform(un["low_hz"], un["high_hz"]), rng.uniform(0.0, 2.0 * math.pi)) for _ in range(int(un["waves"]))]
     each = un["amplitude"] * math.sqrt(2.0 / len(waves)) if waves else 0.0
     unrest = [sum(each * math.sin(2.0 * math.pi * f * i / fps + ph) for f, ph in waves) + 0.0 for i in range(n)]
     low, high = p["range"]
@@ -435,7 +434,7 @@ def pupil_weights(change, big, thin):
     return wb, wt
 
 
-def pupil_scales(doc, big=BIG, thin=THIN, iris_material="瞳"):
+def pupil_scales(doc, big=BIG, thin=THIN, iris_material=pmx_eyes.IRIS_MATERIAL):
     """{"big", "thin"}: the change of the pupil's radius per unit weight of the two morphs, measured on the model (the
     median over the outer half of the pupil's vertices of the offset along the radius, across the line of sight, over
     the radius), and "ratio", the pupil's width over the iris' (the material iris_material) when the model has it"""
@@ -449,13 +448,13 @@ def pupil_scales(doc, big=BIG, thin=THIN, iris_material="瞳"):
     for e in eyes:
         pts = [doc.vertices[v].position() for v in morphs[big] if side[v] == e]
         centre[e] = tuple(sum(p[c] for p in pts) / len(pts) for c in range(3))
+    radii = {}
+    for v in morphs[big]:
+        p, c = doc.vertices[v].position(), centre[side[v]]
+        radii[v] = (p[0] - c[0], p[1] - c[1])
+    top = max(math.hypot(*r) for r in radii.values())
     for key, name in (("big", big), ("thin", thin)):
         ratios = []
-        radii = {}
-        for v in morphs[big]:
-            p, c = doc.vertices[v].position(), centre[side[v]]
-            radii[v] = (p[0] - c[0], p[1] - c[1])
-        top = max(math.hypot(*r) for r in radii.values())
         for v, off in morphs[name].items():
             if v not in radii:
                 continue
@@ -477,6 +476,27 @@ def pupil_scales(doc, big=BIG, thin=THIN, iris_material="瞳"):
     return out
 
 
+def eye_geometry(doc, pupil_morph=pmx_eyes.PUPIL_MORPH, iris_material=pmx_eyes.IRIS_MATERIAL):
+    """per eye index: {"pupil": the rest centre of the pupil morph's vertices, "iris": (half width across X, half
+    height across Y) of the iris material}"""
+    eyes, _ = pmx_eyes.find_eyes(doc)
+    pupil = pmx_eyes.vertex_morphs(doc).get(pupil_morph) or {}
+    iris = sorted({v for t in pmx_eyes.material_triangles(doc, iris_material) or [] for v in t})
+    out = {}
+    for e in eyes:
+        pts = [doc.vertices[v].position() for v in pupil if pmx_eyes._eye_of(doc, v, eyes) == e]
+        if not pts:
+            raise ValueError("%s moves no vertex of %s: the pupil's centre is taken from it" % (pupil_morph, doc.bones[e].name))
+        mine = [doc.vertices[v].position() for v in iris if pmx_eyes._eye_of(doc, v, eyes) == e]
+        if not mine:
+            raise ValueError("the model has no %s material on %s: the light's offsets are in iris radii"
+                             % (iris_material, doc.bones[e].name))
+        xs, ys = [p[0] for p in mine], [p[1] for p in mine]
+        out[e] = {"pupil": tuple(sum(p[c] for p in pts) / len(pts) for c in range(3)),
+                  "iris": ((max(xs) - min(xs)) / 2.0, (max(ys) - min(ys)) / 2.0)}
+    return out
+
+
 # ---- measures -------------------------------------------------------------------------------
 
 def _pct(values, q):
@@ -490,29 +510,24 @@ def _r(value, places=4):
     return round(float(value), places) + 0.0
 
 
-def step_stats(values):
-    """the change from one frame to the next (the length for vectors): its largest and its 99th percentile"""
+def step_stats(values, skip=()):
+    """the change from one frame to the next (the length for vectors): its largest and its 99th percentile, leaving
+    out the steps into the frames of `skip`"""
     if len(values) < 2:
         return {"max": 0.0, "p99": 0.0}
-    if isinstance(values[0], (tuple, list)):
-        steps = [math.sqrt(sum((b - a) ** 2 for a, b in zip(u, v))) for u, v in zip(values, values[1:])]
-    else:
-        steps = [abs(b - a) for a, b in zip(values, values[1:])]
-    return {"max": _r(max(steps), 5), "p99": _r(_pct(steps, 99), 5)}
-
-
-def angle_steps(directions):
-    """the angle in degrees between the directions of consecutive frames: its largest and its 99th percentile"""
-    if len(directions) < 2:
+    skip = set(skip)
+    steps = []
+    for i in range(1, len(values)):
+        if i in skip:
+            continue
+        u, v = values[i - 1], values[i]
+        if isinstance(u, (tuple, list)):
+            steps.append(math.sqrt(sum((b - a) ** 2 for a, b in zip(u, v))))
+        else:
+            steps.append(abs(v - u))
+    if not steps:
         return {"max": 0.0, "p99": 0.0}
-    steps = [_degrees_between(a, b) for a, b in zip(directions, directions[1:])]
     return {"max": _r(max(steps), 5), "p99": _r(_pct(steps, 99), 5)}
-
-
-def vmd_name_of(name, motion):
-    """the name a motion's keys give the bone `name` (cut to 15 bytes of cp932 as a VMD keeps it)"""
-    names = {k.name for k in motion.bones}
-    return name if name in names else fk.vmd_name(name)
 
 
 def summary(values):
@@ -584,21 +599,36 @@ class Result:
 
 def _catchlights(model, handle, eyes):
     out = []
+    names = {model.bones[e].name: e for e in eyes}
+    sides = {v: k for k, v in pmx_eyes.SIDE_EN.items()}
     for b in model.bones:
         if not (b.name_en or "").startswith(pmx_eyes.EN_PREFIX):
             continue
         if not (b.append and b.append.get("parent") == handle and b.flags.get("append_rotate")):
             raise ValueError("the catchlight bone %s does not turn with %s by append" % (b.name, model.bones[handle].name))
         tag = b.name_en[len(pmx_eyes.EN_PREFIX):].split("_")
-        side = tag[1] if len(tag) > 1 else ""
-        eye = {v: k for k, v in pmx_eyes.SIDE_EN.items()}.get(side)
-        names = {model.bones[e].name: e for e in eyes}
-        target = next((n for n in names if eye and n.startswith(eye)), None)
+        side = sides.get(tag[1] if len(tag) > 1 else "")
+        target = next((n for n in names if side and n.startswith(side)), None)
         if target is None:
             raise ValueError("cannot tell which eye the catchlight bone %s (%s) belongs to" % (b.name, b.name_en))
-        out.append({"name": b.name, "eye": target, "share": float(b.append["ratio"])})
+        tail = b.tail.get("offset") if b.tail else None
+        depth = math.sqrt(_dot(tail, tail)) if tail else 0.0
+        if depth <= 0.0:
+            raise ValueError("the catchlight bone %s has no tail offset to its light (pmx_eyes sets it)" % b.name)
+        out.append({"name": b.name, "index": b.index, "eye": target, "eye_index": names[target],
+                    "share": float(b.append["ratio"]), "pivot": tuple(b.position), "depth": depth,
+                    "rest": _add(b.position, tuple(tail))})
     if not out:
         raise ValueError("the model has no catchlight bones: make it with tools/pmx_eyes.py first")
+    return out
+
+
+def _cuts(cameras):
+    out = set()
+    for i in range(1, len(cameras)):
+        (p0, d0), (p1, d1) = cameras[i - 1], cameras[i]
+        if math.sqrt(_dot(_sub(p1, p0), _sub(p1, p0))) > CUT_JUMP or _degrees_between(d0, d1) > CUT_TURN:
+            out.add(i)
     return out
 
 
@@ -613,11 +643,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     heads = {model.bones[e].parent for e in eye_idx}
     if len(heads) != 1 or None in heads:
         raise ValueError("the eyes %s do not share one parent" % "/".join(eyes))
-    head = model.bones[heads.pop()].name
+    head_index = heads.pop()
+    head = model.bones[head_index].name
     lights = _catchlights(model, handle, eye_idx)
+    geometry = eye_geometry(doc)
     scales = pupil_scales(doc)
     names = {b.name for b in model.bones}
-    vp = p["vergence"]
+    vp, lp, pp = p["vergence"], p["light"], p["pupil"]
     hands = [s + h for s in ("右", "左") for h in vp["hand_points"] if s + h in names]
     motion = merge(dance, gaze)
     if not motion.bones:
@@ -626,58 +658,91 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     frames = list(range(0, last + 1))
     n = len(frames)
     track = fk.world_track(model, motion, [head] + eyes + hands, 0, last)
+    handle_track = fk.tracks_of(motion).get(model.bones[handle].name) or fk.tracks_of(motion).get(
+        fk.vmd_name(model.bones[handle].name))
+    handle_frames = [k.frame for k in handle_track] if handle_track else None
     cam_keys = fk.camera_keys(camera)
     cam_frames = [k.frame for k in cam_keys]
     unit_m = vp["unit_mm"] / 1000.0
     half = vp["ipd_mm"] / 2.0 / vp["unit_mm"]
-    head_rot, gaze_head, rows = [], [], []
+    head_world, gaze_head, rows, cameras = [], [], [], []
     for i in range(n):
         hp, hr = track[head][i]
         inv = fk.conjugate(hr)
         per_eye = [fk.rotate(fk.multiply(inv, track[e][i][1]), FORWARD) for e in eyes]
-        g_h = _unit(tuple(a + b for a, b in zip(*per_eye)))
+        g_h = _unit(_add(*per_eye))
         g_w = fk.rotate(hr, g_h)
-        centre = tuple((a + b) / 2.0 for a, b in zip(track[eyes[0]][i][0], track[eyes[1]][i][0]))
-        c = fk.camera_position(fk.camera_at(cam_keys, frames[i], cam_frames))
-        to_cam = tuple(a - b for a, b in zip(c, centre))
+        centre = _scale(_add(track[eyes[0]][i][0], track[eyes[1]][i][0]), 0.5)
+        state = fk.camera_at(cam_keys, frames[i], cam_frames)
+        c = fk.camera_position(state)
+        to_cam = _sub(c, centre)
         row = {"camera": (_degrees_between(g_w, to_cam), math.sqrt(_dot(to_cam, to_cam)) * unit_m), "hands": []}
         for h in hands:
-            to_hand = tuple(a - b for a, b in zip(track[h][i][0], centre))
+            to_hand = _sub(track[h][i][0], centre)
             row["hands"].append((_degrees_between(g_w, to_hand), math.sqrt(_dot(to_hand, to_hand)) * unit_m, h))
         rows.append(row)
-        head_rot.append(hr)
+        head_world.append((hp, hr))
         gaze_head.append(g_h)
+        cameras.append((c, fk.camera_direction(state)))
+    cuts = _cuts(cameras)
     # vergence
-    metres, labels = fixation_targets([{"camera": r["camera"], "hands": [h[:2] for h in r["hands"]]} for r in rows], vp)
-    demand = [vergence_degrees(max(m, vp["near_m"]), vp["ipd_mm"]) for m in metres]
-    angle = damped(demand, FPS, vp["time"])
-    distance = [half / math.tan(math.radians(a)) for a in angle]
-    turns = [vergence_turns(g, d, half) for g, d in zip(gaze_head, distance)]
+    metres, labels = fixation_targets(rows, vp)
+    demand = vergence_demand(labels, metres, vp)
+    angle = vergence_track(demand, FPS, vp["latency"], vp["duration"], vp["max_speed"])
+    turns = []
+    for g, a in zip(gaze_head, angle):
+        turns.append(vergence_turns(g, half / math.tan(math.radians(a)), half) if a > 1e-9 else (fk.IDENTITY, fk.IDENTITY))
     # the light
-    lp = p["light"]
     light = toward_light(lp["direction"])
-    iris = pmx_eyes.model_scale(doc)
-    gain = lp["gain"] if lp["gain"] is not None else (
-        pmx_eyes.HUMAN["cornea_radius"] / pmx_eyes.HUMAN["pupil"] * iris["scale"])
-    swing = light_swing(head_rot, light, gain)
-    capped = [soft_cap(s, lp["cap"]) for s in swing]
-    limited = rate_limited(capped, lp["max_step"])
-    added = smoothed(limited)
-    added_q = [eye_rotation(y, pt) for y, pt in added]
-    side = {e: k for k, e in enumerate(eyes)}
-    bone_rot = {}
+    cornea = lp["cornea_radius_mm"] / lp["iris_radius_mm"]
+    lag = lp["pupil_to_centre_mm"] / lp["iris_radius_mm"]
+    rest_half = _unit(_add(light, FORWARD))
+    rest_offset = light_offset(rest_half, FORWARD, FORWARD, cornea, lag)
+    head_rest = model.bones[head_index].position
+    eye_rest = {e: model.bones[e].position for e in eye_idx}
+    side_of = {e: k for k, e in enumerate(eye_idx)}
+    drawn = {}
     for c in lights:
-        bone_rot[c["name"]] = [fk.multiply(q, fk.power(t[side[c["eye"]]], c["share"])) for q, t in zip(added_q, turns)]
-    # the fade: the half-way direction against each eye's line of sight
-    n_dirs = [_unit(tuple(a + b for a, b in zip(fk.rotate(fk.conjugate(q), light), FORWARD))) for q in head_rot]
-    off = []
+        geo = geometry[c["eye_index"]]
+        d = _sub(c["rest"], geo["pupil"])
+        drawn[c["name"]] = (d[0] / geo["iris"][0], d[1] / geo["iris"][1])
+    keys_q = {c["name"]: [] for c in lights}
+    offsets = {c["name"]: [] for c in lights}
+    off_axis = []
     for i in range(n):
-        angles = [_degrees_between(n_dirs[i], fk.rotate(turns[i][k], gaze_head[i])) for k in range(2)]
-        off.append(sum(angles) / 2.0)
-    hide = fade_track(off, lp["fade"][0], lp["fade"][1], lp["fade_step"])
+        hp, hr = head_world[i]
+        inv = fk.conjugate(hr)
+        q_handle = fk.applied(fk.sample(handle_track, frames[i], handle_frames)[1]) if handle_track else fk.IDENTITY
+        cam = cameras[i][0]
+        per_eye = {}
+        angles = []
+        for e in eye_idx:
+            k = side_of[e]
+            eye_world_pos = track[eyes[k]][i][0]
+            eye_local = fk.multiply(turns[i][k], fk.multiply(inv, track[eyes[k]][i][1]))   # the vergence key on top
+            eye_world_rot = fk.multiply(hr, eye_local)
+            pupil = _add(eye_world_pos, fk.rotate(eye_world_rot, _sub(geometry[e]["pupil"], eye_rest[e])))
+            axis = fk.rotate(eye_world_rot, FORWARD)
+            view = _unit(_sub(cam, pupil))
+            h = _unit(_add(light, view))
+            per_eye[e] = (pupil, axis, view, light_offset(h, axis, view, cornea, lag))
+            angles.append(_degrees_between(h, axis))
+        off_axis.append(sum(angles) / len(angles))
+        for c in lights:
+            pupil, axis, view, now = per_eye[c["eye_index"]]
+            geo = geometry[c["eye_index"]]
+            dx, dy = drawn[c["name"]]
+            ox, oy = dx + now[0] - rest_offset[0], dy + now[1] - rest_offset[1]
+            right, up = screen_basis(view)
+            target = _add(pupil, _add(_scale(right, ox * geo["iris"][0]), _scale(up, oy * geo["iris"][1])))
+            pivot = _add(hp, fk.rotate(hr, _sub(c["pivot"], head_rest)))
+            u = camera_facing(pivot, c["depth"], target, view)
+            local = _between(FORWARD, _unit(fk.rotate(inv, u)))
+            keys_q[c["name"]].append(fk.multiply(local, fk.conjugate(fk.power(q_handle, c["share"]))))
+            offsets[c["name"]].append((ox, oy))
+    hide = hide_track(off_axis, lp["fade"][0], lp["fade"][1])
     # the pupil
-    pp = p["pupil"]
-    near = [max(0.0, 1.0 / (d * unit_m) - 1.0 / vp["free_m"]) for d in distance]
+    near = [1.0 / (half * unit_m / math.tan(math.radians(a))) if a > 1e-9 else 0.0 for a in angle]
     flare_frames = [t * FPS - SHOWN for t in flares]
     chorus_frames = [t * FPS - SHOWN for t in chorus]
     pupil = pupil_track(n, flare_frames, arousal, chorus_frames, near, pp, seed)
@@ -687,7 +752,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     for k, e in enumerate(eyes):
         keys += _bone_keys(e, frames, [t[k] for t in turns])
     for c in lights:
-        keys += _bone_keys(c["name"], frames, bone_rot[c["name"]])
+        keys += _bone_keys(c["name"], frames, keys_q[c["name"]])
     morphs = _morph_keys(BIG, frames, big) + _morph_keys(THIN, frames, thin) + _morph_keys(HIDE, frames, hide)
     out = vmd.Motion(model_name=dance.model_name, bones=keys, morphs=morphs)
     # the report
@@ -698,31 +763,31 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     for a, b in _runs([lab == "hand" for lab in labels]):
         best = min((h for i in range(a, b + 1) for h in rows[i]["hands"]), key=lambda h: h[0])
         hand_runs.append({"first": frames[a], "last": frames[b], "seconds": _r((b - a + 1) / FPS, 3),
-                          "nearest_m": _r(min(metres[a:b + 1]), 3), "point": best[2],
-                          "degrees": _r(max(angle[a:b + 1]), 3)})
-    turn_deg = [_angle(t[0]) for t in turns]
-    handle_track = fk.tracks_of(motion).get(vmd_name_of(model.bones[handle].name, motion))
-    handle_frames = [k.frame for k in handle_track] if handle_track else None
-    handle_q = [fk.applied(fk.sample(handle_track, f, handle_frames)[1]) if handle_track else fk.IDENTITY for f in frames]
-    first = lights[0]
-    bone_dirs = [fk.rotate(fk.multiply(r, fk.power(h, first["share"])), FORWARD)
-                 for r, h in zip(bone_rot[first["name"]], handle_q)]
+                          "median_m": _r(_median(metres[a:b + 1]), 3), "point": best[2],
+                          "demand_degrees": _r(demand[a], 3), "reached_degrees": _r(max(angle[a:min(n, b + 30)]), 3)})
+    first = lights[0]["name"]
+    key_angles = [_angle(q) for q in keys_q[first]]
+    moved = [math.hypot(o[0] - drawn[first][0], o[1] - drawn[first][1]) for o in offsets[first]]
     mm0 = pp["iris_mm"] * scales.get("ratio", 0.25)
+    geo0 = geometry[eye_idx[0]]
     report = {
         "frames": [frames[0], frames[-1]], "seed": seed, "params": p,
         "model": {"head": head, "eyes": eyes, "handle": model.bones[handle].name, "share": lights[0]["share"],
-                  "catchlights": lights, "pupil_scales": {k: _r(v, 4) for k, v in scales.items()},
+                  "catchlights": [{k: c[k] for k in ("name", "eye", "share", "depth")} for c in lights],
+                  "iris_radius": [_r(v, 5) for v in geo0["iris"]],
+                  "pupil_scales": {k: _r(v, 4) for k, v in scales.items()},
                   "pupil_mm": _r(mm0, 3), "half_ipd_units": _r(half, 5)},
         "vergence": {"labels": counts, "hand_runs": hand_runs, "degrees": summary(angle), "demand": summary(demand),
-                     "step": step_stats(angle), "turn_step": step_stats(turn_deg)},
-        "light": {"gain": gain, "iris_scale": _r(iris["scale"], 4),
-                  "swing": summary([math.hypot(*s) for s in swing]), "added": summary([math.hypot(*a) for a in added]),
-                  "at_cap_share": _r(sum(1 for c in capped if math.hypot(*c) >= 0.95 * lp["cap"]) / float(n)),
-                  "limited_frames": sum(1 for a, b in zip(capped, limited) if math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-9),
-                  "added_step": step_stats(added), "bone_step": angle_steps(bone_dirs), "bone": first["name"]},
-        "fade": {"angle": summary(off), "frames_on": sum(1 for h in hide if h > 0.0),
+                     "step": step_stats(angle)},
+        "light": {"cornea": cornea, "lag": lag, "rest_offset": [_r(v) for v in rest_offset],
+                  "drawn": {k: [_r(v) for v in d] for k, d in drawn.items()},
+                  "moved": summary(moved), "cuts": len(cuts),
+                  "offset_step": step_stats(offsets[first]), "offset_step_without_cuts": step_stats(offsets[first], cuts),
+                  "key_step": step_stats(key_angles), "key_step_without_cuts": step_stats(key_angles, cuts),
+                  "bone": first},
+        "fade": {"angle": summary(off_axis), "frames_on": sum(1 for h in hide if h > 0.0),
                  "frames_half": sum(1 for h in hide if h >= 0.5), "frames_full": sum(1 for h in hide if h >= 0.999),
-                 "step": step_stats(hide)},
+                 "step": step_stats(hide), "step_without_cuts": step_stats(hide, cuts)},
         "pupil": {"flares_s": list(flares), "chorus_s": list(chorus), "relative": summary(pupil["total"]),
                   "mm": summary([mm0 * (1.0 + r) for r in pupil["total"]]),
                   "parts": {k: {"min": _r(min(v)), "max": _r(max(v))} for k, v in pupil.items() if k != "total"},
@@ -746,12 +811,12 @@ def loudness(path, n, fps=FPS, rate=8000, window=0.2, low=10.0, high=90.0, smoot
     x = np.frombuffer(raw, dtype=np.float32).astype(np.float64)
     if len(x) < rate:
         raise ValueError("the sound %s is too short" % path)
-    half = int(window * rate / 2)
+    width = int(window * rate / 2)
     csum = np.concatenate([[0.0], np.cumsum(x * x)])
     db = np.zeros(n)
     for i in range(n):
         centre = int(round((i + SHOWN) / fps * rate))
-        a, b = max(0, centre - half), min(len(x), centre + half)
+        a, b = max(0, centre - width), min(len(x), centre + width)
         power = (csum[b] - csum[a]) / max(1, b - a) if b > a else 0.0
         db[i] = 10.0 * math.log10(max(power, 1e-12))
     lo, hi = np.percentile(db, low), np.percentile(db, high)
@@ -793,17 +858,16 @@ def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None
     started = time.time()
     check_distinct(model_path, dance_path, gaze_path, camera_path, out_path, face_path, look_path, audio_path, params_path,
                    report_path)
-    params = PARAMS
     if params_path:
         with open(params_path, encoding="utf-8") as f:
             params = merge_params(PARAMS, json.load(f))
     else:
         params = merge_params(PARAMS, {})
-    all_flares = list(flares)
+    all_flares = sorted(set(float(t) for t in flares))
     if look_path:
         with open(look_path, encoding="utf-8") as f:
             look = json.load(f)
-        all_flares = sorted(set(float(t) for t in look.get("flares", [])) | set(float(t) for t in flares))
+        all_flares = sorted(set(float(t) for t in look.get("flares", [])) | set(all_flares))
     with open(model_path, "rb") as f:
         model_bytes = f.read()
     dance = vmd.load(dance_path)
@@ -863,8 +927,8 @@ def main(argv=None):
         return 2
     short = {"ok": True, "out": report["out"], "frames": report["frames"], "keys": report["keys"],
              "vergence": {k: report["vergence"][k] for k in ("labels", "degrees", "step")},
-             "light": {k: report["light"][k] for k in ("added", "added_step", "bone_step", "at_cap_share")},
-             "fade": {k: report["fade"][k] for k in ("frames_on", "frames_full", "step")},
+             "light": {k: report["light"][k] for k in ("moved", "offset_step_without_cuts", "key_step_without_cuts", "cuts")},
+             "fade": {k: report["fade"][k] for k in ("frames_on", "frames_full", "step_without_cuts")},
              "pupil": {k: report["pupil"][k] for k in ("relative", "mm", "steps")}, "seconds": report["seconds"]}
     if a.report:
         short["report"] = os.path.abspath(a.report)
