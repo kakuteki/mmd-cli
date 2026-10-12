@@ -1,6 +1,6 @@
 # mmd-cli 引き継ぎ（正本）
 
-最終更新: 2026-10-05 04:30（この PC の時計）。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
+最終更新: 2026-10-13（この PC の時計。MV の段ごとの記録は残課題 13）。この文書が現状・判断・知見・残課題の正本。設計は `docs/design-20261004-mmd-cli.md`、
 MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/reviews/`。ヒビカセ MV の文字・背景・光の設計は
 `docs/design-20261004-mv-text.md`。
 
@@ -21,9 +21,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 - 運用先: **MMD の処理は hinata で行う**（加賀さん指示 2026-10-04）。hinata の MMD は
   `C:/Users/nayta/Desktop/MikuMikuDance_v932x64`、mmd-cli は `C:/work/mmd-cli`（`python -m mmd_cli`、
   `MMD_CLI_HOME=C:/work/mmd-cli-home`）。**誰かがコンソールにログオンしていることが前提**（無人のセッション 0 では
-  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は e3806b4（2026-10-04 15:45 の pull）。
-  **hinata は 2026-10-04 15:21 に再起動し、以後ログオンが無い**（`quser` にユーザーなし）。XML 定義のタスク（SID の UserId）は
-  登録まで通ることを確認済みで、実行の確認はログオン後。
+  MMD が起動を終えない）。ログオンは加賀さんが行う。hinata の checkout は 9e5fbe6（2026-10-13 の pull）。
+  （2026-10-04 時点）hinata は 15:21 に再起動し、以後ログオンが無かった。XML 定義のタスク（SID の UserId）は
+  登録まで通ることを確認済み。2026-10-13 は描画が通っている（ログオンあり）。
 - 直近の成果: ヒビカセ（えぬた 0.992）× Sour式鏡音リンの場面を hinata で作成。pmm 2 本・静止画・AVI は hinata
   `C:/work/hibikase/out/`、写しは `_spike/out/hibikase/hinata_out/`。配布モーションの比較は `_spike/out/hibikase/compare.txt`。
   **全曲の AVI** `rin_hibikase_enuta_full.avi`（1280x720・7,743 枚・30 fps・MJPEG・885 MB）は 2026-10-04 14:41 に
@@ -383,6 +383,24 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
      右肩甲帯の挙上 69 度・左ひじの反り）。本番 `tools/anatomy_layer.py`（ひじを蝶番・上腕のねじりを腕捩・胴と首の分け直し・肩甲帯の連動と上限・
      可動域を手の位置を保って柔らかく抑える）、査読→直し（伸びた腕が曲がる・1 コマの跳び）→ main 15996dd。組み立ては 呼吸 → anatomy → motor。
      v5 を hinata で描画中（`stage3/plan_v5.json`、入力 `variants/v5a/anat_motor_v5a.vmd`）。
+
+   - **2026-10-12〜13 第 4 段（加賀さん「腰から肩の間のボディの関節って何個？」→「解剖学に基づいて増やして動作推定して拡張して」）**:
+     背骨の骨を 2 本足して 4 本に（腰椎上部・胸椎上部。`tools/pmx_spine.py`、PMX は `tools/pmx_edit.py` で同じ byte のまま読み書き）、
+     体幹の曲がりを解剖学の割合で 4 本へ配る `tools/spine_layer.py`、皮の崩れを古いモデルと比べる `tools/spine_check.py`。
+     記録 `_spike/out/stage4/spine/NOTES.md`。査読の直し（補正を各骨の可動域で抑える、dae37d1）→ main a0928e7。
+     改造した PMX（hinata のモデルの場所の `White_spine_v6.pmx`）はこの作業専用で配布しない（Sour 式の ReadMe）。
+     届け先 `hibikase_mv_v6_第4段_音あり_20261013.mp4`、見比べ `見比べ_第4段_20261013/`（答え `_spike/out/stage4/key_ab4.json`）。
+   - **2026-10-13 目（加賀さん「黒目が入ってないように見える」）**: モデルの既定の作りで、白い層が黒目を覆っている。`瞳1off` で黒目の面を
+     奥へ下げると紺の黒目が出て、`HL`・`HL２` で光（キャッチライト）が前に出る（`_spike/out/stage4/eyes/`）。案 D（黒目＋光 2 つ）を選ばれた。
+     `face_life --hold NAME=WEIGHT`（査読→直し→ main 9e5fbe6）で曲の全フレームに 3 つを 1 で保つ。冒頭 30 秒の試写を届けた
+     （`プレビュー_黒目と光2つ_冒頭30秒_20261013.mp4`、入力 hinata `render_in/v6d/`）。表情の道具は視線ファイルも入力に取る
+     （まばたきを大きな視線の移動に合わせる）ので、視線を作り直したら表情も作り直す。main の道具で作り直した face_v6d.vmd は md5 が一致。
+   - **2026-10-13 第 5 段（加賀さん「光の位置と黒目の位置を自然に解剖学に基づいた動作をするように」「光と黒目の移動は滑らかにして」
+     「近くを見ると、両目が寄る。こういうのだけは改善して欲しい」）**: 調査 `_spike/out/stage5/research/RESEARCH.md`。
+     本番は 2 本: eye-optics（光の骨と近い的だけの寄り目）と gaze-smooth（`_spike/out/stage5/gaze_smooth/NOTES.md`。サッカード 2.84 → 1.03 回/秒、
+     1 コマの跳び 0、注視の中央値 0.20 → 0.70 秒。頭に運ばれる大きな視線の移動 2 → 78 % が増えたので査読
+     `_spike/out/stage5/review_gaze_smooth/`）。公開する版はえぬた様の規約（30 fps 以外は未対応）どおり 30 fps。60 fps 版は加賀さんが手元で
+     見るためだけに作り、公開しない。
 
 ## 道具化の候補（claude-tools へ。着手は加賀さんの指示があってから）
 
