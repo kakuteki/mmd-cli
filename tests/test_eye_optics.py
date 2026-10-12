@@ -234,16 +234,31 @@ class LightGeometryTest(unittest.TestCase):
         self.assertEqual(tuple(round(c, 9) for c in x), (1.0, 0.0, 0.0))    # the viewer's right is her left, +X
         self.assertEqual(tuple(round(c, 9) for c in y), (0.0, 1.0, 0.0))
 
-    def test_camera_facing_point_lies_on_the_line_of_sight(self):
-        pivot, depth, v = (0.1, 0.2, 0.3), 0.4, eye_optics._unit((0.2, 0.1, -1.0))
-        target = (0.13, 0.18, -0.2)
-        u = eye_optics.camera_facing(pivot, depth, target, v)
-        p = tuple(a + depth * b for a, b in zip(pivot, u))
-        d = tuple(a - b for a, b in zip(p, target))
-        off = tuple(c - eye_optics._dot(d, v) * w for c, w in zip(d, v))
-        self.assertLess(max(abs(c) for c in off), 1e-9)
-        self.assertAlmostEqual(sum(c * c for c in u), 1.0, 9)
-        self.assertGreater(eye_optics._dot(u, v), 0.0)
+    @staticmethod
+    def miss(pivot, depth, radial, turn, target, view):
+        """how far, across the line of sight, the turned point lies from the target"""
+        p = eye_optics._add(pivot, eye_optics._scale(fk.rotate(turn, radial), depth))
+        d = eye_optics._sub(p, target)
+        return math.sqrt(sum(c * c for c in eye_optics._sub(d, eye_optics._scale(view, eye_optics._dot(d, view)))))
+
+    def test_turn_brings_the_light_onto_the_line_of_sight(self):
+        pivot, depth, radial = (0.1, 0.2, 0.3), 0.4, (0.0, 0.0, -1.0)
+        view = eye_optics._unit((0.2, 0.1, -1.0))
+        target = (0.13, 0.25, -0.12)
+        start = self.miss(pivot, depth, radial, fk.IDENTITY, target, view)
+        turn = eye_optics.light_turn(pivot, depth, radial, target, view, damping=0.0)
+        self.assertLess(self.miss(pivot, depth, radial, turn, target, view), 1e-6 * max(1.0, start))
+        damped = eye_optics.light_turn(pivot, depth, radial, target, view, damping=0.15)
+        self.assertLess(self.miss(pivot, depth, radial, damped, target, view), 0.1 * start)
+
+    def test_turn_is_none_on_the_line_and_bounded_side_on(self):
+        pivot, depth, radial = (0.0, 0.0, 0.0), 0.4, (0.0, 0.0, -1.0)
+        view = (0.0, 0.0, -1.0)
+        on = eye_optics.light_turn(pivot, depth, radial, (0.0, 0.0, -0.9), view, damping=0.15)
+        self.assertLess(eye_optics._angle(on), 1e-9)
+        side = (1.0, 0.0, 0.0)                                       # the camera sees the light side on
+        far = eye_optics.light_turn(pivot, depth, radial, (0.0, 0.3, -0.4), side, damping=0.15)
+        self.assertLess(eye_optics._angle(far), 60.0)
 
     def test_hide_is_a_function_of_the_frame(self):
         out = eye_optics.hide_track([30.0, 47.0, 48.0, 49.0, 60.0, 30.0], 46.0, 50.0)

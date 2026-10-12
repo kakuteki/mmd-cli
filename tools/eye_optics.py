@@ -24,10 +24,12 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   drawn offset and moves by the change of the formula from that rest view (both lights of an eye by the same change:
   they keep their spacing, RESEARCH 1.8), the offsets scaled to the model's iris (its half width across X, half
   height across Y; Sour's Rin's iris is an ellipse, 0.1625 by 0.222).
-* Each light bone (pmx_eyes: the pivot the pupil's depth behind the light) is turned, every frame, so that its light
-  sits on the camera's line through that point, on the camera's side: no smoothing and no delay of its own, the same
-  frame as the pupil (RESEARCH 0.2, items 2 to 4).  The key is that turn in the head's frame after the bone's append
-  from 両目 (pmx_eyes' share, a fallback for a gaze this tool did not see); it has no roll of its own.
+* Each light bone (pmx_eyes: the pivot the pupil's depth behind the light) turns with 両目 by its append (pmx_eyes'
+  share, formula A across); every frame its key adds the turn (light_turn) that brings its light from where the append
+  alone puts it onto the camera's line through that point: damped least squares over the two turns across the bone,
+  a few Gauss-Newton steps, so that seen from the front it lands on the line and seen side on (where a turn hardly
+  moves the light across the line of sight) the turn stays small instead of swinging the light round.  No smoothing
+  and no delay of its own: the same frame as the pupil (RESEARCH 0.2, items 2 to 4).  The key has no roll of its own.
 * The change from the drawn place is held under light.cap iris radii (soft: unchanged up to 60 % of it, tanh beyond):
   a light reaches the limbus about one iris radius from the pupil's centre, where it leaves the cornea.
 * When the camera sees her face from the side or behind (more than light.side[0] degrees off the face's forward, both
@@ -113,6 +115,7 @@ PARAMS = {
         "hide": [90.0, 100.0],               # degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6)
         "cap": 1.0,                          # iris radii the light moves off its drawn place at most (soft)
         "side": [60.0, 80.0],                # degrees the camera lies off the face's forward: the solve gives way
+        "damping": 0.15,                     # light_turn's damping, a share of the bone's depth
     },
     "vergence": {
         "ipd_mm": 61.5,                      # women's mean (Murray 2017)
@@ -329,15 +332,47 @@ def light_offset(half, axis, view, cornea, lag):
     return (cornea * _dot(half, right) - lag * _dot(axis, right), cornea * _dot(half, up) - lag * _dot(axis, up))
 
 
-def camera_facing(pivot, depth, target, view):
-    """the unit direction u from `pivot` such that pivot + depth u lies on the camera's line through `target` (seen
-    along `view`), on the camera's side"""
-    d = _sub(target, pivot)
-    b = _scale(_sub(d, _scale(view, _dot(d, view))), 1.0 / depth)
-    n = math.sqrt(_dot(b, b))
-    if n > 0.999:
-        b, n = _scale(b, 0.999 / n), 0.999
-    return _add(b, _scale(view, math.sqrt(1.0 - n * n)))
+def _across(v, view):
+    return _sub(v, _scale(view, _dot(v, view)))
+
+
+def _about_vector(w):
+    """the rotation of the rotation vector w (radians)"""
+    a = math.sqrt(_dot(w, w))
+    if a < 1e-15:
+        return fk.IDENTITY
+    s = math.sin(a / 2.0) / a
+    return fk.normalized((w[0] * s, w[1] * s, w[2] * s, math.cos(a / 2.0)))
+
+
+def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4):
+    """the turn (a rotation in the world, about `pivot`) that brings the point pivot + depth radial onto the camera's
+    line through `target` (seen along `view`): damped least squares over the two turns across `radial`, `damping`
+    times depth as the damping, a few Gauss-Newton steps.  Seen from the front it lands on the line; seen side on,
+    where a turn hardly moves the light across the line of sight, the damping keeps the turn small."""
+    lam = (damping * depth) ** 2
+    total = fk.IDENTITY
+    r = _unit(radial)
+    for _ in range(steps):
+        a = _cross(r, view)
+        if math.sqrt(_dot(a, a)) < 1e-9:
+            a = _cross(r, UP)
+        a = _unit(a)
+        b = _cross(r, a)
+        ja, jb = _across(_scale(_cross(a, r), depth), view), _across(_scale(_cross(b, r), depth), view)
+        e = _across(_sub(target, _add(pivot, _scale(r, depth))), view)
+        aa, ab, bb = _dot(ja, ja) + lam, _dot(ja, jb), _dot(jb, jb) + lam
+        ea, eb = _dot(ja, e), _dot(jb, e)
+        det = aa * bb - ab * ab
+        if det <= 0.0:
+            break
+        x, y = (bb * ea - ab * eb) / det, (aa * eb - ab * ea) / det
+        step = _about_vector(_add(_scale(a, x), _scale(b, y)))
+        total = fk.multiply(step, total)
+        r = fk.rotate(step, r)
+        if abs(x) + abs(y) < 1e-12:
+            break
+    return total
 
 
 def _smoothstep(x):
@@ -764,17 +799,17 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             dx, dy = drawn[c["name"]]
             ox, oy = dx + moved[0], dy + moved[1]
             fallback = fk.power(q_handle, c["share"])
+            key = fk.IDENTITY
             if side < 1.0:
                 right, up = screen_basis(view)
                 target = _add(pupil, _add(_scale(right, ox * geo["iris"][0]), _scale(up, oy * geo["iris"][1])))
                 pivot = _add(hp, fk.rotate(hr, _sub(c["pivot"], head_rest)))
-                u = camera_facing(pivot, c["depth"], target, view)
-                local = _between(FORWARD, _unit(fk.rotate(inv, u)))
+                radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
+                turn = light_turn(pivot, c["depth"], radial, target, view, lp["damping"])
+                key = fk.multiply(inv, fk.multiply(turn, hr))               # the same turn in the head's frame
                 if side > 0.0:
-                    local = fk.slerp(local, fallback, side)
-            else:
-                local = fallback
-            keys_q[c["name"]].append(fk.multiply(local, fk.conjugate(fallback)))
+                    key = fk.slerp(key, fk.IDENTITY, side)
+            keys_q[c["name"]].append(key)
             offsets[c["name"]].append((ox, oy))
     hide = hide_track(off_camera, lp["hide"][0], lp["hide"][1])
     # the pupil
