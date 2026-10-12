@@ -404,11 +404,12 @@ def creep_runs(b, start):
 
 # ---- the plan -------------------------------------------------------------------------------
 
-def plan(inp, seed=0):
-    """the new face motion and the report"""
+def plan(inp, seed=0, hold=None):
+    """the new face motion and the report.  hold: {morph: weight} kept on every frame (see check_hold)"""
     rng = random.Random(seed)
     frames = inp.frames
     original = morph_keys(inp.face)
+    hold = check_hold(hold, original, inp.morphs)
     keys = {name: list(v) for name, v in original.items()}
     has = (lambda name: True) if inp.morphs is None else (lambda name: name in inp.morphs)
     onsets = lip_timing.onsets(inp.face) if any(v in keys for v in VOWELS) else []
@@ -432,8 +433,13 @@ def plan(inp, seed=0):
     new.update(vowels)
     morphs = []
     for name in list(original) + [n for n in new if n not in original]:
+        if name in hold:
+            continue
         for frame, weight in shadowed(new[name], name, inp.dance_morph_keys, frames):
             morphs.append(vmd.MorphKey(name, frame, weight))
+    for name, weight in hold.items():
+        for frame, w in shadowed([(0, weight), (frames - 1, weight)], name, inp.dance_morph_keys, frames):
+            morphs.append(vmd.MorphKey(name, frame, w))
     motion = vmd.Motion(model_name=inp.face.model_name, morphs=morphs)
     intro["eyes_open"] = first_open(track(new.get(BLINK, []), frames), intro)
     listed = blink_info.pop("list")
@@ -453,8 +459,41 @@ def plan(inp, seed=0):
                        "stretched_frames": _dist([e - s for _, s, e in stretched])},
         "blink": blink_report,
         "mouth": dict(mouth_info, **measure_mouth(original, new, frames, inp, intro)),
+        "held": dict(hold),
     }
     return Result(motion, report)
+
+
+def check_hold(hold, original, model_morphs):
+    """the morphs to hold at one weight on every frame: each must be in the model (when its morphs are known) and
+    must not be animated by the face motion (a key above 0), since holding it would undo the author's keys"""
+    hold = dict(hold or {})
+    for name in hold:
+        if model_morphs is not None and name not in model_morphs:
+            raise ValueError("cannot hold %s: the model has no such morph" % name)
+        if any(w != 0.0 for _, w in original.get(name, [])):
+            raise ValueError("cannot hold %s: the face motion animates it" % name)
+    return hold
+
+
+def parse_hold(items):
+    """--hold NAME=WEIGHT (repeatable) -> {name: weight}; the weight is 0 to 1, each name once"""
+    out = {}
+    for item in items or []:
+        name, sep, value = item.partition("=")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError("--hold takes NAME=WEIGHT, not %r" % item)
+        try:
+            weight = float(value)
+        except ValueError:
+            raise ValueError("--hold %s: the weight %r is not a number" % (name, value)) from None
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError("--hold %s: the weight must be 0 to 1, not %s" % (name, value))
+        if name in out:
+            raise ValueError("--hold %s is given twice" % name)
+        out[name] = weight
+    return out
 
 
 def cap_smile(smile_keys, blink, allowed, frames):
@@ -1604,18 +1643,19 @@ def summary_of(report):
             "lag_ms": m["lag_ms"]}
 
 
-def run(face_path, dance_path, gaze_path, model_path, out_path, audio_path=None, cues_path=None, report_path=None, seed=0):
+def run(face_path, dance_path, gaze_path, model_path, out_path, audio_path=None, cues_path=None, report_path=None, seed=0,
+        hold=None):
     started = time.time()
     check_distinct(face_path, dance_path, gaze_path, model_path, out_path, report_path, audio_path, cues_path)
     paths = [os.path.abspath(p) for p in (face_path, dance_path, gaze_path, model_path, out_path)]
     inp = load(paths[0], paths[1], paths[2], paths[3], audio_path and os.path.abspath(audio_path),
                cues_path and os.path.abspath(cues_path))
-    result = plan(inp, seed)
+    result = plan(inp, seed, hold)
     write_bytes(paths[4], vmd.dumps(result.motion))
     back = vmd.load(paths[4])
     files = {"face": paths[0], "dance": paths[1], "gaze": paths[2], "model": paths[3], "out": paths[4],
              "audio": audio_path and os.path.abspath(audio_path), "cues": cues_path and os.path.abspath(cues_path)}
-    summary = dict(files, keys=len(back.morphs), seed=seed, **summary_of(result.report))
+    summary = dict(files, keys=len(back.morphs), seed=seed, held=result.report["held"], **summary_of(result.report))
     if report_path:
         full = os.path.abspath(report_path)
         write_bytes(full, (json.dumps(dict(files, keys=len(back.morphs), **result.report), ensure_ascii=True, indent=1)
@@ -1636,9 +1676,13 @@ def main(argv=None):
     p.add_argument("--cues", help="the text cues of the MV (.json): the lyric lines")
     p.add_argument("--report", help="write the measures before and after and what was done to this JSON")
     p.add_argument("--seed", type=int, default=0, help="the random draws (default 0)")
+    p.add_argument("--hold", action="append", metavar="NAME=WEIGHT",
+                   help="keep a morph the face motion does not animate at WEIGHT (0 to 1) on every frame; repeatable "
+                        "(Sour's Rin: --hold 瞳1off=1 shows the dark pupil, --hold HL２=1 the catchlight)")
     args = p.parse_args(argv)
     try:
-        result = run(args.face, args.dance, args.gaze, args.model, args.out, args.audio, args.cues, args.report, args.seed)
+        result = run(args.face, args.dance, args.gaze, args.model, args.out, args.audio, args.cues, args.report, args.seed,
+                     parse_hold(args.hold))
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

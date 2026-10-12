@@ -347,6 +347,50 @@ class DanceKeysTest(unittest.TestCase):
         self.assertNotIn("ﾏﾆｷｭｱ", alone)
 
 
+class HoldTest(unittest.TestCase):
+    # --hold NAME=WEIGHT: a morph the face motion does not animate, kept at one weight over the whole song (Sour's
+    # Rin: 瞳1off shows the dark pupil, HL２ the catchlight; both are 0 when nothing keys them)
+
+    def test_a_held_morph_stays_at_its_weight_on_every_frame(self):
+        result = face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0, "HL２": 0.5})
+        t = tracks(result.motion)
+        np.testing.assert_allclose(t["瞳1off"], 1.0)
+        np.testing.assert_allclose(t["HL２"], 0.5)
+        self.assertEqual(result.report["held"], {"瞳1off": 1.0, "HL２": 0.5})
+
+    def test_holding_changes_nothing_else(self):
+        plain = tracks(face_life.plan(inputs(), seed=0).motion)
+        held = tracks(face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0}).motion)
+        self.assertEqual(set(held) - set(plain), {"瞳1off"})
+        for name, track in plain.items():
+            np.testing.assert_array_equal(held[name], track)
+
+    def test_a_held_morph_also_wins_on_the_frames_the_dance_keys_it(self):
+        dance = [("瞳1off", 0), ("瞳1off", 400)]
+        result = face_life.plan(inputs(dance_morph_keys=dance), seed=0, hold={"瞳1off": 1.0})
+        merged = {f: 0.0 for _, f in dance}                             # what the dance puts there
+        for k in result.motion.morphs:                                  # the face motion is loaded after the dance
+            if k.name == "瞳1off":
+                merged[k.frame] = k.weight
+        fr = sorted(merged)
+        np.testing.assert_allclose(np.interp(np.arange(F), fr, [merged[f] for f in fr]), 1.0)
+
+    def test_a_morph_the_model_lacks_cannot_be_held(self):
+        with self.assertRaisesRegex(ValueError, "瞳1off"):
+            face_life.plan(inputs(morphs={"まばたき", "あ"}), seed=0, hold={"瞳1off": 1.0})
+
+    def test_a_morph_the_face_motion_animates_cannot_be_held(self):
+        with self.assertRaisesRegex(ValueError, "まばたき"):
+            face_life.plan(inputs(), seed=0, hold={"まばたき": 0.0})
+
+    def test_the_option_is_name_equals_weight_from_0_to_1(self):
+        self.assertEqual(face_life.parse_hold(["瞳1off=1", "HL２=0.25"]), {"瞳1off": 1.0, "HL２": 0.25})
+        self.assertEqual(face_life.parse_hold(None), {})
+        for bad in (["瞳1off"], ["=1"], ["瞳1off=x"], ["瞳1off=1.5"], ["瞳1off=-0.1"], ["瞳1off=1", "瞳1off=0.5"]):
+            with self.assertRaises(ValueError, msg=bad):
+                face_life.parse_hold(bad)
+
+
 class SaccadeTest(unittest.TestCase):
     def test_quick_eye_turns_are_found_and_slow_ones_are_not(self):
         eyes = still_eyes()
