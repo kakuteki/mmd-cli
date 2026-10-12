@@ -393,12 +393,34 @@ class OpticsTest(unittest.TestCase):
             self.assertAlmostEqual(seen[1], rest[1], delta=0.01)
 
     def test_light_behind_the_eye_is_hidden(self):
-        def at(alpha):
+        def at(alpha, g=None):
             a = math.radians(alpha)
             p = {"light": {"direction": [-math.sin(a), 0.0, math.cos(a)]}, "pupil": {"unrest": {"amplitude": 0.0}}}
-            return morph_at(run(c=camera(10.0), params=p).motion, "HL消", 10)
+            return morph_at(run(g=g, c=camera(10.0), params=p).motion, "HL消", 10)
         self.assertEqual(at(80.0), 0.0)
         self.assertEqual(at(105.0), 1.0)
+        # the coordinator's rule is the light against the camera: an eye turned away keeps its light
+        self.assertEqual(at(70.0, gaze(90, {0: (-25.0, 0.0)})), 0.0)
+
+    def test_camera_behind_her_leaves_the_light_on_the_append(self):
+        result = run(c=camera(10.0, yaw=180.0), params=FRONT_LIGHT)
+        for k in keys_of(result.motion, "左HL２"):
+            self.assertLess(eye_optics._angle(k.rotation), 1e-3)
+
+    def test_a_small_cap_holds_the_light(self):
+        g = gaze(90, {0: (15.0, 0.0)})
+        p = {"light": {"direction": [0.0, 0.0, 1.0], "cap": 0.1}, "pupil": {"unrest": {"amplitude": 0.0}}}
+        result = run(g=g, c=camera(10.0), params=p)                    # the lag alone is 0.79 sin 15 = 0.20
+        self.assertLessEqual(result.report["light"]["moved"]["max"], 0.1 + 1e-6)
+        self.assertGreater(result.report["light"]["moved"]["max"], 0.09)
+
+    def test_soft_cap(self):
+        for size in (0.0, 0.3, 0.6, 0.9, 1.5, 40.0):
+            out = eye_optics.soft_cap((size * 0.6, -size * 0.8), 1.0)
+            self.assertLessEqual(math.hypot(*out), 1.0)
+            if size <= 0.6:
+                self.assertAlmostEqual(math.hypot(*out), size, 9)
+        self.assertGreater(eye_optics.soft_cap((0.9, 0.0), 1.0)[0], eye_optics.soft_cap((0.8, 0.0), 1.0)[0])
 
     def test_hand_in_front_brings_the_eyes_together_slowly(self):
         away = tuple(f - r for f, r in zip(FAR, HAND_REST))
@@ -469,6 +491,16 @@ class CommandTest(unittest.TestCase):
         self.assertTrue(motion.bones and motion.morphs)
         with open(report, encoding="utf-8") as f:
             self.assertEqual(json.load(f)["pupil"]["flares_s"], [1.0])
+
+    def test_trace_has_every_frame(self):
+        trace = os.path.join(self.tmp, "t.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(eye_optics.main(self.args("--trace", trace)), 0)
+        with open(trace, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(len(data["frames"]), 91)
+        for key in ("label", "vergence", "light", "hide", "pupil", "camera_aside"):
+            self.assertEqual(len(data[key]), 91, key)
 
     def test_refuses_an_output_over_an_input(self):
         with contextlib.redirect_stdout(io.StringIO()) as printed:
