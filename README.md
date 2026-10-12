@@ -684,6 +684,31 @@ python tools/anatomy_layer.py dance.vmd model.pmx dance_anat.vmd --report r.json
 （腕捩・手捩・手首のねじり）、`axial`（胴と首の分担）、`steps_deg_per_frame`（書いたボーンの 1 コマの回転）、`new_jumps`
 （ひじの位置と上腕の皮の新しい 1 コマの跳び、ひじの曲がりの変化）、`key_changes`、`untouched`。組み立ての中では 呼吸 の後、motor_layer の前に入れる（ヒビカセで確かめた。ひじは motor の後も一軸のまま）。
 
+### 背骨の骨を増やして胴をしならせる（`tools/pmx_spine.py`・`tools/spine_layer.py`・`tools/spine_check.py`、MMD なし）
+
+モデルの胴は 上半身・上半身2 の 2 本だけ。骨を 2 本足して 4 本にし、骨盤から胸までの曲がりを解剖学の割合で配る。
+
+```
+python tools/pmx_spine.py model.pmx model_spine.pmx --report r.json
+python tools/spine_layer.py dance.vmd model.pmx model_spine.pmx dance_spine.vmd --report r.json [--place-cap-cm 3.0]
+python tools/spine_check.py dance.vmd model.pmx dance_spine.vmd model_spine.pmx --report r.json [--frames 4]
+```
+
+- `pmx_spine.py`: 上半身（L3 ごろ）→ 腰椎上部（新、T12/L1 ごろ）→ 上半身2（T8/9 ごろ）→ 胸椎上部（新、T4 ごろ。首・肩P など
+  上半身2 の子を引き取る）。上半身 の子で 腰椎上部 の区間にあるもの（スカートの根）は 腰椎上部 へ。体幹の頂点は、上半身・
+  上半身2 に載っていた分だけを高さで 4 本へ配り直す（各関節の上下 0.35 で smoothstep）。ほかの骨の分は触らない。剛体は
+  そのまま。PMX の読み書きは `mmd_cli/formats/pmx_edit.py`（同じ byte で書き戻せる。骨の挿入で全ての骨番号を詰め直す）。
+  元のモデルは上書きしない。改造したモデルは配布しない（配布するなら原作の ReadMe と改造者の ReadMe が要る）。
+- `spine_layer.py`: 胸（入力の 上半身2）の 下半身 に対する回転を、屈伸・側屈・回旋ごとの分担（屈伸 0.51 / 0.19 / 0.13 /
+  0.17、側屈 0.40 / 0.20 / 0.20 / 0.19、回旋 0.20 / 0.19 / 0.28 / 0.34。出所は道具の説明）で下から積む。胸椎上部 の世界の
+  向きは入力の胸と同じ。曲がった背骨は胸の位置をずらすので、`--place-cap-cm`（既定 3.0 cm）より先だけ、下の 3 本を
+  可動域で重みづけた最小の回転で直す（0 で位置も合わせる。負の値で直さない）。anatomy_layer の 上半身/上半身2 の分け方は
+  これで置き換わる（最後にかける）。
+- `spine_check.py`: 首・頭・肩・手首の世界の位置と向きの差、体幹の皮（面の裏返り・面積比・体積比）を古いモデルと比べる。
+
+報告: `shares_measured`、`chest_drift_anatomical_cm`、`correction_deg`、`opposite_bend_frames` と `opposite_runs`（下と逆向きに
+曲がったコマ）、`corrected_runs`（位置を直したコマ）、`max_step_deg`。
+
 ### リップモーションから歌の時刻を読む（`tools/lip_timing.py`、MMD なし）
 
 リップモーションは あ い う え お のモーフを曲に合わせて打ってあるので、モーフが開き切るフレームが発声になる。音源が手元に
