@@ -89,9 +89,17 @@ def keys_of(motion, name):
 
 
 def morph_at(motion, name, frame):
+    """a morph's weight at a frame as MMD shows it: straight between keys, held before the first and after the last"""
     keys = sorted((k for k in motion.morphs if k.name == name), key=lambda k: k.frame)
     before = [k for k in keys if k.frame <= frame]
-    return before[-1].weight if before else 0.0
+    after = [k for k in keys if k.frame > frame]
+    if not before:
+        return keys[0].weight if keys else 0.0
+    a = before[-1]
+    if a.frame == frame or not after:
+        return a.weight
+    b = after[0]
+    return a.weight + (b.weight - a.weight) * (frame - a.frame) / float(b.frame - a.frame)
 
 
 def yaw_of(q):
@@ -459,14 +467,14 @@ class OpticsTest(unittest.TestCase):
         away = tuple(f - r for f, r in zip(FAR, HAND_REST))
         hand = {0: away, 29: away, 30: (0.0, 0.0, 0.0), 89: (0.0, 0.0, 0.0), 90: away, 150: away}
         result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150))
-        frames = [k.frame for k in keys_of(result.motion, "右目")]
-        yaws = dict(zip(frames, [yaw_of(fk.applied(k.rotation)) for k in keys_of(result.motion, "右目")]))
+        keys = keys_of(result.motion, "右目")
+        frames = [k.frame for k in keys]
 
         def value(f):
-            return yaws[max(x for x in frames if x <= f)]
+            return yaw_of(fk.applied(fk.sample(keys, f, frames)[1]))
         p = eye_optics.PARAMS["vergence"]
         want = p["gain"] * eye_optics.vergence_degrees(0.3, p["ipd_mm"])
-        self.assertAlmostEqual(value(30 + 7), 0.0, 6)                # 0.24 s before it starts
+        self.assertAlmostEqual(value(30 + 7), 0.0, delta=0.05)      # 0.24 s before it starts (keys within 0.05 deg)
         self.assertAlmostEqual(value(89), want, delta=0.05)
         self.assertLessEqual(max(abs(value(f + 1) - value(f)) for f in range(150)), p["max_speed"] / 30.0 + 1e-3)
         self.assertEqual(result.report["vergence"]["labels"]["hand"], 60)
@@ -481,6 +489,42 @@ class OpticsTest(unittest.TestCase):
         rep = run().report
         self.assertAlmostEqual(rep["light"]["cornea"], 7.72 / 5.91, 6)
         self.assertAlmostEqual(rep["light"]["lag"], 4.67 / 5.91, 6)
+
+
+class KeyTest(unittest.TestCase):
+    """MMD refuses more than 20,000 registered points (a dialog on loading the first version's 8,205 morph keys over
+    the face's 11,745): keys only where straight lines between them miss the values"""
+
+    def test_morph_keys_follow_the_values_within_the_tolerance(self):
+        values = [0.1 * math.sin(i / 20.0) + 0.0005 * math.sin(i * 1.7) for i in range(600)]
+        keys = eye_optics._morph_keys("瞳大", list(range(600)), values, 0.001)
+        self.assertLess(len(keys), 200)
+        frames = [k.frame for k in keys]
+        self.assertEqual(frames[0], 0)
+        self.assertEqual(frames[-1], 599)
+        for f in range(600):
+            i = max(j for j, x in enumerate(frames) if x <= f)
+            if frames[i] == f:
+                v = keys[i].weight
+            else:
+                a, b = keys[i], keys[i + 1]
+                v = a.weight + (b.weight - a.weight) * (f - a.frame) / (b.frame - a.frame)
+            self.assertLessEqual(abs(v - values[f]), 0.001 + 1e-6)
+
+    def test_bone_keys_follow_the_turns_within_the_tolerance(self):
+        turns = [eye_optics.eye_rotation(10.0 * math.sin(i / 15.0), 3.0 * math.cos(i / 25.0)) for i in range(400)]
+        turns[200] = eye_optics.eye_rotation(12.0, 0.0)               # a jump
+        keys = eye_optics._bone_keys("右HL２", list(range(400)), turns, 0.05)
+        self.assertLess(len(keys), 300)
+        frames = [k.frame for k in keys]
+        for f in range(400):
+            got = fk.applied(fk.sample(keys, f, frames)[1])
+            self.assertLessEqual(eye_optics._angle(fk.multiply(fk.conjugate(got), turns[f])), 0.05 + 1e-3)
+
+    def test_written_motion_stays_far_under_the_limit(self):
+        result = run(d=dance(300), g=gaze(300, {f: (5.0 * math.sin(f / 9.0), 0.0) for f in range(301)}),
+                     c=camera(2.5, last=300), flares=[2.0])
+        self.assertLess(len(result.motion.morphs), 300)
 
 
 class OverlapTest(unittest.TestCase):

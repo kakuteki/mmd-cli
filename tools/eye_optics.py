@@ -107,6 +107,7 @@ BIG, THIN, HIDE = "瞳大", "瞳細", "HL消"
 CUT_JUMP, CUT_TURN = 1.0, 5.0   # a camera cut: it moves more than this (units) or turns more (degrees) in a frame
 MIN_JERK_5_95 = 0.6162          # the 5 to 95 % time of a minimum-jerk move, as a share of its whole time
 MIN_JERK_TOP = 1.875            # its top speed, times step / time
+MAX_SPAN = 120                  # frames between two keys at most
 
 PARAMS = {
     "light": {
@@ -144,6 +145,10 @@ PARAMS = {
         "near": {"per_dioptre": 0.01},
         "unrest": {"amplitude": 0.01, "low_hz": 0.1, "high_hz": 0.7, "waves": 6},
         "range": [-0.35, 0.5],
+    },
+    "keys": {
+        "bone_deg": 0.05,                    # a bone's keys: straight lines between them miss no frame by more
+        "morph": 0.001,                      # a morph's keys: the same in weight
     },
 }
 
@@ -206,6 +211,17 @@ def _between(a, b):
 
 def _angle(q):
     return math.degrees(2.0 * math.acos(min(1.0, abs(fk.normalized(q)[3]))))
+
+
+def _about(axis, degrees):
+    half = math.radians(degrees) / 2.0
+    s = math.sin(half)
+    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(half))
+
+
+def eye_rotation(yaw, pitch):
+    """the rotation (as applied, in the head's frame) that turns -Z by yaw toward +X and pitch up (tools/eye_gaze.py)"""
+    return fk.multiply(_about((0.0, 1.0, 0.0), -yaw), _about((1.0, 0.0, 0.0), pitch))
 
 
 # ---- vergence -------------------------------------------------------------------------------
@@ -640,25 +656,46 @@ def check_overlaps(motions, bones, morphs):
                                                                           " ..." if len(problems) > 6 else ""))
 
 
-def _bone_keys(name, frames, rotations):
+def _decimate(n, misses):
+    """the indices of the keys to keep (the first and the last always): each span between two kept keys is as long as
+    it can be while misses(a, b) says the straight line from a to b misses no value in between"""
+    if n <= 2:
+        return list(range(n))
+    out, a = [0], 0
+    while a < n - 1:
+        b = a + 1
+        while b + 1 < n and b + 1 - a <= MAX_SPAN and not misses(a, b + 1):
+            b += 1
+        out.append(b)
+        a = b
+    return out
+
+
+def _bone_keys(name, frames, rotations, tolerance=0.05):
+    """a bone's keys (linear curves) where slerps between them stay within `tolerance` degrees of every frame's turn"""
     straight = vmd.bone_interpolation(vmd.LINEAR_CURVE)
-    stored = [tuple(round(c, 6) for c in fk.stored(fk.normalized(q))) for q in rotations]
-    out = []
-    for i, (f, q) in enumerate(zip(frames, stored)):
-        if 0 < i < len(stored) - 1 and stored[i - 1] == q == stored[i + 1]:
-            continue
-        out.append(vmd.BoneKey(name, f, fk.ZERO, q, straight))
-    return out
+    q = [fk.normalized(r) for r in rotations]
+
+    def misses(a, b):
+        for i in range(a + 1, b):
+            between = fk.slerp(q[a], q[b], (i - a) / float(b - a))
+            if _angle(fk.multiply(fk.conjugate(between), q[i])) > tolerance:
+                return True
+        return False
+    return [vmd.BoneKey(name, frames[i], fk.ZERO, tuple(round(c, 7) for c in fk.stored(q[i])), straight)
+            for i in _decimate(len(q), misses)]
 
 
-def _morph_keys(name, frames, weights):
-    values = [round(w, 6) + 0.0 for w in weights]
-    out = []
-    for i, (f, w) in enumerate(zip(frames, values)):
-        if 0 < i < len(values) - 1 and values[i - 1] == w == values[i + 1]:
-            continue
-        out.append(vmd.MorphKey(name, f, w))
-    return out
+def _morph_keys(name, frames, weights, tolerance=0.001):
+    """a morph's keys where straight lines between them stay within `tolerance` of every frame's weight"""
+    w = [float(v) for v in weights]
+
+    def misses(a, b):
+        for i in range(a + 1, b):
+            if abs(w[a] + (w[b] - w[a]) * (i - a) / float(b - a) - w[i]) > tolerance:
+                return True
+        return False
+    return [vmd.MorphKey(name, frames[i], round(w[i], 6) + 0.0) for i in _decimate(len(w), misses)]
 
 
 # ---- everything -----------------------------------------------------------------------------
@@ -841,10 +878,11 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     # the motion
     keys = []
     for k, e in enumerate(eyes):
-        keys += _bone_keys(e, frames, [t[k] for t in turns])
+        keys += _bone_keys(e, frames, [t[k] for t in turns], p["keys"]["bone_deg"])
     for c in lights:
-        keys += _bone_keys(c["name"], frames, keys_q[c["name"]])
-    morphs = _morph_keys(BIG, frames, big) + _morph_keys(THIN, frames, thin) + _morph_keys(HIDE, frames, hide)
+        keys += _bone_keys(c["name"], frames, keys_q[c["name"]], p["keys"]["bone_deg"])
+    tol = p["keys"]["morph"]
+    morphs = _morph_keys(BIG, frames, big, tol) + _morph_keys(THIN, frames, thin, tol) + _morph_keys(HIDE, frames, hide, tol)
     out = vmd.Motion(model_name=dance.model_name, bones=keys, morphs=morphs)
     # the report
     counts = {}
