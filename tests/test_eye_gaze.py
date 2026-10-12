@@ -334,6 +334,21 @@ class LeadTest(unittest.TestCase):
         for i in range(67, 66 + 40):
             self.assertLess(abs(result.looks[i].base[0] - result.looks[i - 1].base[0]), 1.5, i)
 
+    def test_a_turn_with_a_dip_gets_one_lead(self):
+        # the head turns 30 degrees, slows for a frame, and turns 30 more: two runs above TURN_SPEED with the same
+        # onset.  One lead, not two saccades two frames apart (68 % of the jumps that followed a landing within 3
+        # frames in the MV v6d were such pairs)
+        dance = head_turn({0: 0.0, 60: 0.0, 63: 30.0, 64: 31.0, 67: 60.0})
+        seen = run_gaze(dance=dance, cam_motion=BEHIND).sights
+        turns = eye_gaze.fast_turns(seen, FORWARD)[1]
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(turns[0][0], turns[1][0])                       # the same onset
+        for seed in range(6):
+            leads = eye_gaze.plan(seen, FORWARD, LIMITS, seed, False)[3]
+            self.assertEqual(len(leads), 1, (seed, leads))
+            result = run_gaze(dance=dance, cam_motion=BEHIND, seed=seed)
+            self.assertEqual(len([s for s in result.saccades if s["reason"] == "lead"]), 1, (seed, result.saccades))
+
     def test_the_lead_lands_where_the_face_will_point_within_the_limit(self):
         result = self.fast_turn(degrees=60.0)
         lead = [s for s in result.saccades if s["reason"] == "lead"][0]
@@ -425,9 +440,11 @@ def swings(seed, last=400):
 
 class ContactTest(unittest.TestCase):
     def test_each_contact_has_one_saccade_in_and_one_out(self):
-        # the saccade into a contact lands on the frame before it or later.  It was sized by the camera on the
-        # contact's first frame but made with the camera of its own first frame, so it could land two frames early;
-        # the eyes then looked away and back within 4 frames (frames 3240 and 6680 of the MV v6d, stage 5)
+        # one saccade into each contact and one look away: once on the camera the eyes wait there for a contact due
+        # within QUIET + 4 frames.  The saccade in was sized by the camera on the contact's first frame but made with
+        # the camera of its own first frame, so it could land early, and the eyes looked away and back within 4
+        # frames (frames 3240 and 6680 of the MV v6d, stage 5)
+        soon = eye_gaze.QUIET + eye_gaze.saccade_frames(float("inf"))
         for seed in (53, 7, 21):
             result = eye_gaze.gaze(MODEL, swings(seed), camera(cam(0), cam(400)), life=False, seed=seed)
             self.assertGreaterEqual(len(result.contacts), 3, seed)
@@ -436,7 +453,19 @@ class ContactTest(unittest.TestCase):
             self.assertEqual(len(ins), len(result.contacts), (seed, ins, result.contacts))
             self.assertLessEqual(len(outs), len(result.contacts), seed)
             for (a, b), s in zip(result.contacts, ins):
-                self.assertGreaterEqual(s["frame"] + s["frames"] - 1, a - 1, (seed, a, s))
+                landed = s["frame"] + s["frames"] - 1
+                self.assertGreaterEqual(landed, a - soon, (seed, a, s))
+                for look in result.looks[landed:a + 1]:
+                    self.assertEqual(look.mode, "camera", (seed, a, s, look))
+
+    def test_no_saccade_just_before_the_one_into_a_contact(self):
+        # as the head swings to the camera the eyes used to recentre and jump onto the camera 2 or 3 frames later
+        # (64 such pairs in 80 of these scenes): with a contact due they wait for it
+        for seed in (0, 1, 6):
+            result = eye_gaze.gaze(MODEL, swings(seed), camera(cam(0), cam(400)), life=False, seed=seed)
+            for before, after in zip(result.saccades, result.saccades[1:]):
+                if after["reason"] == "contact":
+                    self.assertGreater(after["frame"] - (before["frame"] + before["frames"] - 1), 3, (seed, before, after))
 
     def test_a_camera_within_reach_too_briefly_gets_no_contact(self):
         # her head faces the camera only from frame 40 to 70 (31 frames), turned 40 degrees away otherwise

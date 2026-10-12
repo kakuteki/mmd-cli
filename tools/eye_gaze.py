@@ -70,7 +70,8 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   beyond where they are (capped by that).  Until the onset they keep that angle in the head (state lead: a person's
   gaze shift holds the reflex off); from the onset they are a fixation again, so the head turns toward where the eyes
   already are.  For QUIET frames before a lead no other saccade starts, and for GUARD frames after the onset no
-  recentre.
+  recentre.  A turn whose lead would start before the onset of the lead before (one turn seen as two, with a dip
+  between) gets no lead of its own: two leads 2 frames apart were most of the jumps that followed another.
 * Eye contact (state contact) is planned first, on the whole song.  The camera is within reach on a frame when the
   eyes, held inside the contact zone, would be within CONTACT_ERROR of it (and it is not behind her); gaps of
   CONTACT_GAP frames or less are closed (the analysis joins them too).  No contact from END_CLEAR frames before a
@@ -82,7 +83,10 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   the choruses (--chorus, seconds).  A small shift of a cue (textlight moves four lines by 0.3 to 0.9 s) moves a
   contact by as much at most: a contact is found by the camera's reach and only placed by its anchor.  A contact
   starts with a saccade that lands by its first frame and ends with a look away (a saccade to a point off the face's
-  way).  Its eyes follow the camera inside the contact zone (contact_angles).
+  way).  Its eyes follow the camera inside the contact zone (contact_angles), at most MAX_STEP a frame.  With a
+  contact due within QUIET + 4 frames no other saccade starts (it would be followed by the one onto the camera 2 or 3
+  frames after landing): a lead due then is the saccade onto the camera, and once on it the eyes wait there for the
+  contact.
 * Outside the contacts the gaze keeps KEEP_OFF degrees off the camera on every frame, saccades on their way too: a
   pass over the camera would count as a one-frame eye contact.  When the camera passes over the gaze the kept point
   would flip to its other side in one frame (10 degrees with no easing); when it would move FLIP_STEP degrees more
@@ -700,6 +704,8 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
     for onset, far, sign in turns:
         land = onset - rng.randint(*LEAD)
         first = land - (longest - 1)
+        if leads and first <= leads[-1][2]:
+            continue        # it would start before the lead before has seen its turn start: one lead (a turn with a dip)
         if first >= 1 and not any(contact_end[k] is not None for k in range(max(0, first - QUIET), min(n, onset + 1))):
             leads.append([first, land, onset, far, sign])
     looks, saccades = [], []
@@ -722,6 +728,9 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             flip = (mode == "free" and held is None and bool(looks) and i - landed >= 1
                     and flips(fixate(i, eye, point, offset)[0], origin, raw_before, cameras[i][0], limits))
             start = next((i + k for k in range(1, longest + 2) if i + k < n and contact_start[i + k] == i + k), None)
+            # a contact due within QUIET + 4 frames: no other saccade first (it would be followed by the contact's
+            # 2 or 3 frames after it lands)
+            contact_soon = any(i + k < n and contact_start[i + k] == i + k for k in range(1, QUIET + longest + 1))
             # sized as it will be made (by the camera of this frame), it lands on the contact's first frame or the one
             # before; once on the camera the eyes stay there until the contact starts
             if mode != "camera" and start is not None and \
@@ -729,20 +738,24 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
                 want = ("camera", None, "contact")
             elif mode != "camera" and contact_end[i] is not None and contact_end[i] - i + 1 >= contact_len[i] - 3:
                 want = ("camera", None, "contact")
-            elif mode == "camera" and contact_end[i] is None and start is None:
+            elif mode == "camera" and contact_end[i] is None and not contact_soon:
                 want = ("free", None, "look_away")
             elif mode == "free" and upcoming is not None and upcoming[0] <= i:
                 goal = lead_goal(s, upcoming, origin)
                 if flip or i + saccade_frames(_apart(origin, soften(goal, limits))) - 1 >= upcoming[1]:
-                    want = ("free", upcoming, "lead")
+                    # a turn into a contact: the saccade onto the camera leads it (one saccade, not two in a row)
+                    want = ("camera", None, "contact") if contact_soon else ("free", upcoming, "lead")
                     lead_i += 1
             elif flip:
-                if due:
+                if mode != "camera" and contact_soon:
+                    want = ("camera", None, "contact")           # the contact that comes anyway, a little early
+                elif due:
                     want = ("free", upcoming, "lead")             # the lead that comes anyway, a little early
                     lead_i += 1
                 else:
                     want = ("free", None, "away")
-            elif mode == "free" and held is None and i - landed >= shortest and not (i <= guard_until or due):
+            elif mode == "free" and held is None and i - landed >= shortest and not (i <= guard_until or due
+                                                                                     or contact_soon):
                 if drifts_off(i, eye, point, offset):
                     want = ("free", None, "recentre")
                 elif degrees_between(point, camera_dirs[min(n - 1, i + LOOK_AHEAD)]) < KEEP_OFF:
