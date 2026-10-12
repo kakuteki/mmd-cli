@@ -13,9 +13,9 @@ same shape; an unknown key is refused).  They are estimates for a human eye unti
 
 The light (the catchlight bones, keyed in the head's frame, after their append):
 
-* pmx_eyes makes each light follow the gaze (両目) by append with the share k = d / d_p (the cornea's centre of
-  curvature is d = 5.7 mm in front of the eye's centre of rotation, the pupil d_p = 10.4 mm: 0.55).  Turning the eye
-  carries the light only that far.
+* pmx_eyes makes each light follow the gaze (両目) by append with a share k (a human eye's d / d_p = 5.7 / 10.4 =
+  0.55, its lag 0.45 scaled by the model's iris: Sour's Rin 0.69; the report's model.share is read back from the
+  model).  Turning the eye carries the light only that far.
 * The rest of a corneal reflection's motion comes from the light: the light shines where the cornea's normal is the
   half-way direction n between the direction to the light and to the viewer.  The light is MMD's (light.direction,
   the window's numbers: where the light goes; MMD's default -0.5 -1 0.5 comes from above, in front, on her left).  The
@@ -23,8 +23,10 @@ The light (the catchlight bones, keyed in the head's frame, after their append):
   lies 13 degrees off the face's forward in the median) and its cuts would make the light jump.  So n depends on the
   head's turn against the light only, and the light moves with the head's speed.  With n0 its direction with the head
   at rest, the light's way on the cornea is r_c (n - n0) (r_c = 7.8 mm, the cornea's radius), which the pupil would
-  make turning by r_c / d_p = light.gain (0.75) times (n - n0) radians: the bone turns that far (yaw toward +X by
-  gain (n - n0).x, pitch up by gain (n - n0).y; the bone's pivot lies the pupil's depth behind the light, pmx_eyes).
+  make turning by r_c / d_p = 0.75 times (n - n0) radians on a human eye, scaled like the share by the model's iris
+  (pmx_eyes.model_scale; Sour's Rin 0.52) so that the light crosses the same part of the iris: light.gain, or that
+  when it is null.  The bone turns that far (yaw toward +X by gain (n - n0).x, pitch up by gain (n - n0).y; the
+  bone's pivot lies the pupil's depth behind the light, pmx_eyes).
 * The added turn is held under light.cap degrees (soft: unchanged up to 60 % of it, tanh beyond; at the cap Sour's Rin's
   upper light has moved 0.06 of the iris' 0.16 half width), changed by at most light.max_step degrees a frame (the
   coordinator: no jump over a degree), then smoothed with a 1 4 6 4 1 window (which never steps further).
@@ -98,7 +100,7 @@ SOFT_FROM = 0.6                 # share of a cap up to which soft_cap passes val
 
 PARAMS = {
     "light": {
-        "gain": 0.75,                        # r_c / d_p: 7.8 / 10.4 (estimate: Gullstrand-Le Grand eye)
+        "gain": None,                        # None: r_c / d_p (pmx_eyes.HUMAN, 0.75) times the model's iris scale
         "cap": 8.0,                          # degrees (a turn of the pupil) the added part keeps under
         "max_step": 1.0,                     # degrees a frame the added part changes at most
         "direction": [-0.5, -1.0, 0.5],      # MMD's light, as its window shows it (where the light goes)
@@ -654,7 +656,10 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     # the light
     lp = p["light"]
     light = toward_light(lp["direction"])
-    swing = light_swing(head_rot, light, lp["gain"])
+    iris = pmx_eyes.model_scale(doc)
+    gain = lp["gain"] if lp["gain"] is not None else (
+        pmx_eyes.HUMAN["cornea_radius"] / pmx_eyes.HUMAN["pupil"] * iris["scale"])
+    swing = light_swing(head_rot, light, gain)
     capped = [soft_cap(s, lp["cap"]) for s in swing]
     limited = rate_limited(capped, lp["max_step"])
     added = smoothed(limited)
@@ -710,7 +715,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                   "pupil_mm": _r(mm0, 3), "half_ipd_units": _r(half, 5)},
         "vergence": {"labels": counts, "hand_runs": hand_runs, "degrees": summary(angle), "demand": summary(demand),
                      "step": step_stats(angle), "turn_step": step_stats(turn_deg)},
-        "light": {"swing": summary([math.hypot(*s) for s in swing]), "added": summary([math.hypot(*a) for a in added]),
+        "light": {"gain": gain, "iris_scale": _r(iris["scale"], 4),
+                  "swing": summary([math.hypot(*s) for s in swing]), "added": summary([math.hypot(*a) for a in added]),
                   "at_cap_share": _r(sum(1 for c in capped if math.hypot(*c) >= 0.95 * lp["cap"]) / float(n)),
                   "limited_frames": sum(1 for a, b in zip(capped, limited) if math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-9),
                   "added_step": step_stats(added), "bone_step": angle_steps(bone_dirs), "bone": first["name"]},

@@ -33,7 +33,7 @@ QUIET = {"pupil": {"unrest": {"amplitude": 0.0}}}
 
 
 def toy_model():
-    data, _ = toy_bytes(extra_bones=[("右人指３先", -1, (-0.05, 17.214, EYE_Z - 3.75))])
+    data, _ = toy_bytes(extra_bones=[("右人指３先", -1, (-0.05, 17.214, EYE_Z - 3.75))], iris_z=-0.96)
     doc = pmx_edit.loads(data)
     pmx_eyes.build(doc, share=0.55)
     raw = pmx_edit.dumps(doc)
@@ -372,6 +372,14 @@ class OpticsTest(unittest.TestCase):
         self.assertAlmostEqual(thin - before, want, 2)
         for channel in ("瞳大", "瞳細"):
             self.assertIn("max", result.report["pupil"]["steps"][channel])
+
+    def test_light_gain_is_the_human_corneas_scaled_by_the_models_iris(self):
+        rep = run().report
+        h = pmx_eyes.HUMAN
+        scale = pmx_eyes.model_scale(pmx_edit.loads(MODEL_BYTES))["scale"]
+        self.assertAlmostEqual(rep["light"]["gain"], h["cornea_radius"] / h["pupil"] * scale, 6)
+        forced = run(params={"light": {"gain": 0.75}, "pupil": {"unrest": {"amplitude": 0.0}}}).report
+        self.assertEqual(forced["light"]["gain"], 0.75)
 
     def test_report_has_the_step_measures(self):
         rep = run().report
