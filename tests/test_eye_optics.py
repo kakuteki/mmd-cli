@@ -292,6 +292,12 @@ class LightGeometryTest(unittest.TestCase):
         u, v = eye_optics.disc_coordinates(cam, (0.08, 0.0, -2.0), centre, x, y, n, 0.16, 0.22)
         self.assertAlmostEqual(u, 0.08 * 10.0 / 9.0 / 0.16, 9)                 # in front of the disc: projected back
         self.assertIsNone(eye_optics.disc_coordinates((5.0, 0.0, -1.0), (0.0, 0.1, -1.0), centre, x, y, n, 0.16, 0.22))
+        # seen nearly edge on (85 degrees off its normal) or from behind, the iris is not seen: no place on it
+        edge = (10.0 * math.sin(math.radians(85.0)), 0.0, -1.0 - 10.0 * math.cos(math.radians(85.0)))
+        self.assertIsNone(eye_optics.disc_coordinates(edge, (0.0, 0.0, -1.01), centre, x, y, n, 0.16, 0.22))
+        self.assertIsNone(eye_optics.disc_coordinates((0.0, 0.0, 9.0), (0.0, 0.0, -1.01), centre, x, y, n, 0.16, 0.22))
+        slant = (10.0 * math.sin(math.radians(60.0)), 0.0, -1.0 - 10.0 * math.cos(math.radians(60.0)))
+        self.assertIsNotNone(eye_optics.disc_coordinates(slant, (0.0, 0.0, -1.01), centre, x, y, n, 0.16, 0.22))
 
     def test_hide_is_a_function_of_the_frame(self):
         out = eye_optics.hide_track([30.0, 47.0, 48.0, 49.0, 60.0, 30.0], 46.0, 50.0)

@@ -461,13 +461,16 @@ def drawn_on_iris(dx, dy, right, normal, axis_x):
     return _add(_scale(across, dx), _scale(_cross(across, normal), dy))
 
 
+SEEN_COS = 0.1                  # a disc seen more than about 84 degrees off its normal (or from behind) is not seen
+
+
 def disc_coordinates(camera, point, centre, x, y, normal, half_x, half_y):
-    """where the camera's ray through `point` meets the plane of a disc (its centre, unit axes x and y and its normal),
-    in the disc's half widths (u along x, v along y); None when the ray runs along the plane or meets it behind the
-    camera"""
+    """where the camera's ray through `point` meets the plane of a disc (its centre, unit axes x and y and its normal
+    toward its front), in the disc's half widths (u along x, v along y); None when the camera sees the disc edge on
+    (the ray within SEEN_COS of the plane), from behind, or meets the plane behind the camera"""
     d = _sub(point, camera)
     den = _dot(d, normal)
-    if abs(den) < 1e-12:
+    if -den < SEEN_COS * math.sqrt(_dot(d, d)):
         return None
     s = _dot(_sub(centre, camera), normal) / den
     if s <= 0.0:
