@@ -2,7 +2,7 @@
 and tie them to the dance, the gaze, the sound and the lyrics.  The body is not touched (no bone key is written).
 
     python tools/face_life.py FACE.vmd DANCE.vmd GAZE.vmd MODEL.pmx OUT.vmd [--audio SONG] [--cues cues.json]
-                              [--report r.json] [--seed 0]
+                              [--report r.json] [--seed 0] [--hold NAME=WEIGHT ...]
 
 FACE is the face motion to rewrite (the KAZUSA "Face&Lips" of the MV: expressions, まばたき, あいうえお), DANCE the dance
 it is loaded after, GAZE the 両目 motion loaded after both (tools/eye_gaze.py), MODEL the model (its morph names, and
@@ -431,6 +431,7 @@ def plan(inp, seed=0, hold=None):
     if blink is not None:
         new[BLINK] = blink
     new.update(vowels)
+    check_not_animated(hold, new)
     morphs = []
     for name in list(original) + [n for n in new if n not in original]:
         if name in hold:
@@ -464,16 +465,28 @@ def plan(inp, seed=0, hold=None):
     return Result(motion, report)
 
 
+FULL_WIDTH_DIGITS = str.maketrans("0123456789", "０１２３４５６７８９")
+
+
 def check_hold(hold, original, model_morphs):
-    """the morphs to hold at one weight on every frame: each must be in the model (when its morphs are known) and
-    must not be animated by the face motion (a key above 0), since holding it would undo the author's keys"""
+    """the morphs to hold at one weight on every frame: each must be in the model (when its morphs are known); a
+    name typed with half-width digits points to the model's full-width one (HL2 -> HL２).  Whether the face motion or
+    this tool animates one is checked once the new keys are made (check_not_animated)"""
     hold = dict(hold or {})
     for name in hold:
         if model_morphs is not None and name not in model_morphs:
-            raise ValueError("cannot hold %s: the model has no such morph" % name)
-        if any(w != 0.0 for _, w in original.get(name, [])):
-            raise ValueError("cannot hold %s: the face motion animates it" % name)
+            wide = name.translate(FULL_WIDTH_DIGITS)
+            hint = " (did you mean %s?)" % wide if wide != name and wide in model_morphs else ""
+            raise ValueError("cannot hold %s: the model has no such morph%s" % (name, hint))
     return hold
+
+
+def check_not_animated(hold, new):
+    """a held morph must not move in the rewritten face (a key other than 0, the author's or one this tool makes,
+    such as 口角上げ under 笑い or blinks made where the face motion had only 0 keys): holding it would undo them"""
+    for name in hold:
+        if any(w != 0.0 for _, w in new.get(name, [])):
+            raise ValueError("cannot hold %s: the face motion or this tool animates it" % name)
 
 
 def parse_hold(items):
