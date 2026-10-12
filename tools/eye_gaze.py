@@ -51,8 +51,8 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
      (a fast turn, below, that goes GATE_TURN degrees or more its way: from its onset to where it goes furthest or
      its fast run ends, whichever is later) the reflex is held off while the head turns faster than FAST_HEAD[0]
      deg/s, down to FAST_GAIN at FAST_HEAD[1]: a person's gaze shift, where the eyes jump first and the head carries
-     the gaze on until it arrives (the reflex comes back about 40 ms after); countered in full, such a turn throws
-     the eyes to the far edge in 3 frames.  A fast shake that comes back is countered in full (a person's gain stays
+     the gaze on until it arrives (the reflex comes back about 40 ms after; here over RAMP frames after the turn);
+     countered in full, such a turn throws the eyes to the far edge in 3 frames.  A fast shake that comes back is countered in full (a person's gain stays
      near 1 at 2 to 6 Hz); where the eyes reach their wall, the rest of it carries the gaze;
   2. are pressed against the wall beyond the free zone, and turn at most MAX_STEP a frame (the rest is carried);
   3. look at that point from then on.
@@ -176,6 +176,7 @@ VOR_GAIN = (1.0, 1.0)                 # share of the counter-rotation the eyes m
 FAST_HEAD = (120.0, 300.0)            # deg/s of the head's forward from which the reflex is held off inside a sustained
 FAST_GAIN = 0.2                       # fast turn, and the speed at which it is down to this share
 GATE_TURN = 20.0                      # degrees a fast turn goes its way for the reflex to be held off in it
+RAMP = 3                              # frames over which the reflex comes back after such a turn
 FACE_AHEAD = 12                       # the face's way: the head's forward averaged over the frame and the next 12
 WALL = 0.85                           # share of each limit a fixation is pressed softly against beyond the free zone
 WALL_SEEN = 0.84                      # share of each limit from which the measures count the eyes as at the wall
@@ -637,17 +638,26 @@ def vor_gains(fw, turns):
     """per frame the share of the counter-rotation the eyes make: 1, but inside a sustained fast turn (one of `turns`
     that goes GATE_TURN degrees or more its way, from its onset to where it goes furthest or its fast run ends,
     whichever is later) falling from 1 at FAST_HEAD[0] to FAST_GAIN at FAST_HEAD[1] deg/s of the head's forward (the
-    fastest of the frame and the two around it).  A fast shake that comes back is countered in full"""
+    fastest of the frame and the two around it).  After the turn it comes back to 1 over RAMP frames from where it
+    was (the head may still be fast there: at once the eyes would take up its whole speed in one frame).  A fast
+    shake that comes back is countered in full"""
     n = len(fw)
     speed = [0.0] + [degrees_between(fw[k - 1], fw[k]) * FPS for k in range(1, n)]
     low, high = FAST_HEAD
-    out = [1.0] * n
+    out, inside = [1.0] * n, [False] * n
     for turn in turns:
         if turn.degrees < GATE_TURN:
             continue
         for i in range(turn.onset, min(n, max(turn.far, turn.last) + 1)):
             v = max(speed[max(0, i - 1):min(n, i + 2)])
             out[i] = 1.0 if v <= low else max(FAST_GAIN, 1.0 - (v - low) / (high - low) * (1.0 - FAST_GAIN))
+            inside[i] = True
+    for i in range(1, n):
+        if inside[i - 1] and not inside[i]:
+            for k in range(1, RAMP):
+                if i + k - 1 >= n or inside[i + k - 1]:
+                    break
+                out[i + k - 1] = out[i - 1] + (1.0 - out[i - 1]) * k / float(RAMP)
     return out
 
 
@@ -1220,7 +1230,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                   "contact_error": CONTACT_ERROR,
                   "wall": {k: _r(v) for k, v in _zone(limits, (WALL, WALL, WALL)).to_json().items()}},
         "motion": {"vor_gain": list(VOR_GAIN), "fast_head": list(FAST_HEAD), "fast_gain": FAST_GAIN,
-                   "gate_turn": GATE_TURN, "face_ahead": FACE_AHEAD, "max_step": MAX_STEP, "gap": GAP,
+                   "gate_turn": GATE_TURN, "ramp": RAMP, "face_ahead": FACE_AHEAD, "max_step": MAX_STEP, "gap": GAP,
                    "sustain": SUSTAIN, "fixation_spread": FIXATION_SPREAD,
                    "saccade_frames": {"short": SHORT_SACCADE, "long": LONG_SACCADE}},
         "eye": {"bone": EYES, "center": center, "head": parent, "forward": _vec(forward, 6), "forward_from": forward_from},

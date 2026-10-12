@@ -325,6 +325,40 @@ class FixationTest(unittest.TestCase):
         self.assertGreater(head_path, 30.0)
         self.assertLess(gaze_path, 0.1 * head_path)
 
+    def test_after_a_sustained_turn_the_reflex_comes_back_over_three_frames(self):
+        # the head turns 60 degrees at 300 deg/s and at once comes back 18 at 135 deg/s (slower than a fast turn):
+        # inside the turn the eyes counter a fifth of it, and as it ends the counter-rotation comes back over 3
+        # frames, not in one (the coordinator, 2026-10-13: a step where it comes back is ramped over 2 to 3 frames)
+        dance = head_turn({0: 0.0, 60: 0.0, 66: 60.0, 70: 42.0, LAST: 42.0})
+        result = run_gaze(dance=dance, cam_motion=BEHIND)
+        moving = set()
+        for s in result.saccades:
+            moving.update(range(s["frame"], s["frame"] + s["frames"]))
+        self.assertEqual(moving & set(range(61, 69)), set(), result.saccades)
+        yaw = lambda v: math.degrees(math.atan2(v[0], -v[2]))
+        heads = [yaw(fk.rotate(s.head, FORWARD)) for s in result.sights]
+        share = lambda i: (result.looks[i].base[0] - result.looks[i - 1].base[0]) / -(heads[i] - heads[i - 1])
+        self.assertLess(max(share(i) for i in range(62, 67)), 0.3)          # held off inside the turn
+        self.assertTrue(0.3 < share(67) < 0.6 < share(68) < 0.9, (share(67), share(68)))
+        for i in (69, 70):
+            if i not in moving and i - 1 not in moving:
+                self.assertGreater(share(i), 0.95, i)
+
+    def test_a_long_spin_holds_the_reflex_off_to_its_end(self):
+        # a spin of 2 s at 600 deg/s (review gaze-smooth Q5, kept as it was): the reflex is held off to the end of the
+        # fast run, not only over the 20 frames in which the turn's furthest point is looked for; countered there,
+        # the eyes are thrown to the back wall every few frames.  Outside saccades they turn back by less than a
+        # third of the head's 20 degrees a frame
+        spin = head_turn(dict([(0, 0.0), (30, 0.0)] + [(30 + 5 * k, 100.0 * k) for k in range(1, 13)]), last=LAST)
+        result = run_gaze(dance=spin, cam_motion=BEHIND)
+        moving = set()
+        for s in result.saccades:
+            moving.update(range(s["frame"], s["frame"] + s["frames"]))
+        steps = [abs(result.looks[i].base[0] - result.looks[i - 1].base[0]) for i in range(32, 91)
+                 if i not in moving and i - 1 not in moving]
+        self.assertGreater(len(steps), 30)
+        self.assertLess(max(steps), 20.0 / 3.0)
+
 
 class LeadTest(unittest.TestCase):
     """a20 (a): before a fast turn of the head the eyes jump the way it will turn, 2 to 4 frames ahead of it"""
@@ -619,6 +653,10 @@ class SaccadeTest(unittest.TestCase):
                 if i not in moving:
                     a, b = result.looks[i - 1].base, result.looks[i].base
                     self.assertLessEqual(math.hypot(b[0] - a[0], b[1] - a[1]), 8.0 + 1e-6, (seed, i))
+        # on the flick the eyes turn the 8 degrees they may and the head carries the rest: no saccade then
+        flick = run_gaze(dance=head_turn({0: 0.0, 40: 0.0, 41: 60.0, LAST: 60.0}), cam_motion=BEHIND)
+        self.assertEqual([s for s in flick.saccades if 38 <= s["frame"] <= 45], [])
+        self.assertAlmostEqual(flick.looks[40].base[0] - flick.looks[41].base[0], 8.0, places=6)
 
     def test_a_saccade_lands_without_a_jump_while_the_head_turns(self):
         # the goal of a recentre, glance or look-away is where the face's way is on each frame of it (in the head):
@@ -634,13 +672,13 @@ class SaccadeTest(unittest.TestCase):
                                       eye_gaze.angles_of(FORWARD))
             for s in result.saccades:
                 if s["reason"] in ("recentre", "glance", "away", "look_away"):
-                    for k in range(s["frame"], s["frame"] + s["frames"]):
+                    frames = range(s["frame"], min(len(result.looks), s["frame"] + s["frames"]))   # the song may end first
+                    for k in frames:
                         a, b = result.looks[k - 1].base, result.looks[k].base
                         step = math.hypot(b[0] - a[0], b[1] - a[1])
                         moved = math.hypot(face[k][0] - face[k - 1][0], face[k][1] - face[k - 1][1])
                         self.assertLessEqual(step, 0.59 * s["amplitude"] + moved + 0.5, (seed, s, k))
-                    self.assertLess(max(abs(result.looks[k].base[0]) for k in range(s["frame"], s["frame"] + s["frames"])),
-                                    eye_gaze.EDGE * LIMITS.yaw, (seed, s))
+                    self.assertLess(max(abs(result.looks[k].base[0]) for k in frames), eye_gaze.EDGE * LIMITS.yaw, (seed, s))
 
     def test_a_saccade_follows_the_minimum_jerk_profile(self):
         # the lead of a fast turn goes to a fixed angle in the head: its frames are exactly the profile
