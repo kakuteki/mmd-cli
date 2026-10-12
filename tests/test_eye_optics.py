@@ -429,6 +429,24 @@ class OpticsTest(unittest.TestCase):
         self.assertLessEqual(result.report["light"]["moved"]["max"], 0.1 + 1e-6)
         self.assertGreater(result.report["light"]["moved"]["max"], 0.09)
 
+    def test_light_stays_on_its_iris_and_its_key_bounded(self):
+        head = {0: (0.0, 0.0), 30: (0.0, 0.0), 40: (45.0, 10.0), 90: (45.0, 10.0)}
+        g = gaze(90, {0: (-18.0, -10.0)})
+        result = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-30.0))
+        drawn = result.report["light"]["drawn"][result.trace["light_bone"]]
+        limit = max(1.0, math.hypot(*drawn))
+        self.assertLessEqual(max(math.hypot(*o) for o in result.trace["light"]), limit + 1e-3)
+        near = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-30.0),
+                   params={"light": {"reach": 0.4}, "pupil": {"unrest": {"amplitude": 0.0}}})
+        reach = max(0.4, math.hypot(*drawn))
+        offsets = [math.hypot(*o) for o in near.trace["light"]]
+        self.assertLessEqual(max(offsets), reach + 1e-3)                # (the report rounds the drawn offset)
+        self.assertGreater(max(offsets), reach - 0.01)                # the scene does push it that far
+        cap = eye_optics.PARAMS["light"]["key_cap"]
+        for name in ("右HL２", "右HL", "左HL２", "左HL"):
+            for k in keys_of(result.motion, name):
+                self.assertLessEqual(eye_optics._angle(k.rotation), cap + 1e-3)
+
     def test_soft_cap(self):
         for size in (0.0, 0.3, 0.6, 0.9, 1.5, 40.0):
             out = eye_optics.soft_cap((size * 0.6, -size * 0.8), 1.0)

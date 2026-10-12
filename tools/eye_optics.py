@@ -30,10 +30,12 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   a few Gauss-Newton steps, so that seen from the front it lands on the line and seen side on (where a turn hardly
   moves the light across the line of sight) the turn stays small instead of swinging the light round.  No smoothing
   and no delay of its own: the same frame as the pupil (RESEARCH 0.2, items 2 to 4).  The key has no roll of its own.
-* The change from the drawn place is held under light.cap iris radii (soft: unchanged up to 60 % of it, tanh beyond):
-  a light reaches the limbus about one iris radius from the pupil's centre, where it leaves the cornea.
+* The change from the drawn place is held under light.cap iris radii (soft: unchanged up to 60 % of it, tanh beyond),
+  and the light no further from the pupil's centre than light.reach iris radii (or where it was drawn, if further):
+  a light reaches the limbus about one iris radius from the pupil's centre, where it leaves the cornea.  The key's
+  turn is held under light.key_cap degrees (soft).
 * When the camera sees her face from the side or behind (more than light.side[0] degrees off the face's forward, both
-  eyes' mean) the line through the light no longer meets the eye from the front: the turn gives way, by light.side[1]
+  eyes' mean) the eye is seen at a slant and the solve asks for large turns: the turn gives way, by light.side[1]
   degrees wholly, to the bone's append alone (the light painted on the iris again; the eye is hardly seen there).
 * The light leaves the cornea when the light source lies more than 90 to 100 degrees from the camera (RESEARCH 1.6;
   the coordinator's rule): the morph HL消 (the light material's opacity) goes from 0 at light.hide[0] to 1 at
@@ -114,8 +116,10 @@ PARAMS = {
         "direction": [-0.5, -1.0, 0.5],      # MMD's light, as its window shows it (where the light goes)
         "hide": [90.0, 100.0],               # degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6)
         "cap": 1.0,                          # iris radii the light moves off its drawn place at most (soft)
-        "side": [60.0, 80.0],                # degrees the camera lies off the face's forward: the solve gives way
+        "side": [45.0, 80.0],                # degrees the camera lies off the face's forward: the solve gives way
         "damping": 0.15,                     # light_turn's damping, a share of the bone's depth
+        "key_cap": 20.0,                     # degrees a light bone's key turns at most (soft)
+        "reach": 1.0,                        # iris radii from the pupil's centre a light goes at most (the limbus)
     },
     "vergence": {
         "ipd_mm": 61.5,                      # women's mean (Murray 2017)
@@ -343,6 +347,18 @@ def _about_vector(w):
         return fk.IDENTITY
     s = math.sin(a / 2.0) / a
     return fk.normalized((w[0] * s, w[1] * s, w[2] * s, math.cos(a / 2.0)))
+
+
+def _soft_turn(q, cap):
+    """the rotation q with its angle kept under `cap` degrees (soft_cap on the angle, the same axis)"""
+    q = fk.normalized(q)
+    if q[3] < 0.0:
+        q = tuple(-c for c in q)
+    angle = _angle(q)
+    if angle < 1e-12:
+        return q
+    kept = soft_cap((angle, 0.0), cap)[0]
+    return fk.power(q, kept / angle) if kept < angle else q
 
 
 def light_turn(pivot, depth, radial, target, view, damping=0.15, steps=4):
@@ -798,6 +814,10 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             geo = geometry[c["eye_index"]]
             dx, dy = drawn[c["name"]]
             ox, oy = dx + moved[0], dy + moved[1]
+            reach = max(lp["reach"], math.hypot(dx, dy))         # it stays on its iris (or as far out as it was drawn)
+            if math.hypot(ox, oy) > reach:
+                k = reach / math.hypot(ox, oy)
+                ox, oy = ox * k, oy * k
             fallback = fk.power(q_handle, c["share"])
             key = fk.IDENTITY
             if side < 1.0:
@@ -806,7 +826,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                 pivot = _add(hp, fk.rotate(hr, _sub(c["pivot"], head_rest)))
                 radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
                 turn = light_turn(pivot, c["depth"], radial, target, view, lp["damping"])
-                key = fk.multiply(inv, fk.multiply(turn, hr))               # the same turn in the head's frame
+                key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
                 if side > 0.0:
                     key = fk.slerp(key, fk.IDENTITY, side)
             keys_q[c["name"]].append(key)
