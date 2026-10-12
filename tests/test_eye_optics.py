@@ -268,6 +268,31 @@ class LightGeometryTest(unittest.TestCase):
         far = eye_optics.light_turn(pivot, depth, radial, (0.0, 0.3, -0.4), side, damping=0.15)
         self.assertLess(eye_optics._angle(far), 60.0)
 
+    def test_keep_on_iris_passes_up_to_the_knee_and_never_beyond_the_reach(self):
+        f = eye_optics.keep_on_iris
+        self.assertEqual(f((0.3, 0.4), 0.5, 0.9), (0.3, 0.4))                  # inside: unchanged
+        self.assertAlmostEqual(math.hypot(*f((0.53, 0.0), 0.5, 0.9)), 0.53, 9)   # up to 60 % of the reach too
+        before = 0.0
+        for r in (0.5, 0.6, 0.7, 0.9, 1.2, 2.0, 10.0):
+            out = f((r * 0.6, -r * 0.8), 0.5, 0.9)
+            n = math.hypot(*out)
+            self.assertLessEqual(n, 0.9)
+            self.assertGreaterEqual(n, before)                                 # it keeps its order
+            self.assertAlmostEqual(out[0] / out[1], -0.75, 9)                  # along the same direction
+            before = n
+        self.assertAlmostEqual(math.hypot(*f((0.55, 0.0), 0.5, 0.9)), 0.55, 4)   # smooth past the knee (0.54)
+        self.assertAlmostEqual(math.hypot(*f((1.0, 0.0), 0.95, 0.9)), 0.95, 9)   # drawn beyond the reach: held there
+
+    def test_disc_coordinates_along_the_camera_ray(self):
+        centre, x, y, n = (0.0, 0.0, -1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, -1.0)
+        cam = (0.0, 0.0, -11.0)
+        u, v = eye_optics.disc_coordinates(cam, (0.08, -0.11, -1.0), centre, x, y, n, 0.16, 0.22)
+        self.assertAlmostEqual(u, 0.5, 9)
+        self.assertAlmostEqual(v, -0.5, 9)
+        u, v = eye_optics.disc_coordinates(cam, (0.08, 0.0, -2.0), centre, x, y, n, 0.16, 0.22)
+        self.assertAlmostEqual(u, 0.08 * 10.0 / 9.0 / 0.16, 9)                 # in front of the disc: projected back
+        self.assertIsNone(eye_optics.disc_coordinates((5.0, 0.0, -1.0), (0.0, 0.1, -1.0), centre, x, y, n, 0.16, 0.22))
+
     def test_hide_is_a_function_of_the_frame(self):
         out = eye_optics.hide_track([30.0, 47.0, 48.0, 49.0, 60.0, 30.0], 46.0, 50.0)
         self.assertEqual(out[0], 0.0)
@@ -425,31 +450,67 @@ class OpticsTest(unittest.TestCase):
         # the coordinator's rule is the light against the camera: an eye turned away keeps its light
         self.assertEqual(at(70.0, gaze(90, {0: (-25.0, 0.0)})), 0.0)
 
-    def test_camera_behind_her_leaves_the_light_on_the_append(self):
-        result = run(c=camera(10.0, yaw=180.0), params=FRONT_LIGHT)
+    def test_camera_behind_her_leaves_the_light_painted_on_the_iris(self):
+        g = gaze(90, {0: (10.0, 0.0)})
+        result = run(g=g, c=camera(10.0, yaw=180.0), params=FRONT_LIGHT)
+        share = bone("左HL２").append["ratio"]
+        want = fk.power(turn(10.0, 0.0), 1.0 - share)        # with the append: the whole turn of the eye
         for k in keys_of(result.motion, "左HL２"):
-            self.assertLess(eye_optics._angle(k.rotation), 1e-3)
+            got = fk.applied(k.rotation)
+            self.assertLess(eye_optics._angle(fk.multiply(fk.conjugate(want), got)), 0.06)
+
+    def test_at_rest_each_light_sits_on_its_drawn_place_of_the_iris(self):
+        result = run(c=camera(10.0), params=FRONT_LIGHT)
+        drawn = result.report["light"]["drawn"]
+        self.assertEqual(result.trace["lights"], ["右HL２", "右HL", "左HL２", "左HL"])
+        for k, name in enumerate(result.trace["lights"]):
+            u, v = result.trace["disc"][10][k]
+            self.assertAlmostEqual(u, drawn[name][0], delta=0.01, msg=name)
+            self.assertAlmostEqual(v, drawn[name][1], delta=0.01, msg=name)
+        # the toy's lights: centroids (+-0.45, 17.24) and (+-0.62, 17.04) on irises 0.16 by 0.22 about (+-0.507, 17.143)
+        self.assertAlmostEqual(drawn["左HL２"][0], (0.45 - 0.507) / 0.16, 3)
+        self.assertAlmostEqual(drawn["左HL"][1], (17.04 - 17.143) / 0.22, 3)
+
+    def test_lights_stay_on_the_iris_seen_at_a_slant(self):
+        head = {0: (30.0, 0.0), 90: (30.0, 0.0)}
+        result = run(d=dance(90, head=head), c=camera(1.0))
+        reach = eye_optics.PARAMS["light"]["reach"]
+        radii = [math.hypot(*uv) for row in result.trace["disc"] for uv in row]
+        self.assertLessEqual(max(radii), reach + 1e-3)
+        self.assertGreater(max(radii), reach - 0.06)          # the slant pushes a light out to the iris' edge
+        rep = result.report["light"]
+        self.assertGreater(rep["edge_frames"], 0)
+        self.assertLessEqual(rep["disc_r"]["max"], reach + 1e-3)
+        self.assertGreater(rep["ahead"]["min"], 0.0)            # every light in front of its iris' rim
+        self.assertEqual(rep["behind_frames"], 0)
 
     def test_a_small_cap_holds_the_light(self):
         g = gaze(90, {0: (15.0, 0.0)})
         p = {"light": {"direction": [0.0, 0.0, 1.0], "cap": 0.1}, "pupil": {"unrest": {"amplitude": 0.0}}}
         result = run(g=g, c=camera(10.0), params=p)                    # the lag alone is 0.79 sin 15 = 0.20
-        self.assertLessEqual(result.report["light"]["moved"]["max"], 0.1 + 1e-6)
+        # the cap holds the move as the camera sees it; on the toy's iris, turned 15 degrees with the eye, that is
+        # 1 / cos 15 as much across the iris itself (the report measures the light on the iris)
+        self.assertLessEqual(result.report["light"]["moved"]["max"], 0.1 / math.cos(math.radians(15.0)) + 1e-3)
         self.assertGreater(result.report["light"]["moved"]["max"], 0.09)
 
     def test_light_stays_on_its_iris_and_its_key_bounded(self):
-        head = {0: (0.0, 0.0), 30: (0.0, 0.0), 40: (45.0, 10.0), 90: (45.0, 10.0)}
+        head = {0: (0.0, 0.0), 30: (0.0, 0.0), 40: (25.0, 10.0), 90: (25.0, 10.0)}
         g = gaze(90, {0: (-18.0, -10.0)})
-        result = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-30.0))
-        drawn = result.report["light"]["drawn"][result.trace["light_bone"]]
-        limit = max(1.0, math.hypot(*drawn))
-        self.assertLessEqual(max(math.hypot(*o) for o in result.trace["light"]), limit + 1e-3)
-        near = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-30.0),
+        result = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-15.0))
+        self.assertEqual(result.report["light"]["camera_aside"]["frames_partly"], 0)
+        drawn = result.report["light"]["drawn"]
+        reach = eye_optics.PARAMS["light"]["reach"]
+        for k, name in enumerate(result.trace["lights"]):
+            limit = max(reach, math.hypot(*drawn[name]))
+            self.assertLessEqual(max(math.hypot(*row[k]) for row in result.trace["disc"]), limit + 1e-3, name)
+        near = run(d=dance(90, head=head), g=g, c=camera(3.0, yaw=-15.0),
                    params={"light": {"reach": 0.4}, "pupil": {"unrest": {"amplitude": 0.0}}})
-        reach = max(0.4, math.hypot(*drawn))
-        offsets = [math.hypot(*o) for o in near.trace["light"]]
-        self.assertLessEqual(max(offsets), reach + 1e-3)                # (the report rounds the drawn offset)
-        self.assertGreater(max(offsets), reach - 0.01)                # the scene does push it that far
+        first = near.trace["lights"][0]
+        limit = max(0.4, math.hypot(*drawn[first]))                   # drawn further out than 0.4: held there
+        radii = [math.hypot(*row[0]) for row in near.trace["disc"]]
+        # the key of this 19-degree turn is just past the knee of its soft cap (18 degrees): a hair short of its target
+        self.assertLessEqual(max(radii), limit + 0.01)
+        self.assertGreater(max(radii), limit - 0.01)                  # the scene does push it that far
         cap = eye_optics.PARAMS["light"]["key_cap"]
         for name in ("右HL２", "右HL", "左HL２", "左HL"):
             for k in keys_of(result.motion, name):
@@ -576,8 +637,9 @@ class CommandTest(unittest.TestCase):
         with open(trace, encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(len(data["frames"]), 91)
-        for key in ("label", "vergence", "light", "hide", "pupil", "camera_aside"):
+        for key in ("label", "vergence", "light", "hide", "pupil", "camera_aside", "disc", "ahead"):
             self.assertEqual(len(data[key]), 91, key)
+        self.assertEqual(len(data["disc"][0]), len(data["lights"]))
 
     def test_refuses_an_output_over_an_input(self):
         with contextlib.redirect_stdout(io.StringIO()) as printed:

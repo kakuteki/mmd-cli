@@ -132,7 +132,7 @@ class ToyBuildTest(unittest.TestCase):
         data, self.layout = toy_bytes()
         self.before = pmx_edit.loads(data)
         self.doc = pmx_edit.loads(data)
-        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0)
+        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0, rim=None)
         self.model = pmx.loads(pmx_edit.dumps(self.doc))
         self.names = [b.name for b in self.model.bones]
 
@@ -234,14 +234,15 @@ class SurfaceTest(unittest.TestCase):
 
 
 class LiftTest(unittest.TestCase):
-    """an iris at z -0.99: the upper light (revealed at -1.076) lies in front of it, the lower one (-0.973) behind"""
+    """an iris at z -0.99: the upper light (revealed at -1.076) lies in front of it, the lower one (-0.973) behind
+    (the slide rule alone: rim=None)"""
     IRIS_Z = -0.99
 
     def setUp(self):
         data, self.layout = toy_bytes(iris_z=self.IRIS_Z)
         self.before = pmx_edit.loads(data)
         self.doc = pmx_edit.loads(data)
-        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0, margin=0.01)
+        self.report = pmx_eyes.build(self.doc, share=0.55, clear=0.0, margin=0.01, rim=None)
         self.quads = {q["bone"]: q for q in self.report["quads"]}
 
     def test_only_the_light_behind_the_iris_comes_out(self):
@@ -277,10 +278,54 @@ class LiftTest(unittest.TestCase):
     def test_sliding_needs_more(self):
         data, _ = toy_bytes(iris_z=self.IRIS_Z)
         doc = pmx_edit.loads(data)
-        report = pmx_eyes.build(doc, share=0.55, clear=0.06, margin=0.01)
+        report = pmx_eyes.build(doc, share=0.55, clear=0.06, margin=0.01, rim=None)
         lifts = {q["bone"]: q["lift"] for q in report["quads"]}
         self.assertGreaterEqual(lifts["左HL"], self.quads["左HL"]["lift"])
         self.assertEqual(lifts["左HL２"], 0.0)
+
+
+class RimTest(unittest.TestCase):
+    """seen from the side, the near rim of a dish-shaped iris (Sour's Rin's rim lies 0.11 in front of its centre)
+    hides whatever lies deeper than the rim: every light comes out `rim` in front of the iris' frontmost point"""
+    IRIS_Z = -0.99
+
+    def build(self, **kw):
+        data, layout = toy_bytes(iris_z=self.IRIS_Z)
+        doc = pmx_edit.loads(data)
+        report = pmx_eyes.build(doc, share=0.55, clear=0.0, margin=0.01, **kw)
+        return doc, layout, {q["bone"]: q for q in report["quads"]}, report
+
+    def test_every_light_lies_in_front_of_the_iris_front(self):
+        doc, layout, quads, report = self.build(rim=0.03)
+        front = min(PUPIL_Z, self.IRIS_Z)                    # the toy's iris material holds its pupil quads too
+        self.assertAlmostEqual(report["iris_front"]["右目"], front, 5)
+        self.assertAlmostEqual(report["iris_front"]["左目"], front, 5)
+        self.assertEqual(report["rim"], 0.03)
+        self.assertAlmostEqual(quads["右HL"]["lift"], (HL_Z + HL_PULL) - (front - 0.03), 5)
+        self.assertEqual(quads["右HL２"]["lift"], 0.0)          # revealed at -1.076: already 0.086 in front
+        for key, pull in (("hl", HL_PULL), ("hl2", HL2_PULL)):
+            for side in ("右", "左"):
+                for v in layout[key][side]:
+                    self.assertLessEqual(doc.vertices[v].position()[2] + pull, front - 0.03 + 1e-6)
+
+    def test_the_larger_of_the_slide_and_the_rim(self):
+        _, _, slide, _ = self.build(rim=None)
+        _, _, low, _ = self.build(rim=0.0)
+        _, _, high, _ = self.build(rim=0.03)
+        self.assertAlmostEqual(slide["左HL"]["lift"], (HL_Z + HL_PULL) - (self.IRIS_Z - 0.01), 5)
+        self.assertAlmostEqual(low["左HL"]["lift"], slide["左HL"]["lift"], 9)      # 0.017 < the slide's 0.027
+        self.assertAlmostEqual(high["左HL"]["lift"], (HL_Z + HL_PULL) - (self.IRIS_Z - 0.03), 5)
+
+    def test_the_closing_morph_takes_the_whole_lift_back(self):
+        doc, layout, quads, _ = self.build(rim=0.03)
+        blink = pmx_eyes.vertex_morphs(doc)["まばたき"]
+        for v in layout["hl"]["右"]:
+            self.assertAlmostEqual(blink[v][2], quads["右HL"]["lift"], 5)
+
+    def test_a_negative_rim_is_refused(self):
+        data, _ = toy_bytes(iris_z=self.IRIS_Z)
+        with self.assertRaises(ValueError):
+            pmx_eyes.build(pmx_edit.loads(data), rim=-0.01)
 
 
 class IrisScaleTest(unittest.TestCase):
@@ -359,12 +404,14 @@ class CommandTest(unittest.TestCase):
     def test_writes_the_model_and_the_report(self):
         out, rep = os.path.join(self.tmp, "eyes.pmx"), os.path.join(self.tmp, "r.json")
         with contextlib.redirect_stdout(io.StringIO()) as printed:
-            self.assertEqual(pmx_eyes.main([self.src, out, "--report", rep, "--share", "0.5"]), 0)
+            self.assertEqual(pmx_eyes.main([self.src, out, "--report", rep, "--share", "0.5", "--rim", "0.02"]), 0)
         self.assertTrue(json.loads(printed.getvalue())["ok"])
         model = pmx.load(out)
         self.assertAlmostEqual(model.bones[6].append["ratio"], 0.5, 6)
         with open(rep, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["share"], 0.5)
+            report = json.load(f)
+        self.assertEqual(report["share"], 0.5)
+        self.assertEqual(report["rim"], 0.02)
 
     def test_refuses_to_write_over_the_model(self):
         with open(self.src, "rb") as f:
@@ -390,7 +437,10 @@ class SourRinTest(unittest.TestCase):
         self.assertAlmostEqual(report["pupil_depth"]["左目"], 0.413, delta=0.005)
         self.assertAlmostEqual(report["iris_half_width"], 0.1625, delta=0.001)     # the iris 0.325 wide
         self.assertAlmostEqual(report["share"], 0.691, delta=0.002)               # formula A: 1 - 0.79 x 0.1625 / 0.415
-        self.assertTrue(all(0.0 < q["lift"] < 0.06 for q in report["quads"]))
+        self.assertAlmostEqual(report["iris_front"]["右目"], -1.0807, delta=0.002)  # the dish's rim
+        self.assertTrue(all(0.0 < q["lift"] < 0.2 for q in report["quads"]))
+        for q in report["quads"]:                                                 # every light in front of the rim
+            self.assertLessEqual(q["centroid"][2], report["iris_front"][q["eye"]] - pmx_eyes.RIM + 1e-6)
         self.assertIn("まばたき", report["closing"])
         self.assertIn("笑い", report["closing"])
 
