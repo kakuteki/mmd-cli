@@ -16,9 +16,11 @@ contacts of 0.30 s (median) that came and went 51 times a minute with no relatio
 the gaze as a person's: the eyes move first, look where the face goes, and look at the viewer at chosen moments.
 Its first form (stage 1) held every fixation still in the world, so the head's dance threw the eyes to the edge of
 their range and back 3 times a second, in jumps of one frame (2.98 saccades a second, 487 of them one frame long,
-fixations of 0.20 s, 1.73 reversals a second).  Stage 5 (2026-10-13) smooths them: no one-frame jumps, small
-recentres slide instead of jumping, a nod that comes back is ridden out, a fast head carries the gaze, at most
-MAX_STEP a frame outside saccades.
+fixations of 0.20 s).  Stage 5 (2026-10-13) smooths them: no one-frame jumps, longer fixations, no saccade for a nod
+that comes back, a sustained fast turn carries the gaze, at most MAX_STEP a frame outside saccades; between saccades
+the gaze still stays put in the world.  (The first form of stage 5 also slid the eyes toward the face's way and
+countered only half of each nod: review gaze-smooth found the gaze then flowed with the head like a doll's eye, on 70 %
+of the steps of a still head.  The slide is gone and the nods are countered in full.)
 
 Where the camera is, seen from her eyes (sights; mmd_cli/fk.py does the forward kinematics):
 
@@ -43,19 +45,21 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   approached along tanh).
 * Fixations (state free), stage 5 (2026-10-13: "make the movement of the light and the iris smooth").  The eyes look
   at a point in the world (a direction: far away) and each frame:
-  1. turn against the head (the vestibulo-ocular reflex) by VOR_GAIN of what holding the point would take: all of it
-     sideways, half of it up and down (the head nods 20 to 40 degrees while the eyes reach 6 up and 10 down, so the
-     rest of a nod carries the gaze instead of throwing the eyes up and down).  While the head turns faster than
-     FAST_HEAD[0] deg/s the reflex is held off, down to FAST_GAIN at FAST_HEAD[1] (a person's gaze shift: the eyes
-     jump first and the head carries the gaze; countered, a fast turn throws the eyes to the far edge in 3 frames);
-  2. slide toward where the face is going (the slide that replaces the small recentres): the target is the head's
-     forward averaged over the next FACE_AHEAD frames, seen in the head, plus the offset of the last glance, inside
-     the free zone and AVOID degrees off the camera; the eyes close PULL of the gap a frame, at most PULL_SPEED
-     deg/s (a gap of 5 degrees shrinks by a third in 0.4 s);
-  3. are pressed against the wall beyond the free zone, and turn at most MAX_STEP a frame (the rest is carried);
-  4. look at that point from then on.
-  The eyes move on with a saccade (recentre) only when they would stay more than GAP degrees from the face's way
-  from LOOK_AHEAD frames on for SUSTAIN more frames (the head has moved on, not nodded with the beat), and not before
+  1. turn against the head (the vestibulo-ocular reflex) by VOR_GAIN of what holding the point would take: all of it,
+     sideways and up and down, so the gaze stays put in the world (a person's gain is about 1 at 0.5 to 5 Hz both
+     ways, and the eyes cannot glide between still targets; review gaze-smooth 1.10).  Inside a sustained fast turn
+     (a fast turn, below, that goes GATE_TURN degrees or more its way: from its onset to where it goes furthest or
+     its fast run ends, whichever is later) the reflex is held off while the head turns faster than FAST_HEAD[0]
+     deg/s, down to FAST_GAIN at FAST_HEAD[1]: a person's gaze shift, where the eyes jump first and the head carries
+     the gaze on until it arrives (the reflex comes back about 40 ms after); countered in full, such a turn throws
+     the eyes to the far edge in 3 frames.  A fast shake that comes back is countered in full (a person's gain stays
+     near 1 at 2 to 6 Hz); where the eyes reach their wall, the rest of it carries the gaze;
+  2. are pressed against the wall beyond the free zone, and turn at most MAX_STEP a frame (the rest is carried);
+  3. look at that point from then on.
+  The eyes move on with a saccade (recentre) only when they would stay more than GAP degrees from the face's way (the
+  face target: the head's forward averaged over the frame and the next FACE_AHEAD, seen in the head, plus the offset
+  of the last glance, inside the free zone and AVOID degrees off the camera) from LOOK_AHEAD frames on for SUSTAIN
+  more frames (the head has moved on, not nodded with the beat), and not before
   the shortest fixation: MIN_FIXATION (--min-fixation; 10 frames by default, the first version had 6 and 57 % of its
   fixations stopped there) plus 0 to FIXATION_SPREAD frames drawn for each fixation (with one fixed length the
   fixations that wanted to end earlier all ended on it).  After GLANCE frames (drawn from the seed) of one fixation,
@@ -71,7 +75,9 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   gaze shift holds the reflex off); from the onset they are a fixation again, so the head turns toward where the eyes
   already are.  For QUIET frames before a lead no other saccade starts, and for GUARD frames after the onset no
   recentre.  A turn whose lead would start before the onset of the lead before (one turn seen as two, with a dip
-  between) gets no lead of its own: two leads 2 frames apart were most of the jumps that followed another.
+  between) gets no lead of its own: two leads 2 frames apart were most of the jumps that followed another.  Nor does
+  a turn that goes less than GATE_TURN degrees its way (a shake that comes back: held in the head before it, the
+  eyes would ride the head's first swing).
 * Eye contact (state contact) is planned first, on the whole song.  The camera is within reach on a frame when the
   eyes, held inside the contact zone, would be within CONTACT_ERROR of it (and it is not behind her); gaps of
   CONTACT_GAP frames or less are closed (the analysis joins them too).  No contact from END_CLEAR frames before a
@@ -90,18 +96,19 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
 * Outside the contacts the gaze keeps KEEP_OFF degrees off the camera on every frame, saccades on their way too: a
   pass over the camera would count as a one-frame eye contact.  When the camera passes over the gaze the kept point
   would flip to its other side in one frame (10 degrees with no easing); when it would move FLIP_STEP degrees more
-  than the gaze itself, the eyes move away with a saccade instead (reason away; the coming lead if one is due), as
-  they do when the point nears the camera after the shortest fixation.
+  than the gaze itself, or more than MAX_STEP, the eyes move away with a saccade instead (reason away; the coming
+  lead if one is due), as they do when the point nears the camera after the shortest fixation.
 * A saccade takes saccade_frames(A) frames: 2 under SHORT_SACCADE (15) degrees, 3 up to LONG_SACCADE (35), 4
   beyond (the coordinator, 2026-10-13: no one-frame jumps, and no slower: the main sequence D = 21 + 2.2 A ms puts 5
   to 15 degrees in 1 to 2 frames, and slower eyes look sluggish, Pejsa 2013), along a minimum-jerk profile from where
-  the eyes were to where the target is on each frame of it: the camera, a lead's angle in the head, or the slide's
-  target (the face's way with the offset of a glance or a look away) on that frame.  A goal held still in the world
-  would swing across the eyes' range while the head turns 20 degrees a frame and end the saccade with a jump.  The
-  fixation starts where the saccade lands.  A move under MIN_SACCADE is no saccade: the fixation alone moves.
+  the eyes were to where the target is on each frame of it: the camera, a lead's angle in the head, or the face
+  target (with the offset of a glance or a look away) on that frame.  A goal held still in the world would swing
+  across the eyes' range while the head turns 20 degrees a frame and end the saccade with a jump.  The fixation
+  starts where the saccade lands.  A move under MIN_SACCADE is no saccade: the fixation alone moves.
 * Life: a slow drift (a random walk of up to DRIFT_STEP per frame and axis, kept within DRIFT_LIMIT) and a
   microsaccade every MICRO_INTERVAL frames that jumps back to within MICRO_SIZE of the center are added on top; well
-  under a degree.  Everything random comes from the seed (random.Random), so the same seed gives the same file.
+  under a degree (outside saccades the angles written still turn at most MAX_STEP a frame).  Everything random comes
+  from the seed (random.Random), so the same seed gives the same file.
 
 What is written: a VMD that holds only the 両目 track, a key on every frame where the angles change (and the first
 and last frame) with the linear curve, under the dance's model name.  Load it after the dance: it replaces the
@@ -113,8 +120,9 @@ they add up to 1), the saccades (their reasons: contact, look_away, lead, recent
 frame, frames, reason and amplitude like the first version's, so the analysis' scripts read it), the contacts (first
 and last frame, seconds, the anchor they hold), the anchors, the cuts, the error on the camera during the contacts,
 and measures: the target numbers of the analysis computed on the plan, by the analysts' definitions (eye_measures,
-contact_measures, lead_measure, carried_measure; README: eye_gaze.py) and the smoothness of stage 5
-(smooth_measures).  --debug writes, for --debug-frames (default: every DEBUG_STEP-th frame), the geometry of those
+contact_measures, lead_measure, carried_measure; README: eye_gaze.py), the smoothness of stage 5 (smooth_measures),
+whether the gaze stays put in the world between saccades (world_measures) and the frames at the wall
+(wall_measures).  --debug writes, for --debug-frames (default: every DEBUG_STEP-th frame), the geometry of those
 frames.
 
 --probe P.vmd also writes a short 両目 motion to check the convention on a render: frames 0-29 rest, 30-59 window Y
@@ -129,7 +137,7 @@ import random
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, NamedTuple, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -164,19 +172,19 @@ SUSTAIN = 6                           # frames past LOOK_AHEAD the gap must last
 MIN_FIXATION = 10                     # frames from the landing of a saccade to the earliest recentre or glance (333 ms)
 FIXATION_SPREAD = 5                   # frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed)
 GLANCE = (45, 120)                    # frames of one fixation before a glance (both included)
-VOR_GAIN = (1.0, 0.5)                 # share of the counter-rotation the eyes make sideways and up and down
-FAST_HEAD = (120.0, 300.0)            # deg/s of the head's forward from which the reflex is held off, and the speed at
-FAST_GAIN = 0.2                       # which it is down to this share (gaze shifts carried by the head)
-FACE_AHEAD = 12                       # frames of the head's forward averaged ahead for the face's way
-PULL = 0.08                           # share of the gap to the face's way the eyes close a frame (the slide)
-PULL_SPEED = 30.0                     # deg/s at most of the slide
+VOR_GAIN = (1.0, 1.0)                 # share of the counter-rotation the eyes make sideways and up and down
+FAST_HEAD = (120.0, 300.0)            # deg/s of the head's forward from which the reflex is held off inside a sustained
+FAST_GAIN = 0.2                       # fast turn, and the speed at which it is down to this share
+GATE_TURN = 20.0                      # degrees a fast turn goes its way for the reflex to be held off in it
+FACE_AHEAD = 12                       # the face's way: the head's forward averaged over the frame and the next 12
 WALL = 0.85                           # share of each limit a fixation is pressed softly against beyond the free zone
+WALL_SEEN = 0.84                      # share of each limit from which the measures count the eyes as at the wall
 MAX_STEP = 8.0                        # degrees the eyes turn in the head a frame at most outside saccades
 FLIP_STEP = 4.0                       # degrees the kept-off gaze may move beyond the gaze's own move before it is a
                                       # saccade (the keep-off flipping to the other side of the camera)
 SHORT_SACCADE, LONG_SACCADE = 15.0, 35.0  # degrees: saccades of 2 frames below the first, 3 up to the second, then 4
 GLANCE_OFF = ((-4.0, 4.0), (-3.0, 1.5))   # degrees off the face's way of a glance or a look away: yaw, pitch
-AVOID = 6.0                           # degrees off the camera the slide's target keeps
+AVOID = 6.0                           # degrees off the camera the face target keeps
 KEEP_OFF = 5.0                        # degrees off the camera the gaze keeps outside the contacts
 TURN_SPEED = 150.0                    # deg/s of the head's yaw that make a fast turn
 LEAD = (2, 4)                         # frames before a fast turn's onset on which the eyes land (both included)
@@ -195,7 +203,13 @@ FORWARD_TOLERANCE = 20.0              # degrees off -Z within which 両目 -> �
 DEBUG_STEP = 30
 STATES = ("contact", "free", "lead", "in_saccade")
 REASONS = ("contact", "look_away", "lead", "recentre", "glance", "away")
-REVERSAL = 3.0                        # degrees: two consecutive per-frame steps above this the opposite way (review eye)
+REVERSAL = 3.0                        # degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its
+REVERSAL_WITHIN = 10                  # landing, by one above this the opposite way is a reversal (restless eyes)
+# the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s
+# (what it would carry a resting eye) the gaze is steady under STEADY_GAZE deg/s; with the head under STILL_HEAD deg/s
+# (and outside the contacts) it flows when it moves more than STILL_FLOW degrees a frame
+STEADY_HEAD, STEADY_GAZE = (15.0, 120.0), 10.0
+STILL_HEAD, STILL_FLOW = 20.0, 0.1
 # the analysis' measures: a07 (edge, large gaze changes), a13 (eccentricity, eye contact), a20 (leads)
 CONTACT_SEEN = 4.0                    # degrees: the analysis counts the gaze within this of the camera as eye contact
 CONTACT_JOIN = 2                      # frames: gaps it joins
@@ -560,9 +574,17 @@ def contact_runs(reach, cuts, anchors):
     return sorted(long_ + [(a, b) for _, a, b in mid[:keep]])
 
 
+class Turn(NamedTuple):
+    """a fast turn of the head (frame indices)"""
+    onset: int
+    far: int                        # the frame it has gone furthest by (within 20 frames of the onset)
+    sign: float                     # 1.0 toward her left (+yaw), -1.0 toward her right
+    last: int                       # the last frame of its run above TURN_SPEED
+    degrees: float                  # how far it goes its way from the onset to `far`
+
+
 def fast_turns(seen, forward):
-    """(the head's forward in the world per frame, [(onset, the frame the turn goes furthest by, its sign)]): see the
-    module docstring (Leads)"""
+    """(the head's forward in the world per frame, [Turn]): see the module docstring (Leads)"""
     fw = [fk.rotate(s.head, forward) for s in seen]
     yaw = [math.degrees(math.atan2(f[0], -f[2])) for f in fw]
     step = [0.0] + [(yaw[i] - yaw[i - 1] + 180.0) % 360.0 - 180.0 for i in range(1, len(yaw))]
@@ -579,7 +601,7 @@ def fast_turns(seen, forward):
             total += sign * step[i]
             if total > best:
                 far, best = i, total
-        turns.append((onset, far, sign))
+        turns.append(Turn(onset, far, sign, b, best))
     return fw, turns
 
 
@@ -597,9 +619,10 @@ def face_ways(seen, fw, rest):
     return out
 
 
-def slide_target(face, offset, camera, free):
-    """where a fixation slides to (yaw, pitch in the head): the face's way `face` off by `offset`, inside the free
-    zone, and AVOID degrees off the camera's angles `camera` (pushed straight away from it when nearer)"""
+def face_target(face, offset, camera, free):
+    """where a recentre, a glance or a look away goes (yaw, pitch in the head): the face's way `face` off by
+    `offset`, inside the free zone, and AVOID degrees off the camera's angles `camera` (pushed straight away from it
+    when nearer)"""
     t = (min(max(face[0] + offset[0], -free.yaw), free.yaw), min(max(face[1] + offset[1], -free.down), free.up))
     dy, dp = t[0] - camera[0], t[1] - camera[1]
     d = math.hypot(dy, dp)
@@ -610,27 +633,33 @@ def slide_target(face, offset, camera, free):
     return camera[0] + dy * AVOID / d, camera[1] + dp * AVOID / d
 
 
-def vor_gains(fw):
-    """per frame the share of the counter-rotation the eyes make: 1, falling from FAST_HEAD[0] to FAST_GAIN at
-    FAST_HEAD[1] deg/s of the head's forward (the fastest of the frame and the two around it)"""
+def vor_gains(fw, turns):
+    """per frame the share of the counter-rotation the eyes make: 1, but inside a sustained fast turn (one of `turns`
+    that goes GATE_TURN degrees or more its way, from its onset to where it goes furthest or its fast run ends,
+    whichever is later) falling from 1 at FAST_HEAD[0] to FAST_GAIN at FAST_HEAD[1] deg/s of the head's forward (the
+    fastest of the frame and the two around it).  A fast shake that comes back is countered in full"""
     n = len(fw)
     speed = [0.0] + [degrees_between(fw[k - 1], fw[k]) * FPS for k in range(1, n)]
     low, high = FAST_HEAD
-    out = []
-    for i in range(n):
-        v = max(speed[max(0, i - 1):min(n, i + 2)])
-        out.append(1.0 if v <= low else max(FAST_GAIN, 1.0 - (v - low) / (high - low) * (1.0 - FAST_GAIN)))
+    out = [1.0] * n
+    for turn in turns:
+        if turn.degrees < GATE_TURN:
+            continue
+        for i in range(turn.onset, min(n, max(turn.far, turn.last) + 1)):
+            v = max(speed[max(0, i - 1):min(n, i + 2)])
+            out[i] = 1.0 if v <= low else max(FAST_GAIN, 1.0 - (v - low) / (high - low) * (1.0 - FAST_GAIN))
     return out
 
 
 def flips(raw, kept_before, raw_before, camera, limits):
     """True when keeping `raw` off the camera would move the kept gaze FLIP_STEP degrees more than the gaze itself
-    moved since the frame before: the keep-off flipping to the other side of the camera"""
+    moved since the frame before (the keep-off flipping to the other side of the camera), or more than MAX_STEP (the
+    keep-off comes after the fixation's MAX_STEP)"""
     if raw_before is None or kept_before is None:
         return False
     kept = keep_off(raw, camera, KEEP_OFF, limits)
-    return (math.hypot(kept[0] - kept_before[0], kept[1] - kept_before[1])
-            - math.hypot(raw[0] - raw_before[0], raw[1] - raw_before[1])) > FLIP_STEP
+    moved = math.hypot(kept[0] - kept_before[0], kept[1] - kept_before[1])
+    return moved > MAX_STEP + 1e-6 or moved - math.hypot(raw[0] - raw_before[0], raw[1] - raw_before[1]) > FLIP_STEP
 
 
 def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixation=MIN_FIXATION):
@@ -653,23 +682,17 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             contact_end[i], contact_len[i], contact_start[i] = b, b - a + 1, a
     fw, turns = fast_turns(seen, forward)
     face = face_ways(seen, fw, rest)
-    gains = vor_gains(fw)
+    gains = vor_gains(fw, turns)
 
     def target(i, offset):
-        return slide_target(face[i], offset, cameras[i][0], free)
+        return face_target(face[i], offset, cameras[i][0], free)
 
     def fixate(i, eye, point, offset):
         """(the eye angles, the point they look at) of a fixation on frame i, from the frame before's: the reflex
-        (VOR_GAIN, held off by a fast head), the slide toward the face's way, the wall, at most MAX_STEP"""
+        (VOR_GAIN, held off inside a sustained fast turn), the wall, at most MAX_STEP"""
         full, _ = _head_angles(seen[i], point, rest)
         k = gains[i]
         e = (eye[0] + k * VOR_GAIN[0] * (full[0] - eye[0]), eye[1] + k * VOR_GAIN[1] * (full[1] - eye[1]))
-        t = target(i, offset)
-        gy, gp = t[0] - e[0], t[1] - e[1]
-        gap = math.hypot(gy, gp)
-        if gap > 1e-9:
-            step = min(gap * PULL, PULL_SPEED / FPS)
-            e = (e[0] + gy * step / gap, e[1] + gp * step / gap)
         e = pressed(e, limits)
         sy, sp = e[0] - eye[0], e[1] - eye[1]
         moved = math.hypot(sy, sp)
@@ -701,7 +724,10 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
 
     leads = []                      # [the first frame it may start, the frame it lands by, onset, far, sign]
     longest = saccade_frames(float("inf"))
-    for onset, far, sign in turns:
+    for turn in turns:
+        if turn.degrees < GATE_TURN:
+            continue        # a shake that comes back: no gaze shift to lead, and the reflex counters it
+        onset, far, sign = turn.onset, turn.far, turn.sign
         land = onset - rng.randint(*LEAD)
         first = land - (longest - 1)
         if leads and first <= leads[-1][2]:
@@ -827,6 +853,13 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
         if not (state == "contact" or (state == "in_saccade" and reason_now in ("contact", "look_away"))):
             base = keep_off(base, cameras[i][0], KEEP_OFF, limits)
         final = _clamp((base[0] + drift[i][0], base[1] + drift[i][1]), limits)
+        if looks and state != "in_saccade":
+            # outside saccades the angles written turn at most MAX_STEP a frame, the drift included
+            last = (looks[-1].yaw, looks[-1].pitch)
+            sy, sp = final[0] - last[0], final[1] - last[1]
+            moved = math.hypot(sy, sp)
+            if moved > MAX_STEP:
+                final = (last[0] + sy * MAX_STEP / moved, last[1] + sp * MAX_STEP / moved)
         looks.append(Look(s.frame, final[0] + 0.0, final[1] + 0.0, state, cameras[i][0], _apart(final, cameras[i][0]),
                           mode, base))
     out = [{"frame": c["frame"], "frames": c["frames"], "reason": c["reason"], "amplitude": c["amplitude"]} for c in saccades]
@@ -958,8 +991,10 @@ def smooth_measures(angles, saccades):
     """stage 5: the per-frame turns of the eye in the head (degrees between consecutive eye directions; the largest
     and the 99th percentile, of all steps and of those outside the listed saccades: a step is a saccade's when it
     ends on one of its frames), the median fixation in seconds (from a saccade's landing to the next one's first
-    frame) and the reversals a second (review eye, finding 2: two consecutive steps above REVERSAL degrees the
-    opposite way).  `angles` are (yaw, pitch) of the eye in the head per frame."""
+    frame, eye contacts included) and the reversals a second: a saccade that moves the eye in the head more than
+    REVERSAL degrees followed, within REVERSAL_WITHIN frames of its landing, by one that moves it more than REVERSAL
+    the opposite way (review gaze-smooth 2.4: the eyes' own jumps going back and forth, not the counter-rotation of a
+    nod).  `angles` are (yaw, pitch) of the eye in the head per frame."""
     n = len(angles)
     moving = [False] * n
     for s in saccades:
@@ -969,9 +1004,13 @@ def smooth_measures(angles, saccades):
     steps = [degrees_between(dirs[i], dirs[i + 1]) for i in range(n - 1)]
     outside = [v for i, v in enumerate(steps) if not moving[i + 1]]
     fixations = [b["frame"] - (a["frame"] + a["frames"] - 1) for a, b in zip(saccades, saccades[1:])]
-    moves = [(b[0] - a[0], b[1] - a[1]) for a, b in zip(angles, angles[1:])]
-    turned = sum(1 for a, b in zip(moves, moves[1:])
-                 if math.hypot(*a) > REVERSAL and math.hypot(*b) > REVERSAL and a[0] * b[0] + a[1] * b[1] < 0.0)
+    jumps = []
+    for s in saccades:
+        a, b = s["frame"] - 1, s["frame"] + s["frames"] - 1
+        jumps.append((angles[b][0] - angles[a][0], angles[b][1] - angles[a][1]) if 0 <= a and b < n else (0.0, 0.0))
+    turned = sum(1 for s, t, u, v in zip(saccades, saccades[1:], jumps, jumps[1:])
+                 if t["frame"] - (s["frame"] + s["frames"] - 1) <= REVERSAL_WITHIN and math.hypot(*u) > REVERSAL
+                 and math.hypot(*v) > REVERSAL and u[0] * v[0] + u[1] * v[1] < 0.0)
     return {"eye_steps": {"max": _r(max(steps or [0.0]), 3), "p99": _r(_percentile(steps, 0.99), 3),
                           "outside_saccades_max": _r(max(outside or [0.0]), 3),
                           "outside_saccades_p99": _r(_percentile(outside, 0.99), 3)},
@@ -979,8 +1018,59 @@ def smooth_measures(angles, saccades):
             "reversals_per_second": _r(turned / (n / FPS), 4) if n else 0.0}
 
 
-def plan_measures(seen, looks, saccades, forward, limits):
-    """the measures of the analysis computed on the plan (the world gaze from the head's rotation and the eye angles)"""
+def world_measures(heads, angles, saccades, contacts=(), rest=(0.0, 0.0)):
+    """whether the gaze stays put in the world between saccades (review gaze-smooth 1.3 to 1.6), on the steps from
+    frame i to i + 1 that touch no frame of a listed saccade.  `heads` are the head's world rotations, `angles` the
+    eye's (yaw, pitch) in the head from the rest gaze `rest`, without the drift and the microsaccades.  The head's
+    speed on a step is how far it would carry the gaze of an eye resting in it.  With the head at STEADY_HEAD deg/s:
+    the gains of the counter-rotation sideways and up and down (the eye's move regressed on the move that would hold
+    the gaze: 1 holds it, 0 is a doll's eye riding the head; None when no step asks for a move that way) and the
+    share of steps whose gaze moves under STEADY_GAZE deg/s.  With the head under STILL_HEAD deg/s, outside the
+    `contacts` ((first, last) frames, where the eyes follow the camera): the share of steps whose gaze moves more
+    than STILL_FLOW degrees (eyes gliding with no target)."""
+    n = len(angles)
+    moving = [False] * n
+    for s in saccades:
+        for i in range(s["frame"], min(n, s["frame"] + s["frames"])):
+            moving[i] = True
+    held = [False] * n
+    for a, b in contacts:
+        for i in range(max(0, a), min(n, b + 1)):
+            held[i] = True
+    gazes = [fk.rotate(h, direction_of(y + rest[0], p + rest[1])) for h, (y, p) in zip(heads, angles)]
+    num, den, steady, still = [0.0, 0.0], [0.0, 0.0], [], []
+    for i in range(n - 1):
+        if moving[i] or moving[i + 1]:
+            continue
+        g = gazes[i]
+        carried = degrees_between(g, fk.rotate(heads[i + 1], fk.rotate(fk.conjugate(heads[i]), g))) * FPS
+        step = degrees_between(g, gazes[i + 1])
+        if STEADY_HEAD[0] <= carried < STEADY_HEAD[1]:
+            hold = angles_of(fk.rotate(fk.conjugate(heads[i + 1]), g))
+            hold = ((hold[0] - rest[0] + 180.0) % 360.0 - 180.0, hold[1] - rest[1])
+            for axis in (0, 1):
+                need = hold[axis] - angles[i][axis]
+                num[axis] += (angles[i + 1][axis] - angles[i][axis]) * need
+                den[axis] += need * need
+            steady.append(step * FPS < STEADY_GAZE)
+        if carried < STILL_HEAD and not (held[i] or held[i + 1]):
+            still.append(step > STILL_FLOW)
+    gain = [_r(num[k] / den[k], 3) if den[k] > 1e-6 else None for k in (0, 1)]
+    return {"gain_yaw": gain[0], "gain_pitch": gain[1], "steady_steps": len(steady),
+            "steady_share": _r(sum(steady) / float(len(steady)), 3) if steady else 0.0,
+            "still_steps": len(still), "flow_share": _r(sum(still) / float(len(still)), 3) if still else 0.0}
+
+
+def wall_measures(angles, limits):
+    """the share of frames with the eyes at WALL_SEEN of their limit or beyond: sideways, and up or down"""
+    n = float(len(angles)) or 1.0
+    return {"yaw": _r(sum(1 for y, _ in angles if abs(y) >= WALL_SEEN * limits.yaw) / n),
+            "pitch": _r(sum(1 for _, p in angles if p >= WALL_SEEN * limits.up or p <= -WALL_SEEN * limits.down) / n)}
+
+
+def plan_measures(seen, looks, saccades, forward, limits, contacts=()):
+    """the measures of the analysis computed on the plan (the world gaze from the head's rotation and the eye angles;
+    its steadiness from the angles before the drift is added)"""
     rest = angles_of(forward)
     gazes = [_world(s, (look.yaw, look.pitch), rest) for s, look in zip(seen, looks)]
     yaw = lambda v: math.degrees(math.atan2(v[0], -v[2]))
@@ -991,6 +1081,8 @@ def plan_measures(seen, looks, saccades, forward, limits):
     out["head_carried"] = carried_measure(gazes, saccades, [s.head for s in seen])
     out["saccades_per_second"] = _r(len(saccades) / (len(seen) / FPS), 3)
     out.update(smooth_measures([(look.yaw, look.pitch) for look in looks], saccades))
+    out["world_gaze"] = world_measures([s.head for s in seen], [look.base for look in looks], saccades, contacts, rest)
+    out["wall_share"] = wall_measures([(look.yaw, look.pitch) for look in looks], limits)
     return out
 
 
@@ -1125,9 +1217,10 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         "frames": [seen[0].frame, seen[-1].frame], "seed": seed, "min_fixation": min_fixation,
         "limits": dict(limits.to_json(), soft_from=SOFT_FROM),
         "zones": {"free": free_zone(limits).to_json(), "contact": contact_zone(limits).to_json(),
-                  "contact_error": CONTACT_ERROR, "wall": _zone(limits, (WALL, WALL, WALL)).to_json()},
-        "motion": {"vor_gain": list(VOR_GAIN), "fast_head": list(FAST_HEAD), "fast_gain": FAST_GAIN, "pull": PULL,
-                   "pull_speed": PULL_SPEED, "face_ahead": FACE_AHEAD, "max_step": MAX_STEP, "gap": GAP,
+                  "contact_error": CONTACT_ERROR,
+                  "wall": {k: _r(v) for k, v in _zone(limits, (WALL, WALL, WALL)).to_json().items()}},
+        "motion": {"vor_gain": list(VOR_GAIN), "fast_head": list(FAST_HEAD), "fast_gain": FAST_GAIN,
+                   "gate_turn": GATE_TURN, "face_ahead": FACE_AHEAD, "max_step": MAX_STEP, "gap": GAP,
                    "sustain": SUSTAIN, "fixation_spread": FIXATION_SPREAD,
                    "saccade_frames": {"short": SHORT_SACCADE, "long": LONG_SACCADE}},
         "eye": {"bone": EYES, "center": center, "head": parent, "forward": _vec(forward, 6), "forward_from": forward_from},
@@ -1148,7 +1241,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                   "made": sum(1 for s in saccades if s["reason"] == "lead")},
         "cuts": cuts,
         "error_on_camera": _error_summary([look.error for look in looks if look.state == "contact"]),
-        "measures": plan_measures(seen, looks, saccades, forward, limits),
+        "measures": plan_measures(seen, looks, saccades, forward, limits, contacts),
         "dance_eye_keys": dance_eye_keys(dance),
     }
     return Gaze(looks, saccades, cuts, eye_motion(looks, dance.model_name), report, seen, forward, contacts)

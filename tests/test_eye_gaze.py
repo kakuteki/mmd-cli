@@ -106,6 +106,18 @@ def world_gaze(sight, look):
     return fk.rotate(sight.head, fk.rotate(eye_gaze.eye_rotation(look.yaw, look.pitch), FORWARD))
 
 
+def world_steps_outside_saccades(result, first=0, keep=lambda i: True):
+    """degrees the gaze moves in the world from frame i to i + 1 (i from `first`, and keep(i)), for the steps that
+    touch no saccade frame; from the angles before the life (drift and microsaccades) is added"""
+    moving = set()
+    for s in result.saccades:
+        moving.update(range(s["frame"], s["frame"] + s["frames"]))
+    gazes = [fk.rotate(s.head, fk.rotate(eye_gaze.eye_rotation(*look.base), FORWARD))
+             for s, look in zip(result.sights, result.looks)]
+    return [degrees_between(gazes[i], gazes[i + 1]) for i in range(first, len(gazes) - 1)
+            if i not in moving and i + 1 not in moving and keep(i)]
+
+
 def restless(seed, last=600):
     """a head that turns to a new random angle every 7 frames (often fast, often away from the camera) and a camera
     that cuts every 90 frames"""
@@ -218,8 +230,9 @@ class FixationTest(unittest.TestCase):
 
     def test_a_quick_sway_is_countered_by_the_eyes(self):
         # the head sways 3 degrees either way twice a second (the camera behind her): between saccades (a glance may
-        # come) the eyes turn against it, so the gaze in the world moves much less than the head (the
-        # vestibulo-ocular reflex), and no recentre is needed
+        # come) the eyes turn against all of it, so the gaze stays put in the world (the vestibulo-ocular reflex: a
+        # gain of about 1 at 0.5 to 5 Hz in a person; review gaze-smooth 1.10), and no recentre is needed.  A gain
+        # of 0.6 would leave 40 % of the head's path in the gaze
         sway = {f: (3.0 if (f // 8) % 2 else -3.0) for f in range(0, LAST + 1, 8)}
         dance = head_turn(sway)
         result = run_gaze(dance=dance, cam_motion=BEHIND)
@@ -229,62 +242,88 @@ class FixationTest(unittest.TestCase):
         heads = [fk.rotate(s.head, FORWARD) for s in result.sights]
         gazes = [world_gaze(s, look) for s, look in zip(result.sights, result.looks)]
         yaw = lambda v: math.degrees(math.atan2(v[0], -v[2]))
-        frames = [i for i in range(21, len(heads)) if i not in moving]
+        frames = [i for i in range(21, len(heads)) if i not in moving and i - 1 not in moving]
         head_path = sum(abs(yaw(heads[i]) - yaw(heads[i - 1])) for i in frames)
         gaze_path = sum(abs(yaw(gazes[i]) - yaw(gazes[i - 1])) for i in frames)
         self.assertGreater(head_path, 40.0)
-        self.assertLess(gaze_path, 0.4 * head_path)
+        self.assertLess(gaze_path, 0.1 * head_path)
         self.assertEqual([s for s in result.saccades if s["reason"] == "recentre"], [])
 
-    def test_a_slow_turn_slides_the_eyes_without_a_saccade(self):
-        # a slow turn of 20 degrees over 60 frames (10 deg/s): instead of jumping back to the middle, the held point
-        # slides after the face (a slow pursuit-like glide), so no recentre saccade is needed and the eyes never move
-        # more than a fraction of a degree a frame; they end where the face points
-        dance = head_turn({0: 0.0, 30: 0.0, 90: 20.0})
-        result = run_gaze(dance=dance, cam_motion=BEHIND)
-        self.assertEqual([s for s in result.saccades if s["reason"] == "recentre"], [])
-        moving = set()
-        for s in result.saccades:
-            moving.update(range(s["frame"], s["frame"] + s["frames"]))
-        steps = [math.hypot(b.base[0] - a.base[0], b.base[1] - a.base[1])
-                 for i, (a, b) in enumerate(zip(result.looks, result.looks[1:])) if i + 1 not in moving]
-        self.assertLess(max(steps), 1.0)
-        free = eye_gaze.free_zone(LIMITS)
-        self.assertLessEqual(max(abs(look.base[0]) for look in result.looks), free.yaw)
-        # within a glance's offset (at most 4 degrees sideways) of where the face points
-        self.assertLess(abs(result.looks[-1].base[0]), max(abs(v) for v in eye_gaze.GLANCE_OFF[0]) + 0.5)
+    def test_between_saccades_the_gaze_stays_put_in_the_world(self):
+        # review gaze-smooth 1.6: a person cannot glide the eyes slowly between still targets.  With the head still,
+        # or turning slowly (10 deg/s), the gaze outside saccades moves less than 0.1 degree a frame (3 deg/s); the
+        # eyes keep up with a turn by saccades, not by sliding with the head (stage 5 first slid them at 8 % of the
+        # gap a frame, and the gaze flowed with the head)
+        for dance in (head_turn({0: 0.0}), head_turn({0: 0.0, 30: 0.0, 90: 20.0}), head_turn({0: 0.0, 20: 0.0, 110: 15.0}, axis="x")):
+            result = run_gaze(dance=dance, cam_motion=BEHIND)
+            steps = world_steps_outside_saccades(result)
+            self.assertGreater(len(steps), 60)
+            self.assertLess(max(steps), 0.1)
 
     def test_a_head_that_moves_on_gets_a_saccade_the_way_it_went(self):
-        # the head turns 40 degrees in 10 frames (120 deg/s, not a fast turn) and stays: the eyes cannot slide that
-        # far in time, so after the shortest fixation one recentre saccade takes them the way the head went
+        # the head turns 40 degrees in 10 frames (120 deg/s, not a fast turn) and stays: the eyes hold the gaze, run
+        # out of range, and a recentre saccade takes them the way the head went; between saccades the gaze stays put
         dance = head_turn({0: 0.0, 40: 0.0, 50: 40.0})
         result = run_gaze(dance=dance, cam_motion=BEHIND)
         recentres = [s for s in result.saccades if s["reason"] == "recentre"]
-        self.assertEqual(len(recentres), 1, result.saccades)
+        self.assertTrue(1 <= len(recentres) <= 2, result.saccades)
         s = recentres[0]
         landed = s["frame"] + s["frames"] - 1
         before, after = result.looks[s["frame"] - 1].base[0], result.looks[landed].base[0]
         self.assertGreater(after - before, 3.0, s)                     # toward her left, the way she turned
-        # it lands ahead of the head (where the face is going), turns against the head as it comes (pressed against
-        # the wall, short of the edge) and is back near the middle once the head has stopped (frame 50)
-        for look in result.looks[landed:]:
-            self.assertLessEqual(abs(look.base[0]), eye_gaze.WALL * LIMITS.yaw + 1e-6, look)
-        for look in result.looks[60:]:
-            self.assertLess(abs(look.base[0]), eye_gaze.GAP, look)
+        for look in result.looks:
+            self.assertLess(abs(look.base[0]), eye_gaze.EDGE * LIMITS.yaw, look)       # short of the edge
+        # between saccades the gaze stays put until the eyes are pressed against their wall (beyond the free zone),
+        # where the head carries the rest of it
+        free = eye_gaze.free_zone(LIMITS)
+        inside = lambda i: abs(result.looks[i].base[0]) <= free.yaw and abs(result.looks[i + 1].base[0]) <= free.yaw
+        steps = world_steps_outside_saccades(result, keep=inside)
+        self.assertGreater(len(steps), 60)
+        self.assertLess(max(steps), 0.1)
+        # once the head has stopped (frame 50) and the last saccade has landed, the eyes are within GAP of the middle
+        last = max(t["frame"] + t["frames"] for t in result.saccades)
+        self.assertLess(abs(result.looks[max(last, 60)].base[0]), eye_gaze.GAP)
 
-    def test_a_beat_nod_is_ridden_out_without_saccades(self):
-        # the head nods 8 degrees up and down with the beat (140 BPM) for 7 seconds: the eyes turn against half of
-        # it (the vertical range of the eyes is small) and never jump back and forth
-        nod = {f: (8.0 if k % 2 else -8.0) for k, f in enumerate(range(0, 211, 13))}
+    def test_a_beat_nod_is_countered_up_and_down(self):
+        # the head nods 8 degrees up and down twice a second for 7 seconds: the eyes turn against all of it, up and
+        # down (a person's gain is about 1 vertically too at 0.4 to 4 Hz; review gaze-smooth 1.10), so the gaze
+        # stays put; where the eyes reach their wall (6 up, 10 down are small) the rest of the nod carries the gaze.
+        # Stage 5 first countered half of it (gain 0.5) and the gaze rode the nods.  No saccade back and forth
+        nod = {int(round(7.5 * k)): (8.0 if k % 2 else -8.0) for k in range(0, 29)}
         dance = head_turn(nod, axis="x", last=210)
         result = eye_gaze.gaze(MODEL, dance, camera(cam(0, (0.0, 180.0, 0.0)), cam(210, (0.0, 180.0, 0.0))), life=False)
         self.assertEqual([s for s in result.saccades if s["reason"] in ("recentre", "away")], [])
         heads = [fk.rotate(s.head, FORWARD) for s in result.sights]
         pitch = lambda v: math.degrees(math.atan2(v[1], math.hypot(v[0], v[2])))
         head_range = max(pitch(h) for h in heads[30:]) - min(pitch(h) for h in heads[30:])
-        eye_range = max(look.base[1] for look in result.looks[30:]) - min(look.base[1] for look in result.looks[30:])
-        self.assertGreater(head_range, 10.0)
-        self.assertTrue(0.25 * head_range < eye_range < 0.75 * head_range, (head_range, eye_range))
+        moving = set()
+        for s in result.saccades:
+            moving.update(range(s["frame"], s["frame"] + s["frames"]))
+        off_wall = [i for i in range(30, len(heads)) if i not in moving and
+                    -eye_gaze.WALL_SEEN * LIMITS.down < result.looks[i].base[1] < eye_gaze.WALL_SEEN * LIMITS.up]
+        self.assertGreater(len(off_wall), 60)
+        gaze = [pitch(world_gaze(result.sights[i], result.looks[i])) for i in off_wall]
+        self.assertGreater(head_range, 14.0)
+        self.assertLess(max(gaze) - min(gaze), 0.3 * head_range, (head_range, max(gaze) - min(gaze)))
+
+    def test_a_fast_shake_that_comes_back_is_countered(self):
+        # the head shakes 12 degrees and back at 180 deg/s, twice: fast, but no gaze shift (it comes back), so the
+        # eyes turn against all of it (a person's gain stays near 1 at 2 to 6 Hz); only a sustained fast turn holds
+        # the counter-rotation off (review gaze-smooth 1.10).  Stage 5 first held it off by the head's speed alone
+        shake = head_turn({0: 0.0, 40: 0.0, 42: 12.0, 44: 0.0, 46: 12.0, 48: 0.0})
+        result = run_gaze(dance=shake, cam_motion=BEHIND)
+        self.assertGreaterEqual(len(eye_gaze.fast_turns(result.sights, FORWARD)[1]), 1)     # fast enough to be a turn
+        heads = [fk.rotate(s.head, FORWARD) for s in result.sights]
+        gazes = [world_gaze(s, look) for s, look in zip(result.sights, result.looks)]
+        yaw = lambda v: math.degrees(math.atan2(v[0], -v[2]))
+        moving = set()
+        for s in result.saccades:
+            moving.update(range(s["frame"], s["frame"] + s["frames"]))
+        frames = [i for i in range(40, 50) if i not in moving and i - 1 not in moving]
+        head_path = sum(abs(yaw(heads[i]) - yaw(heads[i - 1])) for i in frames)
+        gaze_path = sum(abs(yaw(gazes[i]) - yaw(gazes[i - 1])) for i in frames)
+        self.assertGreater(head_path, 30.0)
+        self.assertLess(gaze_path, 0.1 * head_path)
 
 
 class LeadTest(unittest.TestCase):
@@ -321,18 +360,19 @@ class LeadTest(unittest.TestCase):
             self.assertAlmostEqual(result.looks[i].base[0], result.looks[landed].base[0], places=6)
         for i in range(landed + 1, 61):
             self.assertEqual(result.looks[i].state, "lead")
-        # while the head turns at 300 deg/s the counter-rotation is held off (a person's gaze shift: the head carries
-        # the gaze it has led), so the eyes stay on the side of the turn instead of being thrown to the far edge;
-        # the turn goes on in the world with the head
+        # while the head turns at 300 deg/s (a sustained turn of 60 degrees) the counter-rotation is held off: the
+        # eyes have jumped first and the head carries the gaze on, so the eyes stay on the side of the turn instead
+        # of being thrown to the far edge; the turn goes on in the world with the head
         for i in range(61, 67):
             self.assertGreater(result.looks[i].base[0], 0.0, i)
         a = world_gaze(result.sights[61], result.looks[61])
         b = world_gaze(result.sights[66], result.looks[66])
         self.assertGreater(degrees_between(a, b), 25.0)
-        # once the head has stopped, the eyes come back to where the face points, sliding
-        self.assertLess(abs(result.looks[66 + 40].base[0]), 2.0)
-        for i in range(67, 66 + 40):
-            self.assertLess(abs(result.looks[i].base[0] - result.looks[i - 1].base[0]), 1.5, i)
+        # once the turn is over the counter-rotation is back: the gaze stays put where it arrived (a person's
+        # reflex returns about 40 ms after the gaze lands; review gaze-smooth 1.10)
+        steps = world_steps_outside_saccades(result, first=68)
+        self.assertGreater(len(steps), 30)
+        self.assertLess(max(steps), 0.1)
 
     def test_a_turn_with_a_dip_gets_one_lead(self):
         # the head turns 30 degrees, slows for a frame, and turns 30 more: two runs above TURN_SPEED with the same
@@ -350,12 +390,15 @@ class LeadTest(unittest.TestCase):
             self.assertEqual(len([s for s in result.saccades if s["reason"] == "lead"]), 1, (seed, result.saccades))
 
     def test_the_lead_lands_where_the_face_will_point_within_the_limit(self):
-        result = self.fast_turn(degrees=60.0)
-        lead = [s for s in result.saccades if s["reason"] == "lead"][0]
-        landed = result.looks[lead["frame"] + lead["frames"] - 1].base
-        # capped (60 degrees is far ahead), then through the soft limit like every angle
-        self.assertAlmostEqual(landed[0], eye_gaze.soft(eye_gaze.LEAD_SHARE * LIMITS.yaw, LIMITS.yaw), places=6)
-        self.assertLess(landed[0], 0.9 * LIMITS.yaw)                                    # never at the edge
+        for degrees in (60.0, -60.0, 40.0):
+            result = self.fast_turn(degrees=degrees)
+            lead = [s for s in result.saccades if s["reason"] == "lead"][0]
+            before = result.looks[lead["frame"] - 1].base
+            landed = result.looks[lead["frame"] + lead["frames"] - 1].base
+            # the way of the turn, several degrees beyond where the eyes were, never at the edge
+            way = 1.0 if degrees > 0 else -1.0
+            self.assertGreater(way * (landed[0] - before[0]), 5.0, (degrees, before, landed))
+            self.assertLess(abs(landed[0]), eye_gaze.EDGE * LIMITS.yaw, degrees)
 
 
 class ContactPlanTest(unittest.TestCase):
@@ -562,9 +605,8 @@ class SaccadeTest(unittest.TestCase):
 
     def test_outside_saccades_the_eyes_turn_at_most_max_step_a_frame(self):
         # the head of `restless` snaps 15 to 50 degrees in 7 frames: counter-rotating all of it would move the eyes
-        # up to 10 degrees a frame with no saccade.  Outside saccades they turn at most MAX_STEP a frame (and the
-        # counter-rotation is held off while the head turns fast), the rest is carried by the head
-        self.assertEqual(eye_gaze.MAX_STEP, 8.0)
+        # up to 10 degrees a frame with no saccade.  Outside saccades they turn at most 8 degrees a frame (inside a
+        # sustained fast turn the counter-rotation is held off; elsewhere the rest is carried by the head)
         runs = [(restless(seed), seed) for seed in range(3)]
         # and a head that snaps 60 degrees in one frame (a flick, too short for a fast turn's lead)
         runs.append(((head_turn({0: 0.0, 40: 0.0, 41: 60.0, LAST: 60.0}), BEHIND), 0))
@@ -576,23 +618,27 @@ class SaccadeTest(unittest.TestCase):
             for i in range(1, len(result.looks)):
                 if i not in moving:
                     a, b = result.looks[i - 1].base, result.looks[i].base
-                    self.assertLessEqual(math.hypot(b[0] - a[0], b[1] - a[1]), eye_gaze.MAX_STEP + 1e-6, (seed, i))
+                    self.assertLessEqual(math.hypot(b[0] - a[0], b[1] - a[1]), 8.0 + 1e-6, (seed, i))
 
     def test_a_saccade_lands_without_a_jump_while_the_head_turns(self):
         # the goal of a recentre, glance or look-away is where the face's way is on each frame of it (in the head):
         # a goal held still in the world swings across the eyes' range while the head turns 20 degrees a frame (a
         # spin: 600 deg/s for 2 s), and the saccade ends with a jump.  Each step stays within the minimum-jerk share
-        # (58 % of the amplitude in the middle of 3 frames) and what the face's way moves meanwhile
+        # (58 % of the amplitude in the middle of 3 frames) and what the face's way moves that frame (up to 11
+        # degrees a frame where the head of `restless` snaps 50 degrees in 7 frames)
         spin = head_turn(dict([(0, 0.0), (30, 0.0)] + [(30 + 5 * k, 100.0 * k) for k in range(1, 13)]), last=LAST)
         runs = [restless(seed) + (seed,) for seed in range(3)] + [(spin, BEHIND, 0)]
         for dance, cams, seed in runs:
             result = run_gaze(dance=dance, cam_motion=cams, seed=seed)
+            face = eye_gaze.face_ways(result.sights, eye_gaze.fast_turns(result.sights, FORWARD)[0],
+                                      eye_gaze.angles_of(FORWARD))
             for s in result.saccades:
                 if s["reason"] in ("recentre", "glance", "away", "look_away"):
                     for k in range(s["frame"], s["frame"] + s["frames"]):
                         a, b = result.looks[k - 1].base, result.looks[k].base
                         step = math.hypot(b[0] - a[0], b[1] - a[1])
-                        self.assertLessEqual(step, 0.59 * s["amplitude"] + 6.0, (seed, s, k))
+                        moved = math.hypot(face[k][0] - face[k - 1][0], face[k][1] - face[k - 1][1])
+                        self.assertLessEqual(step, 0.59 * s["amplitude"] + moved + 0.5, (seed, s, k))
                     self.assertLess(max(abs(result.looks[k].base[0]) for k in range(s["frame"], s["frame"] + s["frames"])),
                                     eye_gaze.EDGE * LIMITS.yaw, (seed, s))
 
@@ -624,15 +670,14 @@ class SaccadeTest(unittest.TestCase):
                     self.assertGreaterEqual(after["frame"] - landed, eye_gaze.MIN_FIXATION, (before, after))
 
     def test_the_shortest_fixation_can_be_chosen(self):
-        # stage 5: 10 frames by default (the stage-1 tool had 6, and 57 % of its fixations stopped there)
-        self.assertEqual(eye_gaze.MIN_FIXATION, 10)
+        # stage 5: 9 to 12 frames by default (the stage-1 tool had 6, and 57 % of its fixations stopped there)
         counts = {10: 0, 16: 0}
         for seed in range(2):
             dance, cams = restless(seed)
             ten = run_gaze(dance=dance, cam_motion=cams, seed=seed)
             longer = run_gaze(dance=dance, cam_motion=cams, seed=seed, min_fixation=16)
             self.assertEqual(longer.report["min_fixation"], 16)
-            self.assertEqual(ten.report["min_fixation"], 10)
+            self.assertTrue(9 <= ten.report["min_fixation"] <= 12, ten.report["min_fixation"])
             gaps = []
             for before, after in zip(longer.saccades, longer.saccades[1:]):
                 if after["reason"] in ("recentre", "glance"):
@@ -650,7 +695,6 @@ class SaccadeTest(unittest.TestCase):
         # frames (the seed): with one fixed shortest length, fixations whose gap had opened earlier all ended on it
         # (review eye, finding 2: 57 % of them at 6 frames; with 10 frames and no spread 24 % stopped at 10)
         spread = eye_gaze.FIXATION_SPREAD
-        self.assertEqual(spread, 5)
         # the head turns on and on at 90 deg/s (no fast turn), so the gaze is always behind where the face goes and
         # each fixation ends at the earliest it may
         keys = {f: 3.0 * f for f in range(0, 301, 10)}
@@ -671,8 +715,7 @@ class SaccadeTest(unittest.TestCase):
 
     def test_a_nod_that_comes_back_within_sustain_frames_moves_nothing(self):
         # the head turns 14 degrees and back at 140 deg/s (no fast turn): the eyes turn against it, out to more
-        # than 8 degrees from where the face points, but they are back within SUSTAIN frames, so no saccade
-        self.assertEqual((eye_gaze.GAP, eye_gaze.SUSTAIN), (8.0, 6))
+        # than GAP degrees from where the face points, but they are back within SUSTAIN frames, so no saccade
         nod = head_turn({0: 0.0, 40: 0.0, 43: 14.0, 45: 14.0, 48: 0.0})
         for seed in range(3):
             result = run_gaze(dance=nod, cam_motion=BEHIND, seed=seed)
@@ -710,40 +753,43 @@ class SoftLimitTest(unittest.TestCase):
     """review 8, R2: the last part of the range is approached along tanh, so the eyes do not stop dead at a limit"""
 
     def test_the_same_up_to_the_soft_part_then_tanh_towards_the_limit(self):
-        self.assertEqual(eye_gaze.SOFT_FROM, 0.6)
-        for value in (0.0, 5.0, -5.0, 10.8, -10.8):
+        # the same up to half the limit and more, then bending smoothly (no kink) toward the limit without reaching
+        # it: a camera at the limit is looked at with about 90 % of it, far beyond the eyes stop at the limit
+        for value in (0.0, 5.0, -5.0, 9.0, -9.0):
             self.assertEqual(eye_gaze.soft(value, 18.0), value)
-        self.assertAlmostEqual(eye_gaze.soft(18.0, 18.0), 18.0 * (0.6 + 0.4 * math.tanh(1.0)), places=12)   # 90.5 %
+        self.assertTrue(0.85 * 18.0 < eye_gaze.soft(18.0, 18.0) < 0.95 * 18.0)
         self.assertAlmostEqual(eye_gaze.soft(-18.0, 18.0), -eye_gaze.soft(18.0, 18.0), places=12)
         values = [eye_gaze.soft(v / 10.0, 18.0) for v in range(0, 541)]                  # up to 3 times the limit
         self.assertTrue(all(b > a for a, b in zip(values, values[1:])))                  # rises all the way
         self.assertLess(max(values), 18.0)                                               # short of the limit
+        self.assertGreater(values[-1], 0.999 * 18.0)
         self.assertEqual(eye_gaze.soft(150.0, 18.0), 18.0)
         self.assertEqual(eye_gaze.soft(-1e6, 18.0), -18.0)
-        h = 1e-6
-        self.assertAlmostEqual((eye_gaze.soft(10.8 + h, 18.0) - eye_gaze.soft(10.8, 18.0)) / h, 1.0, places=4)   # C1
+        slopes = [(b - a) / 0.1 for a, b in zip(values, values[1:])]
+        self.assertLess(max(abs(b - a) for a, b in zip(slopes, slopes[1:])), 0.02)      # C1: the slope never jumps
+        self.assertAlmostEqual(slopes[0], 1.0, places=9)
 
-    def test_the_slide_heads_for_the_face_s_way_off_the_camera(self):
+    def test_saccades_head_for_the_face_s_way_off_the_camera(self):
         free = eye_gaze.free_zone(LIMITS)
         far = (0.0, 180.0)
-        self.assertEqual(eye_gaze.slide_target((3.0, -1.0), (0.0, 0.0), far, free), (3.0, -1.0))
-        self.assertEqual(eye_gaze.slide_target((3.0, -1.0), (2.0, 1.0), far, free), (5.0, 0.0))        # a glance's offset
-        self.assertEqual(eye_gaze.slide_target((30.0, -20.0), (0.0, 0.0), far, free), (free.yaw, -free.down))
-        # a camera 3 degrees off the face's way: the slide stops AVOID degrees off it, on the far side
-        t = eye_gaze.slide_target((0.0, 0.0), (0.0, 0.0), (3.0, 0.0), free)
+        self.assertEqual(eye_gaze.face_target((3.0, -1.0), (0.0, 0.0), far, free), (3.0, -1.0))
+        self.assertEqual(eye_gaze.face_target((3.0, -1.0), (2.0, 1.0), far, free), (5.0, 0.0))        # a glance's offset
+        self.assertEqual(eye_gaze.face_target((30.0, -20.0), (0.0, 0.0), far, free), (free.yaw, -free.down))
+        # a camera 3 degrees off the face's way: the target is AVOID degrees off it, on the far side
+        t = eye_gaze.face_target((0.0, 0.0), (0.0, 0.0), (3.0, 0.0), free)
         self.assertAlmostEqual(t[0], 3.0 - eye_gaze.AVOID, places=9)
         self.assertAlmostEqual(t[1], 0.0, places=9)
 
     def test_a_fixation_is_pressed_against_the_wall_short_of_the_edge(self):
-        # stage 5: beyond the free zone a fixation's angle approaches WALL of the limit along tanh (slope 1 where it
-        # starts), so a gaze held through a sway stops short of the 90 % lines the analysis counts as the edge
-        self.assertEqual(eye_gaze.WALL, 0.85)
+        # stage 5: beyond the free zone a fixation's angle approaches its wall along tanh (slope 1 where it starts),
+        # so a gaze held through a sway stops short of the 90 % lines the analysis counts as the edge
         free = eye_gaze.free_zone(LIMITS)
         self.assertEqual(eye_gaze.pressed((5.0, -3.0), LIMITS), (5.0, -3.0))
+        last = free.yaw
         for far in (13.0, 20.0, 40.0, 400.0):
             yaw, _ = eye_gaze.pressed((far, 0.0), LIMITS)
-            self.assertTrue(free.yaw < yaw < eye_gaze.WALL * LIMITS.yaw + 1e-9, (far, yaw))
-            self.assertLess(yaw, eye_gaze.EDGE * LIMITS.yaw)
+            self.assertTrue(last < yaw < eye_gaze.EDGE * LIMITS.yaw, (far, yaw))
+            last = yaw
             self.assertAlmostEqual(eye_gaze.pressed((-far, 0.0), LIMITS)[0], -yaw, places=12)
         self.assertLess(eye_gaze.pressed((0.0, 30.0), LIMITS)[1], eye_gaze.EDGE * LIMITS.up)
         self.assertGreater(eye_gaze.pressed((0.0, -30.0), LIMITS)[1], -eye_gaze.EDGE * LIMITS.down)
@@ -755,7 +801,7 @@ class SoftLimitTest(unittest.TestCase):
         limits = eye_gaze.Limits(18.0, 6.0, 10.0)
         self.assertEqual(eye_gaze.soften((5.0, 3.0), limits), (5.0, 3.0))
         self.assertAlmostEqual(eye_gaze.soften((0.0, 6.0), limits)[1], eye_gaze.soft(6.0, 6.0), places=12)
-        self.assertAlmostEqual(eye_gaze.soften((0.0, -6.0), limits)[1], -6.0, places=12)          # inside 0.6 x 10
+        self.assertAlmostEqual(eye_gaze.soften((0.0, -5.0), limits)[1], -5.0, places=12)          # inside half of 10
         self.assertAlmostEqual(eye_gaze.soften((0.0, -10.0), limits)[1], -eye_gaze.soft(10.0, 10.0), places=12)
 
 
@@ -876,9 +922,8 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(self.lead_of(fast, steps(57, 8.0), margins=eye_gaze.LEAD_MARGINS)["turns"], 0)
 
     def test_the_smoothness_measures(self):
-        # per-frame turns of the eye in the head (max and 99th percentile, all and outside the listed saccades),
-        # the median fixation (landing to the next saccade) and the reversals (review eye, finding 2: two
-        # consecutive per-frame steps above 3 degrees the opposite way)
+        # per-frame turns of the eye in the head (max and 99th percentile, all and outside the listed saccades) and
+        # the median fixation (landing to the next saccade)
         angles = [(0.0, 0.0)] * 10 + [(5.0, 0.0), (10.0, 0.0)] + [(10.0, 0.0)] * 30 + [(6.0, 0.0), (10.0, 0.0)] + \
                  [(10.0, 0.0)] * 20
         saccades = [{"frame": 10, "frames": 2}, {"frame": 52, "frames": 2}]
@@ -886,7 +931,71 @@ class MeasureTest(unittest.TestCase):
         self.assertAlmostEqual(m["eye_steps"]["max"], 5.0, places=6)
         self.assertAlmostEqual(m["eye_steps"]["outside_saccades_max"], 4.0, places=6)     # 42 -> 43 is not listed
         self.assertAlmostEqual(m["fixation_median_s"], (52 - 11) / 30.0, places=3)
-        self.assertAlmostEqual(m["reversals_per_second"], 1 / (len(angles) / 30.0), places=4)    # 41 -> 42 -> 43
+        # the reversals are the eyes' own jumps going back (review gaze-smooth 2.4): a saccade of more than 3 degrees
+        # followed, within 10 frames of its landing, by one of more than 3 the opposite way.  The eye going 4 degrees
+        # out and back on 41 -> 42 -> 43 outside the saccades (a nod countered) is none
+        self.assertEqual(m["reversals_per_second"], 0.0)
+
+        def jumps(size, wait, second=-1.0):
+            eye = [(0.0, 0.0)] * 10 + [(size / 2.0, 0.0), (size, 0.0)] + [(size, 0.0)] * wait
+            back = size + second * size
+            eye += [((size + back) / 2.0, 0.0), (back, 0.0)] + [(back, 0.0)] * 30
+            return eye_gaze.smooth_measures(eye, [{"frame": 10, "frames": 2}, {"frame": 12 + wait, "frames": 2}])
+
+        m = jumps(6.0, 9)                                       # back 10 frames after the landing (frame 11 -> 21)
+        self.assertAlmostEqual(m["reversals_per_second"], 1 / (53 / 30.0), places=4)
+        self.assertEqual(jumps(6.0, 10)["reversals_per_second"], 0.0)                 # 11 frames: a new fixation
+        self.assertEqual(jumps(3.0, 4)["reversals_per_second"], 0.0)                  # 3 degrees: not more than 3
+        self.assertGreater(jumps(3.2, 4)["reversals_per_second"], 0.0)
+        self.assertEqual(jumps(6.0, 4, second=1.0)["reversals_per_second"], 0.0)      # on the same way
+
+    def test_the_world_gaze_measures_are_held_by_numbers(self):
+        # review gaze-smooth 1.3 to 1.6, on the eye angles without the drift.  The head turns 2 degrees a frame (it
+        # would carry a resting eye's gaze at 60 deg/s) for 30 frames, then stands still for 30; the eye counters a
+        # share k of the turn, then glides on its own
+        def run(k, glide, axis=0, saccades=(), contacts=()):
+            heads, angles = [], []
+            for f in range(61):
+                h = 2.0 * min(f, 30)
+                heads.append(eye_gaze.eye_rotation(h, 0.0) if axis == 0 else eye_gaze.eye_rotation(0.0, h))
+                e = -k * h + glide * max(0, f - 30)
+                angles.append((e, 0.0) if axis == 0 else (0.0, e))
+            return eye_gaze.world_measures(heads, angles, list(saccades), list(contacts))
+
+        m = run(1.0, 0.0)
+        self.assertEqual((m["steady_steps"], m["still_steps"]), (30, 30))
+        self.assertAlmostEqual(m["gain_yaw"], 1.0, places=3)
+        self.assertIsNone(m["gain_pitch"])                                   # the head never nods
+        self.assertEqual((m["steady_share"], m["flow_share"]), (1.0, 0.0))
+        m = run(0.9, 0.09)                       # the gaze moves 6 deg/s with the head, 0.09 degrees a frame alone
+        self.assertAlmostEqual(m["gain_yaw"], 0.9, places=3)
+        self.assertEqual((m["steady_share"], m["flow_share"]), (1.0, 0.0))
+        m = run(0.8, 0.11)                       # 12 deg/s and 0.11 degrees a frame
+        self.assertAlmostEqual(m["gain_yaw"], 0.8, places=3)
+        self.assertEqual((m["steady_share"], m["flow_share"]), (0.0, 1.0))
+        m = run(0.5, 0.0, axis=1)                # a nod countered by half
+        self.assertAlmostEqual(m["gain_pitch"], 0.5, places=3)
+        self.assertIsNone(m["gain_yaw"])
+        # the steps touching a listed saccade's frames are left out, and the still ones touching a contact
+        m = run(1.0, 0.0, saccades=[{"frame": 10, "frames": 2}], contacts=[(40, 49)])
+        self.assertEqual((m["steady_steps"], m["still_steps"]), (27, 19))
+        # the head's speed bands: 15.3 deg/s is in both, 14 only the still one, 117 only the steady one, 121.5 neither
+        for per_frame, steady, still in ((0.51, 30, 60), (14.0 / 30.0, 0, 60), (4.05, 0, 30), (3.9, 30, 30)):
+            heads = [eye_gaze.eye_rotation(per_frame * min(f, 30), 0.0) for f in range(61)]
+            angles = [(-per_frame * min(f, 30), 0.0) for f in range(61)]
+            m = eye_gaze.world_measures(heads, angles, [])
+            self.assertEqual((m["steady_steps"], m["still_steps"]), (steady, still), per_frame)
+
+    def test_the_frames_at_the_wall(self):
+        # the eyes at WALL_SEEN of a limit or beyond, sideways and up or down; a fixation pressed against its wall
+        # is there
+        w = eye_gaze.WALL_SEEN
+        angles = [(w * 18.0 + 0.01, 0.0), (w * 18.0 - 0.01, 0.0), (-w * 18.0 - 0.01, 0.0), (0.0, w * 6.0 + 0.01),
+                  (0.0, -w * 10.0 - 0.01), (0.0, -w * 10.0 + 0.01), (0.0, 0.0), (0.0, 0.0)]
+        self.assertEqual(eye_gaze.wall_measures(angles, LIMITS), {"yaw": 2 / 8.0, "pitch": 2 / 8.0})
+        self.assertLess(w, eye_gaze.WALL)
+        pressed = eye_gaze.pressed((400.0, -400.0), LIMITS)
+        self.assertEqual(eye_gaze.wall_measures([pressed], LIMITS), {"yaw": 1.0, "pitch": 1.0})
 
     def test_large_gaze_changes_made_by_saccades_or_carried_by_the_head(self):
         # the gaze turns 30 degrees in the world over 10 frames: once inside a listed saccade, once without one
@@ -950,7 +1059,11 @@ class OutputTest(unittest.TestCase):
         self.assertEqual(set(report["saccades"]["list"][0]), {"frame", "frames", "reason", "amplitude"})
         self.assertEqual(set(report["measures"]), {"edge_share", "edge_longest_s", "eccentric_15_share", "contact",
                                                    "lead", "head_carried", "saccades_per_second", "eye_steps",
-                                                   "fixation_median_s", "reversals_per_second"})
+                                                   "fixation_median_s", "reversals_per_second", "world_gaze",
+                                                   "wall_share"})
+        self.assertEqual(set(report["measures"]["world_gaze"]), {"gain_yaw", "gain_pitch", "steady_steps",
+                                                                 "steady_share", "still_steps", "flow_share"})
+        self.assertEqual(report["zones"]["wall"], {k: round(v, 4) for k, v in report["zones"]["wall"].items()})
         self.assertEqual(set(report["measures"]["eye_steps"]), {"max", "p99", "outside_saccades_max",
                                                                 "outside_saccades_p99"})
 
@@ -1128,12 +1241,28 @@ class CommandTest(unittest.TestCase):
 
 
 def real_file(*parts):
-    folder = ROOT
+    """a file of the real song under _spike/ of this tree, of a tree up to 3 folders above it (a worktree), or of
+    MMD_CLI_DATA (a copy of the tree kept away from the data, such as a mutation's; review gaze-smooth 3.2)"""
+    folders, folder = [], ROOT
     for _ in range(4):
+        folders.append(folder)
+        folder = os.path.dirname(folder)
+    if os.environ.get("MMD_CLI_DATA"):
+        folders.append(os.environ["MMD_CLI_DATA"])
+    for folder in folders:
         path = os.path.join(folder, *parts)
         if os.path.isfile(path):
             return path
-        folder = os.path.dirname(folder)
+    return None
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop (review gaze-smooth
+    13: a fixed path of one machine skipped the real tests on another without a word)"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
     return None
 
 
@@ -1142,13 +1271,14 @@ HANDHELD = real_file("_spike", "out", "hibikase", "variants", "camera_D_handheld
 MV_CUES = real_file("_spike", "out", "hibikase", "mv", "production", "cues_mv.json")
 OLD_DANCE = real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_smooth_twist.vmd")
 OLD_CAMERA = real_file("_spike", "out", "hibikase", "variants", "camera_D_generated.vmd")
-RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
+RIN = rin_path()
 CHORUS = ["60.02", "128.59", "198.87"]       # the heads of the three choruses (a15: beats 140, 300, 464 at 140 BPM)
 
 
 def measured_from_files(dance_path, camera_path, out_path, report):
     """the target numbers measured again from the files: the dance with the written 両目 track in place of its own
-    through the forward kinematics, not from the plan"""
+    through the forward kinematics, not from the plan.  The world gaze's steadiness is measured on the angles with
+    the drift and the microsaccades of the seed (0) taken off again, as the plan does (review gaze-smooth 1.6)"""
     model = pmx.load(RIN)
     dance, gaze_motion = vmd.load(dance_path), vmd.load(out_path)
     motion = vmd.Motion(model_name=dance.model_name, bones=[k for k in dance.bones if k.name != "両目"] + list(gaze_motion.bones))
@@ -1171,18 +1301,28 @@ def measured_from_files(dance_path, camera_path, out_path, report):
     out["lead"] = eye_gaze.lead_measure([yaw(fk.rotate(h, FORWARD)) for h in heads], [yaw(g) for g in gazes])
     out["head_carried"] = eye_gaze.carried_measure(gazes, report["saccades"]["list"], heads=heads)
     out.update(eye_gaze.smooth_measures(angles, report["saccades"]["list"]))
+    life = eye_gaze.drift_track(len(angles), random.Random(0))
+    still = [(y - d[0], p - d[1]) for (y, p), d in zip(angles, life)]
+    contacts = [(c["first"], c["last"]) for c in report["contacts"]["list"]]
+    out["world_gaze"] = eye_gaze.world_measures(heads, still, report["saccades"]["list"], contacts)
+    out["wall_share"] = eye_gaze.wall_measures(angles, LIMITS)
     return out
 
 
-@unittest.skipUnless(MV_DANCE and HANDHELD and MV_CUES and os.path.isfile(RIN), "the MV's dance, camera, cues or Rin is not here")
+@unittest.skipUnless(MV_DANCE and HANDHELD and MV_CUES and RIN, "the MV's dance, camera, cues or Rin is not here "
+                     "(MMD_CLI_DATA: a folder holding _spike/; MMD_CLI_RIN: White.pmx)")
 class RealSongTest(unittest.TestCase):
     """the MV's dance (dance_final_dn6_twist) and camera (camera_D_handheld): the target numbers of the stage-1 fix
     and of stage 5, measured from the written file.  Before stage 1 (v2): eyes led 4 % of the fast turns, at the edge
     59 % of the frames and up to 4 s on end, 15 degrees or more off the middle 42 %, eye contacts of 0.30 s (median).
     Before stage 5 (the stage-1 tool): 2.98 saccades a second, 487 of them one frame long, fixations of 0.20 s
-    (median, 57 % at the shortest), eye steps up to 31 degrees a frame outside saccades, 1.73 reversals a second.
-    Stage 5 lets the head carry more of the gaze (a07's large gaze changes: 2.7 % carried by the list's split and
-    37 % by v_sac before, about 75 % and 95 % now); that measure was a target of stage 1, not of stage 5"""
+    (median, 57 % at the shortest), eye steps up to 31 degrees a frame outside saccades, 0.76 reversals a second (of
+    saccades going back; 1.73 of per-frame steps).  The first form of stage 5 (2642bbe) had those down to 1.05, none,
+    0.70 s, 8 and 0.07, but let the gaze flow with the head between saccades (review gaze-smooth): with the head at
+    15 to 120 deg/s the gaze stayed under 10 deg/s on 15 % of the steps (the stage-1 tool 88 %), and with the head
+    under 20 deg/s it moved more than 0.1 degree a frame on 73 % (1 %).  The fix keeps the gaze in the world (66 %
+    and 12 %) with 1.44 saccades a second and fixations of 0.47 s.  The head carries a07's large gaze changes 63 %
+    by the list's split and 82 % by v_sac (2.7 % and 37 % before stage 5); a target of stage 1, not of stage 5"""
 
     def test_the_whole_song_meets_the_targets(self):
         folder = tempfile.mkdtemp()
@@ -1210,16 +1350,27 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(m["edge_longest_s"], 1.0)
         self.assertLess(m["eccentric_15_share"], 0.10)
         self.assertGreaterEqual(m["contact"]["episode_median_s"], 1.5, m["contact"])
-        # stage 5: fewer saccades, none of one frame, longer fixations, no jumps outside saccades, few reversals
+        # stage 5 (the coordinator's acceptance of the review fix): fewer saccades, none of one frame, fixations of
+        # 0.4 s or more (median), at most 8 degrees a frame outside saccades, few reversals (0.06 a second, the
+        # stage-1 tool 0.76)
         saccades = report["saccades"]["list"]
         rate = len(saccades) / (7743 / 30.0)
-        self.assertTrue(0.5 <= rate <= 1.5, rate)
+        self.assertTrue(0.5 <= rate <= 1.6, rate)
         self.assertEqual([s for s in saccades if s["frames"] < 2], [])
-        self.assertGreaterEqual(m["fixation_median_s"], 0.5, m)
-        self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], eye_gaze.MAX_STEP + 0.5, m["eye_steps"])
+        self.assertGreaterEqual(m["fixation_median_s"], 0.4, m)
+        self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], 8.0 + 0.005, m["eye_steps"])
         # inside saccades: a 35-degree saccade in 3 frames moves 58 % of it in its middle frame
         self.assertLess(m["eye_steps"]["max"], 0.59 * 35.0 + 1.0, m["eye_steps"])
-        self.assertLess(m["reversals_per_second"], 0.3, m)
+        self.assertLess(m["reversals_per_second"], 0.2, m)
+        # the gaze stays put in the world between saccades (review gaze-smooth 3.4): with the head at 15 to 120
+        # deg/s it moves under 10 deg/s on 60 % of the steps or more, with the head under 20 deg/s more than 0.1
+        # degree a frame on 20 % or fewer; the eyes counter most of the head's turn sideways and up and down
+        world = m["world_gaze"]
+        self.assertGreater(min(world["steady_steps"], world["still_steps"]), 1000, world)
+        self.assertGreaterEqual(world["steady_share"], 0.6, world)
+        self.assertLessEqual(world["flow_share"], 0.2, world)
+        self.assertGreaterEqual(world["gain_yaw"], 0.75, world)
+        self.assertGreaterEqual(world["gain_pitch"], 0.5, world)
         # the plan's own measures say the same as the files
         self.assertAlmostEqual(report["measures"]["edge_share"], m["edge_share"], places=2)
         self.assertAlmostEqual(report["measures"]["contact"]["episode_median_s"], m["contact"]["episode_median_s"], places=1)
@@ -1228,12 +1379,17 @@ class RealSongTest(unittest.TestCase):
                                m["eye_steps"]["outside_saccades_max"], places=0)
         self.assertAlmostEqual(report["measures"]["head_carried"]["by_eye_motion"]["share"],
                                m["head_carried"]["by_eye_motion"]["share"], places=1)
+        for name in ("steady_share", "flow_share", "gain_yaw", "gain_pitch"):
+            self.assertAlmostEqual(report["measures"]["world_gaze"][name], world[name], places=2)
+        self.assertEqual(report["measures"]["wall_share"], m["wall_share"])
 
 
-@unittest.skipUnless(OLD_DANCE and OLD_CAMERA and os.path.isfile(RIN), "the older dance, its camera or Rin is not here")
+@unittest.skipUnless(OLD_DANCE and OLD_CAMERA and RIN, "the older dance, its camera or Rin is not here "
+                     "(MMD_CLI_DATA: a folder holding _spike/; MMD_CLI_RIN: White.pmx)")
 class OlderSongTest(unittest.TestCase):
     """an earlier dance of the same song with the camera before the handheld shake: no cues, so no anchors (only the
-    long contacts); the limits hold and the eyes still lead and stay off the edge"""
+    long contacts); the limits hold, the eyes still lead and stay off the edge, and the gaze stays put in the world
+    between saccades (66 % and 13 % by the measures of the MV's dance)"""
 
     def test_the_older_dance_without_cues(self):
         folder = tempfile.mkdtemp()
@@ -1249,10 +1405,12 @@ class OlderSongTest(unittest.TestCase):
         self.assertLessEqual(m["edge_share"], 0.15)
         self.assertLess(m["edge_longest_s"], 1.0)
         self.assertEqual([s for s in report["saccades"]["list"] if s["frames"] < 2], [])
-        self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], eye_gaze.MAX_STEP + 0.5, m["eye_steps"])
-        self.assertLessEqual(len(report["saccades"]["list"]) / (7743 / 30.0), 1.5)
+        self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], 8.0 + 0.005, m["eye_steps"])
+        self.assertLessEqual(len(report["saccades"]["list"]) / (7743 / 30.0), 1.6)
         for s in [c for c in report["contacts"]["list"]]:
             self.assertGreaterEqual(s["last"] - s["first"] + 1, eye_gaze.CONTACT_MIN)
+        self.assertGreaterEqual(m["world_gaze"]["steady_share"], 0.6, m["world_gaze"])
+        self.assertLessEqual(m["world_gaze"]["flow_share"], 0.2, m["world_gaze"])
 
 
 if __name__ == "__main__":
