@@ -158,8 +158,8 @@ class V7StyleTest(unittest.TestCase):
 
 def shut_runs(b, s, start=150):
     """per blink (a10's closures of まばたき + 笑い from `start`, the long ones left out): (the last frame the lid is at
-    its level before, the first shut frame, the last shut frame, the first frame it is back at its level).  The
-    closing takes t0 - before frames, the opening after - t1, the blink after - before."""
+    its level before, the first frame of its peak, the last frame of its peak, the first frame it is back at its level).
+    The closing takes p0 - before frames, the opening after - p1, the blink after - before."""
     c = b + s
     out = []
     for e in face_life.episodes(c, start):
@@ -168,15 +168,17 @@ def shut_runs(b, s, start=150):
         around = s[max(0, e["cs"] - 4):min(len(s), e["oe"] + 12)]
         if around.max() - around.min() > 0.02:
             continue                        # the smile moves under it: its rise or fall is no part of the blink
+        top = c[e["t0"]:e["t1"] + 1].max()
+        peak = [f for f in range(e["t0"], e["t1"] + 1) if c[f] >= top - 1e-6]
         level = c[max(0, e["cs"] - 3):e["cs"] + 1].min()
-        f0 = e["t0"]
+        f0 = peak[0]
         while f0 > 0 and c[f0 - 1] > level + 0.01:
             f0 -= 1
         level = c[e["oe"]:min(len(c), e["oe"] + 12)].min()
-        f1 = e["t1"]
+        f1 = peak[-1]
         while f1 + 1 < len(c) and c[f1 + 1] > level + 0.01:
             f1 += 1
-        out.append((f0 - 1, e["t0"], e["t1"], f1 + 1))
+        out.append((f0 - 1, peak[0], peak[-1], f1 + 1))
     return out
 
 
@@ -278,6 +280,38 @@ class HumanLidTest(unittest.TestCase):
         self.assertEqual([r for r in face_life.runs(creep) if r[1] - r[0] + 1 >= 10], [])
 
 
+class ShownShareTest(unittest.TestCase):
+    """the share of the author's lowered lid that shows moves at a phrase's start and after its end, over a few frames,
+    or at once while the eye is shut when a blink comes near (a person changes the lid's height with a blink)"""
+
+    PHRASE = [face_life.lip_timing.Phrase(300, 400, "aiu")]
+
+    def test_the_eyes_open_for_the_phrase_and_relax_after_it(self):
+        s = face_life.shown_share(self.PHRASE, 1000)
+        self.assertAlmostEqual(s[250], face_life.LID_SHOWN[1])
+        self.assertAlmostEqual(s[350], face_life.LID_SHOWN[0])
+        self.assertAlmostEqual(s[420], face_life.LID_SHOWN[2])
+        self.assertAlmostEqual(s[600], face_life.LID_SHOWN[1])
+        self.assertGreater(len(set(np.round(s[293:301], 6))), 3)          # a ramp, ending at the first vowel
+
+    def test_a_change_near_a_blink_happens_while_the_eye_is_shut(self):
+        s = face_life.shown_share(self.PHRASE, 1000, blinks=[(295, 297, 305)])
+        self.assertEqual(len(set(np.round(s[285:310], 6))), 2)
+        self.assertAlmostEqual(s[296], face_life.LID_SHOWN[1])
+        self.assertAlmostEqual(s[297], face_life.LID_SHOWN[0])
+
+    def test_a_blink_that_ends_just_before_the_change_takes_it(self):
+        s = face_life.shown_share(self.PHRASE, 1000, blinks=[(280, 282, 291)])
+        self.assertAlmostEqual(s[281], face_life.LID_SHOWN[1])
+        self.assertAlmostEqual(s[282], face_life.LID_SHOWN[0])
+        self.assertEqual(len(set(np.round(s[270:310], 6))), 2)
+
+    def test_a_blink_far_from_the_change_leaves_the_ramp(self):
+        free = face_life.shown_share(self.PHRASE, 1000)
+        far = face_life.shown_share(self.PHRASE, 1000, blinks=[(260, 262, 270)])
+        np.testing.assert_array_equal(free, far)
+
+
 class LidFollowsTheEyesTest(unittest.TestCase):
     """the upper lid moves with the eyes (Sour's Rin: まばたき about 0.027 a degree down keeps the lid where it is on the
     iris, 0.021 a degree up; it cannot rise above 0)"""
@@ -351,6 +385,47 @@ class KimeTest(unittest.TestCase):
         found = face_life.kimes({"右手首": hand}, start=200)
         self.assertEqual(len(found), 1)
         self.assertTrue(404 <= found[0]["frame"] <= 407, found)
+
+
+class KimeAlignTest(unittest.TestCase):
+    """human style: a change of the face that a kime can reach (ALIGN frames) arrives a frame before it, the face
+    landing with the pose (a picture up to about 4 frames before the sound goes unnoticed, 1.4 frames after it does
+    not: ITU-R BT.1359-1); v7 kept the rule of the head's fastest turn"""
+
+    KEYS = {"真面目": [(0, 0.0), (400, 0.0), (405, 1.0)], "笑い": [(0, 0.0), (403, 0.0), (408, 0.5)]}
+
+    def stretched(self, kimes, style, seed=0):
+        out, events, stretched = face_life.rewrite_expressions(
+            {n: list(v) for n, v in self.KEYS.items()}, [(0, 0.5), (F - 1, 0.5)], np.zeros(F), F, random.Random(seed),
+            lambda n: n not in ("口角上げ", "口角下げ"), kimes=kimes, style=style)
+        return {n: (s, e) for n, s, e in stretched}, events
+
+    def test_a_change_within_reach_of_a_kime_arrives_a_frame_before_it(self):
+        for seed in range(5):
+            spans, events = self.stretched([{"frame": 416, "speed": 30.0, "part": "右手首"}], "human", seed)
+            self.assertLessEqual(abs(max(e for _, e in spans.values()) - 415), 1, (seed, spans))
+            self.assertEqual(events[0]["kime"], 416)
+
+    def test_human_changes_take_13_frames_or_more(self):
+        for seed in range(5):
+            spans, _ = self.stretched([], "human", seed)
+            self.assertTrue(all(e - s >= 13 for s, e in spans.values()), spans)
+
+    def test_a_kime_out_of_reach_moves_nothing(self):
+        alone, _ = self.stretched([], "human")
+        far, events = self.stretched([{"frame": 470, "speed": 30.0, "part": "右手首"}], "human")
+        self.assertEqual(alone, far)
+        self.assertIsNone(events[0]["kime"])
+
+    def test_the_strongest_kime_within_reach_wins(self):
+        spans, _ = self.stretched([{"frame": 410, "speed": 12.0, "part": "頭"}, {"frame": 418, "speed": 40.0, "part": "左手首"}],
+                                  "human")
+        self.assertLessEqual(abs(max(e for _, e in spans.values()) - 417), 1, spans)
+
+    def test_the_v7_style_does_not_look_at_kimes(self):
+        plain, _ = self.stretched([], "v7")
+        kimed, _ = self.stretched([{"frame": 416, "speed": 30.0, "part": "右手首"}], "v7")
+        self.assertEqual(plain, kimed)
 
 
 class BlinkShapeTest(unittest.TestCase):
@@ -536,11 +611,13 @@ class BlinkRateTest(unittest.TestCase):
             yaw[start + 6:] = target
         head = np.zeros((F, 4))
         head[:, 1], head[:, 3] = np.sin(np.radians(yaw) / 2), np.cos(np.radians(yaw) / 2)
-        result = face_life.plan(inputs(head=head), seed=0)
-        new = result.report["blink"]["new"]
-        self.assertLessEqual(new["rate_per_min"], face_life.RATE + 1.0)
-        self.assertLessEqual(new["most_in_10s"], face_life.WINDOW_MAX)
-        self.assertGreater(new["gaze_shift_33"]["observed"], new["gaze_shift_33"]["chance_p97.5"])
+        for style in face_life.STYLES:
+            result = face_life.plan(inputs(head=head), seed=0, style=style)
+            new = result.report["blink"]["new"]
+            minutes = (F - result.report["intro"]["eyes_open"]) / FPS / 60.0
+            self.assertLessEqual(new["blinks"] / minutes, face_life.RATE + 0.5, style)      # the author's long closures aside
+            self.assertLessEqual(new["most_in_10s"], face_life.WINDOW_MAX, style)
+            self.assertGreater(new["gaze_shift_33"]["observed"], new["gaze_shift_33"]["chance_p97.5"], style)
 
 
 class GroupingTest(unittest.TestCase):
