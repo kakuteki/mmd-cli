@@ -1,5 +1,6 @@
 """tools/mv_look.py: the stage, the light and the glow put around the dancer MMD rendered with an alpha channel."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -353,6 +354,27 @@ class GraphTest(unittest.TestCase):
         self.assertNotIn("(t-0.000)", f)
         self.assertIn("between(t,-0.100,0.200)", f)
 
+    def test_the_punch_lasts_as_many_seconds_at_60_fps(self):
+        # punch_frames counts frames of the song (MMD's 30 fps): a version at 60 fps punches in for as long as the one at
+        # 30, over twice the frames (at 9 / 60 s it was over in half the time)
+        look = mv_look.merge_look({"flares": [1.0], "camera": {"punch": 0.05, "punch_frames": 9, "aberration": 8}})
+        for fps in (30, 60):
+            f = self.filter_of(mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", look, SIZE, fps,
+                                                      flare_pattern="W/flare_%05d.png", flare_frames=12 * fps // 30))
+            self.assertIn("pow(max(0,1-(t-1.000)/0.300),2)", f, fps)
+            self.assertIn("between(t,1.000,1.300)", f, fps)
+
+    def test_a_punch_that_began_before_a_chunk_at_60_fps_runs_on_as_at_30(self):
+        # a flare 0.25 s before the chunk: its punch (9 frames of the song, 0.3 s) is still on at the chunk's start
+        look = mv_look.merge_look({"flares": [1.0], "flare": {"frames": 4},
+                                   "camera": {"punch": 0.05, "punch_frames": 9, "aberration": 8}})
+        for fps in (30, 60):
+            f = self.filter_of(mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", look, SIZE, fps,
+                                                      flare_pattern="W/flare_%05d.png", flare_frames=4 * fps // 30,
+                                                      start=1.25, light_frames=fps))
+            self.assertIn("(t+0.250)", f, fps)
+            self.assertIn("between(t,-0.250,0.050)", f, fps)
+
     def test_no_camera_effect_without_a_flare_or_when_it_is_zero(self):
         for look in ({}, {"flares": [1.0], "camera": {"punch": 0, "aberration": 0}}):
             f = self.filter_of(self.graph(look=look))
@@ -638,6 +660,140 @@ class StaleLayersTest(unittest.TestCase):
         self.assertEqual(layers["light_frames"], 30)
         self.assertEqual(len([n for n in os.listdir(os.path.join(work, "light")) if n.startswith("light_")]), 30)
         self.assertEqual(len([n for n in os.listdir(os.path.join(work, "flare")) if n.startswith("flare_")]), 4)
+
+
+def file_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class SongClockTest(unittest.TestCase):
+    """A version at 60 fps shows what the one at 30 fps shows at the same time (tools/mv_chunks.py --out-fps 60): the frame
+    counts of the look (flare.frames, camera.punch_frames) and the light loop are frames of the song (1/30 s), so frame 2n
+    at 60 fps is frame n at 30"""
+
+    def setUp(self):
+        self.work = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.work, True)
+
+    def test_the_flare_and_the_light_of_60_fps_are_those_of_30_fps_twice_as_often(self):
+        look = mv_look.merge_look({"beams": {"loop_seconds": 2, "cycles": [2, 3]}, "bokeh": {"cycles": [2, 3]},
+                                   "flare": {"frames": 5}})
+        a = mv_look.write_layers(look, os.path.join(self.work, "30"), SIZE, 30)
+        b = mv_look.write_layers(look, os.path.join(self.work, "60"), SIZE, 60)
+        self.assertEqual((a["light_frames"], a["flare_frames"]), (60, 5))
+        self.assertEqual((b["light_frames"], b["flare_frames"]), (120, 10))
+        for n in range(5):
+            self.assertEqual(file_bytes(b["flare_pattern"] % (2 * n)), file_bytes(a["flare_pattern"] % n), n)
+        for n in (0, 1, 7, 31, 59):
+            self.assertEqual(file_bytes(b["light_pattern"] % (2 * n)), file_bytes(a["light_pattern"] % n), n)
+        # and the frames between are frames of their own: the flare fades on, the light moves on
+        self.assertNotEqual(file_bytes(b["flare_pattern"] % 1), file_bytes(b["flare_pattern"] % 0))
+        self.assertNotEqual(file_bytes(b["light_pattern"] % 15), file_bytes(b["light_pattern"] % 14))
+        self.assertEqual(sorted(os.listdir(os.path.dirname(b["flare_pattern"]))), ["flare_%05d.png" % i for i in range(10)])
+
+    def test_a_loop_of_no_whole_number_of_frames_at_60_has_twice_the_frames_of_30(self):
+        # 0.35 s is 10.5 frames of the song (10, to the even) and 21 at 60 fps: the light of 60 would drift from the light
+        # of 30 by a frame of 60 every loop.  It is the loop of the song at every rate that is a whole number of times 30
+        look = mv_look.merge_look({"beams": {"loop_seconds": 0.35}})
+        self.assertEqual([mv_look.light_frame_count(look, fps) for fps in (30, 60, 120)], [10, 20, 40])
+        self.assertEqual(mv_look.light_frame_count(look, 25), 9)                    # another clock: its own nearest frame
+        v3 = mv_look.merge_look({"beams": {"loop_seconds": 27.428571}})
+        self.assertEqual([mv_look.light_frame_count(v3, fps) for fps in (30, 60)], [823, 1646])
+
+    def test_the_flare_of_the_default_look_lasts_twelve_frames_of_the_song(self):
+        for fps, frames in ((30, 12), (60, 24)):
+            layers = mv_look.write_layers(mv_look.merge_look({"beams": {"loop_seconds": 1}}), os.path.join(self.work, str(fps)),
+                                          SIZE, fps)
+            self.assertEqual(layers["flare_frames"], frames, fps)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class ThirtyArgvTest(unittest.TestCase):
+    """The video to publish is folded at 30 fps: the ffmpeg argv of mv_look at 30 stays the one main 60956b2 built, byte for
+    byte (the SHA-256 of the argv joined by NUL, written with the tool of 60956b2).  A chunk like v7_04 of the MV (the
+    flare of the look v3 on its first frame, two cues), one into which a punch runs on, and the default look unblurred"""
+
+    V3 = {"flares": [44.467, 86.933, 155.533, 225.8, 241.233], "flare": {"strength": 0.75},
+          "beams": {"loop_seconds": 27.428571, "cycles": [2, 3]}, "bokeh": {"cycles": [2, 3]}}
+    PLAN = {"cues": [{"start": 42.7, "frames": 105, "x": 120, "y": 560, "layer": "front", "pattern": "W/text/cue_l/f%05d.png"},
+                     {"start": 86.933333, "frames": 27, "x": 240, "y": 280, "layer": "back", "pattern": "W/text/cue_h/f%05d.png"}]}
+    GOLDEN = {"v7_04_flare_on_the_cut": "7ff22ffc633cebad18cba8523d5ea55a431cf450ab317d66b0291ff4cf18d411",
+              "punch_carried_into_a_chunk": "3c3b826f7c6d28ab2e652afa6fd28687f7cc237ff48751ce31aac86d2f21a2ba",
+              "default_look_no_blur": "b3483e659532ad12cee21f3ab7101aff4fabed12187656ba181cdd5dae33fba8"}
+
+    def argvs(self):
+        look = mv_look.merge_look(self.V3)
+        common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=8, shutter=0.5, light_frames=823)
+        yield "v7_04_flare_on_the_cut", mv_look.ffmpeg_command(
+            "C:/out/v7_04.avi", "C:/out/v7_04.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
+            start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common)
+        yield "punch_carried_into_a_chunk", mv_look.ffmpeg_command(
+            "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
+            start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)
+        yield "default_look_no_blur", mv_look.ffmpeg_command(
+            "C:/out/y.avi", "C:/out/y.mp4", "W/plate.png", "W/light/light_%05d.png", mv_look.merge_look({}), (1280, 720), 30)
+
+    def test_the_argv_at_30_fps_is_the_one_of_before(self):
+        for name, argv in self.argvs():
+            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+
+    def test_the_counts_of_the_layers_at_30_fps_are_those_of_before(self):
+        # what write_layers hands the argv at 30 (12 flare frames, the loop of v3 in 823): the values of main 60956b2
+        self.assertEqual(mv_look.light_frame_count(mv_look.merge_look(self.V3), 30), 823)
+        self.assertEqual(mv_look.song_frames(12, 30), 12)
+        self.assertEqual(mv_look.song_frames(12.7, 30), 12)                         # main took int() of it too
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class SixtyRenderTest(unittest.TestCase):
+    """The same dancer folded to 30 fps and to 60 fps (a white box rendered at 120 fps for 1.2 s, a flare at 0.5 s with a
+    punch of a tenth): there are twice the frames, and frame 2n at 60 fps shows what frame n at 30 shows"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg120.avi")
+        source = ("color=c=black@0.0:s=%dx%d:r=120,format=rgba,"
+                  "drawbox=x=120:y=40:w=80:h=120:color=white@1.0:t=fill:replace=1" % SIZE)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "144",
+                        "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        look = os.path.join(cls.folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                       "lens": {"vignette": 0, "grain": 0}, "flares": [0.5],
+                       "camera": {"punch": 0.1, "punch_frames": 10, "aberration": 0}}, f)
+        cls.results = {}
+        for fps, subframes in ((30, 4), (60, 2)):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = mv_look.main(["render", cls.fg, look, os.path.join(cls.folder, "out%d.mp4" % fps),
+                                     "--work", os.path.join(cls.folder, "work%d" % fps), "--subframes", str(subframes)])
+            cls.results[fps] = (code, json.loads(stream.getvalue()))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def frames(self, fps):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", os.path.join(self.folder, "out%d.mp4" % fps), "-f", "rawvideo",
+                              "-pix_fmt", "rgb24", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1] * 3
+        return [numpy.frombuffer(raw[i * n:(i + 1) * n], dtype=numpy.uint8).astype(numpy.int16) for i in range(len(raw) // n)]
+
+    def test_the_version_at_60_fps_has_twice_the_frames(self):
+        self.assertEqual([self.results[fps][0] for fps in (30, 60)], [0, 0], self.results)
+        self.assertEqual([self.results[fps][1]["fps"] for fps in (30, 60)], [30, 60])
+        self.assertEqual([len(self.frames(fps)) for fps in (30, 60)], [36, 72])
+
+    def test_frame_2n_at_60_fps_is_frame_n_at_30(self):
+        thirty, sixty = self.frames(30), self.frames(60)
+        gaps = [float(numpy.abs(sixty[2 * n] - thirty[n]).mean()) for n in range(36)]
+        self.assertLess(max(gaps), 2.0, [round(g, 2) for g in gaps])
+        # and the test can see a difference: during the flare and the punch one frame of 30 fps differs from the next
+        moving = max(float(numpy.abs(thirty[n + 1] - thirty[n]).mean()) for n in range(15, 26))
+        self.assertGreater(moving, 3 * max(gaps) + 0.5)
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")

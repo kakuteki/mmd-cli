@@ -469,9 +469,14 @@ class MotionTest(unittest.TestCase):
         for t in times:
             s = m.at(t)
             self.assertEqual((s.dx, s.dy, s.tracking_extra, s.wipe, s.underline), (0.0, 0.0, 0.0, 1.0, 1.0))
-        # the blink is counted in frames, whatever the rate
+        # the blink is counted in frames of the song (1/30 s, MMD's frames): a video at 60 fps holds every step for two
+        # frames and blinks as long as one at 30 (tools/mv_chunks.py --out-fps 60); a slower one still shows every step
         fast = motion("flash", start=2.0, end=3.0, fps=60.0)
-        self.assertEqual([fast.at(t).alpha for t in frame_times(fast, 6)], [1.0, 0.0, 1.0, 0.35, 1.0, 1.0])
+        self.assertEqual([fast.at(t).alpha for t in frame_times(fast, 12)],
+                         [1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.35, 0.35, 1.0, 1.0, 1.0, 1.0])
+        slow = motion("flash", start=2.0, end=3.0, fps=24.0)
+        self.assertEqual([slow.at(t).alpha for t in frame_times(slow, 6)], [1.0, 0.0, 1.0, 0.35, 1.0, 1.0])
+        self.assertEqual([m.at(44.5 - k / 30.0).alpha for k in (1, 2)], [1.0, 1.0])    # before its start: nothing to blink
 
     def test_roll_travels_at_one_speed_from_its_first_offset_to_its_last(self):
         m = motion("roll", start=10.0, end=30.0, roll=(672.0, -548.0))
@@ -1564,6 +1569,19 @@ class SequencesTest(unittest.TestCase):
         text = json.dumps(plan, ensure_ascii=True)
         self.assertEqual(json.loads(text), plan)
         self.assertNotIn("\n", text)
+
+    def test_a_flash_at_60_fps_shows_on_frame_2n_what_it_shows_on_frame_n_at_30(self):
+        cue = {"id": "h", "start": 1.0, "end": 1.6, "text": "HI", "style": "hook", "anim": "flash"}
+        a = mv_text.render_sequences(small_doc(cue), self.work + "30", fps=30)["cues"][0]
+        b = mv_text.render_sequences(small_doc(cue), self.work + "60", fps=60)["cues"][0]
+        self.assertEqual(((a["start_frame"], a["frames"]), (b["start_frame"], b["frames"])), ((30, 18), (60, 36)))
+        for n in range(18):
+            with open(a["pattern"] % n, "rb") as f, open(b["pattern"] % (2 * n), "rb") as g:
+                self.assertEqual(f.read(), g.read(), n)
+        with open(b["pattern"] % 2, "rb") as f, open(b["pattern"] % 3, "rb") as g, open(b["pattern"] % 4, "rb") as h:
+            dark, still_dark, lit = f.read(), g.read(), h.read()
+        self.assertEqual(dark, still_dark)                                              # the dark step is two frames long
+        self.assertNotEqual(dark, lit)
 
     def test_the_frame_and_the_rate_can_be_given_instead_of_the_cue_files(self):
         plan = mv_text.render_sequences(small_doc(RISE_CUE), self.work, size=(320, 180), fps=60)

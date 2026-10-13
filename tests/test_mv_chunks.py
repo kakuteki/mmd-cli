@@ -48,6 +48,23 @@ PLAN = {
 REPORT = {"shots": [{"start": 0, "end": 99}, {"start": 100, "end": 249}, {"start": 250, "end": 299}]}
 SPANS = [(0, 99), (100, 249), (250, 299)]
 GIB = 1024 ** 3
+# The SHA-256 of the scripts the default (30 fps) writes, as the tool wrote them before --out-fps (main 60956b2): the 30 fps
+# render of the MV runs from scripts of this tool, so they stay the same byte for byte.  (The plan of that render, written
+# again with the tool of 60956b2, gave the 23 files it runs from, byte for byte: _spike/out/stage5/out_fps/golden_30.py.)
+GOLDEN_30 = {
+    "t": {"chunk_t_00.txt": "0bf0308d6ea9d57f259be7bb76367f404fe9d3f8cc5f6d7ae464c7136b94438f",
+          "chunk_t_01.txt": "accc198b507625ad32973d2471daa2ca18c0552e4b6b592960bc04c879a351c5",
+          "chunk_t_02.txt": "2bc1d35bd2664a9106dfb2bcefe42068ddb23e8d9b0f2bfac0678120d12db0f3",
+          "concat_t.txt": "8c714127c433bd6b1536ed5a0a86deab54d84d0b9a0789a80adeac8d3d110573",
+          "render_t.ps1": "f8830f610b7319707d63152d6a6da5379be7d80f96fcb9cf8b29256bc607adb4"},
+    "b2": {"chunk_b2_00.txt": "6a0d67867bdea71b3bee1c7f0d686d1495bb0643df039ede1ce020cf511b77e0",
+           "chunk_b2_01.txt": "0744a9869afba685f3f48951e1ff9311d44891217e1eea397568c18e7e87668a",
+           "chunk_b2_02.txt": "220a6d7f2c408957bd3745af4d3ed8e2230c168fcd5127ffe6fed4eb01b54833",
+           "concat_b2.txt": "43935d24226981ac78ce82da256fb8d4302bcf8c71f87791fb42d88cd8b43587",
+           "render_b2.ps1": "17ec89ab44a5013a3bb729f77b1b4f90e2c4a352571c0956cbb9e4ff1eecd95f"},
+}
+PLAN_B2 = dict(PLAN, python="C:/Program Files/Python 3/python.exe", mmd_cli_home="C:/work/home", name="song", size=[640, 360],
+               menu={"298": "on"}, cues=None)
 
 
 class SpansTest(unittest.TestCase):
@@ -207,6 +224,119 @@ class BatchTest(unittest.TestCase):
         self.assertIn("282", str(ctx.exception))
 
 
+def hashes(folder):
+    files = {}
+    for name in os.listdir(folder):
+        with open(os.path.join(folder, name), "rb") as f:
+            files[name] = hashlib.sha256(f.read()).hexdigest()
+    return files
+
+
+def value(args, key):
+    return args[args.index(key) + 1]
+
+
+class OutFpsTest(unittest.TestCase):
+    """--out-fps 60 makes a version to watch at home (the one to publish stays at 30 fps, as the motion asks).  MMD renders
+    the same AVI and the chunks are the same frames of the song; every frame of the song becomes two frames of the video,
+    each folded from half as many subframes"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, label, plan=PLAN, spans=SPANS, lead=120, fps=240, shutter=0.5, tag="t", **kw):
+        folder = os.path.join(self.tmp, label)
+        summary = mv_chunks.write(mv_chunks.check_plan(plan), mv_chunks.plan_chunks(spans, lead), folder, tag, fps, shutter, **kw)
+        return summary, hashes(folder)
+
+    def test_the_default_writes_the_scripts_of_before_byte_for_byte(self):
+        for label, kw in (("default", {}), ("thirty", {"out_fps": 30})):
+            self.assertEqual(self.written(label, **kw)[1], GOLDEN_30["t"], label)
+        b2 = self.written("b2", PLAN_B2, mv_chunks.spans_from_cuts([40, 90], 119), 30, 120, 0.75, "b2")[1]
+        self.assertEqual(b2, GOLDEN_30["b2"])
+
+    def test_mmd_renders_the_same_avi_at_60(self):
+        thirty, sixty = self.written("30")[0], self.written("60", out_fps=60)[0]
+        for a, b in zip(thirty["batches"], sixty["batches"]):
+            with open(a, encoding="utf-8") as f, open(b, encoding="utf-8") as g:
+                self.assertEqual(f.read().replace("/t_", "/t_60fps_"), g.read())       # only the name of the AVI differs
+        self.assertEqual(sixty["largest_avi_gb"], thirty["largest_avi_gb"])
+        self.assertEqual((sixty["fps"], sixty["spans"]), (240, [[0, 99], [100, 249], [250, 299]]))
+
+    def test_every_frame_of_the_song_is_two_frames_folded_from_half_the_subframes(self):
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunk = mv_chunks.plan_chunks(SPANS, lead=120)[2]                           # 130..299, the shot from 250
+        thirty = mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)
+        sixty = mv_chunks.fold_args(plan, "t", chunk, 240, 0.5, out_fps=60)
+        self.assertEqual((value(thirty, "--subframes"), value(sixty, "--subframes")), ("8", "4"))
+        for key in ("--cues", "--work", "--shutter", "--offset", "--from", "--to"):    # seconds of the song, as at 30
+            self.assertEqual(value(sixty, key), value(thirty, key), key)
+        self.assertEqual([value(sixty, k) for k in ("--offset", "--from", "--to")], ["4.333333", "8.333333", "10.000000"])
+        self.assertNotEqual(mv_chunks.recipe(plan, "t", chunk, 240, 0.5, out_fps=60), mv_chunks.recipe(plan, "t", chunk, 240, 0.5))
+
+    def test_the_driver_wants_twice_the_frames_and_checks_the_look_at_60(self):
+        summary = self.written("60", out_fps=60)[0]
+        self.assertEqual((summary["out_fps"], summary["fps"], summary["subframes"], summary["frames"]), (60, 240, 4, 600))
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        self.assertEqual(driver.splitlines()[0], "# 3 chunks at 240 fps folded to 60 fps (4 subframes, shutter 0.5), 600 frames, "
+                                                 "joined to C:/work/song/out/mv_t_60fps.mp4.")
+        runs = re.findall(r"^Run-Chunk (?:'[^']*' ){7}(\d+) (\d+) @\(", driver, re.M)
+        self.assertEqual([int(want) for want, _ in runs], [200, 300, 100])
+        # the AVI is the one of 30 fps: the disk must hold as much
+        self.assertEqual([int(need) for _, need in runs],
+                         [mv_chunks.avi_bytes(c, 240, (1280, 720)) + 2 * GIB for c in mv_chunks.plan_chunks(SPANS, lead=120)])
+        self.assertIn("if ($n -ne 600) { 'STOP: the joined video has {0} frames, want {1}' -f $n, 600; exit 1 }", driver)
+        check = [l for l in driver.splitlines() if l.startswith("$check = ")]
+        self.assertEqual(len(check), 1)
+        self.assertTrue(check[0].endswith(" --size 1280x720 --fps 60"), check)          # the layers the fold will use
+
+    def test_the_files_of_60_fps_are_named_apart_from_those_of_30(self):
+        # the command of a 30 fps render with --out-fps 60 added: it must not remove that render's chunks, its joined
+        # video or its driver
+        thirty, files30 = self.written("both")
+        sixty, both = self.written("both", out_fps=60)
+        self.assertEqual({n: both[n] for n in files30}, GOLDEN_30["t"])                 # the files of 30 fps as they were
+        self.assertEqual(sorted(set(both) - set(files30)), ["chunk_t_60fps_00.txt", "chunk_t_60fps_01.txt",
+                                                             "chunk_t_60fps_02.txt", "concat_t_60fps.txt", "render_t_60fps.ps1"])
+        self.assertEqual(sixty["joined"], "C:/work/song/out/mv_t_60fps.mp4")
+        with open(sixty["concat"], encoding="utf-8") as f:
+            self.assertEqual([l for l in f.read().splitlines() if l.startswith("file ")],
+                             ["file 'C:/work/song/out/t_60fps_%02d.mp4'" % i for i in range(3)])
+        with open(sixty["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        self.assertIn("'C:/work/song/out/t_60fps_00.avi'", driver)
+        self.assertIn("'C:/work/song/out/look_work_t_60fps'", driver)
+        self.assertNotIn("'C:/work/song/out/t_00.mp4'", driver)
+
+    def test_the_join_list_of_60_fps_gives_every_chunk_its_length(self):
+        # the edit list of an mp4 is in ms: a 60 fps chunk of 40 frames of the song came out 1333 ms long (20475 of 20480
+        # ticks), and concat put every later chunk 5 ticks early.  Given its duration, concat uses that instead
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunks = mv_chunks.plan_chunks(SPANS, lead=120)
+        self.assertEqual(mv_chunks.concat_text(plan, chunks, "t_60fps", out_fps=60).splitlines(), [
+            "file 'C:/work/song/out/t_60fps_00.mp4'", "duration 3.333333",
+            "file 'C:/work/song/out/t_60fps_01.mp4'", "duration 5.000000",
+            "file 'C:/work/song/out/t_60fps_02.mp4'", "duration 1.666667"])
+        self.assertEqual(mv_chunks.concat_text(plan, chunks, "t"), mv_chunks.concat_text(plan, chunks, "t", out_fps=30))
+        self.assertNotIn("duration", mv_chunks.concat_text(plan, chunks, "t"))
+
+    def test_the_output_is_30_or_60_fps_and_mmd_renders_at_least_as_fast(self):
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunks = mv_chunks.plan_chunks(SPANS, lead=0)
+        folder = os.path.join(self.tmp, "s")
+        for out_fps in (0, 24, 25, 50, 120, "60", 60.0, True, None):
+            with self.assertRaises(ValueError, msg=out_fps) as ctx:
+                mv_chunks.write(plan, chunks, folder, "t", 240, 0.5, out_fps=out_fps)
+            self.assertIn("--out-fps", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            mv_chunks.write(plan, chunks, folder, "t", 30, 0.5, out_fps=60)
+        self.assertIn("--fps", str(ctx.exception))
+        summary = mv_chunks.write(plan, chunks, folder, "t", 60, 0.5, out_fps=60)       # 60 to 60: no blur, as 30 to 30
+        self.assertEqual((summary["subframes"], summary["frames"]), (1, 600))
+
+
 class QuoteTest(unittest.TestCase):
     def test_an_apostrophe_in_the_join_list_is_escaped_as_ffmpeg_reads_it(self):
         plan = mv_chunks.check_plan(dict(PLAN, out="C:/it's/out"))
@@ -228,19 +358,20 @@ class ShutterTest(unittest.TestCase):
         plan = mv_chunks.check_plan(dict(PLAN))
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, True)
-        for fps in (30, 60, 90, 120, 240, 480, 960):
-            for shutter in (0.01, 0.05, 0.07, 0.1, 0.2, 0.24, 0.25, 0.3, 0.5, 1.0):
-                try:
-                    mv_look.check_shutter(fps // 30, shutter)
-                    looks_ok = fps in (30, 60, 120, 240, 480)
-                except ValueError:
-                    looks_ok = False
-                try:
-                    mv_chunks.write(plan, chunks, folder, "t", fps, shutter)
-                    ok = True
-                except ValueError:
-                    ok = False
-                self.assertEqual(ok, looks_ok, (fps, shutter))
+        for out_fps in (30, 60):
+            for fps in (30, 60, 90, 120, 240, 480, 960):
+                for shutter in (0.01, 0.05, 0.07, 0.1, 0.12, 0.13, 0.2, 0.24, 0.25, 0.3, 0.5, 1.0):
+                    try:
+                        mv_look.check_shutter(fps // out_fps, shutter)
+                        looks_ok = fps in (30, 60, 120, 240, 480)
+                    except ValueError:
+                        looks_ok = False
+                    try:
+                        mv_chunks.write(plan, chunks, folder, "t", fps, shutter, out_fps=out_fps)
+                        ok = True
+                    except ValueError:
+                        ok = False
+                    self.assertEqual(ok, looks_ok, (out_fps, fps, shutter))
 
 
 STUBS = r"""
@@ -250,7 +381,9 @@ function python {
     if ($args[0] -eq '-m') {
         if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) { $global:LASTEXITCODE = 1; return }
         $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
-        Set-Content -LiteralPath (($render | ConvertFrom-Json)[2]) -Value 'avi'
+        $r = $render | ConvertFrom-Json
+        # the AVI holds its rate, as the header of MMD's AVI does
+        Set-Content -LiteralPath $r[2] -Value $r[[array]::IndexOf($r, '--fps') + 1]
         $global:LASTEXITCODE = 0
         return
     }
@@ -274,7 +407,10 @@ function python {
     elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
     if ($why) { '{"ok": false, "error": "' + $why + '"}'; $global:LASTEXITCODE = 2; return }
     $null = Get-Content -LiteralPath $look -Raw | ConvertFrom-Json
-    $n = [int][math]::Round(($to - $from) * 30)
+    # the output runs at the rate of the AVI over the subframes (mv_look reads the rate from the AVI)
+    $rate = [double](Get-Content -LiteralPath $avi -TotalCount 1)
+    $sub = [double]$args[[array]::IndexOf($args, '--subframes') + 1]
+    $n = [int][math]::Round(($to - $from) * $rate / $sub)
     if ($env:STUB_SHORT -and ($mp4 -like ('*' + $env:STUB_SHORT + '*'))) { $n = $n - 1 }
     Set-Content -LiteralPath $mp4 -Value $n
     '{"ok": true}'
@@ -312,8 +448,8 @@ def run_powershell(script, env=None, timeout=300):
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
 class DriverTest(unittest.TestCase):
     """The written driver run for real, with python / ffprobe / ffmpeg replaced by PowerShell functions that do what they
-    would: the batch writes its AVI, the fold refuses a missing AVI or look and writes an mp4 of (to - from) * 30
-    frames, the join adds the frames of the listed mp4s up"""
+    would: the batch writes its AVI (which holds its rate), the fold refuses a missing AVI or look and writes an mp4 of
+    (to - from) * rate / subframes frames, the join adds the frames of the listed mp4s up"""
 
     FILES = {"MMD/MikuMikuDance.exe": "mmd", "model/White.pmx": "pmx", "model/tex/skin.png": "skin",
              "dance.vmd": "dance", "lips.vmd": "lips", "camera.vmd": "camera", "stage/floor.x": "floor",
@@ -341,7 +477,7 @@ class DriverTest(unittest.TestCase):
             f.write(text)
         return path
 
-    def write(self, shutter=0.5, **plan):
+    def write(self, shutter=0.5, out_fps=30, **plan):
         b = self.base
         full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
                 "camera": b + "/camera.vmd", "accessories": [b + "/stage/floor.x", b + "/stage2/prop.x"], "look": self.look, "cues": self.cues,
@@ -349,7 +485,7 @@ class DriverTest(unittest.TestCase):
         full.update(plan)
         self.plan = mv_chunks.check_plan(full)
         self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240,
-                                       shutter=shutter)
+                                       shutter=shutter, out_fps=out_fps)
         return self.summary
 
     def run_driver(self, switches="", before="", **env):
@@ -394,6 +530,43 @@ class DriverTest(unittest.TestCase):
             "--cues %s --work %s --subframes 8 --shutter 0.5 --offset 4.333333 --from 8.333333 --to 10.000000" % (cues, work)])
         for i, c in enumerate(c for c in calls if "mv_look.py render" in c):
             self.assertIn("render %s/t_%02d.avi %s %s/t_%02d.mp4" % (self.out, i, self.look, self.out, i), c)
+
+    def test_at_60_fps_every_chunk_and_the_joined_video_have_twice_the_frames(self):
+        self.write(out_fps=60)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual([self.frames("t_60fps_%02d.mp4" % i) for i in range(3)], [200, 300, 100])
+        self.assertEqual(self.frames("mv_t_60fps.mp4"), 600)
+        self.assertIn("joined 600 frames (want 600)", text)
+        folds = [c for c in calls if "mv_look.py render" in c]
+        self.assertEqual(len(folds), 3)
+        self.assertTrue(all(" --subframes 4 --shutter 0.5 " in c for c in folds), folds)
+        layers = [c for c in calls if "mv_look.py layers" in c]
+        self.assertEqual(len(layers), 1, calls)
+        self.assertIn(" --size 1280x720 --fps 60 home=", layers[0])                  # the look checked at the rate it is used
+
+    def test_a_60_fps_run_leaves_the_30_fps_run_of_the_same_tag_alone(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        thirty = {name: self.frames(name) for name in ("t_00.mp4", "t_01.mp4", "t_02.mp4", "mv_t.mp4")}
+        self.assertEqual(thirty, {"t_00.mp4": 100, "t_01.mp4": 150, "t_02.mp4": 50, "mv_t.mp4": 300})
+        driver = self.summary["driver"]
+        self.write(out_fps=60)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual({name: self.frames(name) for name in thirty}, thirty)
+        self.assertEqual(self.frames("mv_t_60fps.mp4"), 600)
+        self.assertTrue(os.path.exists(driver))
+
+    def test_resume_at_60_fps_skips_only_the_chunks_that_are_already_complete(self):
+        self.write(out_fps=60)
+        self.assertEqual(self.run_driver(STUB_SHORT="t_60fps_01")[0], 1)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        batches = self.batches(calls)
+        self.assertEqual(len(batches), 2, calls)
+        self.assertFalse(any("chunk_t_60fps_00" in c for c in batches))
+        self.assertEqual(self.frames("mv_t_60fps.mp4"), 600)
 
     def test_a_new_output_folder_is_made_before_the_disk_is_measured(self):
         self.out = self.base + "/fresh/out"
@@ -829,12 +1002,13 @@ class EndToEndTest(unittest.TestCase):
             json.dump(FLAT_LOOK, f)
         self.fake = self.base + "/fake"
 
-    def render(self, motions, switches=""):
+    def render(self, motions, switches="", out_fps=30):
         plan = mv_chunks.check_plan({"mmd": "C:/MMD/MikuMikuDance.exe", "model": "C:/MMD/model.pmx", "motions": motions,
                                      "camera": "C:/work/camera.vmd", "look": self.look, "out": self.base + "/out",
                                      "scripts": self.base + "/scripts", "mmd_cli": self.fake, "size": [self.W, self.H]})
         spans = mv_chunks.spans_from_cuts([40, 90], 119)
-        summary = mv_chunks.write(plan, mv_chunks.plan_chunks(spans, lead=30), self.base + "/scripts", "t", 240, 0.5)
+        summary = mv_chunks.write(plan, mv_chunks.plan_chunks(spans, lead=30), self.base + "/scripts", "t", 240, 0.5,
+                                  out_fps=out_fps)
         wrapper = os.path.join(self.tmp, "run.ps1")
         with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
             f.write("%s\n& %s %s\nexit $LASTEXITCODE\n"
@@ -872,6 +1046,23 @@ class EndToEndTest(unittest.TestCase):
         frames = self.read_back(joined)
         self.assertEqual([f for f, _, _ in frames], list(range(120)))
         self.assertTrue(all(top < 4 for _, _, top in frames), [round(top) for _, _, top in frames])   # all of it is new
+
+    def test_at_60_fps_every_song_frame_is_two_frames_from_the_two_halves_of_its_subframes(self):
+        joined, text = self.render(["C:/work/dance.vmd"], out_fps=60)
+        self.assertTrue(joined.endswith("/out/mv_t_60fps.mp4"), joined)
+        frames = self.read_back(joined)
+        self.assertEqual([f for f, _, _ in frames], [n for n in range(120) for _ in (0, 1)])
+        # 240 fps folded to 60 with the shutter open half the frame: frame 2n is the mean of subframes 0 and 1 of song
+        # frame n (red 0 and 32), frame 2n + 1 the mean of subframes 4 and 5 (red 128 and 160)
+        reds = [red for _, red, _ in frames]
+        self.assertTrue(all(abs(red - 16) < 6 for red in reds[0::2]), [round(red) for red in reds[0::2]])
+        self.assertTrue(all(abs(red - 144) < 6 for red in reds[1::2]), [round(red) for red in reds[1::2]])
+        # across the joins (concat -c copy) the frames follow each other every 1/60 s
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                                "-of", "csv=p=0", joined], capture_output=True, text=True, stdin=subprocess.DEVNULL, check=True)
+        times = [float(t.strip().strip(",")) for t in probe.stdout.split() if t.strip().strip(",")]
+        self.assertEqual(len(times), 240)
+        self.assertEqual({round((b - a) * 60, 3) for a, b in zip(times, times[1:])}, {1.0})
 
 
 class CliTest(unittest.TestCase):
@@ -915,6 +1106,37 @@ class CliTest(unittest.TestCase):
         code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--cuts", "100", "250", "--last", "299", "--fps", "60")
         self.assertEqual(code, 0, res)
         self.assertEqual((res["chunks"], res["frames"], res["subframes"]), (3, 300, 2))
+
+    def test_out_fps_60_writes_a_version_to_watch_with_twice_the_frames(self):
+        outdir = os.path.join(self.tmp, "s")
+        code, res = self.main(self.plan, outdir, "--shots", self.report, "--tag", "t", "--out-fps", "60")
+        self.assertEqual(code, 0, res)
+        self.assertEqual((res["out_fps"], res["fps"], res["subframes"], res["frames"]), (60, 240, 4, 600))
+        self.assertEqual(res["spans"], [[0, 99], [100, 249], [250, 299]])               # frames of the song, as at 30
+        self.assertEqual(res["joined"], "C:/work/song/out/mv_t_60fps.mp4")
+        self.assertEqual(sorted(os.listdir(outdir)), ["chunk_t_60fps_00.txt", "chunk_t_60fps_01.txt", "chunk_t_60fps_02.txt",
+                                                      "concat_t_60fps.txt", "render_t_60fps.ps1"])
+        code, res = self.main(self.plan, os.path.join(self.tmp, "d"), "--shots", self.report, "--tag", "t")
+        self.assertEqual((code, "out_fps" in res, res["frames"], res["subframes"]), (0, False, 300, 8))
+        self.assertEqual(hashes(os.path.join(self.tmp, "d")), GOLDEN_30["t"])
+
+    def test_the_default_prints_the_summary_of_before(self):
+        # the names and their order in the line main 60956b2 printed: --out-fps adds nothing at the default
+        code, res = self.main(self.plan, os.path.join(self.tmp, "d"), "--shots", self.report, "--tag", "t")
+        self.assertEqual(code, 0, res)
+        self.assertEqual(list(res), ["ok", "chunks", "frames", "fps", "subframes", "shutter", "codec", "avi_bytes_per_pixel",
+                                     "largest_avi_gb", "spans", "driver", "batches", "concat", "joined"])
+        code, res = self.main(self.plan, os.path.join(self.tmp, "e"), "--shots", self.report, "--tag", "t", "--out-fps", "30")
+        self.assertNotIn("out_fps", res)
+
+    def test_an_output_rate_other_than_30_or_60_is_refused(self):
+        for out_fps in ("50", "120", "0"):
+            code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report, "--out-fps", out_fps)
+            self.assertEqual(code, 2, out_fps)
+            self.assertIn("--out-fps", res["error"])
+        code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report, "--fps", "30", "--out-fps", "60")
+        self.assertEqual(code, 2)
+        self.assertIn("--fps", res["error"])
 
     def test_a_frame_rate_mmd_does_not_render_is_refused(self):
         for fps in ("100", "90", "960"):

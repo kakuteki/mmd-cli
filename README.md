@@ -370,7 +370,8 @@ python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
   やわらかい影）/ hook（Y1Cybanin3000 Glitch 180・差し色・左に 3 px ずらした墨の写し）/ caption（Noto 400・28）。
   行に `size` を書くと大きさを変えられる。
 - `anim`: fade / rise（24 px 下から上がって出て、12 px 上へ抜ける）/ tracking-in（字間 0.6 em から詰まる）/ wipe（左から現れる）/
-  flash（1・0・1・0.35・1 と点滅して保持、最後は切る）/ roll（画面の下から上へ通り抜ける）。入りは `enter`（既定 0.6 秒、3 次の
+  flash（1・0・1・0.35・1 と点滅して保持、最後は切る。点滅の 1 段は曲のコマ（1/30 秒）で、60 fps の動画では各段を 2 枚続ける）/
+  roll（画面の下から上へ通り抜ける）。入りは `enter`（既定 0.6 秒、3 次の
   ease-out）、抜けは `exit`（0.4 秒、ease-in）で、合図ごとに変えられる。enter と exit の合計より短い合図は、両方を同じ比で縮めて
   （どこかのフレームで全部見えるようにして）`warnings` に出す。
 - 時刻は最寄りのフレームに合わせる（フレームのちょうど中間は偶数のフレームへ。30 fps の 0.25 秒は 8、0.75 秒は 22）。合図は
@@ -408,6 +409,8 @@ python tools/mv_look.py layers look.json WORK --size WxH --fps N
   `plate`（舞台の色・地平の位置・周辺の暗さ）/ `beams`（光条の本数・広がり・揺れ・ループ秒数）/ `bokeh`（玉ボケ）/
   `glow`（しきい値・半径・強さ）/ `flares`（フレアを出す時刻の一覧、秒）/ `flare` / `camera`（パンチの量と長さ・色ずれ）/
   `lens`（周辺減光・粒子）。長さは高さ 720 のときの画素で、画面の高さに比例する。
+  コマ数で書く値（`flare.frames` 既定 12・`camera.punch_frames` 既定 10）は曲のコマ（MMD のコマ、1/30 秒）で数える。60 fps の
+  動画ではフレアの絵は 2 倍の枚数になり、パンチと色ずれは同じ秒だけ続く（60 fps の 2n 枚目が 30 fps の n 枚目と同じ絵）。
   `beams` や `bokeh` も、書いた項目だけが変わる（例: `{"beams": {"loop_seconds": 27.428571, "cycles": [2, 3]}}`）。
 - 光（光条と玉ボケ）は `beams.loop_seconds` のループで、全曲でくり返す。ループの絵はループごとにまったく同じになる。
   各動きはループあたり整数回の正弦なので、ループの継ぎ目で跳ばない: 光条は 1 本おきに `beams.cycles` の 2 つの回数だけ揺れ、
@@ -415,7 +418,7 @@ python tools/mv_look.py layers look.json WORK --size WxH --fps N
   既定の 12 秒は 140 BPM の 7 小節で、曲の句（8 小節）と合わない。ヒビカセ（140 BPM）では 16 小節（27.428571 秒 = 823 コマ、
   1 回あたり 0.14 コマ長く全曲で約 1.3 コマ）にし、`cycles` を [2, 3] にした（揺れの周期 13.7 秒 = 8 小節と 9.1 秒。既定の 12・6 秒
   に近い速さのまま、絵のくり返しは 21.5 回から 9.4 回へ）。ループの枚数だけ光の連番を書くので、長いループほど層づくりが遅い
-  （640x360 で 1 枚約 0.1 秒、この PC）。
+  （640x360 で 1 枚約 0.1 秒、この PC）。ループの枚数は曲のコマ（30 fps）の整数で、60 fps ではその 2 倍（823 なら 1,646 枚）。
 - `--cues` は `tools/mv_text.py` の合図。`layer` が back の合図は人物の後ろ、front は前に載る。
 - `--from` / `--to` は曲の中の秒で抜粋を作る（合図とフレアの時刻もずれる）。`--offset` は人物のファイルの先頭が曲の何秒か
   （途中のフレームから描いた区間を、曲の時計のまま合成するため。全曲を区間に分けて描いて `ffmpeg -f concat` で繋ぐときに使う）。
@@ -446,16 +449,32 @@ MMD はアクセサリをファイルの数値の 10 倍で表示するので、
 ### 全曲を区間に分けて描いて繋ぐ（`tools/mv_chunks.py`）
 
 240 fps の alpha つき AVI は全曲だと 228 GB（4 分 18 秒・1280x720）になるので、カメラのカットごとの区間に分けて描き、
-区間ごとに `mv_look.py` でぼかしと見た目を付けて 30 fps にしてから繋ぐ。境目はカットに隠れる。MMD の物理は描き始めのフレームで
+区間ごとに `mv_look.py` でぼかしと見た目を付けて 30 fps（`--out-fps 60` なら 60 fps）にしてから繋ぐ。境目はカットに隠れる。MMD の物理は描き始めのフレームで
 休み姿勢から始まるので、各区間はカットの `--lead` フレーム手前から描き（髪やスカートがカットまでに落ち着く）、その助走は捨てる。
 光のループとフレアのパンチは、区間の頭でも曲の時刻のまま続く（mv_look が `--from` から位相を取り、区間より前に
 始まったパンチは途中から入る）。
 
 ```
-python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json [--lead 120] [--fps 240] [--shutter 0.5] [--tag final]
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30]
+                          [--tag final]
 python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60      # カメラの報告が無いとき
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60     # 手元で見る 60 fps 版
 powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
 ```
+
+- `--out-fps` は繋いだ動画の fps で、30（既定。公開する版。配布モーションの規約が 30 fps）か 60（手元で見る版。公開しない）。
+  60 でも MMD は同じ AVI を `--fps` で描き、区間・カット・`--lead` は曲のコマ（30 fps）のまま。曲のコマ 1 つが動画の 2 枚になり、
+  各 1 枚は fps / 60 枚（240 fps なら 4 枚）のうち round(シャッター × 4) 枚の平均（`--shutter` は出力の 1 コマのうち開いている
+  割合で、30 と同じ意味）。look のフレア・パンチと合図の点滅は同じ秒だけ続き、60 fps の 2n 枚目が 30 fps の n 枚目と同じ時刻の
+  絵になる。曲全体（0〜7,742 コマ）なら 15,486 枚。
+- 60 のファイル名には tag の後に `_60fps` が付く（`render_final_60fps.ps1`・`final_60fps_00.mp4`・`<name>_final_60fps.mp4`・
+  作業フォルダ `look_work_final_60fps`）。30 fps の描画と同じ `--tag` で流しても、その区間・繋いだ動画・駆動台本を消さない。
+  60 の連結の一覧には区間ごとの長さ（`duration`）を書く。mp4 の edit list の長さはミリ秒で書かれ、区間によっては 1 ms 短くなる
+  （起きたのはどれも曲のコマ数を 3 で割って 1 余る区間で、起きるかどうかは絵による）。長さを書かない一覧では、その区間の後ろが
+  5 tick（0.33 ms）早く繋がる。30 の一覧と台本は前のまま（公開する版のバイト列を変えないため）なので、30 fps ではこのずれが残る
+  （v7 の本番では区間 04 の edit list が 13533 ms で、曲 1740 から後ろが 0.33 ms 早い。2026-10-13 の査読）。
+- 60 では区間ごとの畳み（層・合図の連番・符号化）が約 2 倍かかる（hinata で 1 区間 51〜52 秒が 100〜102 秒、2026-10-13）。
+  MMD の描画は同じ。
 
 - `plan.json` は描画機の上のファイルの場所（絶対パス。`C:/...` か `//host/...`）。必須は `mmd` `model` `motions`（モデルに読む
   モーションの一覧）`camera` `look` `out`（AVI と mp4 の置き場）`scripts`（OUTDIR の中身を写す先）`mmd_cli`（このリポジトリの
@@ -466,7 +485,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。
 - `--shots` は `tools/make_camera.py --report` の報告で、描くカメラと同じショットのもの（`--handheld` はショットを変えない）。
   ショットに抜けや重なりがあれば誤り。区間は 3 枚以上（1〜2 枚の区間は `-c copy` の連結で時刻が乱れる）。`--fps` は MMD が書く
-  30・60・120・240・480 のどれかで、`--shutter` は mv_look と同じく 1 枚以上のサブフレームを取る値だけを通す。
+  30・60・120・240・480 のどれかで `--out-fps` 以上、`--shutter` は mv_look と同じく 1 枚以上のサブフレームを取る値だけを通す。
 - OUTDIR に区間ごとの `mmd batch` の台本、ffmpeg の連結の一覧、駆動台本（Windows PowerShell 5.1 用、BOM つき）を書く。中身は
   まとめて写す（駆動台本はバッチの SHA-256 を持っていて、描く直前に違うバッチと分かれば止まる）。
 - 駆動台本は最初に `mv_look.py layers` で look を確かめる（誤りなら MMD が描く前に止まる）。そのあと区間ごとに、前の試みの AVI
