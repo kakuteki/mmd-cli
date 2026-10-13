@@ -2,7 +2,7 @@
 channel, folded to 30 fps (or 60) with motion blur and the look of tools/mv_look.py, checked frame by frame, then joined.
 
     python tools/mv_chunks.py PLAN.json OUTDIR (--shots CAMERA_REPORT.json | --cuts F [F ...] --last F)
-                              [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30] [--tag final]
+                              [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30] [--tag final] [--align-physics]
 
 Why chunks: an uncompressed BGRA AVI at 240 fps and 1280x720 takes 29.5 MB per frame of the song (228 GB for a song
 of 4 minutes 18 seconds), one shot of it some 17 GB at most.  A seam is hidden by the camera cut, and every chunk starts
@@ -17,6 +17,12 @@ round(shutter x fps / 60) of its fps / 60 subframes (4 and 2 at 240 fps); the ef
 as at 30 (mv_look counts them in frames of the song).  The files of a run at 60 fps carry "_60fps" after the tag
 (render_final_60fps.ps1, final_60fps_00.mp4, <name>_final_60fps.mp4), so that it removes nothing of a run at 30 fps of
 the same tag.
+
+MMD steps its physics (hair, skirt, ribbons) 60 times a second whatever --fps, on a frame that changes from render to
+render; where that step falls inside the frames a fold averages, the cloth shows twice.  --align-physics folds every chunk
+with mv_look --physics-align, which reads the steps from the chunk's AVI and puts the window of every frame within one
+step.  --fps 480 halves the gaps between the copies of a fast hand (the window takes 8 of 16 subframes) for twice the
+AVI and about twice MMD's time.
 
 PLAN.json names the files on the render machine, as absolute paths with forward slashes:
     {"mmd": ".../MikuMikuDance.exe", "model": ".../model.pmx", "motions": [".../dance.vmd", ".../lips.vmd"],
