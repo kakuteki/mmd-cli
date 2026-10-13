@@ -985,6 +985,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     report["input"] = measure(hands, ang_in, loc, world, P, wrist)
     report["output"] = measure(hands, ang, out_loc, world, P, wrist)
     report["change"] = change(hands, ang_in, ang, held)
+    report["shape"] = shape_shift(hands, ang_in, ang, held)
     return Result(out_motion, report)
 
 
@@ -1121,6 +1122,30 @@ def onset(x, a, b, share=0.1):
 
 
 HELD_REACH = 4                   # frames each way the input's joint must be still for a frame to count as a held shape
+
+
+def shape_shift(hands, ang_in, ang_out, held):
+    """how far each finger moved from the input's place in the hand (mm): the mean of its outer joints and tip (the
+    outline) and the tip alone; everywhere, and in the held shapes away from their changes (as change())"""
+    out = {}
+    for side, hand in hands.items():
+        h = held[side] > 0.5
+        rows = {}
+        for finger in LONG + (THUMB,):
+            seq = reach_chain(hand, finger)
+            if seq is None:
+                continue
+            d = np.linalg.norm(chain_points(seq, {j.bone: ang_out[j.bone] for j in seq}) -
+                               chain_points(seq, {j.bone: ang_in[j.bone] for j in seq}), axis=2) * MM_PER_UNIT
+            moving = np.zeros(d.shape[0], dtype=bool)
+            for j in seq:
+                moving[1:] |= np.abs(np.diff(ang_in[j.bone][0])) >= 0.05
+            near = np.array([moving[max(0, t - HELD_REACH):t + HELD_REACH + 2].any() for t in range(len(moving))])
+            keep = h & ~near
+            rows[finger] = {"outline_mm": {"all": stats(d.mean(axis=1)), "held_still": stats(d.mean(axis=1)[keep])},
+                            "tip_mm": {"all": stats(d[:, -1]), "held_still": stats(d[keep, -1])}}
+        out[side] = rows
+    return out
 
 
 def change(hands, ang_in, ang_out, held):

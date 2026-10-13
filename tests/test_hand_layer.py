@@ -566,6 +566,17 @@ class ReachTest(unittest.TestCase):
         self.assertLess(mp_side, hand_layer.ROM["mp"]["side"][1][1])
         self.assertLess(self.moved_mm(dance, out, "人指").max(), FINGER_RADIUS_MM)
 
+    def test_the_report_measures_how_far_each_finger_left_the_choreography(self):
+        steps = ["hinge", "reach", "coupling", "rom"]
+        dance, out = self.run_one(HOOK, steps)
+        rep = hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).report["shape"]["左"]
+        alone = hand_layer.layer(MODEL, dance, only("hinge", "coupling", "rom"), pulp=PULP).report["shape"]["左"]
+        moved = self.moved_mm(dance, out, "中指")
+        self.assertAlmostEqual(rep["中指"]["tip_mm"]["held_still"]["max"], moved[-1], delta=0.05)
+        self.assertAlmostEqual(rep["中指"]["outline_mm"]["held_still"]["max"], moved.mean(), delta=0.05)
+        self.assertLess(rep["中指"]["tip_mm"]["held_still"]["max"], alone["中指"]["tip_mm"]["held_still"]["max"])
+        self.assertAlmostEqual(rep["薬指"]["outline_mm"]["all"]["max"], 0.0, delta=1e-6)   # an untouched finger
+
     def test_a_shape_that_is_already_anatomical_is_left(self):
         fist = {"中指１": (80.0, 0.0, 0.0), "中指２": (95.0, 0.0, 0.0), "中指３": (70.0, 0.0, 0.0)}
         dance, out = self.run_one(fist, ["reach"])
