@@ -234,5 +234,84 @@ class ReadingTest(unittest.TestCase):
             self.assertAlmostEqual(float(pal2[0]) - palmar, 20.0, delta=0.5)
 
 
+class PassiveTest(unittest.TestCase):
+    """the fingers' passive lag: delta'' + 2 zeta omega delta' + omega^2 delta = forcing, from rest at frame 0"""
+
+    W = 2.0 * math.pi * 6.0
+
+    def run_(self, forcing, omega=None, zeta=0.5):
+        forcing = np.asarray(forcing, dtype=float)
+        n = forcing.shape[1]
+        omega = np.full(n, self.W if omega is None else omega)
+        return hand_layer.passive_response(forcing, omega, np.full(n, zeta), fps=30.0)
+
+    def test_without_forcing_nothing_moves(self):
+        d = self.run_(np.zeros((90, 3)))
+        self.assertEqual(float(np.abs(d).max()), 0.0)
+
+    def test_a_steady_forcing_settles_at_its_static_deflection(self):
+        d = self.run_(np.full((150, 1), 100.0), zeta=0.7)
+        self.assertAlmostEqual(float(d[-1, 0]), 100.0 / self.W ** 2, delta=0.01 * 100.0 / self.W ** 2)
+
+    def test_after_a_push_the_finger_overshoots_and_settles(self):
+        forcing = np.zeros((120, 1))
+        forcing[10:16, 0] = -300.0                           # the hand brakes for 0.2 s
+        d = self.run_(forcing, zeta=0.4)[:, 0]
+        peak = int(np.argmin(d[:30]))
+        self.assertLess(d[peak], -0.05)
+        self.assertGreater(d[peak:peak + 15].max(), 0.0)     # it swings past its rest
+        settle = 16 + int(math.ceil(4.0 / (0.4 * self.W) * 30.0)) + 2
+        self.assertLess(np.abs(d[settle:]).max(), 0.05 * abs(d[peak]))
+
+    def test_more_damping_overshoots_less(self):
+        forcing = np.zeros((120, 1))
+        forcing[10:16, 0] = -300.0
+        light = self.run_(forcing, zeta=0.3)[:, 0]
+        heavy = self.run_(forcing, zeta=0.9)[:, 0]
+        self.assertGreater(light[16:].max(), heavy[16:].max())
+
+    def test_a_stiff_joint_stays_stable_and_small(self):
+        forcing = np.random.default_rng(2).normal(0.0, 200.0, (300, 2))
+        d = self.run_(forcing, omega=2.0 * math.pi * 20.0, zeta=0.7)
+        self.assertTrue(np.all(np.isfinite(d)))
+        self.assertLess(np.abs(d).max(), 0.2)
+
+
+class ForcingTest(unittest.TestCase):
+    """what drives the lag: the hand's angular acceleration about the joint's axis, the joint's linear acceleration (and
+    gravity) on the part beyond it, both in the world"""
+
+    def test_the_hand_turning_faster_toward_flexion_leaves_the_finger_behind(self):
+        F = 40
+        t = np.arange(F) / 30.0
+        axis = np.array([0.0, 0.0, 1.0])
+        ang = 0.5 * 50.0 * t ** 2                             # 50 rad/s^2 about +Z
+        R = np.stack([axis_angle(axis, math.degrees(a)) for a in ang])
+        alpha = hand_layer.angular_acceleration(R, 30.0)
+        self.assertAlmostEqual(float(np.median(alpha[2:-2] @ axis)), 50.0, delta=0.5)
+        acc = np.zeros((F, 3))
+        f = hand_layer.joint_forcing(alpha, acc, np.tile(axis, (F, 1)), np.tile([1.0, 0.0, 0.0], (F, 1)), r=0.03,
+                                     rho=0.02, gravity=False)
+        self.assertLess(float(np.median(f[2:-2])), -40.0)
+
+    def test_a_joint_pushed_toward_the_palm_bends_the_finger_back(self):
+        F = 20
+        e = np.tile([1.0, 0.0, 0.0], (F, 1))                  # the finger along +X, the palm toward +Y: axis +Z
+        axis = np.tile([0.0, 0.0, 1.0], (F, 1))
+        acc = np.tile([0.0, 20.0, 0.0], (F, 1))               # the knuckle accelerates toward the palm
+        f = hand_layer.joint_forcing(np.zeros((F, 3)), acc, axis, e, r=0.03, rho=0.02, gravity=False)
+        self.assertAlmostEqual(float(f[0]), -20.0 * 0.03 / (0.03 ** 2 + 0.02 ** 2), places=6)
+
+    def test_gravity_lets_a_relaxed_finger_droop(self):
+        F = 5
+        e = np.tile([1.0, 0.0, 0.0], (F, 1))
+        axis = np.tile([0.0, 0.0, 1.0], (F, 1))              # flexion toward +Y
+        still = np.zeros((F, 3))
+        palm_up = hand_layer.joint_forcing(still, still, axis, e, r=0.03, rho=0.02, gravity=True)
+        palm_down = hand_layer.joint_forcing(still, still, -axis, e, r=0.03, rho=0.02, gravity=True)
+        self.assertLess(float(palm_up[0]), 0.0)               # palm up: the finger droops back, away from the palm
+        self.assertGreater(float(palm_down[0]), 0.0)          # palm down: it droops into the palm
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -186,3 +186,67 @@ def pulp_from_mesh(path, palm=None):
         thick = vt[2]
         out[side] = thick if float(thick @ palm[side]) >= 0.0 else -thick
     return out
+
+
+# ---- the fingers' passive lag ------------------------------------------------------------------------------------
+
+GRAVITY = np.array([0.0, -9.80665, 0.0])          # m/s^2 in the model's axes (Y up)
+
+
+def passive_response(forcing, omega, zeta, fps, substeps=8):
+    """delta [F, J] (radians) of joints that follow  delta'' + 2 zeta omega delta' + omega^2 delta = forcing  from rest
+    at frame 0, the forcing [F, J] (rad/s^2) taken as linear between frames; semi-implicit Euler, `substeps` per frame"""
+    forcing = np.asarray(forcing, dtype=float)
+    F, J = forcing.shape
+    w, z = np.asarray(omega, dtype=float), np.asarray(zeta, dtype=float)
+    dt = 1.0 / (fps * substeps)
+    d, v = np.zeros(J), np.zeros(J)
+    out = np.zeros((F, J))
+    for t in range(1, F):
+        a0, a1 = forcing[t - 1], forcing[t]
+        for k in range(substeps):
+            f = a0 + (a1 - a0) * ((k + 1) / substeps)
+            v = v + dt * (f - 2.0 * z * w * v - w * w * d)
+            d = d + dt * v
+        out[t] = d
+    return out
+
+
+def angular_velocity(R, fps):
+    """the world angular velocity (rad/s) between frames t and t+1 of world rotations R [F, 4]: [F - 1, 3]"""
+    dq = qmul(R[1:], qconj(R[:-1]))
+    dq = np.where(dq[:, 3:4] < 0.0, -dq, dq)
+    s = np.linalg.norm(dq[:, :3], axis=1)
+    ang = 2.0 * np.arctan2(s, dq[:, 3])
+    axis = dq[:, :3] / np.maximum(s, 1e-12)[:, None]
+    return axis * (ang * fps)[:, None]
+
+
+def angular_acceleration(R, fps):
+    """the world angular acceleration (rad/s^2) at each frame of world rotations R [F, 4]: [F, 3] (the ends repeat
+    their neighbours)"""
+    w = angular_velocity(R, fps)
+    out = np.zeros((len(R), 3))
+    if len(R) >= 3:
+        out[1:-1] = (w[1:] - w[:-1]) * fps
+        out[0], out[-1] = out[1], out[-2]
+    return out
+
+
+def point_acceleration(p, fps):
+    """the acceleration [F, 3] of points p [F, 3] (second differences; the ends repeat their neighbours)"""
+    out = np.zeros_like(p, dtype=float)
+    if len(p) >= 3:
+        out[1:-1] = (p[2:] - 2.0 * p[1:-1] + p[:-2]) * fps * fps
+        out[0], out[-1] = out[1], out[-2]
+    return out
+
+
+def joint_forcing(alpha, acc, axis, e, r, rho, gravity=True):
+    """the forcing (rad/s^2) on a joint's flexion from the motion of the frame it hangs in: the hand's world angular
+    acceleration alpha [F, 3] about the joint's world flexion axis [F, 3], and the joint's world linear acceleration acc
+    [F, 3] (m/s^2; gravity taken away when asked) on the part beyond it, its centre of mass r metres out along the unit
+    direction e [F, 3], its radius of gyration about that centre rho: -(alpha . axis) - r / (r^2 + rho^2) (e x (acc - g))
+    . axis.  Positive bends the part toward the palm (flexion)."""
+    a = np.asarray(acc, dtype=float) - (GRAVITY if gravity else 0.0)
+    return -dot(alpha, axis) - (r / (r * r + rho * rho)) * dot(np.cross(e, a), axis)
