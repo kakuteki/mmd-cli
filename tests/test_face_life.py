@@ -428,6 +428,48 @@ class KimeAlignTest(unittest.TestCase):
         self.assertEqual(plain, kimed)
 
 
+class FlashTest(unittest.TestCase):
+    """human style: at some of the kimes where she sings, the eyes open for a moment (the lid to the model's open
+    eye, at its widest a frame before the kime), a few a minute, never two within FLASH_GAP frames"""
+
+    def plan_with(self, moves, seed=0):
+        hand = moving_point(moves)
+        return face_life.plan(inputs(parts={"右手首": hand}), seed=seed)
+
+    def test_the_eyes_open_at_a_kime_where_she_sings(self):
+        result = self.plan_with([(612, 5, (3.0, 0.0, 0.0))])               # stops about 616, in the phrase 600-636
+        flashes = result.report["blink"]["flashes"]
+        self.assertEqual(len(flashes), 1)
+        k = flashes[0]
+        self.assertTrue(615 <= k <= 619, k)
+        b = tracks(result.motion)["まばたき"]
+        plain = tracks(face_life.plan(inputs(), seed=0).motion)["まばたき"]
+        if between_blinks(b, np.zeros(F))[k - 1]:
+            self.assertLess(b[k - 1], 0.02)
+        self.assertLess(float(b[k - 1]), float(plain[k - 1]) - 0.08)
+        np.testing.assert_allclose(b[k + 12:k + 20], plain[k + 12:k + 20], atol=1e-6)
+
+    def test_no_flash_where_she_does_not_sing(self):
+        result = self.plan_with([(1200, 5, (3.0, 0.0, 0.0))])
+        self.assertEqual(result.report["blink"]["flashes"], [])
+
+    def test_flashes_are_few_and_apart(self):
+        moves, sign = [], 1.0
+        for f in range(240, 1700, 25):                                       # a kime every 25 frames
+            moves.append((f, 5, (3.0 * sign, 0.0, 0.0)))
+            sign = -sign
+        lines = [(8.0, 57.0)]                                                # she sings all along
+        result = face_life.plan(inputs(parts={"右手首": moving_point(moves)}, lines=lines), seed=0)
+        flashes = result.report["blink"]["flashes"]
+        self.assertGreater(len(flashes), 3)
+        self.assertTrue(all(b - a >= face_life.FLASH_GAP for a, b in zip(flashes, flashes[1:])), flashes)
+        self.assertLessEqual(len(flashes) / ((1700 - 240) / FPS / 60.0), face_life.FLASH_RATE + 0.5)
+
+    def test_the_v7_style_has_none(self):
+        result = face_life.plan(inputs(parts={"右手首": moving_point([(612, 5, (3.0, 0.0, 0.0))])}), seed=0, style="v7")
+        self.assertNotIn("flashes", result.report["blink"])
+
+
 class BlinkShapeTest(unittest.TestCase):
     def test_every_v7_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
         seen = set()

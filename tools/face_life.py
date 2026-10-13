@@ -513,7 +513,7 @@ def plan(inp, seed=0, hold=None, style="human"):
     accents = kimes(inp.parts, start or 0) if style == "human" and inp.parts else []
     expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has, kimes=accents, style=style)
     smile = track(expressions.get(SMILE, keys.get(SMILE, [])), frames)
-    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style, phrases)
+    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style, phrases, accents)
     if blink is not None and SMILE in expressions:
         allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
         expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
@@ -903,7 +903,7 @@ def modulate(source, placed, env, part, frames):
 
 # ---- blinks ---------------------------------------------------------------------------------
 
-def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7", phrases=()):
+def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7", phrases=(), accents=None):
     """the new まばたき keys and what was done"""
     human = style == "human"
     closings = HUMAN_CLOSING_FRAMES if human else CLOSING_FRAMES
@@ -951,10 +951,15 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
     for f, cause in chosen:
         closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
         drawn.append((f, cause, closing, hold, rng.choice(openings)))
+    flashes = None
     if human:
-        # the lid's level (the blinks first: a change of the shown share near one happens while the eye is shut)
+        # the lid's level (the blinks first: a change of the shown share near one happens while the eye is shut), the
+        # eyes opened for a moment at some kimes where she sings, the lid following the eyes up and down
         share = shown_share(phrases, frames, inp.voice, [(f, f + c, f + c + h + o) for f, _, c, h, o in drawn])
         base = shown_lid(author, share)
+        flashes = choose_flashes(accents or [], singing(phrases, inp.lines, frames), frames, opened)
+        lift = flash_track(flashes, frames)
+        base = np.where(author < LID_DEEP, base * (1.0 - lift), base)
         follow = lid_offset(pitch, sacc, frames, LID_FOLLOW)
         base = np.clip(base + follow * (base < CLOSED), 0.0, 1.0)
         lid_info = {"author_mean": _r(author[opened:].mean()), "shown_mean": _r(base[opened:].mean()),
@@ -975,6 +980,8 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             "by_cause": {c: sum(1 for x in out if x["cause"] == c) for c in ("gaze_shift", "saccade", "phrase_end", "fill")},
             "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE),
             "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
+    if flashes is not None:
+        info["flashes"] = flashes
     return bake(b), info
 
 
@@ -1158,6 +1165,60 @@ def blink_pulses(b_keys, intro):
 
 
 LID_HIDE = 3                    # frames: a blink this near a change of the shown share takes it into its shut frames
+FLASH_RATE = 5.0                # human style: eyes opened for a moment at a kime, at most this many a minute (a speaker
+                                # raises the brows 2.4 to 7.2 times a minute, Cave et al. 1996; Sour's Rin's brows lie
+                                # under her fringe, so the lid carries it)
+FLASH_GAP = 60                  # frames between two of them at least
+FLASH_STRENGTH = 60             # percentile of the kimes' speed a kime reaches to get one
+FLASH_SHAPE = (5, 3, 8)         # frames opening (ending a frame before the kime), held, closing again
+FLASH_SUNG = 9                  # frames around a lyric line or a phrase that count as singing
+
+
+def choose_flashes(accents, sung, frames, start=0):
+    """the kimes (frames) that get a flash: where she sings (`sung` per frame), at least the FLASH_STRENGTH percentile
+    of the kimes' speed, the strongest first, never two within FLASH_GAP frames, at most FLASH_RATE a minute"""
+    if not accents:
+        return []
+    threshold = float(np.percentile([k["speed"] for k in accents], FLASH_STRENGTH))
+    candidates = sorted((k for k in accents if 0 <= k["frame"] < frames and sung[k["frame"]] and k["speed"] >= threshold),
+                        key=lambda k: (-k["speed"], k["frame"]))
+    budget = int(FLASH_RATE * max(0, frames - start) / FPS / 60.0)
+    chosen = []
+    for k in candidates:
+        if len(chosen) >= budget:
+            break
+        if all(abs(k["frame"] - c) >= FLASH_GAP for c in chosen):
+            chosen.append(k["frame"])
+    return sorted(chosen)
+
+
+def flash_track(flashes, frames):
+    """per frame 0..1: how far the eyes are opened by the flashes (1 at the widest, a frame before each kime)"""
+    up, held, down = FLASH_SHAPE
+    out = np.zeros(frames)
+    for k in flashes:
+        top = k - 1
+        for i in range(1, up + 1):
+            f = top - up + i
+            if 0 <= f < frames:
+                out[f] = max(out[f], float(smoothstep(i / float(up))))
+        for f in range(top, min(frames, top + held)):
+            out[f] = 1.0
+        for i in range(1, down + 1):
+            f = top + held - 1 + i
+            if 0 <= f < frames:
+                out[f] = max(out[f], float(1.0 - smoothstep(i / float(down))))
+    return out
+
+
+def singing(phrases, lines, frames):
+    """per frame: inside a lyric line (seconds) or a phrase of vowels, give or take FLASH_SUNG frames"""
+    out = np.zeros(frames, bool)
+    for p in phrases:
+        out[max(0, p.start - FLASH_SUNG):min(frames, p.end + FLASH_SUNG + 1)] = True
+    for a, z in lines:
+        out[max(0, int(a * FPS) - FLASH_SUNG):min(frames, int(z * FPS) + FLASH_SUNG + 1)] = True
+    return out
 
 
 def shown_share(phrases, frames, voice=None, blinks=()):
