@@ -471,6 +471,29 @@ class StaticTest(unittest.TestCase):
         self.assertGreater(float(dip[0]), start)
 
 
+class EnslaveTest(unittest.TestCase):
+    """a finger's MP is pulled a little toward its neighbours' (the passive coupling of the adjacent fingers)"""
+
+    def mp(self, shape):
+        dance = hand_dance([(0, shape), (LAST, shape)])
+        out = hand_layer.layer(MODEL, dance, only("enslave"), pulp=PULP).motion
+        return {f: float(out_angles(out, "左", f + "１")[0][30]) for f in hand_layer.LONG}
+
+    def test_a_pointing_index_bends_a_little_and_the_middle_finger_opens_a_little(self):
+        got = self.mp("point")
+        k = hand_layer.ENSLAVE
+        self.assertAlmostEqual(got["人指"], 0.0 + k * 80.0, delta=0.05)
+        self.assertAlmostEqual(got["中指"], 80.0 - k * 80.0, delta=0.05)
+        self.assertAlmostEqual(got["薬指"], 80.0, delta=0.05)
+        self.assertAlmostEqual(got["小指"], 80.0, delta=0.05)
+
+    def test_fingers_that_move_together_are_left(self):
+        for shape in ("open", "fist"):
+            got = self.mp(shape)
+            for f in hand_layer.LONG:
+                self.assertAlmostEqual(got[f], SHAPES[shape][f][0], delta=1e-6, msg=(shape, f))
+
+
 class RelaxTest(unittest.TestCase):
     """an open hand that is not a fist or a pointing hand takes the relaxed hand's cascade, gently"""
 

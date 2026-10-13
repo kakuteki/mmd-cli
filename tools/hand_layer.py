@@ -263,12 +263,15 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "coupling", "rom", "relax", "speed", "order", "passive")
+STEPS = ("hinge", "coupling", "enslave", "rom", "relax", "speed", "order", "passive")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees)
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
 # DIP / PIP of the long fingers where the PIP bends more than COUPLING["from"] degrees: kept between low and high
-COUPLING = {"low": 0.5, "high": 1.15, "from": 20.0, "full": 40.0}
+COUPLING = {"low": 0.3, "high": 1.0, "from": 20.0, "full": 40.0}
+# each long finger's MP is pulled toward each neighbour's MP by this share of their difference (the adjacent fingers'
+# passive coupling)
+ENSLAVE = 0.05
 # the range of motion against the rest pose (the thumb's CMC: radial and palmar abduction against the index
 # metacarpal, read absolutely): (soft start, cap) for each way, degrees
 ROM = {
@@ -304,7 +307,7 @@ ACC_SMOOTH = 1                                      # frames each way of the tri
 def default_params():
     p = {s: True for s in STEPS}
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, dip_lag=DIP_LAG_FRAMES, gravity=False,
-             stiffness=dict(STIFFNESS), damping=DAMPING, passive_cap=PASSIVE_CAP)
+             stiffness=dict(STIFFNESS), damping=DAMPING, passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE)
     return p
 
 
@@ -408,6 +411,20 @@ def coupling(hands, ang):
             new = np.where(below > 0, lo - 4.0 * (1.0 - np.exp(-below / 4.0)), dip)
             new = np.where(above > 0, hi + 4.0 * (1.0 - np.exp(-above / 4.0)), new)
             ang[js["dip"].bone][0] = dip + w * (new - dip)
+
+
+def enslave(hands, ang, k):
+    """each long finger's MP flexion moved toward each adjacent finger's by k times their difference (computed from
+    the angles before the step, so the fingers pull on each other at once)"""
+    for hand in hands.values():
+        cs = chains(hand)
+        order_ = [f for f in LONG if f in cs and "mp" in cs[f]]
+        before = {f: ang[cs[f]["mp"].bone][0].copy() for f in order_}
+        for i, f in enumerate(order_):
+            pull = np.zeros_like(before[f])
+            for g in order_[max(0, i - 1):i] + order_[i + 1:i + 2]:
+                pull = pull + k * (before[g] - before[f])
+            ang[cs[f]["mp"].bone][0] = before[f] + pull
 
 
 def rom(hands, ang):
@@ -689,6 +706,8 @@ def layer(model, motion, params=None, pulp=None, log=None):
         hinge(hands, ang)
     if p["coupling"]:
         coupling(hands, ang)
+    if p["enslave"]:
+        enslave(hands, ang, p["enslave_share"])
     if p["rom"]:
         rom(hands, ang)
     relaxed = {s: relaxedness(h, ang) for s, h in hands.items()}
