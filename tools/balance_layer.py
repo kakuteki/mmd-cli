@@ -185,6 +185,8 @@ HIP_ADDUCTION_DEG = (20.0, 22.0)
 HIP_ABDUCTION_DEG = 45.0
 KNEE_FLEXION_DEG = (130.0, 159.0)
 KNEE_GIVE_DEG = 12.0            # the reach's drop bends a leg on the floor by at most this much more
+LIFT_FOLD_DEG = 5.0             # a lifted leg's knee folds at most this much past the dance's (195 s of the MV: the heel
+                                # kicked up behind from 3 to 60 cm in 0.2 s, faster than the carry comes in; 150 -> 156)
 
 # de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original:
 # _spike/out/stage2/motor/work/deleva1996_table4_text.txt; the head, upper trunk, middle trunk, arm rows are the ones of
@@ -938,16 +940,22 @@ def range_slabs(body, carry=None):
 
 def knee_slabs(body, carry=None):
     """per leg, the half-plane of センター floor shifts (metres) that keep the hip at least as far from the IK target
-    as the two-bone leg is at KNEE_FLEXION_DEG[1] (159 degrees, the reference range's upper proposal), or no nearer
-    than it was: (D - (1 - carry) y) . D / |D| >= that distance (linearized: |D'| >= D' . D / |D|)"""
+    as the two-bone leg is at its knee limit, or no nearer than it was: (D - (1 - carry) y) . D / |D| >= that distance
+    (linearized: |D'| >= D' . D / |D|).  The limit: KNEE_FLEXION_DEG[1] (159 degrees, the reference range's upper
+    proposal); on a lifted leg also the dance's flexion + LIFT_FOLD_DEG (the carry keeps a lifted leg's shape once it
+    is in; this keeps it while the carry is still coming in, as in a kick up from the floor in 0.2 s)"""
     slabs = []
     for s in SIDES:
         L1, L2 = body.legs_rest[s]
-        d_min = math.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * math.cos(math.radians(KNEE_FLEXION_DEG[1])))
+        flex0 = body.knee_flexion(s)
+        lifted = body.height(s) >= SUPPORT_H
+        lim = np.where(lifted, np.minimum(KNEE_FLEXION_DEG[1], flex0 + LIFT_FOLD_DEG), KNEE_FLEXION_DEG[1])
+        lim = np.maximum(lim, flex0)
+        d_lim = np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(lim)))
         D = body.ankle(s) - body.hip(s)
         n = np.maximum(np.linalg.norm(D, axis=1), 1e-9)
         u = D[:, [0, 2]] / n[:, None]
-        hi = (n - np.minimum(n - RANGE_NO_WORSE_M / UNIT_M, d_min)) * UNIT_M
+        hi = (n - np.minimum(n - RANGE_NO_WORSE_M / UNIT_M, d_lim)) * UNIT_M
         slabs.append((u * hip_share(carry, s, body.F)[:, None], np.full(body.F, -FREE_M), hi))
     return slabs
 

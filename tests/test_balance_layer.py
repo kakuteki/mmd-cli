@@ -313,6 +313,37 @@ def heel_kick(last=119):
     return motion
 
 
+def fast_kick(last=119):
+    """as at 195 s of the MV: standing on the right foot (14 cm behind), the left foot hovering 3 cm up from 0.7 s to
+    2.3 s, kicked up behind (knee 140 degrees) in 0.1 s at 1.7 s and down again by 1.9 s: faster than the carry comes in"""
+    motion = dance(last=last)
+    left = []
+    for f in range(last + 1):
+        h = 0.375 * min(smooth((f - 20) / 4.0), 1.0 - smooth((f - 70) / 4.0))
+        k = min(smooth((f - 50) / 3.0), 1.0 - smooth((f - 55) / 3.0))
+        a = math.radians(-90.0) * k
+        left.append(key("左足ＩＫ", f, (-0.12 * k, max(h, 7.71 * k), 2.63 * k), q=(math.sin(a / 2), 0.0, 0.0, math.cos(a / 2))))
+    right = [key("右足ＩＫ", f, (0.8, 0.0, 1.8)) for f in range(last + 1)]
+    motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "右足ＩＫ")] + left + right
+    return motion
+
+
+class FastKickTest(unittest.TestCase):
+    def test_lifted_knee_folds_at_most_five_degrees_more(self):
+        """the carry comes in over about 0.4 s, the kick takes 0.1 s: the knee's bound keeps the kicked leg's shape
+        (at most LIFT_FOLD_DEG past the dance) while the body still goes over the standing foot"""
+        motion = fast_kick()
+        before = balance_layer.Body(MODEL, motion)
+        out = balance_layer.layer(MODEL, motion).motion
+        after = balance_layer.Body(MODEL, out)
+        kb, ka = before.knee_flexion("左"), after.knee_flexion("左")
+        lifted = before.height("左") >= balance_layer.SUPPORT_H
+        self.assertGreater(kb.max(), 135.0)                                       # the fixture: a deep, fast fold
+        self.assertLessEqual(float((ka - kb)[lifted].max()), balance_layer.LIFT_FOLD_DEG + 0.5)
+        shift = centre_offsets(motion, out, 119)
+        self.assertGreater(np.linalg.norm(shift[30:45, [0, 2]], axis=1).max() * CM, 4.0)   # it still moves the body
+
+
 class CarryTest(unittest.TestCase):
     """a lifted foot goes with the body: its foot IK moves on the floor plane by the shift of センター (its height and
     turn as the dance had them); on the floor it stays where it was traced"""
