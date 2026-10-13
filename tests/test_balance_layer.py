@@ -643,8 +643,8 @@ class NothingToDoTest(unittest.TestCase):
 
 
 class ReviewTest(unittest.TestCase):
-    """the review's tests (2026-10-14; each fails on a copy broken one way: no short-step discount, the pull not weakened
-    by the other foot's height, センター's parent turn applied the wrong way round)"""
+    """the review's tests (2026-10-14; each fails on a copy broken one way: no short-step discount, a hovering foot's run
+    pulled, the pull not weakened by the other foot's height, センター's parent turn applied the wrong way round)"""
 
     def test_hovering_foot_in_a_wide_stance_leaves_the_body(self):
         """feet 40 cm apart, the left foot only 3 cm up for a second: the trace's feet hover 0.4-4 cm even on two feet
@@ -664,6 +664,21 @@ class ReviewTest(unittest.TestCase):
         far = np.abs(centre_offsets(motion, out, last)[:, 0]).max() * CM
         self.assertGreater(far, 1.0)
         self.assertLess(far, 8.0)
+
+    def test_pull_grows_with_the_other_foot_s_height(self):
+        """the plan: in a pulled run the pull's weight follows the other foot's height from 1.6 to 5 cm (half the full
+        weight while it is still low), full from 5 cm up; nothing where it never gets 5 cm up"""
+        last = 119
+        motion = dance(last=last, left_lifts=[(40, 60, 70, 90, 2.5)])            # up slowly over 0.7 s
+        body = balance_layer.Body(MODEL, motion)
+        plan = balance_layer.support_plan(body, balance_layer.params_default(), body.com())
+        low = body.height("左") * CM
+        w = plan["w"]
+        rising = np.flatnonzero((low > 2.0) & (low < 3.0) & (np.arange(last + 1) < 60))
+        self.assertTrue(len(rising))
+        self.assertLess(w[rising].max(), 0.75)
+        self.assertGreater(w[rising].min(), 0.45)
+        self.assertEqual(float(w[(low > 6.0)].min()), 1.0)
 
     def test_turned_root_still_goes_over_the_standing_foot(self):
         """the whole dance turned 90 degrees by a key on 全ての親: the shift is a world shift, written in センター's
