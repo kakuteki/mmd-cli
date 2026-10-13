@@ -276,6 +276,37 @@ class ShortStepTest(unittest.TestCase):
         self.assertLess(lean[-1], 46 + 25)
 
 
+class SolverTest(unittest.TestCase):
+    def test_bounds_met_without_a_kink_when_the_solver_stops_early(self):
+        """the solver stopped after 40 rounds, far from converged, with a disc that narrows for 6 frames: the shift is
+        still inside every disc, and the curve is not folded to get there (a per-frame fix after the solve made the
+        review's 59.23 s kink, 3.57 m/s^2; here it would be 27 m/s^2)"""
+        F = 90
+        w = np.zeros(F)
+        w[30:61] = 1.0
+        d = np.zeros((F, 2))
+        d[30:61, 0] = 0.2
+        r = np.full(F, 0.13)
+        r[45:51] = 0.10
+        discs = [(np.zeros((F, 2)), r)]
+        y, info = balance_layer.solve_shift(w, d, np.ones(F), discs, [], 1.0, 0.1, 0.02, 0.5, iters=40)
+        self.assertTrue(np.all(np.linalg.norm(y, axis=1) <= r + 1e-9))
+        self.assertGreater(np.linalg.norm(y, axis=1).max(), 0.08)              # it does move
+        acc = np.linalg.norm(y[2:] - 2 * y[1:-1] + y[:-2], axis=1) * FPS * FPS
+        self.assertLess(acc.max(), 2.0)
+
+    def test_drop_meets_its_need_without_a_kink_when_the_solver_stops_early(self):
+        """the hips' drop after 10 rounds: never under its need, and not folded to get there (here 1.9 m/s^2 with
+        the per-frame fix; the bound is 0.5)"""
+        F = 90
+        need = np.zeros(F)
+        need[40:46] = 0.015
+        y, info = balance_layer.solve_drop(need, 0.5, 0.1, iters=10)
+        self.assertTrue(np.all(y >= need - 1e-12))
+        acc = np.abs(y[2:] - 2 * y[1:-1] + y[:-2]) * FPS * FPS
+        self.assertLess(acc.max(), 1.0)
+
+
 class TransferStepTest(unittest.TestCase):
     def test_step_that_travels_to_the_next_foot_is_not_pulled_back(self):
         """the body travels from the right foot to the left foot's new place (50 cm/s) while the left foot is in the air

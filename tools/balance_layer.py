@@ -129,6 +129,8 @@ REACH_TOL_CM = 0.3              # a leg keeps this much slack (the IK's last few
 ADMM_ITERS = 800
 ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
+SET_MARGIN = 0.001              # m: the bounds are solved this much tighter, so the converged curve is inside the true ones
+FIX_HALF = 9                    # frames: the half-width of the smooth cover that brings an unconverged curve inside
 # ---- the landings ------------------------------------------------------------------------------------------------
 DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
 DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
@@ -539,11 +541,51 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
                 ux /= k
                 L = factor(rho)
                 rescaled += 1
-    xf = project(x)                                    # the smooth x, put back in the set where it is a hair out
+    # x itself (the banded solve's smooth curve), not its per-frame projection: putting each frame back into its set on
+    # its own folds the curve where a bound starts to act (the review: 59.23 s, 3.57 m/s^2).  The callers solve with
+    # bounds tightened by SET_MARGIN and bring x into the true bounds by a smooth cover (smooth_cover)
     info = {"iterations": it, "residual_acc_m_s2": None if res_a is None else round(res_a, 4),
-            "residual_set_cm": None if res_x is None else round(res_x, 4),
-            "final_fix_cm_max": round(float(np.linalg.norm(xf - x, axis=1).max()) * 100.0, 4), "rho": rho}
-    return xf, info
+            "residual_set_cm": None if res_x is None else round(res_x, 4), "rho": rho}
+    return x, info
+
+
+def smooth_cover(v, half):
+    """a smooth curve never under v >= 0 (per frame): the running maximum over +-half frames, averaged by a raised
+    cosine of the same half-width (each frame's average reads only maxima of windows that hold the frame itself)"""
+    v = np.asarray(v, dtype=np.float64)
+    F = len(v)
+    if F == 0 or not np.any(v > 0):
+        return np.zeros(F)
+    pad = np.concatenate([np.full(half, v[0]), v, np.full(half, v[-1])])
+    m = np.lib.stride_tricks.sliding_window_view(pad, 2 * half + 1).max(axis=1)
+    k = 0.5 * (1.0 + np.cos(math.pi * np.arange(-half, half + 1) / (half + 1.0)))
+    k /= k.sum()
+    mp = np.concatenate([np.full(half, m[0]), m, np.full(half, m[-1])])
+    return np.convolve(mp, k, mode="valid")
+
+
+def disc_scale(x, c, r):
+    """per frame, the largest a in [0, 1] with |a x - c| <= r (the disc holds 0)"""
+    out = np.ones(len(x))
+    out_m = np.linalg.norm(x - c, axis=1) > r
+    if not out_m.any():
+        return out
+    xx = np.sum(x * x, axis=1)
+    xc = np.sum(x * c, axis=1)
+    cc = np.sum(c * c, axis=1) - r * r
+    root = (xc + np.sqrt(np.maximum(xc * xc - xx * cc, 0.0))) / np.maximum(xx, 1e-30)
+    out[out_m] = np.where(cc[out_m] > 0.0, 0.0, np.clip(root[out_m], 0.0, 1.0))
+    return out
+
+
+def slab_scale(x, m, lo, hi):
+    """per frame, the largest a in [0, 1] with lo <= a x . m <= hi (lo <= 0 <= hi)"""
+    s = np.sum(x * m, axis=1)
+    out = np.ones(len(x))
+    up, down = s > hi, s < lo
+    out[up] = np.clip(np.maximum(hi[up], 0.0) / s[up], 0.0, 1.0)
+    out[down] = np.clip(np.minimum(lo[down], 0.0) / s[down], 0.0, 1.0)
+    return out
 
 
 def proj_slab(x, m, lo, hi):
@@ -562,8 +604,15 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
     if F < 5 or not np.any(w > 0):
         return np.zeros((F, 2)), {"iterations": 0}
     toward = toward_targets(d, int(round(1.5 * FPS)))
-    sets = [(lambda v, c=c, r=r: proj_disc(v, c, r)) for c, r in discs]
-    sets += [(lambda v, m=m, lo=lo, hi=hi: proj_slab(v, m, lo, hi)) for m, lo, hi in slabs]
+    # solved inside bounds tightened by SET_MARGIN (each still holds 0, the dance itself)
+    sets = []
+    for c, r in discs:
+        rt = np.maximum(r - SET_MARGIN, np.minimum(r, np.linalg.norm(c, axis=1)))
+        sets.append(lambda v, c=c, r=rt: proj_disc(v, c, r))
+    for m, lo, hi in slabs:
+        mn = np.linalg.norm(m, axis=1)
+        lt, ht = np.minimum(lo + SET_MARGIN * mn, 0.0), np.maximum(hi - SET_MARGIN * mn, 0.0)
+        sets.append(lambda v, m=m, lo=lt, hi=ht: proj_slab(v, m, lo, hi))
     sets.append(lambda v: proj_half(v, toward))
 
     def project(v, rounds=30):
@@ -576,7 +625,17 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
                 y = z
         return y
     lam = np.where(w > 0, lam_in, lam_out)
-    return admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain)
+    y, info = admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain)
+    # into the true bounds: the shift scaled down by a smooth cover of what each frame lacks (the bounds hold 0 and are
+    # convex, so a frame scaled under its own largest scale is inside; scaling keeps the direction, so the half-plane)
+    scale = np.ones(F)
+    for c, r in discs:
+        scale = np.minimum(scale, disc_scale(y, c, r))
+    for m, lo, hi in slabs:
+        scale = np.minimum(scale, slab_scale(y, m, lo, hi))
+    cut = np.clip(smooth_cover(1.0 - scale, FIX_HALF), 0.0, 1.0)
+    info["bound_cut_max"] = round(float(cut.max()), 5)
+    return (1.0 - cut)[:, None] * y, info
 
 
 def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
@@ -585,10 +644,13 @@ def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
     F = len(need)
     if F < 5 or not np.any(need > 0):
         return np.zeros(F), {"iterations": 0}
-    lo = need[:, None]
+    lo = need[:, None]              # not tightened: a straight leg bends degrees for a millimetre more of drop
     y, info = admm(np.zeros(F), np.zeros((F, 1)), 1.0, lambda v: np.maximum(v, lo), acc_max, tau_s, iters,
                    tol_x_cm=0.01)
-    return y[:, 0], info
+    y = y[:, 0]
+    raise_ = smooth_cover(np.maximum(need - y, 0.0), FIX_HALF)      # up to the need where the solve left it short
+    info["need_raise_cm_max"] = round(float(raise_.max()) * 100.0, 4)
+    return y + raise_, info
 
 
 # ---- the plan ---------------------------------------------------------------------------------------------------
@@ -931,12 +993,13 @@ def layer(model, motion, params=None, log=None):
         log("solving the shift over %d frames (%d pull frames)" % (F, int(np.sum(w > 0))))
         y, info = solve_shift(w, d, k, discs, slabs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
         moving = np.linalg.norm(y, axis=1) > 1e-4
+        edge = SET_MARGIN + 5e-4                        # the solve keeps SET_MARGIN inside the bounds
         for c, r in discs:                              # the shift stopped by a leg's reach: on its disc's edge
-            reach_tight |= (np.linalg.norm(y - c, axis=1) > r - 1e-4) & moving
+            reach_tight |= (np.linalg.norm(y - c, axis=1) > r - edge) & moving
         for m, lo, hi in slabs:                         # or by a hip's range: on its slab's edge
             s_ = np.sum(y * m, axis=1)
             nm = np.maximum(np.linalg.norm(m, axis=1), 1e-9)
-            range_tight |= (((s_ - lo) / nm < 1e-4) | ((hi - s_) / nm < 1e-4)) & moving
+            range_tight |= (((s_ - lo) / nm < edge) | ((hi - s_) / nm < edge)) & moving
         x = k[:, None] * y                              # the COM's shift (linearized), for the report
     else:
         d = np.zeros((F, 2))
