@@ -365,6 +365,19 @@ class LandingTest(unittest.TestCase):
         self.assertLess(abs((after - before)[land + 20]), 3.0)      # back within 0.7 s
         self.assertTrue(result.report["landings"]["dipped"] >= 1)
 
+    def test_two_landings_close_together_stay_smooth(self):
+        """a small hop: the left foot lands, the right 8 frames later while the left's dip is on its way back, then the
+        left lifts: both landings take weight; their dips add up smoothly (the larger of the two bumps has a corner
+        where they cross: 0.81 cm per frame^2 here)"""
+        last = 119
+        motion = dance(last=last, left_lifts=[(36, 41, 45, 50, 1.0), (62, 68, 90, 96, 2.0)],
+                       right_lifts=[(36, 41, 52, 58, 1.0)])
+        result = balance_layer.layer(MODEL, motion)
+        self.assertGreaterEqual(result.report["landings"]["dipped"], 2)
+        down = centre_offsets(motion, result.motion, last)[:, 1] * CM
+        acc = np.abs(down[2:] - 2 * down[1:-1] + down[:-2])
+        self.assertLess(acc.max(), 0.65)                         # cm per frame^2: a 2 cm bump alone reaches 0.65
+
     def test_toe_tap_gets_no_dip(self):
         """the left foot taps the floor and lifts again while the right foot stays down: no weight to take"""
         last = 119

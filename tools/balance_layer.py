@@ -803,10 +803,12 @@ def landing_dips(body, plan, p):
                 rh = float(np.hypot(*(A - H)[[0, 2]]))
                 v = float(H[1] - A[1])
                 if dist > rh and v > 0:
-                    depth = v - math.sqrt(dist * dist - rh * rh)
-                    depth = float(np.clip(depth, 0.0, DIP_MAX_CM / CM))
+                    # the whole depth this landing needs at its top, less what the dips before it already give there
+                    # (added, not the larger of the two: the larger of two smooth bumps has a corner where they cross)
+                    total = float(np.clip(v - math.sqrt(dist * dist - rh * rh), 0.0, DIP_MAX_CM / CM))
+                    depth = max(0.0, total - float(dip[pk]))
                     if depth > 0:
-                        dip = np.maximum(dip, depth * dip_bump(F, f, peak_f, end_f))
+                        dip = dip + depth * dip_bump(F, f, peak_f, end_f)
                         row["depth_cm"] = round(depth * CM, 2)
                         row["knee_have_deg"] = round(have, 2)
         rows.append(row)
