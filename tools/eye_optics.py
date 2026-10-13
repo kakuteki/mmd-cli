@@ -83,13 +83,16 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   face's morphs every frame, lid_mesh): formula A can put a light where they cover the iris (an upper light under a
   lowered lid while the eye looks down: the MV's 167.2 seconds, the left upper light on the lash line under 笑い 0.6;
   the inner corner's skin at 24.1 seconds).  Such a light slides back along the straight way to its drawn place
-  (with the drag) as far as the lids leave its iris uncovered with light.lid_margin around it, as the camera sees it
-  (slide_off_lids on the camera's rays); where they cover all the way, it sits at its drawn place, where the model
-  has it, under the lid.  Then the guard (light.guard: the lids, the face and the hair): nothing of them may lie
-  between a light and the iris behind it (the light would show on them; the guard also looks light.guard_margin
-  about its centre).  A light failing it comes down along the camera's line onto its iris (light.hug_height in
-  front of it, under whatever covers it, which then covers the light as it covers the iris), or behind it
-  (light.hide_depth) if that is not enough.  Neither changes where it shows on the screen.
+  (with the drag) as far as the lids leave its iris uncovered with light.lid_margin around it (or without the margin,
+  if the drawn place lies within it), as the camera sees it (slide_off_lids on the camera's rays); where they cover
+  the way all along (an eye looking up under its lid, a lid coming down), it stays where the formula puts it, under
+  them, as a reflection there would (sent to the drawn place instead, it jumped there and back whenever the
+  formula's place came to the lid's edge for a frame or two).  Then the guard (light.guard: the lids, the face and
+  the hair): nothing of them may lie between a light and the iris behind it (the light would show on them; the guard
+  also looks light.guard_margin about its centre).  A light failing it comes down along the camera's line onto its
+  iris (light.hug_height in front of it, under whatever covers it, which then covers the light as it covers the
+  iris, its edge crossing the light), or behind it (light.hide_depth) if that is not enough.  Neither changes where
+  it shows on the screen.
 * The light leaves the cornea when the light source lies more than 90 to 100 degrees from the camera (RESEARCH 1.6;
   the coordinator's rule): the morph HL消 (the light material's opacity) goes from 0 at light.hide[0] to 1 at
   light.hide[1] degrees between the light and the camera seen from the eyes, each frame on its own.  (The research's
@@ -1527,9 +1530,18 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                                                          for du, dv in around if margin > 0.0]
                         return not blocked(np.repeat(cam_np[None, :], len(ends), axis=0), ends, lid_tris).any()
                     if not clear(planned):
-                        got = slide_off_lids(clear, planned, at_drawn) or (tuple(at_drawn), 0.0)
-                        target = on_disc(got[0])
-                        state, moved_by = got[1], math.hypot(got[0][0] - planned[0], got[0][1] - planned[1])
+                        # with the margin, or where the drawn place lies within it, without; where the lids cover the
+                        # way all along, the light stays where the formula puts it, under them, as a reflection there
+                        # would be (the guard below takes it down onto the iris if it would stand in front of them):
+                        # sent to its drawn place instead, it jumped there and back as the formula's place came to the
+                        # lid's edge for a frame or two
+                        got = (slide_off_lids(clear, planned, at_drawn)
+                               or slide_off_lids(lambda d: clear(d, 0.0), planned, at_drawn))
+                        if got is None:
+                            state = -1.0
+                        else:
+                            target = on_disc(got[0])
+                            state, moved_by = got[1], math.hypot(got[0][0] - planned[0], got[0][1] - planned[1])
             # where the camera sees the iris so much at a slant that no place of it holds the light (its dish hides
             # its own centre), the light would hang beside the iris: it goes behind it (below)
             unseen = False
@@ -1671,8 +1683,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                             "wanted_beyond_iris": _r(sum(1 for w, _ in pushes if w > 1.0) / count),
                             "pushed_over_0.1": _r(sum(1 for _, s in pushes if s > 0.1) / count),
                             "pushed_over_0.2": _r(sum(1 for _, s in pushes if s > 0.2) / count)}
-    lids_report = {name: {"slid_frames": sum(1 for s in lid_state[name] if 0.0 < s < 1.0),
-                          "at_drawn_frames": sum(1 for s in lid_state[name] if s == 0.0),
+    lids_report = {name: {"slid_frames": sum(1 for s in lid_state[name] if 0.0 <= s < 1.0),
+                          "covered_frames": sum(1 for s in lid_state[name] if s < 0.0),
                           "slid_max": _r(max(slid[name]) if slid[name] else 0.0),
                           "onto_iris_frames": guarded[name][0], "behind_iris_frames": guarded[name][1],
                           "beside_iris_frames": off_iris[name]}

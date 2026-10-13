@@ -475,7 +475,7 @@ class OpticsTest(unittest.TestCase):
         self.assertEqual(rep["vergence"]["camera_max_degrees"], 0.0)
         for name in ("右HL２", "右HL", "左HL２", "左HL"):
             self.assertEqual(rep["light"]["rim"][name]["open_frames"], 91)
-            self.assertEqual(rep["light"]["lids"][name], {"slid_frames": 0, "at_drawn_frames": 0, "slid_max": 0.0,
+            self.assertEqual(rep["light"]["lids"][name], {"slid_frames": 0, "covered_frames": 0, "slid_max": 0.0,
                                                           "onto_iris_frames": 0, "behind_iris_frames": 0,
                                                           "beside_iris_frames": 0})
         self.assertIn("behind_rim_plane_frames", rep["light"])
@@ -856,9 +856,9 @@ class LidTest(unittest.TestCase):
             self.assertGreater(result.report["light"]["lids"][name]["slid_frames"], 80)
 
     def test_a_lid_over_the_drawn_place_takes_the_light_down_under_it(self):
-        """まばたき 1 lowers the lid over the upper lights' drawn places too: there, at their drawn height, they would
-        stand in front of the lid; they come down onto the iris, behind the lid, which covers them as it covers the
-        iris"""
+        """まばたき 1 lowers the lid over the upper lights' drawn places too, the whole way back covered: the lights
+        stay where the formula puts them; at their drawn height they would stand in front of the lid, so they come
+        down onto the iris, behind the lid, which covers them as it covers the iris"""
         model = self.lidded()
         result = eye_optics.optics(model, dance(), gaze(), camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET),
                                    face=self.face({0: 1.0, 90: 1.0}))
@@ -869,7 +869,7 @@ class LidTest(unittest.TestCase):
         on_iris = tuple(p + o for p, o in zip(ip, fk.rotate(iq, (0.0, 0.0, -0.96 - iris.position[2]))))
         normal = fk.rotate(iq, (0.0, 0.0, -1.0))
         k = result.trace["lights"].index("左HL２")
-        self.assertEqual(result.trace["lid"][45][k], 0.0)                 # at its drawn place
+        self.assertEqual(result.trace["lid"][45][k], -1.0)                # covered all the way: where the formula puts it
         self.assertEqual(result.trace["sink"][45][k], 1)                  # brought down onto its iris
         spot = self.light_world(model, [dance(), gaze(), result.motion], 45, "左HL２", 1.0)
         height = sum((s - o) * c for s, o, c in zip(spot, on_iris, normal))
