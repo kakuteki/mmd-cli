@@ -65,9 +65,19 @@ What is done (the numbers are the constants below):
   when MMD loads both: OUT holds a key of its own on each of those frames, so that its tracks win.
 
 Styles (--style).  "v7" writes the face of the MV v7 again, byte for byte (the tool as it was at main 08894a4: the
-numbers above).  "human" (the default since stage 6) changes the blinks to a person's length: each closes in
-HUMAN_CLOSING_FRAMES and opens in HUMAN_OPENING_FRAMES (HUMAN_OPENING, fast first and slow at the end), 9 to 12 frames
-in all.
+numbers above).  "human" (the default since stage 6) changes:
+* The lid between the blinks.  Where the author held it lower than LID_NEUTRAL (KAZUSA's serious face: 0.22 to 0.38,
+  6 tenths of the open time), only a share of that shows (shown_share, shown_lid): LID_SHOWN[0] while a phrase is sung
+  (up to LID_QUIET more for a quiet one), LID_SHOWN[1] at rest, LID_SHOWN[2] for a moment after a phrase; each change
+  over a few frames, or at once while the eye is shut when a blink comes near (LID_HIDE).  The lid follows the eyes up
+  and down by LID_FOLLOW a degree, never shutting a smiling eye between the blinks (CLOSURE_CAP).
+* The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (LONG_HOLD,
+  LONG_OPENING) after some phrases (P_LONG) and where nothing is sung; a blink SMILE_END_BLINK frames before a smile
+  falls (P_SMILE_END); none about a flash (FLASH_QUIET).
+* The expressions: changes take HUMAN_ONSET_FRAMES / HUMAN_OFFSET_FRAMES / HUMAN_CHANGE_FRAMES and arrive KIME_ARRIVE
+  frames before a kime they can reach (kimes, kime_shift: a fast move of the head or a hand that stops and holds); a
+  held smile eases off by up to HUMAN_WAVE["eye"].  At some kimes where she sings (choose_flashes: at most FLASH_RATE a
+  minute, FLASH_GAP apart) the eyes open for a moment (flash_track): the brows lie under her fringe, the lid carries it.
 
 The report (--report, and in short on stdout) gives, for the expressions, the blinks and the mouth, the measures of
 the analyses a11, a10 and a12 before (FACE) and after (OUT).  Read expression.stretched_frames for how long a change of
