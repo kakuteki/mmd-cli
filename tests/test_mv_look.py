@@ -72,9 +72,12 @@ class LookSettingsTest(unittest.TestCase):
         self.assertEqual(mv_look.merge_look({})["stage"]["world"], 0)        # by default fixed to the picture, as before
         for bad in ({"world": 2}, {"floor": 0.5}, {"radius": -1}, {"specks": 0}, {"pool": 1.5}, {"shadow": -0.1},
                     {"floor_step": 0}, {"floor_accent_every": 1.5}, {"pool_colour": [1, 2]}, {"wrold": 1},
-                    {"world": 1, "floor": 0, "shadow": 0.5}):
+                    {"world": 1, "floor": 0, "shadow": 0.5}, {"floor_y": float("nan")}, {"floor_y": "high"}):
             with self.assertRaises(ValueError, msg=bad):
                 mv_look.merge_look({"stage": bad})
+        # the floor's height: 0 (make_stage.py's floor) unless the look raises it (0.111: where the model's soles stand)
+        self.assertEqual(mv_look.merge_look({})["stage"]["floor_y"], 0.0)
+        self.assertEqual(mv_look.merge_look({"stage": {"floor_y": 0.111}})["stage"]["floor_y"], 0.111)
 
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")

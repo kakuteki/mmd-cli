@@ -1,6 +1,6 @@
 """Write a stage floor for MMD as a DirectX .x accessory (text): a dark plane and a grid of glowing lines.
 
-    python tools/make_stage.py OUT.x [--half 60] [--step 5] [--line 0.06] [--accent-every 4]
+    python tools/make_stage.py OUT.x [--half 60] [--step 5] [--line 0.06] [--accent-every 4] [--height 0]
 
 MMD's own floor is the grid that comes with the coordinate axes (menu 215): the grid cannot be kept without
 the red, green and blue axis lines.  This accessory is a floor of its own, loaded with `mmd accessory load
@@ -10,6 +10,8 @@ OUT.x` after `mmd menu set 215 off` (and `221 off`: the ground shadow is a light
   against it, nearly black and slightly transparent;
 * a line every `step` units in both directions, a thin quad 2 * `line` wide at y 0; every
   `accent-every`-th one (counted from the centre) is twice as wide and amber, the others cool white.
+* `--height` lifts the whole floor (the lines to y = height, the plane with them).  On the floor the choreography was
+  made on, the model's soles stand 0.111 above y 0 (2026-10-14, the feet layer): `--height 0.111` puts the floor under them.
   The colour of a material is in its emissive part alone and its diffuse part is black, so the floor
   looks the same whatever the light of the scene: MMD adds the lit diffuse to the emissive and clamps,
   which turned an amber in both parts into yellow (measured: 1.0, 0.63, 0.19 came out about 1.0, 1.0, 0.3).
@@ -22,6 +24,7 @@ in sight under a wide shot, which reads as the edge of a stage.
 import argparse
 import dataclasses
 import json
+import math
 import os
 import sys
 from typing import List, Tuple
@@ -50,16 +53,19 @@ def _quad(stage, corners, material):
     stage.face_materials += [material, material]
 
 
-def floor(half=60.0, step=5.0, line=0.06, accent_every=4):
-    """the plane and the grid, in MMD units (see the module docstring)"""
+def floor(half=60.0, step=5.0, line=0.06, accent_every=4, height=0.0):
+    """the plane and the grid, in MMD units (see the module docstring), the lines at y = height"""
     if not half > 0 or not step > 0 or not line > 0:
         raise ValueError("--half, --step and --line must be greater than 0")
+    if not math.isfinite(height):
+        raise ValueError("--height must be a number")
     if step > half:
         raise ValueError("--step (%g) is larger than --half (%g): there would be one line" % (step, half))
     if accent_every < 0 or int(accent_every) != accent_every:
         raise ValueError("--accent-every is a whole number, 0 for no accent lines")
     stage = Stage([], [], [])
-    _quad(stage, [(-half, PLANE_DEPTH, -half), (-half, PLANE_DEPTH, half), (half, PLANE_DEPTH, half), (half, PLANE_DEPTH, -half)], 0)
+    deep = height + PLANE_DEPTH
+    _quad(stage, [(-half, deep, -half), (-half, deep, half), (half, deep, half), (half, deep, -half)], 0)
     n = int(half // step)
     for i in range(-n, n + 1):
         c = i * step
@@ -67,8 +73,8 @@ def floor(half=60.0, step=5.0, line=0.06, accent_every=4):
         w = line * (2.0 if accent else 1.0)
         material = 2 if accent else 1
         lo, hi = max(c - w, -half), min(c + w, half)                # the lines at the edge end with the plane
-        _quad(stage, [(lo, 0.0, -half), (lo, 0.0, half), (hi, 0.0, half), (hi, 0.0, -half)], material)
-        _quad(stage, [(-half, 0.0, lo), (-half, 0.0, hi), (half, 0.0, hi), (half, 0.0, lo)], material)
+        _quad(stage, [(lo, height, -half), (lo, height, half), (hi, height, half), (hi, height, -half)], material)
+        _quad(stage, [(-half, height, lo), (-half, height, hi), (half, height, hi), (half, height, lo)], material)
     return stage
 
 
@@ -114,16 +120,19 @@ def main(argv=None):
     p.add_argument("--step", type=float, default=5.0, help="between two lines (default 5, MMD's own grid)")
     p.add_argument("--line", type=float, default=0.06, help="half the width of a line (default 0.06)")
     p.add_argument("--accent-every", type=int, default=4, help="every N-th line is amber and wider; 0 for none (default 4)")
+    p.add_argument("--height", type=float, default=0.0,
+                   help="the height of the floor (its lines), in MMD units (default 0; 0.111 is where the model's soles stand)")
     args = p.parse_args(argv)
     try:
-        stage = floor(args.half, args.step, args.line, args.accent_every)
+        stage = floor(args.half, args.step, args.line, args.accent_every, args.height)
         out = os.path.abspath(args.out)
         write_bytes(out, x_text(stage).encode("ascii"))
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
     print(json.dumps({"ok": True, "out": out, "vertices": len(stage.vertices), "faces": len(stage.faces),
-                      "half": args.half, "step": args.step, "line": args.line, "accent_every": args.accent_every},
+                      "half": args.half, "step": args.step, "line": args.line, "accent_every": args.accent_every,
+                      "height": args.height},
                      ensure_ascii=True))
     return 0
 

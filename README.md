@@ -445,7 +445,7 @@ python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.j
 床は `tools/make_stage.py` で作る（座標軸の格子は軸線ごと消すしかないため）:
 
 ```
-python tools/make_stage.py stage_floor.x [--half 60] [--step 5] [--line 0.06] [--accent-every 4]
+python tools/make_stage.py stage_floor.x [--half 60] [--step 5] [--line 0.06] [--accent-every 4] [--height 0]
 mmd menu set 215 off        # 座標軸と標準の格子
 mmd menu set 221 off        # 地面影（暗い舞台では明るいしみに見える）
 mmd menu set 282 on         # 背景黒化 = alpha つきで書き出す
@@ -454,6 +454,10 @@ mmd accessory load stage_floor.x
 
 MMD はアクセサリをファイルの数値の 10 倍で表示するので、ファイルには MMD 単位の 1/10 を書く。色は自己発光だけに入れる
 （拡散色にも入れると照明分が足されて飽和し、色相が転ぶ）。
+
+`--height` は床全体（線と面）を上げる（MMD 単位）。振付の元の床では、Sour 式リンの靴底は y 0 より 0.111（約 0.9 cm）上に立つ
+（2026-10-14、足の層の測り）。`--height 0.111` でその高さの床になる（hinata の `stage6/feet/stage/stage_floor_y0111.x` とバイト単位で同じ）。
+既定の 0 は前の `stage_floor.x` と同じ。
 
 #### 舞台を世界に置く（look の `stage`、`tools/mv_world.py`）
 
@@ -468,7 +472,8 @@ MMD はアクセサリをファイルの数値の 10 倍で表示するので、
 - **玉ボケ**: 幕の少し手前（半径の 85〜100 %）、幕の周り `stage.specks` 度（既定 160）に、前の画面と同じ密度で。漂いと瞬きは前と同じ。
 - **床**（`stage.floor` 1、既定）: `make_stage.py` の床（同じ寸法・線）を、v7 が見せた色で描く。**MMD には床のアクセサリを読ませない**
   （計画の `accessories` を空に）。読ませたままだと、人物のファイルの最初の絵に床の alpha（226〜252）が写り、5 % を超えると止まる。
-  `stage.floor` 0 なら床は MMD が描き、幕と光だけを世界に置く。
+  `stage.floor` 0 なら床は MMD が描き、幕と光だけを世界に置く。床の高さは `stage.floor_y`（既定 0。`make_stage.py --height` と
+  同じ数を書く。靴底の高さの床なら 0.111）で、線・縁・光だまり・影はこの高さの面に描く。
 - **光だまりと影**（`stage.pool`・`stage.shadow`、0〜1、既定 0）: 人物のまわりの床を照らし（センターを 90 コマで均した所、`pool_radius`・
   `pool_colour`）、足の裏の下に接地の影（足首の少し後ろからつま先まで、足が上がるほど淡く広く）と体のまわりの淡い暗がりを落とす。
   足の位置は足ＩＫ・つま先ＩＫを順運動学（`mmd_cli/fk.py`）で読むので、`--model` と `--motion`（MMD が読む順）が要る。

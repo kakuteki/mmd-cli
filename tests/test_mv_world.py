@@ -325,6 +325,53 @@ class FloorTest(unittest.TestCase):
         self.assertGreater(at(there, u8, v8), at(there, u0, v0))
         self.assertGreater(at(here, u0, v0), at(here, u8, v8))
 
+    # the floor raised to where the model's soles stand (stage.floor_y, make_stage --height; 0.111 on 2026-10-14), seen from
+    # close and above: there the height moves the floor's points several pixels on the picture
+    LIFT = 0.111
+
+    def close_view(self):
+        return mv_world.View(state((0, 1, 0), 6.0, (35.0, 0.0, 0.0)), (640, 360))
+
+    def test_a_raised_floor_has_its_lines_at_its_height(self):
+        view = self.close_view()
+        rgb, cover = mv_world.floor([view], world_look(floor_y=self.LIFT), view.size)
+        bright = rgb.sum(axis=2) * cover
+        # lines z = k run across the picture: read down a column, between where the line's two edges project (the amber
+        # line at z = 0 is twice as wide)
+        for z, half in ((0.0, 0.12), (5.0, 0.06)):
+            edges = lambda y: view.project([(1.0, y, z - half), (1.0, y, z + half)])
+            u, v, _ = edges(self.LIFT)
+            _, v0, _ = edges(0.0)
+            middle, middle0 = float(v.mean()), float(v0.mean())
+            self.assertGreater(abs(middle - middle0), 2.0)                  # the height shows on the picture
+            col = int(round(u.mean()))
+            rows = numpy.arange(int(v.min()) - 8, int(v.max()) + 9)
+            plane = numpy.median(numpy.r_[bright[rows[:4], col], bright[rows[-4:], col]])
+            prof = numpy.clip(bright[rows, col] - plane, 0, None)
+            centroid = float((prof * rows).sum() / prof.sum())
+            self.assertAlmostEqual(centroid, middle, delta=0.2, msg=z)
+
+    def test_on_a_raised_floor_the_shadow_lies_under_the_sole(self):
+        lift = self.LIFT
+        view = self.close_view()
+        figure = FakeFigure(left=((-30.0, 1.7 + lift, 30.0), (-30.0, 0.1 + lift, 30.0)),       # one foot far off
+                            right=((2.5, 1.7 + lift, 2.5), (2.5, 0.1 + lift, 2.5 + 1e-6)),   # a sole as short as a point
+                            pelvis=(40.0, 10.0, 40.0))                                        # her body's shade far off
+        figure.rest = (1.7 + lift, 0.1 + lift)
+        lit = mv_world.floor([view], world_look(floor_y=lift, shadow=0.0), view.size, [figure])[0].sum(axis=2)
+        shaded = mv_world.floor([view], world_look(floor_y=lift, shadow=1.0), view.size, [figure])[0].sum(axis=2)
+        dark = numpy.clip(lit - shaded, 0, None)
+        u, v, _ = view.project([(2.5, lift, 2.5)])
+        _, v0, _ = view.project([(2.5, 0.0, 2.5)])
+        # the darkest point (the shade is round the sole's point on the floor), to a fraction of a pixel down the picture
+        r0, c0 = int(v[0]) - 40, int(u[0]) - 40
+        window = dark[r0:r0 + 81, c0:c0 + 81]
+        r, c = numpy.unravel_index(int(numpy.argmax(window)), window.shape)
+        a, b, d = window[r - 1, c], window[r, c], window[r + 1, c]
+        peak = r0 + r + 0.5 * (a - d) / (a - 2 * b + d)
+        self.assertGreater(abs(v[0] - v0[0]), 5.0)
+        self.assertAlmostEqual(peak, v[0], delta=0.5)
+
     def test_the_floor_of_several_moments_is_their_average(self):
         look = world_look()
         a, b = self.view(angles=(10.0, -1.0, 0.0)), self.view(angles=(10.0, 1.0, 0.0))

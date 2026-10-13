@@ -106,6 +106,7 @@ DEFAULT_LOOK = {
               "specks": 160.0,      # the specks lie on the cyc over this many degrees round the stage centre
               "floor": 1,           # 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it
               "floor_half": 60.0, "floor_step": 5.0, "floor_line": 0.06, "floor_accent_every": 4,   # make_stage.py's floor
+              "floor_y": 0.0,       # its height (make_stage --height): 0.111 is where the model's soles stand (2026-10-14)
               "pool": 0.0,          # a pool of light on the floor round the dancer, 0 none to 1 (needs her motion)
               "pool_radius": 14.0,  # its size (a standard deviation, MMD units)
               "pool_colour": [34, 32, 30],      # what it adds to the floor at its middle at 1
@@ -175,6 +176,8 @@ def _check_stage(stage):
             raise ValueError("stage.%s must be above 0, not %r" % (key, stage[key]))
     if stage["radius"] < 0:
         raise ValueError("stage.radius is the radius of the cyc, or 0 for one infinitely far: not %r" % (stage["radius"],))
+    if not math.isfinite(stage["floor_y"]):
+        raise ValueError("stage.floor_y is the height of the floor in MMD units, not %r" % (stage["floor_y"],))
     if not 0 < stage["specks"] <= 360:
         raise ValueError("stage.specks is the degrees round the stage the specks lie over, above 0 up to 360: not %r"
                          % (stage["specks"],))

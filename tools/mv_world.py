@@ -19,7 +19,8 @@ floor MMD drew was black with nothing under her feet.  Here the same pieces lie 
 * the specks: on the cyc (a little in front of it, each at its own depth) over `specks` degrees round the stage centre, as
   many per degree as the plate had per picture, drifting and twinkling as before;
 * the floor (`floor` 1): the floor of tools/make_stage.py (a line every `floor_step`, amber every `floor_accent_every`-th,
-  `floor_half` to each side) in the colours v7 showed it, so MMD renders the dancer without the floor accessory.  It can take a
+  `floor_half` to each side, at the height `floor_y`: its --height; 0.111 is where the model's soles stand) in the colours v7
+  showed it, so MMD renders the dancer without the floor accessory.  It can take a
   pool of light round the dancer (`pool`) and the shadows of her feet and body (`shadow`), both from her motion (Figure):
   the ankles and toes (the IK bones), the pelvis and the centre, by forward kinematics (mmd_cli/fk.py).
 
@@ -31,6 +32,7 @@ frames of the MV's camera, tests/test_mv_world.py).  A camera that turns about i
 which way MMD turns the picture has not been measured.
 """
 import argparse
+import copy
 import json
 import math
 import os
@@ -448,16 +450,26 @@ def _floor_once(view, stage, figure):
     return rgb, cover
 
 
+def _over_the_floor(view, height):
+    """`view` with the world lowered by `height`: a floor at y = height is then the plane y = 0 the floor is worked out on
+    (its lines, edges, pool and shadows lie at x and z, which the lowering keeps)"""
+    if not height:
+        return view
+    lowered = copy.copy(view)
+    lowered.eye = view.eye - np.array([0.0, float(height), 0.0])
+    return lowered
+
+
 def floor(views, look, size, figures=None):
     """(rgb, cover) of the floor seen by the cameras `views` (the moments a shutter is open), averaged: cover is the share
     of each pixel the floor takes, rgb its colour there.  `figures`: the dancer at each of those moments (Figure.state), for
-    the pool of light and the shadows"""
+    the pool of light and the shadows.  The floor lies at y = stage.floor_y (make_stage --height)"""
     stage = look["stage"]
     w, h = size
     total = np.zeros((h, w, 3))
     covered = np.zeros((h, w))
     for i, view in enumerate(views):
-        rgb, cover = _floor_once(view, stage, figures[i] if figures else None)
+        rgb, cover = _floor_once(_over_the_floor(view, stage["floor_y"]), stage, figures[i] if figures else None)
         total += rgb * cover[..., None]
         covered += cover
     cover = covered / float(len(views))
@@ -577,10 +589,10 @@ def moments(index, fps, subframes=1, shutter=1.0):
 SHARP_ENOUGH = 1.0               # px: a floor that moves less while the shutter is open is drawn once, at its middle
 
 
-def floor_moves(a, b, half):
-    """the farthest a point of the floor square (a grid of them) moves on the picture from camera a to camera b"""
+def floor_moves(a, b, half, height=0.0):
+    """the farthest a point of the floor square (a grid of them, at y = height) moves on the picture from camera a to b"""
     g = np.linspace(-half, half, 9)
-    points = np.array([(x, 0.0, z) for x in g for z in g])
+    points = np.array([(x, height, z) for x in g for z in g])
     ua, va, da = a.project(points)
     ub, vb, db = b.project(points)
     w, h = a.size
@@ -588,12 +600,13 @@ def floor_moves(a, b, half):
     return float(np.hypot(ub - ua, vb - va)[seen].max()) if seen.any() else 0.0
 
 
-def floor_moments(track, times, size, half):
+def floor_moments(track, times, size, half, height=0.0):
     """the moments the floor is drawn at for a frame whose shutter is open at `times`: all of them when the floor moves
     SHARP_ENOUGH or more in that time (their average is its motion blur), else only their middle (it is sharp then: on the
     MV's camera it moves at most 2.6 px, under 1 px in 90 % of the frames)"""
     middle = sum(times) / len(times)
-    if len(times) > 1 and floor_moves(view_at(track, times[0], size), view_at(track, times[-1], size), half) >= SHARP_ENOUGH:
+    if len(times) > 1 and floor_moves(view_at(track, times[0], size), view_at(track, times[-1], size), half,
+                                      height) >= SHARP_ENOUGH:
         return list(times)
     return [middle]
 
@@ -611,7 +624,7 @@ def stage_image(look, size, track, fps, index, light_frames, subframes=1, shutte
     small = Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
     back = np.asarray(small.resize(tuple(size), Image.BILINEAR), dtype=np.float64)
     if int(look["stage"]["floor"]):
-        drawn = floor_moments(track, times, size, float(look["stage"]["floor_half"]))
+        drawn = floor_moments(track, times, size, float(look["stage"]["floor_half"]), float(look["stage"]["floor_y"]))
         views = [view_at(track, t, size) for t in drawn]
         figures = [figure.state(t) for t in drawn] if figure is not None else None
         rgb, cover = floor(views, look, size, figures)
