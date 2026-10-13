@@ -5,6 +5,7 @@ where it was traced.
 
     python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--arrays a.npz] [--r-bal 0.6]
                                   [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip-deg 15] [--no-dip]
+                                  [--mmd-ik tools/leg_ik.py]
 
 Why (the analysis a05 of 2026-10-07, REPORT 4.1): the traced dance keeps the body between the feet while one foot is up;
 the centre of mass (COM) is 10.8 cm (v7: 11.3) from the standing foot's centre, sideways.  People standing on one foot
@@ -92,7 +93,8 @@ and the dip), apa (how much of the shift is done when the foot lifts, and when i
 is out of the leg's reach, before and after; frames whose slack the layer took under REACH_TOL_CM), knee (flexion on the
 floor, before and after; over 159 degrees), hip (adduction against the reference range, before and after), landings (the
 knee's bend within 0.13 s after a landing, before and after), feet_carry (per foot: frames carried, the largest move, on
-the floor 0), untouched (the other bones' bytes), solver.
+the floor 0), mmd_ik (with --mmd-ik: the new misses per round, what is left, the frames held back, the solver's md5),
+untouched (the other bones' bytes), solver.
 --arrays writes the per-frame curves (the shift, the COM before and after, the pull, the drop, the dip, the knees, the
 carry, ...).
 """
