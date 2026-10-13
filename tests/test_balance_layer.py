@@ -414,6 +414,46 @@ class NothingToDoTest(unittest.TestCase):
         self.assertLess(np.abs(shift).max() * CM, 1.0)
 
 
+class ReviewTest(unittest.TestCase):
+    """the review's tests (2026-10-14; each fails on a copy broken one way: no short-step discount, the pull not weakened
+    by the other foot's height, センター's parent turn applied the wrong way round)"""
+
+    def test_hovering_foot_in_a_wide_stance_leaves_the_body(self):
+        """feet 40 cm apart, the left foot only 3 cm up for a second: the trace's feet hover 0.4-4 cm even on two feet
+        (a05), a05's single support needs 5 cm, the MV shows no lifted foot: the body is not carried over the right foot"""
+        last = 119
+        motion = dance(last=last, spread=1.6, centre=(0.0, -0.8, 0.0), left_lifts=[(40, 50, 80, 90, 0.375)])
+        out = balance_layer.layer(MODEL, motion).motion
+        shift = centre_offsets(motion, out, last)
+        self.assertLess(np.linalg.norm(shift[:, [0, 2]], axis=1).max() * CM, 1.0)
+
+    def test_brief_step_pull_is_its_share(self):
+        """with the acceleration bound lifted, a 0.2 s step is still pulled only its share of the way (the inverted
+        pendulum's drift, about a quarter of 17 cm), not all the way"""
+        last = 89
+        motion = dance(last=last, left_lifts=[(40, 43, 44, 47, 1.0)])
+        out = balance_layer.layer(MODEL, motion, {"acc_max": 30.0}).motion
+        far = np.abs(centre_offsets(motion, out, last)[:, 0]).max() * CM
+        self.assertGreater(far, 1.0)
+        self.assertLess(far, 8.0)
+
+    def test_turned_root_still_goes_over_the_standing_foot(self):
+        """the whole dance turned 90 degrees by a key on 全ての親: the shift is a world shift, written in センター's
+        parent's frame, so the body still goes over the right foot"""
+        last = 119
+        motion = dance(last=last, left_lifts=LIFT_RIGHT_STANDS)
+        h = math.radians(90.0) / 2.0
+        motion.bones += [key("全ての親", 0, q=(0.0, math.sin(h), 0.0, math.cos(h))),
+                         key("全ての親", last, q=(0.0, math.sin(h), 0.0, math.cos(h)))]
+        out = balance_layer.layer(MODEL, motion).motion
+        before, after = balance_layer.Body(MODEL, motion), balance_layer.Body(MODEL, out)
+        foot = 0.5 * (before.ankle("右") + before.toe("右"))[:, [0, 2]]
+        lat_before = np.linalg.norm(before.com()[60:75, [0, 2]] - foot[60:75], axis=1) * CM
+        lat_after = np.linalg.norm(after.com()[60:75, [0, 2]] - foot[60:75], axis=1) * CM
+        self.assertGreater(lat_before.min(), 12.0)
+        self.assertLess(lat_after.max(), 4.0)
+
+
 class CliTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

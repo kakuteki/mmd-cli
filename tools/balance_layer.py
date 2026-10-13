@@ -612,6 +612,7 @@ def support_plan(body, p, com):
     foot = np.full(F, "", dtype=object)
     share = np.zeros(F)
     shares = []
+    kinds = []
     lead, lag = int(round(p["lead_s"] * FPS)), int(round(p["lag_s"] * FPS))
     for i, (a, b, s) in enumerate(ss):
         prev_end = ss[i - 1][1] if i else -10 ** 9
@@ -619,6 +620,12 @@ def support_plan(body, p, com):
         peak = float(np.max(lift[s][a:b + 1]))
         need = need_share(b - a + 1, float(com[(a + b) // 2, 1]) * UNIT_M)
         shares.append(need)
+        if float(np.max(low[other[s]][a:b + 1])) * CM < p["clear_cm"]:
+            # the other foot only hovers (never CLEAR_CM up): the trace's feet hover 0.4-4 cm on two feet too (a05), so
+            # this is no evidence of standing on one foot, and the MV shows no lifted foot: no weight shift is asked for
+            kinds.append("hover")
+            continue
+        kinds.append("pulled")
 
         def put(t, v):
             if v > w[t]:
@@ -636,7 +643,7 @@ def support_plan(body, p, com):
                 break
             put(t, peak * (1.0 - j / (lag + 1.0)))
     return {"low": low, "sup": sup, "single": single, "runs": ss, "w": w, "foot": foot, "share": share,
-            "run_shares": shares}
+            "run_shares": shares, "run_kinds": kinds}
 
 
 def need_share(frames, com_height_m):
@@ -994,12 +1001,17 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
     if F >= 3:
         acc[1:-1] = d2((com1 - com0)[:, [0, 2]] * UNIT_M) * FPS * FPS
     rows = []
-    for (a, b, s), need in zip(plan["runs"], plan["run_shares"]):
+    for (a, b, s), need, kind in zip(plan["runs"], plan["run_shares"], plan["run_kinds"]):
         o = "右" if s == "左" else "左"
         lift = float(plan["low"][o][a:b + 1].max() * CM)
         seg = slice(a, b + 1)
         da, db = dist_after[seg], dist_before[seg]
         rb = plan["r_bal_cm"]
+        if kind != "pulled":
+            rows.append({"first": a, "last": b, "s": [round(a / FPS, 2), round(b / FPS, 2)], "frames": b - a + 1,
+                         "foot": s, "other_up_cm": round(lift, 1), "kind": kind,
+                         "shift_cm_max": round(float(np.linalg.norm(shift[seg][:, [0, 2]], axis=1).max() * CM), 2)})
+            continue
         if np.isfinite(da).any() and np.isfinite(db).any():
             before_cm = float(np.nanmedian(db))
             intended = rb + (1.0 - need) * max(0.0, before_cm - rb)
@@ -1022,15 +1034,18 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
             if not limited:
                 limited.append("pull %.2f" % frac)
         rows.append({"first": a, "last": b, "s": [round(a / FPS, 2), round(b / FPS, 2)], "frames": b - a + 1,
-                     "foot": s, "other_up_cm": round(lift, 1), "need_share": round(need, 3),
+                     "foot": s, "other_up_cm": round(lift, 1), "kind": kind, "need_share": round(need, 3),
                      "intended_cm": None if intended is None else round(intended, 2),
                      "band_distance_cm_before": round(float(np.nanmedian(db)), 2) if np.isfinite(db).any() else None,
                      "band_distance_cm_after": round(float(np.nanmedian(da)), 2) if np.isfinite(da).any() else None,
                      "short_of_target_cm": round(max(short, 0.0), 2), "limited_by": limited})
     rep["runs"] = rows
-    rep["runs_summary"] = {"count": len(rows), "short_over_3cm": sum(1 for r in rows if r["short_of_target_cm"] > 3.0),
-                           "short_over_3cm_by_reach": sum(1 for r in rows if r["short_of_target_cm"] > 3.0 and "reach" in r["limited_by"]),
-                           "short_over_3cm_holds": sum(1 for r in rows if r["short_of_target_cm"] > 3.0 and r["frames"] >= 15)}
+    pulled = [r for r in rows if r["kind"] == "pulled"]
+    rep["runs_summary"] = {"count": len(rows), "kinds": {k: sum(1 for r in rows if r["kind"] == k) for k in sorted({r["kind"] for r in rows})},
+                           "short_over_3cm": sum(1 for r in pulled if r["short_of_target_cm"] > 3.0),
+                           "short_over_3cm_by_reach": sum(1 for r in pulled if r["short_of_target_cm"] > 3.0 and "reach" in r["limited_by"]),
+                           "short_over_3cm_holds": sum(1 for r in pulled if r["short_of_target_cm"] > 3.0 and r["frames"] >= 15),
+                           "not_pulled_shift_cm_max": round(max([r["shift_cm_max"] for r in rows if r["kind"] != "pulled"] or [0.0]), 2)}
     # the centre
     sh = shift * CM
     step = np.linalg.norm(np.diff(sh, axis=0), axis=1) if F > 1 else np.zeros(0)
