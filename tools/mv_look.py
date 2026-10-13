@@ -61,6 +61,17 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+
+def _sibling(name):
+    """a tool next to this one, loaded from its file (tools/ is no package)"""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+mv_world = _sibling("mv_world")
+
 DEFAULT_LOOK = {
     # colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)
     "plate": {"base": [10, 12, 20], "haze": [34, 44, 78], "pool": [70, 86, 140], "horizon": 0.68, "vignette": 0.45},
@@ -82,6 +93,9 @@ DEFAULT_LOOK = {
     # every frame (0 none, up to about 10); both lie under the text in front
     "lens": {"vignette": 0.3, "grain": 3},
     "flares": [],
+    # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py); world 0 keeps
+    # them fixed to the picture, as before
+    "stage": copy.deepcopy(mv_world.DEFAULT_STAGE),
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -133,7 +147,32 @@ def merge_look(overrides):
         # a motion with a part of a period per loop would jump where the loop starts again
         if not all(int(v) == v and v >= 1 for v in look[name]["cycles"]):
             raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
+    _check_stage(look["stage"])
     return look
+
+
+def _check_stage(stage):
+    """the values of the stage section that tools/mv_world.py can draw (see its docstring)"""
+    for key in ("world", "floor"):
+        if stage[key] not in (0, 1):
+            raise ValueError("stage.%s is 0 or 1, not %r" % (key, stage[key]))
+    for key in ("floor_half", "floor_step", "floor_line", "pool_radius"):
+        if not stage[key] > 0:
+            raise ValueError("stage.%s must be above 0, not %r" % (key, stage[key]))
+    if stage["radius"] < 0:
+        raise ValueError("stage.radius is the radius of the cyc, or 0 for one infinitely far: not %r" % (stage["radius"],))
+    if not 0 < stage["specks"] <= 360:
+        raise ValueError("stage.specks is the degrees round the stage the specks lie over, above 0 up to 360: not %r"
+                         % (stage["specks"],))
+    if int(stage["floor_accent_every"]) != stage["floor_accent_every"] or stage["floor_accent_every"] < 0:
+        raise ValueError("stage.floor_accent_every is a whole number, 0 for no accent lines")
+    for key in ("pool", "shadow"):
+        if not 0 <= stage[key] <= 1:
+            raise ValueError("stage.%s is 0 (none) to 1, not %r" % (key, stage[key]))
+    if any(c < 0 for c in stage["pool_colour"]):
+        raise ValueError("stage.pool_colour is r, g, b from 0")
+    if stage["world"] and not stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
+        raise ValueError("stage.pool and stage.shadow light and darken the floor this tool draws: they need stage.floor 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------
@@ -561,13 +600,13 @@ def _same_folder(a, b):
 
 def prepared_key(look, size, fps, cues_path):
     """what the layers and the text of `prepare` are made from: the values of the look, the size and the rate of the video,
-    the bytes of the cue file, and the code that draws them (this tool and tools/mv_text.py).  The fonts mv_text finds on
-    the machine are not in it (tools/mv_chunks.py -Resume does not see them either)"""
+    the bytes of the cue file, and the code that draws them (this tool, tools/mv_text.py and tools/mv_world.py).  The fonts
+    mv_text finds on the machine are not in it (tools/mv_chunks.py -Resume does not see them either)"""
     digest = hashlib.sha256(json.dumps({"look": look, "size": [int(size[0]), int(size[1])], "fps": fps},
                                        sort_keys=True).encode("utf-8"))
     here = os.path.dirname(os.path.abspath(__file__))
     for label, path in (("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
-                        ("mv_text", os.path.join(here, "mv_text.py"))):
+                        ("mv_text", os.path.join(here, "mv_text.py")), ("mv_world", os.path.join(here, "mv_world.py"))):
         digest.update(("\0%s\0" % label).encode("ascii"))
         if path is None:
             digest.update(b"none")
