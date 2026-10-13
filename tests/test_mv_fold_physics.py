@@ -293,6 +293,16 @@ class PhysicsAlignCommandTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--physics-align", result["error"]["message"])
 
+    @unittest.skipUnless(FFMPEG, "needs ffmpeg")
+    def test_a_dancer_ffmpeg_cannot_read_stops_the_aligned_fold_with_its_message(self):
+        with open(self.fg, "wb") as f:
+            f.write(b"RIFF\0\0\0\0AVI not really")
+        code, result = answer(["render", self.fg, self.look, os.path.join(self.folder, "o.mp4"), "--size", "320x180", "--fps", "240",
+                               "--subframes", "8", "--physics-align", "--work", os.path.join(self.folder, "w")])
+        self.assertEqual(code, 1, result)
+        self.assertIn("could not read the dancer for its physics", result["error"]["message"])
+        self.assertFalse(os.path.exists(os.path.join(self.folder, "o.mp4")))
+
     def test_aligning_needs_a_rate_of_whole_steps_of_the_physics(self):
         # 90 fps folded by 3: the physics (60 a second) steps every 1.5 frames, no window can follow it
         code, result = answer(["render", self.fg, self.look, os.path.join(self.folder, "o.mp4"), "--size", "320x180", "--fps", "90",

@@ -62,6 +62,7 @@ import math
 import os
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -641,22 +642,23 @@ def measure_physics(fg, size, fps, subframes, taken, start=None, duration=None, 
     h = max(2, int(round(size[1] * w / float(size[0]))))
     argv = (["ffmpeg", "-v", "error"] + dancer_input(fg, fps, subframes, start, duration, offset)
             + ["-vf", "scale=%d:%d:flags=area" % (w, h), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
-    reader = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    with tempfile.TemporaryFile() as said:          # not a pipe: ffmpeg could fill one while the frames are read
+        reader = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=said, stdin=subprocess.DEVNULL)
 
-    def pictures():
-        n = w * h * 4
-        while True:
-            raw = reader.stdout.read(n)
-            if len(raw) < n:
-                return
-            yield np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
-    try:
-        lone = lone_pixels(pictures())
-    finally:
-        reader.stdout.close()
-        error = reader.stderr.read().decode("utf-8", "replace")
-        reader.stderr.close()
-        reader.wait()
+        def pictures():
+            n = w * h * 4
+            while True:
+                raw = reader.stdout.read(n)
+                if len(raw) < n:
+                    return
+                yield np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
+        try:
+            lone = lone_pixels(pictures())
+        finally:
+            reader.stdout.close()
+            reader.wait()
+            said.seek(0)
+            error = said.read().decode("utf-8", "replace")
     if reader.returncode != 0 or not lone:
         raise RuntimeError("ffmpeg could not read the dancer for its physics (%s): %s" % (reader.returncode, error.strip()[-300:]))
     window = PHASE_WINDOW * int(round(rate / float(SONG_FPS)))
