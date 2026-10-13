@@ -705,6 +705,14 @@ class RelaxTest(unittest.TestCase):
         self.assertGreater(sum(more_bent), sum(less_bent) + 4.0)
         del d_f
 
+    def test_the_report_counts_the_open_hands_curl_apart(self):
+        # an open hand is curled (the relaxed hand), the choreography's stretched ones too: the shape's measure shows
+        # it in the open hands held still, which the held shapes do not count
+        dance = hand_dance([(0, "open"), (LAST, "open")])
+        shape = hand_layer.layer(MODEL, dance, only("relax"), pulp=PULP).report["shape"]["static"]["左"]["中指"]
+        self.assertGreater(shape["tip_mm"]["open_still"]["p50"], 5.0)
+        self.assertEqual(shape["tip_mm"]["held_still"]["n"], 0)
+
     def test_the_tenodesis_is_not_carried_past_the_measured_wrist(self):
         # Su 2005 measured the wrist from 60 degrees palmar flexion to 60 extension: past it the fingers follow no further
         dance = hand_dance([(0, "open"), (LAST, "open")])

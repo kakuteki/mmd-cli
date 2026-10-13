@@ -1235,7 +1235,8 @@ HELD_REACH = 4                   # frames each way the input's joint must be sti
 
 def shape_shift(hands, ang_in, ang_out, held):
     """how far each finger moved from the input's place in the hand (mm): the mean of its outer joints and tip (the
-    outline) and the tip alone; everywhere, and in the held shapes away from their changes (as change())"""
+    outline) and the tip alone; everywhere, in the held shapes away from their changes (as change()) and in the open
+    hands held as still (open_still: relax curls them all, the choreography's stretched hands too)"""
     out = {}
     for side, hand in hands.items():
         h = held[side] > 0.5
@@ -1251,8 +1252,11 @@ def shape_shift(hands, ang_in, ang_out, held):
                 moving[1:] |= np.abs(np.diff(ang_in[j.bone][0])) >= 0.05
             near = np.array([moving[max(0, t - HELD_REACH):t + HELD_REACH + 2].any() for t in range(len(moving))])
             keep = h & ~near
-            rows[finger] = {"outline_mm": {"all": stats(d.mean(axis=1)), "held_still": stats(d.mean(axis=1)[keep])},
-                            "tip_mm": {"all": stats(d[:, -1]), "held_still": stats(d[keep, -1])}}
+            still_open = ~h & ~near
+            rows[finger] = {"outline_mm": {"all": stats(d.mean(axis=1)), "held_still": stats(d.mean(axis=1)[keep]),
+                                           "open_still": stats(d.mean(axis=1)[still_open])},
+                            "tip_mm": {"all": stats(d[:, -1]), "held_still": stats(d[keep, -1]),
+                                       "open_still": stats(d[still_open, -1])}}
         out[side] = rows
     return out
 
