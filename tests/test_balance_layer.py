@@ -142,8 +142,8 @@ def centre_offsets(motion_in, motion_out, last):
     return np.array([np.subtract(pb, pa) for (pa, _), (pb, _) in zip(a, b)])
 
 
-def others(motion):
-    return vmd.dumps(vmd.Motion(model_name=motion.model_name, bones=[k for k in motion.bones if k.name != "センター"],
+def others(motion, skip=("センター",)):
+    return vmd.dumps(vmd.Motion(model_name=motion.model_name, bones=[k for k in motion.bones if k.name not in skip],
                                 morphs=motion.morphs))
 
 
@@ -221,20 +221,31 @@ class WeightShiftTest(unittest.TestCase):
     def test_smooth_no_one_frame_jump(self):
         step = np.linalg.norm(np.diff(self.shift, axis=0), axis=1) * CM
         self.assertLess(step.max(), 1.5)
-        # the COM's added acceleration on the floor stays under the bound (the pressure under the foot can make it)
+        # the COM's added acceleration on the floor stays under the bound (the pressure under the foot can make it), but
+        # for the lifted leg's share (thigh, shank and foot: 20.9 % of the mass) of what the carry adds to its foot
         added = (balance_layer.Body(MODEL, self.out).com() - balance_layer.Body(MODEL, self.motion).com())[:, [0, 2]]
         acc = np.linalg.norm(added[2:] - 2 * added[1:-1] + added[:-2], axis=1) * 0.08 * FPS * FPS
-        self.assertLess(acc.max(), balance_layer.ACC_MAX * 1.1)
+        foot = (world(self.out, ["左足ＩＫ"], self.last)["左足ＩＫ"][0] - world(self.motion, ["左足ＩＫ"], self.last)["左足ＩＫ"][0])
+        foot_acc = np.linalg.norm(foot[2:] - 2 * foot[1:-1] + foot[:-2], axis=1) * 0.08 * FPS * FPS
+        self.assertLess(acc.max(), balance_layer.ACC_MAX * 1.1 + 0.209 * foot_acc.max())
+        self.assertLess(acc.max(), 2.0 * balance_layer.ACC_MAX)
         # and the hips' drop (for the legs' reach; no landing takes weight here) is slower still
         down = self.shift[:, 1]
         acc_y = np.abs(down[2:] - 2 * down[1:-1] + down[:-2]) * 0.08 * FPS * FPS
         self.assertLess(acc_y.max(), balance_layer.DROP_ACC_MAX * 1.1)
 
     def test_feet_and_everything_else_untouched(self):
-        self.assertEqual(others(self.motion), others(self.out))
+        """センター and the lifted foot's IK (on the floor plane, while it is up) are written; every other bone, the
+        morphs and the standing foot are the dance's bytes"""
+        self.assertEqual(others(self.motion, skip=("センター", "左足ＩＫ")), others(self.out, skip=("センター", "左足ＩＫ")))
         self.assertTrue(self.report["untouched"]["identical"])
-        names = {k.name for k in self.out.bones if k.name == "センター"}
-        self.assertEqual(names, {"センター"})
+        self.assertEqual(self.report["untouched"]["written"], ["センター", "左足ＩＫ"])
+        before, after = world(self.motion, ["左足ＩＫ"], self.last)["左足ＩＫ"], world(self.out, ["左足ＩＫ"], self.last)["左足ＩＫ"]
+        move = after[0] - before[0]
+        np.testing.assert_allclose(move[:41], 0.0, atol=1e-6)               # on the floor till it lifts
+        np.testing.assert_allclose(move[90:], 0.0, atol=1e-6)               # and from its landing
+        np.testing.assert_allclose(move[:, 1], 0.0, atol=1e-6)              # its height is the dance's
+        np.testing.assert_allclose(after[1], before[1], atol=1e-6)          # and its turn
 
     def test_legs_reach_their_feet(self):
         after = balance_layer.Body(MODEL, self.out)
@@ -274,6 +285,86 @@ class ShortStepTest(unittest.TestCase):
         lean = np.flatnonzero(np.abs(shift[:, 0]) * CM > 0.5)
         self.assertGreater(lean[0], 41 - 20)                  # and not for a second around it
         self.assertLess(lean[-1], 46 + 25)
+
+
+def world(motion, names, last):
+    """per name, the world positions [F, 3] (units) and rotations [F, 4] of mmd_cli.fk"""
+    track = fk.world_track(MODEL, motion, names, 0, last)
+    return {n: (np.array([p for p, _ in track[n]]), np.array([q for _, q in track[n]])) for n in names}
+
+
+def heel_kick(last=119):
+    """standing on the right foot, 14 cm behind the left and near the middle; the left heel kicked up behind the hip
+    from 0.5 s to 3 s (the knee folded 155 degrees, as at 195 s of the MV): the layer moves the body back over the right
+    foot, towards the kicked heel (left in the world, the heel would fold the knee to 165 degrees)"""
+    motion = dance(last=last)
+    left = []
+    for f in range(last + 1):
+        s = min(smooth((f - 15) / 20.0), 1.0 - smooth((f - 70) / 20.0))
+        a = math.radians(-90.0) * s
+        left.append(key("左足ＩＫ", f, (-0.12 * s, 7.71 * s, 1.44 * s), q=(math.sin(a / 2), 0.0, 0.0, math.cos(a / 2))))
+    right = [key("右足ＩＫ", f, (0.8, 0.0, 1.8)) for f in range(last + 1)]
+    motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "右足ＩＫ")] + left + right
+    return motion
+
+
+class CarryTest(unittest.TestCase):
+    """a lifted foot goes with the body: its foot IK moves on the floor plane by the shift of センター (its height and
+    turn as the dance had them); on the floor it stays where it was traced"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.last = 119
+        cls.motion = heel_kick(cls.last)
+        cls.result = balance_layer.layer(MODEL, cls.motion)
+        cls.out = cls.result.motion
+        names = ["センター", "左足ＩＫ", "右足ＩＫ", "左つま先ＩＫ"]
+        cls.before = world(cls.motion, names, cls.last)
+        cls.after = world(cls.out, names, cls.last)
+
+    def test_kicked_foot_moves_with_the_body(self):
+        centre = self.after["センター"][0] - self.before["センター"][0]
+        foot = self.after["左足ＩＫ"][0] - self.before["左足ＩＫ"][0]
+        self.assertGreater(np.linalg.norm(centre[45:60, [0, 2]], axis=1).min() * CM, 5.0)        # the body went back
+        np.testing.assert_allclose(foot[45:60][:, [0, 2]], centre[45:60][:, [0, 2]], atol=1e-4)  # the heel with it
+        np.testing.assert_allclose(foot[:, 1], 0.0, atol=1e-6)                                  # its height kept
+        np.testing.assert_allclose(self.after["左足ＩＫ"][1], self.before["左足ＩＫ"][1], atol=1e-6)   # its turn kept
+        toe = self.after["左つま先ＩＫ"][0] - self.before["左つま先ＩＫ"][0]
+        np.testing.assert_allclose(toe, foot, atol=1e-6)
+
+    def test_feet_on_the_floor_stay(self):
+        body = balance_layer.Body(MODEL, self.motion)
+        on = body.height("左") < balance_layer.SUPPORT_H
+        self.assertTrue(on[:10].all() and on[-10:].all())
+        foot = self.after["左足ＩＫ"][0] - self.before["左足ＩＫ"][0]
+        np.testing.assert_allclose(foot[on], 0.0, atol=1e-6)
+        np.testing.assert_allclose(self.after["右足ＩＫ"][0], self.before["右足ＩＫ"][0], atol=1e-6)
+
+    def test_carry_is_smooth(self):
+        """the carry does not move the foot more abruptly than the dance itself swings it"""
+        for motion, out in ((self.motion, self.out), (dance(last=119, left_lifts=LIFT_RIGHT_STANDS), None)):
+            out = out or balance_layer.layer(MODEL, motion).motion
+            before, after = world(motion, ["左足ＩＫ"], 119)["左足ＩＫ"][0], world(out, ["左足ＩＫ"], 119)["左足ＩＫ"][0]
+            carry = after - before
+            acc = np.linalg.norm(carry[2:] - 2 * carry[1:-1] + carry[:-2], axis=1)
+            own = np.linalg.norm(before[2:] - 2 * before[1:-1] + before[:-2], axis=1)
+            self.assertGreater(np.abs(carry).max() * CM, 5.0)
+            self.assertLess(acc.max(), 0.75 * own.max())
+
+    def test_kicked_knee_not_folded_past_its_range(self):
+        """the knee of the kicked leg stays within 159 degrees (the reference range's upper proposal; left in the
+        world, the heel would come nearer the hip and the knee fold to 165)"""
+        kb = balance_layer.Body(MODEL, self.motion).knee_flexion("左")
+        ka = balance_layer.Body(MODEL, self.out).knee_flexion("左")
+        self.assertGreater(kb.max(), 150.0)                                  # the fixture: a deep fold
+        self.assertLessEqual(ka.max(), max(balance_layer.KNEE_FLEXION_DEG[1], kb.max()) + 0.5)
+
+    def test_report_names_the_carry(self):
+        carry = self.result.report["feet_carry"]
+        self.assertGreater(carry["左"]["frames"], 20)
+        self.assertEqual(carry["右"]["frames"], 0)
+        self.assertLess(carry["左"]["on_floor_cm_max"], 1e-4)
+        self.assertTrue(self.result.report["untouched"]["identical"])
 
 
 class SolverTest(unittest.TestCase):

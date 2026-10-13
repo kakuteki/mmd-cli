@@ -131,6 +131,9 @@ ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
 SET_MARGIN = 0.001              # m: the bounds are solved this much tighter, so the converged curve is inside the true ones
 FIX_HALF = 9                    # frames: the half-width of the smooth cover that brings an unconverged curve inside
+KEPT_MIN = 0.02                 # a foot carried 98 % and more: its leg sets no bound on the shift
+FREE_M = 1.0e3                  # m: the radius (or slab side) of a bound that does not bound
+CARRY_HALF = 6                  # frames: the half-width of the carry's smoothing (it changes over about 0.4 s)
 # ---- the landings ------------------------------------------------------------------------------------------------
 DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
 DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
@@ -194,6 +197,18 @@ class Body:
                     break
                 a = sk.parent(a)
         self.shift = np.zeros((self.F, 3))
+        self.carry = None                               # side -> [F]: how much of the floor shift its foot IK takes
+        self.below_ik = {}
+        for s in SIDES:
+            ik = sk.i(s + "足ＩＫ")
+            self.below_ik[s] = set()
+            for k in order:
+                a = k
+                while a is not None:
+                    if a == ik:
+                        self.below_ik[s].add(sk.bones[k].name)
+                        break
+                    a = sk.parent(a)
         self.rest = {n: sk.rest[sk.i(n)] for n in names}
         self._legs = {}
         self.legs_rest = {}
@@ -203,10 +218,13 @@ class Body:
         self.ankle_rest_y = {s: float(self.rest[s + "足ＩＫ"][1]) for s in SIDES}
         self.toe_rest_y = {s: float(self.rest[s + "つま先ＩＫ"][1]) for s in SIDES}
 
-    def moved(self, shift):
+    def moved(self, shift, carry=None):
+        """the body with everything under センター moved by shift [F, 3] (units, world) and each foot IK (with what hangs
+        on it) moved by carry[side] [F] times the shift's floor part"""
         other = object.__new__(Body)
         other.__dict__.update(self.__dict__)
         other.shift = np.asarray(shift, dtype=np.float64)
+        other.carry = carry
         other._legs = {}
         return other
 
@@ -216,6 +234,12 @@ class Body:
     def p(self, name):
         if name in self.under:
             return self._pos[name] + self.shift
+        if self.carry is not None:
+            for s, names in self.below_ik.items():
+                if name in names and s in self.carry:
+                    floor = self.shift.copy()
+                    floor[:, 1] = 0.0
+                    return self._pos[name] + self.carry[s][:, None] * floor
         return self._pos[name]
 
     def q(self, name):
@@ -774,17 +798,30 @@ def band_target(body, com, plan, r_bal_cm):
     return d * UNIT_M * plan["share"][:, None]
 
 
-def com_response(body, com0):
-    """how far the COM's floor point follows センター's floor move, per frame (the knees re-solved; the feet stay)"""
+def com_response(body, com0, carry=None):
+    """how far the COM's floor point follows センター's floor move, per frame (the knees re-solved; the feet on the floor
+    stay, a lifted foot goes with the body by its carry)"""
     F = body.F
     k = np.zeros(F)
     probe = 0.125                                           # units (1 cm)
     for axis in (0, 2):
         sh = np.zeros((F, 3))
         sh[:, axis] = probe
-        c = body.moved(sh).com()
+        c = body.moved(sh, carry).com()
         k += (c[:, axis] - com0[:, axis]) / probe
     return np.clip(0.5 * k, 0.5, 1.0)
+
+
+def carry_factor(low, p):
+    """[F]: how much of センター's floor shift a foot's IK takes: 0 while the foot supports (under SUPPORT_H), 1 from
+    CLEAR_CM up (a lifted foot goes with the body, so the lifted leg keeps the dance's shape against the pelvis), a
+    smoothstep between; then smoothed under itself (the running minimum over +-CARRY_HALF frames averaged by a raised
+    cosine), so it is 0 on every frame the foot supports and changes smoothly"""
+    clear = p["clear_cm"] / CM
+    raw = smoothstep((low - SUPPORT_H) / max(clear - SUPPORT_H, 1e-6))
+    c = np.clip(1.0 - smooth_cover(1.0 - raw, CARRY_HALF), 0.0, 1.0)
+    c[low < SUPPORT_H] = 0.0
+    return c
 
 
 def knee_give(L1, L2, flex_deg, give_deg):
@@ -807,9 +844,15 @@ def drop_allowance(body, plan, drop_max_cm, give_deg):
     return {"左": np.minimum(cap, give["右"]), "右": np.minimum(cap, give["左"])}
 
 
-def reach_discs(body, allowance):
+def hip_share(carry, s, F):
+    """1 - carry: how much of センター's floor shift moves leg s's hip against its foot"""
+    return np.ones(F) if carry is None or s not in carry else 1.0 - carry[s]
+
+
+def reach_discs(body, allowance, carry=None):
     """per leg, the disc of センター floor shifts (metres) that keep its IK target within reach with the hips also down
-    by up to allowance[leg] (units, per frame); a target already out of reach: no farther than it was"""
+    by up to allowance[leg] (units, per frame); a target already out of reach: no farther than it was.  A carried foot
+    moves with the hip by its carry: the hip moves against it by (1 - carry) y, so the disc grows by 1 / (1 - carry)"""
     discs = []
     for s in SIDES:
         D = body.ankle(s) - body.hip(s)
@@ -817,14 +860,20 @@ def reach_discs(body, allowance):
         v2 = v - np.clip(v, 0.0, allowance[s])
         R = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, np.linalg.norm(D, axis=1))
         r = np.sqrt(np.maximum(R * R - v2 * v2, 0.0))
-        discs.append((D[:, [0, 2]] * UNIT_M, r * UNIT_M))
+        g = hip_share(carry, s, body.F)
+        free = g < KEPT_MIN
+        gg = np.maximum(g, KEPT_MIN)[:, None]
+        centre = np.where(free[:, None], 0.0, D[:, [0, 2]] * UNIT_M / gg)
+        radius = np.where(free, FREE_M, r * UNIT_M / gg[:, 0])
+        discs.append((centre, radius))
     return discs
 
 
-def range_slabs(body):
+def range_slabs(body, carry=None):
     """per leg, the slab of センター floor shifts (metres) that keep the hip's adduction (the hip-to-ankle line out of
     下半身's sagittal plane, towards the other leg) under HIP_ADDUCTION_DEG[1] and its abduction under
-    HIP_ABDUCTION_DEG, or no farther than they were (linearized: the line's length kept)"""
+    HIP_ABDUCTION_DEG, or no farther than they were (linearized: the line's length kept); a carried foot's leg by
+    (1 - carry) of the shift"""
     slabs = []
     sa, sb = math.sin(math.radians(HIP_ADDUCTION_DEG[1])), math.sin(math.radians(HIP_ABDUCTION_DEG))
     for s in SIDES:
@@ -836,7 +885,23 @@ def range_slabs(body):
         lo = dm - np.maximum(sa * n, dm)
         # abduction: -(D - y) . m <= max(sb n, -dm)  ->  y . m <= dm + max(sb n, -dm)
         hi = dm + np.maximum(sb * n, -dm)
-        slabs.append((m[:, [0, 2]], lo * UNIT_M, hi * UNIT_M))
+        slabs.append((m[:, [0, 2]] * hip_share(carry, s, body.F)[:, None], lo * UNIT_M, hi * UNIT_M))
+    return slabs
+
+
+def knee_slabs(body, carry=None):
+    """per leg, the half-plane of センター floor shifts (metres) that keep the hip at least as far from the IK target
+    as the two-bone leg is at KNEE_FLEXION_DEG[1] (159 degrees, the reference range's upper proposal), or no nearer
+    than it was: (D - (1 - carry) y) . D / |D| >= that distance (linearized: |D'| >= D' . D / |D|)"""
+    slabs = []
+    for s in SIDES:
+        L1, L2 = body.legs_rest[s]
+        d_min = math.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * math.cos(math.radians(KNEE_FLEXION_DEG[1])))
+        D = body.ankle(s) - body.hip(s)
+        n = np.maximum(np.linalg.norm(D, axis=1), 1e-9)
+        u = D[:, [0, 2]] / n[:, None]
+        hi = (n - np.minimum(n, d_min)) * UNIT_M
+        slabs.append((u * hip_share(carry, s, body.F)[:, None], np.full(body.F, -FREE_M), hi))
     return slabs
 
 
@@ -984,54 +1049,67 @@ def layer(model, motion, params=None, log=None):
     info = {"iterations": 0}
     reach_tight = np.zeros(F, bool)
     range_tight = np.zeros(F, bool)
+    knee_tight = np.zeros(F, bool)
     allowance = drop_allowance(body, plan, p["drop_max_cm"], KNEE_GIVE_DEG)
+    carry = {s: carry_factor(plan["low"][s], p) for s in SIDES}
     if np.any(w > 0):
         d = band_target(body, com0, plan, p["r_bal_cm"])
-        k = com_response(body, com0)
-        discs = reach_discs(body, allowance)
-        slabs = range_slabs(body)
+        k = com_response(body, com0, carry)
+        discs = reach_discs(body, allowance, carry)
+        slabs = range_slabs(body, carry)
+        kslabs = knee_slabs(body, carry)
         log("solving the shift over %d frames (%d pull frames)" % (F, int(np.sum(w > 0))))
-        y, info = solve_shift(w, d, k, discs, slabs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
+        y, info = solve_shift(w, d, k, discs, slabs + kslabs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
         moving = np.linalg.norm(y, axis=1) > 1e-4
         edge = SET_MARGIN + 5e-4                        # the solve keeps SET_MARGIN inside the bounds
         for c, r in discs:                              # the shift stopped by a leg's reach: on its disc's edge
             reach_tight |= (np.linalg.norm(y - c, axis=1) > r - edge) & moving
-        for m, lo, hi in slabs:                         # or by a hip's range: on its slab's edge
-            s_ = np.sum(y * m, axis=1)
-            nm = np.maximum(np.linalg.norm(m, axis=1), 1e-9)
-            range_tight |= (((s_ - lo) / nm < edge) | ((hi - s_) / nm < edge)) & moving
+        for group, tight in ((slabs, range_tight), (kslabs, knee_tight)):   # or by a hip's or knee's range
+            for m, lo, hi in group:
+                s_ = np.sum(y * m, axis=1)
+                nm = np.linalg.norm(m, axis=1)
+                ok = nm > 1e-9
+                near = np.zeros(F, bool)
+                near[ok] = ((s_[ok] - lo[ok]) / nm[ok] < edge) | ((hi[ok] - s_[ok]) / nm[ok] < edge)
+                tight |= near & moving
         x = k[:, None] * y                              # the COM's shift (linearized), for the report
     else:
         d = np.zeros((F, 2))
         y = np.zeros((F, 2))
     plan["reach_tight"] = reach_tight
     plan["range_tight"] = range_tight
+    plan["knee_tight"] = knee_tight
     shift = np.zeros((F, 3))
     shift[:, [0, 2]] = y / UNIT_M
-    moved = body.moved(shift)
+    moved = body.moved(shift, carry)
     need = drop_needed(moved, before=body)
     finite = np.isfinite(need)
     drop, info["drop"] = solve_drop(np.where(finite, need, 0.0) * UNIT_M, DROP_ACC_MAX, p["tau_s"])
     drop = drop / UNIT_M
     allow_any = np.maximum(allowance["左"], allowance["右"])
     drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
-    moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1))
+    moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1), carry)
     dip, landings = landing_dips(moved, plan, p)        # on the body already moved and dropped: the two add up
     shift[:, 1] = -(drop + dip)
+    floor = shift.copy()
+    floor[:, 1] = 0.0
+    feet = {s: carry[s][:, None] * floor for s in SIDES}     # the carried feet's world move (units)
     if np.abs(shift).max() < 1e-6:
         out = motion
     else:
         out = write_centre(model, motion, body, shift)
+        out = write_feet(out, body, feet)
     after = Body(model, out)
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
-                           unreachable=int(np.sum(~finite))))
+                           unreachable=int(np.sum(~finite)), feet=feet))
     report["seconds"] = round(time.time() - t0, 2)
     foot_code = np.array([{"左": 1, "右": 2}.get(v, 0) for v in plan["foot"]], dtype=np.int8)
     arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
               "pull_foot": foot_code, "pull_target_m": d, "share": plan["share"], "com_response": k, "drop": drop,
               "dip": dip, "reach_tight": plan["reach_tight"], "range_tight": plan["range_tight"],
-              "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
-              "low_L": plan["low"]["左"], "low_R": plan["low"]["右"]}
+              "knee_tight": plan["knee_tight"], "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
+              "low_L": plan["low"]["左"], "low_R": plan["low"]["右"], "carry_L": carry["左"], "carry_R": carry["右"],
+              "foot_move_L": feet["左"], "foot_move_R": feet["右"]}
     for s, tag in (("左", "L"), ("右", "R")):
         arrays["knee_before_" + tag] = body.knee_flexion(s)
         arrays["knee_after_" + tag] = after.knee_flexion(s)
@@ -1074,7 +1152,50 @@ def write_centre(model, motion, body, shift):
                       lights=motion.lights, shadows=motion.shadows, show_iks=motion.show_iks)
 
 
-def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over, unreachable):
+def write_feet(motion, body, feet):
+    """the dance with each carried foot IK moved by feet[side] [F, 3] (units, world; 0 on the floor): per-frame linear
+    keys from the last key before each moved span to the first key after it, the rest of the track byte for byte (so
+    the feet on the floor, their heights and turns stay the dance's)"""
+    sk = body.sk
+    F = body.F
+    bones = list(motion.bones)
+    tracks = fk.tracks_of(motion)
+    for s in SIDES:
+        move = feet[s]
+        if np.abs(move).max() < 1e-9:
+            continue
+        name = s + "足ＩＫ"
+        parent = sk.parent(sk.i(name))
+        Rp = np.tile(M.IDENT, (F, 1)) if parent is None else body.q(sk.bones[parent].name)
+        local = M.qrot(M.qconj(Rp), move)
+        keys = sorted(tracks.get(name) or tracks.get(fk.vmd_name(name)) or [], key=lambda kk: kk.frame)
+        frames = [kk.frame for kk in keys]
+        raw = keys[0].raw_name if keys else None
+        label = keys[0].name if keys else name
+        redo = np.zeros(F, bool)
+        for a, b in runs(np.linalg.norm(move, axis=1) > 1e-9):
+            before = [fr for fr in frames if fr <= a - 1]
+            after = [fr for fr in frames if fr >= b + 1]
+            first = before[-1] + 1 if before else max(0, a - 1)
+            last = after[0] if after else min(F - 1, b + 1)
+            redo[first:last + 1] = True
+        linear = vmd.bone_interpolation(vmd.LINEAR_CURVE)
+        new = [kk for kk in keys if kk.frame >= F or not redo[kk.frame]]
+        for f in np.flatnonzero(redo):
+            if keys:
+                pos, rot = fk.sample(keys, int(f), frames)
+            else:
+                pos, rot = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)
+            pnew = tuple(float(a) + float(b) for a, b in zip(pos, local[f]))
+            new.append(vmd.BoneKey(label, int(f), pnew, tuple(float(v) for v in rot), linear, raw_name=raw))
+        new.sort(key=lambda kk: kk.frame)
+        bones = [kk for kk in bones if kk.name != label] + new
+    return vmd.Motion(model_name=motion.model_name, bones=bones, morphs=motion.morphs, cameras=motion.cameras,
+                      lights=motion.lights, shadows=motion.shadows, show_iks=motion.show_iks)
+
+
+def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over, unreachable,
+             feet=None):
     F = before.F
     com1 = after.com()
     rep = {}
@@ -1184,6 +1305,8 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
         knee["on_floor_deg_" + tag] = {"before": q_stats(kb[on], (0.05, 0.5, 0.95)), "after": q_stats(ka[on], (0.05, 0.5, 0.95))}
         knee["change_deg_" + tag] = q_stats(np.abs(ka - kb), (0.5, 0.99))
         knee["over_%d_frames_%s" % (KNEE_FLEXION_DEG[0], tag)] = [int(np.sum(kb > KNEE_FLEXION_DEG[0])), int(np.sum(ka > KNEE_FLEXION_DEG[0]))]
+        knee["over_%d_newly_%s" % (KNEE_FLEXION_DEG[1], tag)] = int(np.sum((ka > KNEE_FLEXION_DEG[1]) & (ka > kb + 0.5)))
+        knee["max_deg_" + tag] = [round(float(kb.max()), 1), round(float(ka.max()), 1)]
         hb, ha = before.hip_adduction(s), after.hip_adduction(s)
         hip["adduction_deg_" + tag] = {"before": q_stats(hb, (0.5, 0.99)), "after": q_stats(ha, (0.5, 0.99))}
         hip["over_%d_frames_%s" % (HIP_ADDUCTION_DEG[0], tag)] = [int(np.sum(hb > HIP_ADDUCTION_DEG[0])), int(np.sum(ha > HIP_ADDUCTION_DEG[0]))]
@@ -1202,14 +1325,30 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
                        "knee_gain_0.13s_deg": {t: q_stats(np.array(v), (0.25, 0.5, 0.75)) if v else None for t, v in gains.items()},
                        "share_gain_ge_10deg": {t: round(float(np.mean(np.array(v) >= 10.0)), 3) if v else None for t, v in gains.items()},
                        "dips": [r for r in landings if r["depth_cm"] > 0][:400]}
-    # untouched bytes
-    kin = vmd.dumps(vmd.Motion(model_name=motion.model_name, bones=[kk for kk in motion.bones if kk.name != CENTRE],
-                               morphs=motion.morphs, cameras=motion.cameras, lights=motion.lights, shadows=motion.shadows,
-                               show_iks=motion.show_iks))
-    kout = vmd.dumps(vmd.Motion(model_name=out.model_name, bones=[kk for kk in out.bones if kk.name != CENTRE],
-                                morphs=out.morphs, cameras=out.cameras, lights=out.lights, shadows=out.shadows,
-                                show_iks=out.show_iks))
-    rep["untouched"] = {"identical": kin == kout, "bones": len({kk.name for kk in motion.bones if kk.name != CENTRE})}
+    # the carried feet: moved on the floor plane only, not on the floor
+    feet = feet or {}
+    carried = set()
+    for s in SIDES:
+        if s in feet and np.abs(feet[s]).max() >= 1e-9:
+            carried |= {s + "足ＩＫ", fk.vmd_name(s + "足ＩＫ")}
+    rep["feet_carry"] = {}
+    for s in SIDES:
+        mv = feet.get(s, np.zeros((F, 3)))
+        n = np.linalg.norm(mv, axis=1)
+        on = plan["sup"][s]
+        rep["feet_carry"][s] = {"frames": int(np.sum(n > 1e-6)), "max_cm": round(float(n.max() * CM), 2),
+                                "on_floor_cm_max": round(float(n[on].max() * CM), 6) if on.any() else 0.0,
+                                "height_cm_max": round(float(np.abs(mv[:, 1]).max() * CM), 6)}
+    # untouched bytes: every bone but センター and the carried foot IKs
+    skip = {CENTRE} | carried
+
+    def others(m):
+        return vmd.dumps(vmd.Motion(model_name=m.model_name, bones=[kk for kk in m.bones if kk.name not in skip],
+                                    morphs=m.morphs, cameras=m.cameras, lights=m.lights, shadows=m.shadows,
+                                    show_iks=m.show_iks))
+    rep["untouched"] = {"identical": others(motion) == others(out),
+                        "bones": len({kk.name for kk in motion.bones if kk.name not in skip}),
+                        "written": sorted(skip)}
     rep["solver"] = info
     return rep
 
