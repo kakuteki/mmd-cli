@@ -1034,10 +1034,13 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
     # the centre
     sh = shift * CM
     step = np.linalg.norm(np.diff(sh, axis=0), axis=1) if F > 1 else np.zeros(0)
-    acc_c = np.linalg.norm(d2(shift * UNIT_M), axis=1) * FPS * FPS if F > 2 else np.zeros(0)
+    a2 = d2(shift * UNIT_M) * FPS * FPS if F > 2 else np.zeros((0, 3))
+    acc_c = np.linalg.norm(a2, axis=1)
+    acc_h, acc_v = np.linalg.norm(a2[:, [0, 2]], axis=1), np.abs(a2[:, 1])
     k = (com0[:, 1] * UNIT_M) / G
     rep["centre"] = {"shift_cm": q_stats(np.linalg.norm(sh[:, [0, 2]], axis=1)), "down_cm": q_stats(-sh[:, 1]),
                      "step_cm": q_stats(step, (0.5, 0.99)), "added_acc_m_s2": q_stats(acc_c),
+                     "added_acc_h_m_s2": q_stats(acc_h), "added_acc_v_m_s2": q_stats(acc_v),
                      "com_added_acc_m_s2": q_stats(np.linalg.norm(acc, axis=1)),
                      "pressure_move_cm": q_stats(np.linalg.norm(acc, axis=1) * k * 100.0),
                      "reach_drop_cm": q_stats(drop * CM), "landing_dip_cm": q_stats(dip * CM),

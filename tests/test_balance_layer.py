@@ -242,6 +242,13 @@ class WeightShiftTest(unittest.TestCase):
             reach = np.linalg.norm(after.ankle(s) - after.hip(s), axis=1)
             self.assertLessEqual(reach.max(), after.leg_length(s) + 1e-6)
 
+    def test_report_splits_the_added_acceleration(self):
+        c = self.report["centre"]
+        added = self.shift * 0.08
+        acc = added[2:] - 2 * added[1:-1] + added[:-2]
+        self.assertAlmostEqual(c["added_acc_h_m_s2"]["max"], float(np.linalg.norm(acc[:, [0, 2]], axis=1).max()) * FPS * FPS, 2)
+        self.assertAlmostEqual(c["added_acc_v_m_s2"]["max"], float(np.abs(acc[:, 1]).max()) * FPS * FPS, 2)
+
     def test_report_measures_a05(self):
         a05 = self.report["a05_lateral_cm"]
         self.assertGreater(a05["before"]["median"], 12.0)
@@ -502,8 +509,13 @@ class SongTest(unittest.TestCase):
         self.assertLess(a05["after_holds"]["median"], 3.0)
 
     def test_feet_untouched_and_smooth(self):
+        """no 1-frame jump: the added acceleration of センター stays at its bound on the floor (with the last per-frame
+        fix of the solver, a few mm) and at the landing dip's own (2 cm in 0.13 s: about 6 m/s^2) upward"""
         self.assertTrue(self.report["untouched"]["identical"])
-        self.assertLess(self.report["centre"]["step_cm"]["max"], 1.5)
+        c = self.report["centre"]
+        self.assertLess(c["added_acc_h_m_s2"]["p99"], balance_layer.ACC_MAX * 1.05)
+        self.assertLess(c["added_acc_h_m_s2"]["max"], 4.0)
+        self.assertLess(c["added_acc_v_m_s2"]["max"], 6.5)
 
     def test_reach_not_worse(self):
         for s in ("L", "R"):
