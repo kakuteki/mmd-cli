@@ -470,6 +470,19 @@ class LayerTest(unittest.TestCase):
         f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(above), trace_toe_extra=extra)
         self.assertAlmostEqual(float(f_out["左"]["low"][0]), float(f_in["左"]["low"][0]), delta=0.003)
 
+    def test_pointed_foot_swinging_past_stays_in_the_air(self):
+        # the same height, but the foot swings past (5 cm a frame, 150 cm/s): a toe on the floor does not move so; it is
+        # a step's swing skimming the floor and stays in the air
+        extra = 0.5
+        above = extra * math.sin(math.radians(40.0))
+        ik, center = self.pointed_over_the_floor(above)
+        x, y, z = ik.position
+        keys = [center] + [key("左足ＩＫ", t, axis_angle((1, 0, 0), -40.0), position=(x, y, z - 0.625 * (t - 3)))
+                           for t in range(7)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=7, trace_toe_extra=extra)
+        self.assertAlmostEqual(float(f_in["左"]["low"][3]), 0.111 + above, delta=0.003)
+        self.assertAlmostEqual(float(f_out["左"]["low"][3]), float(f_in["左"]["low"][3]), delta=0.003)
+
     def test_default_floor_is_the_traces(self):
         # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved
         # down: the foot in the air keeps its height, the loaded rolled foot is laid flat with its sole on that floor

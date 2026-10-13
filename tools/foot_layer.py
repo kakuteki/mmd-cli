@@ -337,21 +337,38 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
     return out
 
 
+TOE_SLIDE = (30.0, 80.0)        # cm/s: a pointed foot moving faster than the first is less and less taken to touch the
+                                # floor with the trace model's toe, faster than the second not at all (a toe on the
+                                # floor stays or slides slowly; a step's swing skims past)
+
+
+def foot_speed(f):
+    """the foot's horizontal speed [F] in cm/s (the middle of its heel and forefoot), the larger of the steps into and
+    out of each frame"""
+    xz = 0.5 * (f["heel_xz"] + f["fore_xz"])
+    step = np.linalg.norm(np.diff(xz, axis=0), axis=1) * FPS * UNIT_CM
+    v = np.zeros(len(xz))
+    if len(step):
+        v[1:] = step
+        v[:-1] = np.maximum(v[:-1], step)
+    return v
+
+
 def trace_height(f, o, extra=0.0):
     """the flat sole's lowest point over the trace's floor [F] (units), as the trace's own model stood: a model whose
     foot reached `extra` units further from the ankle to the toe had its toe that much times sin(the toes-down pitch)
-    lower, on the floor where this one's stops short.  0 for the dance's own model."""
-    return f["flat_low"] - o.floor - extra * np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
+    lower, on the floor where this one's stops short.  Only for a foot moving slower than TOE_SLIDE.  0 for the dance's
+    own model."""
+    gate = 1.0 - smoothstep(foot_speed(f), *TOE_SLIDE)
+    return f["flat_low"] - o.floor - extra * gate * np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
 
 
-def toe_extra_estimate(f, o, frames_per_s=FPS):
+def toe_extra_estimate(f, o):
     """(the median, the number of frames) of trace_height's `extra` that would put this foot's still pitched frames on
     the floor: frames moving less than 15 cm/s, pitched 15 to 70 degrees toes-down, 0.3 to 6 cm over the trace's floor.
     A trace made for a model with a longer foot leaves such frames over the floor in proportion to sin(pitch)."""
     e = f["flat_low"] - o.floor
-    xz = 0.5 * (f["heel_xz"] + f["fore_xz"])
-    speed = np.zeros(len(e))
-    speed[1:] = np.linalg.norm(np.diff(xz, axis=0), axis=1) * frames_per_s * UNIT_CM
+    speed = foot_speed(f)
     sinp = np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
     m = (speed < 15.0) & (-f["pitch"] >= 15.0) & (-f["pitch"] <= 70.0) & (e * UNIT_CM > 0.3) & (e * UNIT_CM < 6.0)
     return (float(np.median(e[m] / sinp[m])) if m.any() else None), int(m.sum())
