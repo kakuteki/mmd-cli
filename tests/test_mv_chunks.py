@@ -1277,6 +1277,14 @@ class WorkersDriverTest(unittest.TestCase):
         code, text, calls = self.run_driver()                            # and once it is let go, the run goes
         self.assertEqual(code, 0, text)
 
+    def test_a_worker_started_by_hand_finds_no_run_and_renders_nothing(self):
+        self.write()
+        os.makedirs(os.path.join(self.out, "run_t"), exist_ok=True)
+        code, text, calls = self.run_driver("-Worker 1")
+        self.assertEqual(code, 1, text)
+        self.assertIn("found no run", text)
+        self.assertEqual(self.rendered(calls), [])
+
     def test_what_an_earlier_run_left_in_its_folder_does_not_stop_this_one(self):
         self.write()
         for name in ("claim_t_00", "done_t_01", "stop", "busy_t_02", "stamp.txt"):
