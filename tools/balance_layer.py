@@ -116,6 +116,8 @@ R_BAL_CM = 0.6                  # the band about the standing sole's line: peopl
                                 # stances most (1.5 cm: median 3.3 cm left in runs of 0.5 s and more, 0.5 cm: 2.6)
 LEAD_S = 0.15                   # the pull ramps up this long before the foot lifts
 LAG_S = 0.05                    # and down this long after it lands
+TRANSFER_V = 0.2                # m/s: a run whose COM moves this fast towards where the other foot lands, its XcoM past
+                                # half the way there, is a step onto that foot and is not pulled (the review's criterion)
 # ---- the shift ---------------------------------------------------------------------------------------------------
 ACC_MAX = 1.0                   # m/s^2 of added COM acceleration (about 9 cm of centre-of-pressure move)
 TAU_S = 0.1                     # the minimum-jerk smoothness's time scale
@@ -625,6 +627,9 @@ def support_plan(body, p, com):
             # this is no evidence of standing on one foot, and the MV shows no lifted foot: no weight shift is asked for
             kinds.append("hover")
             continue
+        if travels(body, com, a, b, s):
+            kinds.append("transfer")
+            continue
         kinds.append("pulled")
 
         def put(t, v):
@@ -644,6 +649,33 @@ def support_plan(body, p, com):
             put(t, peak * (1.0 - j / (lag + 1.0)))
     return {"low": low, "sup": sup, "single": single, "runs": ss, "w": w, "foot": foot, "share": share,
             "run_shares": shares, "run_kinds": kinds}
+
+
+def travels(body, com, a, b, s):
+    """True when the single-support run [a, b] on foot s is a step onto the next foot: at the run's middle the trace's COM
+    moves away from the standing foot, towards where the other foot lands, at TRANSFER_V and more, and its extrapolated
+    centre of mass (XcoM = COM + v / w, Hof et al. 2005) is past half the way there.  The body then falls onto the next
+    foot, which catches it (the foot is placed beyond the XcoM, Hof 2008); holding it over the foot it leaves would mean
+    reversing that fall"""
+    F = body.F
+    o = "右" if s == "左" else "左"
+    m = (a + b) // 2
+    land = min(F - 1, b + 1)
+    here = 0.5 * (body.ankle(s)[m] + body.toe(s)[m])[[0, 2]]
+    there = 0.5 * (body.ankle(o)[land] + body.toe(o)[land])[[0, 2]]
+    gap = float(np.linalg.norm(there - here))
+    if gap < 1e-6:
+        return False
+    u = (there - here) / gap
+    i0, i1 = max(a, m - 2), min(b, m + 2)
+    if i1 <= i0:
+        i0, i1 = max(0, m - 1), min(F - 1, m + 1)
+    if i1 <= i0:
+        return False
+    v = float((com[i1, [0, 2]] - com[i0, [0, 2]]) @ u) * UNIT_M * FPS / (i1 - i0)      # m/s
+    e = float((com[m, [0, 2]] - here) @ u) * UNIT_M
+    w = math.sqrt(G / max(float(com[m, 1]) * UNIT_M, 0.2))
+    return v >= TRANSFER_V and e + v / w >= 0.5 * gap * UNIT_M
 
 
 def need_share(frames, com_height_m):

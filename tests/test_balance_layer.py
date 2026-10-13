@@ -276,6 +276,28 @@ class ShortStepTest(unittest.TestCase):
         self.assertLess(lean[-1], 46 + 25)
 
 
+class TransferStepTest(unittest.TestCase):
+    def test_step_that_travels_to_the_next_foot_is_not_pulled_back(self):
+        """the body travels from the right foot to the left foot's new place (50 cm/s) while the left foot is in the air
+        for 0.37 s and lands 20 cm further out: a step that falls onto the next foot (Hof's XcoM past half the way to
+        where the foot lands, Hof 2008); people do not hold the body back over the foot they leave"""
+        last = 119
+        motion = dance(last=last)
+        left = []
+        for f in range(last + 1):
+            x = 1.0 + 2.5 * smooth((f - 40) / 12.0)
+            y = 2.0 * min(smooth((f - 40) / 4.0), 1.0 - smooth((f - 48) / 4.0))
+            left.append(key("左足ＩＫ", f, (x, y, 0.0)))
+        travel = [key("センター", f, (-0.9 + 2.9 * smooth((f - 36) / 20.0), -0.6, 0.0)) for f in range(last + 1)]
+        motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "センター")] + left + travel
+        result = balance_layer.layer(MODEL, motion)
+        shift = centre_offsets(motion, result.motion, last)
+        back = -shift[30:60, 0] * CM                         # towards the right (standing) foot
+        self.assertLess(back.max(), 1.0)
+        kinds = {r["kind"] for r in result.report["runs"]}
+        self.assertIn("transfer", kinds)
+
+
 class ReachTest(unittest.TestCase):
     def test_wide_stance_low_foot_stops_at_the_reach(self):
         """feet 70 cm apart, the left foot only 6 cm up: the body cannot get over the right foot with the left leg still
