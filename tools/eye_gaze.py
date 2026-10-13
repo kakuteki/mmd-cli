@@ -96,7 +96,9 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   before at 30 % of the peak.  The eyes jump the way of the turn and land LEAD frames before the onset (2 to 4, from
   the seed; the saccade starts as many frames earlier as it is long): toward where the face will be when the turn has
   gone furthest (within 20 frames), at most LEAD_SHARE of the yaw limit off the middle and at least LEAD_STEP degrees
-  beyond where they are (capped by that).  Until the onset they keep that angle in the head (state lead: a person's
+  beyond where they are (capped by that; eyes already further the way of the turn keep their angle: a lead never
+  jumps back against its turn, which with the quick phase after it made a reversal, review gaze-v8).  Until the
+  onset they keep that angle in the head (state lead: a person's
   gaze shift holds the reflex off); from the onset they are a fixation again, so the head turns toward where the eyes
   already are.  For QUIET frames before a lead no other saccade starts, and for GUARD frames after the onset no
   recentre.  A turn whose lead would start before the onset of the lead before (one turn seen as two, with a dip
@@ -122,12 +124,19 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   is the mean of its HAND_POINTS (the wrist and the middle finger's tip: the middle of the hand, open or closed).  It
   is looked at over a run of frames on which it is HAND_NEAR to HAND_FAR metres from the eyes, before her face (in
   the HAND_ZONE of the limits seen in the head, the free zone, or HAND_REACH degrees beyond it: the face is turned to
-  it), HAND_CAMERA degrees or more off the camera (nearer the camera's line she holds it out to the viewer) and moving
-  under HAND_FAST deg/s seen from the eyes, HAND_MIN frames or more, with the hand under HAND_SLOW deg/s on one frame
-  at least (it comes to rest, or nearly: a person looks at a gesture held still; speakers look at 4 % of their
-  gestures, about 1 s each, Gullberg & Holmqvist 1999, Gullberg & Kita 2009).  Nearer than HAND_NEAR the hand covers
-  or touches the face, the dance's most frequent hand before her face.  The contacts and the leads win.  A saccade
-  (reason hand) lands by the run's first frame where the hand will settle (its first frame under HAND_SLOW): the eyes
+  it), HAND_CAMERA degrees or more off the camera (nearer the camera's line she holds it out to the viewer), with its
+  palm turned HAND_PALM degrees or more away from the camera (hand_palms; a palm shown to the viewer is a gesture to
+  the viewer: at 120.6 and 178.4 s of the MV v8 the eyes dropped to the backs of her hands) and moving under
+  HAND_FAST deg/s seen from the eyes, HAND_MIN frames or more (0.3 s: a person's look at a gesture lasts 0.46 s on
+  average, Gullberg & Holmqvist 2006; 5 of the 9 looks of the MV v8 were 6 to 8 frames and left the eyes on the hand
+  for 2 to 4 between two large jumps), with the hand under HAND_SLOW deg/s on one frame at least (it comes to rest,
+  or nearly: a person looks at a gesture held still; speakers look at 4 % of their gestures, about 1 s each,
+  Gullberg & Holmqvist 1999, Gullberg & Kita 2009).  Nearer than HAND_NEAR the hand covers or touches the face, the
+  dance's most frequent hand before her face.  The contacts and the leads win.  The eyes aim at the tip, of
+  FINGER_TIPS, furthest from the wrist (hand_aims: a raised finger's tip; at 52 s of the MV v8 the look point put the
+  gaze on the cuff, 24 degrees below the raised index finger, the eyes 6 to 9 degrees down, review gaze-v8; the tip
+  is above their reach there, and they go up as far as they reach).  A saccade (reason hand) lands by the run's first
+  frame where the aim will be when the hand settles (its first frame under HAND_SLOW): the eyes
   are there before the hand, as a person's lead the hand she moves (Johansson 2001; Chen 2016: the eyes start about
   20 ms before a self-moved finger).  Then they follow it HAND_AHEAD frames ahead at most PURSUIT_SPEED deg/s in the
   world (smooth pursuit of a self-moved target: gain about 0.9, twice the eyes' own top speed, Chen 2016, Gauthier
@@ -250,7 +259,8 @@ WALL_GAP = 3.0                        # degrees the face's way lies back toward 
                                       # the free zone, on that axis, for a quick phase or a saccade off the wall
 # looks at her hands (stage 6)
 HANDS = ("右", "左")
-HAND_POINTS = ("手首", "中指３先")      # their mean is where the eyes look on a hand: its middle, open or closed
+HAND_POINTS = ("手首", "中指３先")      # their mean is the hand's look point: its middle, open or closed (the runs)
+FINGER_TIPS = ("人指３先", "中指３先", "薬指３先", "小指３先", "親指２先")   # the eyes aim at the one furthest from the wrist
 UNIT_M = 0.08                         # metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80)
 HAND_NEAR, HAND_FAR = 0.18, 0.60      # metres from the eyes: nearer, the hand covers or touches the face; further, beyond
                                       # an arm's reach (tools/eye_optics.py: hand_m 0.6)
@@ -259,7 +269,9 @@ HAND_REACH = 4.0                      # before her face: the face turned to it, 
 HAND_CAMERA = 10.0                    # degrees: a hand nearer the camera's line is held out to the viewer, not looked at
 HAND_FAST = 300.0                     # deg/s: a hand moving faster, seen from the eyes in the world, is not followed
 HAND_SLOW = 100.0                     # deg/s: a look at a hand needs it this slow on one frame of it at least
-HAND_MIN = 6                          # frames a look at a hand lasts at least
+HAND_MIN = 9                          # frames a look at a hand lasts at least (0.3 s: a person's look at a gesture
+                                      # lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass)
+HAND_PALM = 45.0                      # degrees: a palm turned this near the camera is shown to the viewer, not looked at
 HAND_JOIN = 2                         # frames between two runs of the hand that make one
 HAND_AHEAD = 1                        # frames: the eyes follow the hand where it will be (a self-moved target is led)
 PURSUIT_SPEED = 100.0                 # deg/s: the gaze follows a hand at most this fast in the world
@@ -428,6 +440,61 @@ def hand_points(model, dance, first=0, last=None):
     track = fk.world_track(model, dance, [b for v in names.values() for b in v], first, last)
     return {side: [tuple(sum(track[b][i][0][c] for b in v) / len(v) for c in range(3)) for i in range(last - first + 1)]
             for side, v in names.items()}
+
+
+def hand_palms(model, dance, first=0, last=None):
+    """side -> the normal out of the palm in the world on each frame (a unit vector: the wrist to the middle finger's
+    tip crossed with the little finger's tip to the index finger's, mirrored on her right), for the sides with those
+    four bones; None on a frame where they lie on a line"""
+    by = _by_name(model)
+    parts = ("手首", "中指３先", "人指３先", "小指３先")
+    sides = [side for side in HANDS if all(side + p in by for p in parts)]
+    if not sides:
+        return {}
+    if last is None:
+        last = fk.last_frame(dance)
+    track = fk.world_track(model, dance, [side + p for side in sides for p in parts], first, last)
+    out = {}
+    for side in sides:
+        rows = []
+        for i in range(last - first + 1):
+            w, middle, index, little = (track[side + p][i][0] for p in parts)
+            along = tuple(m - x for m, x in zip(middle, w))
+            across = tuple(a - b for a, b in zip(index, little))
+            n = _cross(across, along) if side == "左" else _cross(along, across)
+            norm = math.sqrt(sum(c * c for c in n))
+            rows.append(tuple(c / norm for c in n) if norm > 1e-9 else None)
+        out[side] = rows
+    return out
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def hand_aims(model, dance, first=0, last=None):
+    """side -> where the eyes aim on the hand in the world on each frame from `first` to `last`: the tip, of
+    FINGER_TIPS, furthest from the wrist on that frame (a raised finger's tip; an open hand's longest finger), for the
+    sides with a wrist and a tip (review gaze-v8: the middle of the hand put the gaze on the cuff below the finger
+    raised at 52 s of the MV)"""
+    by = _by_name(model)
+    names = {side: [side + t for t in FINGER_TIPS if side + t in by] for side in HANDS if side + HAND_POINTS[0] in by}
+    names = {side: v for side, v in names.items() if v}
+    if not names:
+        return {}
+    if last is None:
+        last = fk.last_frame(dance)
+    track = fk.world_track(model, dance, [s + HAND_POINTS[0] for s in names] + [b for v in names.values() for b in v],
+                           first, last)
+    out = {}
+    for side, tips in names.items():
+        rows = []
+        for i in range(last - first + 1):
+            w = track[side + HAND_POINTS[0]][i][0]
+            tip = max(tips, key=lambda b: sum((p - q) ** 2 for p, q in zip(track[b][i][0], w)))
+            rows.append(tuple(track[tip][i][0]))
+        out[side] = rows
+    return out
 
 
 def _head_angles(sight, direction, rest):
@@ -655,17 +722,18 @@ def contact_runs(reach, cuts, anchors):
     return sorted(long_ + [(a, b) for _, a, b in mid[:keep]])
 
 
-def hand_runs(seen, hands, forward, limits, contacts=(), leads=()):
+def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None):
     """[(first, last, side, metres, settle)] frame indices where the eyes look at a hand (`hands`: hand_points),
     sorted: runs of frames on which the hand's look point is HAND_NEAR to HAND_FAR metres from the eyes, before her face
     (in the HAND_ZONE of the limits seen in the head, or within HAND_REACH degrees of it: the face is turned to the
-    hand and the eyes rest near their middle on it), HAND_CAMERA degrees or more off the camera, and moving under
-    HAND_FAST deg/s seen from the eyes in the world (gaps of HAND_JOIN frames closed); HAND_MIN frames long or more
-    with the hand under HAND_SLOW deg/s on one frame at least (it comes to rest, or nearly, before her face: `settle`
-    is the first such frame).  Where both hands qualify at once the longer run is kept (the nearer on a tie).  The
-    contacts and the leads (as plan makes them: the first frame its saccade may start, its landing, the turn's onset,
-    ...) win: no run on the frames from the saccade into a contact to its end, nor from a lead's saccade to GUARD
-    frames after its turn's onset.  `metres` is the hand's median distance on the run."""
+    hand and the eyes rest near their middle on it), HAND_CAMERA degrees or more off the camera, with its palm (`palms`:
+    hand_palms, where known) turned HAND_PALM degrees or more away from the camera (a palm shown to the viewer is a
+    gesture to the viewer), and moving under HAND_FAST deg/s seen from the eyes in the world (gaps of HAND_JOIN frames
+    closed); HAND_MIN frames long or more with the hand under HAND_SLOW deg/s on one frame at least (it comes to rest,
+    or nearly, before her face: `settle` is the first such frame).  Where both hands qualify at once the longer run is
+    kept (the nearer on a tie).  The contacts and the leads (as plan makes them: the first frame its saccade may start,
+    its landing, the turn's onset, ...) win: no run on the frames from the saccade into a contact to its end, nor from
+    a lead's saccade to GUARD frames after its turn's onset.  `metres` is the hand's median distance on the run."""
     rest = angles_of(forward)
     n = len(seen)
     longest = saccade_frames(float("inf"))
@@ -681,6 +749,7 @@ def hand_runs(seen, hands, forward, limits, contacts=(), leads=()):
     for side, points in sorted(hands.items()):
         ok, speed, dist = [], [], []
         before = None
+        palm = (palms or {}).get(side)
         for i, s in enumerate(seen):
             v = tuple(p - e for p, e in zip(points[i], s.eye))
             metres = math.sqrt(sum(c * c for c in v)) * UNIT_M
@@ -689,9 +758,11 @@ def hand_runs(seen, hands, forward, limits, contacts=(), leads=()):
             before = v
             dist.append(metres)
             speed.append(moving)
+            shown = palm is not None and palm[i] is not None and \
+                degrees_between(palm[i], tuple(c - p for c, p in zip(s.camera, points[i]))) < HAND_PALM
             ok.append(not behind and not blocked[i] and HAND_NEAR <= metres <= HAND_FAR and moving <= HAND_FAST
                       and degrees_between(v, tuple(c - e for c, e in zip(s.camera, s.eye))) >= HAND_CAMERA
-                      and _apart(_clamp(angles, zone), angles) <= HAND_REACH)
+                      and not shown and _apart(_clamp(angles, zone), angles) <= HAND_REACH)
         joined = []
         for a, b in _runs(ok):
             if joined and a - joined[-1][1] - 1 <= HAND_JOIN and not any(blocked[joined[-1][1] + 1:a]):
@@ -779,10 +850,13 @@ def flips(raw, kept_before, raw_before, camera, limits):
     return moved > MAX_STEP + 1e-6 or moved - math.hypot(raw[0] - raw_before[0], raw[1] - raw_before[1]) > FLIP_STEP
 
 
-def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixation=MIN_FIXATION, hands=None):
+def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixation=MIN_FIXATION, hands=None,
+         aims=None, palms=None):
     """(a Look per sight, the saccades, the contacts as (first, last) frame indices, the leads planned, the looks at a
-    hand as (first, last, side, metres)): see the module docstring.  `anchors` are frame indices; `min_fixation` frames
-    is the shortest fixation (--min-fixation); `hands` the hands' look points per frame (hand_points)."""
+    hand as (first, last, side, metres, settle)): see the module docstring.  `anchors` are frame indices;
+    `min_fixation` frames is the shortest fixation (--min-fixation); `hands` the hands' look points per frame
+    (hand_points), which choose the looks; `aims` where the eyes aim on a hand per frame (hand_aims; a side without
+    one aims at its look point); `palms` the normals out of the palms per frame (hand_palms)."""
     check_limits(limits)
     check_min_fixation(min_fixation)
     rest = angles_of(forward)
@@ -865,7 +939,9 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
         cap = LEAD_SHARE * limits.yaw
         k = min(1.0, cap / max(1e-9, math.hypot(*angles)))
         angles = (angles[0] * k, max(-free.down, min(free.up, angles[1] * k)))
-        return sign * max(sign * angles[0], min(cap, sign * origin[0] + LEAD_STEP)), angles[1]
+        # never back against the turn: eyes already beyond the cap the way of the turn keep their angle (review gaze-v8:
+        # 22 leads went 2 degrees back and the quick phase after them 15 to 25 degrees forward, a reversal)
+        return sign * max(sign * angles[0], min(max(cap, sign * origin[0]), sign * origin[0] + LEAD_STEP)), angles[1]
 
     leads = []                      # [the first frame it may start, the frame it lands by, onset, far, sign]
     longest = saccade_frames(float("inf"))
@@ -879,18 +955,19 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             continue        # it would start before the lead before has seen its turn start: one lead (a turn with a dip)
         if first >= 1 and not any(contact_end[k] is not None for k in range(max(0, first - QUIET), min(n, onset + 1))):
             leads.append([first, land, onset, far, sign])
-    runs = hand_runs(seen, hands or {}, forward, limits, contacts, leads)
+    runs = hand_runs(seen, hands or {}, forward, limits, contacts, leads, palms)
     run_of = [None] * n                 # the look at a hand (an index of runs) each frame lies in
     for k, run in enumerate(runs):
         for i in range(run[0], run[1] + 1):
             run_of[i] = k
 
     def hand_goal(i, k):
-        """the eye angles that look, from frame i, at the hand of run k where it will be HAND_AHEAD frames on, or
-        where it settles if it has not yet (the gaze is there before the hand), within the run; held in the contact
-        zone"""
+        """the eye angles that look, from frame i, at the aim on the hand of run k where it will be HAND_AHEAD frames
+        on, or where it settles if it has not yet (the gaze is there before the hand), within the run; held in the
+        contact zone"""
         a, b, side, _, settle = runs[k]
-        angles, _ = _seen(seen[i], hands[side][min(b, max(a, settle, i + HAND_AHEAD))], forward, rest)
+        points = (aims or {}).get(side) or hands[side]
+        angles, _ = _seen(seen[i], points[min(b, max(a, settle, i + HAND_AHEAD))], forward, rest)
         return contact_angles(angles, limits)
 
     looks, saccades = [], []
@@ -1424,7 +1501,8 @@ class Gaze:
     forward: Tuple[float, float, float]
     contacts: List[Tuple[int, int]]
     hand_points: dict = None            # side -> the hand's look point in the world per frame (hand_points)
-    hand_looks: list = None             # (first, last, side, metres) frame indices of the looks at a hand
+    hand_looks: list = None             # (first, last, side, metres, settle) frame indices of the looks at a hand
+    hand_aims: dict = None              # side -> where the eyes aim on the hand in the world per frame (hand_aims)
 
 
 def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN, seed=0, life=True, anchors=(),
@@ -1441,7 +1519,10 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     first = seen[0].frame
     marks = sorted({a - first for a in anchors if 0 <= a - first < len(seen)})
     hands = hand_points(model, dance, first, seen[-1].frame)
-    looks, saccades, contacts, leads, runs = plan(seen, forward, limits, seed, life, marks, min_fixation, hands)
+    aims = hand_aims(model, dance, first, seen[-1].frame)
+    palms = hand_palms(model, dance, first, seen[-1].frame)
+    looks, saccades, contacts, leads, runs = plan(seen, forward, limits, seed, life, marks, min_fixation, hands, aims,
+                                                  palms)
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -1465,7 +1546,9 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                    "max_step": MAX_STEP, "gap": GAP,
                    "wall_gap": WALL_GAP, "sustain": SUSTAIN, "fixation_spread": FIXATION_SPREAD,
                    "saccade_frames": {"short": SHORT_SACCADE, "long": LONG_SACCADE}},
-        "hand_rules": {"points": list(HAND_POINTS), "metres": [HAND_NEAR, HAND_FAR], "reach": HAND_REACH,
+        "hand_rules": {"points": list(HAND_POINTS), "aim": list(FINGER_TIPS), "palm": HAND_PALM,
+                       "metres": [HAND_NEAR, HAND_FAR],
+                       "reach": HAND_REACH,
                        "camera": HAND_CAMERA, "fast": HAND_FAST, "slow": HAND_SLOW, "min_frames": HAND_MIN,
                        "join": HAND_JOIN, "ahead": HAND_AHEAD, "pursuit": PURSUIT_SPEED, "catch_up": CATCH_UP,
                        "catch_up_after": CATCH_UP_AFTER, "zone": list(HAND_ZONE), "sides": sorted(hands)},
@@ -1494,7 +1577,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         "dance_eye_keys": dance_eye_keys(dance),
     }
     return Gaze(looks, saccades, cuts, eye_motion(looks, dance.model_name), report, seen, forward, contacts, hands,
-                runs)
+                runs, aims)
 
 
 def debug_rows(result, frames):
