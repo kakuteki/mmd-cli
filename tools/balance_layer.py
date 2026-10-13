@@ -52,8 +52,8 @@ How:
    takes the weight (the other foot lifts within DIP_WINDOW, or was already up) bends its knee by --dip-deg by DIP_PEAK
    and comes back by DIP_END (walking: 1-3 degrees at contact, 17 at 0.13 s; Winter 2009 Table A.1, a woman of 156 cm):
    the hips go down by what the two-bone leg needs for that bend, at most DIP_MAX_CM, only as far as the dance does not
-   already bend the knee there.  A tap (the foot lands and lifts again while the other stays down) is left alone.  The
-   drop of 4. and the dip are not added: the hips go down by the larger.
+   already bend the knee there (measured on the body already moved and dropped by 4., so the two add up).  A tap (the
+   foot lands and lifts again while the other stays down) is left alone.
 
 Written: センター only, a key on every frame (linear), its rotation as the dance had it.  Every other bone, every morph and
 the rest of the file are the dance's own bytes; when nothing is to be done the dance comes back unchanged.
@@ -128,7 +128,7 @@ ADMM_TOL_REACH = 0.05           # cm
 DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
 DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
 DIP_END_S = 0.4
-DIP_MAX_CM = 2.5
+DIP_MAX_CM = 2.0                # (2 cm in 0.13 s: the hips accelerate at most about 6 m/s^2)
 DIP_WINDOW_S = 0.3              # the other foot lifts within this after the landing: the landing takes the weight
 GAP = 4                         # a05's swing: at least 4 frames off the floor...
 SWING_MIN_H = 0.2               # ...in which the foot rose at least 1.6 cm
@@ -239,16 +239,20 @@ class Body:
         dd = np.minimum(dist, L1 + L2 - 1e-9)
         a = (L1 ** 2 - L2 ** 2 + dd ** 2) / (2.0 * dd)
         h = np.sqrt(np.maximum(L1 ** 2 - a ** 2, 0.0))
-        # the knee bends towards 下半身's front (MMD's IK turns the thigh from the rest pose, knee forward), turned out
-        # towards the foot's front as far as the foot lies flat and points the pelvis's way: a pointed foot (toe down
-        # or back) does not steer it, so its side never flips from one frame to the next
+        # the knee is a hinge about 下半身's side axis (MMD's IK turns the thigh from the rest pose, knee forward): it
+        # bends towards side x (hip -> ankle), forward for a standing leg, up for a leg kicked forward, down for one
+        # lifted behind; turned out towards the foot's front as far as the foot lies flat and points the pelvis's way
+        # (a pointed foot does not steer it); a little of the pelvis's front keeps it defined for a leg straight out to
+        # the side.  So its side never flips from one frame to the next.
         facing = self.facing()
+        side = M.qrot(self.q("下半身"), np.broadcast_to(np.array([1.0, 0.0, 0.0]), (self.F, 3)))
+        hinge = np.cross(side, u)
         foot = T - A
         flat = np.hypot(foot[:, 0], foot[:, 2]) / np.maximum(np.linalg.norm(foot, axis=1), 1e-9)
         foot[:, 1] = 0.0
         foot /= np.maximum(np.linalg.norm(foot, axis=1), 1e-9)[:, None]
         agree = np.maximum(np.sum(foot * facing, axis=1), 0.0)
-        fwd = facing + (flat * agree)[:, None] * foot
+        fwd = hinge + (flat * agree)[:, None] * foot + 0.1 * facing
         n = fwd - np.sum(fwd * u, axis=1)[:, None] * u
         n /= np.maximum(np.linalg.norm(n, axis=1), 1e-9)[:, None]
         knee = H + a[:, None] * u + h[:, None] * n
@@ -484,9 +488,11 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
     tf = tau_s * FPS
     scale = 1.0 + float(np.median(lam))
     mu = scale * tf ** 6
-    rho_a = scale * tf ** 4
-    rho_x = scale
-    L = band_factor(band_terms(F, w * g * g + lam + rho_x, [(mu, D3_STENCIL), (rho_a, D2_STENCIL)]))
+    rho = 1.0                                           # both blocks' penalties scale together (residual balancing)
+
+    def factor(r):
+        return band_factor(band_terms(F, w * g * g + lam + r * scale, [(mu, D3_STENCIL), (r * scale * tf ** 4, D2_STENCIL)]))
+    L = factor(rho)
     amax = acc_max * DT * DT
     q = (w * g)[:, None] * d
     za = np.zeros((F - 2, n))
@@ -497,7 +503,10 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
     res_a = res_x = None
     it = 0
     x = zx
+    zx_seen = zx
+    rescaled = 0
     for it in range(1, iters + 1):
+        rho_a, rho_x = rho * scale * tf ** 4, rho * scale
         x = band_solve(L, q + rho_a * d2t(za - ua, F) + rho_x * (zx - ux))
         ax = d2(x)
         ah = alpha * ax + (1.0 - alpha) * za
@@ -513,10 +522,22 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
             res_x = float(np.linalg.norm(x - zx, axis=1).max()) * 100.0
             if res_a < ADMM_TOL_ACC and res_x < tol_x_cm:
                 break
+        if it % 50 == 0:
+            # residual balancing (Boyd et al. 2011, 3.4.1): the constraints' miss against how much z still moves
+            r = float(np.linalg.norm(x - zx))
+            s = float(np.linalg.norm(zx - zx_seen)) / 50.0
+            zx_seen = zx
+            k = 2.0 if r > 10.0 * s else (0.5 if s > 10.0 * r else 1.0)
+            if k != 1.0 and rescaled < 12:
+                rho *= k
+                ua /= k
+                ux /= k
+                L = factor(rho)
+                rescaled += 1
     xf = project(x)                                    # the smooth x, put back in the set where it is a hair out
     info = {"iterations": it, "residual_acc_m_s2": None if res_a is None else round(res_a, 4),
             "residual_set_cm": None if res_x is None else round(res_x, 4),
-            "final_fix_cm_max": round(float(np.linalg.norm(xf - x, axis=1).max()) * 100.0, 4)}
+            "final_fix_cm_max": round(float(np.linalg.norm(xf - x, axis=1).max()) * 100.0, 4), "rho": rho}
     return xf, info
 
 
@@ -888,8 +909,8 @@ def layer(model, motion, params=None, log=None):
     allow_any = np.maximum(allowance["左"], allowance["右"])
     drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
     moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1))
-    dip, landings = landing_dips(moved, plan, p)
-    shift[:, 1] = -np.maximum(drop, dip)
+    dip, landings = landing_dips(moved, plan, p)        # on the body already moved and dropped: the two add up
+    shift[:, 1] = -(drop + dip)
     if np.abs(shift).max() < 1e-6:
         out = motion
     else:

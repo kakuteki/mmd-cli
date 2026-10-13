@@ -327,6 +327,28 @@ class RangeTest(unittest.TestCase):
         self.assertLess(step.max(), 0.3)
 
 
+    def test_heel_to_the_hip_keeps_the_knee_continuous(self):
+        """the left heel brought up behind to hip height, the toe pointing down and back (as at 133.7 s of the MV): the
+        hip-to-ankle line points straight back, against the pelvis's front, so the knee's side must come from the
+        hinge (down), not from the pelvis's front (undefined there); the COM's acceleration stays smooth"""
+        last = 119
+        motion = dance(last=last, spread=0.0)
+        fold = []
+        for f in range(last + 1):
+            s = min(smooth((f - 40) / 20.0), 1.0 - smooth((f - 80) / 20.0))
+            a = math.radians(-90.0) * s
+            fold.append(key("左足ＩＫ", f, (0.08 * s, 8.25 * s, 2.03 * s), q=(math.sin(a / 2), 0.0, 0.0, math.cos(a / 2))))
+        motion.bones = [k for k in motion.bones if k.name != "左足ＩＫ"] + fold
+        body = balance_layer.Body(MODEL, motion)
+        u = body.ankle("左") - body.hip("左")
+        u /= np.linalg.norm(u, axis=1, keepdims=True)
+        self.assertGreater(u[60, 2], 0.95)                                    # the fixture: the line points back
+        com = body.com()
+        acc = np.linalg.norm(com[2:] - 2 * com[1:-1] + com[:-2], axis=1) * CM
+        self.assertLess(acc.max(), 0.3)
+        self.assertLess(body.knee("左")[60, 1], body.hip("左")[60, 1] - 2.0)   # the knee hangs below the hip
+
+
 class LandingTest(unittest.TestCase):
     def test_knee_gives_on_a_landing_that_takes_the_weight(self):
         """the left foot steps (up and down); as it lands the right foot lifts: the left leg takes the weight and its knee
