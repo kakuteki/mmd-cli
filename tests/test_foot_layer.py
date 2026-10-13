@@ -387,7 +387,7 @@ class LayerTest(unittest.TestCase):
 
     def test_landing_is_smooth(self):
         # the foot comes down over 12 frames rolled 15 degrees and stands 8: no step bigger than the input's but for the
-        # putting down, eased over the frames before the landing (HEIGHT_RATE a frame at most)
+        # putting down, eased over the frames before the landing (a few mm here)
         q = rolled("左", 15.0)
         keys = [key("センター", 0, position=(0, -0.8, 0)), key("左足首", 0, q),
                 key("左足ＩＫ", 0, q, position=(0, 2.0, -0.5)), key("左足ＩＫ", 12, q), key("左足ＩＫ", 20, q)]
@@ -395,7 +395,7 @@ class LayerTest(unittest.TestCase):
         a, b = f_in["左"], f_out["左"]
         step_in = np.abs(np.diff(a["ankle"][:, 1]))
         step_out = np.abs(np.diff(b["ankle"][:, 1]))
-        self.assertLess(float(step_out.max()), float(step_in.max()) + foot_layer.HEIGHT_RATE)
+        self.assertLess(float(step_out.max()), float(step_in.max()) + 0.04)
         turn_out = foot_layer.angle_steps(b["q_foot"])
         self.assertLess(float(turn_out.max()), float(a["roll"][0]) / 3.0 + 0.5)       # laid flat over 3 frames or more
         self.assertLess(abs(float(b["roll"][14])), 0.5)                                # flat once it stands
@@ -517,6 +517,18 @@ class LayerTest(unittest.TestCase):
         self.assertLess(float(b["ankle"][-1, 1]), float(a["ankle"][-1, 1]) - 0.1)      # the ankle lowered onto the ball
         added = np.abs(np.diff(b["ankle"][:, 1]) - np.diff(a["ankle"][:, 1]))
         self.assertLess(float(added.max()), 0.125)
+
+    def test_foot_lifting_into_a_kick_is_let_go(self):
+        # standing on the ball (pitched 30 degrees, lowered onto it), then lifted 4 cm a frame: after the lift-off the
+        # foot follows the dance; around it the layer's height change is never more than it was while the foot stood,
+        # and it is gone EASE frames after
+        lifts = [0.0] * 5 + [0.5 * k for k in range(1, 10)]
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(30.0, lifts), frames=len(lifts))
+        dy = f_out["左"]["ankle"][:, 1] - f_in["左"]["ankle"][:, 1]
+        standing = float(np.abs(dy[:5]).max())
+        self.assertGreater(standing, 0.05)                                            # it was lowered onto the ball
+        self.assertLess(float(np.abs(dy[5:]).max()), standing + 0.01)
+        self.assertLess(float(np.abs(dy[5 + foot_layer.EASE:]).max()), 0.01)
 
     def test_one_frame_lift_of_a_standing_foot_is_bridged(self):
         # standing on the ball (pitched 30 degrees), the trace lifts the foot 1 cm for a single frame: no pop
