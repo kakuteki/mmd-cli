@@ -281,6 +281,16 @@ class PassiveTest(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(d)))
         self.assertLess(np.abs(d).max(), 0.2)
 
+    def test_a_very_stiff_well_damped_joint_stays_stable(self):
+        # a small thumb held stiff: about 50 Hz at a damping ratio of 0.85 (explicit steps of 1/240 s diverge there)
+        w = 2.0 * math.pi * 55.0
+        forcing = np.random.default_rng(4).normal(0.0, 300.0, (600, 2))
+        d = self.run_(forcing, omega=w, zeta=0.85)
+        self.assertTrue(np.all(np.isfinite(d)))
+        self.assertLess(np.abs(d).max(), 3.0 * 900.0 / w ** 2)
+        step = self.run_(np.full((200, 1), 500.0), omega=w, zeta=0.85)
+        self.assertAlmostEqual(float(step[-1, 0]), 500.0 / w ** 2, delta=0.02 * 500.0 / w ** 2)
+
 
 class ForcingTest(unittest.TestCase):
     """what drives the lag: the hand's angular acceleration about the joint's axis, the joint's linear acceleration (and
@@ -394,6 +404,14 @@ class OutputTest(unittest.TestCase):
     def setUpClass(cls):
         cls.dance = hand_dance([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
         cls.result = hand_layer.layer(MODEL, cls.dance, pulp=PULP)
+
+    def test_every_key_is_a_finite_unit_rotation(self):
+        # a swinging arm drives the stiffest joint (the thumb, about 50 Hz) hardest
+        dance = hand_dance([(0, "open"), (LAST, "open")], arm=[(0, 20.0), (10, 80.0), (12, 20.0), (LAST, 20.0)])
+        for motion in (self.result.motion, hand_layer.layer(MODEL, dance, pulp=PULP).motion):
+            q = np.array([k.rotation for k in motion.bones])
+            self.assertTrue(np.all(np.isfinite(q)))
+            np.testing.assert_allclose(np.linalg.norm(q, axis=1), 1.0, atol=1e-5)
 
     def test_every_finger_bone_has_a_key_on_every_frame(self):
         tracks = fk.tracks_of(self.result.motion)

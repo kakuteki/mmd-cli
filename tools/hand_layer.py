@@ -268,21 +268,25 @@ GRAVITY = np.array([0.0, -9.80665, 0.0])          # m/s^2 in the model's axes (Y
 
 def passive_response(forcing, omega, zeta, fps, substeps=8):
     """delta [F, J] (radians) of joints that follow  delta'' + 2 zeta omega delta' + omega^2 delta = forcing  from rest
-    at frame 0, the forcing [F, J] (rad/s^2) taken as linear between frames; semi-implicit Euler, `substeps` per frame.
-    omega and zeta are [J] or, changing with time, [F, J] (the frame's own values through its interval)"""
+    at frame 0, the forcing [F, J] (rad/s^2) taken as linear between frames.  omega and zeta are [J] or, changing with
+    time, [F, J] (the frame's own values through its interval).  Implicit Euler (stable however stiff), at least
+    `substeps` steps a frame and more where the stiffest joint's omega dt would pass 0.25 (the step's own damping
+    stays small): v' = (v + dt (f - omega^2 d)) / (1 + 2 zeta omega dt + omega^2 dt^2), d' = d + dt v'"""
     forcing = np.asarray(forcing, dtype=float)
     F, J = forcing.shape
     w = np.broadcast_to(np.asarray(omega, dtype=float), (F, J))
     z = np.broadcast_to(np.asarray(zeta, dtype=float), (F, J))
-    dt = 1.0 / (fps * substeps)
+    n = max(int(substeps), int(math.ceil(float(w.max(initial=0.0)) / (fps * 0.25))))
+    dt = 1.0 / (fps * n)
     d, v = np.zeros(J), np.zeros(J)
     out = np.zeros((F, J))
     for t in range(1, F):
         a0, a1 = forcing[t - 1], forcing[t]
         wt, zt = w[t], z[t]
-        for k in range(substeps):
-            f = a0 + (a1 - a0) * ((k + 1) / substeps)
-            v = v + dt * (f - 2.0 * zt * wt * v - wt * wt * d)
+        den = 1.0 + 2.0 * zt * wt * dt + wt * wt * dt * dt
+        for k in range(n):
+            f = a0 + (a1 - a0) * ((k + 1) / n)
+            v = (v + dt * (f - wt * wt * d)) / den
             d = d + dt * v
         out[t] = d
     return out
