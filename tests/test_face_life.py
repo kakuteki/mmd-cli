@@ -470,6 +470,32 @@ class FlashTest(unittest.TestCase):
         self.assertNotIn("flashes", result.report["blink"])
 
 
+class HumanReportTest(unittest.TestCase):
+    """the report gives the half-closed eye (a10's: まばたき 0.2 or more between the blinks) before and after, and after
+    without what the lid follows the eyes by; the kimes and the changes of the face that land on one"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = face_life.plan(inputs(parts={"右手首": moving_point([(403, 5, (3.0, 0.0, 0.0))])},
+                                           eyes=pitched_eyes([(700, 790, -8.0)])), seed=0)
+        cls.report = cls.result.report
+
+    def test_half_closed_eyes_before_and_after(self):
+        lid = self.report["blink"]["lid"]
+        t = tracks(self.result.motion)
+        mask = between_blinks(t["まばたき"], t["笑い"], start=self.report["intro"]["eyes_open"] + 30)
+        own = float((t["まばたき"][mask] >= 0.2).mean())
+        self.assertAlmostEqual(lid["half_eye"]["new"], own, delta=0.03)
+        self.assertGreater(lid["half_eye"]["before"], 0.9)
+        self.assertLessEqual(lid["half_eye_without_the_gaze"], lid["half_eye"]["new"])
+
+    def test_the_kimes_and_the_changes_on_them(self):
+        k = self.report["expression"]["kimes"]
+        self.assertEqual(k["found"], 1)
+        self.assertEqual(k["changes_on_one"], 1)
+        json.dumps(self.report)
+
+
 class BlinkShapeTest(unittest.TestCase):
     def test_every_v7_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
         seen = set()

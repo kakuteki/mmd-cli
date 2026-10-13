@@ -545,12 +545,23 @@ def plan(inp, seed=0, hold=None, style="human"):
     blink_report["new"]["closure_max"] = _r(shut_new.max(), 3)
     blink_report["new"]["closure_over_the_author"] = _r(max(0.0, float(shut_new.max() - max(1.0, author.max()))), 3)
     blink_report["before"]["closure_max"] = _r(author.max(), 3)
+    lid = dict(blink_report.get("lid") or {})
+    follow = lid.pop("_follow", None)
+    b_new, s_new = track(new.get(BLINK, []), frames), track(new.get(SMILE, []), frames)
+    lid["half_eye"] = {"before": half_eye(track(original.get(BLINK, []), frames), track(original.get(SMILE, []), frames)),
+                       "new": half_eye(b_new, s_new)}
+    if follow is not None:
+        lid["half_eye_without_the_gaze"] = half_eye(b_new, s_new, minus=follow)
+    blink_report["lid"] = lid
     report = {
         "frames": [0, frames - 1], "seed": seed, "style": style, "intro": intro,
         "expression": {"before": measure_expressions(original, frames, speed),
                        "new": measure_expressions(new, frames, speed), "changes": len(events),
-                       "moved_to_head": sum(1 for e in events if e["shift"] != 0),
-                       "stretched_frames": _dist([e - s for _, s, e in stretched])},
+                       "moved_to_head": sum(1 for e in events if e["shift"] != 0 and e.get("kime") is None),
+                       "stretched_frames": _dist([e - s for _, s, e in stretched]),
+                       "kimes": {"found": len(accents),
+                                 "per_min": _r(len(accents) / max(1e-9, (frames - (start or 0)) / FPS / 60.0), 2),
+                                 "changes_on_one": sum(1 for e in events if e.get("kime") is not None)}},
         "blink": blink_report,
         "mouth": dict(mouth_info, **measure_mouth(original, new, frames, inp, intro)),
         "held": dict(hold),
@@ -961,9 +972,10 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
         lift = flash_track(flashes, frames)
         base = np.where(author < LID_DEEP, base * (1.0 - lift), base)
         follow = lid_offset(pitch, sacc, frames, LID_FOLLOW)
+        lid_info = {"_follow": follow * (base < CLOSED)}
         base = np.clip(base + follow * (base < CLOSED), 0.0, 1.0)
-        lid_info = {"author_mean": _r(author[opened:].mean()), "shown_mean": _r(base[opened:].mean()),
-                    "shares": list(LID_SHOWN), "follow_per_degree": list(LID_FOLLOW)}
+        lid_info.update({"author_mean": _r(author[opened:].mean()), "shown_mean": _r(base[opened:].mean()),
+                         "shares": list(LID_SHOWN), "follow_per_degree": list(LID_FOLLOW)})
     b = base.copy()
     out = []
     for f, cause, closing, hold, opening in drawn:
@@ -1665,6 +1677,25 @@ def _shift_test(ev, ref, span, before, after, rng):
     return {"n": int(len(ev)), "observed": _r(observed), "chance_mean": _r(null.mean()),
             "chance_p2.5": _r(np.percentile(null, 2.5)), "chance_p97.5": _r(np.percentile(null, 97.5)),
             "p_greater": _r((null >= observed).mean(), 4)}
+
+
+HALF = 0.2                      # まばたき from which the eye counts as half closed between the blinks (a10's base)
+
+
+def half_eye(b, s, minus=None):
+    """the remeasure's half-closed eye (a10's "base"): from the first frame まばたき stays under 0.5 for 30 frames, outside
+    the closures of まばたき + 笑い (closing start to opening end), the share of frames with まばたき (less `minus`, the
+    lid's following of the eyes) at HALF or more"""
+    low = b < 0.5
+    start = next((f for f in range(len(b) - 30) if low[f:f + 30].all()), None)
+    if start is None:
+        return None
+    mask = np.zeros(len(b), bool)
+    mask[start:] = True
+    for e in episodes(b + s, start):
+        mask[e["cs"]:e["oe"] + 1] = False
+    v = b - minus if minus is not None else b
+    return _r(float((v[mask] >= HALF).mean()), 4) if mask.any() else None
 
 
 def measure_blinks(keys, frames, inp, onsets, opened):
