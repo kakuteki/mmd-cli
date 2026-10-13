@@ -11,7 +11,8 @@ floor MMD drew was black with nothing under her feet.  Here the same pieces lie 
 * the cyc: the plate on a vertical cylinder of `radius` round the stage centre (0 makes it infinitely far: only the turn of
   the camera moves it).  Its haze band and its pool of light are where the camera the look was made for (REFERENCE: 38 in
   front of the stage centre, 13 up, level, a view angle of 30) saw them on the plate, so that camera sees the plate of
-  before; any other camera sees the cyc from where it is.  The plate's darker corners stay with the picture;
+  before; any other camera sees the cyc from where it is.  The plate's darker sides (plate.vignette) are paint of the cyc
+  too: fixed to the picture they would follow the camera and hold the backdrop back (the lens darkens the picture's corners);
 * the beams: the fan of `beams` hangs from a truss `truss` behind the stage centre, at the height where the reference camera
   saw the fan's origin (35 % of the picture's height above it), each beam a cone from the truss to the floor, fading
   downwards as it did on the picture;
@@ -168,8 +169,7 @@ def _seen_from_the_front(theta, radius):
 
 def backdrop(view, look, scale=LIGHT_SCALE):
     """[rows, columns, 3] floats: the cyc as `view` sees it, on a picture `scale` times smaller.  The plate of the look
-    (mv_look.plate) is painted on it as the reference camera saw it, and the plate's darker corners are those of the
-    picture"""
+    (mv_look.plate), its darker sides included, is painted on it as the reference camera saw it"""
     settings = look["plate"]
     radius = float(look["stage"]["radius"])
     theta, psi = _cyc_place(view, scale, radius)
