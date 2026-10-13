@@ -300,14 +300,14 @@ class LayerTest(unittest.TestCase):
         self.assertEqual({k.name for k in out.bones} - {k.name for k in m_in.bones}, written - {k.name for k in m_in.bones})
 
     def test_deep_squat_lifts_the_heel_past_the_loaded_dorsiflexion(self):
-        # a squat so deep (the pelvis down 5.5, the feet flat and back) that the flat foot would dorsiflex past the
-        # weight-bearing lunge's 40 degrees: the heel comes up, the forefoot stays on the floor
-        keys = (key("センター", 0, position=(0, -5.5, 0)), key("左足ＩＫ", 0, position=(0, 0, 1.2)),
+        # a squat so deep (the pelvis down 3.5, the feet flat and back 1.2: 46 degrees) that the flat foot would
+        # dorsiflex past the weight-bearing lunge's 40 degrees: the heel comes up, the forefoot stays on the floor
+        keys = (key("センター", 0, position=(0, -3.5, 0)), key("左足ＩＫ", 0, position=(0, 0, 1.2)),
                 key("右足ＩＫ", 0, position=(0, 0, 1.2)))
         f_in, f_out, out, plan = run_layer(*keys, floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertGreater(float(a["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 3.0)
-        self.assertLess(float(b["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 0.5)
+        self.assertLess(float(b["dorsi"][0]), foot_layer.LOADED_DORSI_CAP)            # (a cap of 80 would give 41)
         self.assertLess(float(b["pitch"][0]), -3.0)                                    # the heel raised
         self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.003)                   # the forefoot on the floor
 
@@ -352,6 +352,44 @@ class LayerTest(unittest.TestCase):
         self.assertLess(float(turn_out.max()), float(a["roll"][0]) / 3.0 + 0.5)       # laid flat over 3 frames or more
         self.assertLess(abs(float(b["roll"][14])), 0.5)                                # flat once it stands
         self.assertGreater(abs(float(b["roll"][0])), 14.0)                             # untouched high up
+
+    def test_foot_along_the_shank_is_not_whipped(self):
+        # the trace's foot in the air with its toes up along the shank (dorsiflexed some 65 degrees, past any range, as
+        # at the top of a kick that folds the knee), wobbling 4 degrees about that line: the plane of the shank and the
+        # foot, about whose normal a dorsiflexion is undone, turns round with the wobble, so undoing it there would
+        # swing the foot round frame by frame.  The output turns no faster than the input.
+        keys = []
+        for t in range(13):
+            phi = math.radians(40.0 * t)
+            q = fk.multiply(axis_angle((math.cos(phi), 0.0, math.sin(phi)), 4.0), axis_angle((1, 0, 0), 90.0))
+            keys += [key("左足ＩＫ", t, q), key("左足首", t, q)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=13)
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(a["dorsi"].min()), 55.0)
+        over = foot_layer.angle_steps(b["q_foot"]) - foot_layer.angle_steps(a["q_foot"])
+        self.assertLess(float(over.max()), 2.0)
+
+    def test_untrusted_frames_do_not_spread_into_their_neighbours(self):
+        # the foot lifted in the air, pitched 15 degrees down and rolled 10 (inside every range), but for three frames
+        # turned with its toes up along the shank, 6 degrees off it, where its roll and its dorsiflexion against the
+        # shank cannot be read (the roll reads some 90 degrees).  What is read there must not be "corrected" into the
+        # frames around them, which need nothing: the output's foot is the input's on every frame.
+        lift, centre = (0, 3.0, -1.0), key("センター", 0, position=(0, -1.0, 0))
+        leg = leg_ik.solve(RIG, motion(key("左足ＩＫ", 0, position=lift), centre), [0])["左"]
+        sv = (leg["knee"][0] - leg["ankle"][0]) / np.linalg.norm(leg["knee"][0] - leg["ankle"][0])
+        a0 = SHOE.sides["左"].a0
+        along = axis_angle(tuple(np.cross(a0, sv)), math.degrees(math.acos(float(np.dot(a0, sv)))))
+        up = fk.multiply(axis_angle(tuple(np.cross(sv, (1.0, 0.0, 0.0))), 6.0), along)
+        down = fk.multiply(axis_angle((1, 0, 0), -15.0), rolled("左", 10.0))
+        keys = [centre]
+        for t in range(13):
+            q = up if 5 <= t <= 7 else down
+            keys += [key("左足ＩＫ", t, q, position=lift), key("左足首", t, q)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=13)
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(a["low"].min()), 2.0)                                # in the air
+        self.assertGreater(abs(float(a["inversion"][6])), 60.0)                        # the roll read there
+        self.assertLess(float(turn_between(a["q_foot"], b["q_foot"]).max()), 1.0)
 
     def test_default_floor_is_the_traces(self):
         # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved

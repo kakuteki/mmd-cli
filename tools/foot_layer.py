@@ -458,6 +458,9 @@ LOAD_D0 = 1.0                   # units added to a foot's distance from the pelv
 LOAD_SHARE = (0.15, 0.45)       # a foot bearing less of the weight than the first keeps its roll and its toes; more
                                 # than the second: laid flat, the toes bent under a raised heel
 ROLL_DORSI = (45.0, 60.0)       # |dorsiflexion| over which the roll against the shank fades out of the corrections
+AXIS_DORSI = (70.0, 80.0)       # |dorsiflexion| (as the bones stand) over which the dorsiflexion's correction fades out:
+                                # the foot points along the shank within 20 to 10 degrees, and the plane of the two,
+                                # about whose normal the foot is turned, is lost
 SHANK_SWING = 25.0              # degrees a frame: a shank turning faster takes no range correction of the foot
 ROLL_JUMP, FOOT_STILL = 40.0, 15.0   # degrees a frame: a roll that jumps more while the foot turns less is a jump of
                                      # the shank (the reference), not of the foot
@@ -550,6 +553,14 @@ def spread(x, radius=None):
     return smooth_max_envelope(np.maximum(x, 0.0), radius) - smooth_max_envelope(np.maximum(-x, 0.0), radius)
 
 
+def trusted(x, ok):
+    """a correction x [F] spread over its neighbours (spread) where it can be trusted: ok [F] 0..1 per frame.  The
+    corrections of frames not trusted are dropped first (what was read there must not reach the frames around them),
+    then the spread is faded out around those frames (EASE frames, a raised cosine), so the foot eases back to the
+    input's there."""
+    return spread(x * ok) * (1.0 - smooth_max_envelope(1.0 - ok, EASE))
+
+
 def turn_about(axis, deg, q):
     """q turned further by `deg` degrees about the world axis `axis` [F, 3]"""
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
@@ -581,20 +592,24 @@ def foot_targets(o, f, leg, rest, share, near, p):
         start, cap = lim["dorsiflexion"]
         dcap = cap + v * max(0.0, p["loaded_dorsi_cap"] - cap)             # a loaded foot dorsiflexes further
         dd = np.where(dorsi >= 0.0, soft_limit(dorsi, start, dcap), -soft_limit(-dorsi, *lim["plantarflexion"])) - dorsi
-        # where the shank itself swings faster than SHANK_SWING a frame (a leg folded in a kick, MMD's knee turning
-        # round), holding the foot inside the range would whip it with the shank: left as the input has it
+        # left as the input has it (trusted): the dorsiflexion where the shank itself swings faster than SHANK_SWING a
+        # frame (a leg folded in a kick, MMD's knee turning round: holding the foot inside the range would whip it with
+        # the shank) and where the foot points along the shank (AXIS_DORSI: the axis of the turn is lost); the roll
+        # where its reference is lost (roll_reliable; it is turned about the foot's own axis, so a fast shank does not
+        # swing it).  Such frames' own corrections are dropped before the spread (what is read there means nothing and
+        # must not reach the frames around), and the spread is faded out around them.
         swing = np.zeros(len(sv))
         swing[1:] = np.degrees(np.arccos(np.clip(np.sum(sv[1:] * sv[:-1], axis=1), -1.0, 1.0)))
         fast = (swing > SHANK_SWING).astype(float)
         fast[:-1] = np.maximum(fast[:-1], fast[1:])
-        dd = dd * (1.0 - smooth_max_envelope(fast, 2))
         a = qrot(q, o.a0)
-        q = turn_about(np.cross(sv, a), -spread(dd), q)         # about the shank x foot normal: + lowers dorsiflexion
+        q = turn_about(np.cross(sv, a), -trusted(dd, 1.0 - np.maximum(fast, smoothstep(np.abs(d_b), *AXIS_DORSI))), q)
+        # (about the shank x foot normal: + lowers the dorsiflexion)
         d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
         inv = inv - rest["inversion"]
         di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
-        di = di * roll_reliable(inv, d_b, leg["q_foot"])          # d_b: 90 - the angle of the foot to the shank
-        q = turn_about(qrot(q, o.a0), side_sign * spread(di), q)   # about the foot's forward axis
+        ok = roll_reliable(inv, d_b, leg["q_foot"])                      # d_b: 90 - the angle of the foot to the shank
+        q = turn_about(qrot(q, o.a0), side_sign * trusted(di, ok), q)   # about the foot's forward axis
     toes = np.zeros(len(q))
     if p["toes"]:
         pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
