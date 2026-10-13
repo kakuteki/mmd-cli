@@ -34,6 +34,9 @@ ffmpeg (the compositing), from back to front:
 
 look.json overrides single values of DEFAULT_LOOK; an unknown name is an error (a misspelt setting would
 otherwise silently do nothing).  Lengths are in pixels of a 720 line picture and scale with the height.
+Frame counts (flare.frames, camera.punch_frames) are frames of the song, as MMD counts them (SONG_FPS, 30 a second), and
+the light loop is a whole number of them: a video at 60 fps (tools/mv_chunks.py --out-fps 60) has twice the frames of
+each and shows on its frame 2n what one at 30 fps shows on its frame n.
 The output has no sound: the song is added afterwards (ffmpeg -i OUT.mp4 -i song.wav -c:v copy ...).
 """
 import argparse
@@ -60,9 +63,10 @@ DEFAULT_LOOK = {
     # tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and
     # turned the skin pink; this keeps the folds of the dress and still gives her a soft edge
     "glow": {"threshold": 175, "radius": 14, "strength": 0.45},
+    # the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60)
     "flare": {"frames": 12, "strength": 0.85, "colour": [255, 244, 224]},
     # what the camera does at a flare: it punches in by `punch` of the picture and comes back within
-    # `punch_frames`, and red and blue part by `aberration` pixels for as long
+    # `punch_frames` frames of the song, and red and blue part by `aberration` pixels for as long
     "camera": {"punch": 0.04, "punch_frames": 10, "aberration": 3},
     # the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with
     # every frame (0 none, up to about 10); both lie under the text in front
@@ -71,6 +75,7 @@ DEFAULT_LOOK = {
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
+SONG_FPS = 30                    # the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song
 
 
 # ---- the look -------------------------------------------------------------------------------
@@ -133,7 +138,19 @@ def plate(size, settings):
 
 
 def light_frame_count(look, fps):
-    return max(1, int(round(float(look["beams"]["loop_seconds"]) * fps)))
+    """the frames of the light loop: at a rate that is a whole number of times SONG_FPS the loop is a whole number of
+    frames of the song (so 60 fps has twice the frames of 30 and the same light at the same time), at any other the
+    nearest whole number of its own frames"""
+    seconds = float(look["beams"]["loop_seconds"])
+    times = fps / float(SONG_FPS)
+    if times == int(times) and times >= 1:
+        return max(1, int(round(seconds * SONG_FPS))) * int(times)
+    return max(1, int(round(seconds * fps)))
+
+
+def song_frames(frames, fps):
+    """a count of frames of the song (the look's) at the rate fps: as many seconds"""
+    return max(1, int(round(int(frames) * fps / float(SONG_FPS))))
 
 
 def _unit(i, salt):
@@ -231,10 +248,12 @@ def write_layers(look, work, size, fps):
         light_frame(small, look, i, count).save(os.path.join(light_dir, "light_%05d.png" % i))
     flare_dir = os.path.join(work, "flare")
     os.makedirs(flare_dir, exist_ok=True)
-    flare_frames = max(1, int(look["flare"]["frames"]))
+    # flare.frames are frames of the song: at 60 fps the flare has twice the frames and fades in steps half as large
+    flare_frames = song_frames(look["flare"]["frames"], fps)
+    flare = dict(look["flare"], frames=flare_frames)
     _clear_frames(flare_dir, "flare_")
     for i in range(flare_frames):
-        flare_frame(small, look["flare"], i).save(os.path.join(flare_dir, "flare_%05d.png" % i))
+        flare_frame(small, flare, i).save(os.path.join(flare_dir, "flare_%05d.png" % i))
     return {"plate": plate_path, "light_pattern": _slashes(os.path.join(light_dir, "light_%05d.png")), "light_frames": count,
             "flare_pattern": _slashes(os.path.join(flare_dir, "flare_%05d.png")), "flare_frames": flare_frames}
 
@@ -305,7 +324,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         overlays[layer].append((next_input, offset, cue["x"], cue["y"], None))
         next_input += 1
     flare_starts = []                  # seconds from the excerpt's start; below 0 for a flare that began before it
-    punch_span = look["camera"]["punch_frames"] / float(fps)
+    punch_span = look["camera"]["punch_frames"] / float(SONG_FPS)          # frames of the song, whatever the rate
     for at in look["flares"]:
         if not flare_pattern:
             continue
@@ -355,7 +374,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
     camera = look["camera"]
-    span = camera["punch_frames"] / float(fps)
+    span = punch_span
     hits = flare_starts if span > 0 else []
     if hits and camera["punch"] > 0:
         # 1 + punch * (1 - (t - T) / span)^2 from each flare time T on; the picture is scaled about its centre

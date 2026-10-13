@@ -61,8 +61,9 @@ Motion (Motion.at).  A State per frame: alpha, an offset, extra tracking, how fa
 of the underline is drawn.  A cue comes in `enter` seconds (cubic ease-out) and goes in `exit` seconds
 (cubic ease-in).  "fade" changes the alpha only; "rise" comes up from 24 px below and leaves 12 px higher;
 "tracking-in" starts with 0.6 em more between the letters and closes; "wipe" shows the block from the left
-behind a soft edge and goes by fading; "flash" blinks for five frames (alpha 1, 0, 1, 0.35, 1), holds and is
-cut off; "roll" travels at one speed from under the frame to over it (end credits).
+behind a soft edge and goes by fading; "flash" blinks for five frames of the song (alpha 1, 0, 1, 0.35, 1; frames
+of 1/30 s, MMD's, so a video at 60 fps holds every step for two frames), holds and is cut off; "roll" travels at
+one speed from under the frame to over it (end credits).
 
 The motion runs on the frame grid.  A time goes to the nearest frame (a time exactly between two frames
 to the even one: at 30 fps 0.25 s is frame 8 and 0.75 s is frame 22), and a cue has the frames from that
@@ -127,6 +128,7 @@ RISE = (24.0, -12.0)                         # px: where "rise" starts below its
 TRACKING_IN = (0.6, 0.1)                     # em: how far "tracking-in" starts spread, and spreads again leaving
 WIPE_EDGE = 24.0                             # px: the soft edge of "wipe"
 FLASH = (1.0, 0.0, 1.0, 0.35, 1.0)           # the alpha of the first frames of "flash"; full after them
+FLASH_FPS = 30                               # those frames are frames of the song (MMD's): 60 fps holds each for two
 # "left-third" and "right-third" centre the block on a quarter and on three quarters of the width: beside
 # the dancer, who stands in the middle (a lyric in the centre of the lower third lands on the legs)
 X_ANCHORS = ("left", "center", "right", "left-third", "right-third")
@@ -526,7 +528,9 @@ class Motion:
         gone = ease_in(_progress(t - (self.end - self.exit), self.exit))
         if self.anim == "flash":
             frame = int(round((t - self.start) * self.fps))
-            return State(alpha=FLASH[frame] if 0 <= frame < len(FLASH) else 1.0)
+            # the step of the blink: the frame of the song (FLASH_FPS) that frame of the video falls in
+            step = int(frame * FLASH_FPS // self.fps) if frame >= 0 else -1
+            return State(alpha=FLASH[step] if 0 <= step < len(FLASH) else 1.0)
         if self.anim == "roll":
             share = _progress(t - self.start, self.end - self.start)
             return State(dy=self.roll[0] + (self.roll[1] - self.roll[0]) * share)
