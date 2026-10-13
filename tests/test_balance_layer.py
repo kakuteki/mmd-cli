@@ -248,10 +248,13 @@ class WeightShiftTest(unittest.TestCase):
         np.testing.assert_allclose(after[1], before[1], atol=1e-6)          # and its turn
 
     def test_legs_reach_their_feet(self):
-        after = balance_layer.Body(MODEL, self.out)
+        """each leg keeps 1.5 cm of slack to its foot IK (MMD's IK falls short of the target on a leg nearer full
+        stretch), or what slack it had"""
+        before, after = balance_layer.Body(MODEL, self.motion), balance_layer.Body(MODEL, self.out)
         for s in ("左", "右"):
-            reach = np.linalg.norm(after.ankle(s) - after.hip(s), axis=1)
-            self.assertLessEqual(reach.max(), after.leg_length(s) + 1e-6)
+            room = np.maximum(after.leg_length(s) - balance_layer.REACH_TOL_CM / CM, before.reach(s))
+            self.assertTrue(np.all(after.reach(s) <= room + 1e-6), s)
+            self.assertEqual(self.report["reach"]["slack_taken_frames_" + {"左": "L", "右": "R"}[s]], 0)
 
     def test_report_splits_the_added_acceleration(self):
         c = self.report["centre"]
@@ -431,7 +434,10 @@ class ReachTest(unittest.TestCase):
         for s in ("左", "右"):
             reach = np.linalg.norm(after.ankle(s) - after.hip(s), axis=1)
             before = np.linalg.norm(balance_layer.Body(MODEL, motion).ankle(s) - balance_layer.Body(MODEL, motion).hip(s), axis=1)
-            self.assertTrue(np.all(reach <= np.maximum(after.leg_length(s), before) + 1e-6))
+            # 1.5 cm of slack kept (MMD's IK falls short on a leg nearer full stretch; with 0.3 cm the left leg goes there)
+            room = np.maximum(after.leg_length(s) - balance_layer.REACH_TOL_CM / CM, before)
+            self.assertTrue(np.all(reach <= room + 1e-6), s)
+        self.assertEqual(balance_layer.REACH_TOL_CM, 1.5)
         short = [r for r in result.report["runs"] if r["short_of_target_cm"] > 3.0]
         self.assertTrue(short, "the run that the reach stops must be named")
         self.assertIn("reach", short[0]["limited_by"])
@@ -702,8 +708,11 @@ class SongTest(unittest.TestCase):
         self.assertLess(c["added_acc_v_m_s2"]["max"], 6.5)
 
     def test_reach_not_worse(self):
+        """no leg loses its slack to its foot IK below 1.5 cm (or below what the dance had): MMD's IK falls short of the
+        target on legs nearer full stretch (measured with the feet layer's leg_ik on the MV)"""
         for s in ("L", "R"):
             self.assertEqual(self.report["reach"]["worse_frames_" + s], 0)
+            self.assertEqual(self.report["reach"]["slack_taken_frames_" + s], 0)
 
 
 if __name__ == "__main__":

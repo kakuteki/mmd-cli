@@ -125,7 +125,10 @@ LAM_IN = 0.02                   # the pull back to the dance where the pull is (
 LAM_OUT = 0.5                   # and elsewhere: keeps a brief step's lean short (it does not start a second early)
 DROP_MAX_CM = 2.0               # the hips may go down this far for the legs to reach
 DROP_ACC_MAX = 0.5              # m/s^2: the drop's own acceleration (a slow give of the knees)
-REACH_TOL_CM = 0.3              # a leg keeps this much slack (the IK's last few mm)
+REACH_TOL_CM = 1.5              # a leg keeps this much slack, or as much as it had: MMD's IK (saba's solve, the feet
+                                # layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK
+                                # target in 70-100 % of the v7 frames with under 1 cm of two-bone slack, 22-26 % at
+                                # 1-1.5 cm, 2-3 % at 1.5-4 cm (the review's measure, NOTES 10/14)
 ADMM_ITERS = 800
 ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
@@ -1300,6 +1303,8 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
         rb, ra = before.reach(s), after.reach(s)
         reach["unreachable_frames_" + tag] = [int(np.sum(rb - L > CONTACT_EPS)), int(np.sum(ra - L > CONTACT_EPS))]
         reach["worse_frames_" + tag] = int(np.sum((ra > np.maximum(L, rb) + 1e-6)))
+        # frames whose two-bone slack the layer took below REACH_TOL_CM (or below what the dance had)
+        reach["slack_taken_frames_" + tag] = int(np.sum(ra > np.maximum(L - REACH_TOL_CM / CM, rb) + 1e-5))
         on = plan["sup"][s]
         kb, ka = before.knee_flexion(s), after.knee_flexion(s)
         knee["on_floor_deg_" + tag] = {"before": q_stats(kb[on], (0.05, 0.5, 0.95)), "after": q_stats(ka[on], (0.05, 0.5, 0.95))}
