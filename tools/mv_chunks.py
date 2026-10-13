@@ -1,14 +1,22 @@
 """Render a whole MV in chunks: one chunk per camera shot, each rendered by MMD at a high frame rate with an alpha
-channel, folded to 30 fps with motion blur and the look of tools/mv_look.py, checked frame by frame, then joined.
+channel, folded to 30 fps (or 60) with motion blur and the look of tools/mv_look.py, checked frame by frame, then joined.
 
     python tools/mv_chunks.py PLAN.json OUTDIR (--shots CAMERA_REPORT.json | --cuts F [F ...] --last F)
-                              [--lead 120] [--fps 240] [--shutter 0.5] [--tag final]
+                              [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30] [--tag final]
 
 Why chunks: an uncompressed BGRA AVI at 240 fps and 1280x720 takes 29.5 MB per frame of the song (228 GB for a song
 of 4 minutes 18 seconds), one shot of it some 17 GB at most.  A seam is hidden by the camera cut, and every chunk starts
 --lead frames before its cut so that hair and skirt (physics, which MMD starts from the rest pose at the first rendered
 frame) have settled by the cut.  The lead-in is rendered but not kept: mv_look gets --offset (the first rendered
 frame), --from (the cut) and --to (the end of the shot), and goes on with the light loop and a running flare.
+
+The cuts, the lead and the spans are frames of the song (MMD's frames, 30 per second) whatever the output.  --out-fps is
+the rate of the joined video: 30 (the default; the rate to publish: the motion asks for 30 fps videos) or 60 (to watch).
+At 60 MMD renders the same AVI and every frame of the song becomes two frames of the video, each the average of
+round(shutter x fps / 60) of its fps / 60 subframes (4 and 2 at 240 fps); the effects of the look last as many seconds
+as at 30 (mv_look counts them in frames of the song).  The files of a run at 60 fps carry "_60fps" after the tag
+(render_final_60fps.ps1, final_60fps_00.mp4, <name>_final_60fps.mp4), so that it removes nothing of a run at 30 fps of
+the same tag.
 
 PLAN.json names the files on the render machine, as absolute paths with forward slashes:
     {"mmd": ".../MikuMikuDance.exe", "model": ".../model.pmx", "motions": [".../dance.vmd", ".../lips.vmd"],
@@ -39,7 +47,8 @@ those folders (a texture the model reads from elsewhere) or behind a junction in
 render without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver
 checks the look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
-The summary is one line of JSON; an error is {"ok": false, "error": ...} with exit code 2.
+The summary is one line of JSON (frames: of the joined video; spans: frames of the song); an error is
+{"ok": false, "error": ...} with exit code 2.
 """
 import argparse
 import hashlib
@@ -49,7 +58,8 @@ import os
 import re
 import sys
 
-FPS = 30
+FPS = 30                        # the frames of the song (MMD's): the cuts, the lead, the spans and the seconds count in them
+OUT_FPS = (30, 60)              # the joined video: 30 to publish (the motion's terms), 60 to watch
 MMD_FPS = (30, 60, 120, 240, 480)
 MIN_FRAMES = 3
 UNCOMPRESSED = "未圧縮"
@@ -141,7 +151,7 @@ def plan_chunks(spans, lead):
 
 
 def avi_bytes(chunk, fps, size, bytes_per_pixel=4):
-    """the AVI of the chunk, lead-in included: every frame at 30 fps is fps/30 frames in the AVI"""
+    """the AVI of the chunk, lead-in included: every frame of the song is fps/30 frames in the AVI (whatever the output)"""
     return int((chunk["end"] - chunk["first"] + 1) * (fps // FPS) * size[0] * size[1] * bytes_per_pixel)
 
 
@@ -240,32 +250,35 @@ def _names(plan, tag, chunk):
     return name, "%s/%s.avi" % (plan["out"], name), "%s/%s.mp4" % (plan["out"], name)
 
 
-def fold_args(plan, tag, chunk, fps, shutter):
-    """what mv_look gets after `render AVI LOOK MP4` for the chunk"""
+def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS):
+    """what mv_look gets after `render AVI LOOK MP4` for the chunk: the subframes make the output rate (mv_look divides
+    the rate of the AVI by them), the times are seconds of the song"""
     fold = ["--cues", plan["cues"]] if plan["cues"] else []
-    fold += ["--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // FPS, "--shutter", shutter,
+    fold += ["--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // out_fps, "--shutter", shutter,
              "--offset", "%.6f" % (chunk["first"] / float(FPS)), "--from", "%.6f" % (chunk["cut"] / float(FPS)),
              "--to", "%.6f" % ((chunk["end"] + 1) / float(FPS))]
     return [str(a) for a in fold]
 
 
-def recipe(plan, tag, chunk, fps, shutter):
+def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS):
     """what makes the chunk's mp4 apart from the contents of the input files: its batch, its look and its fold"""
-    parts = [batch_text(plan, chunk, fps, _names(plan, tag, chunk)[1]), plan["look"]] + fold_args(plan, tag, chunk, fps, shutter)
+    parts = [batch_text(plan, chunk, fps, _names(plan, tag, chunk)[1]), plan["look"]] + fold_args(plan, tag, chunk, fps, shutter,
+                                                                                                   out_fps)
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
 
 
-def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
-    sub = fps // FPS
-    total = sum(c["frames"] for c in chunks)
+def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS):
+    sub = fps // out_fps
+    per = out_fps // FPS                                    # frames of the video to a frame of the song
+    total = sum(c["frames"] for c in chunks) * per
     joined = "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)
     concat = "%s/concat_%s.txt" % (plan["scripts"], tag)
     py = "python" if plan["python"] == "python" else _ps(plan["python"])
     inputs = [plan["mmd"], plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
     inputs += [plan["cues"]] if plan["cues"] else []
     work = "%s/look_work_%s" % (plan["out"], tag)
-    lines = ["# %d chunks at %d fps folded to 30 fps (%d subframes, shutter %s), %d frames, joined to %s."
-             % (len(chunks), fps, sub, shutter, total, joined),
+    lines = ["# %d chunks at %d fps folded to %d fps (%d subframes, shutter %s), %d frames, joined to %s."
+             % (len(chunks), fps, out_fps, sub, shutter, total, joined),
              "# Written by tools/mv_chunks.py.  -Resume skips a chunk whose mp4 has its frame count and was made from the",
              "# same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
              "# It does not see fonts, MMD's settings, Python, ffmpeg or files outside the watched folders: after changing",
@@ -307,7 +320,9 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
               "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
               "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
               "$stamp = $files -join \"`n\"",
-              "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps 30" % (py, _ps(work), plan["size"][0], plan["size"][1]),
+              # the look is checked at the rate the fold will draw it at
+              "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps %d" % (py, _ps(work), plan["size"][0],
+                                                                                                    plan["size"][1], out_fps),
               # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
               "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the look check (not found?)' -f %s; exit 1 }" % _ps(plan["python"]),
               "if ($LASTEXITCODE -ne 0) { 'STOP: mv_look layers failed on the look {0} ({1}):' -f $look, (Why $LASTEXITCODE); $check; exit 1 }",
@@ -361,9 +376,9 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
         name, avi, mp4 = _names(plan, tag, c)
         lines.append("Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
             _ps(name), _ps("%s/chunk_%s.txt" % (plan["scripts"], name)), _ps(batch_hashes[c["index"]]),
-            _ps(recipe(plan, tag, c, fps, shutter)), _ps("%s/%s.json" % (plan["out"], name)), _ps(avi), _ps(mp4),
-            c["frames"], avi_bytes(c, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
-            ", ".join(_ps(a) for a in fold_args(plan, tag, c, fps, shutter))))
+            _ps(recipe(plan, tag, c, fps, shutter, out_fps)), _ps("%s/%s.json" % (plan["out"], name)), _ps(avi), _ps(mp4),
+            c["frames"] * per, avi_bytes(c, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
+            ", ".join(_ps(a) for a in fold_args(plan, tag, c, fps, shutter, out_fps))))
     lines += ["Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue" % _ps(joined),
               "Invoke-Native ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
               "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed ({0})' -f (Why $LASTEXITCODE); exit 1 }",
@@ -373,19 +388,38 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes):
     return "\r\n".join(lines) + "\r\n"
 
 
-def concat_text(plan, chunks, tag):
-    return "".join("file '%s'\n" % _names(plan, tag, c)[2].replace("'", "'\\''") for c in chunks)
+def concat_text(plan, chunks, tag, out_fps=FPS):
+    """the list ffmpeg joins.  At 60 fps every chunk has its length too: an mp4 keeps it in its edit list in ms, and a chunk of
+    60 fps whose frames of the song are no multiple of 3 came out short (1333 ms for 40 frames: 20475 of 20480 ticks), which
+    put every later chunk 5 ticks early (ffmpeg 8.1, 2026-10-13); concat takes the given length instead"""
+    text = ""
+    for c in chunks:
+        text += "file '%s'\n" % _names(plan, tag, c)[2].replace("'", "'\\''")
+        if out_fps != FPS:
+            text += "duration %.6f\n" % (c["frames"] / float(FPS))
+    return text
 
 
-def write(plan, chunks, outdir, tag, fps, shutter):
+def run_tag(tag, out_fps):
+    """what names the files of a run: the tag, and at 60 fps the tag with "_60fps" (a run at 60 fps with the tag of a run at
+    30 fps would otherwise remove its chunks, its joined video and its driver)"""
+    return tag if out_fps == FPS else "%s_%dfps" % (tag, out_fps)
+
+
+def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
+    if not _whole(out_fps) or out_fps not in OUT_FPS:
+        raise ValueError("--out-fps is 30 (the video to publish: the motion asks for 30 fps) or 60 (to watch), not %r" % (out_fps,))
     if fps not in MMD_FPS:
         raise ValueError("--fps is one of %s: the rates MMD renders" % ", ".join(str(f) for f in MMD_FPS))
-    sub = fps // FPS
+    if fps < out_fps:
+        raise ValueError("--fps %d is below --out-fps %d: MMD renders at least one frame for every frame of the video" % (fps, out_fps))
+    sub = fps // out_fps
     if not (isinstance(shutter, (int, float)) and 0 < shutter <= 1) or (sub > 1 and int(math.floor(shutter * sub + 0.5)) < 1):
         raise ValueError("--shutter is the share of the frame time the shutter is open, above 0 up to 1; with %d subframes "
                          "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
     if not NAME.fullmatch(tag):
         raise ValueError("--tag goes into file names: letters, digits, _ and - only")
+    tag = run_tag(tag, out_fps)
     os.makedirs(outdir, exist_ok=True)
     batches, hashes = [], {}
     for c in chunks:
@@ -398,13 +432,13 @@ def write(plan, chunks, outdir, tag, fps, shutter):
         hashes[c["index"]] = hashlib.sha256(data).hexdigest().upper()
     driver = os.path.join(outdir, "render_%s.ps1" % tag)
     with open(driver, "w", encoding="utf-8-sig", newline="") as f:      # PowerShell 5.1 reads a file without a BOM as ANSI
-        f.write(driver_text(plan, chunks, tag, fps, shutter, hashes))
+        f.write(driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps))
     concat = os.path.join(outdir, "concat_%s.txt" % tag)
     with open(concat, "w", encoding="utf-8", newline="\n") as f:
-        f.write(concat_text(plan, chunks, tag))
+        f.write(concat_text(plan, chunks, tag, out_fps))
     bpp = plan["avi_bytes_per_pixel"]
-    return {"chunks": len(chunks), "frames": sum(c["frames"] for c in chunks), "fps": fps, "subframes": sub,
-            "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
+    return {"chunks": len(chunks), "frames": sum(c["frames"] for c in chunks) * (out_fps // FPS), "out_fps": out_fps,
+            "fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
             "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
             "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
             "joined": "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)}
@@ -420,7 +454,9 @@ def build_parser():
     p.add_argument("--last", type=int, help="with --cuts: the last frame of the song")
     p.add_argument("--lead", type=int, default=120, help="frames rendered before each cut for the physics (default 120)")
     p.add_argument("--fps", type=int, default=240, help="the rate MMD renders at: 30, 60, 120, 240 or 480 (default 240)")
-    p.add_argument("--shutter", type=float, default=0.5, help="share of each 30 fps frame blurred (default 0.5)")
+    p.add_argument("--shutter", type=float, default=0.5, help="share of each frame of the video blurred (default 0.5)")
+    p.add_argument("--out-fps", type=int, default=FPS,
+                   help="the rate of the joined video: 30 (default; to publish) or 60 (to watch; the files get _60fps)")
     p.add_argument("--tag", default="final", help="names the files of this run (default final)")
     return p
 
@@ -439,7 +475,7 @@ def main(argv=None):
             if args.last is None:
                 raise ValueError("--cuts needs --last (the last frame of the song)")
             spans = spans_from_cuts(args.cuts, args.last)
-        result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter)
+        result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter, args.out_fps)
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         return 2
