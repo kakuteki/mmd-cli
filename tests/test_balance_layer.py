@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -363,6 +364,17 @@ class CarryTest(unittest.TestCase):
         self.assertGreater(kb.max(), 150.0)                                  # the fixture: a deep fold
         self.assertLessEqual(ka.max(), max(balance_layer.KNEE_FLEXION_DEG[1], kb.max()) + 0.5)
 
+    def test_knee_bound_holds_without_the_carry(self):
+        """the knee's bound by itself (it guards the frames where the carry is still coming in): with no carry at all
+        the shift stops short of folding the kicked knee past 159 degrees"""
+        with mock.patch.object(balance_layer, "carry_factor", lambda low, p: np.zeros_like(low)):
+            out = balance_layer.layer(MODEL, self.motion).motion
+        kb = balance_layer.Body(MODEL, self.motion).knee_flexion("左")
+        ka = balance_layer.Body(MODEL, out).knee_flexion("左")
+        self.assertLessEqual(ka.max(), max(balance_layer.KNEE_FLEXION_DEG[1], kb.max()) + 0.5)
+        shift = centre_offsets(self.motion, out, self.last)
+        self.assertGreater(np.linalg.norm(shift[45:60, [0, 2]], axis=1).max() * CM, 3.0)     # it still moves
+
     def test_report_names_the_carry(self):
         carry = self.result.report["feet_carry"]
         self.assertGreater(carry["左"]["frames"], 20)
@@ -705,26 +717,34 @@ SONG = os.environ.get("BALANCE_SONG")
 
 
 def song_paths():
-    """the MV's inputs named by BALANCE_SONG (a JSON {"model", "dance"}): SkipTest, with the reason, when it is not set;
-    a set variable naming files that are not there fails instead"""
+    """the MV's inputs named by BALANCE_SONG (a JSON {"model", "dance"} and, for the check with MMD's IK, "leg_ik": the
+    feet layer's tools/leg_ik.py): SkipTest, with the reason, when it is not set; a set variable naming files that are not
+    there fails instead"""
     if not SONG:
-        raise unittest.SkipTest("BALANCE_SONG is not set: it names a JSON of the MV's inputs (model, dance), on hinata "
-                                "C:/work/hibikase/stage6/balance/song_inputs.json")
+        raise unittest.SkipTest("BALANCE_SONG is not set: it names a JSON of the MV's inputs (model, dance, leg_ik), on "
+                                "hinata C:/work/hibikase/stage6/balance/scripts/song_inputs.json")
     with open(SONG, encoding="utf-8") as f:
         paths = json.load(f)
-    missing = ["%s %s" % (k, paths.get(k)) for k in ("model", "dance") if not paths.get(k) or not os.path.isfile(paths[k])]
+    keys = ("model", "dance") + (("leg_ik",) if "leg_ik" in paths else ())
+    missing = ["%s %s" % (k, paths.get(k)) for k in keys if not paths.get(k) or not os.path.isfile(paths[k])]
     if missing:
         raise AssertionError("BALANCE_SONG (%s) names files that are not there: %s" % (SONG, "; ".join(missing)))
     return paths
 
 
 class SongTest(unittest.TestCase):
+    """the MV (BALANCE_SONG), solved with MMD's IK at hand when the JSON names the feet layer's leg_ik"""
+
     @classmethod
     def setUpClass(cls):
         paths = song_paths()
         cls.model = pmx.load(paths["model"])
         cls.motion = vmd.load(paths["dance"])
-        cls.result = balance_layer.layer(cls.model, cls.motion)
+        cls.ik = paths.get("leg_ik")
+        check = None
+        if cls.ik:
+            check, _ = balance_layer.mmd_ik_check(cls.ik, paths["model"], fk.last_frame(cls.motion) + 1)
+        cls.result = balance_layer.layer(cls.model, cls.motion, ik_check=check)
         cls.report = cls.result.report
 
     def test_weight_on_the_standing_foot(self):
@@ -734,12 +754,13 @@ class SongTest(unittest.TestCase):
         self.assertLess(a05["after_holds"]["median"], 3.0)
 
     def test_feet_untouched_and_smooth(self):
-        """no 1-frame jump: the added acceleration of センター stays at its bound on the floor (with the last per-frame
-        fix of the solver, a few mm) and at the landing dip's own (2 cm in 0.13 s: about 6 m/s^2) upward"""
+        """no 1-frame jump: the added acceleration of センター stays at its bound on the floor (the solve's curve is
+        brought into its bounds smoothly, not frame by frame) and at the landing dip's own (2 cm in 0.13 s: about
+        6 m/s^2) upward"""
         self.assertTrue(self.report["untouched"]["identical"])
         c = self.report["centre"]
         self.assertLess(c["added_acc_h_m_s2"]["p99"], balance_layer.ACC_MAX * 1.05)
-        self.assertLess(c["added_acc_h_m_s2"]["max"], 4.0)
+        self.assertLess(c["added_acc_h_m_s2"]["max"], balance_layer.ACC_MAX * 1.1)
         self.assertLess(c["added_acc_v_m_s2"]["max"], 6.5)
 
     def test_reach_not_worse(self):
@@ -748,6 +769,31 @@ class SongTest(unittest.TestCase):
         for s in ("L", "R"):
             self.assertEqual(self.report["reach"]["worse_frames_" + s], 0)
             self.assertEqual(self.report["reach"]["slack_taken_frames_" + s], 0)
+
+    def test_no_new_miss_as_mmd_solves_the_legs(self):
+        if not self.ik:
+            self.skipTest("BALANCE_SONG names no leg_ik (the feet layer's tools/leg_ik.py): MMD's IK is not at hand")
+        self.assertTrue(self.report["mmd_ik"]["checked"])
+        self.assertEqual(self.report["mmd_ik"]["remaining"], 0)
+
+    def test_lifted_feet_carried_and_knees_in_range(self):
+        for s in ("左", "右"):
+            carry = self.report["feet_carry"][s]
+            self.assertEqual(carry["on_floor_cm_max"], 0.0)
+            self.assertEqual(carry["height_cm_max"], 0.0)
+            self.assertEqual(self.report["knee"]["over_159_newly_" + {"左": "L", "右": "R"}[s]], 0)
+        self.assertGreater(self.report["feet_carry"]["右"]["max_cm"], 5.0)
+
+    def test_hovering_and_travelling_runs_not_pulled(self):
+        """the runs whose other foot never gets 5 cm up (the review: 128 of 265) and the steps onto the next foot keep
+        the dance's body but for the neighbouring runs' lean coming and going"""
+        runs = self.report["runs"]
+        hover = [r["shift_cm_max"] for r in runs if r["kind"] == "hover"]
+        travel = [r["shift_cm_max"] for r in runs if r["kind"] == "transfer"]
+        self.assertGreater(len(hover), 50)
+        self.assertGreater(len(travel), 10)
+        self.assertLess(float(np.median(hover)), 0.5)
+        self.assertLess(float(np.median(travel)), 3.0)
 
 
 if __name__ == "__main__":
