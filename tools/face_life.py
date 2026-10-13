@@ -1404,7 +1404,7 @@ def shown_share(phrases, frames, voice=None, blinks=()):
         target[z0:min(frames, z0 + LID_STEP + LID_RELAX_HOLD)] = relaxed
     firsts = set()
     for (a, z), q in zip(spans, quiet):
-        target[a:min(frames, z + LID_RELAX_AFTER)] = LID_SHOWN[0] + LID_QUIET * float(q)
+        target[a:min(frames, z + LID_RELAX_AFTER)] = min(1.0, LID_SHOWN[0] + LID_QUIET * float(q))
         firsts.add(a)
     out = target.copy()
     blinks = sorted(blinks)

@@ -381,6 +381,18 @@ class ShownShareTest(unittest.TestCase):
         far = face_life.shown_share(self.PHRASE, 1000, blinks=[(260, 262, 270)])
         np.testing.assert_array_equal(free, far)
 
+    def test_a_quiet_phrase_never_shows_more_than_the_authors_own_lowering(self):
+        # the quietest phrase shows LID_QUIET more of the author's lowering than the loudest, but never more than all of it
+        phrases = [face_life.lip_timing.Phrase(300, 400, "aiu"), face_life.lip_timing.Phrase(600, 700, "aiu")]
+        n = int(1000 / FPS * 100) + 10                                       # the centre power every 10 ms
+        voice = np.ones(n)
+        t = np.arange(n) / 100.0 + face_life.AUDIO_T0
+        voice[(t >= 600 / FPS) & (t <= 701 / FPS)] = 1e-4                  # the second phrase is quiet
+        with mock.patch.object(face_life, "LID_SHOWN", (0.85, 0.95, 1.0)):
+            s = face_life.shown_share(phrases, 1000, voice)
+        self.assertGreater(s[650], s[350])
+        self.assertLessEqual(float(s.max()), 1.0 + 1e-9)
+
 
 class LidFollowsTheEyesTest(unittest.TestCase):
     """the upper lid moves with the eyes (Sour's Rin: まばたき about 0.027 a degree down keeps the lid where it is on the
