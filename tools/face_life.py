@@ -112,6 +112,9 @@ ALIGN = 9                       # frames a change may move toward the fastest tu
 ALIGN_RATIO = 1.5
 ALIGN_LEAD = 2                  # frames the face starts changing before the head turns fastest
 WAVE = {"brow": 0.15, "eye": 0.12, "mouth": 0.25}            # how far the envelope lowers a held weight
+HUMAN_WAVE = {"brow": 0.15, "eye": 0.2, "mouth": 0.25}       # human style: a held smile eases off by up to a fifth (within
+                                                             # a fifth a held face is not taken for a new one: the toon
+                                                             # characters of Hyde et al. 2013 looked the same at 80-120 %)
 ENVELOPE_STEP = (35, 70)        # frames between the keys of the envelope
 ENVELOPE_MIN_STEP = 0.15        # the envelope changes by at least this from one key to the next
 SLOW = 20                       # frames: a change between two keys this far apart is a drift, and is waved too
@@ -837,7 +840,7 @@ def rewrite_expressions(keys, env, speed, frames, rng, has, kimes=None, style="v
             placed.append([span[0], span[1], span[2], r[1], r[3], r[0], r[2]])
         placed = resolve(placed, frames)
         stretched += [(name, p[0], p[1]) for p in placed if not p[2]]
-        out[name] = modulate(sources[name], placed, env, PART[name], frames)
+        out[name] = modulate(sources[name], placed, env, PART[name], frames, HUMAN_WAVE if human else WAVE)
     return out, events, stretched
 
 
@@ -888,10 +891,10 @@ def align_shift(center, speed, length=13.0):
     return int(round(peak - ALIGN_LEAD - start))
 
 
-def modulate(source, placed, env, part, frames):
+def modulate(source, placed, env, part, frames, wave=WAVE):
     """the keys of one morph: each change at its new frames, and the weight between changes lowered along the envelope
-    (delayed like the part), so that it never holds still"""
-    amount = WAVE[part]
+    (delayed like the part) by up to wave[part] of it, so that it never holds still"""
+    amount = wave[part]
     delay = DELAY[part][0]
     ef = np.array([f for f, _ in env], float) + delay
     er = np.array([r for _, r in env], float)

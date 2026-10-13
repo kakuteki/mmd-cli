@@ -535,6 +535,20 @@ class SmileTest(unittest.TestCase):
         self.assertGreaterEqual(hits, 2)
 
 
+class SmileBreathesTest(unittest.TestCase):
+    """human style: a held smile eases off and comes back by up to HUMAN_WAVE["eye"] of its weight (within a fifth a
+    held face is not taken for a new one; v7 moved it by up to 12 %)"""
+
+    def test_a_long_smile_moves_more_but_never_by_more_than_a_fifth(self):
+        def spread(style):
+            s = tracks(face_life.plan(inputs(face=smiling_face()), seed=0, style=style).motion)["笑い"][830:1270]
+            return s.min(), s.max()
+        lo, hi = spread("human")
+        lo7, hi7 = spread("v7")
+        self.assertGreaterEqual(lo, (1.0 - face_life.HUMAN_WAVE["eye"]) * hi - 1e-6)
+        self.assertGreater((hi - lo) / hi, 1.3 * (hi7 - lo7) / hi7)
+
+
 class FlashQuietTest(unittest.TestCase):
     def test_no_blink_starts_about_a_flash(self):
         moves, sign = [], 1.0
