@@ -349,24 +349,40 @@ FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
 STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "order", "passive", "speed", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
-# the rest pose, eased from the start toward the cap (degrees)
+# the rest pose, eased from the start toward the cap (degrees).  The thumb's MP has a second axis (Hollister 1995): it
+# moves sideways some 12 - 14 degrees passively (Kim 2014, Patel 2013) and about 20 each way in active circumduction
+# (39 there and back, Tanaka 2024), so its sideways bend starts at 12 and is capped at 20
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
-# DIP / PIP of the long fingers where the PIP bends more than COUPLING["from"] degrees: kept between low and high
-COUPLING = {"low": 0.3, "high": 1.0, "from": 20.0, "full": 40.0}
+HINGE_THUMB_MP = {"side": (12.0, 20.0), "twist": (5.0, 12.0)}
+# DIP / PIP of the long fingers where the PIP bends more than COUPLING["from"] degrees: kept between low and high.  The
+# low ends are the slopes of DIP on PIP in the lightest grasps (Kamper 2003, table 2: index 0.32, middle 0.36, ring
+# 0.16, little 0.25; slopes of whole grasps, used here as the least ratio of a frame).  The high end has no source:
+# the measured ratios reach 0.75 - 0.77 in a fist (Mentzel 2011, Hahn 1995: "the linkage varies greatly"); 1.0 only
+# takes away a DIP bent past its PIP's angle
+COUPLING = {"low": {"人指": 0.32, "中指": 0.36, "薬指": 0.16, "小指": 0.25}, "high": 1.0, "from": 20.0, "full": 40.0}
 COUPLING_SOFT = 4.0              # degrees inside the band where the wall starts
 # each long finger's MP is pulled toward each neighbour's MP by this share of their difference (the adjacent fingers'
 # passive coupling)
 ENSLAVE = 0.05
 # the range of motion against the rest pose (the thumb's CMC: radial and palmar abduction against the index
-# metacarpal, read absolutely): (soft start, cap) for each way, degrees
+# metacarpal, read absolutely): (soft start, cap) for each way, degrees.  The starts are the active means (Mohamed
+# Ibrahim 2024) or the Japanese reference, the caps the mean + 2 SD or the reference + 10 (PIP: hyperextension 13 - 16
+# on average, SD about 8)
 ROM = {
-    "mp": {"flex": ((25.0, 40.0), (90.0, 100.0)), "side": ((25.0, 35.0), (25.0, 35.0)), "twist": ((15.0, 25.0), (15.0, 25.0))},
-    "pip": {"flex": ((10.0, 25.0), (100.0, 110.0))},
+    "mp": {"flex": ((25.0, 40.0), (90.0, 100.0)), "twist": ((15.0, 25.0), (15.0, 25.0))},
+    "pip": {"flex": ((15.0, 30.0), (100.0, 110.0))},
     "dip": {"flex": ((10.0, 20.0), (80.0, 90.0))},
     "cmc": {"flex": ((10.0, 20.0), (60.0, 65.0)), "side": ((15.0, 25.0), (90.0, 95.0)), "twist": ((25.0, 35.0), (25.0, 35.0))},
     "tmp": {"flex": ((10.0, 25.0), (60.0, 65.0))},
     "ip": {"flex": ((15.0, 30.0), (80.0, 90.0))},
 }
+# the MCP's sideways range, finger by finger (Latz 2019, table 1, the wrist neutral: the mean for the start, the mean +
+# 2 SD for the cap): (ulnar, radial).  The little finger goes far to the ulnar side (48.5 +- 17.0), the ring finger
+# little to the radial side (8.1 +- 5.8).  The table's row for the middle finger repeats another row (research A 1.3)
+# and is not used: the middle finger keeps 25 / 35 each way.  Read against the rest pose, as the other joints (Rin's
+# rest puts the proximal phalanges 2 - 10 degrees off their metacarpals' lines)
+MP_SIDE = {"人指": ((20.7, 44.1), (31.2, 50.8)), "中指": ((25.0, 35.0), (25.0, 35.0)),
+           "薬指": ((28.0, 49.4), (8.1, 19.7)), "小指": ((48.5, 82.5), (14.8, 40.4))}
 SPEED_MAX_DEG_S = 1900.0         # a finger's MP + PIP + DIP together, degrees per second
 # the order of a finger's joints within a change of its shape, as shares of the change's length (frames, at most
 # ORDER_MAX): closing, the MCP's speed peaks 11.4 % after the PIP's (Carpinella 2011) and the DIP follows the PIP
@@ -376,13 +392,17 @@ ORDER = {"close": {"mp": 0.114, "pip": 0.0, "dip": 0.10}, "open": {"mp": 0.0, "p
 ORDER_MAX = 1.5
 ORDER_SPEED = 60.0               # degrees per second of a finger's MP + PIP + DIP: it is changing its shape
 # the relaxed hand: an open hand (the four fingers' mean MP + PIP + DIP under OPEN[0], none over OPEN[2]) is relaxed
-# (fully at OPEN[0], not at all from OPEN[1]); it leans by RELAX_GAIN toward the relaxed hand held in the air with the
-# wrist 15 - 20 degrees extended (Varghese 2020: office workers' dominant hands, MCP, PIP, DIP), moved with the wrist by
-# the tenodesis (Su 2005: degrees per degree of wrist extension) from that 17.5 degrees
+# (fully at OPEN[0], not at all from OPEN[1]); it leans by RELAX_GAIN toward the relaxed hand Varghese 2020 measured
+# (seated, "the hand well supported", the forearm supinated - the palm up -, the wrist at 15 - 20 degrees extension,
+# "completely relaxed"; office workers' dominant hands, MCP, PIP, DIP), moved with the wrist by the tenodesis (Su 2005:
+# degrees per degree of wrist extension, relaxed fingers, the wrist measured from 60 flexion to 60 extension and not
+# carried past it) from that 17.5 degrees.  Every open hand is curled alike, the ones the choreography stretches too:
+# the shape's measure counts them apart (open_still)
 OPEN = (30.0, 70.0, 90.0)
-RELAXED_AIR = {"人指": (27.1, 38.7, 13.8), "中指": (33.2, 40.7, 14.2), "薬指": (29.3, 44.8, 14.3), "小指": (26.2, 43.1, 16.1)}
+RELAXED_HAND = {"人指": (27.1, 38.7, 13.8), "中指": (33.2, 40.7, 14.2), "薬指": (29.3, 44.8, 14.3), "小指": (26.2, 43.1, 16.1)}
 RELAXED_WRIST = 17.5
 TENODESIS = {"mp": 0.30, "pip": 0.43, "dip": 0.16}
+TENODESIS_WRIST = 60.0           # degrees each way of the wrist that Su 2005 measured
 RELAX_GAIN = 0.25
 # the passive lag: one body per finger turning at its MP (the thumb at its MP) against a spring and a damper
 SEGMENT_MASS = {"人指": (19.1, 8.1, 6.0), "中指": (20.0, 9.6, 6.5), "薬指": (17.0, 8.9, 5.5), "小指": (10.8, 5.3, 4.3),
@@ -407,7 +427,7 @@ WRIST_ELLIPSE = {"centre": (-8.2, -1.8), "half_axes": (35.0, 73.2), "tilt_deg": 
 # hand's active palmar flexion and ulnar deviation (Gracia-Ibanez 2020, table 1)
 FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
 # where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left
-# out (what the fingers touch holds them; Varghese 2020 and Su 2005 measured free, relaxed fingers): a fingertip within
+# out (what the fingers touch holds them; Varghese 2020 and Su 2005 measured relaxed fingers pressing on nothing): a fingertip within
 # the first distance (mm) of the eyes, of the line 上半身 - 首 (motor_layer's contact), of the line from the hips to 下半身,
 # of the other forearm or hand, fully; none past the second.  Padded by CONTACT_PAD frames each way
 CONTACT_MM = {"face": (70.0, 100.0), "chest": (60.0, 90.0), "waist": (80.0, 110.0), "other": (35.0, 60.0)}
@@ -508,13 +528,14 @@ def chains(hand):
 # ---- step 1: the shape in each frame ------------------------------------------------------------------------------
 
 def hinge(hands, ang):
-    """the hinge joints' sideways bend and twist eased toward their plane (HINGE)"""
+    """the hinge joints' sideways bend and twist eased toward their plane (HINGE; the thumb's MP: HINGE_THUMB_MP)"""
     for hand in hands.values():
         for j in hand.joints:
             if j.kind in ("pip", "dip", "ip") or (j.finger == THUMB and j.kind == "mp"):
+                band = HINGE_THUMB_MP if (j.finger == THUMB and j.kind == "mp") else HINGE
                 a = ang[j.bone]
-                a[1] = soft_band(a[1], HINGE["side"], HINGE["side"])
-                a[2] = soft_band(a[2], HINGE["twist"], HINGE["twist"])
+                a[1] = soft_band(a[1], band["side"], band["side"])
+                a[2] = soft_band(a[2], band["twist"], band["twist"])
 
 
 def coupling(hands, ang):
@@ -526,7 +547,7 @@ def coupling(hands, ang):
                 continue
             pip, dip = ang[js["pip"].bone][0], ang[js["dip"].bone][0]
             w = smoothstep(pip, COUPLING["from"], COUPLING["full"])
-            lo, hi = COUPLING["low"] * pip, COUPLING["high"] * pip
+            lo, hi = COUPLING["low"][f] * pip, COUPLING["high"] * pip
             # a soft wall inside the band (the soft limit's form): a DIP more than COUPLING_SOFT degrees inside the band
             # is left, one beyond it saturates toward the band's edge and never passes it
             new = -soft_limit(-dip, -(lo + COUPLING_SOFT), -lo)
@@ -548,14 +569,22 @@ def enslave(hands, ang, k):
             ang[cs[f]["mp"].bone][0] = before[f] + pull
 
 
+def joint_limits(j, way):
+    """((start, cap) of the negative side, (start, cap) of the positive side) of a joint's angle (ROM; the MCP's
+    sideways range by finger: MP_SIDE), or None where it has no range"""
+    if way == "side" and j.kind == "mp" and j.finger in MP_SIDE:
+        return MP_SIDE[j.finger]
+    return ROM[kind_of(j)].get(way)
+
+
 def rom(hands, ang):
-    """every joint's angles eased into its range (ROM: soft start, cap; identity below the start)"""
+    """every joint's angles eased into its range (joint_limits: soft start, cap; identity below the start)"""
     for hand in hands.values():
         for j in hand.joints:
-            lim = ROM[kind_of(j)]
             for i, way in enumerate(("flex", "side", "twist")):
-                if way in lim:
-                    low, high = lim[way]
+                lim = joint_limits(j, way)
+                if lim is not None:
+                    low, high = lim
                     ang[j.bone][i] = soft_band(ang[j.bone][i], low, high)
 
 
@@ -616,8 +645,9 @@ def reach(hands, ang, ang_in, band=True, limits=True):
             w_band = smoothstep(x0[:, 2], COUPLING["from"], COUPLING["full"]) * REACH["band"]
             bounds = []
             for j, i in free:
-                lim = ROM[kind_of(j)].get(("flex", "side")[i])
+                lim = joint_limits(j, ("flex", "side")[i])
                 bounds.append(None if lim is None else (lim[0][0], lim[1][0]))
+            low = COUPLING["low"].get(finger, 0.0)
 
             def residual(x):
                 rows = {b: a.copy() for b, a in fixed.items()}
@@ -628,7 +658,7 @@ def reach(hands, ang, ang_in, band=True, limits=True):
                 if band and finger != THUMB:
                     pip, dip = x[:, 2], x[:, 3]
                     r.append((w_band * np.maximum(dip - (COUPLING["high"] * pip - COUPLING_SOFT), 0.0))[:, None])
-                    r.append((w_band * np.maximum((COUPLING["low"] * pip + COUPLING_SOFT) - dip, 0.0))[:, None])
+                    r.append((w_band * np.maximum((low * pip + COUPLING_SOFT) - dip, 0.0))[:, None])
                 if limits:
                     for c, b in enumerate(bounds):
                         if b is not None:
@@ -697,9 +727,10 @@ def relaxedness(hand, ang):
 
 
 def relax(hands, ang, wrist_ext, gain, touch=None):
-    """the relaxed hand: each joint of a relaxed hand leans toward the relaxed hand in the air at the wrist's angle,
-    flexion += gain x r x (RELAXED_AIR + TENODESIS x (wrist extension - RELAXED_WRIST) - flexion); touch: side -> 0 .. 1,
-    the hand on something (contact_weights), where it does not lean"""
+    """the relaxed hand: each joint of a relaxed hand leans toward Varghese 2020's relaxed hand moved by the wrist's
+    angle, flexion += gain x r x (RELAXED_HAND + TENODESIS x (wrist extension - RELAXED_WRIST) - flexion), the wrist
+    taken within +-TENODESIS_WRIST (Su 2005's range); touch: side -> 0 .. 1, the hand on something (contact_weights),
+    where it does not lean"""
     out = {}
     for side, hand in hands.items():
         r = relaxedness(hand, ang)
@@ -707,13 +738,13 @@ def relax(hands, ang, wrist_ext, gain, touch=None):
             continue
         if touch is not None and side in touch:
             r = r * (1.0 - touch[side])
-        w = wrist_ext[side]
+        w = np.clip(wrist_ext[side], -TENODESIS_WRIST, TENODESIS_WRIST)
         for f, js in chains(hand).items():
-            if f == THUMB or f not in RELAXED_AIR:
+            if f == THUMB or f not in RELAXED_HAND:
                 continue
             for i, k in enumerate(("mp", "pip", "dip")):
                 cur = ang[js[k].bone][0]
-                target = RELAXED_AIR[f][i] + TENODESIS[k] * (w - RELAXED_WRIST)
+                target = RELAXED_HAND[f][i] + TENODESIS[k] * (w - RELAXED_WRIST)
                 ang[js[k].bone][0] = cur + gain * r * (target - cur)
         out[side] = r
     return out
@@ -1104,13 +1135,13 @@ def measure(hands, ang, loc, world, P, wrist=None):
                           "direction": {"flexion_extension": int(hist[0] + hist[4]), "dart_thrower": int(hist[1]),
                                         "deviation": int(hist[2]), "opposite_dart_thrower": int(hist[3])}}
         for j in hand.joints:
-            lim = ROM[kind_of(j)]
             row = {}
             for i, way in enumerate(("flex", "side", "twist")):
-                if way not in lim:
+                lim = joint_limits(j, way)
+                if lim is None:
                     continue
                 x = ang[j.bone][i]
-                (ls, lc), (hs, hc) = lim[way]
+                (ls, lc), (hs, hc) = lim
                 row[way] = {"beyond_start": int(((x > hs) | (x < -ls)).sum()), "beyond_cap": int(((x > hc) | (x < -lc)).sum()),
                             "max_beyond_cap": _r(max(0.0, float(np.max(np.maximum(x - hc, -lc - x)))))}
             r["rom"][j.bone] = row
@@ -1124,6 +1155,7 @@ def measure(hands, ang, loc, world, P, wrist=None):
             bent = pip > 30.0
             ratio = dip[bent] / pip[bent]
             r["coupling"][f] = {"dip_over_pip": stats(ratio), "under_0.3": int((ratio < 0.3).sum()),
+                                "under_low": int((ratio < COUPLING["low"][f]).sum()),
                                 "over_1.3": int((ratio > 1.3).sum())}
         sums = finger_sums(hand, ang)
         rel = relaxedness(hand, ang)

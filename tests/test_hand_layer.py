@@ -469,11 +469,13 @@ class StaticTest(unittest.TestCase):
         self.assertAlmostEqual(float(tw[0]), 3.0, places=3)
 
     def test_a_dip_left_straight_under_a_bent_pip_follows_it(self):
-        # the deep flexor bends the DIP with the PIP: in a grasp at least about a quarter of it (DIP / PIP 0.16 to
-        # 0.36 in Kamper 2003's grasps, 0.57 to 0.77 in a fist)
-        out = self.run_one({"薬指２": (80.0, 0.0, 0.0), "薬指３": (0.0, 0.0, 0.0)}, ["coupling"])
-        dip = out_angles(out, "左", "薬指３")[0]
-        self.assertGreater(float(dip[0]), 0.25 * 80.0)
+        # the deep flexor bends the DIP with the PIP: at least as much as the lightest grasp shows, finger by finger
+        # (DIP / PIP slopes in Kamper 2003's grasps: index 0.32, middle 0.36, ring 0.16, little 0.25), not more
+        for finger, slope in (("人指", 0.32), ("中指", 0.36), ("薬指", 0.16), ("小指", 0.25)):
+            out = self.run_one({finger + "２": (80.0, 0.0, 0.0), finger + "３": (0.0, 0.0, 0.0)}, ["coupling"])
+            dip = float(out_angles(out, "左", finger + "３")[0][0])
+            self.assertGreater(dip, slope * 80.0 - 0.5, finger)
+            self.assertLess(dip, slope * 80.0 + 4.0, finger)
 
     def test_a_dip_bent_far_beyond_its_pip_comes_back(self):
         # DIP / PIP 1.7 (the trace's middle finger): no study shows the DIP bending past its PIP's angle
@@ -485,6 +487,30 @@ class StaticTest(unittest.TestCase):
         out = self.run_one({"中指２": (95.0, 0.0, 0.0), "中指３": (70.0, 0.0, 0.0)}, ["coupling", "rom"])
         self.assertAlmostEqual(float(out_angles(out, "左", "中指３")[0][0]), 70.0, places=3)
         self.assertAlmostEqual(float(out_angles(out, "左", "中指２")[0][0]), 95.0, places=3)
+
+    def test_each_finger_spreads_as_far_as_measured(self):
+        # the MCP's sideways range differs by finger (Latz 2019, wrist neutral, mean +- SD): the little finger goes
+        # 48.5 +- 17.0 degrees to the ulnar side, the ring finger only 8.1 +- 5.8 to the radial side
+        out = self.run_one({"小指１": (0.0, -45.0, 0.0)}, ["rom"])
+        self.assertAlmostEqual(float(out_angles(out, "左", "小指１")[1][0]), -45.0, delta=1.0)
+        out = self.run_one({"薬指１": (0.0, 30.0, 0.0)}, ["rom"])
+        ring = float(out_angles(out, "左", "薬指１")[1][0])
+        self.assertLess(ring, 8.1 + 2 * 5.8)
+        self.assertGreater(ring, 8.1)
+
+    def test_the_thumb_mp_bends_sideways_as_far_as_measured(self):
+        # the thumb's MP moves sideways about 12 - 14 degrees passively (Kim 2014, Patel 2013) and some 20 each way in
+        # active circumduction (Tanaka 2024): a bend of 12 is left, the heart's 41 comes back inside 20
+        for bend, low, high in ((-12.0, -12.5, -11.5), (-41.0, -20.0, -12.0)):
+            out = self.run_one({"親指１": (6.8, bend, 0.0)}, ["hinge"])
+            got = float(out_angles(out, "左", "親指１")[1][0])
+            self.assertGreater(got, low, bend)
+            self.assertLess(got, high, bend)
+
+    def test_a_pip_bent_back_as_far_as_measured_is_left(self):
+        # the PIP's active hyperextension is 13 - 16 degrees on average (Mohamed Ibrahim 2024): 15 is left
+        out = self.run_one({"中指２": (-15.0, 0.0, 0.0)}, ["rom"])
+        self.assertAlmostEqual(float(out_angles(out, "左", "中指２")[0][0]), -15.0, delta=0.3)
 
     def test_a_dip_beyond_its_range_is_eased_below_the_cap(self):
         out = self.run_one({"中指２": (100.0, 0.0, 0.0), "中指３": (116.0, 0.0, 0.0)}, ["rom"])
@@ -548,9 +574,10 @@ class ReachTest(unittest.TestCase):
 
     def test_the_heart_s_thumb_bends_in_its_plane_and_its_tip_follows_as_far_as_it_can(self):
         dance, out = self.run_one(HEART, ["hinge", "reach", "rom"])
-        for bone in ("親指１", "親指２"):
+        # the MP moves sideways about 20 each way at most (Tanaka 2024), the IP is a hinge
+        for bone, most in (("親指１", 20.0), ("親指２", 10.0)):
             fl, sd, tw = out_angles(out, "左", bone)
-            self.assertLess(abs(float(sd[30])), 10.0, bone)
+            self.assertLess(abs(float(sd[30])), most, bone)
             self.assertLess(abs(float(tw[30])), 15.0, bone)
         _, alone = self.run_one(HEART, ["hinge", "rom"])
         moved, moved_alone = self.moved_mm(dance, out, hand_layer.THUMB), self.moved_mm(dance, alone, hand_layer.THUMB)
@@ -565,13 +592,13 @@ class ReachTest(unittest.TestCase):
             self.assertLess(abs(float(tw[30])), 15.0, bone)
         mp_side = float(out_angles(out, "左", "人指１")[1][30])
         self.assertGreater(mp_side, PINCH["人指１"][1] + 3.0)            # the sideways bend went to the MP
-        self.assertLess(mp_side, hand_layer.ROM["mp"]["side"][1][1])
+        self.assertLess(mp_side, hand_layer.MP_SIDE["人指"][1][1])
         self.assertLess(self.moved_mm(dance, out, "人指").max(), FINGER_RADIUS_MM)
 
     def test_a_dip_left_straight_comes_into_the_band_and_the_tip_stays(self):
         dance, out = self.run_one(RING_STRAIGHT, ["hinge", "reach", "coupling", "rom"])
         pip, dip = out_angles(out, "左", "薬指２")[0][30], out_angles(out, "左", "薬指３")[0][30]
-        self.assertGreater(dip, 0.3 * pip - 1.0)                         # the deep flexor bends the DIP with the PIP
+        self.assertGreater(dip, 0.16 * pip - 1.0)        # the deep flexor bends the DIP with the PIP (ring: Kamper 2003)
         moved = self.moved_mm(dance, out, "薬指")
         _, alone = self.run_one(RING_STRAIGHT, ["hinge", "coupling", "rom"])
         self.assertLess(moved[-1], 0.5 * self.moved_mm(dance, alone, "薬指")[-1])
@@ -677,6 +704,20 @@ class RelaxTest(unittest.TestCase):
         less_bent = early if more_bent is late else late
         self.assertGreater(sum(more_bent), sum(less_bent) + 4.0)
         del d_f
+
+    def test_the_tenodesis_is_not_carried_past_the_measured_wrist(self):
+        # Su 2005 measured the wrist from 60 degrees palmar flexion to 60 extension: past it the fingers follow no further
+        dance = hand_dance([(0, "open"), (LAST, "open")])
+        names = [j.bone for h in HANDS.values() for j in h.joints]
+        loc = hand_layer.joint_locals(dance, names, LAST + 1)[0]
+        got = []
+        for w in (60.0, 90.0, -60.0, -90.0):
+            ang = hand_layer.read_all(HANDS, loc)
+            hand_layer.relax(HANDS, ang, {s: np.full(LAST + 1, w) for s in HANDS}, 1.0)
+            got.append(float(ang["左中指２"][0][30]))
+        self.assertAlmostEqual(got[0], got[1], places=6)
+        self.assertAlmostEqual(got[2], got[3], places=6)
+        self.assertGreater(got[0], got[2] + 20.0)                         # within the range it still follows
 
     def test_a_hand_on_something_does_not_lean(self):
         # touch 1 (the hand on the face, the body or the other arm) leaves the open hand as it is; touch 0 curls it
@@ -1008,9 +1049,10 @@ class RealDanceTest(unittest.TestCase):
         result = hand_layer.layer(self.model, part, pulp=self.pulp)
         a = result.report["input"]["右"]["coupling"]["薬指"]
         b = result.report["output"]["右"]["coupling"]["薬指"]
-        self.assertGreater(a["under_0.3"], 10)
+        # below the ring finger's least ratio (DIP / PIP 0.16 in Kamper 2003's grasps)
+        self.assertGreater(a["under_low"], 10)
         # left: the frames where the DIP follows a fast PIP late (the order step), not the held curl
-        self.assertLess(b["under_0.3"], a["under_0.3"] / 4.0)
+        self.assertLess(b["under_low"], a["under_low"] / 4.0)
 
     def face_gap_mm(self, motion, first, last):
         """per frame, the nearest of the left hand's four fingertips to the eyes' midpoint and to the head (mm)"""
