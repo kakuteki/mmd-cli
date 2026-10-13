@@ -313,5 +313,235 @@ class ForcingTest(unittest.TestCase):
         self.assertGreater(float(palm_down[0]), 0.0)          # palm down: it droops into the palm
 
 
+# ---- the layer on made-up dances ---------------------------------------------------------------------------------
+
+def key(name, frame, q=(0.0, 0.0, 0.0, 1.0), position=(0.0, 0.0, 0.0)):
+    return vmd.BoneKey(name, frame, tuple(position), fk.stored(tuple(float(v) for v in q)))
+
+
+def untouched_keys(last=LAST, centre=True):
+    """keys of bones the layer must not touch; centre moves the body (センター) between frames 0 and 30"""
+    moved = (0.3, -0.4, 0.1) if centre else (0.0, -0.2, 0.1)
+    return [key("センター", 0, position=(0.0, -0.2, 0.1)), key("センター", 30, position=moved),
+            key("センター", last, position=moved),
+            key("下半身", 0, axis_angle((1, 0, 0), 5.0)), key("下半身", last, axis_angle((1, 0, 0), 5.0)),
+            key("左腕", 0, axis_angle((0, 0, 1), 20.0)), key("左腕", last, axis_angle((0, 0, 1), 20.0))]
+
+
+def joint_of(side, bone):
+    return next(j for j in HANDS[side].joints if j.bone == side + bone)
+
+
+def flexed(side, bone, flex, side_deg=0.0, twist_deg=0.0):
+    """the local rotation of a joint `flex` degrees from its rest bend (side and twist likewise; the thumb's CMC reads
+    its angles absolutely)"""
+    j = joint_of(side, bone)
+    r0, r1 = (0.0, 0.0) if j.kind == "cmc" else j.rest
+    return hand_layer.compose_joint(j, np.array([r0 + flex]), np.array([r1 + side_deg]), np.array([twist_deg]))[0]
+
+
+SHAPES = {   # rest-relative flexion (MP, PIP, DIP) per long finger
+    "open": {f: (0.0, 0.0, 0.0) for f in hand_layer.LONG},
+    "fist": {f: (80.0, 95.0, 70.0) for f in hand_layer.LONG},
+    "point": {"人指": (0.0, 0.0, 0.0), "中指": (80.0, 95.0, 70.0), "薬指": (80.0, 95.0, 70.0), "小指": (80.0, 95.0, 70.0)},
+}
+
+
+def shape_keys(side, frame, shape):
+    out = []
+    for f, (mp, pip, dip) in SHAPES[shape].items():
+        for bone, a in (("１", mp), ("２", pip), ("３", dip)):
+            out.append(key(side + f + bone, frame, flexed(side, f + bone, a)))
+    return out
+
+
+def hand_dance(shapes, last=LAST, arm=None, side="左", centre=True):
+    """shapes: [(frame, shape)] keyed on the long fingers of one hand; arm: [(frame, degrees)] of 左腕 about Z"""
+    keys = [k for k in untouched_keys(last, centre) if not (arm and k.name == "左腕")]
+    for frame, shape in shapes:
+        keys += shape_keys(side, frame, shape)
+    for frame, deg in arm or []:
+        keys.append(key("左腕", frame, axis_angle((0, 0, 1), deg)))
+    return vmd.Motion(model_name="dancer", bones=keys, morphs=[vmd.MorphKey("あ", 0, 0.5), vmd.MorphKey("あ", 40, 0.0)])
+
+
+def out_angles(motion, side, bone, last=LAST):
+    """(flex, side, twist) of a joint in the motion, every frame, rest-relative as the layer reads them"""
+    j = joint_of(side, bone)
+    keys = fk.tracks_of(motion)[side + bone]
+    frames = [k.frame for k in keys]
+    q = np.array([fk.applied(fk.sample(keys, f, frames)[1]) for f in range(last + 1)])
+    fl, sd, tw = hand_layer.read_joint(j, q)
+    if j.kind != "cmc":
+        fl, sd = fl - j.rest[0], sd - j.rest[1]
+    return fl, sd, tw
+
+
+def only(*steps):
+    p = hand_layer.default_params()
+    for s in hand_layer.STEPS:
+        p[s] = s in steps
+    return p
+
+
+class OutputTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dance = hand_dance([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
+        cls.result = hand_layer.layer(MODEL, cls.dance, pulp=PULP)
+
+    def test_every_finger_bone_has_a_key_on_every_frame(self):
+        tracks = fk.tracks_of(self.result.motion)
+        for side in ("左", "右"):
+            for j in HANDS[side].joints:
+                self.assertEqual(sorted(k.frame for k in tracks[j.bone]), list(range(LAST + 1)), j.bone)
+
+    def test_untouched_bones_and_morphs_are_byte_for_byte_the_same(self):
+        names = ("センター", "下半身", "左腕")
+        before = vmd.dumps(vmd.Motion(model_name="x", bones=[k for k in self.dance.bones if k.name in names],
+                                      morphs=list(self.dance.morphs)))
+        after = vmd.dumps(vmd.Motion(model_name="x", bones=[k for k in self.result.motion.bones if k.name in names],
+                                     morphs=list(self.result.motion.morphs)))
+        self.assertEqual(before, after)
+        self.assertTrue(self.result.report["untouched"]["identical"])
+
+    def test_with_every_step_off_the_fingers_are_the_input_s(self):
+        out = hand_layer.layer(MODEL, self.dance, only(), pulp=PULP).motion
+        for b in ("中指２", "小指３", "親指１"):
+            a = out_angles(out, "左", b)
+            keys = fk.tracks_of(self.dance).get("左" + b)
+            if keys is None:
+                np.testing.assert_allclose(a[0], 0.0, atol=1e-6)
+                continue
+            frames = [k.frame for k in keys]
+            q = np.array([fk.applied(fk.sample(keys, f, frames)[1]) for f in range(LAST + 1)])
+            j = joint_of("左", b)
+            exp = hand_layer.read_joint(j, q)[0] - j.rest[0]
+            np.testing.assert_allclose(a[0], exp, atol=1e-4)
+
+
+class StaticTest(unittest.TestCase):
+    """the shape in each frame: the hinge joints bend in their plane, DIP follows PIP, the range of motion"""
+
+    def run_one(self, bone_angles, steps):
+        keys = untouched_keys()
+        for bone, (fl, sd, tw) in bone_angles.items():
+            keys += [key("左" + bone, 0, flexed("左", bone, fl, sd, tw)), key("左" + bone, LAST, flexed("左", bone, fl, sd, tw))]
+        dance = vmd.Motion(model_name="d", bones=keys)
+        return hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).motion
+
+    def test_a_pip_bent_sideways_comes_back_into_its_plane(self):
+        out = self.run_one({"人指２": (40.0, 20.0, 30.0)}, ["hinge"])
+        fl, sd, tw = out_angles(out, "左", "人指２")
+        self.assertLess(np.abs(sd).max(), hand_layer.HINGE["side"][1] + 0.01)
+        self.assertLess(np.abs(tw).max(), hand_layer.HINGE["twist"][1] + 0.01)
+        self.assertAlmostEqual(float(fl[0]), 40.0, delta=2.0)
+
+    def test_a_small_sideways_bend_is_left(self):
+        out = self.run_one({"人指２": (40.0, 2.0, 3.0)}, ["hinge"])
+        fl, sd, tw = out_angles(out, "左", "人指２")
+        self.assertAlmostEqual(float(sd[0]), 2.0, places=3)
+        self.assertAlmostEqual(float(tw[0]), 3.0, places=3)
+
+    def test_a_dip_left_straight_under_a_bent_pip_follows_it(self):
+        out = self.run_one({"薬指２": (80.0, 0.0, 0.0), "薬指３": (0.0, 0.0, 0.0)}, ["coupling"])
+        dip = out_angles(out, "左", "薬指３")[0]
+        self.assertGreater(float(dip[0]), hand_layer.COUPLING["low"] * 80.0 - 6.0)
+
+    def test_a_dip_bent_far_beyond_its_pip_comes_back(self):
+        out = self.run_one({"中指２": (50.0, 0.0, 0.0), "中指３": (85.0, 0.0, 0.0)}, ["coupling"])
+        dip = out_angles(out, "左", "中指３")[0]
+        self.assertLess(float(dip[0]), hand_layer.COUPLING["high"] * 50.0 + 6.0)
+
+    def test_a_fist_that_couples_well_is_left(self):
+        out = self.run_one({"中指２": (95.0, 0.0, 0.0), "中指３": (70.0, 0.0, 0.0)}, ["coupling", "rom"])
+        self.assertAlmostEqual(float(out_angles(out, "左", "中指３")[0][0]), 70.0, places=3)
+        self.assertAlmostEqual(float(out_angles(out, "左", "中指２")[0][0]), 95.0, places=3)
+
+    def test_a_dip_beyond_its_range_is_eased_below_the_cap(self):
+        out = self.run_one({"中指２": (100.0, 0.0, 0.0), "中指３": (116.0, 0.0, 0.0)}, ["rom"])
+        dip = out_angles(out, "左", "中指３")[0]
+        start, cap = hand_layer.ROM["dip"]["flex"][1]                    # the flexion side's (start, cap)
+        self.assertLess(float(dip[0]), cap)
+        self.assertGreater(float(dip[0]), start)
+
+
+class RelaxTest(unittest.TestCase):
+    """an open hand that is not a fist or a pointing hand takes the relaxed hand's cascade, gently"""
+
+    def test_an_open_hand_fans_from_the_index_to_the_little_finger(self):
+        dance = hand_dance([(0, "open"), (LAST, "open")])
+        out = hand_layer.layer(MODEL, dance, only("relax"), pulp=PULP).motion
+        sums = [sum(float(out_angles(out, "左", f + p)[0][30]) for p in ("１", "２", "３")) for f in hand_layer.LONG]
+        self.assertTrue(all(b > a + 1.0 for a, b in zip(sums, sums[1:])), sums)
+        self.assertLess(max(sums), 60.0)                                  # still an open hand
+
+    def test_a_fist_and_a_pointing_finger_are_left(self):
+        for shape, finger in (("fist", "中指"), ("point", "人指")):
+            dance = hand_dance([(0, shape), (LAST, shape)])
+            out = hand_layer.layer(MODEL, dance, only("relax"), pulp=PULP).motion
+            exp = SHAPES[shape][finger]
+            got = [float(out_angles(out, "左", finger + p)[0][30]) for p in ("１", "２", "３")]
+            np.testing.assert_allclose(got, exp, atol=0.5, err_msg=shape)
+
+
+class SpeedTest(unittest.TestCase):
+    def test_a_one_frame_snap_is_spread_round_its_middle(self):
+        dance = hand_dance([(0, "open"), (30, "open"), (31, "fist"), (LAST, "fist")])
+        out = hand_layer.layer(MODEL, dance, only("speed"), pulp=PULP).motion
+        s = sum(out_angles(out, "左", "中指" + p)[0] for p in ("１", "２", "３"))
+        step = np.abs(np.diff(s))
+        self.assertLess(step.max(), hand_layer.SPEED_MAX_DEG_S / 30.0 + 0.5)
+        half = 0.5 * (s[0] + s[-1])
+        cross = float(np.interp(half, s[20:45], np.arange(20, 45)))
+        self.assertAlmostEqual(cross, 30.5, delta=0.6)                    # the change keeps its time
+        self.assertAlmostEqual(float(s[10]), 0.0, places=4)               # far from it, nothing moved
+        self.assertAlmostEqual(float(s[LAST]), 245.0, places=3)
+
+    def test_a_change_within_the_speed_is_left(self):
+        dance = hand_dance([(0, "open"), (20, "open"), (40, "fist"), (LAST, "fist")])
+        out = hand_layer.layer(MODEL, dance, only("speed"), pulp=PULP).motion
+        ref = hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion
+        np.testing.assert_allclose(out_angles(out, "左", "中指２")[0], out_angles(ref, "左", "中指２")[0], atol=1e-6)
+
+
+class OrderTest(unittest.TestCase):
+    def test_the_dip_moves_a_little_after_the_pip_and_meets_the_shape(self):
+        dance = hand_dance([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
+        out = hand_layer.layer(MODEL, dance, only("order"), pulp=PULP).motion
+        pip, dip = out_angles(out, "左", "中指２")[0], out_angles(out, "左", "中指３")[0]
+
+        def t10(x):
+            return float(np.interp(0.1 * x[-1], x[15:35], np.arange(15, 35)))
+        self.assertGreater(t10(dip) - t10(pip), 0.25)
+        self.assertLess(t10(dip) - t10(pip), 1.5)
+        self.assertAlmostEqual(float(dip[40]), 70.0, places=3)
+        self.assertAlmostEqual(float(dip[10]), 0.0, places=3)
+
+
+class LayerPassiveTest(unittest.TestCase):
+    """the fingers lag the hand: they trail when it speeds up and run on when it stops, the open hand more than a fist"""
+
+    def dev(self, shape, arm):
+        dance = hand_dance([(0, shape), (LAST, shape)], arm=arm, centre=False)
+        out = hand_layer.layer(MODEL, dance, only("passive"), pulp=PULP).motion
+        ref = hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion
+        return out_angles(out, "左", "中指１")[0] - out_angles(ref, "左", "中指１")[0]
+
+    def test_a_still_hand_keeps_its_fingers(self):
+        d = self.dev("open", None)
+        self.assertLess(np.abs(d).max(), 1e-6)
+
+    def test_a_swing_that_stops_moves_the_fingers_and_they_settle(self):
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        d = self.dev("open", arm)
+        self.assertGreater(np.abs(d[18:36]).max(), 2.0)
+        self.assertLess(np.abs(d[50:]).max(), 0.3)
+
+    def test_a_fist_moves_less_than_an_open_hand(self):
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        self.assertLess(np.abs(self.dev("fist", arm)).max(), 0.7 * np.abs(self.dev("open", arm)).max())
+
+
 if __name__ == "__main__":
     unittest.main()
