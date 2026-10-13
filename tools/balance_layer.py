@@ -2,7 +2,7 @@
 foot, starting before the foot lifts (an anticipatory weight shift), and a foot that lands and takes the weight bends
 its knee.  The feet's IK keys are not touched (the feet stay where they were traced).
 
-    python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--arrays a.npz] [--r-bal 1.5]
+    python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--arrays a.npz] [--r-bal 0.6]
                                   [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip-deg 15] [--no-dip]
 
 Why (the analysis a05 of 2026-10-07, REPORT 4.1): the traced dance keeps the body between the feet while one foot is up;
@@ -110,7 +110,10 @@ CENTRE = "センター"
 SUPPORT_H = 0.2                 # units (1.6 cm, a05's FLY): a foot this low carries weight
 CONTACT_EPS = 0.05              # units (4 mm, a05): a foot on the floor (the a05 measure, the landings)
 CLEAR_CM = 5.0                  # the other foot this high: the full pull (a05's single support: 5 cm)
-R_BAL_CM = 1.5                  # the band about the standing sole's line
+R_BAL_CM = 0.6                  # the band about the standing sole's line: people standing on one foot keep the centre of
+                                # pressure -0.32 +- 0.55 cm from the foot's long axis (Haba & Iwatsuki 2023, Table 1; sway
+                                # SD 0.6 cm, Janura et al. 2019).  On the MV the band's width is what moves the held
+                                # stances most (1.5 cm: median 3.3 cm left in runs of 0.5 s and more, 0.5 cm: 2.6)
 LEAD_S = 0.15                   # the pull ramps up this long before the foot lifts
 LAG_S = 0.05                    # and down this long after it lands
 # ---- the shift ---------------------------------------------------------------------------------------------------
