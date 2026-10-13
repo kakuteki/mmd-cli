@@ -1459,7 +1459,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                 """the iris as the camera sees it: a dish seen at a slant shows its deep side off where the rim's plane
                 puts it; duv held back, along the camera's rays, until the camera's line meets the iris within the
                 reach (or the light's drawn radius, if further out): toward the centre of the rim's plane (which keeps
-                it within the reach there too), or where that is not seen on the iris, toward where its centre is"""
+                it within the reach there too); where that is not seen on the iris, toward the first place on the way
+                to where the iris' centre shows that is, within the reach on the plane; failing that, toward there"""
                 if not lp["seen"]:
                     return duv
                 limit = max(lp["reach"], math.hypot(u0, v0))
@@ -1471,8 +1472,14 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                     return duv
                 mid_iris = disc_coordinates(cam, iris_point((0.0, 0.0), heights[e], geo, bone, moved_iris),
                                             centre, ax, ay, normal, ix, iy)
-                for anchor in ((0.0, 0.0), mid_iris):
-                    if anchor is None or not inside(anchor):
+                anchors = [(0.0, 0.0)]
+                if mid_iris is not None:
+                    # on the way to where the iris' centre shows, the first place both seen on the iris and within the
+                    # reach on the rim's plane (the way from it to duv stays within the reach there), then that place
+                    anchors += [tuple(t * m for m in mid_iris) for t in (0.25, 0.5, 0.75, 1.0)
+                                if math.hypot(*mid_iris) * t <= lp["reach"]] + [mid_iris]
+                for anchor in anchors:
+                    if not inside(anchor):
                         continue
                     lo, hi = 0.0, 1.0
                     for _ in range(12):
