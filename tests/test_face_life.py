@@ -309,6 +309,50 @@ class LidFollowsTheEyesTest(unittest.TestCase):
         self.assertTrue(700 <= first <= 703, first)
 
 
+def moving_point(moves, frames=F, rest=(0.0, 10.0, 0.0)):
+    """a point's world position per frame: at rest, moved by `moves` [(first, frames, (dx, dy, dz))], each move eased
+    in and out (smoothstep) over its frames and held after"""
+    p = np.tile(np.array(rest, float), (frames, 1))
+    for first, n, d in moves:
+        x = np.clip((np.arange(frames) - first) / float(n), 0.0, 1.0)
+        p += (x * x * (3.0 - 2.0 * x))[:, None] * np.array(d, float)[None, :]
+    return p
+
+
+class KimeTest(unittest.TestCase):
+    """the body's accents ("決め"): a fast move of the head or a hand that stops and holds the pose"""
+
+    def test_a_fast_move_that_stops_and_holds_is_a_kime(self):
+        hand = moving_point([(300, 5, (3.0, 0.0, 0.0))])                 # 3 units in 5 frames, then held
+        found = face_life.kimes({"右手首": hand}, start=0)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(304 <= found[0]["frame"] <= 307, found)
+
+    def test_a_stop_that_moves_on_at_once_is_no_kime(self):
+        # out and straight back (the return stops and holds: that one is a kime)
+        hand = moving_point([(300, 5, (3.0, 0.0, 0.0)), (306, 5, (-3.0, 0.0, 0.0))])
+        frames = [k["frame"] for k in face_life.kimes({"右手首": hand}, start=0)]
+        self.assertFalse([f for f in frames if f < 310], frames)
+        self.assertEqual(len(frames), 1)
+
+    def test_slow_moves_are_no_kime(self):
+        hand = moving_point([(300, 60, (3.0, 0.0, 0.0))])
+        self.assertEqual(face_life.kimes({"右手首": hand}, start=0), [])
+
+    def test_parts_stopping_together_are_one_kime_and_the_strongest_counts(self):
+        a = moving_point([(300, 5, (3.0, 0.0, 0.0))])
+        b = moving_point([(301, 4, (0.0, 4.0, 0.0))])
+        found = face_life.kimes({"右手首": a, "左手首": b}, start=0)
+        self.assertEqual(len(found), 1)
+        self.assertGreater(found[0]["speed"], 25.0)
+
+    def test_nothing_before_the_body_starts(self):
+        hand = moving_point([(100, 5, (3.0, 0.0, 0.0)), (400, 5, (-3.0, 0.0, 0.0))])
+        found = face_life.kimes({"右手首": hand}, start=200)
+        self.assertEqual(len(found), 1)
+        self.assertTrue(404 <= found[0]["frame"] <= 407, found)
+
+
 class BlinkShapeTest(unittest.TestCase):
     def test_every_v7_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
         seen = set()

@@ -363,6 +363,58 @@ def eye_pitch(eyes):
     return np.degrees(np.arcsin(np.clip(d[:, 1] / np.linalg.norm(d, axis=1), -1.0, 1.0)))
 
 
+KIME_PARTS = ("頭", "右手首", "左手首")
+KIME_PEAK = 75                  # percentile of a part's speed (from the body's start) the peak before a stop reaches
+KIME_MIN_SPEED = 8.0            # model units a second the peak reaches at least (0.64 m/s at 8 cm a unit)
+KIME_LOOK = 8                   # frames before the stop the peak is looked for in
+KIME_DROP = 0.25                # the speed falls below this share of the peak (tools/motor_layer.py's stops_and_hits)
+KIME_HOLD = 6                   # frames the part then stays under it: the pose is held
+KIME_MERGE = 4                  # frames: stops of several parts this close are one accent
+
+
+def point_speed(p):
+    """model units a second of a [F, 3] track (central differences)"""
+    v = np.zeros_like(p)
+    v[1:-1] = (p[2:] - p[:-2]) * (FPS / 2.0)
+    if len(p) > 1:
+        v[0], v[-1] = (p[1] - p[0]) * FPS, (p[-1] - p[-2]) * FPS
+    return np.linalg.norm(v, axis=1)
+
+
+def kimes(parts, start=0):
+    """the body's accents ("決め"): [{"frame", "speed", "part"}] sorted by frame.  For each part ({name: [F, 3] world
+    positions}) a stop is a frame where the speed falls below KIME_DROP of its peak over the KIME_LOOK frames before
+    (the peak at least the part's KIME_PEAK percentile from `start` on and KIME_MIN_SPEED), taken at the slowest of
+    the next 6 frames, and a kime when the part then stays under that for KIME_HOLD frames.  Stops of several parts
+    within KIME_MERGE frames are one; it keeps the frame and the speed of the fastest"""
+    found = []
+    for name, p in parts.items():
+        s = point_speed(np.asarray(p, float))
+        n_all = len(s)
+        if n_all <= start + KIME_LOOK + KIME_HOLD + 6:
+            continue
+        thr = max(float(np.percentile(s[start:], KIME_PEAK)), KIME_MIN_SPEED)
+        n = max(start + KIME_LOOK, 1)
+        while n < n_all - KIME_HOLD - 6:
+            pk = float(s[n - KIME_LOOK:n].max())
+            if pk >= thr and s[n] < KIME_DROP * pk <= s[n - 1]:
+                m = n + int(np.argmin(s[n:n + 6]))
+                if (s[m:m + KIME_HOLD] < KIME_DROP * pk).all():
+                    found.append((m, pk, name))
+                n += 4
+            else:
+                n += 1
+    found.sort()
+    merged = []
+    for f, pk, name in found:
+        if merged and f - merged[-1]["frame"] <= KIME_MERGE:
+            if pk > merged[-1]["speed"]:
+                merged[-1] = {"frame": int(f), "speed": float(pk), "part": name}
+            continue
+        merged.append({"frame": int(f), "speed": float(pk), "part": name})
+    return merged
+
+
 def body_start(head_rot, head_pos=None, moves=BODY_MOVES):
     """the first frame on which the head has turned or moved away from where it is on frame 0"""
     turned = _angles_between(qrot(head_rot, FORWARD), qrot(head_rot[:1], FORWARD)[0]) > moves[0]
