@@ -492,16 +492,22 @@ def summarize(f, contact, floor_y, limits=None):
 
 def compare(f_in, f_out, contact):
     """how far the output's foot is from the input's: the foot's world turn (degrees) and the ankle's place (cm), in
-    contact and in the air"""
+    contact and in the air; what the layer adds to a frame's step: the foot's turn beyond the input's (degrees) and the
+    ankle's height change apart from the input's (cm).  Frames are named by the frame a step arrives at."""
     d = np.abs(np.sum(f_in["q_foot"] * f_out["q_foot"], axis=1))
     turn = np.degrees(2.0 * np.arccos(np.clip(d, -1.0, 1.0)))
     move = np.linalg.norm(f_out["ankle"] - f_in["ankle"], axis=1) * UNIT_CM
     over = angle_steps(f_out["q_foot"]) - angle_steps(f_in["q_foot"])          # the layer's own one-frame turns
     worst = np.argsort(-over)[:5]
+    rise = np.abs(np.diff(f_out["ankle"][:, 1] - f_in["ankle"][:, 1])) * UNIT_CM  # the layer's own one-frame heights
+    worst_h = np.argsort(-rise)[:5]
     return {"foot_turn_deg": {"contact": stats(turn[contact]), "air": stats(turn[~contact])},
             "ankle_move_cm": {"contact": stats(move[contact]), "air": stats(move[~contact])},
             "step_over_input_deg": {"over_10": int((over > 10).sum()), "over_20": int((over > 20).sum()),
-                                    "worst": [[int(i), _r(float(over[i]), 1)] for i in worst]}}
+                                    "worst": [[int(i) + 1, _r(float(over[i]), 1)] for i in worst]},
+            "height_step_over_input_cm": {"over_1": int((rise > 1.0).sum()), "over_2": int((rise > 2.0).sum()),
+                                          "p99": _r(float(np.percentile(rise, 99)), 2) if len(rise) else None,
+                                          "worst": [[int(i) + 1, _r(float(rise[i]), 2)] for i in worst_h]}}
 
 
 # ---- the layer -----------------------------------------------------------------------------------------------------

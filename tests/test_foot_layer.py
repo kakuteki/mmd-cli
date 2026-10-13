@@ -179,6 +179,17 @@ class SpreadTest(unittest.TestCase):
 
 
 class SummaryTest(unittest.TestCase):
+    def test_compare_counts_the_height_steps_the_layer_adds(self):
+        # the output's ankle follows the input's but jumps 0.3 (2.4 cm) up at frame 4 and back at 5
+        f_in, f_out = fake_foot(10), fake_foot(10)
+        f_in["ankle"][:, 1] = np.linspace(2.0, 1.1, 10)
+        f_out["ankle"][:, 1] = f_in["ankle"][:, 1]
+        f_out["ankle"][4, 1] += 0.3
+        r = foot_layer.compare(f_in, f_out, np.ones(10, dtype=bool))["height_step_over_input_cm"]
+        self.assertEqual(r["over_1"], 2)
+        self.assertEqual(r["over_2"], 2)
+        self.assertEqual(sorted(i for i, _ in r["worst"][:2]), [4, 5])
+
     def test_penetration_and_hover(self):
         f = fake_foot(10)
         f["low"][3:5] = [-0.01, -0.05]                  # 0.4 and 4 mm too low; the second also below the dark plane
