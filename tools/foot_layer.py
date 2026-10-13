@@ -337,6 +337,26 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
     return out
 
 
+def trace_height(f, o, extra=0.0):
+    """the flat sole's lowest point over the trace's floor [F] (units), as the trace's own model stood: a model whose
+    foot reached `extra` units further from the ankle to the toe had its toe that much times sin(the toes-down pitch)
+    lower, on the floor where this one's stops short.  0 for the dance's own model."""
+    return f["flat_low"] - o.floor - extra * np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
+
+
+def toe_extra_estimate(f, o, frames_per_s=FPS):
+    """(the median, the number of frames) of trace_height's `extra` that would put this foot's still pitched frames on
+    the floor: frames moving less than 15 cm/s, pitched 15 to 70 degrees toes-down, 0.3 to 6 cm over the trace's floor.
+    A trace made for a model with a longer foot leaves such frames over the floor in proportion to sin(pitch)."""
+    e = f["flat_low"] - o.floor
+    xz = 0.5 * (f["heel_xz"] + f["fore_xz"])
+    speed = np.zeros(len(e))
+    speed[1:] = np.linalg.norm(np.diff(xz, axis=0), axis=1) * frames_per_s * UNIT_CM
+    sinp = np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
+    m = (speed < 15.0) & (-f["pitch"] >= 15.0) & (-f["pitch"] <= 70.0) & (e * UNIT_CM > 0.3) & (e * UNIT_CM < 6.0)
+    return (float(np.median(e[m] / sinp[m])) if m.any() else None), int(m.sum())
+
+
 def contact_mask(flat_low, trace_floor, enter=CONTACT_ENTER, exit_=CONTACT_EXIT):
     """the foot on the floor, with hysteresis: enters at trace_floor + enter, leaves above trace_floor + exit"""
     on = np.zeros(len(flat_low), dtype=bool)
@@ -530,7 +550,8 @@ def trace_floor(shoe):
 def default_params():
     return {"floor_y": None, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
-            "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP}
+            "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP,
+            "trace_toe_extra": 0.0}
 
 
 def load_shares(shoe, feet, sol, p):
@@ -542,7 +563,7 @@ def load_shares(shoe, feet, sol, p):
     near, g = {}, {}
     for s, o in shoe.sides.items():
         f = feet[s]
-        e = f["flat_low"] - o.floor
+        e = trace_height(f, o, p["trace_toe_extra"])
         near[s] = 1.0 - smoothstep(e, p["load_full"], p["load_none"])
         centre = 0.5 * (f["heel_xz"] + f["fore_xz"])
         d = np.linalg.norm(centre - hips[:, [0, 2]], axis=1)
@@ -592,7 +613,7 @@ def foot_targets(o, f, leg, rest, share, near, p):
     only while its sole faces the floor), the ankle complex inside its range, the toes bent so that a loaded raised
     heel stands on the ball with the toe box on the floor"""
     side_sign = 1.0 if o.name == "左" else -1.0
-    e = f["flat_low"] - o.floor
+    e = trace_height(f, o, p["trace_toe_extra"])
     v = 1.0 - smoothstep(e, *p["on_floor"])
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
@@ -806,18 +827,23 @@ def build(motion, written, F):
 
 # ---- the command ---------------------------------------------------------------------------------------------------
 
-def measure_report(rig, shoe, motion, floor_y, frames=None, contact_from=None):
+def measure_report(rig, shoe, motion, floor_y, frames=None, contact_from=None, toe_extra=0.0):
     """(measures, report, contacts) of a dance: measure_feet over every frame and summarize per side.  The contact
-    frames are the motion's own (against the trace's floor) unless `contact_from` gives them (side -> mask), so that an
-    output is judged on its input's contact."""
+    frames are the motion's own (against the trace's floor, with the trace model's toe: trace_height) unless
+    `contact_from` gives them (side -> mask), so that an output is judged on its input's contact."""
     if frames is None:
         frames = range(0, fk.last_frame(motion) + 1)
     m = measure_feet(rig, shoe, motion, frames, floor_y)
     rep, contacts = {}, {}
     for s, f in m.items():
-        c = contact_from[s] if contact_from is not None else contact_mask(f["flat_low"], f["trace_floor"])
+        o = shoe.sides[s]
+        c = contact_from[s] if contact_from is not None else contact_mask(trace_height(f, o, toe_extra) + o.floor,
+                                                                          o.floor)
         contacts[s] = c
         rep[TAGS[s]] = summarize(f, c, floor_y)
+        est, n = toe_extra_estimate(f, o)
+        rep[TAGS[s]]["trace_toe_extra_estimate_cm"] = {"cm": _r(est * UNIT_CM, 2) if est is not None else None,
+                                                       "frames": n}
     return m, rep, contacts
 
 
@@ -829,6 +855,10 @@ def main(argv=None):
     ap.add_argument("--report")
     ap.add_argument("--floor-y", type=float, default=None,
                     help="the visible floor's height (MMD units); the rest pose's soles (the trace's floor) if not given")
+    ap.add_argument("--trace-toe-cm", type=float, default=0.0,
+                    help="how much further the trace's model's foot reached from the ankle to the toe (cm): its pointed "
+                         "toe touched the floor where this model's stops short; the report's "
+                         "trace_toe_extra_estimate_cm measures it from the dance")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
@@ -844,11 +874,12 @@ def main(argv=None):
     if off:
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
     floor_y = trace_floor(shoe) if args.floor_y is None else args.floor_y
-    m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y)
-    report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "heel_pitch_deg": HEEL_PITCH_DEG,
-              "seconds": None}
+    extra = args.trace_toe_cm / UNIT_CM
+    m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y, toe_extra=extra)
+    report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
+              "heel_pitch_deg": HEEL_PITCH_DEG, "seconds": None}
     if not args.measure_only:
-        out, plan = layer(rig, shoe, motion, {"floor_y": floor_y})
+        out, plan = layer(rig, shoe, motion, {"floor_y": floor_y, "trace_toe_extra": extra})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
         m_out, rep_out, _ = measure_report(rig, shoe, back, floor_y, contact_from=contacts)

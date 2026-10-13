@@ -146,6 +146,22 @@ def fake_foot(F, floor=0.0):
             "q_foot": q, "q_ex": q.copy()}
 
 
+class ToeExtraTest(unittest.TestCase):
+    def test_estimate_from_still_pointed_frames(self):
+        # 30 still frames pointed 40 degrees toes-down hovering 0.5 sin(40) over the trace's floor (a trace model's foot
+        # 0.5 longer), 10 flat frames on the floor (not counted): the estimate is 0.5
+        F = 40
+        f = fake_foot(F, floor=0.111)
+        f["pitch"] = np.where(np.arange(F) >= 10, -40.0, 0.0)
+        f["flat_low"] = 0.111 + np.where(f["pitch"] < 0.0, 0.5 * math.sin(math.radians(40.0)), 0.0)
+        est, n = foot_layer.toe_extra_estimate(f, SHOE.sides["左"])
+        self.assertEqual(n, 30)
+        self.assertAlmostEqual(est, 0.5, 6)
+        # and trace_height puts those frames on the floor with it
+        h = foot_layer.trace_height(f, SHOE.sides["左"], 0.5)
+        self.assertLess(float(np.abs(h).max()), 1e-6)
+
+
 class SpreadTest(unittest.TestCase):
     def test_a_short_correction_is_spread_over_its_neighbours(self):
         # a correction of two frames (the peak of a kick past the range) comes in and goes out over EASE frames each
@@ -426,6 +442,34 @@ class LayerTest(unittest.TestCase):
         self.assertGreater(abs(float(a["inversion"][6])), 60.0)                        # the roll read there
         self.assertLess(float(turn_between(a["q_foot"], b["q_foot"]).max()), 1.0)
 
+    def pointed_over_the_floor(self, above):
+        """keys of the left foot pointed 40 degrees toes-down with the shoe's lowest point `above` units over the trace's
+        floor, the knees bent (センター down 1.2) so that the leg can still reach down"""
+        q = axis_angle((1, 0, 0), -40.0)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        probe = measure(key("左足ＩＫ", 0, q, position=(0, 0.5, -0.3)), center)["左"]
+        lift = 0.5 + 0.111 + above - float(probe["low"][0])
+        return key("左足ＩＫ", 0, q, position=(0, lift, -0.3)), center
+
+    def test_pointed_foot_that_touches_in_the_trace_is_put_on_the_floor(self):
+        # the trace's model had a foot longer by `trace_toe_extra` (its pointed toe reached the floor where this shoe stops
+        # short by that much times sin(pitch)): such a foot touches the floor in the trace, so it is put on the floor
+        extra = 0.5
+        above = extra * math.sin(math.radians(40.0))
+        keys = self.pointed_over_the_floor(above)
+        f_in, f_out, out, plan = run_layer(*keys, trace_toe_extra=extra)
+        self.assertAlmostEqual(float(f_in["左"]["low"][0]), 0.111 + above, delta=0.003)
+        self.assertAlmostEqual(float(f_out["左"]["low"][0]), 0.111, delta=0.003)          # on the trace's floor
+        # without it (another model's trace, or the same model's) the foot is in the air: it stays where it is
+        f_in, f_out, out, plan = run_layer(*keys)
+        self.assertAlmostEqual(float(f_out["左"]["low"][0]), 0.111 + above, delta=0.003)
+
+    def test_pointed_foot_above_the_trace_models_reach_stays_in_the_air(self):
+        extra = 0.5
+        above = extra * math.sin(math.radians(40.0)) + 0.3              # 2.4 cm over where the trace's toe would be
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(above), trace_toe_extra=extra)
+        self.assertAlmostEqual(float(f_out["左"]["low"][0]), float(f_in["左"]["low"][0]), delta=0.003)
+
     def test_default_floor_is_the_traces(self):
         # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved
         # down: the foot in the air keeps its height, the loaded rolled foot is laid flat with its sole on that floor
@@ -468,6 +512,12 @@ class CommandTest(unittest.TestCase):
             self.assertEqual(r["output"]["L"]["penetration"]["frames"], 0)
             self.assertLess(r["output"]["L"]["hover_in_contact_cm"]["max"], 0.02)
             self.assertEqual(len({k.frame for k in vmd.load(out).bones if k.name == "左足首"}), 4)
+            self.assertEqual(r["trace_toe_cm"], 0.0)
+            self.assertIn("trace_toe_extra_estimate_cm", r["input"]["L"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                foot_layer.main([src, model, out, "--report", rep, "--trace-toe-cm", "4.0"])
+            with open(rep, encoding="utf-8") as fh:
+                self.assertEqual(json.load(fh)["trace_toe_cm"], 4.0)
         finally:
             shutil.rmtree(folder)
 
