@@ -375,7 +375,8 @@ class LayerTest(unittest.TestCase):
         self.assertLess(abs(float(f["dorsi"][0] - f["rest_dorsi"])), 5.0)
 
     def test_landing_is_smooth(self):
-        # the foot comes down over 12 frames rolled 15 degrees and stands 8: no step bigger than the input's
+        # the foot comes down over 12 frames rolled 15 degrees and stands 8: no step bigger than the input's but for the
+        # putting down, eased over the frames before the landing (HEIGHT_RATE a frame at most)
         q = rolled("左", 15.0)
         keys = [key("センター", 0, position=(0, -0.8, 0)), key("左足首", 0, q),
                 key("左足ＩＫ", 0, q, position=(0, 2.0, -0.5)), key("左足ＩＫ", 12, q), key("左足ＩＫ", 20, q)]
@@ -383,7 +384,7 @@ class LayerTest(unittest.TestCase):
         a, b = f_in["左"], f_out["左"]
         step_in = np.abs(np.diff(a["ankle"][:, 1]))
         step_out = np.abs(np.diff(b["ankle"][:, 1]))
-        self.assertLess(float(step_out.max()), float(step_in.max()) + 0.02)
+        self.assertLess(float(step_out.max()), float(step_in.max()) + foot_layer.HEIGHT_RATE)
         turn_out = foot_layer.angle_steps(b["q_foot"])
         self.assertLess(float(turn_out.max()), float(a["roll"][0]) / 3.0 + 0.5)       # laid flat over 3 frames or more
         self.assertLess(abs(float(b["roll"][14])), 0.5)                                # flat once it stands
@@ -482,6 +483,37 @@ class LayerTest(unittest.TestCase):
         f_in, f_out, out, plan = run_layer(*keys, frames=7, trace_toe_extra=extra)
         self.assertAlmostEqual(float(f_in["左"]["low"][3]), 0.111 + above, delta=0.003)
         self.assertAlmostEqual(float(f_out["左"]["low"][3]), float(f_in["左"]["low"][3]), delta=0.003)
+
+    def heel_up_keys(self, pitch, lifts):
+        """keys of the left foot pitched `pitch` degrees toes-down, its shoe's lowest point on the trace's floor raised by
+        lifts[t] units at frame t, the knees bent (センター down 1.2), the right foot lifted out of the way (the left one
+        bears the weight)"""
+        q = axis_angle((1, 0, 0), -pitch)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        right = key("右足ＩＫ", 0, position=(0, 2.5, 0.8))
+        probe = measure(key("左足ＩＫ", 0, q, position=(0, 0.5, -0.3)), center, right)["左"]
+        base = 0.5 + 0.111 - float(probe["low"][0])
+        return [center, right] + [key("左足ＩＫ", t, q, position=(0, base + h, -0.3)) for t, h in enumerate(lifts)]
+
+    def test_heel_up_landing_settles_onto_the_ball_without_a_jump(self):
+        # the foot comes down on its tip (pitched 38 degrees) and stays: loaded, its toes bend and the ankle lowers 2.7 cm
+        # until the ball stands on the floor.  That is eased over the frames before the landing: the layer adds less than
+        # 1 cm a frame to the ankle's own motion (all of it in the landing's frame was 2.9 cm)
+        lifts = [0.5, 0.4, 0.3, 0.2, 0.1, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(38.0, lifts), frames=len(lifts))
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(b["mtp"][-1] - b["rest_mtp"]), 20.0)                 # the toes bent in the end
+        self.assertLess(float(b["ankle"][-1, 1]), float(a["ankle"][-1, 1]) - 0.1)      # the ankle lowered onto the ball
+        added = np.abs(np.diff(b["ankle"][:, 1]) - np.diff(a["ankle"][:, 1]))
+        self.assertLess(float(added.max()), 0.125)
+
+    def test_one_frame_lift_of_a_standing_foot_is_bridged(self):
+        # standing on the ball (pitched 30 degrees), the trace lifts the foot 1 cm for a single frame: no pop
+        lifts = [0.0] * 11
+        lifts[5] = 0.125
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(30.0, lifts), frames=len(lifts))
+        y = f_out["左"]["ankle"][:, 1]
+        self.assertLess(abs(float(y[5] - 0.5 * (y[4] + y[6]))), 0.03)
 
     def test_default_floor_is_the_traces(self):
         # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved

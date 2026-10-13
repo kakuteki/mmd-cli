@@ -524,6 +524,10 @@ ROLL_JUMP, FOOT_STILL = 40.0, 15.0   # degrees a frame: a roll that jumps more w
 FLAT_PITCH = (30.0, 60.0)       # degrees of pitch from the floor: a sole steeper than the first is laid flat less and
                                 # less, steeper than the second (a foot pointed down at the floor) keeps its roll
 ROUNDS = 3                      # rounds of solving the legs again to put the sole on the floor
+HEIGHT_RATE = 0.08              # units a frame (0.64 cm, 19 cm/s): the most the layer's height change moves the ankle
+                                # beyond the dance's own motion; a foot is lowered onto the floor before it lands and
+                                # raised back after it lifts, over as many frames as that takes
+BRIDGE = 2                      # frames: a standing foot lifted for this long or less (the trace's jitter) stays down
 X_AXIS = np.array([1.0, 0.0, 0.0])
 
 
@@ -631,7 +635,7 @@ def foot_targets(o, f, leg, rest, share, near, p):
     heel stands on the ball with the toe box on the floor"""
     side_sign = 1.0 if o.name == "左" else -1.0
     e = trace_height(f, o, p["trace_toe_extra"])
-    v = 1.0 - smoothstep(e, *p["on_floor"])
+    v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE)
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
     loaded = smoothstep(share, *p["load_share"])
@@ -686,6 +690,31 @@ def shell_at(o, ankle, q_foot, toes):
     q_ex = qmul(q_foot, qaxis(np.broadcast_to(X_AXIS, ankle.shape), np.radians(toes)))
     ex = ankle + qrot(q_foot, o.ex - o.ankle)
     return shell_world(o, {"ankle": ankle, "q_foot": q_foot, "ex": ex, "q_ex": q_ex})
+
+
+def bridge(v, gap):
+    """the on-floor weights v [F] with the dips of `gap` frames or fewer between two frames on the floor (v >= 0.5) filled
+    to the lower of the two"""
+    v = np.array(v, dtype=float)
+    down = v >= 0.5
+    for a, b in runs(~down):
+        if a > 0 and b < len(v) - 1 and b - a + 1 <= gap:
+            v[a:b + 1] = np.maximum(v[a:b + 1], min(v[a - 1], v[b + 1]))
+    return v
+
+
+def eased_weight(v, gap, rate):
+    """the on-floor weight v [F] eased so that its own change moves the height it puts on, v * gap (units), by at most
+    `rate` a frame: followed forward and backward with that limit, the larger of the two (the foot is put down before
+    the frame it lands on and let go after the dance lifts it).  Where v stays, the height follows the floor exactly."""
+    step = rate / np.maximum(np.abs(np.asarray(gap, dtype=float)), 1e-6)
+    fwd = np.array(v, dtype=float)
+    for t in range(1, len(fwd)):
+        fwd[t] = min(max(fwd[t], fwd[t - 1] - step[t]), fwd[t - 1] + step[t])
+    bwd = np.array(v, dtype=float)
+    for t in range(len(bwd) - 2, -1, -1):
+        bwd[t] = min(max(bwd[t], bwd[t + 1] - step[t]), bwd[t + 1] + step[t])
+    return np.maximum(fwd, bwd)
 
 
 def smooth_max_envelope(x, radius):
@@ -754,8 +783,10 @@ def layer(rig, shoe, motion, params=None, log=None):
             # the air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
             low0 = shell_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
-            target = v * floor_y + (1.0 - v) * (low0 + d1)
-            target = target + smooth_max_envelope(floor_y - target, 3)
+            gap = floor_y - low0 - d1                     # what putting the sole on the floor adds to the shift
+            dy = d1 + eased_weight(v, gap, HEIGHT_RATE) * gap
+            dy = dy + smooth_max_envelope(floor_y - (low0 + dy), 3)          # nothing below the floor
+            target = low0 + dy
             plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": target - low0, "d1": d1, "target_low": target,
                        "share": shares[s], "floor_y": floor_y}
             set_dy(s, plan[s]["dy"])
