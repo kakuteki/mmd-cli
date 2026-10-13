@@ -150,6 +150,20 @@ STYLES = ("human", "v7")
 HUMAN_CLOSING_FRAMES = (2, 3)   # a spontaneous blink closes in about 100 ms and opens in about 220 ms (Nakamura et al.
 HUMAN_OPENING_FRAMES = (7, 8)   # 2008), 9 frames at 30 fps measured most often (Trutoiu et al. 2011)
 HUMAN_OPENING = {7: (0.76, 0.55, 0.37, 0.23, 0.12, 0.05), 8: (0.79, 0.6, 0.43, 0.29, 0.18, 0.09, 0.03)}
+LID_NEUTRAL = 0.10              # the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above
+                                # the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2)
+LID_SHOWN = (0.2, 0.35, 0.8)    # the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung
+                                # (the loudest), at rest, and in the relaxing after a phrase
+LID_QUIET = 0.25                # the quietest phrase shows this much more of it than the loudest (ranked by the voice)
+LID_DEEP = 0.5                  # from here to CLOSED the author's lid (a long closure, the wake-up) is blended back in
+LID_STEP = 6                    # frames a change of the shown share takes
+LID_RELAX_AFTER = 6             # frames after a phrase's last vowel the lid starts to relax
+LID_RELAX_HOLD = 24             # frames the relaxed lid holds before it goes back to rest
+LID_RELAX_BACK = 12             # frames it takes to go back (the lid opening: slow is no creep)
+LID_SHORT_GAP = 20              # frames: phrases this close keep the lid as in a phrase between them
+LID_FOLLOW = (0.027, 0.021)     # まばたき per degree the eyes look down / up: what keeps Sour's Rin's upper lid where it is
+                                # on the iris (stage 6 face-v2 q2: the lid moves 0.15 iris radii per 0.1 of まばたき, the
+                                # iris' top 0.04 per degree)
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -436,7 +450,7 @@ def plan(inp, seed=0, hold=None, style="human"):
     env = envelope([(p.start, p.end) for p in phrases], frames, rng)
     expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has)
     smile = track(expressions.get(SMILE, keys.get(SMILE, [])), frames)
-    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style)
+    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style, phrases)
     if blink is not None and SMILE in expressions:
         allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
         expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
@@ -800,7 +814,7 @@ def modulate(source, placed, env, part, frames):
 
 # ---- blinks ---------------------------------------------------------------------------------
 
-def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7"):
+def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7", phrases=()):
     """the new まばたき keys and what was done"""
     human = style == "human"
     closings = HUMAN_CLOSING_FRAMES if human else CLOSING_FRAMES
@@ -818,7 +832,17 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
     base = base_track(b_keys, longs, frames, intro, events)
     pitch = eye_pitch(inp.eyes)
     sacc = saccades(inp.head, inp.eyes)
-    base = base + lid_offset(pitch, sacc, frames) * (base < CLOSED)
+    lid_info = {}
+    if human:
+        share = shown_share(phrases, frames, inp.voice)
+        author = base
+        base = shown_lid(author, share)
+        follow = lid_offset(pitch, sacc, frames, LID_FOLLOW)
+        base = base + follow * (base < CLOSED)
+        lid_info = {"author_mean": _r(author[opened:].mean()), "shown_mean": _r(np.clip(base, 0, 1)[opened:].mean()),
+                    "share_sung": LID_SHOWN[0], "share_after": LID_SHOWN[1], "follow_per_degree": list(LID_FOLLOW)}
+    else:
+        base = base + lid_offset(pitch, sacc, frames) * (base < CLOSED)
     base = np.clip(base, 0.0, 1.0)
     clear = np.zeros(frames, bool)
     clear[:min(frames, opened + KEEP_CLEAR)] = True
@@ -856,7 +880,7 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             b[g] = max(b[g], base[g] + (peak - base[g]) * p)
         out.append({"start": int(f), "cause": cause, "closing": closing, "hold": hold, "opening": opening})
     b = without_creep(b, opened)
-    info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out,
+    info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out, "lid": lid_info,
             "by_cause": {c: sum(1 for x in out if x["cause"] == c) for c in ("gaze_shift", "saccade", "phrase_end", "fill")},
             "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE),
             "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
@@ -1042,9 +1066,59 @@ def blink_pulses(b_keys, intro):
     return out
 
 
-def lid_offset(pitch, sacc, frames):
+def shown_share(phrases, frames, voice=None):
+    """per frame, the share of the author's lowering of the lid that shows (human style).  At rest LID_SHOWN[1]; in a
+    phrase LID_SHOWN[0] for the loudest phrase and up to LID_QUIET more for the quietest (the mean centre power of the
+    voice over the phrase, ranked; without the voice all at LID_SHOWN[0]); after a phrase the lid relaxes to
+    LID_SHOWN[2] for LID_RELAX_HOLD frames and goes back to rest over LID_RELAX_BACK.  Phrases less than LID_SHORT_GAP
+    frames apart are one.  The lid opens over the LID_STEP frames before a phrase's first vowel and relaxes over
+    LID_STEP frames from LID_RELAX_AFTER frames after its last; where a relaxing meets the next phrase, the phrase wins"""
+    rest, relaxed = float(LID_SHOWN[1]), float(LID_SHOWN[2])
+    out = np.full(frames, rest)
+    spans = []
+    for p in phrases:
+        if spans and p.start - spans[-1][1] <= LID_SHORT_GAP:
+            spans[-1][1] = max(spans[-1][1], p.end)
+        else:
+            spans.append([p.start, p.end])
+    if not spans:
+        return out
+    loud = []
+    for a, z in spans:
+        v = _voice_at(voice, _seconds(a), _seconds(z + 1)) if voice is not None else None
+        loud.append(-99.0 if v is None else v)
+    quiet = 1.0 - _rank(loud) if voice is not None and len(spans) > 1 else np.zeros(len(spans))
+    for (a, z), q in zip(spans, quiet):                   # the relaxing after each phrase
+        inside = LID_SHOWN[0] + LID_QUIET * float(q)
+        z0 = min(frames, z + LID_RELAX_AFTER)
+        z1 = min(frames, z0 + LID_STEP)
+        z2 = min(frames, z1 + LID_RELAX_HOLD)
+        z3 = min(frames, z2 + LID_RELAX_BACK)
+        out[z0:z1] = inside + (relaxed - inside) * smoothstep((np.arange(z0, z1) - z0 + 1) / float(max(1, z1 - z0)))
+        out[z1:z2] = relaxed
+        out[z2:z3] = relaxed + (rest - relaxed) * smoothstep((np.arange(z2, z3) - z2 + 1) / float(max(1, z3 - z2)))
+    for (a, z), q in zip(spans, quiet):                   # the phrases (with their lead-in) over it
+        inside = LID_SHOWN[0] + LID_QUIET * float(q)
+        a0 = max(0, a - LID_STEP)
+        z0 = min(frames, z + LID_RELAX_AFTER)
+        if a > a0:
+            start = out[a0]
+            out[a0:a] = start + (inside - start) * smoothstep((np.arange(a0, a) - a0 + 1) / float(a - a0))
+        out[a:z0] = inside
+    return out
+
+
+def shown_lid(author, share):
+    """the lid between the blinks (human style): a level the author lowered below LID_NEUTRAL shows by `share` of it;
+    from LID_DEEP on it blends back to the author's (a long closure, the eyes opening at the start, stay as they were)"""
+    low = LID_NEUTRAL + share * np.maximum(0.0, author - LID_NEUTRAL)
+    w = np.clip((author - LID_DEEP) / (CLOSED - LID_DEEP), 0.0, 1.0)
+    return np.where(author <= LID_NEUTRAL, author, low * (1.0 - w) + author * w)
+
+
+def lid_offset(pitch, sacc, frames, gains=(LID_DOWN, LID_UP)):
     """まばたき added for where the eyes look, one value per fixation (the median pitch between two saccades),
-    changing with each saccade"""
+    changing with each saccade; gains: まばたき per degree down and up"""
     edges = [0] + [s["start"] for s in sacc] + [frames]
     out = np.zeros(frames)
     previous = None
@@ -1053,7 +1127,7 @@ def lid_offset(pitch, sacc, frames):
             continue
         settle = min(z, a + 3) if a > 0 else a
         p = float(np.median(pitch[settle:z])) if z > settle else float(pitch[a])
-        value = LID_DOWN * max(0.0, -p) - LID_UP * max(0.0, p)
+        value = gains[0] * max(0.0, -p) - gains[1] * max(0.0, p)
         out[a:z] = value
         if previous is not None and a > 0:
             n = min(3, z - a)

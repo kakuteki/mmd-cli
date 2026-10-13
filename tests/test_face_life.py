@@ -218,6 +218,97 @@ class HumanBlinkTest(unittest.TestCase):
         self.assertGreaterEqual(dist["median"], 9)
 
 
+def between_blinks(b, s, start=150):
+    """frames from `start` outside the blinks and the long closures (a10's episodes, closing start to opening end)"""
+    mask = np.zeros(len(b), bool)
+    mask[start:] = True
+    for e in face_life.episodes(b + s, start):
+        mask[max(0, e["cs"] - 1):e["oe"] + 2] = False
+    return mask
+
+
+def pitched_eyes(spans):
+    """the 両目 rotation per frame: level, but `spans` [(first, last, degrees up)]"""
+    eyes = still_eyes()
+    for a, z, deg in spans:
+        half = np.radians(deg) / 2.0
+        eyes[a:z + 1, 0] = np.sin(half)
+        eyes[a:z + 1, 3] = np.cos(half)
+    return eyes
+
+
+class HumanLidTest(unittest.TestCase):
+    """the lid between the blinks.  The KAZUSA motion holds the upper lid low (まばたき 0.22 to 0.38) through its serious
+    face; the synthetic face holds 0.26 from the wake-up on.  The human style shows only part of the author's lowering
+    above the neutral lid: little while a phrase is sung, more after it; the lid follows the eyes up and down"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = face_life.plan(inputs(), seed=0)
+        cls.t = tracks(cls.result.motion)
+        cls.open = between_blinks(cls.t["まばたき"], cls.t["笑い"])
+        cls.v7 = tracks(face_life.plan(inputs(), seed=0, style="v7").motion)
+
+    def test_the_authors_low_lid_shows_only_in_part(self):
+        b, s = self.t["まばたき"], self.t["笑い"]
+        lid = b[self.open & (s < 0.01)]
+        self.assertGreaterEqual(lid.min(), face_life.LID_NEUTRAL - 1e-6)
+        self.assertLessEqual(lid.max(), 0.26 + 1e-6)
+        self.assertLess(float(np.mean(lid)), 0.10 + 0.6 * (0.26 - 0.10))
+
+    def test_the_eyes_are_more_open_while_a_phrase_is_sung_than_after_it(self):
+        b = self.t["まばたき"]
+        sung = [f for f in range(604, 634) if self.open[f]]       # the phrase of 600 to 636
+        after = [f for f in range(652, 676) if self.open[f]]      # its end and the pause before 680
+        self.assertTrue(sung and after)
+        self.assertLess(float(np.mean(b[sung])), float(np.mean(b[after])) - 0.04)
+
+    def test_half_closed_eyes_take_much_less_time_than_in_v7(self):
+        open7 = between_blinks(self.v7["まばたき"], self.v7["笑い"])
+        half7 = float((self.v7["まばたき"][open7] >= 0.2).mean())
+        half = float((self.t["まばたき"][self.open] >= 0.2).mean())
+        self.assertGreater(half7, 0.9)
+        self.assertLess(half, 0.5 * half7)
+
+    def test_the_lid_changes_quickly_and_never_creeps(self):
+        b = self.t["まばたき"]
+        step = np.diff(b, prepend=b[0])
+        creep = (step > 1e-5) & (step <= 0.05)
+        creep[:150] = False
+        self.assertEqual([r for r in face_life.runs(creep) if r[1] - r[0] + 1 >= 10], [])
+
+
+class LidFollowsTheEyesTest(unittest.TestCase):
+    """the upper lid moves with the eyes (Sour's Rin: まばたき about 0.027 a degree down keeps the lid where it is on the
+    iris, 0.021 a degree up; it cannot rise above 0)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.level = tracks(face_life.plan(inputs(), seed=0).motion)["まばたき"]
+        cls.down = tracks(face_life.plan(inputs(eyes=pitched_eyes([(700, 790, -8.0)])), seed=0).motion)["まばたき"]
+        cls.up = tracks(face_life.plan(inputs(eyes=pitched_eyes([(700, 790, 6.0)])), seed=0).motion)["まばたき"]
+        cls.open = between_blinks(cls.level, np.zeros(F)) & between_blinks(cls.down, np.zeros(F)) \
+            & between_blinks(cls.up, np.zeros(F))
+
+    def test_looking_down_lowers_the_lid_with_the_eyes(self):
+        frames = [f for f in range(706, 788) if self.open[f]]
+        self.assertTrue(frames)
+        rise = self.down[frames] - self.level[frames]
+        np.testing.assert_allclose(rise, 8 * face_life.LID_FOLLOW[0], atol=0.02)
+
+    def test_looking_up_raises_the_lid_down_to_open(self):
+        frames = [f for f in range(706, 788) if self.open[f]]
+        fall = self.level[frames] - self.up[frames]
+        expected = np.minimum(self.level[frames], 6 * face_life.LID_FOLLOW[1])
+        np.testing.assert_allclose(fall, expected, atol=0.02)
+        self.assertGreaterEqual(self.up.min(), 0.0)
+
+    def test_the_lid_moves_with_the_saccade(self):
+        moved = np.abs(self.down - self.level) > 0.05
+        first = int(np.argmax(moved[690:])) + 690
+        self.assertTrue(700 <= first <= 703, first)
+
+
 class BlinkShapeTest(unittest.TestCase):
     def test_every_v7_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
         seen = set()
