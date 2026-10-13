@@ -230,7 +230,7 @@ class VergencePhaseTest(unittest.TestCase):
         more than half way from the look's third frame to its last, and most of the vergence (degrees x frames) lies
         within the look, not after it.  Natural vergence of 10 degrees peaks at 70 to 80 deg/s (Erkelens et al. 1989,
         236:441: 50 deg/s for 5 degrees to 150 to 200 for 34), about 0.25 s; at 0.41 s (5 to 95 % 0.25 s, stage 5)
-        the eyes passed 3 degrees on the look's last 4 frames only and 56 % of the vergence came after it"""
+        the eyes passed 3 degrees on the look's last 4 frames only and 55 % of the vergence came after it"""
         labels = ["free"] * 20 + ["hand"] * 9 + ["free"] * 30
         top = 5.3
         out = self.phase([0.0] * 20 + [top] * 9 + [0.0] * 30, labels)

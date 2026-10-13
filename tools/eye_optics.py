@@ -152,9 +152,9 @@ The vergence (keys on 右目 and 左目, after their append from 両目; RESEARC
   peaks at about 50 deg/s for a change of 5 degrees (the two eyes together) and 150 to 200 for 34 (Erkelens, Steinman
   & Collewijn 1989, Proc R Soc B 236:441), so the 6 to 11 degrees of a hand 30 to 60 cm off take about 0.2 to 0.27 s:
   the coordinator's "0.2 to 0.3 s" as the whole of the move.  The gaze's looks last 0.3 to 0.6 s; with stage 5's
-  0.25 s from 5 to 95 % (0.41 s in all) the eyes were past half way on the last 4 frames of the 0.3 s look at 52 s
-  only, and more of the vergence came after the look than in it.  (Tyler 2015's 0.24 s latency and 8 deg/s, disparity
-  steps on a screen, put the whole vergence after the MV's looks, partly onto the camera: stage 5 review Q1.)
+  0.25 s from 5 to 95 % (0.41 s in all) the eyes of the MV v8 were past 3 degrees on the last 5 frames of the 0.3 s
+  look at 52 s only (of 6.0), and 55 % of its vergence came after the look.  (Tyler 2015's 0.24 s latency and 8 deg/s,
+  disparity steps on a screen, put the whole vergence after the MV's looks, partly onto the camera: stage 5 review Q1.)
 * Each eye then turns from the gaze onto the point at that distance along it (right eye -X, left eye +X: inward is
   +yaw for the right eye and -yaw for the left, as the coordinator's vergence probe keys them).
 
