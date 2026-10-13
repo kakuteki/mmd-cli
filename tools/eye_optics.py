@@ -54,8 +54,9 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   iris' centre as the camera sees it, along the camera's rays (iris_hit, the first meeting), until its ray meets the
   iris within the reach (or its drawn radius, if further out).  Seen so much at a slant that no place of the iris
   holds it (the dish hides its own centre: the MV's 253.9 seconds, the eyes 62 degrees off the camera), the light goes
-  behind its iris instead of hanging beside it.  The key's turn is held under light.key_cap degrees (soft from 60 %
-  of it).
+  light.hide_depth behind its iris on the camera's line through where the iris' centre shows, which covers it
+  (put back beside the iris, in the socket, nothing covered it).  The key's turn is held under light.key_cap degrees
+  (soft from 60 % of it).
 * The light rides on its iris (light.ride): the bone also moves, along the camera's line (so where the light shows
   does not change), until the light lies as high in front of the iris' surface where it has come to as it was drawn
   in front of the surface where it was drawn (iris_heights: the iris' frontmost surface over a grid, in the rest
