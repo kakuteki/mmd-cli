@@ -40,6 +40,9 @@ from mmd_cli import fk  # noqa: E402
 
 SIDES = ("左", "右")
 EPS_DEG = 1.0e-3                 # saba: a CCD step smaller than this (degrees) is skipped
+GAIN = 1.0e-7                   # units: a loop that brings the target closer by less ends the solve.  saba (and MMD)
+                                # stop at the first loop that does not bring it closer; MMD's float32 cannot tell a
+                                # gain this small at the legs' scale (about 1e-6 of 10 units), float64 here could
 
 
 # ---- quaternions (x, y, z, w) over the last axis -------------------------------------------------------------------
@@ -390,7 +393,7 @@ def _solve_leg(state, side, F):
         th = _ccd_step(H, rt, th, apos, G, side.leg_limit, np.ones(n, dtype=bool))
         rt, kpos, rk, apos = chain(th, kn)
         dist = np.linalg.norm(apos - G, axis=-1)
-        better = dist < best[idx]
+        better = dist < best[idx] - GAIN
         bi, wi = idx[better], idx[~better]
         best[bi] = dist[better]
         thigh[bi], knee[bi], plane[bi] = th[better], kn[better], pl[better]
@@ -423,7 +426,7 @@ def _solve_toe(state, side, F):
         rf = qmul(parent_rot, foot)
         tpos = apos + qrot(rf, o_toe + t_toe)
         dist = np.linalg.norm(tpos - goal, axis=-1)
-        better = active & (dist < best)
+        better = active & (dist < best - GAIN)
         worse = active & ~better
         best = np.where(better, dist, best)
         best_foot = np.where(better[:, None], foot, best_foot)

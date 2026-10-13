@@ -440,7 +440,6 @@ LOAD_FULL = 0.03                # units above the trace's floor (the flat sole):
 LOAD_NONE = 0.30                # ... and none above (2.4 cm); between, a smoothstep: the roll is laid flat this way
 ON_FLOOR = (0.03, 0.10)         # the band (units above the trace's floor) over which the sole is put onto the floor and
                                 # the toes take a raised heel: below, on the floor; above, the floor shift alone
-TWIST = (45.0, 70.0)            # adduction / abduction against the shank (soft start, cap), in the air only
 EASE = 4                        # frames over which the flattening and the toes come and go
 LOAD_D0 = 1.0                   # units added to a foot's distance from the pelvis in the load share (8 cm)
 LOAD_SHARE = (0.15, 0.45)       # a foot bearing less of the weight than the first keeps its roll and its toes; more
@@ -485,7 +484,7 @@ def continuous(q):
 
 def default_params():
     return {"floor_y": 0.0, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
-            "rom": True, "toes": True, "limits": dict(REFERENCE), "twist": TWIST, "heel_pitch_deg": HEEL_PITCH_DEG,
+            "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
             "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP}
 
 
@@ -544,10 +543,6 @@ def foot_targets(o, f, leg, rest, share, near, p):
         inv = inv - rest["inversion"]
         di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
         q = turn_about(qrot(q, o.a0), side_sign * di, q)        # about the foot's forward axis
-        d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
-        add = add - rest["adduction"]
-        da = (1.0 - v) * (soft_band(add, p["twist"], p["twist"]) - add)   # never spins a foot on the floor
-        q = turn_about(sv, side_sign * da, q)
     toes = np.zeros(len(q))
     if p["toes"]:
         pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
@@ -588,28 +583,10 @@ def layer(rig, shoe, motion, params=None, log=None):
     keys = IK.sample(rig, motion, frames)
     sol = IK.solve(rig, motion, frames, keys)
     feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
-    plan = {}
-    new_keys = dict(keys)
     shares, near = load_shares(shoe, feet, sol, p)
-    for s, o in shoe.sides.items():
-        side = rig.sides[s]
-        rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
-        q_t, toes, w, v = foot_targets(o, feet[s], sol[s], rest, shares[s], near[s], p)
-        # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in the
-        # air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
-        low0 = sole_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
-        d1 = floor_y - o.floor
-        target = v * floor_y + (1.0 - v) * (low0 + d1)
-        target = target + smooth_max_envelope(floor_y - target, 3)
-        dy = target - low0
-        pos, rot = keys[side.leg_ik]
-        new_keys[side.leg_ik] = (pos + np.stack([np.zeros(F), dy, np.zeros(F)], axis=1), rot)
-        plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": dy, "d1": d1, "target_low": target,
-                   "share": shares[s]}
-    out_sol = IK.solve(rig, motion, frames, new_keys)
-    # MMD's IK does not always put the ankle on its goal (a nearly straight leg lags behind a lifted goal): push the
-    # goal on where the foot bears weight until the sole reaches its planned height; a frame that does not follow
-    # (an unreachable goal) is left at its best and listed
+    new_keys = dict(keys)
+    plan = {}
+
     def lowest(s, sol_):
         pl = plan[s]
         return sole_at(shoe.sides[s], sol_[s]["ankle"], pl["q_t"], pl["toes"])[:, :, 1].min(axis=1)
@@ -619,28 +596,53 @@ def layer(rig, shoe, motion, params=None, log=None):
         pos, rot = keys[side.leg_ik]
         new_keys[side.leg_ik] = (pos + np.stack([np.zeros(F), dy, np.zeros(F)], axis=1), rot)
 
-    for s, pl in plan.items():
-        pl["miss"] = pl["target_low"] - lowest(s, out_sol)
-        pl["stuck"] = np.zeros(F, dtype=bool)
-    for _ in range(int(p["rounds"])):
-        tried = {}
+    # two passes: the targets against the input's shank, the heights, a solve; then the targets again against the
+    # shank that solve gives (a changed goal can swing MMD's knee elsewhere where the leg is nearly straight), the
+    # heights again
+    shank = sol
+    for _ in range(2):
+        for s, o in shoe.sides.items():
+            leg = dict(sol[s])
+            for k in ("ankle", "knee", "q_shin"):
+                leg[k] = shank[s][k]
+            rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
+            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p)
+            # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
+            # the air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
+            low0 = sole_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
+            d1 = floor_y - o.floor
+            target = v * floor_y + (1.0 - v) * (low0 + d1)
+            target = target + smooth_max_envelope(floor_y - target, 3)
+            plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": target - low0, "d1": d1, "target_low": target,
+                       "share": shares[s]}
+            set_dy(s, plan[s]["dy"])
+        out_sol = IK.solve(rig, motion, frames, new_keys)
+        # MMD's IK does not always put the ankle on its goal (a nearly straight leg lags behind a lifted goal): push
+        # the goal on where the foot is on the floor until the sole reaches its planned height; a frame that does not
+        # follow (an unreachable goal) is left at its best and listed (miss)
         for s, pl in plan.items():
-            push = (pl["v"] > 0.0) & ~pl["stuck"] & (np.abs(pl["miss"]) > 1e-3)
-            if push.any():
-                tried[s] = (push, np.where(push, pl["dy"] + np.clip(pl["miss"], -0.15, 0.15), pl["dy"]))
-                set_dy(s, tried[s][1])
-        if not tried:
-            break
-        try_sol = IK.solve(rig, motion, frames, new_keys)
-        for s, (push, dy) in tried.items():
-            pl = plan[s]
-            miss = pl["target_low"] - lowest(s, try_sol)
-            better = push & (np.abs(miss) < np.abs(pl["miss"]) - 1e-5)
-            pl["stuck"] |= push & ~better
-            pl["dy"] = np.where(better, dy, pl["dy"])
-            pl["miss"] = np.where(better, miss, pl["miss"])
-            set_dy(s, pl["dy"])
-    out_sol = IK.solve(rig, motion, frames, new_keys)
+            pl["miss"] = pl["target_low"] - lowest(s, out_sol)
+            pl["stuck"] = np.zeros(F, dtype=bool)
+        for _ in range(int(p["rounds"])):
+            tried = {}
+            for s, pl in plan.items():
+                push = (pl["v"] > 0.0) & ~pl["stuck"] & (np.abs(pl["miss"]) > 1e-3)
+                if push.any():
+                    tried[s] = (push, np.where(push, pl["dy"] + np.clip(pl["miss"], -0.15, 0.15), pl["dy"]))
+                    set_dy(s, tried[s][1])
+            if not tried:
+                break
+            try_sol = IK.solve(rig, motion, frames, new_keys)
+            for s, (push, dy) in tried.items():
+                pl = plan[s]
+                miss = pl["target_low"] - lowest(s, try_sol)
+                better = push & (np.abs(miss) < np.abs(pl["miss"]) - 1e-5)
+                pl["stuck"] |= push & ~better
+                pl["dy"] = np.where(better, dy, pl["dy"])
+                pl["miss"] = np.where(better, miss, pl["miss"])
+                set_dy(s, pl["dy"])
+        out_sol = IK.solve(rig, motion, frames, new_keys)
+        shank = out_sol
     # the keys that make MMD's IK put the foot there: 足首 starts the toe IK already on the goal, つま先ＩＫ's goal
     # lies on the turned toe from the ankle MMD reaches, 足先EX bends the toes
     for s, o in shoe.sides.items():
