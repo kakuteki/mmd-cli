@@ -471,6 +471,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   作業フォルダ `look_work_final_60fps`）。30 fps の描画と同じ `--tag` で流しても、その区間・繋いだ動画・駆動台本を消さない。
   60 の連結の一覧には区間ごとの長さ（`duration`）を書く（mp4 の edit list はミリ秒で、60 fps の区間のうち曲のコマ数が 3 の倍数
   でないものは 1 ms 短く読まれ、後の区間が 0.33 ms 早く繋がっていた）。30 の一覧と台本は前のまま。
+- 60 では区間ごとの畳み（層・合図の連番・符号化）が約 2 倍かかる（hinata で 1 区間 51〜52 秒が 100〜102 秒、2026-10-13）。
+  MMD の描画は同じ。
 
 - `plan.json` は描画機の上のファイルの場所（絶対パス。`C:/...` か `//host/...`）。必須は `mmd` `model` `motions`（モデルに読む
   モーションの一覧）`camera` `look` `out`（AVI と mp4 の置き場）`scripts`（OUTDIR の中身を写す先）`mmd_cli`（このリポジトリの
