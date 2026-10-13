@@ -1,6 +1,7 @@
 """Put the dancer's weight on the standing foot: while one foot is off the floor, センター carries the body over the other
 foot, starting before the foot lifts (an anticipatory weight shift), and a foot that lands and takes the weight bends
-its knee.  The feet's IK keys are not touched (the feet stay where they were traced).
+its knee.  A lifted foot goes with the body (its IK moves on the floor plane by the shift); a foot on the floor stays
+where it was traced.
 
     python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--arrays a.npz] [--r-bal 0.6]
                                   [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip-deg 15] [--no-dip]
@@ -24,6 +25,13 @@ How:
    its length T (need_share): on the linear inverted pendulum a COM at rest an offset e outside the foot drifts
    e (cosh(w T) - 1) (w = sqrt(g / COM height), 1/w = 0.29 s for Rin): a 0.2 s step drifts 0.23 e and the next foot
    catches it, from about 0.4 s on the body would fall, so the run is pulled min(1, cosh(w T) - 1) of the way.
+   Two kinds of run are not pulled (the review of 2026-10-14):
+     hover: the other foot never gets CLEAR_CM up.  The trace's feet hover 0.4-4 cm on two feet too (a05), so this is
+       no evidence of standing on one foot, and the MV shows no lifted foot (the body slid sideways for no seen reason).
+     transfer: a step onto the next foot.  At the run's middle the COM moves towards where the other foot lands at
+       TRANSFER_V and more, its extrapolated centre of mass (XcoM = COM + v / w, Hof et al. 2005) past half the way
+       there: the body falls onto the next foot, which catches it (the foot goes beyond the XcoM, Hof 2008); holding
+       it over the foot it leaves would reverse that fall.
 3. The shift y (センター's move on the floor, every frame) minimizes
        sum w |k y - d|^2 + lam |y|^2 + mu |y'''|^2
    (d: the COM's way to the band times the run's share; k: how far the COM follows センター, measured on the body with
@@ -34,40 +42,58 @@ How:
          it 3.8-6.3 cm towards the lifting leg and start 0.32-0.44 s (lifting a leg) to about 0.6 s (a step) before
          the foot leaves, and are still about 2 cm short of the standing foot when it does (Hussein et al. 2013,
          Mouchnino & Blouin 2013); dancers get there in one go (Mouchnino et al. 1992).
-     (b) every foot IK's target within its leg's reach after the hips move (or no farther than it already was), the
-         hips allowed down for it: a leg at its reach stays straight (the hip goes round the ankle), so the drop for one
-         leg is bounded by what bends the other leg, if it is on the floor, KNEE_GIVE_DEG more (at most --drop-max).
+     (b) every foot IK's target within its leg's reach less REACH_TOL_CM (1.5 cm) after the hips move (or no farther
+         than it already was), the hips allowed down for it: a leg at its reach stays straight (the hip goes round the
+         ankle), so the drop for one leg is bounded by what bends the other leg, if it is on the floor, KNEE_GIVE_DEG
+         more (at most --drop-max).  The 1.5 cm: MMD's IK (saba's solve; the feet layer's tools/leg_ik.py) leaves a foot
+         on the floor more than 4 mm short of its target on most frames of the v7 dance with under 1 cm of two-bone
+         slack, on 2-3 % with 1.5-4 cm.
      (c) each hip's adduction (the hip-to-ankle line out of 下半身's sagittal plane) under the reference range's upper
          proposal (22 degrees; stage 3 research: the Japanese reference 20) and its abduction under 45, or no farther
-         than in the dance.
+         than in the dance; each knee under 159 degrees (the upper proposal; the hip kept as far from the foot IK's
+         target as the two-bone leg is at 159, or no nearer than it was).
      (d) never pointing away from the nearest pull: a minimum-jerk smoother rings about 5 % before and after a step;
          people do not move the COM the wrong way before a weight shift (the centre of pressure goes that way, not
          the COM).
+   A lifted foot goes with the body (the carry, 6.): its leg's bounds act on (1 - carry) of the shift.
    Solved by ADMM (Boyd et al. 2011): one banded solve per round with a fixed matrix, the bounds projected per frame
-   (Dykstra's projection for the intersection).  Moving センター translates the trunk and the head without turning them:
-   the dancers' "translation strategy in the pelvis" (Krasnow et al. 2011; the trunk kept vertical, Mouchnino et al.
-   1991), against the naive "inclination strategy".
-4. The hips then go down as far as the legs need to reach (the least smooth drop: the same solver, |y''| <= DROP_ACC_MAX).
+   (Dykstra's projection for the intersection), tightened by SET_MARGIN (1 mm); the solve's smooth curve is then
+   scaled down where it is still out of a bound by a smooth cover of what it lacks (the bounds are convex and hold 0;
+   no per-frame fix, which folded the curve where a bound starts to act).  Moving センター translates the trunk and the
+   head without turning them: the dancers' "translation strategy in the pelvis" (Krasnow et al. 2011; the trunk kept
+   vertical, Mouchnino et al. 1991), against the naive "inclination strategy".
+4. The hips then go down as far as the legs need to reach (the least smooth drop: the same solver, |y''| <= DROP_ACC_MAX,
+   raised by the same smooth cover where the solve left it short).
 5. Landings (--dip-deg, --no-dip): a foot that lands after a swing (a05: off the floor 4 frames, up 1.6 cm) and then
    takes the weight (the other foot lifts within DIP_WINDOW, or was already up) bends its knee by --dip-deg by DIP_PEAK
    and comes back by DIP_END (walking: 1-3 degrees at contact, 17 at 0.13 s; Winter 2009 Table A.1, a woman of 156 cm):
    the hips go down by what the two-bone leg needs for that bend, at most DIP_MAX_CM, only as far as the dance does not
    already bend the knee there (measured on the body already moved and dropped by 4., so the two add up).  A tap (the
    foot lands and lifts again while the other stays down) is left alone.
+6. The carry: a lifted foot's IK moves on the floor plane by carry times センター's floor shift, so the lifted leg keeps
+   the dance's shape against the pelvis (left in the world, a heel kicked up behind folded the knee to 164 degrees at
+   195 s).  carry is 0 while the foot supports, 1 from CLEAR_CM up (smoothstep between), smoothed under itself over
+   +-CARRY_HALF frames: 0 on every frame the foot supports, and it changes over about 0.4 s.  Its height and its turn
+   are the dance's (the feet layer's).
 
-Written: センター only, a key on every frame (linear), its rotation as the dance had it.  Every other bone, every morph and
-the rest of the file are the dance's own bytes; when nothing is to be done the dance comes back unchanged.
+Written: センター, a key on every frame (linear), its rotation as the dance had it; each carried foot IK, per-frame linear
+keys from the last key before each carried span to the first key after it (its own interpolated value plus the carry on
+the floor plane, its rotation as the dance had it).  Every other bone and key, every morph and the rest of the file are
+the dance's own bytes; when nothing is to be done the dance comes back unchanged.
 
 Report (--report; in short on stdout): a05_lateral_cm (the analysis's measure: in single support with the other foot
 5 cm up and the standing foot on the floor, the COM's sideways distance from the standing foot's centre along 下半身's
 side axis, + towards the lifted foot, before and after; after_holds: in single-support runs of 0.5 s and more), runs
-(each single-support run: when, which foot, how high the other, its need_share, the distance to the sole's line before
-and after and the intended one, how far short and why: reach, hip range or acceleration), centre (the shift, its 1-frame
-step, the added accelerations and the pressure move they need, the drop and the dip), apa (how much of the shift is done
-when the foot lifts, and when it starts), reach (frames whose IK target is out of the leg's reach, before and after),
-knee (flexion on the floor, before and after), hip (adduction against the reference range, before and after), landings
-(the knee's bend within 0.13 s after a landing, before and after), untouched (the other bones' bytes), solver.
---arrays writes the per-frame curves (the shift, the COM before and after, the pull, the drop, the dip, the knees, ...).
+(each single-support run: when, which foot, how high the other, its kind (pulled, hover, transfer), its need_share, the
+distance to the sole's line before and after and the intended one, how far short and why: reach, hip range or
+acceleration), centre (the shift, its 1-frame step, the added accelerations and the pressure move they need, the drop
+and the dip), apa (how much of the shift is done when the foot lifts, and when it starts), reach (frames whose IK target
+is out of the leg's reach, before and after; frames whose slack the layer took under REACH_TOL_CM), knee (flexion on the
+floor, before and after; over 159 degrees), hip (adduction against the reference range, before and after), landings (the
+knee's bend within 0.13 s after a landing, before and after), feet_carry (per foot: frames carried, the largest move, on
+the floor 0), untouched (the other bones' bytes), solver.
+--arrays writes the per-frame curves (the shift, the COM before and after, the pull, the drop, the dip, the knees, the
+carry, ...).
 """
 import argparse
 import importlib.util
@@ -129,11 +155,20 @@ REACH_TOL_CM = 1.5              # a leg keeps this much slack, or as much as it 
                                 # layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK
                                 # target in 70-100 % of the v7 frames with under 1 cm of two-bone slack, 22-26 % at
                                 # 1-1.5 cm, 2-3 % at 1.5-4 cm (the review's measure, NOTES 10/14)
-ADMM_ITERS = 800
+ADMM_ITERS = 2000                # at most; it stops when the residuals are under the tolerances (v7: about 1,650)
 ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
 SET_MARGIN = 0.001              # m: the bounds are solved this much tighter, so the converged curve is inside the true ones
+REACH_NO_WORSE_M = 0.0005       # m: "no worse than the dance" bounds allow this much, so the dance itself (no shift) is
+RANGE_NO_WORSE_M = 0.002        # inside them, not on their edge (on the edge, the smallest miss of the solve could only be
+                                # undone by no shift at all).  A leg already past its reach: 0.5 mm (under the 1 mm of a
+                                # new IK miss); a hip already past its range, a knee past 159 degrees: 2 mm along the
+                                # hip-to-ankle line (0.2 degrees), more than the solve's miss (1.1 mm after 800 rounds on v7)
 FIX_HALF = 9                    # frames: the half-width of the smooth cover that brings an unconverged curve inside
+IK_ROUNDS = 6                   # with MMD's IK at hand: the rounds of holding back where it would newly fall short
+IK_MISS = 0.05                  # units (4 mm, a05's contact): an ankle this far from its foot IK's target misses it
+IK_WORSE = 0.0125               # units (1 mm): and this much farther than in the dance: a new miss (the review's)
+IK_HALF = 2                     # frames on each side of a new miss whose shift and dips are halved in a round
 KEPT_MIN = 0.02                 # a foot carried 98 % and more: its leg sets no bound on the shift
 FREE_M = 1.0e3                  # m: the radius (or slab side) of a bound that does not bound
 CARRY_HALF = 6                  # frames: the half-width of the carry's smoothing (it changes over about 0.4 s)
@@ -511,28 +546,32 @@ def toward_targets(d, reach_frames):
     return out
 
 
-def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL_REACH, gain=None):
+def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH, gain=None, warm=None):
     """x [F, n] (metres): min 1/2 sum w |g x - d|^2 + 1/2 sum lam |x|^2 + mu/2 |x'''|^2 subject to |x''| <= acc_max (per
     frame) and x = project(x) (a per-frame set, given by its projection); g = gain per frame (1).  ADMM (Boyd et al.
     2011, over-relaxed 1.6) on the splitting [x'' ; x] = [za ; zx]: the x-step is one banded solve with a fixed
-    matrix."""
+    matrix.  warm: the state of an earlier solve of a nearby problem (info["_state"]) to start from."""
+    iters = ADMM_ITERS if iters is None else iters
     F, n = d.shape
     lam = np.broadcast_to(np.asarray(lam, dtype=np.float64), (F,))
     g = np.ones(F) if gain is None else np.asarray(gain, dtype=np.float64)
     tf = tau_s * FPS
     scale = 1.0 + float(np.median(lam))
     mu = scale * tf ** 6
-    rho = 1.0                                           # both blocks' penalties scale together (residual balancing)
+    rho = 1.0 if warm is None else warm["rho"]          # both blocks' penalties scale together (residual balancing)
 
     def factor(r):
         return band_factor(band_terms(F, w * g * g + lam + r * scale, [(mu, D3_STENCIL), (r * scale * tf ** 4, D2_STENCIL)]))
     L = factor(rho)
     amax = acc_max * DT * DT
     q = (w * g)[:, None] * d
-    za = np.zeros((F - 2, n))
-    ua = np.zeros_like(za)
-    zx = project(np.zeros((F, n)))
-    ux = np.zeros_like(zx)
+    if warm is None:
+        za = np.zeros((F - 2, n))
+        ua = np.zeros_like(za)
+        zx = project(np.zeros((F, n)))
+        ux = np.zeros_like(zx)
+    else:
+        za, ua, zx, ux = (warm[k].copy() for k in ("za", "ua", "zx", "ux"))
     alpha = 1.6
     res_a = res_x = None
     it = 0
@@ -572,7 +611,8 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
     # its own folds the curve where a bound starts to act (the review: 59.23 s, 3.57 m/s^2).  The callers solve with
     # bounds tightened by SET_MARGIN and bring x into the true bounds by a smooth cover (smooth_cover)
     info = {"iterations": it, "residual_acc_m_s2": None if res_a is None else round(res_a, 4),
-            "residual_set_cm": None if res_x is None else round(res_x, 4), "rho": rho}
+            "residual_set_cm": None if res_x is None else round(res_x, 4), "rho": rho,
+            "_state": {"za": za, "ua": ua, "zx": zx, "ux": ux, "rho": rho}}
     return x, info
 
 
@@ -623,7 +663,7 @@ def proj_slab(x, m, lo, hi):
     return x - (over / mm)[:, None] * m
 
 
-def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters=ADMM_ITERS):
+def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters=None, warm=None):
     """センター's floor shift y [F, 2] (metres): the COM's shift gain * y pulled to d where w > 0 (held back by lam_in
     there, by lam_out elsewhere), minimum jerk, |y''| <= acc_max, y in every disc of `discs` [(centres [F, 2], radii
     [F])] and every slab of `slabs` [(m [F, 2], lo [F], hi [F])], never pointing away from the nearest pull"""
@@ -652,7 +692,7 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
                 y = z
         return y
     lam = np.where(w > 0, lam_in, lam_out)
-    y, info = admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain)
+    y, info = admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain, warm=warm)
     # into the true bounds: the shift scaled down by a smooth cover of what each frame lacks (the bounds hold 0 and are
     # convex, so a frame scaled under its own largest scale is inside; scaling keeps the direction, so the half-plane)
     scale = np.ones(F)
@@ -662,10 +702,12 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
         scale = np.minimum(scale, slab_scale(y, m, lo, hi))
     cut = np.clip(smooth_cover(1.0 - scale, FIX_HALF), 0.0, 1.0)
     info["bound_cut_max"] = round(float(cut.max()), 5)
+    info["_cut"] = cut                                  # per frame (the layer moves it to its arrays)
+    info["_raw"] = y
     return (1.0 - cut)[:, None] * y, info
 
 
-def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
+def solve_drop(need, acc_max, tau_s, iters=None):
     """the hips' drop y [F] (metres), never under `need` (metres; 0 where nothing is needed): the least smooth curve
     (minimum jerk, |y''| <= acc_max)"""
     F = len(need)
@@ -674,6 +716,7 @@ def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
     lo = need[:, None]              # not tightened: a straight leg bends degrees for a millimetre more of drop
     y, info = admm(np.zeros(F), np.zeros((F, 1)), 1.0, lambda v: np.maximum(v, lo), acc_max, tau_s, iters,
                    tol_x_cm=0.01)
+    info.pop("_state", None)
     y = y[:, 0]
     raise_ = smooth_cover(np.maximum(need - y, 0.0), FIX_HALF)      # up to the need where the solve left it short
     info["need_raise_cm_max"] = round(float(raise_.max()) * 100.0, 4)
@@ -861,7 +904,7 @@ def reach_discs(body, allowance, carry=None):
         D = body.ankle(s) - body.hip(s)
         v = -D[:, 1]                                       # the hip's height over the target
         v2 = v - np.clip(v, 0.0, allowance[s])
-        R = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, np.linalg.norm(D, axis=1))
+        R = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, np.linalg.norm(D, axis=1) + REACH_NO_WORSE_M / UNIT_M)
         r = np.sqrt(np.maximum(R * R - v2 * v2, 0.0))
         g = hip_share(carry, s, body.F)
         free = g < KEPT_MIN
@@ -884,10 +927,11 @@ def range_slabs(body, carry=None):
         n = np.linalg.norm(D, axis=1)
         m = body.medial(s)
         dm = np.sum(D * m, axis=1)                      # the line's medial part: n sin(adduction)
+        eps = RANGE_NO_WORSE_M / UNIT_M
         # adduction: (D - y) . m <= max(sa n, dm)   ->  y . m >= dm - max(sa n, dm)
-        lo = dm - np.maximum(sa * n, dm)
+        lo = dm - np.maximum(sa * n, dm + eps)
         # abduction: -(D - y) . m <= max(sb n, -dm)  ->  y . m <= dm + max(sb n, -dm)
-        hi = dm + np.maximum(sb * n, -dm)
+        hi = dm + np.maximum(sb * n, -dm + eps)
         slabs.append((m[:, [0, 2]] * hip_share(carry, s, body.F)[:, None], lo * UNIT_M, hi * UNIT_M))
     return slabs
 
@@ -903,7 +947,7 @@ def knee_slabs(body, carry=None):
         D = body.ankle(s) - body.hip(s)
         n = np.maximum(np.linalg.norm(D, axis=1), 1e-9)
         u = D[:, [0, 2]] / n[:, None]
-        hi = (n - np.minimum(n, d_min)) * UNIT_M
+        hi = (n - np.minimum(n - RANGE_NO_WORSE_M / UNIT_M, d_min)) * UNIT_M
         slabs.append((u * hip_share(carry, s, body.F)[:, None], np.full(body.F, -FREE_M), hi))
     return slabs
 
@@ -916,7 +960,7 @@ def drop_needed(body, tol_cm=REACH_TOL_CM, before=None):
         D = body.ankle(s) - body.hip(s)
         R = body.leg_length(s) - tol_cm / CM
         if before is not None:
-            R = np.maximum(R, before.reach(s))
+            R = np.maximum(R, before.reach(s) + REACH_NO_WORSE_M / UNIT_M)   # as the reach discs allow
         rh = np.linalg.norm(D[:, [0, 2]], axis=1)
         v = -D[:, 1]
         ok = rh < R
@@ -946,8 +990,9 @@ def dip_bump(F, at, peak_f, end_f):
     return np.where(t < 0, 0.0, np.where(t <= peak_f, up, np.where(t <= end_f, down, 0.0)))
 
 
-def landing_dips(body, plan, p):
-    """the hips' drop (units, per frame) of the landings that take the weight, and the landings' list"""
+def landing_dips(body, plan, p, cap=None):
+    """the hips' drop (units, per frame) of the landings that take the weight, and the landings' list; cap [F] (0..1)
+    scales each landing's depth by its least value over the landing's dip"""
     F = body.F
     other = {"左": "右", "右": "左"}
     window = int(round(DIP_WINDOW_S * FPS))
@@ -979,6 +1024,8 @@ def landing_dips(body, plan, p):
                     # (added, not the larger of the two: the larger of two smooth bumps has a corner where they cross)
                     total = float(np.clip(v - math.sqrt(dist * dist - rh * rh), 0.0, DIP_MAX_CM / CM))
                     depth = max(0.0, total - float(dip[pk]))
+                    if cap is not None:
+                        depth *= float(cap[f:min(F, f + int(math.ceil(end_f)) + 1)].min())
                     if depth > 0:
                         dip = dip + depth * dip_bump(F, f, peak_f, end_f)
                         row["depth_cm"] = round(depth * CM, 2)
@@ -1035,7 +1082,12 @@ def band_distance(body, com, foot):
 
 # ---- the layer --------------------------------------------------------------------------------------------------
 
-def layer(model, motion, params=None, log=None):
+def layer(model, motion, params=None, log=None, ik_check=None):
+    """the dance with the weight on the standing foot (Result: motion, report, arrays).  ik_check: MMD's IK at hand, a
+    function of a motion giving per side the distance (units, per frame) of the solved ankle from its foot IK's target
+    (main() builds it from the feet layer's tools/leg_ik.py with --mmd-ik): the layer then solves its result again with
+    it and, where a foot on the floor would newly fall short (over IK_MISS and IK_WORSE more than in the dance), halves
+    its change around that frame and solves again, IK_ROUNDS times at most"""
     log = log or (lambda *_: None)
     p = params_default()
     p.update(params or {})
@@ -1047,61 +1099,94 @@ def layer(model, motion, params=None, log=None):
     report = {"params": dict(p), "frames": F}
     plan.update({"r_bal_cm": p["r_bal_cm"], "acc_max": p["acc_max"]})
     w = plan["w"]
-    x = np.zeros((F, 2))
-    k = np.ones(F)
-    info = {"iterations": 0}
-    reach_tight = np.zeros(F, bool)
-    range_tight = np.zeros(F, bool)
-    knee_tight = np.zeros(F, bool)
     allowance = drop_allowance(body, plan, p["drop_max_cm"], KNEE_GIVE_DEG)
     carry = {s: carry_factor(plan["low"][s], p) for s in SIDES}
-    if np.any(w > 0):
+    pulled = bool(np.any(w > 0))
+    if pulled:
         d = band_target(body, com0, plan, p["r_bal_cm"])
         k = com_response(body, com0, carry)
         discs = reach_discs(body, allowance, carry)
         slabs = range_slabs(body, carry)
         kslabs = knee_slabs(body, carry)
-        log("solving the shift over %d frames (%d pull frames)" % (F, int(np.sum(w > 0))))
-        y, info = solve_shift(w, d, k, discs, slabs + kslabs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
-        moving = np.linalg.norm(y, axis=1) > 1e-4
-        edge = SET_MARGIN + 5e-4                        # the solve keeps SET_MARGIN inside the bounds
-        for c, r in discs:                              # the shift stopped by a leg's reach: on its disc's edge
-            reach_tight |= (np.linalg.norm(y - c, axis=1) > r - edge) & moving
-        for group, tight in ((slabs, range_tight), (kslabs, knee_tight)):   # or by a hip's or knee's range
-            for m, lo, hi in group:
-                s_ = np.sum(y * m, axis=1)
-                nm = np.linalg.norm(m, axis=1)
-                ok = nm > 1e-9
-                near = np.zeros(F, bool)
-                near[ok] = ((s_[ok] - lo[ok]) / nm[ok] < edge) | ((hi[ok] - s_[ok]) / nm[ok] < edge)
-                tight |= near & moving
-        x = k[:, None] * y                              # the COM's shift (linearized), for the report
     else:
-        d = np.zeros((F, 2))
-        y = np.zeros((F, 2))
-    plan["reach_tight"] = reach_tight
-    plan["range_tight"] = range_tight
-    plan["knee_tight"] = knee_tight
-    shift = np.zeros((F, 3))
-    shift[:, [0, 2]] = y / UNIT_M
-    moved = body.moved(shift, carry)
-    need = drop_needed(moved, before=body)
-    finite = np.isfinite(need)
-    drop, info["drop"] = solve_drop(np.where(finite, need, 0.0) * UNIT_M, DROP_ACC_MAX, p["tau_s"])
-    drop = drop / UNIT_M
-    allow_any = np.maximum(allowance["左"], allowance["右"])
-    drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
-    moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1), carry)
-    dip, landings = landing_dips(moved, plan, p)        # on the body already moved and dropped: the two add up
-    shift[:, 1] = -(drop + dip)
-    floor = shift.copy()
-    floor[:, 1] = 0.0
-    feet = {s: carry[s][:, None] * floor for s in SIDES}     # the carried feet's world move (units)
-    if np.abs(shift).max() < 1e-6:
-        out = motion
-    else:
-        out = write_centre(model, motion, body, shift)
-        out = write_feet(out, body, feet)
+        d, k = np.zeros((F, 2)), np.ones(F)
+    radius = np.full(F, FREE_M)                         # the hold-back: |shift| under this (metres) per frame
+    dip_cap = np.ones(F)                                # and the landings' dips scaled by this
+    miss0 = ik_check(motion) if ik_check is not None else None
+    ik_rows = []
+    warm = None
+    y = np.zeros((F, 2))
+    for rnd in range(IK_ROUNDS + 1):
+        x = np.zeros((F, 2))
+        info = {"iterations": 0}
+        cut = np.zeros(F)
+        reach_tight = np.zeros(F, bool)
+        range_tight = np.zeros(F, bool)
+        knee_tight = np.zeros(F, bool)
+        if pulled:
+            held = radius < FREE_M
+            hold = [(np.zeros((F, 2)), radius)] if held.any() else []
+            log("solving the shift over %d frames (%d pull frames, %d held back)" % (F, int(np.sum(w > 0)), int(held.sum())))
+            y, info = solve_shift(w, d, k, discs + hold, slabs + kslabs, p["acc_max"], p["tau_s"], p["lam_in"],
+                                  p["lam_out"], warm=warm)
+            cut = info.pop("_cut", np.zeros(F))
+            info.pop("_raw", None)
+            warm = info.pop("_state", None)
+            moving = np.linalg.norm(y, axis=1) > 1e-4
+            edge = SET_MARGIN + 5e-4                    # the solve keeps SET_MARGIN inside the bounds
+            for c, r in discs:                          # the shift stopped by a leg's reach: on its disc's edge
+                reach_tight |= (np.linalg.norm(y - c, axis=1) > r - edge) & moving
+            for group, tight in ((slabs, range_tight), (kslabs, knee_tight)):   # or by a hip's or knee's range
+                for m, lo, hi in group:
+                    s_ = np.sum(y * m, axis=1)
+                    nm = np.linalg.norm(m, axis=1)
+                    ok = nm > 1e-9
+                    near = np.zeros(F, bool)
+                    near[ok] = ((s_[ok] - lo[ok]) / nm[ok] < edge) | ((hi[ok] - s_[ok]) / nm[ok] < edge)
+                    tight |= near & moving
+            x = k[:, None] * y                          # the COM's shift (linearized), for the report
+        plan["reach_tight"] = reach_tight
+        plan["range_tight"] = range_tight
+        plan["knee_tight"] = knee_tight
+        shift = np.zeros((F, 3))
+        shift[:, [0, 2]] = y / UNIT_M
+        moved = body.moved(shift, carry)
+        need = drop_needed(moved, before=body)
+        finite = np.isfinite(need)
+        drop, info["drop"] = solve_drop(np.where(finite, need, 0.0) * UNIT_M, DROP_ACC_MAX, p["tau_s"])
+        drop = drop / UNIT_M
+        allow_any = np.maximum(allowance["左"], allowance["右"])
+        drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
+        moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1), carry)
+        dip, landings = landing_dips(moved, plan, p, dip_cap)   # on the body already moved and dropped: they add up
+        shift[:, 1] = -(drop + dip)
+        floor = shift.copy()
+        floor[:, 1] = 0.0
+        feet = {s: carry[s][:, None] * floor for s in SIDES}     # the carried feet's world move (units)
+        if np.abs(shift).max() < 1e-6:
+            out = motion
+        else:
+            out = write_centre(model, motion, body, shift)
+            out = write_feet(out, body, feet)
+        if ik_check is None:
+            break
+        miss1 = ik_check(out)
+        new = np.zeros(F, bool)
+        for s in SIDES:
+            new |= plan["sup"][s] & (miss1[s] > IK_MISS) & (miss1[s] > miss0[s] + IK_WORSE)
+        ik_rows.append({"round": rnd, "new_misses": int(new.sum()),
+                        "frames": [round(f / FPS, 2) for f in np.flatnonzero(new)[:40]]})
+        log("MMD's IK, round %d: %d new misses on the floor" % (rnd, int(new.sum())))
+        if not new.any() or rnd == IK_ROUNDS:
+            break
+        near = np.zeros(F, bool)
+        for f in np.flatnonzero(new):
+            near[max(0, f - IK_HALF):f + IK_HALF + 1] = True
+        radius[near] = np.minimum(radius[near], 0.5 * np.linalg.norm(y[near], axis=1))
+        dip_cap[near] *= 0.5
+    report["mmd_ik"] = {"checked": ik_check is not None, "rounds": len(ik_rows) - 1 if ik_rows else 0,
+                        "per_round": ik_rows, "remaining": ik_rows[-1]["new_misses"] if ik_rows else None,
+                        "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0))}
     after = Body(model, out)
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
                            unreachable=int(np.sum(~finite)), feet=feet))
@@ -1110,7 +1195,8 @@ def layer(model, motion, params=None, log=None):
     arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
               "pull_foot": foot_code, "pull_target_m": d, "share": plan["share"], "com_response": k, "drop": drop,
               "dip": dip, "reach_tight": plan["reach_tight"], "range_tight": plan["range_tight"],
-              "knee_tight": plan["knee_tight"], "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
+              "knee_tight": plan["knee_tight"], "bound_cut": cut,
+              "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
               "low_L": plan["low"]["左"], "low_R": plan["low"]["右"], "carry_L": carry["左"], "carry_R": carry["右"],
               "foot_move_L": feet["左"], "foot_move_R": feet["右"]}
     for s, tag in (("左", "L"), ("右", "R")):
@@ -1302,9 +1388,10 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
         L = before.leg_length(s)
         rb, ra = before.reach(s), after.reach(s)
         reach["unreachable_frames_" + tag] = [int(np.sum(rb - L > CONTACT_EPS)), int(np.sum(ra - L > CONTACT_EPS))]
-        reach["worse_frames_" + tag] = int(np.sum((ra > np.maximum(L, rb) + 1e-6)))
+        eps = REACH_NO_WORSE_M / UNIT_M + 1e-5          # a leg already past it may go 0.5 mm farther
+        reach["worse_frames_" + tag] = int(np.sum((ra > np.maximum(L, rb + eps))))
         # frames whose two-bone slack the layer took below REACH_TOL_CM (or below what the dance had)
-        reach["slack_taken_frames_" + tag] = int(np.sum(ra > np.maximum(L - REACH_TOL_CM / CM, rb) + 1e-5))
+        reach["slack_taken_frames_" + tag] = int(np.sum(ra > np.maximum(L - REACH_TOL_CM / CM, rb + eps)))
         on = plan["sup"][s]
         kb, ka = before.knee_flexion(s), after.knee_flexion(s)
         knee["on_floor_deg_" + tag] = {"before": q_stats(kb[on], (0.05, 0.5, 0.95)), "after": q_stats(ka[on], (0.05, 0.5, 0.95))}
@@ -1374,6 +1461,27 @@ def write_bytes(path, data):
             os.remove(part)
 
 
+def mmd_ik_check(module_path, model_path, frames):
+    """(ik_check for layer(), a note for the report) from MMD's IK solver at module_path (the feet layer's
+    tools/leg_ik.py: LegRig.load(pmx path), solve(rig, motion, frames) -> side -> {"reach": [F], ...})"""
+    import hashlib
+    if not model_path.lower().endswith(".pmx"):
+        raise ValueError("--mmd-ik needs the model as .pmx (the IK links' limits are read from it)")
+    if not os.path.isfile(module_path):
+        raise ValueError("--mmd-ik: no file %s" % module_path)
+    spec = importlib.util.spec_from_file_location("_balance_mmd_ik", module_path)
+    lik = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lik)
+    rig = lik.LegRig.load(model_path)
+
+    def check(motion):
+        sol = lik.solve(rig, motion, range(frames))
+        return {s: np.asarray(sol[s]["reach"], dtype=np.float64) for s in SIDES}
+    with open(module_path, "rb") as f:
+        md5 = hashlib.md5(f.read()).hexdigest()
+    return check, {"module": os.path.abspath(module_path), "module_md5": md5}
+
+
 def check_distinct(*paths):
     seen = {}
     for path in paths:
@@ -1410,6 +1518,8 @@ def main(argv=None):
     ap.add_argument("--dip-deg", type=float, default=DIP_DEG, help="degrees: the knee's bend on a landing")
     ap.add_argument("--no-dip", action="store_true", help="no knee bend on the landings")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
+    ap.add_argument("--mmd-ik", help="MMD's IK solver (the feet layer's tools/leg_ik.py): hold the layer back where a foot "
+                                     "on the floor would newly fall short of its IK target as MMD solves it (.pmx only)")
     args = ap.parse_args(argv)
     try:
         check_distinct(args.dance, args.model, args.out, args.report, args.arrays)
@@ -1417,7 +1527,12 @@ def main(argv=None):
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
                   "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip}
-        result = layer(model, motion, params)
+        ik_check, ik_note = None, None
+        if args.mmd_ik:
+            ik_check, ik_note = mmd_ik_check(args.mmd_ik, args.model, fk.last_frame(motion) + 1)
+        result = layer(model, motion, params, ik_check=ik_check)
+        if ik_note:
+            result.report["mmd_ik"].update(ik_note)
         write_bytes(os.path.abspath(args.out), vmd.dumps(result.motion))
         report = dict(result.report, dance=os.path.abspath(args.dance), model=os.path.abspath(args.model),
                       out=os.path.abspath(args.out))

@@ -1,5 +1,6 @@
 """tools/balance_layer.py: the weight goes onto the standing foot (センター moves the body over it, before the other foot
-lifts) and the knee bends on a landing that takes the weight; the feet's IK keys are not touched."""
+lifts) and the knee bends on a landing that takes the weight; a lifted foot's IK goes with the body on the floor plane,
+the feet on the floor stay where they were."""
 import contextlib
 import importlib.util
 import io
@@ -441,6 +442,40 @@ class ReachTest(unittest.TestCase):
         short = [r for r in result.report["runs"] if r["short_of_target_cm"] > 3.0]
         self.assertTrue(short, "the run that the reach stops must be named")
         self.assertIn("reach", short[0]["limited_by"])
+
+
+class MmdIkCheckTest(unittest.TestCase):
+    """with MMD's IK at hand (--mmd-ik: the feet layer's tools/leg_ik.py), the layer solves its result again with it and
+    holds back its change where a foot on the floor would newly fall short of its IK target (over 4 mm, and 1 mm more
+    than in the dance).  Here a stand-in IK that falls short on legs with under 2.5 cm of slack"""
+
+    @staticmethod
+    def stand_in(motion):
+        body = balance_layer.Body(MODEL, motion)
+        return {s: np.maximum(0.0, body.reach(s) - (body.leg_length(s) - 2.5 / CM)) for s in ("左", "右")}
+
+    def new_misses(self, before, after, motion):
+        sup = {s: balance_layer.Body(MODEL, motion).height(s) < balance_layer.SUPPORT_H for s in ("左", "右")}
+        return sum(int(np.sum(sup[s] & (after[s] > 0.05) & (after[s] > before[s] + 0.0125))) for s in ("左", "右"))
+
+    def test_held_back_where_the_ik_would_fall_short(self):
+        last = 119
+        motion = dance(last=last, spread=3.3, centre=(0.0, -1.2, 0.0), left_lifts=[(40, 50, 80, 90, 0.75)])
+        before = self.stand_in(motion)
+        plain = balance_layer.layer(MODEL, motion).motion
+        self.assertGreater(self.new_misses(before, self.stand_in(plain), motion), 0)       # the fixture: it would miss
+        result = balance_layer.layer(MODEL, motion, ik_check=self.stand_in)
+        self.assertEqual(self.new_misses(before, self.stand_in(result.motion), motion), 0)
+        rep = result.report["mmd_ik"]
+        self.assertTrue(rep["checked"])
+        self.assertGreaterEqual(rep["rounds"], 1)
+        self.assertEqual(rep["remaining"], 0)
+        shift = centre_offsets(motion, result.motion, last)
+        self.assertGreater(np.abs(shift[:, 0]).max() * CM, 2.0)                        # it still moves the body
+
+    def test_report_says_when_not_checked(self):
+        result = balance_layer.layer(MODEL, dance(last=119, left_lifts=LIFT_RIGHT_STANDS))
+        self.assertFalse(result.report["mmd_ik"]["checked"])
 
 
 class RangeTest(unittest.TestCase):
