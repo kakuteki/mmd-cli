@@ -125,9 +125,10 @@ ALIGN = 9                       # frames a change may move toward the fastest tu
 ALIGN_RATIO = 1.5
 ALIGN_LEAD = 2                  # frames the face starts changing before the head turns fastest
 WAVE = {"brow": 0.15, "eye": 0.12, "mouth": 0.25}            # how far the envelope lowers a held weight
-HUMAN_WAVE = {"brow": 0.15, "eye": 0.2, "mouth": 0.25}       # human style: a held smile eases off by up to a fifth (within
-                                                             # a fifth a held face is not taken for a new one: the toon
-                                                             # characters of Hyde et al. 2013 looked the same at 80-120 %)
+HUMAN_WAVE = {"brow": 0.15, "eye": 0.2, "mouth": 0.25}       # human style: a held smile eases off by up to a fifth.  A
+                                                             # decided value, set by Hyde et al. 2013 (toon characters'
+                                                             # whole motion scaled to 80-120 % was not told apart): their
+                                                             # condition was the size of the whole motion, not a hold
 ENVELOPE_STEP = (35, 70)        # frames between the keys of the envelope
 ENVELOPE_MIN_STEP = 0.15        # the envelope changes by at least this from one key to the next
 SLOW = 20                       # frames: a change between two keys this far apart is a drift, and is waved too
@@ -183,7 +184,7 @@ LONG_GAP = 240                  # frames (8 s) at least between the starts of tw
 HUMAN_OPENING = OPENING
 P_LONG = {"phrase_end": 0.5, "rest": 0.25}
 CLOSURE_CAP = 0.7               # human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that
-                                # follows the eyes down must not shut a smiling eye
+                                # follows the eyes down must not shut a smiling eye.  A decided value, under a10's "shut" 0.8
 FLASH_QUIET = (8, 3)            # frames before and after a flash's kime no blink starts (blinks hold off at a moment that
                                 # holds the attention: Shultz et al. 2011)
 SMILE_END_BLINK = 21            # frames before a smile has fallen (its last moving frame) a blink is placed: in natural
@@ -454,8 +455,9 @@ KIME_LOOK = 8                   # frames before the stop the peak is looked for 
 KIME_DROP = 0.25                # the speed falls below this share of the peak (tools/motor_layer.py's stops_and_hits)
 KIME_HOLD = 6                   # frames the part then stays under it: the pose is held
 KIME_MERGE = 4                  # frames: stops of several parts this close are one accent
-KIME_ARRIVE = 1                 # frames before a kime a change of the face arrives (human style): a picture up to about
-                                # 4 frames before the sound goes unnoticed, 1.4 frames after it does not (ITU-R BT.1359-1)
+KIME_ARRIVE = 1                 # frames before a kime a change of the face arrives (human style).  A decided value: never
+                                # after the kime.  The face and the body are both picture: the tolerance of sound against
+                                # picture in broadcasting (ITU-R BT.1359-1) is no ground for it
 HUMAN_ONSET_FRAMES = (14, 18)   # human style: a rise from nothing (onsets of 4 and 7 frames looked faker than 16,
 HUMAN_OFFSET_FRAMES = (15, 20)  # Krumhuber and Kappas 2005; spontaneous smiles rise in 17 to 18 frames and fall in 17
 HUMAN_CHANGE_FRAMES = (13, 17)  # to 19, Schmidt et al. 2006), a fall to nothing, any other change
@@ -1291,12 +1293,13 @@ def blink_pulses(b_keys, intro):
 
 
 LID_HIDE = 3                    # frames: a blink this near a change of the shown share takes it into its shut frames
-FLASH_RATE = 5.0                # human style: eyes opened for a moment at a kime, at most this many a minute (a speaker
-                                # raises the brows 2.4 to 7.2 times a minute, Cave et al. 1996; Sour's Rin's brows lie
-                                # under her fringe, so the lid carries it)
+FLASH_RATE = 5.0                # human style: eyes opened for a moment at a kime, at most this many in any minute.  The
+                                # flash is a decided value: Sour's Rin's brows lie under her fringe, so the lid carries the
+                                # accent, with no study behind a lid for the brows; the rate was set by fast brow movements
+                                # in conversation (2.4 to 7.2 a minute, Cave et al. 1996: brows, speech, another condition)
 FLASH_GAP = 60                  # frames between two of them at least
 FLASH_STRENGTH = 60             # percentile of the kimes' speed a kime reaches to get one
-FLASH_SHAPE = (5, 3, 8)         # frames opening (ending a frame before the kime), held, closing again
+FLASH_SHAPE = (5, 3, 8)         # frames opening (ending a frame before the kime), held, closing again (decided values)
 FLASH_SUNG = 9                  # frames around a lyric line or a phrase that count as singing
 
 
