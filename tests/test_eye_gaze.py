@@ -1,6 +1,7 @@
 """tools/eye_gaze.py: eyes that look on their own (fixations on where the face goes, saccades that lead the head's
 turns, eye contact planned where the camera stays within reach) as a 両目 track to load after the dance."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -944,6 +945,31 @@ class HandTest(unittest.TestCase):
         for i in range(landed, 76):
             self.assertLess(self.hand_on(result, i) if i >= 36 else 0.0, 0.5, i)
 
+    def test_the_report_names_the_point_the_eyes_aim_at_on_each_frame_of_a_look(self):
+        # tools/eye_optics.py brings the eyes together on the looks of this report, at the distance of the point they
+        # aim at (stage 6: it found its own looks where a hand lay within 12 degrees of the gaze, 96 % of its vergence
+        # where she looked at no hand, review gaze-v8 6.7): until the hand stops, where it will stop (the eyes are
+        # there before it); then the tip of its longest finger, where the gaze is
+        stop = ahead(-6.0, -4.0, 0.30)
+        points = {0: None, 29: None, 30: ahead(-40.0, -4.0, 0.30), 36: stop, 76: stop, 77: None}
+        result = run_hands(hand_dance(points, at=hand_aim_rest))
+        look = result.report["hands"]["list"][0]
+        aim = look["aim"]
+        self.assertEqual(len(aim), look["last"] - look["first"] + 1)
+        self.assertLess(look["first"], 36)                                   # the look starts as the hand swings in
+        for k, p in enumerate(aim):
+            self.assertLess(math.dist(p, stop), 1e-3, look["first"] + k)
+        tips = result.hand_aims["右"]
+        for i in range(look["first"] + 1, look["last"] + 1):
+            sight, seen = result.sights[i], result.looks[i]
+            point = aim[i - look["first"]]
+            if i >= 37:
+                self.assertLess(math.dist(point, tips[min(look["last"], i + 1)]), 1e-3, i)     # the tip, one frame on
+            if seen.state == "hand":
+                toward = tuple(p - e for p, e in zip(point, sight.eye))
+                self.assertLess(degrees_between(world_gaze(sight, seen), toward), 0.5, i)
+        self.assertEqual(json.loads(json.dumps(result.report["hands"]))["list"][0]["aim"], aim)   # plain numbers
+
     def test_a_hand_that_moves_on_faster_than_the_eyes_follow_gets_a_catch_up_saccade(self):
         # held, then 16 degrees across in 3 frames (160 deg/s, over the 100 the gaze follows a hand) and held again:
         # the eyes fall behind and one saccade catches them up, not right after the first (CATCH_UP_AFTER frames)
@@ -968,49 +994,92 @@ def load_named(name):
 
 
 class HandVergenceTest(unittest.TestCase):
-    """tools/eye_optics.py brings the eyes together where the gaze meets a near hand (within 12 degrees of it): on the
-    hand this tool looks at, 14 degrees off her face's way, it does; with the eyes turned 10 degrees the other way the
-    same hand is out of its cone and the eyes stay parallel (the stage-5 tool never chose a hand: only a hand the gaze
-    passed by chance brought the eyes together)"""
+    """tools/eye_optics.py brings the eyes together on the looks at a hand this tool plans, read from its --report: on
+    the hand she looks at, 14 degrees off her face's way, it does; on a hand held 6 degrees off her gaze for 0.27 s,
+    which she passes by (no look), the eyes stay parallel (stage 5 brought them together on any hand within 12 degrees
+    of the gaze, whether she looked at it or not: 96 % of the vergence of the MV v8 fell outside her looks, review
+    gaze-v8 6.7)"""
 
-    def test_eye_optics_converges_on_the_hand_she_looks_at(self):
+    @classmethod
+    def setUpClass(cls):
         from tests.test_pmx_eyes import EYE_Z, toy_bytes
-        pmx_eyes, eye_optics = load_named("pmx_eyes"), load_named("eye_optics")
+        cls.pmx_eyes, cls.eye_optics = load_named("pmx_eyes"), load_named("eye_optics")
         wrist, tip = (-4.65, 12.41, -0.24), (-6.05, 11.42, -0.26)
         hand_tip = tuple(w + 0.5 * (t - w) / math.dist(wrist, tip) for w, t in zip(wrist, tip))     # 手先, 4 cm on
         data, _ = toy_bytes(extra_bones=[("右手首", -1, wrist), ("右中指３先", -1, tip), ("右手先", -1, hand_tip)],
                             iris_z=-0.96)
         doc = pmx_edit.loads(data)
-        pmx_eyes.build(doc, share=0.55)
-        model_bytes = pmx_edit.dumps(doc)
-        model = pmx.loads(model_bytes)
-        eye = (0.0, 17.214, EYE_Z)
-        rest = eye_gaze.hand_points(model, head_turn({0: 0.0}, last=1))["右"][0]      # the hand's look point at rest
-        point = tuple(e + d * 0.30 / UNIT_M for e, d in zip(eye, direction(-14.0, -2.0)))
+        cls.pmx_eyes.build(doc, share=0.55)
+        cls.model_bytes = pmx_edit.dumps(doc)
+        cls.model = pmx.loads(cls.model_bytes)
+        cls.eye = (0.0, 17.214, EYE_Z)
+
+        def key(frame):
+            return motion_edit.camera_key_from_ui({"pos": cls.eye, "distance": 2500.0 / 80.0, "rot": (0.0, 60.0, 0.0),
+                                                   "fov": 30, "perspective": True}, frame=frame)
+        cls.cams = vmd.Motion.for_camera(cameras=[key(0), key(120)])
+        cls.quiet = cls.eye_optics.merge_params(cls.eye_optics.PARAMS, {"pupil": {"unrest": {"amplitude": 0.0}}})
+
+    def dance(self, yaw, pitch, first, last):
+        """the toy's right hand held 30 cm before her eyes at (yaw, pitch) from frame `first` to `last`, by her side
+        before and after"""
+        rest = eye_gaze.hand_points(self.model, head_turn({0: 0.0}, last=1))["右"][0]      # the look point at rest
+        point = tuple(e + d * 0.30 / UNIT_M for e, d in zip(self.eye, direction(yaw, pitch)))
         move = tuple(p - r for p, r in zip(point, rest))
         keys = [vmd.BoneKey("右目", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("左目", 0, fk.ZERO, fk.IDENTITY),
                 vmd.BoneKey("頭", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("頭", 120, fk.ZERO, fk.IDENTITY)]
-        for frame, m in ((0, fk.ZERO), (39, fk.ZERO), (40, move), (79, move), (80, fk.ZERO), (120, fk.ZERO)):
+        for frame, m in ((0, fk.ZERO), (first - 1, fk.ZERO), (first, move), (last, move), (last + 1, fk.ZERO),
+                         (120, fk.ZERO)):
             keys += [vmd.BoneKey(name, frame, m, fk.IDENTITY) for name in ("右手首", "右中指３先", "右手先")]
-        dance = vmd.Motion(model_name="toy", bones=keys)
+        return vmd.Motion(model_name="toy", bones=keys)
 
-        def key(frame):
-            return motion_edit.camera_key_from_ui({"pos": eye, "distance": 2500.0 / 80.0, "rot": (0.0, 60.0, 0.0),
-                                                   "fov": 30, "perspective": True}, frame=frame)
-        cams = vmd.Motion.for_camera(cameras=[key(0), key(120)])
-        result = eye_gaze.gaze(model, dance, cams, life=False)
+    def test_eye_optics_converges_on_the_hand_she_looks_at(self):
+        dance = self.dance(-14.0, -2.0, 40, 79)
+        result = eye_gaze.gaze(self.model, dance, self.cams, life=False)
         self.assertEqual([(h["first"], h["last"]) for h in result.report["hands"]["list"]], [(41, 79)])   # 40: it arrives
-        quiet = eye_optics.merge_params(eye_optics.PARAMS, {"pupil": {"unrest": {"amplitude": 0.0}}})
-        optics = eye_optics.optics(model_bytes, dance, result.motion, cams, quiet)
+        optics = self.eye_optics.optics(self.model_bytes, dance, result.motion, self.cams, self.quiet,
+                                        looks=self.eye_optics.gaze_looks(result.report))
         verg, labels = optics.trace["vergence"], optics.trace["label"]
-        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
-        self.assertEqual(set(labels[41:79]), {"hand"})
-        self.assertGreater(min(verg[52:79]), 0.9 * want, verg[40:80])
-        self.assertLess(max(verg[:36]), 0.05)
-        away = fk.stored(eye_gaze.eye_rotation(10.0, 0.0))
-        elsewhere = vmd.Motion(model_name="toy", bones=[vmd.BoneKey("両目", f, fk.ZERO, away) for f in (0, 120)])
-        alone = eye_optics.optics(model_bytes, dance, elsewhere, cams, quiet)
-        self.assertLess(max(alone.trace["vergence"]), 0.05)
+        aim = result.report["hands"]["list"][0]["aim"][20]
+        want = math.degrees(math.atan(61.5 / 2.0 / (math.dist(aim, self.eye) * UNIT_M * 1000.0)))   # the eyes meet at its tip
+        self.assertEqual(set(labels[41:80]), {"hand"})
+        self.assertGreater(min(verg[52:80]), 0.95 * want, verg[40:80])
+        self.assertLess(max(verg[:38]), 0.05)
+
+    def test_eye_optics_leaves_the_eyes_parallel_on_a_hand_she_passes_by(self):
+        dance = self.dance(-6.0, -2.0, 40, 47)
+        result = eye_gaze.gaze(self.model, dance, self.cams, life=False)
+        self.assertEqual(result.report["hands"]["list"], [])
+        hand = eye_gaze.hand_points(self.model, dance)["右"]
+        off = [degrees_between(world_gaze(s, look), tuple(p - e for p, e in zip(hand[s.frame], s.eye)))
+               for s, look in zip(result.sights, result.looks)]
+        self.assertLess(max(off[40:48]), 12.0)                    # within the cone that brought stage 5's eyes together
+        optics = self.eye_optics.optics(self.model_bytes, dance, result.motion, self.cams, self.quiet,
+                                        looks=self.eye_optics.gaze_looks(result.report))
+        self.assertEqual(max(optics.trace["vergence"]), 0.0)
+
+    def test_the_command_reads_the_report_the_gaze_wrote(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        face = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", 0, 0.0)])
+        paths = {}
+        for name, data in (("model.pmx", self.model_bytes), ("dance.vmd", vmd.dumps(self.dance(-14.0, -2.0, 40, 79))),
+                           ("camera.vmd", vmd.dumps(self.cams)), ("face.vmd", vmd.dumps(face))):
+            paths[name] = os.path.join(folder, name)
+            with open(paths[name], "wb") as f:
+                f.write(data)
+        gaze_path, report, trace = (os.path.join(folder, n) for n in ("gaze.vmd", "gaze.json", "trace.json"))
+        code, result = run([paths["dance.vmd"], paths["camera.vmd"], paths["model.pmx"], gaze_path, "--report", report])
+        self.assertEqual(code, 0, result)
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = self.eye_optics.main([paths["model.pmx"], paths["dance.vmd"], gaze_path, paths["camera.vmd"],
+                                         os.path.join(folder, "optics.vmd"), "--face", paths["face.vmd"],
+                                         "--gaze-report", report, "--trace", trace])
+        self.assertEqual(code, 0, printed.getvalue())
+        with open(trace, encoding="utf-8") as f:
+            verg = json.load(f)["vergence"]
+        self.assertGreater(min(verg[52:80]), 5.0)
+        self.assertLess(max(verg[:38] + verg[95:]), 0.05)
 
 
 class SaccadeTest(unittest.TestCase):
@@ -1594,6 +1663,16 @@ class CommandTest(unittest.TestCase):
         self.assertAlmostEqual(row["eye_center"][1], 17.2, places=3)
         self.assertAlmostEqual(row["head_forward"][2], -1.0, places=3)
         self.assertEqual(os.listdir(os.path.dirname(out)), ["eyes.vmd"])
+
+    def test_the_report_names_the_motion_it_describes_by_its_md5(self):
+        # tools/eye_optics.py reads the looks at a hand from this report and refuses a report of another gaze
+        out, report = os.path.join(self.folder, "eyes.vmd"), os.path.join(self.folder, "r.json")
+        code, result = run([self.dance, self.camera, self.model, out, "--report", report])
+        self.assertEqual(code, 0, result)
+        with open(out, "rb") as f:
+            written = hashlib.md5(f.read()).hexdigest()
+        with open(report, encoding="ascii") as f:
+            self.assertEqual(json.load(f)["out_md5"], written)
 
     def test_up_and_down_limits_and_the_pitch_shortcut(self):
         out = os.path.join(self.folder, "o.vmd")

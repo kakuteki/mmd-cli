@@ -1,12 +1,14 @@
 """Move the lights in the eyes, the pupils and the eyes' vergence as a person's do, written as one VMD to load after the
 dance, the face and the gaze.
 
-    python tools/eye_optics.py MODEL.pmx DANCE.vmd GAZE.vmd CAMERA.vmd OUT.vmd --face FACE.vmd [--look LOOK.json]
+    python tools/eye_optics.py MODEL.pmx DANCE.vmd GAZE.vmd CAMERA.vmd OUT.vmd --face FACE.vmd
+                               (--gaze-report GAZE.json | --no-vergence) [--look LOOK.json]
                                [--flares S ...] [--audio SONG] [--chorus S ...] [--params P.json] [--report r.json]
                                [--seed 0] [--trace t.json]
 
 MODEL is the model made by tools/pmx_eyes.py (its catchlight bones); GAZE the 両目 track of tools/eye_gaze.py, merged
-over the dance as MMD merges a later motion (its keys replace the dance's on the same bone and frame); FACE the face
+over the dance as MMD merges a later motion (its keys replace the dance's on the same bone and frame), and GAZE.json
+its --report (the looks at a hand the eyes come together on: below); FACE the face
 motion loaded with them (needed when the model's closing morphs move its lights, as Sour's Rin's do: build in the
 order gaze, face, this, and give the face VMD that will be drawn).  Every frame of the dance is computed.  The numbers
 are PARAMS, each replaceable with --params (a JSON of the same shape; an unknown key is refused); they are those of
@@ -121,29 +123,38 @@ r is kept in pupil.range; r > 0 is 瞳大 r / 1.71, r < 0 瞳細 -r / 0.61 (Sour
 
 The vergence (keys on 右目 and 左目, after their append from 両目; RESEARCH 3.2 and 0.2 item 9):
 
-* The eyes converge on her hands only, not on the camera, however near (large eyes look cross-eyed; a person's line of
-  sight lies about 6 degrees nasal of the eye's axis anyway).  A hand is looked at (fixation_targets) when one of its
-  points (vergence.hand_points) lies within hand_deg of the gaze (both eyes' mean, in the world), between near_m and
-  hand_m away, for hand_frames frames on end; the camera, within camera_deg of the gaze, wins when it is nearer the gaze
-  for its tolerance.  hand_deg (12) is far wider than what a person fixates (the fovea's 1 to 2 degrees) because
-  tools/eye_gaze.py never chooses a hand as its target: the gaze passes near a hand only by chance, and a narrow cone
-  would leave almost no look at one.  So the eyes meet on the point at the hand's distance along the gaze, not on the
-  hand itself (in the MV's close-ups the two cannot be told apart).
-* Looks at a hand split by up to vergence.gap_frames frames (the hand a little off the gaze, or nearer than near_m for
-  a moment), with no look at the camera between, are one look (the MV's 52 seconds: the fingers came to 11 cm for 5
-  frames in one look).
-* The demand during a run on a hand is gain x atan((ipd / 2) / distance) per eye, the distance the run's median but
-  not nearer than angle_near_m (ipd 61.5 mm, Murray 2017; gain 1: the geometric angle, RESEARCH 3.2 and the
-  coordinator's probe; 15 cm: 11.6 degrees an eye at most); elsewhere 0.
+* The eyes converge where she looks at her hand, and nowhere else: on the looks at a hand that tools/eye_gaze.py
+  planned, read from its --report of the same gaze (--gaze-report; gaze_looks: its out_md5 must be the gaze VMD's).
+  When and at what she looks is the gaze's plan; this tool turns the two eyes onto the one point.  Stage 5 found its
+  own looks wherever one of her hand's points lay within 12 degrees of the gaze, 10 to 60 cm off, for 6 frames (the
+  gaze of stage 5 never chose a hand): with the gaze of stage 6 (the MV v8: 3 looks, 41 frames), 96 % of that
+  vergence (degrees x frames) fell outside its looks, up to 11.6 degrees an eye where her hand covers or nears her face
+  and the gaze only passes it (41, 130, 135, 153 and 249 s; review gaze-v8 4.2).  A person converges on what she
+  fixates; a nearer thing off the fixation is seen double, not converged on.  Without --gaze-report the tool refuses,
+  unless --no-vergence keeps the eyes parallel throughout.
+* Never on the camera, however near (large eyes look cross-eyed; a person's line of sight lies about 6 degrees nasal
+  of the eye's axis anyway; fixation_targets): a frame is on the camera on the report's eye contacts and where the gaze
+  is within camera_deg of the camera for camera_frames frames on end, and that wins over a look.
+* Looks split by up to vergence.gap_frames frames, with no frame on the camera between, are one look.
+* The demand during a run on a hand is gain x atan((ipd / 2) / distance) per eye, the distance the run's median of the
+  distances from the eyes to the point they aim at (the report's aim: the tip of her finger furthest from the wrist,
+  or where her hand will stop until it does) but not nearer than angle_near_m (ipd 61.5 mm, Murray 2017; gain 1: the
+  geometric angle, RESEARCH 3.2 and the coordinator's probe; 15 cm: 11.6 degrees an eye at most); elsewhere 0.  The
+  eyes meet on the point at that distance along the gaze (the gaze may fall short of the aim: at 52 s of the MV the
+  raised finger's tip is above the eyes' reach).
 * It is in phase with the look (vergence_in_phase): the eyes start to converge vergence.lead seconds before the run
   (they lead a target the hand moves by about 90 ms and lag a moving real target by under 125 ms: Erkelens et al.
-  1989, Proc R Soc B 236:417) and start to diverge on its last frame; they are parallel on every frame on the camera
-  (the rise waits for the last frame on the camera before the run, the fall is over by the next one: a look between
-  two looks at the camera only begins to converge).  Each way runs along a minimum-jerk curve whose 5 to 95 % time is
-  vergence.duration (0.25 s; the coordinator's 0.2 to 0.3 s) or longer, so its top speed stays under max_speed
-  (60 deg/s; natural gaze shifts reach 50 to 200: Erkelens et al. 1989, 236:441).  (Tyler 2015's 0.24 s latency and
-  8 deg/s, disparity steps on a screen, put the whole vergence after the MV's looks of 0.2 to 0.6 s, partly onto the
-  camera: stage 5 review Q1.)
+  1989, Proc R Soc B 236:417; the gaze's saccade onto the hand starts 2 or 3 frames before the look) and start to
+  diverge on its last frame; they are parallel on every frame on the camera (the rise waits for the last frame on the
+  camera before the run, the fall is over by the next one: a look between two looks at the camera only begins to
+  converge).  Each way runs along a minimum-jerk curve whose 5 to 95 % time is vergence.duration (0.15 s, 0.24 s in
+  all) or longer, so its top speed stays under max_speed (60 deg/s an eye).  Natural vergence between real targets
+  peaks at about 50 deg/s for a change of 5 degrees (the two eyes together) and 150 to 200 for 34 (Erkelens, Steinman
+  & Collewijn 1989, Proc R Soc B 236:441), so the 6 to 11 degrees of a hand 30 to 60 cm off take about 0.2 to 0.27 s:
+  the coordinator's "0.2 to 0.3 s" as the whole of the move.  The gaze's looks last 0.3 to 0.6 s; with stage 5's
+  0.25 s from 5 to 95 % (0.41 s in all) the eyes were past half way on the last 4 frames of the 0.3 s look at 52 s
+  only, and more of the vergence came after the look than in it.  (Tyler 2015's 0.24 s latency and 8 deg/s, disparity
+  steps on a screen, put the whole vergence after the MV's looks, partly onto the camera: stage 5 review Q1.)
 * Each eye then turns from the gaze onto the point at that distance along it (right eye -X, left eye +X: inward is
   +yaw for the right eye and -yaw for the left, as the coordinator's vergence probe keys them).
 
@@ -157,6 +168,7 @@ with no key on frame 0; bone keys are not counted): they are counted with the da
 """
 import argparse
 import copy
+import hashlib
 import json
 import math
 import os
@@ -213,18 +225,15 @@ PARAMS = {
         "ipd_mm": 61.5,                      # women's mean (Murray 2017)
         "unit_mm": 80.0,                     # one model unit
         "gain": 1.0,                         # the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe)
-        "near_m": 0.10,                      # a hand nearer than this is not looked at
         "angle_near_m": 0.15,                # the angle is at most that of a point this near (11.6 degrees an eye)
-        "hand_m": 0.6,                       # about an arm's reach
-        "hand_deg": 12.0,                    # degrees off the gaze (see the module docstring for why so wide)
-        "hand_frames": 6,                    # tools/eye_gaze.py's shortest fixation (0.2 s)
         "gap_frames": 6,                     # looks at a hand this many frames apart or fewer are one look
-        "hand_points": ["人指３先", "中指３先", "親指２先", "手先"],
         "camera_deg": 4.0,                   # tools/eye_gaze.py counts a gaze this near the camera as eye contact
         "camera_frames": 3,
         "lead": 0.07,                        # seconds the eyes start before the look (Erkelens 1989: about 90 ms)
-        "duration": 0.25,                    # seconds, 5 to 95 %, each way (the coordinator's 0.2 to 0.3)
-        "max_speed": 60.0,                   # degrees a second (natural gaze shifts reach 50 to 200, Erkelens 1989)
+        "duration": 0.15,                    # seconds, 5 to 95 %, each way: 0.24 s in all (the coordinator's 0.2 to
+                                             # 0.3; natural vergence of 6 to 11 degrees, Erkelens 1989, 236:441)
+        "max_speed": 60.0,                   # degrees a second an eye (natural gaze shifts reach 50 to 200 with both
+                                             # eyes together, Erkelens 1989)
     },
     "pupil": {
         "iris_mm": 11.82,                    # the visible iris' diameter, to give the pupil in mm
@@ -344,46 +353,73 @@ def _runs(mask):
     return out
 
 
-def fixation_targets(rows, params):
-    """(metres, labels) per frame: what the eyes look at.  A row is {"camera": (degrees off the gaze, metres),
-    "hands": [(degrees off the gaze, metres), ...]}; see the module docstring.  A frame bridged between two looks at a
-    hand (gap_frames or fewer, no look at the camera between) is labelled "hand" with no distance (None)."""
+def fixation_targets(rows, params, looks=(), contacts=()):
+    """(metres, labels) per frame: what the eyes look at.  A row is {"camera": (degrees off the gaze, metres)};
+    `looks` are the gaze's looks at a hand as (first, last, [metres from the eyes to the point they aim at, per frame])
+    and `contacts` its eye contacts as (first, last), frame indices (gaze_looks).  On the camera ("camera"): on the
+    contacts, and where the gaze is within camera_deg of it for camera_frames frames on end.  On a hand ("hand", with
+    the aim's distance): on the looks' frames but those.  Looks split by up to gap_frames frames with no frame on the
+    camera between are one look (the frames between are "hand" with no distance, None).  "free" elsewhere: the eyes
+    parallel, whatever lies near the gaze."""
     p = params
-    cam_ok = [r["camera"][0] <= p["camera_deg"] for r in rows]
-    hand = []
-    for r in rows:
-        fit = [h[:2] for h in r["hands"] if h[0] <= p["hand_deg"] and p["near_m"] <= h[1] <= p["hand_m"]]
-        hand.append(min(fit) if fit else None)
-    labels = []
-    for i, r in enumerate(rows):
-        options = []
-        if cam_ok[i]:
-            options.append((r["camera"][0] / p["camera_deg"], "camera"))
-        if hand[i] is not None:
-            options.append((hand[i][0] / p["hand_deg"], "hand"))
-        labels.append(min(options)[1] if options else "free")
-    looks = _runs([lab == "hand" for lab in labels])
-    for (_, b0), (a1, _) in zip(looks, looks[1:]):
+    n = len(rows)
+    labels = ["free"] * n
+    for a, b in _runs([r["camera"][0] <= p["camera_deg"] for r in rows]):
+        if b - a + 1 >= p["camera_frames"]:
+            for i in range(a, b + 1):
+                labels[i] = "camera"
+    for a, b in contacts:
+        for i in range(max(0, a), min(n, b + 1)):
+            labels[i] = "camera"
+    metres = [None] * n
+    for a, b, far in looks:
+        for i in range(max(0, a), min(n, b + 1)):
+            if labels[i] != "camera":
+                labels[i], metres[i] = "hand", far[i - a]
+    runs = _runs([lab == "hand" for lab in labels])
+    for (_, b0), (a1, _) in zip(runs, runs[1:]):
         if a1 - b0 - 1 <= p["gap_frames"] and not any(labels[i] == "camera" for i in range(b0 + 1, a1)):
             for i in range(b0 + 1, a1):
                 labels[i] = "hand"
-    for a, b in _runs([lab == "hand" for lab in labels]):
-        if b - a + 1 < p["hand_frames"]:
-            for i in range(a, b + 1):
-                labels[i] = "camera" if cam_ok[i] else "free"
-    for a, b in _runs([lab == "camera" for lab in labels]):
-        if b - a + 1 < p["camera_frames"]:
-            for i in range(a, b + 1):
-                labels[i] = "free"
-    metres = []
-    for i, r in enumerate(rows):
-        if labels[i] == "camera":
-            metres.append(r["camera"][1])
-        elif labels[i] == "hand" and hand[i] is not None:
-            metres.append(hand[i][1])
-        else:
-            metres.append(None)
     return metres, labels
+
+
+def gaze_looks(report, gaze_bytes=None):
+    """{"looks": [{"first", "last", "hand", "aim": [(x, y, z) per frame]}], "contacts": [(first, last)]}: the looks at a
+    hand and the eye contacts of tools/eye_gaze.py's --report (the dict read from it; frames as in the gaze VMD, the
+    aims in the world, model units).  With `gaze_bytes` (the gaze VMD as read) the report must name them by its
+    out_md5: a report of another gaze would bring the eyes together where she looks at nothing near.  ValueError on a
+    report without looks at a hand (not eye_gaze's, or from before stage 6), without out_md5 or without the points the
+    eyes aim at (eye_gaze of main 03fae09 or before: run it again, the gaze VMD comes out the same)."""
+    hands = report.get("hands") if isinstance(report, dict) else None
+    if not isinstance(hands, dict) or not isinstance(hands.get("list"), list):
+        raise ValueError("the gaze report has no looks at a hand (\"hands\"): it is not tools/eye_gaze.py's --report, or "
+                         "one from before stage 6")
+    if gaze_bytes is not None:
+        named, got = report.get("out_md5"), hashlib.md5(gaze_bytes).hexdigest()
+        if not named:
+            raise ValueError("the gaze report names no out_md5 (the md5 of the gaze VMD it describes; tools/eye_gaze.py "
+                             "of main 03fae09 or before): run tools/eye_gaze.py again with --report")
+        if named != got:
+            raise ValueError("the gaze report is of another gaze: its out_md5 is %s, the gaze VMD's %s (give the "
+                             "--report tools/eye_gaze.py wrote with this gaze)" % (named, got))
+    looks = []
+    try:
+        for h in hands["list"]:
+            first, last, aim = int(h["first"]), int(h["last"]), h.get("aim")
+            if not isinstance(aim, list):
+                raise ValueError("the gaze report's look at a hand on frames %d to %d names no aim (the points the eyes "
+                                 "aim at; tools/eye_gaze.py of main 03fae09 or before): run tools/eye_gaze.py again"
+                                 % (first, last))
+            if last < first or len(aim) != last - first + 1:
+                raise ValueError("the gaze report's look at a hand on frames %d to %d has %d aims, not one a frame"
+                                 % (first, last, len(aim)))
+            looks.append({"first": first, "last": last, "hand": h.get("hand"),
+                          "aim": [tuple(float(c) for c in point) for point in aim]})
+        contacts = [(int(c["first"]), int(c["last"])) for c in (report.get("contacts") or {}).get("list", [])]
+    except (KeyError, TypeError) as exc:
+        raise ValueError("the gaze report is not tools/eye_gaze.py's: %s %s" % (type(exc).__name__, exc))
+    return {"looks": looks, "contacts": contacts}
 
 
 def _median(values):
@@ -1281,9 +1317,12 @@ def _cuts(cameras):
     return out
 
 
-def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=None, chorus=(), seed=0, face=None):
+def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=None, chorus=(), seed=0, face=None,
+           looks=None):
     """the eye optics motion and its report for the model (the bytes of a PMX made by pmx_eyes), the dance, the gaze
-    (両目) and the camera; `flares` and `chorus` in seconds, `arousal` the loudness per frame from 0 to 1"""
+    (両目) and the camera; `flares` and `chorus` in seconds, `arousal` the loudness per frame from 0 to 1; `looks` the
+    gaze's looks at a hand and eye contacts (gaze_looks of tools/eye_gaze.py's report of the gaze), on which the eyes
+    come together: without them they stay parallel"""
     p = merge_params(PARAMS, {}) if params is None else params
     doc = pmx_edit.loads(model_bytes)
     model = pmx.loads(model_bytes)
@@ -1297,16 +1336,19 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     lights = _catchlights(model, handle, eye_idx)
     geometry = eye_geometry(doc)
     scales = pupil_scales(doc)
-    names = {b.name for b in model.bones}
     vp, lp, pp = p["vergence"], p["light"], p["pupil"]
-    hands = [s + h for s in ("右", "左") for h in vp["hand_points"] if s + h in names]
     motion = merge(dance, gaze)
     if not motion.bones:
         raise ValueError("the dance and the gaze have no bone keys")
     last = max(fk.last_frame(dance), fk.last_frame(gaze))
     frames = list(range(0, last + 1))
     n = len(frames)
-    track = fk.world_track(model, motion, [head] + eyes + hands, 0, last)
+    given = looks if looks is not None else {"looks": [], "contacts": []}
+    for look in given["looks"]:
+        if look["first"] < 0 or look["last"] > last:
+            raise ValueError("the gaze's look at a hand on frames %d to %d lies beyond the dance's frames 0 to %d"
+                             % (look["first"], look["last"], last))
+    track = fk.world_track(model, motion, [head] + eyes, 0, last)
     handle_track = fk.tracks_of(motion).get(model.bones[handle].name) or fk.tracks_of(motion).get(
         fk.vmd_name(model.bones[handle].name))
     handle_frames = [k.frame for k in handle_track] if handle_track else None
@@ -1314,7 +1356,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     cam_frames = [k.frame for k in cam_keys]
     unit_m = vp["unit_mm"] / 1000.0
     half = vp["ipd_mm"] / 2.0 / vp["unit_mm"]
-    head_world, gaze_head, rows, cameras = [], [], [], []
+    head_world, gaze_head, gaze_world, centres, rows, cameras = [], [], [], [], [], []
     for i in range(n):
         hp, hr = track[head][i]
         inv = fk.conjugate(hr)
@@ -1325,17 +1367,25 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         state = fk.camera_at(cam_keys, frames[i], cam_frames)
         c = fk.camera_position(state)
         to_cam = _sub(c, centre)
-        row = {"camera": (_degrees_between(g_w, to_cam), math.sqrt(_dot(to_cam, to_cam)) * unit_m), "hands": []}
-        for h in hands:
-            to_hand = _sub(track[h][i][0], centre)
-            row["hands"].append((_degrees_between(g_w, to_hand), math.sqrt(_dot(to_hand, to_hand)) * unit_m, h))
-        rows.append(row)
+        rows.append({"camera": (_degrees_between(g_w, to_cam), math.sqrt(_dot(to_cam, to_cam)) * unit_m)})
         head_world.append((hp, hr))
         gaze_head.append(g_h)
+        gaze_world.append(g_w)
+        centres.append(centre)
         cameras.append((c, fk.camera_direction(state)))
     cuts = _cuts(cameras)
-    # vergence
-    metres, labels = fixation_targets(rows, vp)
+    # vergence: on the gaze's looks at a hand, at the distance of the point the eyes aim at
+    aim_at = {}                                     # frame index -> (the aim, the hand) on the looks
+    look_rows = []
+    for look in given["looks"]:
+        far = []
+        for k, aim in enumerate(look["aim"]):
+            i = look["first"] + k
+            aim_at[i] = (aim, look["hand"])
+            to_aim = _sub(aim, centres[i])
+            far.append(math.sqrt(_dot(to_aim, to_aim)) * unit_m)
+        look_rows.append((look["first"], look["last"], far))
+    metres, labels = fixation_targets(rows, vp, look_rows, given["contacts"])
     demand = vergence_demand(labels, metres, vp)
     angle = vergence_in_phase(demand, labels, FPS, vp["lead"], vp["duration"], vp["max_speed"])
     turns = []
@@ -1651,11 +1701,14 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         counts[lab] = counts.get(lab, 0) + 1
     hand_runs = []
     for a, b in _runs([lab == "hand" for lab in labels]):
-        best = min((h for i in range(a, b + 1) for h in rows[i]["hands"]), key=lambda h: h[0])
         seen_m = [m for m in metres[a:b + 1] if m is not None]
+        on = [i for i in range(a, b + 1) if i in aim_at]
+        off = [_degrees_between(gaze_world[i], _sub(aim_at[i][0], centres[i])) for i in on]
         later = angle[b + 1:min(n, b + 31)]
         hand_runs.append({"first": frames[a], "last": frames[b], "seconds": _r((b - a + 1) / FPS, 3),
-                          "median_m": _r(_median(seen_m), 3), "point": best[2], "demand_degrees": _r(demand[a], 3),
+                          "median_m": _r(_median(seen_m), 3),
+                          "hand": "/".join(sorted({str(aim_at[i][1]) for i in on})),
+                          "aim_off_gaze_degrees": _r(_median(off), 2), "demand_degrees": _r(demand[a], 3),
                           "reached_within_degrees": _r(max(angle[a:b + 1]), 3),
                           "reached_after_degrees": _r(max(later) if later else 0.0, 3),
                           "peak_frame": frames[max(range(max(0, a - 10), min(n, b + 31)), key=lambda j: angle[j])]})
@@ -1699,8 +1752,9 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                   "iris_radius": [_r(v, 5) for v in geo0["iris"]],
                   "pupil_scales": {k: _r(v, 4) for k, v in scales.items()},
                   "pupil_mm": _r(mm0, 3), "half_ipd_units": _r(half, 5)},
-        "vergence": {"labels": counts, "hand_runs": hand_runs, "degrees": summary(angle), "demand": summary(demand),
-                     "step": step_stats(angle), "share": share,
+        "vergence": {"source": "gaze report" if looks is not None else "none", "looks": len(given["looks"]),
+                     "contacts": len(given["contacts"]), "labels": counts, "hand_runs": hand_runs,
+                     "degrees": summary(angle), "demand": summary(demand), "step": step_stats(angle), "share": share,
                      "camera_max_degrees": _r(max([a for a, l_ in zip(angle, labels) if l_ == "camera"] or [0.0]), 4)},
         "light": {"cornea": cornea, "lag": lag, "rest_offset": [_r(v) for v in rest_offset],
                   "drawn": {k: [_r(v) for v in d] for k, d in drawn.items()},
@@ -1811,10 +1865,17 @@ def check_distinct(*paths):
 
 
 def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None, look_path=None, flares=(),
-        audio_path=None, chorus=(), params_path=None, report_path=None, seed=0, trace_path=None):
+        audio_path=None, chorus=(), params_path=None, report_path=None, seed=0, trace_path=None, gaze_report_path=None,
+        vergence=True):
     started = time.time()
     check_distinct(model_path, dance_path, gaze_path, camera_path, out_path, face_path, look_path, audio_path, params_path,
-                   report_path, trace_path)
+                   report_path, trace_path, gaze_report_path)
+    if vergence and not gaze_report_path:
+        raise ValueError("--gaze-report is needed: the eyes come together where she looks at her hand, and those looks "
+                         "are the gaze's plan (tools/eye_gaze.py's --report of this gaze); give --no-vergence to keep "
+                         "the eyes parallel")
+    if gaze_report_path and not vergence:
+        raise ValueError("--gaze-report and --no-vergence do not go together")
     if params_path:
         with open(params_path, encoding="utf-8") as f:
             params = merge_params(PARAMS, json.load(f))
@@ -1828,7 +1889,13 @@ def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None
     with open(model_path, "rb") as f:
         model_bytes = f.read()
     dance = vmd.load(dance_path)
-    gaze = vmd.load(gaze_path)
+    with open(gaze_path, "rb") as f:
+        gaze_bytes = f.read()
+    gaze = vmd.loads(gaze_bytes)
+    looks = None
+    if gaze_report_path:
+        with open(gaze_report_path, encoding="utf-8") as f:
+            looks = gaze_looks(json.load(f), gaze_bytes)
     camera = vmd.load(camera_path)
     model = pmx.loads(model_bytes)
     eye_names = {"右目", "左目"} | {b.name for b in model.bones if (b.name_en or "").startswith(pmx_eyes.EN_PREFIX)}
@@ -1849,12 +1916,13 @@ def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None
         ap = params["pupil"]["arousal"]
         arousal, loud = loudness(audio_path, n, low=ap["low"], high=ap["high"])
     result = optics(model_bytes, dance, gaze, camera, params, all_flares, arousal, [float(c) for c in chorus], seed,
-                    motions.get("face"))
+                    motions.get("face"), looks)
     _write(out_path, vmd.dumps(result.motion))
     back = vmd.load(out_path)
     report = dict(result.report)
     report["in"] = {"model": os.path.abspath(model_path), "dance": os.path.abspath(dance_path),
                     "gaze": os.path.abspath(gaze_path), "camera": os.path.abspath(camera_path),
+                    "gaze_report": os.path.abspath(gaze_report_path) if gaze_report_path else None,
                     "face": os.path.abspath(face_path) if face_path else None,
                     "look": os.path.abspath(look_path) if look_path else None,
                     "audio": os.path.abspath(audio_path) if audio_path else None}
@@ -1890,15 +1958,20 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0, help="the pupil's unrest (default 0)")
     ap.add_argument("--trace", help="write the values of every frame (target, vergence, light offset, HL消, pupil, the "
                                     "eyes' centre and the camera) to this JSON")
+    ap.add_argument("--gaze-report", help="tools/eye_gaze.py's --report of this gaze: the eyes come together on its "
+                                          "looks at a hand (needed unless --no-vergence; refused when it is of another "
+                                          "gaze)")
+    ap.add_argument("--no-vergence", action="store_true", help="keep the eyes parallel (a gaze with no report of "
+                                                               "tools/eye_gaze.py)")
     a = ap.parse_args(argv)
     try:
         report = run(a.model, a.dance, a.gaze, a.camera, a.out, a.face, a.look, a.flares, a.audio, a.chorus, a.params,
-                     a.report, a.seed, a.trace)
+                     a.report, a.seed, a.trace, a.gaze_report, not a.no_vergence)
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
     short = {"ok": True, "out": report["out"], "frames": report["frames"], "keys": report["keys"],
-             "vergence": {k: report["vergence"][k] for k in ("labels", "degrees", "step")},
+             "vergence": {k: report["vergence"][k] for k in ("source", "looks", "labels", "degrees", "step")},
              "light": {k: report["light"][k] for k in ("moved", "offset_step_without_cuts", "key_step_without_cuts", "cuts")},
              "fade": {k: report["fade"][k] for k in ("frames_on", "frames_full", "step_without_cuts")},
              "pupil": {k: report["pupil"][k] for k in ("relative", "mm", "steps")}, "seconds": report["seconds"]}
