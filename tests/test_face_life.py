@@ -121,8 +121,105 @@ def tracks(motion, frames=F):
     return out
 
 
+V7_FIXTURE = os.path.join(ROOT, "tests", "fixtures", "face_life_v7_synthetic.vmd")
+
+
+class V7StyleTest(unittest.TestCase):
+    """--style v7 makes the face of the MV v7 again: the fixture is the output of the tool as it was at main 08894a4
+    (the v7 face) for these inputs, seed 0, 瞳1off held at 1 and HL２ at 0.5"""
+
+    def test_the_v7_style_writes_the_v7_face_byte_for_byte(self):
+        with open(V7_FIXTURE, "rb") as f:
+            v7 = f.read()
+        made = vmd.dumps(face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0, "HL２": 0.5}, style="v7").motion)
+        self.assertEqual(made, v7)
+
+    def test_the_human_style_is_the_default_and_differs(self):
+        with open(V7_FIXTURE, "rb") as f:
+            v7 = f.read()
+        default = face_life.plan(inputs(), seed=0, hold={"瞳1off": 1.0, "HL２": 0.5})
+        self.assertEqual(default.report["style"], "human")
+        self.assertNotEqual(vmd.dumps(default.motion), v7)
+
+    def test_an_unknown_style_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "style"):
+            face_life.plan(inputs(), seed=0, style="v6")
+
+    def test_the_command_passes_the_style_on(self):
+        argv = ["f.vmd", "d.vmd", "g.vmd", "m.pmx", "o.vmd"]
+        with mock.patch.object(face_life, "run", return_value={}) as run, mock.patch("sys.stdout", new=io.StringIO()):
+            self.assertEqual(face_life.main(argv), 0)
+            self.assertEqual(run.call_args.kwargs["style"], "human")
+            self.assertEqual(face_life.main(argv + ["--style", "v7"]), 0)
+            self.assertEqual(run.call_args.kwargs["style"], "v7")
+        with mock.patch("sys.stderr", new=io.StringIO()), self.assertRaises(SystemExit):
+            face_life.main(argv + ["--style", "v6"])
+
+
+def shut_runs(b, s, start=150):
+    """per blink (a10's closures of まばたき + 笑い from `start`, the long ones left out): (the last frame the lid is at
+    its level before, the first shut frame, the last shut frame, the first frame it is back at its level).  The
+    closing takes t0 - before frames, the opening after - t1, the blink after - before."""
+    c = b + s
+    out = []
+    for e in face_life.episodes(c, start):
+        if e["closed"] > face_life.SHORT_CLOSURE:
+            continue
+        around = s[max(0, e["cs"] - 4):min(len(s), e["oe"] + 12)]
+        if around.max() - around.min() > 0.02:
+            continue                        # the smile moves under it: its rise or fall is no part of the blink
+        level = c[max(0, e["cs"] - 3):e["cs"] + 1].min()
+        f0 = e["t0"]
+        while f0 > 0 and c[f0 - 1] > level + 0.01:
+            f0 -= 1
+        level = c[e["oe"]:min(len(c), e["oe"] + 12)].min()
+        f1 = e["t1"]
+        while f1 + 1 < len(c) and c[f1 + 1] > level + 0.01:
+            f1 += 1
+        out.append((f0 - 1, e["t0"], e["t1"], f1 + 1))
+    return out
+
+
+class HumanBlinkTest(unittest.TestCase):
+    """a spontaneous blink lasts about 300 to 330 ms (Nakamura et al. 2008: closing about 100 ms, opening about 220 ms;
+    Trutoiu et al. 2011: 9 frames at 30 fps measured most often), the lid closing about three times as fast as it
+    opens, the opening fast first and slow at its end"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = face_life.plan(inputs(), seed=0)
+        cls.t = tracks(cls.result.motion)
+        cls.blinks = shut_runs(cls.t["まばたき"], cls.t["笑い"])
+
+    def test_there_are_blinks(self):
+        self.assertGreater(len(self.blinks), 8)
+
+    def test_each_blink_lasts_9_to_12_frames_most_of_them_10_or_more(self):
+        lengths = [z - a for a, _, _, z in self.blinks]
+        self.assertTrue(all(9 <= n <= 12 for n in lengths), lengths)
+        self.assertGreaterEqual(float(np.median(lengths)), 10)
+        self.assertGreater(len(set(lengths)), 1)
+
+    def test_the_lid_opens_at_least_twice_as_slowly_as_it_closes(self):
+        for a, t0, t1, z in self.blinks:
+            self.assertLessEqual(t0 - a, 3)
+            self.assertGreaterEqual(z - t1, 2 * (t0 - a), (a, t0, t1, z))
+
+    def test_the_opening_is_fast_first_and_slow_at_its_end(self):
+        c = self.t["まばたき"] + self.t["笑い"]
+        for a, t0, t1, z in self.blinks:
+            steps = -np.diff(c[t1:z + 1])
+            self.assertTrue(np.all(steps > -1e-9), steps)
+            half = len(steps) // 2
+            self.assertGreater(steps[:half].sum(), 1.5 * steps[half:].sum(), steps)
+
+    def test_the_report_counts_blinks_of_9_frames_or_more(self):
+        dist = self.result.report["blink"]["new"]["frames_closing_start_to_open"]
+        self.assertGreaterEqual(dist["median"], 9)
+
+
 class BlinkShapeTest(unittest.TestCase):
-    def test_every_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
+    def test_every_v7_shape_is_7_to_10_frames_and_opens_slower_than_it_closes(self):
         seen = set()
         for closing in face_life.CLOSING_FRAMES:
             for hold in face_life.HOLD_FRAMES:
@@ -158,13 +255,13 @@ class PlanTest(unittest.TestCase):
         runs = face_life.runs(creep)
         self.assertEqual([r for r in runs if r[1] - r[0] + 1 >= 10], [])
 
-    def test_blinks_are_not_one_template_and_last_7_to_10_frames(self):
+    def test_blinks_are_not_one_template_and_last_9_to_12_frames(self):
         blinks = self.result.report["blink"]["new"]["list"]
         self.assertGreater(len(blinks), 8)
         shapes = {(b["closing"], b["hold"], b["opening"]) for b in blinks}
         self.assertGreater(len(shapes), 1)
         for b in blinks:
-            self.assertTrue(7 <= b["closing"] + b["hold"] + b["opening"] <= 10)
+            self.assertTrue(9 <= b["closing"] + b["hold"] + b["opening"] <= 12)
 
     def test_a_quick_head_swing_mostly_brings_a_blink(self):
         starts = [b["start"] for b in self.result.report["blink"]["new"]["list"]]

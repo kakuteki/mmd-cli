@@ -2,7 +2,7 @@
 and tie them to the dance, the gaze, the sound and the lyrics.  The body is not touched (no bone key is written).
 
     python tools/face_life.py FACE.vmd DANCE.vmd GAZE.vmd MODEL.pmx OUT.vmd [--audio SONG] [--cues cues.json]
-                              [--report r.json] [--seed 0] [--hold NAME=WEIGHT ...]
+                              [--report r.json] [--seed 0] [--hold NAME=WEIGHT ...] [--style human|v7]
 
 FACE is the face motion to rewrite (the KAZUSA "Face&Lips" of the MV: expressions, まばたき, あいうえお), DANCE the dance
 it is loaded after, GAZE the 両目 motion loaded after both (tools/eye_gaze.py), MODEL the model (its morph names, and
@@ -63,6 +63,11 @@ What is done (the numbers are the constants below):
   moves and none is added (the report counts them), except that the wake-up carries its own.
 * The dance's own face keys (the MV's dance keys まばたき on a few frames of the intro) would be merged into the face
   when MMD loads both: OUT holds a key of its own on each of those frames, so that its tracks win.
+
+Styles (--style).  "v7" writes the face of the MV v7 again, byte for byte (the tool as it was at main 08894a4: the
+numbers above).  "human" (the default since stage 6) changes the blinks to a person's length: each closes in
+HUMAN_CLOSING_FRAMES and opens in HUMAN_OPENING_FRAMES (HUMAN_OPENING, fast first and slow at the end), 9 to 12 frames
+in all.
 
 The report (--report, and in short on stdout) gives, for the expressions, the blinks and the mouth, the measures of
 the analyses a11, a10 and a12 before (FACE) and after (OUT).  Read expression.stretched_frames for how long a change of
@@ -138,6 +143,13 @@ KEEP_CLEAR = 15                 # frames around the long closures and after the 
 BASE_SWITCH = 8                 # frames over which the lid level changes where an old blink hid the change
 CREEP_LONGEST = 9               # frames: the lid never closes slowly for longer (a10 counts 10 and more as a creep)
 LID_DOWN, LID_UP = 0.01, 0.005  # まばたき per degree the eyes look down / up
+
+# The styles.  "human" (the default since stage 6, face-v2) and "v7" (the face of the MV v7 byte for byte: the tool as
+# it was at main 08894a4).  What "human" changes is listed in the module docstring.
+STYLES = ("human", "v7")
+HUMAN_CLOSING_FRAMES = (2, 3)   # a spontaneous blink closes in about 100 ms and opens in about 220 ms (Nakamura et al.
+HUMAN_OPENING_FRAMES = (7, 8)   # 2008), 9 frames at 30 fps measured most often (Trutoiu et al. 2011)
+HUMAN_OPENING = {7: (0.76, 0.55, 0.37, 0.23, 0.12, 0.05), 8: (0.79, 0.6, 0.43, 0.29, 0.18, 0.09, 0.03)}
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -389,9 +401,10 @@ def episodes(closure, start):
     return out
 
 
-def blink_profile(closing, hold, opening):
-    """the lid from the frame before the closing (0) to the frame the opening ends (0): 1 is shut"""
-    return [0.0] + list(CLOSING[closing]) + [1.0] * (1 + hold) + list(OPENING[opening]) + [0.0]
+def blink_profile(closing, hold, opening, openings=None):
+    """the lid from the frame before the closing (0) to the frame the opening ends (0): 1 is shut.  openings: the
+    table of the opening's shapes (OPENING, v7's, or HUMAN_OPENING)"""
+    return [0.0] + list(CLOSING[closing]) + [1.0] * (1 + hold) + list((openings or OPENING)[opening]) + [0.0]
 
 
 def creep_runs(b, start):
@@ -404,8 +417,11 @@ def creep_runs(b, start):
 
 # ---- the plan -------------------------------------------------------------------------------
 
-def plan(inp, seed=0, hold=None):
-    """the new face motion and the report.  hold: {morph: weight} kept on every frame (see check_hold)"""
+def plan(inp, seed=0, hold=None, style="human"):
+    """the new face motion and the report.  hold: {morph: weight} kept on every frame (see check_hold); style: "human"
+    or "v7" (STYLES)"""
+    if style not in STYLES:
+        raise ValueError("the style is one of %s, not %r" % (", ".join(STYLES), style))
     rng = random.Random(seed)
     frames = inp.frames
     original = morph_keys(inp.face)
@@ -420,7 +436,7 @@ def plan(inp, seed=0, hold=None):
     env = envelope([(p.start, p.end) for p in phrases], frames, rng)
     expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has)
     smile = track(expressions.get(SMILE, keys.get(SMILE, [])), frames)
-    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng)
+    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style)
     if blink is not None and SMILE in expressions:
         allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
         expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
@@ -453,7 +469,7 @@ def plan(inp, seed=0, hold=None):
     blink_report["new"]["closure_over_the_author"] = _r(max(0.0, float(shut_new.max() - max(1.0, author.max()))), 3)
     blink_report["before"]["closure_max"] = _r(author.max(), 3)
     report = {
-        "frames": [0, frames - 1], "seed": seed, "intro": intro,
+        "frames": [0, frames - 1], "seed": seed, "style": style, "intro": intro,
         "expression": {"before": measure_expressions(original, frames, speed),
                        "new": measure_expressions(new, frames, speed), "changes": len(events),
                        "moved_to_head": sum(1 for e in events if e["shift"] != 0),
@@ -784,8 +800,12 @@ def modulate(source, placed, env, part, frames):
 
 # ---- blinks ---------------------------------------------------------------------------------
 
-def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
+def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7"):
     """the new まばたき keys and what was done"""
+    human = style == "human"
+    closings = HUMAN_CLOSING_FRAMES if human else CLOSING_FRAMES
+    openings = HUMAN_OPENING_FRAMES if human else OPENING_FRAMES
+    table = HUMAN_OPENING if human else OPENING
     b_keys = keys.get(BLINK)
     if not b_keys:
         return None, {"list": []}
@@ -825,9 +845,9 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
     b = base.copy()
     out = []
     for f, cause in chosen:
-        closing, hold = rng.choice(CLOSING_FRAMES), (1 if rng.random() < 0.4 else 0)
-        opening = rng.choice(OPENING_FRAMES)
-        prof = blink_profile(closing, hold, opening)
+        closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
+        opening = rng.choice(openings)
+        prof = blink_profile(closing, hold, opening, table)
         for i, p in enumerate(prof):
             g = f + i
             if g >= frames:
@@ -1657,18 +1677,21 @@ def summary_of(report):
 
 
 def run(face_path, dance_path, gaze_path, model_path, out_path, audio_path=None, cues_path=None, report_path=None, seed=0,
-        hold=None):
+        hold=None, style="human"):
     started = time.time()
+    if style not in STYLES:
+        raise ValueError("the style is one of %s, not %r" % (", ".join(STYLES), style))
     check_distinct(face_path, dance_path, gaze_path, model_path, out_path, report_path, audio_path, cues_path)
     paths = [os.path.abspath(p) for p in (face_path, dance_path, gaze_path, model_path, out_path)]
     inp = load(paths[0], paths[1], paths[2], paths[3], audio_path and os.path.abspath(audio_path),
                cues_path and os.path.abspath(cues_path))
-    result = plan(inp, seed, hold)
+    result = plan(inp, seed, hold, style)
     write_bytes(paths[4], vmd.dumps(result.motion))
     back = vmd.load(paths[4])
     files = {"face": paths[0], "dance": paths[1], "gaze": paths[2], "model": paths[3], "out": paths[4],
              "audio": audio_path and os.path.abspath(audio_path), "cues": cues_path and os.path.abspath(cues_path)}
-    summary = dict(files, keys=len(back.morphs), seed=seed, held=result.report["held"], **summary_of(result.report))
+    summary = dict(files, keys=len(back.morphs), seed=seed, style=style, held=result.report["held"],
+                   **summary_of(result.report))
     if report_path:
         full = os.path.abspath(report_path)
         write_bytes(full, (json.dumps(dict(files, keys=len(back.morphs), **result.report), ensure_ascii=True, indent=1)
@@ -1692,10 +1715,13 @@ def main(argv=None):
     p.add_argument("--hold", action="append", metavar="NAME=WEIGHT",
                    help="keep a morph the face motion does not animate at WEIGHT (0 to 1) on every frame; repeatable "
                         "(Sour's Rin: --hold 瞳1off=1 shows the dark pupil, --hold HL２=1 the catchlight)")
+    p.add_argument("--style", choices=STYLES, default="human",
+                   help="human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; "
+                        "v7: the face of the MV v7 again, byte for byte")
     args = p.parse_args(argv)
     try:
         result = run(args.face, args.dance, args.gaze, args.model, args.out, args.audio, args.cues, args.report, args.seed,
-                     parse_hold(args.hold))
+                     parse_hold(args.hold), style=args.style)
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
