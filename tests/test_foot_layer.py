@@ -110,6 +110,186 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(on.tolist(), [False, False, False, True, True, True, False, False, True])
 
 
+def fake_foot(F, floor=0.0):
+    """measure_feet's arrays for one foot standing flat on `floor`, not moving"""
+    q = np.tile([0.0, 0.0, 0.0, 1.0], (F, 1))
+    z = np.zeros(F)
+    return {"low": z + floor, "flat_low": z + floor, "flat_heel_low": z + floor, "flat_fore_low": z + floor,
+            "heel_low": z + floor, "fore_low": z + floor, "roll": z.copy(), "pitch": z.copy(), "dorsi": z.copy(),
+            "inversion": z.copy(), "adduction": z.copy(), "mtp": z.copy(), "toes_pitch": z.copy(),
+            "heel_xz": np.zeros((F, 2)), "fore_xz": np.tile([0.0, -1.5], (F, 1)), "ankle": np.zeros((F, 3)),
+            "q_foot": q, "q_ex": q.copy()}
+
+
+class SummaryTest(unittest.TestCase):
+    def test_penetration_and_hover(self):
+        f = fake_foot(10)
+        f["low"][3:5] = [-0.01, -0.05]                  # 0.4 and 4 mm too low; the second also below the dark plane
+        f["flat_low"][6:8] = 0.111                      # in contact but hovering 8.9 mm
+        r = foot_layer.summarize(f, np.ones(10, dtype=bool), 0.0)
+        self.assertEqual(r["penetration"]["frames"], 2)
+        self.assertEqual(r["penetration"]["below_plane_frames"], 1)
+        self.assertAlmostEqual(r["penetration"]["deepest_cm"], 0.4, 3)
+        self.assertEqual(r["hover_in_contact_over_5mm"], 2)
+
+    def test_slide_and_pivot(self):
+        f = fake_foot(21)
+        f["heel_xz"][10:, 0] = np.linspace(0.0, 0.5, 11)        # frames 10..20: the whole foot slides 0.5 sideways
+        f["fore_xz"][10:, 0] = np.linspace(0.0, 0.5, 11)
+        r = foot_layer.summarize(f, np.ones(21, dtype=bool), 0.0)
+        self.assertAlmostEqual(r["slide_per_contact_cm"]["max"], 4.0, 3)
+        g = fake_foot(21)
+        ang = np.radians(np.linspace(0, 40, 21))                  # a pivot on the ball: the heel swings, the ball stays
+        g["heel_xz"] = np.stack([1.5 * np.sin(ang), -1.5 + 1.5 * np.cos(ang)], axis=1)
+        r = foot_layer.summarize(g, np.ones(21, dtype=bool), 0.0)
+        self.assertLess(r["slide_per_contact_cm"]["max"], 1e-9)
+
+    def test_touchdown_kinds_and_heel_drop(self):
+        F = 40
+        f = fake_foot(F)
+        contact = np.zeros(F, dtype=bool)
+        contact[10:20] = True                           # forefoot first, the heel down 3 frames later
+        f["flat_heel_low"][10:13] = [0.3, 0.2, 0.1]
+        contact[25:35] = True                           # flat
+        r = foot_layer.summarize(f, contact, 0.0)
+        self.assertEqual(r["touchdowns"]["count"], 2)
+        self.assertEqual(r["touchdowns"]["first"], {"heel": 0, "fore": 1, "flat": 1})
+        self.assertEqual(r["touchdowns"]["fore_frames_to_heel_down"]["max"], 3)
+        self.assertEqual(r["touchdowns"]["fore_heel_down_within_1_frame"], 0)
+        self.assertEqual(r["liftoffs"]["flat"], 2)
+
+    def test_anatomy_beyond(self):
+        f = fake_foot(5)
+        f["dorsi"][:] = [0, 25, 40, -50, -70]
+        f["inversion"][:] = [0, 33, 40, -22, -30]
+        r = foot_layer.summarize(f, np.ones(5, dtype=bool), 0.0)
+        a = r["anatomy"]
+        self.assertEqual((a["dorsiflexion"]["beyond_reference"], a["dorsiflexion"]["beyond_cap"]), (2, 1))
+        self.assertEqual((a["plantarflexion"]["beyond_reference"], a["plantarflexion"]["beyond_cap"]), (2, 1))
+        self.assertEqual((a["inversion"]["beyond_reference"], a["inversion"]["beyond_cap"]), (2, 1))
+        self.assertEqual((a["eversion"]["beyond_reference"], a["eversion"]["beyond_cap"]), (2, 1))
+
+
+def rolled(s, deg):
+    """the turn about the foot's own forward axis that drops its outside edge by `deg` (an inversion)"""
+    return axis_angle(tuple(SHOE.sides[s].a0), (1.0 if s == "左" else -1.0) * deg)
+
+
+def run_layer(*keys, frames=1, **params):
+    """(input measures, output measures, output motion, plan) for a motion of `frames` frames"""
+    m_in = motion(*keys)
+    if fk.last_frame(m_in) < frames - 1:
+        m_in.bones.append(key("センター", frames - 1))
+    out, plan = foot_layer.layer(RIG, SHOE, m_in, params)
+    f_in = foot_layer.measure_feet(RIG, SHOE, m_in, range(frames))
+    f_out = foot_layer.measure_feet(RIG, SHOE, out, range(frames))
+    return f_in, f_out, out, plan
+
+
+def turn_between(qa, qb):
+    return np.degrees(2.0 * np.arccos(np.clip(np.abs(np.sum(qa * qb, axis=-1)), -1.0, 1.0)))
+
+
+class LayerTest(unittest.TestCase):
+    def test_loaded_rolled_foot_is_laid_flat_on_the_floor(self):
+        # the knees bent (センター down) so that the legs reach the floor 0.111 below the trace's
+        q = rolled("左", 15.0)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("左足首", 0, q),
+                                           key("センター", 0, position=(0, -0.8, 0)))
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(a["roll"][0]), 10.0)                                 # the input stands rolled
+        self.assertLess(abs(float(b["roll"][0])), 0.5)
+        self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.002)               # on the visible floor
+        self.assertAlmostEqual(float(b["pitch"][0]), float(a["pitch"][0]), delta=0.3)
+        self.assertAlmostEqual(float(b["yaw"][0]), float(a["yaw"][0]), delta=0.3)
+        self.assertLess(np.linalg.norm(b["ankle"][0, [0, 2]] - a["ankle"][0, [0, 2]]), 0.01)   # not slid
+        # the right foot (untouched in the input) is moved down onto the floor too
+        self.assertAlmostEqual(float(f_out["右"]["low"][0]), 0.0, delta=0.002)
+
+    def test_mmd_ik_reproduces_the_planned_foot(self):
+        q = rolled("左", 12.0)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0.3, 0.0, -0.2)), key("左足首", 0, q),
+                                           key("センター", 0, position=(0, -0.6, 0)))
+        self.assertLess(float(turn_between(f_out["左"]["q_foot"][0], plan["左"]["q_t"][0])), 0.05)
+        self.assertLess(float(turn_between(f_out["右"]["q_foot"][0], plan["右"]["q_t"][0])), 0.05)
+
+    def test_foot_in_the_air_keeps_its_turn(self):
+        # lifted 3 units, pointed 30 degrees and rolled 10: inside the range, far from the floor: only the floor shift
+        q = fk.multiply(axis_angle((1, 0, 0), -30.0), rolled("左", 10.0))
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, 3.0, -1.0)), key("左足首", 0, q),
+                                           key("センター", 0, position=(0, -1.0, 0)))
+        a, b = f_in["左"], f_out["左"]
+        self.assertLess(float(turn_between(a["q_foot"][0], b["q_foot"][0])), 0.3)
+        self.assertAlmostEqual(float(b["ankle"][0, 1] - a["ankle"][0, 1]), -0.111, delta=0.003)
+
+    def test_nothing_below_the_floor(self):
+        # the trace's foot pitched toes-down 12 degrees with its ankle at the floor's height: the toes sink in
+        q = axis_angle((1, 0, 0), -12.0)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("センター", 0, position=(0, -0.8, 0)))
+        self.assertLess(float(f_in["左"]["low"][0]), -0.05)
+        self.assertGreater(float(f_out["左"]["low"][0]), -foot_layer.PEN_TOL)
+
+    def test_roll_past_the_subtalar_cap_stays_on_its_edge(self):
+        # the shank leaning out 40 degrees over a foot the trace keeps level: inverting so much is past the cap, so the
+        # foot keeps part of its roll and stands on its edge (the edge on the floor, the foot inside its range)
+        lean = axis_angle((0, 0, 1), -40.0)                         # the thigh turned so that the shank leans out
+        f_in, f_out, out, plan = run_layer(key("センター", 0, position=(0, -1.5, 0)), key("左足", 0, lean),
+                                           key("左足ＩＫ", 0, position=(0.8, 0.0, 0.0)))
+        b = f_out["左"]
+        cap = foot_layer.REFERENCE["inversion"][1]
+        self.assertLess(abs(float(b["inversion"][0])), cap + 0.5)
+        self.assertGreater(float(b["low"][0]), -foot_layer.PEN_TOL)
+
+    def test_raised_heel_stands_on_the_ball_with_the_toes_flat(self):
+        # the foot pitched 25 degrees toes-down with its rigid tip on the trace's floor (the trace's tiptoe)
+        q = axis_angle((1, 0, 0), -25.0)
+        center = key("センター", 0, position=(0, -0.8, 0))
+        probe = measure(key("左足ＩＫ", 0, q), center)["左"]
+        lift = 0.111 - float(probe["low"][0])
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, lift, 0)), center)
+        a, b = f_in["左"], f_out["左"]
+        self.assertAlmostEqual(float(a["low"][0]), 0.111, delta=0.03)               # near the trace's floor
+        self.assertLess(float(a["toes_pitch"][0]), -20.0)                              # the input stands on the tip
+        self.assertLess(abs(float(b["toes_pitch"][0])), 3.0)                           # the toe box lies flat
+        self.assertAlmostEqual(float(b["mtp"][0] - b["rest_mtp"]), -float(b["pitch"][0]), delta=3.0)
+        self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.003)
+        self.assertLess(float(b["pitch"][0]), -15.0)                                   # the heel stays raised
+
+    def test_rom_caps_an_overpointed_foot_in_the_air(self):
+        q = axis_angle((1, 0, 0), -120.0)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, 3.0, 0)), key("左足首", 0, q),
+                                           key("センター", 0, position=(0, -1.0, 0)))
+        cap = foot_layer.REFERENCE["plantarflexion"][1]
+        self.assertGreater(float(-f_in["左"]["dorsi"][0]), cap)
+        self.assertLess(float(-f_out["左"]["dorsi"][0]), cap)
+
+    def test_other_bones_untouched(self):
+        q = rolled("左", 15.0)
+        m_in = motion(key("左足ＩＫ", 0, q), key("左足首", 0, q), key("センター", 0, position=(0.1, -0.5, 0.2)),
+                      key("下半身", 0, axis_angle((0, 1, 0), 10.0)), key("左足", 0, axis_angle((0, 1, 0), 5.0)))
+        out, _ = foot_layer.layer(RIG, SHOE, m_in, {})
+        written = {"左足ＩＫ", "右足ＩＫ", "左つま先ＩＫ", "右つま先ＩＫ", "左足首", "右足首", "左足先EX", "右足先EX"}
+        before = sorted((k.name, k.frame, k.position, k.rotation, k.interpolation) for k in m_in.bones if k.name not in written)
+        after = sorted((k.name, k.frame, k.position, k.rotation, k.interpolation) for k in out.bones if k.name not in written)
+        self.assertEqual(before, after)
+        self.assertEqual({k.name for k in out.bones} - {k.name for k in m_in.bones}, written - {k.name for k in m_in.bones})
+
+    def test_landing_is_smooth(self):
+        # the foot comes down over 12 frames rolled 15 degrees and stands 8: no step bigger than the input's
+        q = rolled("左", 15.0)
+        keys = [key("センター", 0, position=(0, -0.8, 0)), key("左足首", 0, q),
+                key("左足ＩＫ", 0, q, position=(0, 2.0, -0.5)), key("左足ＩＫ", 12, q), key("左足ＩＫ", 20, q)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=21)
+        a, b = f_in["左"], f_out["左"]
+        step_in = np.abs(np.diff(a["ankle"][:, 1]))
+        step_out = np.abs(np.diff(b["ankle"][:, 1]))
+        self.assertLess(float(step_out.max()), float(step_in.max()) + 0.02)
+        turn_out = foot_layer.angle_steps(b["q_foot"])
+        self.assertLess(float(turn_out.max()), float(a["roll"][0]) / 3.0 + 0.5)       # laid flat over 3 frames or more
+        self.assertLess(abs(float(b["roll"][14])), 0.5)                                # flat once it stands
+        self.assertGreater(abs(float(b["roll"][0])), 14.0)                             # untouched high up
+
+
 RIN_PATHS = ("C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx",
              "C:/Users/nayta/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx")
 

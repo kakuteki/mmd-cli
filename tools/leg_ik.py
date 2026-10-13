@@ -46,8 +46,10 @@ EPS_DEG = 1.0e-3                 # saba: a CCD step smaller than this (degrees) 
 
 def qmul(a, b):
     """the Hamilton product a * b (b first, then a)"""
-    ax, ay, az, aw = np.moveaxis(np.asarray(a, dtype=np.float64), -1, 0)
-    bx, by, bz, bw = np.moveaxis(np.asarray(b, dtype=np.float64), -1, 0)
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    ax, ay, az, aw = a[..., 0], a[..., 1], a[..., 2], a[..., 3]
+    bx, by, bz, bw = b[..., 0], b[..., 1], b[..., 2], b[..., 3]
     return np.stack([aw * bx + ax * bw + ay * bz - az * by,
                      aw * by - ax * bz + ay * bw + az * bx,
                      aw * bz + ax * by - ay * bx + az * bw,
@@ -62,8 +64,8 @@ def qrot(q, v):
     """v turned by the unit quaternion q (q v q^-1)"""
     q = np.asarray(q, dtype=np.float64)
     v = np.asarray(v, dtype=np.float64)
-    x, y, z, w = np.moveaxis(q, -1, 0)
-    vx, vy, vz = np.moveaxis(v, -1, 0)
+    x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+    vx, vy, vz = v[..., 0], v[..., 1], v[..., 2]
     tx, ty, tz = 2.0 * (y * vz - z * vy), 2.0 * (z * vx - x * vz), 2.0 * (x * vy - y * vx)
     return np.stack([vx + w * tx + y * tz - z * ty, vy + w * ty + z * tx - x * tz, vz + w * tz + x * ty - y * tx], axis=-1)
 
@@ -344,56 +346,57 @@ def _solve_leg(state, side, F):
     t_ankle, _ = state.local(side.ankle)
     _, thigh = state.local(side.thigh)
     _, knee = state.local(side.knee)                     # before the first plane step the knee has its key
+    thigh, knee = thigh.copy(), knee.copy()
     plane = np.zeros(F)
     best_thigh, best_knee, best_plane = thigh.copy(), knee.copy(), plane.copy()
     best = np.full(F, np.inf)
     active = np.ones(F, dtype=bool)
-    xaxis = np.tile([1.0, 0.0, 0.0], (F, 1))
-
-    def chain(thigh_local, knee_local):
-        rt = qmul(parent_rot, thigh_local)
-        kpos = hip_pos + qrot(rt, o_knee + t_knee)
-        rk = qmul(rt, knee_local)
-        apos = kpos + qrot(rk, o_ankle + t_ankle)
-        return rt, kpos, rk, apos
-
+    lo, hi = side.knee_lo, side.knee_hi
     for it in range(side.leg_loops):
-        if not active.any():
+        idx = np.flatnonzero(active)            # the frames still improving (each is solved on its own)
+        if len(idx) == 0:
             break
+        n = len(idx)
+        xaxis = np.broadcast_to(np.array([1.0, 0.0, 0.0]), (n, 3))
+        P, H, G = parent_rot[idx], hip_pos[idx], goal[idx]
+        TK, TA = o_knee + t_knee[idx], o_ankle + t_ankle[idx]
+        th, kn, pl = thigh[idx], knee[idx], plane[idx]
+
+        def chain(thigh_local, knee_local):
+            rt = qmul(P, thigh_local)
+            kpos = H + qrot(rt, TK)
+            rk = qmul(rt, knee_local)
+            return rt, kpos, rk, kpos + qrot(rk, TA)
+
         # the knee: in its plane (about its own X)
-        rt, kpos, rk, apos = chain(thigh, knee)
+        rt, kpos, rk, apos = chain(th, kn)
         inv = qconj(rk)
-        vik = unit(qrot(inv, goal - kpos))
+        vik = unit(qrot(inv, G - kpos))
         vt = unit(qrot(inv, apos - kpos))
         angle = np.minimum(np.arccos(np.clip(np.sum(vik * vt, axis=-1), -1.0, 1.0)), side.leg_limit)
         d1 = np.sum(qrot(qaxis(xaxis, angle), vt) * vik, axis=-1)
         d2 = np.sum(qrot(qaxis(xaxis, -angle), vt) * vik, axis=-1)
-        new = plane + np.where(d1 > d2, angle, -angle)
+        new = pl + np.where(d1 > d2, angle, -angle)
         if it == 0:
-            lo, hi = side.knee_lo, side.knee_hi
             outside = (new < lo) | (new > hi)
             mirrored_in = outside & (-new > lo) & (-new < hi)
             half = 0.5 * (lo + hi)
             further = outside & ~mirrored_in & (np.abs(half - new) > np.abs(half + new))
             new = np.where(mirrored_in | further, -new, new)
-        new = np.clip(new, side.knee_lo, side.knee_hi)
-        plane = np.where(active, new, plane)
-        knee = np.where(active[:, None], qaxis(xaxis, plane), knee)
+        pl = np.clip(new, lo, hi)
+        kn = qaxis(xaxis, pl)
         # the thigh: the plain CCD step
-        rt, kpos, rk, apos = chain(thigh, knee)
-        thigh = _ccd_step(hip_pos, rt, thigh, apos, goal, side.leg_limit, active)
-        rt, kpos, rk, apos = chain(thigh, knee)
-        dist = np.linalg.norm(apos - goal, axis=-1)
-        better = active & (dist < best)
-        worse = active & ~better
-        best = np.where(better, dist, best)
-        best_thigh = np.where(better[:, None], thigh, best_thigh)
-        best_knee = np.where(better[:, None], knee, best_knee)
-        best_plane = np.where(better, plane, best_plane)
-        thigh = np.where(worse[:, None], best_thigh, thigh)
-        knee = np.where(worse[:, None], best_knee, knee)
-        plane = np.where(worse, best_plane, plane)
-        active &= ~worse
+        rt, kpos, rk, apos = chain(th, kn)
+        th = _ccd_step(H, rt, th, apos, G, side.leg_limit, np.ones(n, dtype=bool))
+        rt, kpos, rk, apos = chain(th, kn)
+        dist = np.linalg.norm(apos - G, axis=-1)
+        better = dist < best[idx]
+        bi, wi = idx[better], idx[~better]
+        best[bi] = dist[better]
+        thigh[bi], knee[bi], plane[bi] = th[better], kn[better], pl[better]
+        best_thigh[bi], best_knee[bi], best_plane[bi] = th[better], kn[better], pl[better]
+        thigh[wi], knee[wi], plane[wi] = best_thigh[wi], best_knee[wi], best_plane[wi]
+        active[wi] = False
     state.local_rot[side.thigh] = thigh
     state.local_rot[side.knee] = knee
     state.forget([side.thigh, side.knee, side.ankle, side.toe])
@@ -431,15 +434,17 @@ def _solve_toe(state, side, F):
     return best
 
 
-def solve(rig, motion, frames):
+def solve(rig, motion, frames, keys=None):
     """side -> dict of arrays over `frames` (F of them): world positions hip, knee, ankle, toe (the つま先 bone), ex
     (足先EX, or the ankle when the model has none), goal_ankle (足ＩＫ), goal_toe (つま先ＩＫ); world rotations
     q_thigh, q_shin, q_foot (足首), q_ex (足先EX), q_ik (足ＩＫ); local turns local_thigh, local_knee, local_foot;
     knee_angle (the knee's X turn, radians, negative bends) and reach (the ankle's distance from its goal) and
-    toe_reach"""
+    toe_reach.  `keys` (bone index -> (positions [F, 3], rotations [F, 4] as applied), as sample() gives them) solves
+    those values instead of the motion's (a layer trying keys out without writing a VMD)."""
     frames = list(frames)
     F = len(frames)
-    keys = sample(rig, motion, frames)
+    if keys is None:
+        keys = sample(rig, motion, frames)
     state = _State(rig, keys)
     for index in rig.order:                 # FK of everything first (IK links with their keys)
         state.world(index)
