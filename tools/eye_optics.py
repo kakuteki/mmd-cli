@@ -1650,12 +1650,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     fronts = [a for name in ahead for a in ahead[name]]
     mm0 = pp["iris_mm"] * scales.get("ratio", 0.25)
     geo0 = geometry[eye_idx[0]]
-    # the open eye: its closing morphs at OPEN_LID or less and its iris facing the camera (not handed over aside)
+    # the open eye: its closing morphs at OPEN_LID or less and its iris facing the camera (not handed over aside); the
+    # lights put behind the iris (not shown) left out
     open_rows = {}
     for c in lights:
         k = side_of[c["eye_index"]]
         open_rows[c["name"]] = [i for i in range(n) if closing[c["eye_index"]][i] <= OPEN_LID and aside_of[i][k] == 0.0
-                                and discs[c["name"]][i] is not None]
+                                and discs[c["name"]][i] is not None and sinks[c["name"]][i] < 2]
     open_disc = [math.hypot(*discs[name][i]) for name in open_rows for i in open_rows[name]]
     open_iris = [math.hypot(*irises[name][i]) for name in open_rows for i in open_rows[name] if irises[name][i] is not None]
     rim_report = {}
