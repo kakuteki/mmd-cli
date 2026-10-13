@@ -71,7 +71,8 @@ numbers above).  "human" (the default since stage 6) changes:
   (up to LID_QUIET more for a quiet one), LID_SHOWN[1] at rest, LID_SHOWN[2] for a moment after a phrase; each change
   over a few frames, or at once while the eye is shut when a blink comes near (LID_HIDE).  The lid follows the eyes up
   and down by LID_FOLLOW a degree on every frame (lid_follow; v7 sets it once per fixation), never shutting a smiling
-  eye between the blinks (CLOSURE_CAP).
+  eye between the blinks (CLOSURE_CAP).  まばたき's keys are those straight lines need to stay within
+  BLINK_KEY_TOLERANCE of every frame (bake_within): a key a frame would crowd MMD's registered points.
 * The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (LONG_HOLD,
   LONG_OPENING) after some phrases (P_LONG) and where nothing is sung; a blink SMILE_END_BLINK frames before a smile
   falls (P_SMILE_END); none about a flash (FLASH_QUIET).
