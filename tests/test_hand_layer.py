@@ -754,6 +754,14 @@ class OrderTest(unittest.TestCase):
         self.assertLess(t_pip - t_mp, 2.0)
         self.assertAlmostEqual(float(pip[45]), 0.0, places=3)
 
+    def test_a_hand_that_opens_and_closes_again_at_once_closes_in_the_closing_order(self):
+        # a fist opened over 3 frames and closed again over 6: two changes, not one (taken as one, from fist to fist,
+        # the closing got the opening's order and the length of both)
+        mp, pip, dip = self.run_([(0, "fist"), (20, "fist"), (23, "open"), (29, "fist"), (LAST, "fist")])
+        t_mp, t_pip = self.middle(mp, 23, 34), self.middle(pip, 23, 34)
+        self.assertGreater(t_mp - t_pip, 0.1)                            # closing: the PIP leads
+        self.assertLess(t_mp - t_pip, 0.114 * 6 + 0.3)                   # by a share of the closing's own length
+
 
 class LayerPassiveTest(unittest.TestCase):
     """the fingers lag the hand: they trail when it speeds up and run on when it stops, the open hand more than a fist"""

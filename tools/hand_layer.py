@@ -771,8 +771,9 @@ def time_shift(x, lag):
 
 def order(hands, ang, longest, scale=1.0):
     """the joints of each long finger moved out of step within each change of its shape (a run where its MP + PIP +
-    DIP changes faster than ORDER_SPEED): every joint is read lag frames earlier, lag = ORDER[closing or opening][joint]
-    x scale x the change's length in frames (at most `longest`), faded in and out over the change; holds are untouched"""
+    DIP closes, or opens, faster than ORDER_SPEED; a turn of the way starts a new change): every joint is read lag
+    frames earlier, lag = ORDER[closing or opening][joint] x scale x the change's length in frames (at most `longest`),
+    faded in and out over the change; holds are untouched"""
     report = {"changes": 0}
     for hand in hands.values():
         for f, js in chains(hand).items():
@@ -780,10 +781,13 @@ def order(hands, ang, longest, scale=1.0):
                 continue
             bones = {k: ang[js[k].bone] for k in ("mp", "pip", "dip")}
             s = sum(b[0] for b in bones.values())
-            moving = np.abs(np.gradient(s)) * FPS > ORDER_SPEED
+            speed = np.gradient(s) * FPS
             lags = {k: np.zeros(len(s)) for k in bones}
-            for a, b in runs(moving):
-                way = "close" if s[min(b + 1, len(s) - 1)] > s[max(a - 1, 0)] else "open"
+            # a change closes or opens the finger: a hand that opens and at once closes again makes two changes, each
+            # with its own way and length (cut where the way turns, as the measures' shape_changes cut)
+            changes = [(a, b, "close") for a, b in runs(speed > ORDER_SPEED)] + \
+                      [(a, b, "open") for a, b in runs(speed < -ORDER_SPEED)]
+            for a, b, way in sorted(changes):
                 n = b - a + 1
                 report["changes"] += 1
                 for k in bones:
