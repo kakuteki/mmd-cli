@@ -2,10 +2,13 @@
 
     python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json]
 """
+import argparse
 import importlib.util
+import json
 import math
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -839,3 +842,80 @@ def change(hands, ang_in, ang_out, held):
             rows[j.bone] = {"all": stats(np.abs(d)), "held_still": stats(np.abs(d[h & still]))}
         out[side] = rows
     return out
+
+
+# ---- the command --------------------------------------------------------------------------------------------------
+
+def load_model(path):
+    return pmd.load(path) if path.lower().endswith(".pmd") else pmx.load(path)
+
+
+def short(report):
+    out = {"untouched_identical": report["untouched"]["identical"]}
+    for side, _ in SIDES:
+        if side not in report["output"]:
+            continue
+        a, b = report["input"][side], report["output"][side]
+        out[side] = {"frozen_share": [a.get("frozen_while_hand_moves", {}).get("share"),
+                                      b.get("frozen_while_hand_moves", {}).get("share")],
+                     "finger_speed_over_1900": [a["finger_speed_deg_s"]["over_1900"], b["finger_speed_deg_s"]["over_1900"]],
+                     "dip_after_pip_p50": [a["dip_after_pip_frames"].get("p50"), b["dip_after_pip_frames"].get("p50")]}
+    return out
+
+
+def run(dance_path, model_path, out_path, report_path=None, params=None, log=None):
+    started = time.time()
+    A.check_distinct(dance_path, model_path, out_path, report_path)
+    dance = vmd.load(dance_path)
+    model = load_model(model_path)
+    pulp = pulp_from_mesh(model_path) if model_path.lower().endswith(".pmx") else {}
+    result = layer(model, dance, params, pulp=pulp, log=log)
+    A.write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
+    report = dict({"in": os.path.abspath(dance_path), "model": os.path.abspath(model_path),
+                   "out": os.path.abspath(out_path)}, **result.report)
+    summary = dict({"out": os.path.abspath(out_path), "keys": len(result.motion.bones)}, **short(report))
+    report["seconds"] = summary["seconds"] = _r(time.time() - started, 1)
+    if report_path:
+        A.write_bytes(os.path.abspath(report_path), (json.dumps(report, ensure_ascii=True, indent=1) + "\n").encode("ascii"))
+        summary["report"] = os.path.abspath(report_path)
+    return summary
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("dance", help="the dance motion (.vmd)")
+    ap.add_argument("model", help="the model (.pmx or .pmd; a .pmx's mesh gives the thumb's pulp side)")
+    ap.add_argument("out", help="the dance with the layer (.vmd)")
+    ap.add_argument("--report", help="write the measures of the input and the output to this JSON")
+    for s in STEPS:
+        ap.add_argument("--no-" + s, action="store_true", help="leave out the step %s" % s)
+    ap.add_argument("--relax-gain", type=float, default=RELAX_GAIN,
+                    help="the relaxed hand's cascade and tenodesis times this (default %g)" % RELAX_GAIN)
+    ap.add_argument("--speed-max", type=float, default=SPEED_MAX_DEG_S,
+                    help="degrees per second of a finger's MP + PIP + DIP, past which a change is spread (default %g)"
+                         % SPEED_MAX_DEG_S)
+    ap.add_argument("--dip-lag", type=float, default=DIP_LAG_FRAMES,
+                    help="frames the DIP follows its PIP while they move (default %g)" % DIP_LAG_FRAMES)
+    ap.add_argument("--gravity", action="store_true", help="let gravity bend the fingers too (off: the dancer holds "
+                                                            "the shape she shows against it)")
+    ap.add_argument("--verbose", action="store_true", help="progress on stderr")
+    a = ap.parse_args(argv)
+    params = default_params()
+    params.update({s: not getattr(a, "no_" + s) for s in STEPS})
+    params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, dip_lag=a.dip_lag, gravity=a.gravity)
+    log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
+    try:
+        if not a.speed_max > 0.0:
+            raise ValueError("--speed-max must be above 0")
+        if a.dip_lag < 0.0 or a.relax_gain < 0.0:
+            raise ValueError("--dip-lag and --relax-gain must not be negative")
+        result = run(a.dance, a.model, a.out, a.report, params, log)
+    except (ValueError, OSError, KeyError) as exc:
+        print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
+        return 2
+    print(json.dumps(dict({"ok": True}, **result), ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

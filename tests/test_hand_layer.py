@@ -1,9 +1,14 @@
 """tools/hand_layer.py: the hands and the fingers made anatomical (the joints read in the hand's own frame, the range of
 motion, the coupling of the joints and of the fingers, the relaxed hand and the fingers' passive lag), baked onto a
 dance."""
+import contextlib
 import importlib.util
+import io
+import json
 import math
 import os
+import shutil
+import tempfile
 import unittest
 
 import numpy as np
@@ -541,6 +546,102 @@ class LayerPassiveTest(unittest.TestCase):
     def test_a_fist_moves_less_than_an_open_hand(self):
         arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
         self.assertLess(np.abs(self.dev("fist", arm)).max(), 0.7 * np.abs(self.dev("open", arm)).max())
+
+
+class ReportTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        dance = hand_dance([(0, "open"), (20, "open"), (21, "fist"), (LAST, "fist")],
+                           arm=[(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)])
+        cls.result = hand_layer.layer(MODEL, dance, pulp=PULP)
+
+    def test_the_input_and_the_output_are_measured_alike(self):
+        rep = self.result.report
+        for part in ("input", "output"):
+            r = rep[part]["左"]
+            for key_ in ("rom", "hinge", "coupling", "open_hand", "steps_deg_per_frame", "finger_speed_deg_s",
+                         "dip_after_pip_frames", "frozen_while_hand_moves"):
+                self.assertIn(key_, r, (part, key_))
+
+    def test_the_snap_was_too_fast_before_and_is_not_after(self):
+        rep = self.result.report
+        self.assertGreater(rep["input"]["左"]["finger_speed_deg_s"]["over_1900"], 0)
+        self.assertEqual(rep["output"]["左"]["finger_speed_deg_s"]["over_1900"], 0)
+
+    def test_the_fingers_no_longer_hold_dead_still_while_the_hand_swings(self):
+        rep = self.result.report
+        before = rep["input"]["左"]["frozen_while_hand_moves"]
+        after = rep["output"]["左"]["frozen_while_hand_moves"]
+        self.assertGreater(before["frozen_frames"], after["frozen_frames"])
+
+    def test_the_change_is_reported_per_joint(self):
+        self.assertIn("held_still", self.result.report["change"]["左"]["左中指２"])
+
+
+def read_bytes(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def read_json(path):
+    with open(path, encoding="ascii") as fh:
+        return json.load(fh)
+
+
+class CommandTest(unittest.TestCase):
+    def test_writes_the_dance_and_the_report(self):
+        folder = tempfile.mkdtemp()
+        try:
+            dance_path, model_path = os.path.join(folder, "d.vmd"), os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as fh:
+                fh.write(model_bytes())
+            vmd.dump(hand_dance([(0, "open"), (30, "fist"), (LAST, "fist")]), dance_path)
+            out, rep = os.path.join(folder, "o.vmd"), os.path.join(folder, "r.json")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = hand_layer.main([dance_path, model_path, out, "--report", rep])
+            self.assertEqual(code, 0, buf.getvalue())
+            line = json.loads(buf.getvalue().strip().splitlines()[-1])
+            self.assertTrue(line["ok"])
+            self.assertTrue(os.path.isfile(out))
+            report = read_json(rep)
+            self.assertIn("output", report)
+            self.assertEqual(len(fk.tracks_of(vmd.load(out))["左中指２"]), LAST + 1)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_refuses_to_write_over_the_dance(self):
+        folder = tempfile.mkdtemp()
+        try:
+            dance_path, model_path = os.path.join(folder, "d.vmd"), os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as fh:
+                fh.write(model_bytes())
+            vmd.dump(hand_dance([(0, "open"), (LAST, "open")]), dance_path)
+            before = read_bytes(dance_path)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = hand_layer.main([dance_path, model_path, dance_path])
+            self.assertEqual(code, 2)
+            self.assertEqual(read_bytes(dance_path), before)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_a_step_can_be_switched_off(self):
+        folder = tempfile.mkdtemp()
+        try:
+            dance_path, model_path = os.path.join(folder, "d.vmd"), os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as fh:
+                fh.write(model_bytes())
+            vmd.dump(hand_dance([(0, "open"), (LAST, "open")]), dance_path)
+            out, rep = os.path.join(folder, "o.vmd"), os.path.join(folder, "r.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = hand_layer.main([dance_path, model_path, out, "--report", rep, "--no-relax", "--no-passive"])
+            self.assertEqual(code, 0)
+            report = read_json(rep)
+            self.assertFalse(report["params"]["relax"])
+            self.assertFalse(report["params"]["passive"])
+        finally:
+            shutil.rmtree(folder)
 
 
 if __name__ == "__main__":
