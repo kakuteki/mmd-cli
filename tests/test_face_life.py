@@ -416,6 +416,40 @@ class LidFollowsMovingEyesTest(unittest.TestCase):
         self.assertGreater(float(np.abs(rise).max()), 0.08)
 
 
+class BakeWithinTest(unittest.TestCase):
+    """a lid that follows the eyes bends on almost every frame: baked key for key it fills MMD's registered points
+    (20,000 for a model's morph keys with every motion loaded).  bake_within keeps the keys that straight lines need
+    to stay within a tolerance of every frame, and never turns a slow rise broken by small dips into a10's creep"""
+
+    def test_the_keys_stay_within_the_tolerance_and_are_fewer(self):
+        f = np.arange(600)
+        v = 0.2 + 0.1 * np.sin(f / 40.0) + 0.3 * (f >= 300) + 0.004 * np.sin(f / 2.0)
+        keys = face_life.bake_within(v, 0.001, 0)
+        back = face_life.track(keys, len(v))
+        self.assertLessEqual(float(np.abs(back - v).max()), 0.001 + 1e-6)
+        self.assertLess(len(keys), 0.8 * len(face_life.bake(v)))
+        self.assertEqual((keys[0][0], keys[-1][0]), (0, 599))
+
+    def test_a_slow_rise_broken_by_small_dips_stays_without_creep(self):
+        f = np.arange(200)
+        v = np.full(200, 0.1)
+        i = np.arange(40)
+        v[80:120] = 0.1 + 0.0005 * i + 0.0008 * (i % 2)         # up 0.0013, down 0.0003, up ...: no creep; a line within
+                                                                  # 0.001 of it rises 0.0005 a frame for 40 frames: one
+        v[120:] = v[119]
+        self.assertEqual(face_life.creep_runs(v, 0), [])
+        keys = face_life.bake_within(v, 0.001, 0)
+        self.assertEqual(face_life.creep_runs(face_life.track(keys, len(v)), 0), [])
+
+    def test_the_human_blink_track_is_baked_within_the_tolerance(self):
+        # a slow nod (2 s): the lid follows a gentle curve that bake keys on every frame where it bends (50 keys here)
+        head, eyes, _ = nodding(700, 790, period=60, swing=6.0)
+        motion = face_life.plan(inputs(head=head, eyes=eyes), seed=0).motion
+        frames = sorted(k.frame for k in motion.morphs if k.name == "まばたき")
+        inside = [f for f in frames if 702 <= f <= 788]
+        self.assertLess(len(inside), 0.5 * 87)
+
+
 def moving_point(moves, frames=F, rest=(0.0, 10.0, 0.0)):
     """a point's world position per frame: at rest, moved by `moves` [(first, frames, (dx, dy, dz))], each move eased
     in and out (smoothstep) over its frames and held after"""

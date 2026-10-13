@@ -199,6 +199,9 @@ LID_FOLLOW = (0.029, 0.021)     # まばたき per degree the eyes look down / u
                                 # moves 0.15 iris radii per 0.1 of まばたき, the iris' top 0.04 per degree: stage 6 q2).
                                 # It goes with the eyes' pitch on every frame (lid_follow): the lid follows the eye however
                                 # it moves, and a dancer's eyes move in the head without saccades, turning against the nod
+BLINK_KEY_TOLERANCE = 0.001     # human style: まばたき's keys are those straight lines need to stay this near every frame
+                                # (bake_within; eye_optics' keys.morph).  Following the eyes the lid bends on most frames:
+                                # a key a frame took 4,000 of the 20,000 points MMD registers for a model's morph keys
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -294,6 +297,42 @@ def bake(values, places=6):
     bend = np.abs(v[:-2] - 2.0 * v[1:-1] + v[2:]) > 10.0 ** -places
     keep = [0] + [i + 1 for i in np.where(bend)[0]] + [n - 1]
     return [(int(i), float(v[i])) for i in keep]
+
+
+def bake_within(values, tolerance, start=0, places=6):
+    """[(frame, weight)] of a per-frame curve: the keys that straight lines between them need to stay within
+    `tolerance` of every frame (from the first frame on, each next key as far on as the line still fits).  A stretch
+    where the lines would make a creep the curve has not (creep_runs from `start`: a rise broken by small dips drawn
+    straight) keeps all of bake's keys"""
+    v = np.round(np.asarray(values, float), places)
+    n = len(v)
+    if n <= 2:
+        return bake(v, places)
+    keep = {0}
+    i = 0
+    while i < n - 1:
+        j = i + 1
+        while j + 1 < n:
+            k = j + 1
+            x = np.arange(i, k + 1)
+            if np.abs(v[i] + (v[k] - v[i]) * (x - i) / float(k - i) - v[i:k + 1]).max() > tolerance:
+                break
+            j = k
+        keep.add(j)
+        i = j
+    exact = [f for f, _ in bake(v, places)]
+    before = set(creep_runs(v, start))
+    for _ in range(10):
+        frames_ = sorted(keep)
+        drawn = np.interp(np.arange(n), frames_, v[frames_])
+        new = [r for r in creep_runs(drawn, start) if r not in before]
+        if not new:
+            break
+        for s, e in new:
+            keep.update(f for f in exact if s - 1 <= f <= e + 1)
+    else:
+        keep = set(exact)
+    return [(int(f), float(v[f])) for f in sorted(keep)]
 
 
 def runs(mask):
@@ -1048,7 +1087,7 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
     if flashes is not None:
         info["flashes"] = flashes
-    return bake(b), info
+    return (bake_within(b, BLINK_KEY_TOLERANCE, opened) if human else bake(b)), info
 
 
 class Schedule:
