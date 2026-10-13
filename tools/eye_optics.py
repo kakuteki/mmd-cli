@@ -1477,9 +1477,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                 anchors = [(0.0, 0.0)]
                 if mid_iris is not None:
                     # on the way to where the iris' centre shows, the first place both seen on the iris and within the
-                    # reach on the rim's plane (the way from it to duv stays within the reach there), then that place
-                    anchors += [tuple(t * m for m in mid_iris) for t in (0.25, 0.5, 0.75, 1.0)
-                                if math.hypot(*mid_iris) * t <= lp["reach"]] + [mid_iris]
+                    # reach on the rim's plane (the way from it to duv stays within the reach there: up to where the way
+                    # crosses the reach), then that place
+                    far = math.hypot(*mid_iris)
+                    steps = [t for t in (0.25, 0.5, 0.75, 1.0) if far * t <= lp["reach"]]
+                    if far > lp["reach"]:
+                        steps.append(lp["reach"] / far)
+                    anchors += [tuple(t * m for m in mid_iris) for t in steps] + [mid_iris]
                 for anchor in anchors:
                     if not inside(anchor):
                         continue
