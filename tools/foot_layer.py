@@ -418,7 +418,8 @@ def summarize(f, contact, floor_y, limits=None):
         if name == "dorsiflexion":                      # a foot on the floor may go to the weight-bearing lunge's
             cap = np.where(loaded, max(cap, LOADED_DORSI_CAP), cap)
         rom[name] = {"beyond_reference": int((x > start).sum()), "beyond_cap": int((x > cap).sum()),
-                     "beyond_cap_loaded": int(((x > cap) & loaded).sum()), "max": _r(float(x.max()), 1)}
+                     "beyond_cap_loaded": int(((x > cap) & loaded).sum()), "max": _r(float(x.max()), 1),
+                     "beyond_cap_runs": [[int(a), int(b)] for a, b in runs(x > cap)][:20]}
     out["anatomy"] = rom
     out["adduction_abs_deg"] = stats(np.abs(f["adduction"]))
     out["steps"] = {"foot_deg_per_frame": stats(angle_steps(f["q_foot"])),
@@ -451,6 +452,10 @@ EASE = 4                        # frames over which the flattening and the toes 
 LOAD_D0 = 1.0                   # units added to a foot's distance from the pelvis in the load share (8 cm)
 LOAD_SHARE = (0.15, 0.45)       # a foot bearing less of the weight than the first keeps its roll and its toes; more
                                 # than the second: laid flat, the toes bent under a raised heel
+ROLL_DORSI = (45.0, 60.0)       # |dorsiflexion| over which the roll against the shank fades out of the corrections
+SHANK_SWING = 25.0              # degrees a frame: a shank turning faster takes no range correction of the foot
+ROLL_JUMP, FOOT_STILL = 40.0, 15.0   # degrees a frame: a roll that jumps more while the foot turns less is a jump of
+                                     # the shank (the reference), not of the foot
 FLAT_PITCH = (30.0, 60.0)       # degrees of pitch from the floor: a sole steeper than the first is laid flat less and
                                 # less, steeper than the second (a foot pointed down at the floor) keeps its roll
 ROUNDS = 3                      # rounds of solving the legs again to put the sole on the floor
@@ -513,6 +518,21 @@ def load_shares(shoe, feet, sol, p):
     return {s: np.where(total > 1e-9, g[s] / np.maximum(total, 1e-9), 0.0) for s in g}, near
 
 
+def roll_reliable(inv, dorsi, q_foot):
+    """0..1 per frame: how far the roll against the shank can be trusted.  It is read about the foot's axis from the
+    shank, so it means nothing when the foot points along the shank (|dorsiflexion| toward 90: ROLL_DORSI), and it
+    jumps when the shank swings past the foot (a leg folded 140 degrees in a kick) while the foot itself hardly turns:
+    a frame whose roll moves more than ROLL_JUMP degrees while the foot turns less than FOOT_STILL is such a jump, and
+    it and its neighbours (EASE frames, a raised cosine) are left as the input has them."""
+    r = 1.0 - smoothstep(np.abs(dorsi), *ROLL_DORSI)
+    d_inv = np.abs((np.diff(inv) + 180.0) % 360.0 - 180.0)
+    still = angle_steps(q_foot) < FOOT_STILL
+    jump = np.zeros(len(inv))
+    jump[1:] = np.maximum(jump[1:], (d_inv > ROLL_JUMP) & still)
+    jump[:-1] = np.maximum(jump[:-1], (d_inv > ROLL_JUMP) & still)
+    return r * (1.0 - smooth_max_envelope(jump, EASE))
+
+
 def spread(x, radius=None):
     """a correction spread over the neighbouring frames (each side's largest kept, raised cosine of EASE frames): a
     range passed for one or two frames (the peak of a kick) is corrected without the foot snapping in and out"""
@@ -551,11 +571,19 @@ def foot_targets(o, f, leg, rest, share, near, p):
         start, cap = lim["dorsiflexion"]
         dcap = cap + v * max(0.0, p["loaded_dorsi_cap"] - cap)             # a loaded foot dorsiflexes further
         dd = np.where(dorsi >= 0.0, soft_limit(dorsi, start, dcap), -soft_limit(-dorsi, *lim["plantarflexion"])) - dorsi
+        # where the shank itself swings faster than SHANK_SWING a frame (a leg folded in a kick, MMD's knee turning
+        # round), holding the foot inside the range would whip it with the shank: left as the input has it
+        swing = np.zeros(len(sv))
+        swing[1:] = np.degrees(np.arccos(np.clip(np.sum(sv[1:] * sv[:-1], axis=1), -1.0, 1.0)))
+        fast = (swing > SHANK_SWING).astype(float)
+        fast[:-1] = np.maximum(fast[:-1], fast[1:])
+        dd = dd * (1.0 - smooth_max_envelope(fast, 2))
         a = qrot(q, o.a0)
         q = turn_about(np.cross(sv, a), -spread(dd), q)         # about the shank x foot normal: + lowers dorsiflexion
         d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
         inv = inv - rest["inversion"]
         di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
+        di = di * roll_reliable(inv, d_b, leg["q_foot"])          # d_b: 90 - the angle of the foot to the shank
         q = turn_about(qrot(q, o.a0), side_sign * spread(di), q)   # about the foot's forward axis
     toes = np.zeros(len(q))
     if p["toes"]:
