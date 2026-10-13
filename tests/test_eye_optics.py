@@ -476,7 +476,8 @@ class OpticsTest(unittest.TestCase):
         for name in ("右HL２", "右HL", "左HL２", "左HL"):
             self.assertEqual(rep["light"]["rim"][name]["open_frames"], 91)
             self.assertEqual(rep["light"]["lids"][name], {"slid_frames": 0, "at_drawn_frames": 0, "slid_max": 0.0,
-                                                          "onto_iris_frames": 0, "behind_iris_frames": 0})
+                                                          "onto_iris_frames": 0, "behind_iris_frames": 0,
+                                                          "beside_iris_frames": 0})
         self.assertIn("behind_rim_plane_frames", rep["light"])
         self.assertEqual(len(keys_of_morph(result.motion, "HL消")), 2)       # never on: the first and the last frame
         doc = pmx_edit.loads(MODEL_BYTES)

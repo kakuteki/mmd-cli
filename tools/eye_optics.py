@@ -52,8 +52,10 @@ The light (the catchlight bones; RESEARCH 1.4, formula A):
   dish seen at a slant shows its deep side off where its rim's plane puts it (the MV's 45.7, 144.1, 214.1, 224.9 and
   253.9 seconds showed lights over the eye white so, at 0.47 to 0.90 on the plane); the light is held back toward the
   iris' centre as the camera sees it, along the camera's rays (iris_hit, the first meeting), until its ray meets the
-  iris within the reach (or its drawn radius, if further out).  The key's turn is held under light.key_cap degrees
-  (soft from 60 % of it).
+  iris within the reach (or its drawn radius, if further out).  Seen so much at a slant that no place of the iris
+  holds it (the dish hides its own centre: the MV's 253.9 seconds, the eyes 62 degrees off the camera), the light goes
+  behind its iris instead of hanging beside it.  The key's turn is held under light.key_cap degrees (soft from 60 %
+  of it).
 * The light rides on its iris (light.ride): the bone also moves, along the camera's line (so where the light shows
   does not change), until the light lies as high in front of the iris' surface where it has come to as it was drawn
   in front of the surface where it was drawn (iris_heights: the iris' frontmost surface over a grid, in the rest
@@ -1383,6 +1385,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     rim = {c["name"]: [] for c in lights}           # (the formula's radius on the disc, the rim's push back) or None
     slid = {c["name"]: [] for c in lights}          # how far the lids moved the light (iris radii)
     guarded = {c["name"]: [0, 0] for c in lights}     # light-frames brought down onto the iris, and behind it
+    off_iris = {c["name"]: 0 for c in lights}         # light-frames put behind the iris: no place of it held them
     sinks = {c["name"]: [] for c in lights}
     off_camera, off_axis, sideways, aside_of = [], [], [], []
     for i in range(n):
@@ -1514,6 +1517,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                         got = slide_off_lids(clear, planned, at_drawn) or (tuple(at_drawn), 0.0)
                         target = on_disc(got[0])
                         state, moved_by = got[1], math.hypot(got[0][0] - planned[0], got[0][1] - planned[1])
+            # where the camera sees the iris so much at a slant that no place of it holds the light (its dish hides
+            # its own centre), the light would hang beside the iris: it goes behind it (below)
+            unseen = False
+            if lp["seen"] and at is not None:
+                final = disc_coordinates(cam, target, centre, ax, ay, normal, ix, iy)
+                got = seen_at(final) if final is not None else None
+                unseen = got is None or math.hypot(*got[1]) > 1.0
             radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
             turn = light_turn(pivot, c["depth"], radial, target, _unit(_sub(cam, target)), lp["damping"], offset=drag)
             key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
@@ -1539,7 +1549,15 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             # the guard: nothing of the lids, the face or the hair between the light and its iris behind it (else it
             # would show on them): the light is brought down onto its iris, under them; failing that, behind it
             depth = 0
+            forced = unseen and lp["ride"] and c["name"] in drawn_height
+            if forced:
+                depth = 2
+                shift, height = ride(-(lp["hide_depth"] + moved_iris[2]), dragged_too=True)
+                spot = _add(_add(bare, shift), dragged)
+                off_iris[c["name"]] += 1
             for wanted in ((lp["hug_height"] - moved_iris[2]), -(lp["hide_depth"] + moved_iris[2])):
+                if forced:
+                    break
                 behind = iris_hit(cam, spot, heights[e], bone, moved_iris)
                 back = _world_of(behind, bone) if behind is not None else None
                 ray = _unit(_sub(spot, cam))
@@ -1555,7 +1573,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                 shift, height = ride(wanted, dragged_too=True)
                 spot = _add(_add(bare, shift), dragged)
             behind = iris_hit(cam, spot, heights[e], bone, moved_iris, geo)        # None: not over the iris
-            if depth:
+            if depth and not forced:
                 guarded[c["name"]][depth - 1] += 1
             sinks[c["name"]].append(depth)
             keys_t[c["name"]].append(fk.rotate(inv, shift))                    # the bone's move, in the head's frame
@@ -1634,7 +1652,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     lids_report = {name: {"slid_frames": sum(1 for s in lid_state[name] if 0.0 < s < 1.0),
                           "at_drawn_frames": sum(1 for s in lid_state[name] if s == 0.0),
                           "slid_max": _r(max(slid[name]) if slid[name] else 0.0),
-                          "onto_iris_frames": guarded[name][0], "behind_iris_frames": guarded[name][1]}
+                          "onto_iris_frames": guarded[name][0], "behind_iris_frames": guarded[name][1],
+                          "beside_iris_frames": off_iris[name]}
                    for name in lid_state}
     report = {
         "frames": [frames[0], frames[-1]], "seed": seed, "params": p,
