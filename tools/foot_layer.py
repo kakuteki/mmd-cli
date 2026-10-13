@@ -1,6 +1,11 @@
 """Feet that carry weight: the ankles, the feet and the toes of a dance made anatomical, and their contact with the floor.
 
-    python tools/foot_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y 0.0] [--measure-only]
+    python tools/foot_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--measure-only]
+
+The floor is at the height of the rest pose's soles unless --floor-y gives another (the trace's floor: the tracer stood
+the model there, so the dance is not moved down; 0.111 for Sour's Rin).  tools/make_stage.py's floor lies at y 0, under
+those soles by 0.111 (9 mm): raise the floor to them, or give --floor-y 0 to lower every foot by that much (the legs
+then reach 9 mm further, and where the pelvis is low already they fall short; the report counts it as unreached).
 
 (the measuring half; the layer itself is described where it is defined, below.)
 
@@ -494,8 +499,13 @@ def continuous(q):
     return q
 
 
+def trace_floor(shoe):
+    """the trace's floor: where the rest pose's soles stand (the tracer stood the model there), the two sides' mean"""
+    return float(np.mean([o.floor for o in shoe.sides.values()]))
+
+
 def default_params():
-    return {"floor_y": 0.0, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
+    return {"floor_y": None, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
             "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP}
 
@@ -616,10 +626,27 @@ def smooth_max_envelope(x, radius):
 
 
 def layer(rig, shoe, motion, params=None, log=None):
-    """(the output motion, the plan per side) of the foot layer on `motion` (see the module docstring)"""
+    """(the output motion, the plan per side) of the foot layer on `motion`.
+
+    Per frame and foot, from the feet as MMD's IK puts them:
+    * the load: a foot near the floor bears the body's weight in proportion to its nearness to the pelvis seen from
+      above (load_shares); a loaded foot whose sole faces the floor has its roll laid flat (the sole flat across the
+      floor, the subtalar joint taking the shank's lean), eased in and out over EASE frames;
+    * the range: the ankle complex's angles held inside REFERENCE by a soft limit (a foot on the floor may dorsiflex to
+      LOADED_DORSI_CAP), except where the shank swings faster than SHANK_SWING a frame or the roll's reference cannot
+      be trusted (roll_reliable): there the input's foot stays;
+    * the toes: a loaded foot with its heel raised stands on the ball, 足先EX extending the toes so that the toe box
+      lies on the floor (up to the cap of the MTP's extension);
+    * the height: the trace's floor moved onto the floor (params["floor_y"]; by default the trace's own: no shift),
+      the sole of a foot on the floor (the ON_FLOOR band) exactly on it, nothing below it.  MMD's IK is solved again
+      and the foot IK's goal pushed on where the ankle lags behind it (ROUNDS); the frames that do not follow are
+      left at their best and listed (miss);
+    * twice: the range is checked again against the shank that MMD reaches with the new heights.
+    The keys, on every frame (build): 足ＩＫ's height (its horizontal place and its turn as the input has them),
+    つま先ＩＫ's goal on the turned toe, 足首's turn (the start of the toe IK), 足先EX's bend.  Nothing else changes."""
     p = default_params()
     p.update(params or {})
-    floor_y = float(p["floor_y"])
+    floor_y = trace_floor(shoe) if p["floor_y"] is None else float(p["floor_y"])
     F = fk.last_frame(motion) + 1
     frames = list(range(F))
     keys = IK.sample(rig, motion, frames)
@@ -656,7 +683,7 @@ def layer(rig, shoe, motion, params=None, log=None):
             target = v * floor_y + (1.0 - v) * (low0 + d1)
             target = target + smooth_max_envelope(floor_y - target, 3)
             plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": target - low0, "d1": d1, "target_low": target,
-                       "share": shares[s]}
+                       "share": shares[s], "floor_y": floor_y}
             set_dy(s, plan[s]["dy"])
         out_sol = IK.solve(rig, motion, frames, new_keys)
         # MMD's IK does not always put the ankle on its goal (a nearly straight leg lags behind a lifted goal): push
@@ -764,25 +791,31 @@ def main(argv=None):
     ap.add_argument("model")
     ap.add_argument("out", nargs="?")
     ap.add_argument("--report")
-    ap.add_argument("--floor-y", type=float, default=0.0)
+    ap.add_argument("--floor-y", type=float, default=None,
+                    help="the visible floor's height (MMD units); the rest pose's soles (the trace's floor) if not given")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
+    if not args.measure_only:
+        if not args.out:
+            raise SystemExit("OUT.vmd is needed unless --measure-only")
+        if os.path.abspath(args.out) == os.path.abspath(args.dance):
+            raise SystemExit("OUT.vmd is the dance itself: write the layer's dance elsewhere")
     rig = IK.LegRig.load(args.model)
     shoe = Shoe.load(rig, args.model)
     motion = vmd.load(args.dance)
     off = rig.check_iks(motion)
     if off:
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
-    m_in, rep, contacts = measure_report(rig, shoe, motion, args.floor_y)
-    report = {"input": rep, "floor_y": args.floor_y, "heel_pitch_deg": HEEL_PITCH_DEG, "seconds": None}
+    floor_y = trace_floor(shoe) if args.floor_y is None else args.floor_y
+    m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y)
+    report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "heel_pitch_deg": HEEL_PITCH_DEG,
+              "seconds": None}
     if not args.measure_only:
-        if not args.out:
-            raise SystemExit("OUT.vmd is needed unless --measure-only")
-        out, plan = layer(rig, shoe, motion, {"floor_y": args.floor_y})
+        out, plan = layer(rig, shoe, motion, {"floor_y": floor_y})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
-        m_out, rep_out, _ = measure_report(rig, shoe, back, args.floor_y, contact_from=contacts)
+        m_out, rep_out, _ = measure_report(rig, shoe, back, floor_y, contact_from=contacts)
         report["output"] = rep_out
         report["change"] = {TAGS[s]: compare(m_in[s], m_out[s], contacts[s]) for s in m_in}
         report["unreached"] = {TAGS[s]: {"frames": int((np.abs(pl["miss"]) > 0.025).sum()),
@@ -793,6 +826,7 @@ def main(argv=None):
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
             json.dump(report, fh, ensure_ascii=False, indent=1)
+    print("floor y %.4f (the trace's %.4f)" % (floor_y, report["trace_floor"]))
     for which in ("input", "output"):
         for tag, r in report.get(which, {}).items():
             print("%s %s: contact %d/%d, penetration %d frames (deepest %s cm), hover in contact p50 %s cm, roll in "

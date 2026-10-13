@@ -2,9 +2,14 @@
 contact with the floor), and the layer that makes them carry weight anatomically.  Checked by what the feet do: a
 rolled foot is measured rolled and laid flat on the floor by the layer, the ball and the toes take a raised heel, the
 sole neither sinks into nor hovers over the floor while loaded, the air keeps the dance's foot, nothing else moves."""
+import contextlib
+import io
+import json
 import math
 import os
+import shutil
 import struct
+import tempfile
 import unittest
 
 import numpy as np
@@ -215,7 +220,7 @@ class LayerTest(unittest.TestCase):
         # the knees bent (センター down) so that the legs reach the floor 0.111 below the trace's
         q = rolled("左", 15.0)
         f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("左足首", 0, q),
-                                           key("センター", 0, position=(0, -0.8, 0)))
+                                           key("センター", 0, position=(0, -0.8, 0)), floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertGreater(float(a["roll"][0]), 10.0)                                 # the input stands rolled
         self.assertLess(abs(float(b["roll"][0])), 0.5)
@@ -237,7 +242,7 @@ class LayerTest(unittest.TestCase):
         # lifted 3 units, pointed 30 degrees and rolled 10: inside the range, far from the floor: only the floor shift
         q = fk.multiply(axis_angle((1, 0, 0), -30.0), rolled("左", 10.0))
         f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, 3.0, -1.0)), key("左足首", 0, q),
-                                           key("センター", 0, position=(0, -1.0, 0)))
+                                           key("センター", 0, position=(0, -1.0, 0)), floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertLess(float(turn_between(a["q_foot"][0], b["q_foot"][0])), 0.3)
         self.assertAlmostEqual(float(b["ankle"][0, 1] - a["ankle"][0, 1]), -0.111, delta=0.003)
@@ -245,7 +250,7 @@ class LayerTest(unittest.TestCase):
     def test_nothing_below_the_floor(self):
         # the trace's foot pitched toes-down 12 degrees with its ankle at the floor's height: the toes sink in
         q = axis_angle((1, 0, 0), -12.0)
-        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("センター", 0, position=(0, -0.8, 0)))
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("センター", 0, position=(0, -0.8, 0)), floor_y=0.0)
         self.assertLess(float(f_in["左"]["low"][0]), -0.05)
         self.assertGreater(float(f_out["左"]["low"][0]), -foot_layer.PEN_TOL)
 
@@ -254,7 +259,7 @@ class LayerTest(unittest.TestCase):
         # foot keeps part of its roll and stands on its edge (the edge on the floor, the foot inside its range)
         lean = axis_angle((0, 0, 1), -40.0)                         # the thigh turned so that the shank leans out
         f_in, f_out, out, plan = run_layer(key("センター", 0, position=(0, -1.5, 0)), key("左足", 0, lean),
-                                           key("左足ＩＫ", 0, position=(0.8, 0.0, 0.0)))
+                                           key("左足ＩＫ", 0, position=(0.8, 0.0, 0.0)), floor_y=0.0)
         b = f_out["左"]
         cap = foot_layer.REFERENCE["inversion"][1]
         self.assertLess(abs(float(b["inversion"][0])), cap + 0.5)
@@ -266,7 +271,7 @@ class LayerTest(unittest.TestCase):
         center = key("センター", 0, position=(0, -0.8, 0))
         probe = measure(key("左足ＩＫ", 0, q), center)["左"]
         lift = 0.111 - float(probe["low"][0])
-        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, lift, 0)), center)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, lift, 0)), center, floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertAlmostEqual(float(a["low"][0]), 0.111, delta=0.03)               # near the trace's floor
         self.assertLess(float(a["toes_pitch"][0]), -20.0)                              # the input stands on the tip
@@ -299,7 +304,7 @@ class LayerTest(unittest.TestCase):
         # weight-bearing lunge's 40 degrees: the heel comes up, the forefoot stays on the floor
         keys = (key("センター", 0, position=(0, -5.5, 0)), key("左足ＩＫ", 0, position=(0, 0, 1.2)),
                 key("右足ＩＫ", 0, position=(0, 0, 1.2)))
-        f_in, f_out, out, plan = run_layer(*keys)
+        f_in, f_out, out, plan = run_layer(*keys, floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertGreater(float(a["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 3.0)
         self.assertLess(float(b["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 0.5)
@@ -313,7 +318,8 @@ class LayerTest(unittest.TestCase):
         center = key("センター", 0, position=(0, -1.6, 0))
         probe = measure(key("左足ＩＫ", 0, q, position=(3.5, 0.0, 0.0)), key("左足首", 0, q), center)["左"]
         lift = 0.111 - float(probe["low"][0])
-        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(3.5, lift, 0.0)), key("左足首", 0, q), center)
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(3.5, lift, 0.0)), key("左足首", 0, q), center,
+                                           floor_y=0.0)
         a, b = f_in["左"], f_out["左"]
         self.assertLess(float(plan["左"]["share"][0]), 0.2)
         self.assertGreater(float(plan["右"]["share"][0]), 0.8)
@@ -346,6 +352,64 @@ class LayerTest(unittest.TestCase):
         self.assertLess(float(turn_out.max()), float(a["roll"][0]) / 3.0 + 0.5)       # laid flat over 3 frames or more
         self.assertLess(abs(float(b["roll"][14])), 0.5)                                # flat once it stands
         self.assertGreater(abs(float(b["roll"][0])), 14.0)                             # untouched high up
+
+    def test_default_floor_is_the_traces(self):
+        # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved
+        # down: the foot in the air keeps its height, the loaded rolled foot is laid flat with its sole on that floor
+        q = rolled("左", 15.0)
+        air = fk.multiply(axis_angle((1, 0, 0), -30.0), rolled("右", 10.0))
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q), key("左足首", 0, q),
+                                           key("右足ＩＫ", 0, air, position=(0, 3.0, -1.0)), key("右足首", 0, air),
+                                           key("センター", 0, position=(0, -0.8, 0)))
+        self.assertAlmostEqual(float(plan["左"]["floor_y"]), 0.111, 5)
+        self.assertGreater(float(f_in["左"]["roll"][0]), 10.0)
+        self.assertLess(abs(float(f_out["左"]["roll"][0])), 0.5)
+        self.assertAlmostEqual(float(f_out["左"]["low"][0]), 0.111, delta=0.002)
+        self.assertAlmostEqual(float(f_out["右"]["ankle"][0, 1] - f_in["右"]["ankle"][0, 1]), 0.0, delta=0.003)
+
+
+class CommandTest(unittest.TestCase):
+    def write_inputs(self, folder):
+        src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
+        q = rolled("左", 15.0)
+        vmd.dump(motion(key("左足ＩＫ", 0, q), key("左足首", 0, q), key("センター", 0, position=(0, -0.8, 0)),
+                        key("センター", 3, position=(0, -0.8, 0))), src)
+        with open(model, "wb") as fh:
+            fh.write(DATA)
+        return src, model
+
+    def test_writes_the_dance_and_reports_it_against_the_traces_floor(self):
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = foot_layer.main([src, model, out, "--report", rep])
+            self.assertEqual(code, 0)
+            with open(rep, encoding="utf-8") as fh:
+                r = json.load(fh)
+            self.assertAlmostEqual(r["floor_y"], 0.111, 5)                 # none given: the trace's floor
+            self.assertTrue(r["untouched"]["identical"])
+            self.assertGreater(r["input"]["L"]["roll_in_contact_deg"]["max"], 10.0)
+            self.assertLess(r["output"]["L"]["roll_in_contact_deg"]["max"], 0.5)
+            self.assertEqual(r["output"]["L"]["penetration"]["frames"], 0)
+            self.assertLess(r["output"]["L"]["hover_in_contact_cm"]["max"], 0.02)
+            self.assertEqual(len({k.frame for k in vmd.load(out).bones if k.name == "左足首"}), 4)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_refuses_to_write_over_the_dance(self):
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            with open(src, "rb") as fh:
+                before = fh.read()
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                foot_layer.main([src, model, src])
+            with open(src, "rb") as fh:
+                self.assertEqual(fh.read(), before)
+        finally:
+            shutil.rmtree(folder)
 
 
 RIN_PATHS = ("C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx",
