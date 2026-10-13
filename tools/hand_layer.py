@@ -406,10 +406,17 @@ WRIST_ELLIPSE = {"centre": (-8.2, -1.8), "half_axes": (35.0, 73.2), "tilt_deg": 
 # a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free
 # hand's active palmar flexion and ulnar deviation (Gracia-Ibanez 2020, table 1)
 FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
+# where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left
+# out (what the fingers touch holds them; Varghese 2020 and Su 2005 measured free, relaxed fingers): a fingertip within
+# the first distance (mm) of the eyes, of the line 上半身 - 首 (motor_layer's contact), of the line from the hips to 下半身,
+# of the other forearm or hand, fully; none past the second.  Padded by CONTACT_PAD frames each way
+CONTACT_MM = {"face": (70.0, 100.0), "chest": (60.0, 90.0), "waist": (80.0, 110.0), "other": (35.0, 60.0)}
+CONTACT_PAD = 4
 
 
 def default_params():
     p = {s: True for s in STEPS}
+    p["contact"] = True
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
              stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE)
     return p
@@ -689,14 +696,17 @@ def relaxedness(hand, ang):
     return r * (1.0 - smoothstep(s.max(axis=0), OPEN[2], OPEN[2] + 30.0))
 
 
-def relax(hands, ang, wrist_ext, gain):
+def relax(hands, ang, wrist_ext, gain, touch=None):
     """the relaxed hand: each joint of a relaxed hand leans toward the relaxed hand in the air at the wrist's angle,
-    flexion += gain x r x (RELAXED_AIR + TENODESIS x (wrist extension - RELAXED_WRIST) - flexion)"""
+    flexion += gain x r x (RELAXED_AIR + TENODESIS x (wrist extension - RELAXED_WRIST) - flexion); touch: side -> 0 .. 1,
+    the hand on something (contact_weights), where it does not lean"""
     out = {}
     for side, hand in hands.items():
         r = relaxedness(hand, ang)
         if r is None:
             continue
+        if touch is not None and side in touch:
+            r = r * (1.0 - touch[side])
         w = wrist_ext[side]
         for f, js in chains(hand).items():
             if f == THUMB or f not in RELAXED_AIR:
@@ -852,7 +862,7 @@ def smooth_frames(x, reach):
     return out.reshape((len(x),) + x.shape[1:])
 
 
-def passive(hands, ang, loc, world, P, params, held):
+def passive(hands, ang, loc, world, P, params, held, touch=None):
     """the fingers' lag (radians -> degrees added to the flexion; the long fingers' MP, PIP, DIP by PASSIVE_SHARE, the
     thumb's MP and IP): each finger's body driven by the hand's world angular acceleration about its MP's axis and the
     MP's world linear acceleration (gravity only when asked: the dancer holds the shape she shows against it), the
@@ -889,6 +899,8 @@ def passive(hands, ang, loc, world, P, params, held):
         delta = np.degrees(passive_response(forcing, omega, zeta, FPS))
         cap = params["passive_cap"]
         delta = soft_band(delta, cap, cap)
+        if touch is not None and side in touch:
+            delta = delta * (1.0 - touch[side])[:, None]
         rep = {}
         for c, b in enumerate(bodies):
             js = chains(hand)[b.finger]
@@ -902,6 +914,57 @@ def passive(hands, ang, loc, world, P, params, held):
                              "zeta_open": _r(b.zeta["open"], 2), "scale": _r(b.scale, 3), "coeff_per_m": _r(b.coeff, 1)}
         report[side] = rep
     return report
+
+
+def contact_weights(model, motion, F, sides):
+    """side -> 0 .. 1 per frame: a fingertip of the hand at the face, the chest, the waist or the other forearm and hand
+    (CONTACT_MM, from the bones' positions under the input), padded by CONTACT_PAD frames and smoothed over 5"""
+    P = _positions(model)
+    tips = {s: [s + f + "３先" for f in LONG if s + f + "３先" in P] for s in sides}
+    eyes = [n for n in ("左目", "右目") if n in P] or [n for n in ("頭",) if n in P]
+    chest = ["上半身", "首"] if all(n in P for n in ("上半身", "首")) else []
+    hips = [n for n in ("左足", "右足") if n in P] if "下半身" in P else []
+    names = set(eyes) | set(chest) | set(hips) | ({"下半身"} if hips else set())
+    for s in sides:
+        names |= set(tips[s]) | {s + n for n in ("ひじ", "手首", "中指１") if s + n in P}
+    out = {s: np.zeros(F) for s in sides}
+    if not names:
+        return out
+    pose = fk.Pose(model, motion, sorted(names))
+    W = {n: np.zeros((F, 3)) for n in names}
+    for f in range(F):
+        at = pose.at(f)
+        for n in names:
+            W[n][f] = at[n][0]
+    mm = UNIT_M * 1000.0
+
+    def to_line(p, a, b):
+        ab = b - a
+        t = np.clip(np.sum((p - a) * ab, axis=1) / np.maximum(np.sum(ab * ab, axis=1), 1e-12), 0.0, 1.0)
+        return np.linalg.norm(p - (a + t[:, None] * ab), axis=1) * mm
+
+    for s in sides:
+        o = "右" if s == "左" else "左"
+        c = np.zeros(F)
+        for t in tips[s]:
+            p = W[t]
+            if eyes:
+                c = np.maximum(c, 1.0 - smoothstep(np.linalg.norm(p - np.mean([W[e] for e in eyes], axis=0), axis=1) * mm,
+                                                   *CONTACT_MM["face"]))
+            if chest:
+                c = np.maximum(c, 1.0 - smoothstep(to_line(p, W["上半身"], W["首"]), *CONTACT_MM["chest"]))
+            if hips:
+                c = np.maximum(c, 1.0 - smoothstep(to_line(p, np.mean([W[h] for h in hips], axis=0), W["下半身"]),
+                                                   *CONTACT_MM["waist"]))
+            for a, b in ((o + "ひじ", o + "手首"), (o + "手首", o + "中指１")):
+                if a in W and b in W:
+                    c = np.maximum(c, 1.0 - smoothstep(to_line(p, W[a], W[b]), *CONTACT_MM["other"]))
+        padded = c.copy()
+        for k in range(1, CONTACT_PAD + 1):
+            padded[k:] = np.maximum(padded[k:], c[:-k])
+            padded[:-k] = np.maximum(padded[:-k], c[k:])
+        out[s] = np.convolve(np.pad(padded, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
+    return out
 
 
 def wrist_angles(model, loc, F):
@@ -966,10 +1029,14 @@ def layer(model, motion, params=None, pulp=None, log=None):
     relaxed = {s: relaxedness(h, ang) for s, h in hands.items()}
     held = {s: (1.0 - r) if r is not None else np.ones(F) for s, r in relaxed.items()}
     wrist = wrist_angles(model, loc, F)
+    touch = None
+    if p.get("contact", True) and (p["relax"] or p["passive"]):
+        touch = contact_weights(model, motion, F, [s for s in hands])
+        report["steps"]["contact_frames"] = {s: int((c > 0.5).sum()) for s, c in touch.items()}
     if p["relax"]:
         ext = {s: (-w[0] if w is not None else np.zeros(F)) for s, w in wrist.items()}
         report["steps"]["relax_frames"] = {s: int((r > 0.5).sum()) for s, r in
-                                           relax(hands, ang, ext, p["relax_gain"]).items()}
+                                           relax(hands, ang, ext, p["relax_gain"], touch).items()}
     # the shape the layer holds in each frame (the timing steps below move it in time): measured with the range applied
     static = {b: a.copy() for b, a in ang.items()}
     if p["rom"]:
@@ -979,7 +1046,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     sides = [s for s, _ in SIDES if s + "手首" in P and s in hands]
     world = hand_world(model, motion, F, sides) if sides else {}
     if p["passive"]:
-        report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held)
+        report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held, touch)
     if p["speed"]:
         # after the lag and the order, so that what they add is held to the speed too
         report["steps"]["speed_spread_steps"] = speed_limit(hands, ang, p["speed_max"])
@@ -1225,6 +1292,8 @@ def main(argv=None):
                     help="the joints' lags within a change of shape times this (default 1; 0 moves them together)")
     ap.add_argument("--order-max", type=float, default=ORDER_MAX,
                     help="the longest lag of a joint within a change, frames (default %g)" % ORDER_MAX)
+    ap.add_argument("--no-contact", action="store_true", help="relax and lag the fingers of a hand that touches the face, "
+                                                               "the body or the other arm too")
     ap.add_argument("--gravity", action="store_true", help="let gravity bend the fingers too (off: the dancer holds "
                                                             "the shape she shows against it)")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
@@ -1232,7 +1301,7 @@ def main(argv=None):
     params = default_params()
     params.update({s: not getattr(a, "no_" + s) for s in STEPS})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
-                  gravity=a.gravity)
+                  gravity=a.gravity, contact=not a.no_contact)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if not a.speed_max > 0.0:

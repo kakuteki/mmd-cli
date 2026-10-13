@@ -678,6 +678,22 @@ class RelaxTest(unittest.TestCase):
         self.assertGreater(sum(more_bent), sum(less_bent) + 4.0)
         del d_f
 
+    def test_a_hand_on_something_does_not_lean(self):
+        # touch 1 (the hand on the face, the body or the other arm) leaves the open hand as it is; touch 0 curls it
+        dance = hand_dance([(0, "open"), (LAST, "open")])
+        names = [j.bone for h in HANDS.values() for j in h.joints]
+        loc = hand_layer.joint_locals(dance, names, LAST + 1)[0]
+        ext = {s: np.full(LAST + 1, 17.5) for s in HANDS}
+        for t, moved in ((1.0, False), (0.0, True)):
+            ang = hand_layer.read_all(HANDS, loc)
+            before = {b: a.copy() for b, a in ang.items()}
+            hand_layer.relax(HANDS, ang, ext, hand_layer.RELAX_GAIN, {s: np.full(LAST + 1, t) for s in HANDS})
+            change = max(float(np.abs(ang[b] - before[b]).max()) for b in ang)
+            if moved:
+                self.assertGreater(change, 2.0)
+            else:
+                self.assertLess(change, 1e-9)
+
     def test_a_fist_and_a_pointing_finger_are_left(self):
         for shape, finger in (("fist", "中指"), ("point", "人指")):
             dance = hand_dance([(0, shape), (LAST, shape)])
@@ -761,6 +777,17 @@ class LayerPassiveTest(unittest.TestCase):
     def test_a_fist_moves_less_than_an_open_hand(self):
         arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
         self.assertLess(np.abs(self.dev("fist", arm)).max(), 0.7 * np.abs(self.dev("open", arm)).max())
+
+    def test_a_hand_on_something_does_not_trail(self):
+        # where the hand touches (contact_weights 1), what it touches holds the fingers: no lag
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        kept = hand_layer.contact_weights
+        hand_layer.contact_weights = lambda model, motion, F, sides: {s: np.ones(F) for s in sides}
+        try:
+            d = self.dev("open", arm)
+        finally:
+            hand_layer.contact_weights = kept
+        self.assertLess(np.abs(d).max(), 1e-6)
 
     def test_the_report_keeps_the_held_shape_apart_from_the_lag(self):
         # the shape of each frame (what the choreography holds) is measured before the timing: the lag moves the
@@ -976,6 +1003,32 @@ class RealDanceTest(unittest.TestCase):
         self.assertGreater(a["under_0.3"], 10)
         # left: the frames where the DIP follows a fast PIP late (the order step), not the held curl
         self.assertLess(b["under_0.3"], a["under_0.3"] / 4.0)
+
+    def face_gap_mm(self, motion, first, last):
+        """per frame, the nearest of the left hand's four fingertips to the eyes' midpoint and to the head (mm)"""
+        names = ["左目", "右目", "頭"] + ["左" + f + "３先" for f in hand_layer.LONG]
+        pose = fk.Pose(self.model, motion, names)
+        out = []
+        for f in range(first, last + 1):
+            at = pose.at(f)
+            eyes = (np.array(at["左目"][0]) + np.array(at["右目"][0])) / 2.0
+            head = np.array(at["頭"][0])
+            tips = [np.array(at["左" + x + "３先"][0]) for x in hand_layer.LONG]
+            out.append(min(min(np.linalg.norm(t - eyes), np.linalg.norm(t - head)) for t in tips) * MM)
+        return np.array(out)
+
+    def test_a_hand_held_to_the_face_does_not_curl_into_it(self):
+        # 7,505 - 7,550 (left): the hand comes to the chin, open, its fingertips 53 - 79 mm from the eyes (7,517 - 7,535).
+        # The relaxed hand (Varghese 2020) and the tenodesis (Su 2005) were measured on free fingers; what the fingers
+        # touch holds them, so the layer does not curl or swing them into the face
+        part = crop(self.dance, 7505, 7550)
+        before = self.face_gap_mm(part, 12, 30)
+        after = self.face_gap_mm(hand_layer.layer(self.model, part, pulp=self.pulp).motion, 12, 30)
+        self.assertGreater(float((after - before).min()), -2.0)
+        params = hand_layer.default_params()
+        params["contact"] = False                                         # the rule off: the curl goes into the face
+        loose = self.face_gap_mm(hand_layer.layer(self.model, part, params, pulp=self.pulp).motion, 12, 30)
+        self.assertLess(float((loose - before).min()), -2.0)
 
 
 # ---- the promises no test held before (the review's mutants): the wrist's sides, the lag's direction and size, -----
