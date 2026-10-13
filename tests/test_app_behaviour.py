@@ -552,5 +552,36 @@ class MenuSetTest(unittest.TestCase):
         self.assertEqual(state["clicks"], [])
 
 
+class _Stop(Exception):
+    pass
+
+
+@unittest.skipUnless(app is not None, "needs Windows")
+class RenderAviTimeoutTest(TempHome):
+    """how long `render avi` waits for MMD to write the AVI when no --timeout is given: 60 s and 2 s per frame of the motion,
+    and at 480 fps (16 frames of the AVI to each) 0.25 s per frame of the AVI: one took up to 0.14 s while the GPU was shared
+    (review of fast-render), so 2 s per frame of the motion ran out"""
+
+    def waited(self, fps, start=100, end=199):
+        seen = []
+
+        def menu(item, handlers, timeout=None, done=None):
+            seen.append(timeout)
+            raise _Stop()
+        m = bare(menu=menu, _file_handlers=lambda path, said: {}, _written=lambda path: (lambda: False))
+        m._quoting = lambda said: mock.MagicMock()
+        m._camera_mode = lambda: mock.MagicMock()
+        with self.assertRaises(_Stop):
+            m.render_avi(self.path("a.avi"), start, end, fps=fps)
+        return seen[0]
+
+    def test_up_to_240_fps_it_waits_2_s_per_frame_of_the_motion_as_before(self):
+        for fps in (30, 60, 120, 240):
+            self.assertEqual(self.waited(fps), 60.0 + 2.0 * 100, fps)
+
+    def test_at_480_fps_it_waits_a_quarter_second_per_frame_of_the_avi(self):
+        self.assertEqual(self.waited(480), 60.0 + 0.25 * 1600)
+
+
 if __name__ == "__main__":
     unittest.main()
