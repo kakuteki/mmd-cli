@@ -667,5 +667,84 @@ class CommandTest(unittest.TestCase):
             shutil.rmtree(folder)
 
 
+# ---- the real dance (skipped where it is not; MMD_CLI_TRACE and MMD_CLI_RIN point at them elsewhere) ---------------
+
+MAIN_TREE = "C:/Users/kaga/Desktop/mmd-cli"           # the main working tree, where the real data lives
+
+
+def real_file(*parts):
+    folder = ROOT
+    for _ in range(4):
+        path = os.path.join(folder, *parts)
+        if os.path.isfile(path):
+            return path
+        folder = os.path.dirname(folder)
+    path = os.path.join(MAIN_TREE, *parts)
+    return path if os.path.isfile(path) else None
+
+
+def rin_path():
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+TRACE = os.environ.get("MMD_CLI_TRACE") or real_file("_spike", "out", "hibikase", "variants", "dance_arms_open6_twist.vmd")
+RIN = rin_path()
+REAL = bool(TRACE) and os.path.isfile(TRACE) and RIN is not None
+
+
+def crop(motion, first, last):
+    """the motion between two frames as a motion of its own (a key on every frame, the linear curve)"""
+    out = []
+    for name, keys in fk.tracks_of(motion).items():
+        frames = [k.frame for k in keys]
+        for f in range(first, last + 1):
+            p, r = fk.sample(keys, f, frames)
+            out.append(vmd.BoneKey(keys[0].name, f - first, p, r, vmd.bone_interpolation(vmd.LINEAR_CURVE),
+                                   raw_name=keys[0].raw_name))
+    return vmd.Motion(model_name=motion.model_name, bones=out, morphs=list(motion.morphs))
+
+
+@unittest.skipUnless(REAL, "the trace or Rin is not here")
+class RealDanceTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.model = pmx.load(RIN)
+        cls.pulp = hand_layer.pulp_from_mesh(RIN)
+        cls.dance = vmd.load(TRACE)
+
+    def test_the_mesh_gives_the_thumbs_pulp_side(self):
+        for side in ("左", "右"):
+            self.assertIn(side, self.pulp)
+            palm = hand_layer.hand_model(self.model)[side].palm
+            self.assertGreater(float(self.pulp[side] @ palm), 0.2)       # toward the palm, not the nail
+
+    def test_the_pointing_hands_at_52_s_keep_their_shape_and_stop_being_carved(self):
+        # 1,535 - 1,585: both index fingers point up in front of the face while the arms move (the brief's 52 s;
+        # before 1,535 the index is still curled in a fist)
+        part = crop(self.dance, 1535, 1585)
+        result = hand_layer.layer(self.model, part, pulp=self.pulp)
+        for side in ("左", "右"):
+            ch = result.report["change"][side]
+            self.assertLess(ch[side + "人指２"]["held_still"]["p95"], 3.0, side)    # the pointing finger stays straight
+            self.assertLess(ch[side + "人指３"]["held_still"]["p95"], 3.0, side)
+            a, b = result.report["input"][side], result.report["output"][side]
+            self.assertLess(b["frozen_while_hand_moves"]["share"], a["frozen_while_hand_moves"]["share"])
+        self.assertTrue(result.report["untouched"]["identical"])
+
+    def test_the_ring_finger_dip_no_longer_stays_straight_in_a_curl(self):
+        # 717 - 760 (right): the ring finger's DIP straight (DIP / PIP 0.05) under a PIP bent 80 degrees and more
+        part = crop(self.dance, 717, 760)
+        result = hand_layer.layer(self.model, part, pulp=self.pulp)
+        a = result.report["input"]["右"]["coupling"]["薬指"]
+        b = result.report["output"]["右"]["coupling"]["薬指"]
+        self.assertGreater(a["under_0.3"], 10)
+        # left: the frames where the DIP follows a fast PIP late (the order step), not the held curl
+        self.assertLess(b["under_0.3"], a["under_0.3"] / 4.0)
+
+
 if __name__ == "__main__":
     unittest.main()

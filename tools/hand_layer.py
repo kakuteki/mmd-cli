@@ -269,18 +269,19 @@ STEPS = ("hinge", "coupling", "enslave", "rom", "relax", "speed", "order", "pass
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
 # DIP / PIP of the long fingers where the PIP bends more than COUPLING["from"] degrees: kept between low and high
 COUPLING = {"low": 0.3, "high": 1.0, "from": 20.0, "full": 40.0}
+COUPLING_SOFT = 4.0              # degrees inside the band where the wall starts
 # each long finger's MP is pulled toward each neighbour's MP by this share of their difference (the adjacent fingers'
 # passive coupling)
 ENSLAVE = 0.05
 # the range of motion against the rest pose (the thumb's CMC: radial and palmar abduction against the index
 # metacarpal, read absolutely): (soft start, cap) for each way, degrees
 ROM = {
-    "mp": {"flex": ((25.0, 45.0), (90.0, 100.0)), "side": ((25.0, 35.0), (25.0, 35.0)), "twist": ((15.0, 25.0), (15.0, 25.0))},
-    "pip": {"flex": ((5.0, 15.0), (100.0, 110.0))},
-    "dip": {"flex": ((5.0, 10.0), (80.0, 90.0))},
+    "mp": {"flex": ((25.0, 40.0), (90.0, 100.0)), "side": ((25.0, 35.0), (25.0, 35.0)), "twist": ((15.0, 25.0), (15.0, 25.0))},
+    "pip": {"flex": ((10.0, 25.0), (100.0, 110.0))},
+    "dip": {"flex": ((10.0, 20.0), (80.0, 90.0))},
     "cmc": {"flex": ((10.0, 20.0), (60.0, 65.0)), "side": ((15.0, 25.0), (90.0, 95.0)), "twist": ((25.0, 35.0), (25.0, 35.0))},
-    "tmp": {"flex": ((10.0, 20.0), (60.0, 65.0))},
-    "ip": {"flex": ((10.0, 20.0), (80.0, 90.0))},
+    "tmp": {"flex": ((10.0, 25.0), (60.0, 65.0))},
+    "ip": {"flex": ((15.0, 30.0), (80.0, 90.0))},
 }
 SPEED_MAX_DEG_S = 1900.0         # a finger's MP + PIP + DIP together, degrees per second
 DIP_LAG_FRAMES = 0.75            # the DIP follows the PIP this many frames late while they move
@@ -405,11 +406,10 @@ def coupling(hands, ang):
             pip, dip = ang[js["pip"].bone][0], ang[js["dip"].bone][0]
             w = smoothstep(pip, COUPLING["from"], COUPLING["full"])
             lo, hi = COUPLING["low"] * pip, COUPLING["high"] * pip
-            below = np.maximum(lo - dip, 0.0)
-            above = np.maximum(dip - hi, 0.0)
-            # a soft wall: an excess e is brought to 4 (1 - exp(-e / 4)) degrees past the band
-            new = np.where(below > 0, lo - 4.0 * (1.0 - np.exp(-below / 4.0)), dip)
-            new = np.where(above > 0, hi + 4.0 * (1.0 - np.exp(-above / 4.0)), new)
+            # a soft wall inside the band (the soft limit's form): a DIP more than COUPLING_SOFT degrees inside the band
+            # is left, one beyond it saturates toward the band's edge and never passes it
+            new = -soft_limit(-dip, -(lo + COUPLING_SOFT), -lo)
+            new = soft_limit(new, hi - COUPLING_SOFT, hi)
             ang[js["dip"].bone][0] = dip + w * (new - dip)
 
 
@@ -708,8 +708,6 @@ def layer(model, motion, params=None, pulp=None, log=None):
         coupling(hands, ang)
     if p["enslave"]:
         enslave(hands, ang, p["enslave_share"])
-    if p["rom"]:
-        rom(hands, ang)
     relaxed = {s: relaxedness(h, ang) for s, h in hands.items()}
     held = {s: (1.0 - r) if r is not None else np.ones(F) for s, r in relaxed.items()}
     if p["relax"]:
@@ -724,7 +722,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     if p["passive"]:
         report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held)
     if p["rom"]:
-        rom(hands, ang)
+        rom(hands, ang)               # once, last: the soft limit is not idempotent
     out_loc = compose_all(hands, ang)
     out_motion = A.build(motion, None, out_loc, {b: keypos[b] for b in out_loc}, F)
     report["untouched"] = untouched(motion, out_motion, out_motion.labels)
@@ -848,17 +846,22 @@ def onset(x, a, b, share=0.1):
     return a + i - 1 + (share - y[i - 1]) / max(y[i] - y[i - 1], 1e-9)
 
 
+HELD_REACH = 4                   # frames each way the input's joint must be still for a frame to count as a held shape
+
+
 def change(hands, ang_in, ang_out, held):
     """how far the layer moved each joint's flexion (degrees): everywhere, and where the hand holds a shape that is not
-    an open hand (held > 0.5) and the input's fingers are still (the choreography's shapes)"""
+    an open hand (held > 0.5) and the input's joint is still within HELD_REACH frames each way (the choreography's
+    shapes; the frames next to a change are left out, as the speed limit spreads a change into them)"""
     out = {}
     for side, hand in hands.items():
         rows = {}
         h = held[side] > 0.5
         for j in hand.joints:
             d = ang_out[j.bone][0] - ang_in[j.bone][0]
-            still = np.concatenate([[True], np.abs(np.diff(ang_in[j.bone][0])) < 0.05])
-            rows[j.bone] = {"all": stats(np.abs(d)), "held_still": stats(np.abs(d[h & still]))}
+            moving = np.concatenate([[False], np.abs(np.diff(ang_in[j.bone][0])) >= 0.05])
+            near = np.array([moving[max(0, t - HELD_REACH):t + HELD_REACH + 2].any() for t in range(len(moving))])
+            rows[j.bone] = {"all": stats(np.abs(d)), "held_still": stats(np.abs(d[h & ~near]))}
         out[side] = rows
     return out
 
