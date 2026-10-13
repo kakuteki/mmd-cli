@@ -62,15 +62,20 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 
-def _sibling(name):
-    """a tool next to this one, loaded from its file (tools/ is no package)"""
-    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(os.path.abspath(__file__)), name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_WORLD = []
 
 
-mv_world = _sibling("mv_world")
+def world_tool():
+    """tools/mv_world.py (tools/ is no package: loaded from its file, once), only for a look whose stage lies in the world:
+    it reads the camera and the dancer with mmd_cli, which a look fixed to the picture does without"""
+    if not _WORLD:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_world.py")
+        spec = importlib.util.spec_from_file_location("mv_world", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _WORLD.append(module)
+    return _WORLD[0]
+
 
 DEFAULT_LOOK = {
     # colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)
@@ -93,9 +98,18 @@ DEFAULT_LOOK = {
     # every frame (0 none, up to about 10); both lie under the text in front
     "lens": {"vignette": 0.3, "grain": 3},
     "flares": [],
-    # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py); world 0 keeps
-    # them fixed to the picture, as before
-    "stage": copy.deepcopy(mv_world.DEFAULT_STAGE),
+    # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py, which says how);
+    # world 0 keeps them fixed to the picture, as before
+    "stage": {"world": 0,           # 1: the stage lies in the world and follows the camera (render needs --camera)
+              "radius": 120.0,      # the cyc: a cylinder round the stage centre, MMD units (0: infinitely far)
+              "truss": 60.0,        # the beams hang from a truss this far behind the stage centre
+              "specks": 160.0,      # the specks lie on the cyc over this many degrees round the stage centre
+              "floor": 1,           # 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it
+              "floor_half": 60.0, "floor_step": 5.0, "floor_line": 0.06, "floor_accent_every": 4,   # make_stage.py's floor
+              "pool": 0.0,          # a pool of light on the floor round the dancer, 0 none to 1 (needs her motion)
+              "pool_radius": 14.0,  # its size (a standard deviation, MMD units)
+              "pool_colour": [34, 32, 30],      # what it adds to the floor at its middle at 1
+              "shadow": 0.0},       # the shadows of her feet and body on the floor, 0 none to 1 (needs her motion)
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -648,33 +662,39 @@ def prepared_key(look, size, fps, cues_path, world=None):
     return digest.hexdigest()
 
 
-def prepare(look, work, size, fps, cues_path=None, world=None):
+def prepare(look, work, size, fps, cues_path=None, world=None, span=None):
     """write the plate, the light loop, the flare and the text sequences under `work` once, and then PREPARED, the note of
     what they were made from.  The old note goes first, so that a prepare that fails half way leaves no note that vouches
-    for half written layers.  A stage in the world (`world`, see world_inputs) draws its frames for the whole song (as far
-    as the camera motion has keys) in place of the plate and the light loop"""
+    for half written layers.  A stage in the world (`world`, see world_inputs) draws its frames in place of the plate and
+    the light loop: for the whole song (as far as the camera motion has keys), or for `span` (seconds of the song, from and
+    to)"""
     work = os.path.abspath(work)
     os.makedirs(work, exist_ok=True)
     note_path = os.path.join(work, PREPARED)
     forget_prepared(work)
+    if world is not None:
+        first, frames = 0, int(round((world["track"][1][-1] + 1) * fps / float(SONG_FPS)))
+        if span is not None:
+            if not span[1] > span[0] >= 0:
+                raise ValueError("--from and --to give the span of the song to prepare, from 0 on: not %r" % (list(span),))
+            first, frames = int(round(span[0] * fps)), int(round(span[1] * fps)) - int(round(span[0] * fps))
     layers = write_layers(look, work, size, fps)
     plan = text_plan(cues_path, work, size, fps) if cues_path else None
     note = {"key": prepared_key(look, size, fps, cues_path, world), "work": _slashes(work), "layers": layers, "text": plan}
     if world is not None:
-        last = world["track"][1][-1]
-        frames = int(round((last + 1) * fps / float(SONG_FPS)))
-        note["stage"] = mv_world.write_stage(look, work, size, fps, world["track"], 0, frames, layers["light_frames"],
-                                             world["subframes"], world["shutter"], world["figure"])
+        note["stage"] = world_tool().write_stage(look, work, size, fps, world["track"], first, frames, layers["light_frames"],
+                                                 world["subframes"], world["shutter"], world["figure"])
     with open(note_path + ".part", "w", encoding="utf-8") as f:
         json.dump(note, f, ensure_ascii=True, indent=1)
     os.replace(note_path + ".part", note_path)
     return note
 
 
-def _whole_sequence(pattern, frames):
-    """frames 0 .. frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered sequence until a
-    number is missing, so a frame more would lengthen the loop, the flare or the cue"""
-    return all(os.path.isfile(pattern % i) for i in range(int(frames))) and not os.path.exists(pattern % int(frames))
+def _whole_sequence(pattern, frames, first=0):
+    """frames first .. first + frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered
+    sequence until a number is missing, so a frame more would lengthen the loop, the flare or the cue"""
+    first, last = int(first), int(first) + int(frames)
+    return all(os.path.isfile(pattern % i) for i in range(first, last)) and not os.path.exists(pattern % last)
 
 
 def load_prepared(work, look, size, fps, cues_path=None, world=None):
@@ -702,9 +722,9 @@ def load_prepared(work, look, size, fps, cues_path=None, world=None):
         sequences.append((layers["light_pattern"], layers["light_frames"]))
         whole = os.path.isfile(layers["plate"])
     else:
-        whole = isinstance(stage, dict) and stage.get("first") == 0
-        if whole:
-            sequences.append((stage["pattern"], stage["frames"]))
+        whole = isinstance(stage, dict) and isinstance(stage.get("first"), int) and stage["first"] >= 0
+        if whole and not _whole_sequence(stage["pattern"], stage["frames"], stage["first"]):
+            whole = False
     if not whole or not all(_whole_sequence(p, n) for p, n in sequences):
         raise ValueError("the layers in %s are not as `prepare` left them (a frame is missing or one too many): %s" % (work, again))
     return layers, plan, stage
@@ -731,13 +751,13 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
     check_shutter(subframes, shutter)
     world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
              "subframes": int(subframes), "shutter": float(shutter)}
-    world["track"] = mv_world.camera_track(world["camera"])
+    world["track"] = world_tool().camera_track(world["camera"])
     if stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         if not model or not motions:
             raise ValueError("stage.pool and stage.shadow follow the dancer: give --model MODEL.pmx and her --motion files, "
                              "in the order MMD loads them")
         world["model"], world["motions"] = os.path.abspath(model), [os.path.abspath(m) for m in motions]
-        world["figure"] = mv_world.Figure.from_files(world["model"], world["motions"])
+        world["figure"] = world_tool().Figure.from_files(world["model"], world["motions"])
     return world
 
 
@@ -807,16 +827,17 @@ def render(args):
         work = os.path.abspath(args.prepared)
         layers, plan, drawn = load_prepared(work, look, size, fps, args.cues, world)
         if world is not None:
-            if first < 0 or first + count > drawn["frames"]:
-                raise ValueError("the stage prepared in %s has the frames 0 to %d of the video, and this excerpt needs %d to "
-                                 "%d: prepare with the camera of the whole song" % (work, drawn["frames"] - 1, first, first + count - 1))
+            if first < drawn["first"] or first + count > drawn["first"] + drawn["frames"]:
+                raise ValueError("the stage prepared in %s has the frames %d to %d of the video, and this excerpt needs %d to "
+                                 "%d: prepare the span of every chunk" % (work, drawn["first"], drawn["first"] + drawn["frames"] - 1,
+                                                                        first, first + count - 1))
             stage = {"pattern": drawn["pattern"], "first": first, "frames": count}
     else:
         work = os.path.abspath(args.work or out + ".work")
         layers = write_layers(look, work, size, fps)
         plan = text_plan(args.cues, work, size, fps) if args.cues else None
         if world is not None:
-            stage = mv_world.write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
+            stage = world_tool().write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
                                          world["subframes"], world["shutter"], world["figure"])
     folder = os.path.dirname(out)
     if folder:
@@ -858,7 +879,10 @@ def prepare_command(args):
         raise ValueError("prepare needs --size WxH and --fps N")
     check_encoder(args.encoder)
     world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter)
-    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues, world)
+    if (args.start is None) != (args.to is None):
+        raise ValueError("--from and --to go together: the span of the song whose stage to prepare")
+    span = None if args.start is None else (args.start, args.to)
+    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues, world, span)
     plan = note["text"]
     result = dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
                   warnings=plan["warnings"] if plan else [])
@@ -917,6 +941,9 @@ def main(argv=None):
     s.add_argument("--subframes", type=int, default=1,
                    help="a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur)")
     s.add_argument("--shutter", type=float, default=0.5, help="a stage in the world: the renders' --shutter")
+    s.add_argument("--from", dest="start", type=float,
+                   help="a stage in the world: prepare its frames from this second of the song (default: the song's start)")
+    s.add_argument("--to", type=float, help="... up to this second (default: the camera motion's last key)")
     args = p.parse_args(argv)
     if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
         args.fps = int(args.fps)

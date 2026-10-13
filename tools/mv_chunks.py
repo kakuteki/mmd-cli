@@ -65,7 +65,7 @@ MIN_FRAMES = 3
 UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
-OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name")
+OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
 DISK_MARGIN = 2 * 1024 ** 3
 PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell takes each of these for a single quote
@@ -214,6 +214,10 @@ def check_plan(plan):
     full.setdefault("name", "mv")
     if not isinstance(full["name"], str) or not NAME.fullmatch(full["name"]):
         raise ValueError("name goes into a file name: letters, digits, _ and - only")
+    full.setdefault("world", False)
+    if not isinstance(full["world"], bool):
+        raise ValueError("world is true (the look's stage lies in the world: mv_look reads the camera and the dancer) or "
+                         "false, not %r" % (full["world"],))
     for key in ("out", "scripts"):
         for folder in watched_folders(full):
             if _inside(full[key], folder):
@@ -262,7 +266,18 @@ def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepa
              "--to", "%.6f" % ((chunk["end"] + 1) / float(FPS))]
     if encoder != "x264":
         fold += ["--encoder", encoder]
-    return [str(a) for a in fold]
+    return [str(a) for a in fold + _world_args(plan)]
+
+
+def _world_args(plan):
+    """with "world": true, what a stage in the world is drawn from: the camera motion and the dancer (mv_look reads the
+    dancer only for a pool of light or shadows)"""
+    if not plan["world"]:
+        return []
+    args = ["--camera", plan["camera"], "--model", plan["model"]]
+    for motion in plan["motions"]:
+        args += ["--motion", motion]
+    return args
 
 
 def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
@@ -281,15 +296,22 @@ def _python(plan):
     return "python" if plan["python"] == "python" else _ps(plan["python"])
 
 
-def _look_check(plan, work, out_fps, encoder, prepare=False):
+def _look_check(plan, work, out_fps, encoder, prepare=False, chunks=None, subframes=1, shutter=0.5):
     """the line that checks the look before MMD renders: `layers` (the driver of one worker), or `prepare` (the one of
-    --workers: the layers and the text, once for every chunk).  With nvenc it also tries h264_nvenc"""
+    --workers: the layers and the text, once for every chunk).  With nvenc it also tries h264_nvenc.  With "world": true it
+    reads the camera and the dancer too, and `prepare` draws the stage of the chunks' span with the folds' shutter"""
     line = "$check = Invoke-Native %s tools/mv_look.py %s $look %s --size %dx%d --fps %d" % (
         _python(plan), "prepare" if prepare else "layers", _ps(work), plan["size"][0], plan["size"][1], out_fps)
     if prepare and plan["cues"]:
         line += " --cues %s" % _ps(plan["cues"])
     if encoder != "x264":
         line += " --encoder %s" % encoder
+    world = _world_args(plan)
+    if world:
+        line += " " + " ".join(a if a.startswith("--") else _ps(a) for a in world)
+        if prepare:
+            line += " --subframes %d --shutter %s --from %.6f --to %.6f" % (
+                subframes, shutter, chunks[0]["cut"] / float(FPS), (chunks[-1]["end"] + 1) / float(FPS))
     return line
 
 
@@ -582,7 +604,8 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
     lines += _stamp_lines()
     lines += ["[IO.File]::WriteAllText((Join-Path $run 'stamp.txt'), $stamp)"]
     # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
-    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True), "prepare")
+    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True, chunks=chunks, subframes=sub,
+                                            shutter=shutter), "prepare")
     lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(work),
               "$self = (Get-Process -Id $PID).Path",
               "$count = %d" % count,

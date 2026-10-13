@@ -217,6 +217,23 @@ class WorldCommandTest(unittest.TestCase):
         self.assertEqual(code, 2, result)                              # prepared without the shutter of 8 subframes
         self.assertIn("prepare", result["error"]["message"])
 
+    def test_prepare_can_draw_the_stage_of_a_span_only(self):
+        # tools/mv_chunks.py --workers prepares the span of its chunks (a preview of 30 s draws 900 frames, not the song's)
+        code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
+                               "--from", "0.4", "--to", "1.0"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual((result["stage"]["first"], result["stage"]["frames"]), (12, 18))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "stage"))), ["stage_%05d.png" % n for n in range(12, 30)])
+        code, result, calls = self.render(self.world, "--prepared", self.work, "--camera", self.camera)
+        self.assertEqual(code, 0, result)
+        fake = FakeRun()
+        with unittest.mock.patch.object(mv_look.subprocess, "run", fake):
+            code, result = answer(["render", self.fg, self.world, os.path.join(self.folder, "o.mp4"), "--size", "320x180",
+                                   "--fps", "30", "--offset", "0.2", "--from", "0.3", "--to", "1.0",
+                                   "--prepared", self.work, "--camera", self.camera])
+        self.assertEqual(code, 2, result)                              # from 0.3 s: a frame before the prepared ones
+        self.assertIn("stage", result["error"]["message"])
+
     def test_an_excerpt_past_the_prepared_stage_is_refused(self):
         code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera])
         self.assertEqual(code, 0, result)

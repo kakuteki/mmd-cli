@@ -54,18 +54,7 @@ REFERENCE_HEIGHT = 720.0         # lengths of the look are pixels of a 720 line 
 REFERENCE = {"look_at": (0.0, 13.0, 0.0), "distance": 38.0, "fov": 30.0}
 # where the old fan of beams had its origin: above the middle of the picture by 35 % of its height (mv_look._beams)
 BEAM_ORIGIN = (0.5, -0.35)
-DEFAULT_STAGE = {
-    "world": 0,                  # 1: the stage lies in the world and follows the camera (needs --camera); 0: as before
-    "radius": 120.0,             # the cyc: a cylinder round the stage centre, MMD units (0: infinitely far)
-    "truss": 60.0,               # the beams hang from a truss this far behind the stage centre
-    "specks": 160.0,             # the specks lie on the cyc over this many degrees round the stage centre
-    "floor": 1,                  # 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it
-    "floor_half": 60.0, "floor_step": 5.0, "floor_line": 0.06, "floor_accent_every": 4,     # tools/make_stage.py's
-    "pool": 0.0,                 # a pool of light on the floor round the dancer, 0 none to 1 (needs her motion)
-    "pool_radius": 14.0,         # its size (a standard deviation, MMD units)
-    "pool_colour": [34, 32, 30],  # what it adds to the floor at its middle at 1
-    "shadow": 0.0,               # the shadows of her feet and body on the floor, 0 none to 1 (needs her motion)
-}
+# (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"])
 # the floor of tools/make_stage.py as v7 showed it.  Its materials are emissive only (the plane 0.03, 0.045, 0.09 at alpha
 # 0.92; a line 0.70, 0.82, 1.00 at 0.55 over it; an accent 1.00, 0.63, 0.19 at 0.80), MMD writes the colour multiplied by
 # the alpha, the 240 fps fold multiplies it again and the overlay a third time (it takes the colour as straight): the plane
