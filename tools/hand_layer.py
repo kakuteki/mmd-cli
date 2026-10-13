@@ -27,21 +27,29 @@ The steps (STEPS, each can be switched off), in this order:
 
 1. hinge: PIP, DIP and the thumb's MP and IP are hinges: their sideways bend and twist are eased (the soft limit of
    tools/anatomy_layer.py: identity under the start, saturating toward the cap) from 3 to 8 and from 5 to 12 degrees.
-2. coupling: the deep flexor and the oblique retinacular ligament tie the DIP to the PIP (Leijnse 1997: one degree of
+   (The thumb's MP has a second, small axis, Hollister 1995; it is held to the same band here.)
+2. reach: the hinges and the coupling undo shapes the trace made at the wrong joint (the thumbs of a heart bent 41
+   degrees sideways at the MP, a pinch made at the index's PIP, a fist hooked at the DIP); each finger is fitted back
+   to the input's outline (its outer joints and its tip, in the hand) by the joints that can move that way: a long
+   finger's MP (flexion, sideways) and its PIP with the DIP inside the coupling's band, the thumb's CMC (radial and
+   palmar abduction) and its MP and IP flexion; angles past the soft start of their range cost (REACH).  What the
+   range cannot give stays lost: the heart's thumb tip ends some 10 mm from the trace's.
+3. coupling: the deep flexor and the oblique retinacular ligament tie the DIP to the PIP (Leijnse 1997: one degree of
    freedom; DIP / PIP 0.76 Hahn 1995, 0.75-0.77 and the little finger 0.57 Mentzel 2011, 0.16-0.36 in a light grasp
    Kamper 2003, "the linkage varies greatly"): where the PIP bends (fully from 40 degrees, faded in from 20) the DIP is
-   kept between 0.3 and 1.0 times the PIP by a soft wall 4 degrees inside the band.
-3. enslave: a finger's MP is pulled toward its neighbours' by 0.05 of their difference (the adjacent fingers' passive
+   kept between 0.3 and 1.0 times the PIP by a soft wall 4 degrees inside the band (after reach, it catches what the
+   fit left outside).
+4. enslave: a finger's MP is pulled toward its neighbours' by 0.05 of their difference (the adjacent fingers' passive
    coupling; Lang & Schieber 2004: 4 to 16 % of the moved finger's motion in the others, mostly the adjacent MCP).
-4. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90)
+5. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90)
    leans by --relax-gain (0.25) toward the relaxed hand held in the air (Varghese 2020, the wrist 15 - 20 degrees
    extended: MCP 26-33, PIP 39-45, DIP 14-16, the index the least bent) moved with the wrist by the tenodesis (MP
    0.30, PIP 0.43, DIP 0.16 degrees per degree of wrist extension, Su 2005; it acts on relaxed fingers only).
-5. order: within each change of a finger's shape its joints move out of step, by shares of the change's length
+6. order: within each change of a finger's shape its joints move out of step, by shares of the change's length
    (Carpinella 2011: closing a fist the MCP's speed peaks 11.4 % after the PIP's, opening the hand the PIP's 7.4 %
    after the MCP's; the DIP follows the PIP, Mentzel 2011), at most --order-max frames; holds are untouched.  The fingers
    are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
-6. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
+7. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
    hand's world angular acceleration about the joint's axis and the joint's world linear acceleration (finger_body,
    joint_forcing, passive_response).  The masses are Martin 2013's segments (via the research's cylinders), scaled to
    Rin's fingers (about 0.58 of a grown man's); the stiffness 1.0 N m/rad for a held shape (a finger stroking a
@@ -51,11 +59,11 @@ The steps (STEPS, each can be switched off), in this order:
    the PIP and 0.2 to the DIP (the thumb's MP and half to its IP), eased from 4 toward 10 degrees (purposeful
    movements keep the distal joints' passive motion to a few degrees: Koshland 2000, Hore).  Gravity is left out by
    default: the shape a dancer shows is held against it.
-7. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
+8. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
    SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
    centred box average, wide only there), so the change keeps its time; last of the timing steps, so that what the
    order and the lag add is held to the speed too.
-8. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
+9. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
    the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the reference +
    10 for the caps).
 
@@ -337,7 +345,7 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "coupling", "enslave", "relax", "order", "passive", "speed", "rom")
+STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "order", "passive", "speed", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees)
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
@@ -540,6 +548,126 @@ def rom(hands, ang):
                 if way in lim:
                     low, high = lim[way]
                     ang[j.bone][i] = soft_band(ang[j.bone][i], low, high)
+
+
+# ---- step 1b: the finger where the choreography put it -----------------------------------------------------------
+
+# the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at
+# their MP, a pinch made at the index's PIP, a fist hooked at the DIP); the finger goes back to the input's outline,
+# carried by the joints that can move that way: a long finger's MP (flexion and sideways) and its PIP with the DIP in
+# the coupling's band, the thumb's CMC (radial and palmar abduction) and its MP and IP (flexion).  A least-squares fit
+# per frame (Gauss-Newton, the Jacobian by central differences, a step kept only where it lowers the cost): the
+# distances of the finger's joints and tip from the input's (mm), each free angle's change from the hinged shape (reg
+# mm per degree: among equal fits the smallest change), the DIP past the soft wall of the band (band mm per degree,
+# where the input's PIP bends: the band does not let go when the fit opens the PIP) and an angle past the soft start
+# of its range (rom mm per degree; the cap is the last step's)
+REACH = {"reg": 0.05, "band": 5.0, "rom": 1.0, "iterations": 16, "step_max": 15.0, "h": 0.01, "damping": 1e-6}
+MM_PER_UNIT = UNIT_M * 1000.0
+
+
+def reach_chain(hand, finger):
+    """the finger's three joints from the base outward (the thumb: CMC, MP, IP), or None"""
+    js = chains(hand).get(finger, {})
+    kinds = ("cmc", "mp", "ip") if finger == THUMB else ("mp", "pip", "dip")
+    return [js[k] for k in kinds] if all(k in js for k in kinds) else None
+
+
+def chain_points(seq, rows):
+    """[F, n, 3] the far end of each joint's segment (the next joints and the fingertip) from the chain's first joint,
+    in the frame of that joint's parent (model units); rows: bone -> [3, F] the angles as the layer keeps them
+    (rest-relative, the CMC absolutely)"""
+    R, p, out = None, 0.0, []
+    for j in seq:
+        f, s, t = rows[j.bone]
+        if j.kind != "cmc":
+            f, s = f + j.rest[0], s + j.rest[1]
+        q = compose_joint(j, f, s, t)
+        R = q if R is None else qmul(R, q)
+        p = p + qrot(R, j.d * j.length)
+        out.append(p)
+    return np.stack(out, axis=1)
+
+
+def reach(hands, ang, ang_in, band=True, limits=True):
+    """each finger brought back toward the input's outline (REACH); band: keep the DIP in the coupling's band, limits:
+    the angles under the soft starts of their range.  Returns side -> finger -> the mean distance of the finger's
+    joints and tip from the input's before and after (mm), the tip's after, and the frames where a free angle moved
+    more than 1 degree"""
+    report = {}
+    for side, hand in hands.items():
+        rep = {}
+        for finger in LONG + (THUMB,):
+            seq = reach_chain(hand, finger)
+            if seq is None:
+                continue
+            free = [(seq[0], 0), (seq[0], 1), (seq[1], 0), (seq[2], 0)]
+            target = chain_points(seq, {j.bone: ang_in[j.bone] for j in seq})
+            fixed = {j.bone: ang[j.bone].copy() for j in seq}
+            x0 = np.stack([fixed[j.bone][i] for j, i in free], axis=1)
+            w_band = smoothstep(x0[:, 2], COUPLING["from"], COUPLING["full"]) * REACH["band"]
+            bounds = []
+            for j, i in free:
+                lim = ROM[kind_of(j)].get(("flex", "side")[i])
+                bounds.append(None if lim is None else (lim[0][0], lim[1][0]))
+
+            def residual(x):
+                rows = {b: a.copy() for b, a in fixed.items()}
+                for c, (j, i) in enumerate(free):
+                    rows[j.bone][i] = x[:, c]
+                d = (chain_points(seq, rows) - target) * MM_PER_UNIT
+                r = [d.reshape(len(x), -1), (x - x0) * REACH["reg"]]
+                if band and finger != THUMB:
+                    pip, dip = x[:, 2], x[:, 3]
+                    r.append((w_band * np.maximum(dip - (COUPLING["high"] * pip - COUPLING_SOFT), 0.0))[:, None])
+                    r.append((w_band * np.maximum((COUPLING["low"] * pip + COUPLING_SOFT) - dip, 0.0))[:, None])
+                if limits:
+                    for c, b in enumerate(bounds):
+                        if b is not None:
+                            r.append(REACH["rom"] * np.maximum(x[:, c] - b[1], 0.0)[:, None])
+                            r.append(REACH["rom"] * np.maximum(-b[0] - x[:, c], 0.0)[:, None])
+                return np.concatenate(r, axis=1)
+
+            def outline(rows):
+                d = np.linalg.norm(chain_points(seq, rows) - target, axis=2) * MM_PER_UNIT
+                return d.mean(axis=1), d[:, -1]
+
+            x = x0.copy()
+            n = x.shape[1]
+            res = residual(x)
+            cost = np.sum(res * res, axis=1)
+            before = outline(fixed)[0]
+            for _ in range(REACH["iterations"]):
+                J = np.empty(res.shape + (n,))
+                for c in range(n):
+                    e = np.zeros(n)
+                    e[c] = REACH["h"]
+                    J[:, :, c] = (residual(x + e) - residual(x - e)) / (2.0 * REACH["h"])
+                JTJ = np.einsum("fmi,fmj->fij", J, J) + REACH["damping"] * np.eye(n)
+                g = np.einsum("fmi,fm->fi", J, res)
+                dx = np.clip(-np.linalg.solve(JTJ, g[..., None])[..., 0], -REACH["step_max"], REACH["step_max"])
+                moved = False
+                for scale in (1.0, 0.5, 0.25):
+                    trial = x + scale * dx
+                    r_t = residual(trial)
+                    c_t = np.sum(r_t * r_t, axis=1)
+                    better = c_t < cost - 1e-12
+                    if better.any():
+                        x = np.where(better[:, None], trial, x)
+                        res = np.where(better[:, None], r_t, res)
+                        cost = np.where(better, c_t, cost)
+                        dx = np.where(better[:, None], 0.0, dx)
+                        moved = True
+                    if not np.abs(dx).max() > 1e-6:
+                        break
+                if not moved:
+                    break
+            for c, (j, i) in enumerate(free):
+                ang[j.bone][i] = x[:, c]
+            after, tip = outline({j.bone: ang[j.bone] for j in seq})
+            rep[finger] = {"outline_mm_before": stats(before), "outline_mm_after": stats(after), "tip_mm_after": stats(tip),
+                           "moved_frames": int((np.abs(x - x0).max(axis=1) > 1.0).sum())}
+        report[side] = rep
+    return report
 
 
 # ---- step 2: the relaxed hand -------------------------------------------------------------------------------------
@@ -827,6 +955,8 @@ def layer(model, motion, params=None, pulp=None, log=None):
               for s, v in (pulp or {}).items()}, "steps": {}}
     if p["hinge"]:
         hinge(hands, ang)
+    if p["reach"]:
+        report["steps"]["reach"] = reach(hands, ang, ang_in, band=p["coupling"], limits=p["rom"])
     if p["coupling"]:
         coupling(hands, ang)
     if p["enslave"]:

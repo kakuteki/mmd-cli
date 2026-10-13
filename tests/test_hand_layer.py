@@ -494,6 +494,102 @@ class StaticTest(unittest.TestCase):
         self.assertGreater(float(dip[0]), start)
 
 
+def finger_points(motion, side, finger, frame=30):
+    """[3, 3] the finger's two outer joints and its tip in the wrist's frame (model units), by the model's own forward
+    kinematics (not the layer's)"""
+    names = [side + finger + p for p in (("１", "２", "２先") if finger == hand_layer.THUMB else ("２", "３", "３先"))]
+    at = fk.Pose(MODEL, motion, [side + "手首"] + names).at(frame)
+    pw, qw = at[side + "手首"]
+    conj = (-qw[0], -qw[1], -qw[2], qw[3])
+    return np.array([rotate(conj, np.subtract(at[n][0], pw)) for n in names])
+
+
+def tip_in_hand(motion, side, finger, frame=30):
+    return finger_points(motion, side, finger, frame)[-1]
+
+
+MM = 0.08 * 1000.0              # millimetres per model unit (one unit is 8 cm)
+FINGER_RADIUS_MM = 0.07 * MM    # about the half thickness of Rin's fingers (the audit's default radius, 5.6 mm)
+
+# the trace's own shapes (v7, rest-relative degrees (flex, side, twist); the thumb's CMC absolutely): the middle finger
+# of a fist hooked at the DIP (frame 7600), the thumbs of the two hands' heart (1983), the index of a pinch (2462)
+HOOK = {"中指１": (87.9, 1.8, -0.3), "中指２": (68.1, 3.9, 0.0), "中指３": (115.7, 5.1, -0.3)}
+HEART = {"親指０": (6.4, 36.5, 0.6), "親指１": (6.8, -40.8, 10.4), "親指２": (-2.3, -21.2, 17.7)}
+PINCH = {"人指１": (35.0, 14.0, 1.6), "人指２": (46.1, 22.4, -40.7), "人指３": (45.3, 30.5, 3.3)}
+
+
+class ReachTest(unittest.TestCase):
+    """the hinges and the DIP's coupling change a shape the trace made at the wrong joint; the finger stays where the
+    choreography put it, carried by the joints that can move that way (the MP of a long finger, the thumb's CMC), as
+    far as their range allows"""
+
+    def run_one(self, bone_angles, steps, frames=(0, LAST)):
+        keys = untouched_keys(centre=False)
+        for bone, (fl, sd, tw) in bone_angles.items():
+            keys += [key("左" + bone, f, flexed("左", bone, fl, sd, tw)) for f in frames]
+        dance = vmd.Motion(model_name="d", bones=keys)
+        return dance, hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).motion
+
+    def moved_mm(self, dance, out, finger):
+        """how far each of the finger's outer joints and its tip moved (mm)"""
+        return np.linalg.norm(finger_points(out, "左", finger) - finger_points(dance, "左", finger), axis=1) * MM
+
+    def test_a_dip_hooked_past_its_pip_shares_the_bend_and_the_fist_stays_closed(self):
+        dance, out = self.run_one(HOOK, ["hinge", "reach", "coupling", "rom"])
+        pip, dip = out_angles(out, "左", "中指２")[0][30], out_angles(out, "左", "中指３")[0][30]
+        self.assertLess(dip, 1.0 * pip + 1.0)                            # no study shows the DIP past its PIP
+        self.assertLess(dip, hand_layer.ROM["dip"]["flex"][1][1])        # within the DIP's range
+        moved = self.moved_mm(dance, out, "中指")
+        self.assertLess(moved.max(), FINGER_RADIUS_MM)                   # every point within the finger's half thickness
+        _, alone = self.run_one(HOOK, ["hinge", "coupling", "rom"])
+        self.assertGreater(self.moved_mm(dance, alone, "中指")[-1], 2.0 * FINGER_RADIUS_MM)   # without it the tip leaves
+
+    def test_the_heart_s_thumb_bends_in_its_plane_and_its_tip_follows_as_far_as_it_can(self):
+        dance, out = self.run_one(HEART, ["hinge", "reach", "rom"])
+        for bone in ("親指１", "親指２"):
+            fl, sd, tw = out_angles(out, "左", bone)
+            self.assertLess(abs(float(sd[30])), 10.0, bone)
+            self.assertLess(abs(float(tw[30])), 15.0, bone)
+        _, alone = self.run_one(HEART, ["hinge", "rom"])
+        moved, moved_alone = self.moved_mm(dance, out, hand_layer.THUMB), self.moved_mm(dance, alone, hand_layer.THUMB)
+        self.assertLess(moved[-1], 0.5 * moved_alone[-1])                # the tip: the trace bent the MP 41 degrees
+        self.assertLess(moved.mean(), moved_alone.mean())                # sideways, past what the thumb's range can give
+
+    def test_a_pinch_made_at_the_pip_moves_to_the_mp_and_the_tip_stays(self):
+        dance, out = self.run_one(PINCH, ["hinge", "reach", "coupling", "rom"])
+        for bone in ("人指２", "人指３"):
+            fl, sd, tw = out_angles(out, "左", bone)
+            self.assertLess(abs(float(sd[30])), 10.0, bone)
+            self.assertLess(abs(float(tw[30])), 15.0, bone)
+        mp_side = float(out_angles(out, "左", "人指１")[1][30])
+        self.assertGreater(mp_side, PINCH["人指１"][1] + 3.0)            # the sideways bend went to the MP
+        self.assertLess(mp_side, hand_layer.ROM["mp"]["side"][1][1])
+        self.assertLess(self.moved_mm(dance, out, "人指").max(), FINGER_RADIUS_MM)
+
+    def test_a_shape_that_is_already_anatomical_is_left(self):
+        fist = {"中指１": (80.0, 0.0, 0.0), "中指２": (95.0, 0.0, 0.0), "中指３": (70.0, 0.0, 0.0)}
+        dance, out = self.run_one(fist, ["reach"])
+        for bone, (fl, sd, tw) in fist.items():
+            got = out_angles(out, "左", bone)
+            np.testing.assert_allclose([float(got[0][30]), float(got[1][30])], [fl, sd], atol=0.01, err_msg=bone)
+
+    def test_a_hand_closing_into_the_hook_moves_smoothly(self):
+        # open at frame 20, the hooked fist from frame 26: every joint closes without turning back, and its speed
+        # changes from frame to frame no more abruptly than the input's (a fit that jumps between two ways of
+        # holding the tip would do both)
+        keys = untouched_keys(centre=False)
+        for bone, (fl, sd, tw) in HOOK.items():
+            keys += [key("左" + bone, f, flexed("左", bone, 0.0)) for f in (0, 20)]
+            keys += [key("左" + bone, f, flexed("左", bone, fl, sd, tw)) for f in (26, LAST)]
+        dance = vmd.Motion(model_name="d", bones=keys)
+        out = hand_layer.layer(MODEL, dance, only("hinge", "reach", "coupling", "rom"), pulp=PULP).motion
+        for bone in HOOK:
+            a_in = out_angles(dance, "左", bone)[0]
+            a_out = out_angles(out, "左", bone)[0]
+            self.assertGreater(np.diff(a_out).min(), -0.5, bone)
+            self.assertLess(np.abs(np.diff(a_out, 2)).max(), 1.5 * np.abs(np.diff(a_in, 2)).max() + 1.0, bone)
+
+
 class EnslaveTest(unittest.TestCase):
     """a finger's MP is pulled a little toward its neighbours' (the passive coupling of the adjacent fingers)"""
 
