@@ -73,9 +73,10 @@ numbers above).  "human" (the default since stage 6) changes:
   and down by LID_FOLLOW a degree on every frame (lid_follow; v7 sets it once per fixation), never shutting a smiling
   eye between the blinks (CLOSURE_CAP).  まばたき's keys are those straight lines need to stay within
   BLINK_KEY_TOLERANCE of every frame (bake_within): a key a frame would crowd MMD's registered points.
-* The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (LONG_HOLD,
-  LONG_OPENING) after some phrases (P_LONG) and where nothing is sung; a blink SMILE_END_BLINK frames before a smile
-  falls (P_SMILE_END); none about a flash (FLASH_QUIET).
+* The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (10 to 11
+  frames: LONG_CLOSING, LONG_HOLD, LONG_OPENING; LONG_GAP apart) after some phrases (P_LONG) and where nothing is sung;
+  a blink SMILE_END_BLINK frames before a smile has fallen (P_SMILE_END); none starting about a flash (FLASH_QUIET), and
+  a flash a blink would run into gives way.
 * The expressions: changes take HUMAN_ONSET_FRAMES / HUMAN_OFFSET_FRAMES / HUMAN_CHANGE_FRAMES and arrive KIME_ARRIVE
   frames before a kime they can reach (kimes, kime_shift: a fast move of the head or a hand that stops and holds); a
   held smile eases off by up to HUMAN_WAVE["eye"].  At some kimes where she sings (choose_flashes: at most FLASH_RATE a
@@ -185,7 +186,9 @@ CLOSURE_CAP = 0.7               # human style: between the blinks まばたき +
                                 # follows the eyes down must not shut a smiling eye
 FLASH_QUIET = (8, 3)            # frames before and after a flash's kime no blink starts (blinks hold off at a moment that
                                 # holds the attention: Shultz et al. 2011)
-SMILE_END_BLINK = 20            # frames before a smile starts to fall a blink is placed (21 on average: Trutoiu 2014)
+SMILE_END_BLINK = 21            # frames before a smile has fallen (its last moving frame) a blink is placed: in natural
+                                # smiles of light conversation blinks came 21 frames on average before the offset, the last
+                                # frame the lip corners move, 38 by chance (Trutoiu 2014, 5.3; 30 fps)
 P_SMILE_END = 0.6
 LID_NEUTRAL = 0.10              # the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above
                                 # the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2)
@@ -1037,9 +1040,9 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             if f + 10 <= z:
                 plan_.add(f, "phrase_end")
     if human:
-        for f in smile_falls(smile):
+        for _, end in smile_falls(smile):
             if rng.random() < P_SMILE_END:
-                plan_.add(f - SMILE_END_BLINK + rng.randint(-3, 3), "smile_end")
+                plan_.add(end - SMILE_END_BLINK + rng.randint(-3, 3), "smile_end")
     for s in sorted(sacc, key=lambda x: -x["amplitude"]):
         if s["amplitude"] >= BIG_SACCADE and rng.random() < P_SACCADE:
             plan_.add(s["start"] - 1 + rng.randint(0, 1), "saccade")
@@ -1298,16 +1301,20 @@ FLASH_SUNG = 9                  # frames around a lyric line or a phrase that co
 
 
 def smile_falls(smile, top=0.25, gone=0.1, steep=0.005):
-    """the frames where 笑い (a per-frame track) starts to fall from `top` or more to under `gone`: from where it goes
-    under `gone`, back while it falls by more than `steep` a frame (a slow drift of the hold before is no part of it)"""
+    """[(start, end)] of each fall of 笑い (a per-frame track) from `top` or more to under `gone`: from where it goes
+    under `gone`, back while it falls by more than `steep` a frame (a slow drift of the hold before is no part of it) to
+    the start, on while it still falls by more than that to the end (the last frame the smile moves: Trutoiu's offset)"""
     s = np.asarray(smile, float)
     out = []
     for g in np.where((s[:-1] >= gone) & (s[1:] < gone))[0] + 1:
         f = int(g)
         while f > 0 and s[f - 1] - s[f] > steep:
             f -= 1
+        z = int(g)
+        while z + 1 < len(s) and s[z] - s[z + 1] > steep:
+            z += 1
         if s[f] >= top:
-            out.append(f)
+            out.append((f, z))
     return out
 
 

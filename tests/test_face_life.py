@@ -645,14 +645,18 @@ class SmileTest(unittest.TestCase):
         self.assertLessEqual(float((b + s)[frames].max()), face_life.CLOSURE_CAP + 1e-6)
         self.assertGreater(result.report["blink"]["lid"]["frames_capped_for_the_smile"], 0)
 
-    def test_a_blink_comes_before_the_smile_falls(self):
+    def test_a_blink_comes_about_21_frames_before_the_smile_has_fallen(self):
+        # Trutoiu (2014, 5.3): blinks come 21 frames on average before a smile's offset, the last frame the lip corners
+        # move (by chance 38); the smile here falls from 1300 on, over the human style's offset of 15 to 20 frames
         hits = 0
         for seed in range(6):
             result = face_life.plan(inputs(face=smiling_face()), seed=seed)
+            s = tracks(result.motion)["笑い"]
+            end = max(g for g in range(1290, 1400) if s[g - 1] - s[g] > 0.005)
             starts = [x["start"] for x in result.report["blink"]["new"]["list"] if x["cause"] == "smile_end"]
             hits += len(starts)
             for f in starts:
-                self.assertTrue(1270 <= f <= 1300, f)
+                self.assertTrue(18 <= end - f <= 24, (seed, f, end))
         self.assertGreaterEqual(hits, 2)
 
 
