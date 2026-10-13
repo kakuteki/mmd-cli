@@ -1208,6 +1208,66 @@ class PreparedLayersTest(unittest.TestCase):
         code, result, calls = self.render("--prepared", self.work, "--cues", self.cues)
         self.assertEqual(code, 0, result)
 
+    def test_layers_drawn_again_with_work_or_layers_take_the_note_away(self):
+        # `render --work` and `layers` into a prepared folder draw their own layers there: the note of prepare must not go on
+        # vouching for them (review of fast-render, 2-d: look A prepared, look B drawn with --work, then A --prepared folded
+        # with the layers of B and said nothing)
+        self.prepare()
+        other = self.put("other.json", {"beams": {"loop_seconds": 1, "opacity": 0.9}, "flares": [0.5], "flare": {"frames": 4}})
+        code, result, calls = self.render("--work", self.work, "--cues", self.cues, look=other)
+        self.assertEqual(code, 0, result)
+        self.assertFalse(os.path.exists(os.path.join(self.work, "prepared.json")))
+        code, result, calls = self.render("--prepared", self.work, "--cues", self.cues)
+        self.assertEqual(code, 2, result)
+        self.assertIn("prepare", result["error"]["message"])
+        self.assertEqual(calls, [])
+        self.prepare()
+        code, result = tool_answer(["layers", other, self.work, "--size", "320x180", "--fps", "30"])
+        self.assertEqual(code, 0, result)
+        code, result, calls = self.render("--prepared", self.work, "--cues", self.cues)
+        self.assertEqual(code, 2, result)
+
+    def test_a_prepare_that_fails_half_way_leaves_no_note(self):
+        # the note of an earlier prepare goes first: a prepare that draws other layers and then fails on its cue file leaves no
+        # note that vouches for them (review of fast-render, m23)
+        self.prepare()
+        other = self.put("other.json", {"beams": {"loop_seconds": 1, "opacity": 0.9}, "flares": [0.5], "flare": {"frames": 4}})
+        broken = os.path.join(self.folder, "broken.json")
+        with open(broken, "w", encoding="utf-8") as f:
+            f.write("{broken")
+        code, result = tool_answer(["prepare", other, self.work, "--size", "320x180", "--fps", "30", "--cues", broken])
+        self.assertEqual(code, 2, result)
+        for look in (self.look, other):
+            code, result, calls = self.render("--prepared", self.work, "--cues", self.cues, look=look)
+            self.assertEqual(code, 2, (look, result))
+            self.assertEqual(calls, [])
+
+    def test_layers_prepared_by_another_version_of_the_tools_are_refused(self):
+        # the note holds the code of mv_look and mv_text (review of fast-render, m15): with a copy of the two tools, a byte
+        # more in either after prepare refuses the layers
+        copy = os.path.join(self.folder, "tools")
+        os.makedirs(copy)
+        for name in ("mv_look.py", "mv_text.py"):
+            shutil.copyfile(os.path.join(ROOT, "tools", name), os.path.join(copy, name))
+        spec = importlib.util.spec_from_file_location("mv_look_copy", os.path.join(copy, "mv_look.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        look = module.load_look(self.look)
+        module.prepare(look, self.work, (320, 180), 30, self.cues)
+        module.load_prepared(self.work, look, (320, 180), 30, self.cues)                # as it was: taken
+        for name in ("mv_look.py", "mv_text.py"):
+            path = os.path.join(copy, name)
+            with open(path, "rb") as f:
+                kept = f.read()
+            with open(path, "ab") as f:
+                f.write(b"\n# another version\n")
+            with self.assertRaises(ValueError, msg=name) as ctx:
+                module.load_prepared(self.work, look, (320, 180), 30, self.cues)
+            self.assertIn("another version", str(ctx.exception))
+            with open(path, "wb") as f:
+                f.write(kept)
+        module.load_prepared(self.work, look, (320, 180), 30, self.cues)                # both back: taken again
+
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")
 class EncoderCheckTest(unittest.TestCase):

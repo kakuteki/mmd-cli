@@ -251,8 +251,10 @@ def flare_frame(size, settings, index):
 
 
 def write_layers(look, work, size, fps):
-    """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are"""
+    """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are.  A note of
+    `prepare` in `work` goes first: it vouches for the layers prepare drew, not for these"""
     os.makedirs(work, exist_ok=True)
+    forget_prepared(work)
     plate_path = os.path.join(work, "plate.png")
     plate(size, look["plate"]).save(plate_path)
     light_dir = os.path.join(work, "light")
@@ -539,10 +541,19 @@ def text_plan(cues_path, work, size, fps):
     spec.loader.exec_module(module)
     with open(cues_path, encoding="utf-8") as f:
         doc = json.load(f)
+    forget_prepared(work)
     return module.render_sequences(doc, os.path.join(work, "text"), size=size, fps=fps)
 
 
 # ---- layers prepared once for many renders ---------------------------------------------------
+
+def forget_prepared(work):
+    """take the note of `prepare` out of `work` before anything draws there: `render --work` and `layers` into a prepared
+    folder would otherwise leave a note that vouches for layers it did not make (review of fast-render, 2-d)"""
+    note_path = os.path.join(os.path.abspath(work), PREPARED)
+    if os.path.exists(note_path):
+        os.remove(note_path)
+
 
 def _same_folder(a, b):
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
@@ -576,8 +587,7 @@ def prepare(look, work, size, fps, cues_path=None):
     work = os.path.abspath(work)
     os.makedirs(work, exist_ok=True)
     note_path = os.path.join(work, PREPARED)
-    if os.path.exists(note_path):
-        os.remove(note_path)
+    forget_prepared(work)
     layers = write_layers(look, work, size, fps)
     plan = text_plan(cues_path, work, size, fps) if cues_path else None
     note = {"key": prepared_key(look, size, fps, cues_path), "work": _slashes(work), "layers": layers, "text": plan}
