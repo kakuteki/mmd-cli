@@ -54,6 +54,7 @@ the thigh's angle out of 下半身's sagittal plane, against the reference range
 """
 import argparse
 import importlib.util
+import io
 import json
 import math
 import os
@@ -116,7 +117,9 @@ GAP = 4                         # a05's swing: at least 4 frames off the floor..
 SWING_MIN_H = 0.2               # ...in which the foot rose at least 1.6 cm
 # ---- the reference ranges (stage 3 research, the Japanese reference ROM 1995 / 2022 and the upper proposal) -----
 HIP_ADDUCTION_DEG = (20.0, 22.0)
+HIP_ABDUCTION_DEG = 45.0
 KNEE_FLEXION_DEG = (130.0, 159.0)
+KNEE_GIVE_DEG = 12.0            # the reach's drop bends a leg on the floor by at most this much more
 
 # de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original:
 # _spike/out/stage2/motor/work/deleva1996_table4_text.txt; the head, upper trunk, middle trunk, arm rows are the ones of
@@ -219,11 +222,16 @@ class Body:
         dd = np.minimum(dist, L1 + L2 - 1e-9)
         a = (L1 ** 2 - L2 ** 2 + dd ** 2) / (2.0 * dd)
         h = np.sqrt(np.maximum(L1 ** 2 - a ** 2, 0.0))
-        fwd = T - A
-        fwd[:, 1] = 0.0
-        weak = np.linalg.norm(fwd, axis=1) < 1e-6
-        if weak.any():
-            fwd[weak] = self.facing()[weak]
+        # the knee bends towards 下半身's front (MMD's IK turns the thigh from the rest pose, knee forward), turned out
+        # towards the foot's front as far as the foot lies flat and points the pelvis's way: a pointed foot (toe down
+        # or back) does not steer it, so its side never flips from one frame to the next
+        facing = self.facing()
+        foot = T - A
+        flat = np.hypot(foot[:, 0], foot[:, 2]) / np.maximum(np.linalg.norm(foot, axis=1), 1e-9)
+        foot[:, 1] = 0.0
+        foot /= np.maximum(np.linalg.norm(foot, axis=1), 1e-9)[:, None]
+        agree = np.maximum(np.sum(foot * facing, axis=1), 0.0)
+        fwd = facing + (flat * agree)[:, None] * foot
         n = fwd - np.sum(fwd * u, axis=1)[:, None] * u
         n /= np.maximum(np.linalg.norm(n, axis=1), 1e-9)[:, None]
         knee = H + a[:, None] * u + h[:, None] * n
@@ -297,10 +305,14 @@ class Body:
         total = sum(w for w, _ in parts)
         return sum(w * p for w, p in parts) / total
 
+    def medial(self, s):
+        """the unit vector from leg s towards the other, in 下半身's frame [F, 3]"""
+        side = M.qrot(self.q("下半身"), np.broadcast_to(np.array([1.0, 0.0, 0.0]), (self.F, 3)))
+        return -side if s == "左" else side             # the model's left is +X
+
     def hip_adduction(self, s):
         """degrees: the thigh's angle out of 下半身's sagittal plane, + towards the other leg (adduction)"""
-        side = M.qrot(self.q("下半身"), np.broadcast_to(np.array([1.0, 0.0, 0.0]), (self.F, 3)))
-        medial = -side if s == "左" else side          # the model's left is +X
+        medial = self.medial(s)
         thigh = self.knee(s) - self.hip(s)
         thigh /= np.maximum(np.linalg.norm(thigh, axis=1), 1e-9)[:, None]
         return np.degrees(np.arcsin(np.clip(np.sum(thigh * medial, axis=1), -1.0, 1.0)))
@@ -481,20 +493,22 @@ def toward_targets(d, reach_frames):
     return out
 
 
-def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL_REACH):
-    """x [F, n] (metres): min 1/2 sum w |x-d|^2 + 1/2 sum lam |x|^2 + mu/2 |x'''|^2 subject to |x''| <= acc_max (per
-    frame) and x = project(x) (a per-frame set, given by its projection).  ADMM (Boyd et al. 2011, over-relaxed 1.6) on
-    the splitting [x'' ; x] = [za ; zx]: the x-step is one banded solve with a fixed matrix."""
+def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL_REACH, gain=None):
+    """x [F, n] (metres): min 1/2 sum w |g x - d|^2 + 1/2 sum lam |x|^2 + mu/2 |x'''|^2 subject to |x''| <= acc_max (per
+    frame) and x = project(x) (a per-frame set, given by its projection); g = gain per frame (1).  ADMM (Boyd et al.
+    2011, over-relaxed 1.6) on the splitting [x'' ; x] = [za ; zx]: the x-step is one banded solve with a fixed
+    matrix."""
     F, n = d.shape
     lam = np.broadcast_to(np.asarray(lam, dtype=np.float64), (F,))
+    g = np.ones(F) if gain is None else np.asarray(gain, dtype=np.float64)
     tf = tau_s * FPS
     scale = 1.0 + float(np.median(lam))
     mu = scale * tf ** 6
     rho_a = scale * tf ** 4
     rho_x = scale
-    L = band_factor(band_terms(F, w + lam + rho_x, [(mu, D3_STENCIL), (rho_a, D2_STENCIL)]))
+    L = band_factor(band_terms(F, w * g * g + lam + rho_x, [(mu, D3_STENCIL), (rho_a, D2_STENCIL)]))
     amax = acc_max * DT * DT
-    q = w[:, None] * d
+    q = (w * g)[:, None] * d
     za = np.zeros((F - 2, n))
     ua = np.zeros_like(za)
     zx = project(np.zeros((F, n)))
@@ -526,17 +540,37 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=ADMM_ITERS, tol_x_cm=ADMM_TOL
     return xf, info
 
 
-def solve_shift(w, d, discs, acc_max, tau_s, lam_in, lam_out, iters=ADMM_ITERS):
-    """the COM's floor shift x [F, 2] (metres): pulled to d where w > 0 (held back by lam_in there, by lam_out
-    elsewhere), minimum jerk, |x''| <= acc_max, x in every disc of `discs` [(centres [F, 2], radii [F])]"""
+def proj_slab(x, m, lo, hi):
+    """onto lo <= x . m <= hi (per frame; m need not be a unit vector)"""
+    mm = np.maximum(np.sum(m * m, axis=1), 1e-18)
+    s = np.sum(x * m, axis=1)
+    over = np.maximum(s - hi, 0.0) - np.maximum(lo - s, 0.0)
+    return x - (over / mm)[:, None] * m
+
+
+def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters=ADMM_ITERS):
+    """センター's floor shift y [F, 2] (metres): the COM's shift gain * y pulled to d where w > 0 (held back by lam_in
+    there, by lam_out elsewhere), minimum jerk, |y''| <= acc_max, y in every disc of `discs` [(centres [F, 2], radii
+    [F])] and every slab of `slabs` [(m [F, 2], lo [F], hi [F])], never pointing away from the nearest pull"""
     F = len(w)
     if F < 5 or not np.any(w > 0):
         return np.zeros((F, 2)), {"iterations": 0}
-    centres = [c for c, _ in discs]
-    radii = [r for _, r in discs]
-    lam = np.where(w > 0, lam_in, lam_out)
     toward = toward_targets(d, int(round(1.5 * FPS)))
-    return admm(w, d, lam, lambda v: proj_discs(v, centres, radii, toward), acc_max, tau_s, iters)
+    sets = [(lambda v, c=c, r=r: proj_disc(v, c, r)) for c, r in discs]
+    sets += [(lambda v, m=m, lo=lo, hi=hi: proj_slab(v, m, lo, hi)) for m, lo, hi in slabs]
+    sets.append(lambda v: proj_half(v, toward))
+
+    def project(v, rounds=30):
+        y = v.copy()
+        inc = [np.zeros_like(v) for _ in sets]
+        for _ in range(rounds):
+            for j, proj in enumerate(sets):
+                z = proj(y + inc[j])
+                inc[j] = y + inc[j] - z
+                y = z
+        return y
+    lam = np.where(w > 0, lam_in, lam_out)
+    return admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain)
 
 
 def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
@@ -557,6 +591,7 @@ def solve_drop(need, acc_max, tau_s, iters=ADMM_ITERS):
 class Result:
     motion: vmd.Motion
     report: dict
+    arrays: dict = None         # per-frame curves (units unless named): shift [F, 3], com_before, com_after, pull, ...
 
 
 def support_plan(body, p, com):
@@ -647,19 +682,57 @@ def com_response(body, com0):
     return np.clip(0.5 * k, 0.5, 1.0)
 
 
-def reach_discs(body, k, drop_max_cm):
-    """per leg, the disc of COM floor shifts (metres) that keep its IK target within reach after the hips move by shift
-    / k and down by up to drop_max (the target already out of reach: no farther than it was)"""
+def knee_give(L1, L2, flex_deg, give_deg):
+    """how much nearer (units) the hip comes to the ankle when the knee bends from flex_deg by give_deg"""
+    def dist(th):
+        return np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(np.clip(th, 0.0, 180.0))))
+    return np.maximum(dist(flex_deg) - dist(flex_deg + give_deg), 0.0)
+
+
+def drop_allowance(body, plan, drop_max_cm, give_deg):
+    """per leg and frame, how far (units) the hips may go down for that leg to reach its foot: the drop does not bend
+    the leg it is for (that leg stays at its reach; the hip goes round the ankle), it bends the other leg if that one is
+    on the floor, by at most give_deg more (a straight leg gives about 0.5 cm, one bent 40 degrees 2.9 cm); at most
+    drop_max"""
+    give = {}
+    for s in SIDES:
+        L1, L2 = body.legs_rest[s]
+        give[s] = np.where(plan["sup"][s], knee_give(L1, L2, body.knee_flexion(s), give_deg), np.inf)
+    cap = drop_max_cm / CM
+    return {"左": np.minimum(cap, give["右"]), "右": np.minimum(cap, give["左"])}
+
+
+def reach_discs(body, allowance):
+    """per leg, the disc of センター floor shifts (metres) that keep its IK target within reach with the hips also down
+    by up to allowance[leg] (units, per frame); a target already out of reach: no farther than it was"""
     discs = []
-    drop = drop_max_cm / CM
     for s in SIDES:
         D = body.ankle(s) - body.hip(s)
         v = -D[:, 1]                                       # the hip's height over the target
-        v2 = v - np.clip(v, 0.0, drop)
+        v2 = v - np.clip(v, 0.0, allowance[s])
         R = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, np.linalg.norm(D, axis=1))
         r = np.sqrt(np.maximum(R * R - v2 * v2, 0.0))
-        discs.append((k[:, None] * D[:, [0, 2]] * UNIT_M, k * r * UNIT_M))
+        discs.append((D[:, [0, 2]] * UNIT_M, r * UNIT_M))
     return discs
+
+
+def range_slabs(body):
+    """per leg, the slab of センター floor shifts (metres) that keep the hip's adduction (the hip-to-ankle line out of
+    下半身's sagittal plane, towards the other leg) under HIP_ADDUCTION_DEG[1] and its abduction under
+    HIP_ABDUCTION_DEG, or no farther than they were (linearized: the line's length kept)"""
+    slabs = []
+    sa, sb = math.sin(math.radians(HIP_ADDUCTION_DEG[1])), math.sin(math.radians(HIP_ABDUCTION_DEG))
+    for s in SIDES:
+        D = body.ankle(s) - body.hip(s)
+        n = np.linalg.norm(D, axis=1)
+        m = body.medial(s)
+        dm = np.sum(D * m, axis=1)                      # the line's medial part: n sin(adduction)
+        # adduction: (D - y) . m <= max(sa n, dm)   ->  y . m >= dm - max(sa n, dm)
+        lo = dm - np.maximum(sa * n, dm)
+        # abduction: -(D - y) . m <= max(sb n, -dm)  ->  y . m <= dm + max(sb n, -dm)
+        hi = dm + np.maximum(sb * n, -dm)
+        slabs.append((m[:, [0, 2]], lo * UNIT_M, hi * UNIT_M))
+    return slabs
 
 
 def drop_needed(body, tol_cm=REACH_TOL_CM, before=None):
@@ -803,30 +876,37 @@ def layer(model, motion, params=None, log=None):
     k = np.ones(F)
     info = {"iterations": 0}
     reach_tight = np.zeros(F, bool)
+    range_tight = np.zeros(F, bool)
+    allowance = drop_allowance(body, plan, p["drop_max_cm"], KNEE_GIVE_DEG)
     if np.any(w > 0):
         d = band_target(body, com0, plan, p["r_bal_cm"])
         k = com_response(body, com0)
-        discs = reach_discs(body, k, p["drop_max_cm"])
+        discs = reach_discs(body, allowance)
+        slabs = range_slabs(body)
         log("solving the shift over %d frames (%d pull frames)" % (F, int(np.sum(w > 0))))
-        x, info = solve_shift(w, d, discs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
+        y, info = solve_shift(w, d, k, discs, slabs, p["acc_max"], p["tau_s"], p["lam_in"], p["lam_out"])
+        moving = np.linalg.norm(y, axis=1) > 1e-4
         for c, r in discs:                              # the shift stopped by a leg's reach: on its disc's edge
-            reach_tight |= (np.linalg.norm(x - c, axis=1) > r - 1e-4) & (np.linalg.norm(x, axis=1) > 1e-4)
+            reach_tight |= (np.linalg.norm(y - c, axis=1) > r - 1e-4) & moving
+        for m, lo, hi in slabs:                         # or by a hip's range: on its slab's edge
+            s_ = np.sum(y * m, axis=1)
+            nm = np.maximum(np.linalg.norm(m, axis=1), 1e-9)
+            range_tight |= (((s_ - lo) / nm < 1e-4) | ((hi - s_) / nm < 1e-4)) & moving
+        x = k[:, None] * y                              # the COM's shift (linearized), for the report
     else:
         d = np.zeros((F, 2))
+        y = np.zeros((F, 2))
     plan["reach_tight"] = reach_tight
-    # センター's floor move for the COM's shift, corrected on the body
+    plan["range_tight"] = range_tight
     shift = np.zeros((F, 3))
-    if np.abs(x).max() > 1e-7:
-        shift[:, [0, 2]] = x / (k[:, None] * UNIT_M)
-        for _ in range(2):
-            got = (body.moved(shift).com() - com0)[:, [0, 2]] * UNIT_M
-            shift[:, [0, 2]] += (x - got) / (k[:, None] * UNIT_M)
+    shift[:, [0, 2]] = y / UNIT_M
     moved = body.moved(shift)
     need = drop_needed(moved, before=body)
     finite = np.isfinite(need)
     drop, info["drop"] = solve_drop(np.where(finite, need, 0.0) * UNIT_M, DROP_ACC_MAX, p["tau_s"])
     drop = drop / UNIT_M
-    drop_over = int(np.sum(need[finite] > p["drop_max_cm"] / CM + 1e-6))
+    allow_any = np.maximum(allowance["左"], allowance["右"])
+    drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
     moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1))
     dip, landings = landing_dips(moved, plan, p)
     shift[:, 1] = -np.maximum(drop, dip)
@@ -838,7 +918,22 @@ def layer(model, motion, params=None, log=None):
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
                            unreachable=int(np.sum(~finite))))
     report["seconds"] = round(time.time() - t0, 2)
-    return Result(out, report)
+    foot_code = np.array([{"左": 1, "右": 2}.get(v, 0) for v in plan["foot"]], dtype=np.int8)
+    arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
+              "pull_foot": foot_code, "pull_target_m": d, "share": plan["share"], "com_response": k, "drop": drop,
+              "dip": dip, "reach_tight": plan["reach_tight"], "range_tight": plan["range_tight"],
+              "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
+              "low_L": plan["low"]["左"], "low_R": plan["low"]["右"]}
+    for s, tag in (("左", "L"), ("右", "R")):
+        arrays["knee_before_" + tag] = body.knee_flexion(s)
+        arrays["knee_after_" + tag] = after.knee_flexion(s)
+        arrays["reach_before_" + tag] = body.reach(s)
+        arrays["reach_after_" + tag] = after.reach(s)
+        arrays["adduction_before_" + tag] = body.hip_adduction(s)
+        arrays["adduction_after_" + tag] = after.hip_adduction(s)
+        arrays["ankle_" + tag] = body.ankle(s)
+        arrays["toe_" + tag] = body.toe(s)
+    return Result(out, report, arrays)
 
 
 def write_centre(model, motion, body, shift):
@@ -889,9 +984,9 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
     foot = plan["foot"]
     dist_after = band_distance(after, com1, foot)
     dist_before = band_distance(before, com0, foot)
-    acc = np.zeros((F, 2))
+    acc = np.zeros((F, 2))                              # the COM's added acceleration on the floor (m/s^2)
     if F >= 3:
-        acc[1:-1] = d2(x) * FPS * FPS
+        acc[1:-1] = d2((com1 - com0)[:, [0, 2]] * UNIT_M) * FPS * FPS
     rows = []
     for (a, b, s), need in zip(plan["runs"], plan["run_shares"]):
         o = "右" if s == "左" else "左"
@@ -914,6 +1009,8 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
             # acceleration bound (the added acceleration at its bound in the run or the half second before)
             if np.any(plan["reach_tight"][max(0, a - 5):b + 1]):
                 limited.append("reach")
+            if np.any(plan["range_tight"][max(0, a - 5):b + 1]):
+                limited.append("hip range")
             if np.any(np.linalg.norm(acc[max(0, a - 15):b + 1], axis=1) > 0.95 * plan["acc_max"]):
                 limited.append("acceleration")
             if not limited:
@@ -1049,9 +1146,10 @@ def main(argv=None):
     ap.add_argument("--drop-max", type=float, default=DROP_MAX_CM, help="cm: the hips may go down for the legs' reach")
     ap.add_argument("--dip-deg", type=float, default=DIP_DEG, help="degrees: the knee's bend on a landing")
     ap.add_argument("--no-dip", action="store_true", help="no knee bend on the landings")
+    ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
     args = ap.parse_args(argv)
     try:
-        check_distinct(args.dance, args.model, args.out, args.report)
+        check_distinct(args.dance, args.model, args.out, args.report, args.arrays)
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
@@ -1062,6 +1160,10 @@ def main(argv=None):
                       out=os.path.abspath(args.out))
         if args.report:
             write_bytes(os.path.abspath(args.report), (json.dumps(report, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+        if args.arrays:
+            buf = io.BytesIO()
+            np.savez_compressed(buf, **result.arrays)
+            write_bytes(os.path.abspath(args.arrays), buf.getvalue())
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

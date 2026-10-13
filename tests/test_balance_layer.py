@@ -105,12 +105,25 @@ def foot_track(name, last, base, lifts):
     return keys
 
 
-def dance(last=119, spread=1.0, centre=(0.0, -0.6, 0.0), left_lifts=(), right_lifts=(), arms=False, centre_keys=None):
+def dance(last=119, spread=1.0, centre=(0.0, -0.6, 0.0), left_lifts=(), right_lifts=(), arms=False, centre_keys=None,
+          pelvis_roll_deg=0.0, left_point=None):
     """feet `spread` units out from rest (both sides), センター still at `centre` (as a trace keeps it between the feet),
-    the lifts of each foot; morphs and an arm key that the layer must copy byte for byte"""
+    the lifts of each foot; morphs and an arm key that the layer must copy byte for byte.  pelvis_roll_deg turns 下半身
+    about Z (negative: its left side goes down); left_point (first, last, degrees) turns the left foot IK about X from 0
+    to the degrees (negative points the toe down and back)"""
     bones = []
-    bones += foot_track("左足ＩＫ", last, (spread, 0.0, 0.0), left_lifts)
+    left = foot_track("左足ＩＫ", last, (spread, 0.0, 0.0), left_lifts)
+    if left_point is not None:
+        a, b, deg = left_point
+        for k in left:
+            ang = math.radians(deg) * smooth((k.frame - a) / float(b - a))
+            k.rotation = fk.stored((math.sin(ang / 2.0), 0.0, 0.0, math.cos(ang / 2.0)))
+    bones += left
     bones += foot_track("右足ＩＫ", last, (-spread, 0.0, 0.0), right_lifts)
+    if pelvis_roll_deg:
+        h = math.radians(pelvis_roll_deg) / 2.0
+        bones += [key("下半身", 0, q=(0.0, 0.0, math.sin(h), math.cos(h))),
+                  key("下半身", last, q=(0.0, 0.0, math.sin(h), math.cos(h)))]
     if centre_keys is None:
         bones += [key("センター", 0, centre), key("センター", last, centre)]
     else:
@@ -267,6 +280,47 @@ class ReachTest(unittest.TestCase):
         self.assertIn("reach", short[0]["limited_by"])
 
 
+class RangeTest(unittest.TestCase):
+    def test_standing_hip_kept_in_its_range(self):
+        """下半身 tilted 22 degrees down on the lifted side: the standing hip is already adducted about 20 degrees, and
+        carrying the body over the foot would take it past the reference range (22, the upper proposal); the layer
+        stops at the range and says so"""
+        last = 119
+        motion = dance(last=last, spread=0.5, left_lifts=LIFT_RIGHT_STANDS, pelvis_roll_deg=-22.0)
+        result = balance_layer.layer(MODEL, motion)
+        before = balance_layer.Body(MODEL, motion).hip_adduction("右")
+        after = balance_layer.Body(MODEL, result.motion).hip_adduction("右")
+        self.assertGreater(before[60], 15.0)                                  # the fixture: adducted already
+        self.assertTrue(np.all(after <= np.maximum(22.0, before) + 1.5), float(np.max(after - np.maximum(22.0, before))))
+        run = [r for r in result.report["runs"] if r["first"] <= 60 <= r["last"]][0]
+        self.assertIn("hip range", run["limited_by"])
+
+    def test_straight_legs_do_not_buckle(self):
+        """straight legs (センター at its rest height): the hips may go down for a leg to reach its foot only as far as
+        the other leg on the floor bends 12 degrees; on one foot the standing leg stays straight (its hip goes round
+        the ankle) and the body still gets over it"""
+        last = 119
+        motion = dance(last=last, spread=0.3, centre=(0.0, 0.0, 0.0), left_lifts=LIFT_RIGHT_STANDS)
+        result = balance_layer.layer(MODEL, motion)
+        before, after = balance_layer.Body(MODEL, motion), balance_layer.Body(MODEL, result.motion)
+        for s in ("左", "右"):
+            on = before.height(s) < balance_layer.SUPPORT_H
+            gain = (after.knee_flexion(s) - before.knee_flexion(s))[on]
+            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.0, s)
+        heel, toe = before.sole("右")
+        line_x = 0.5 * (heel[:, 0] + toe[:, 0])
+        self.assertLess(np.abs(after.com()[65:80, 0] - line_x[65:80]).max() * CM, 3.0)
+
+    def test_pointed_foot_keeps_the_body_continuous(self):
+        """the lifted foot points down and on back past the vertical: the knee's side does not flip, the COM does not
+        jump"""
+        last = 119
+        motion = dance(last=last, left_lifts=LIFT_RIGHT_STANDS, left_point=(45, 75, -80.0))
+        com = balance_layer.Body(MODEL, motion).com()
+        step = np.linalg.norm(np.diff(com, axis=0), axis=1) * CM
+        self.assertLess(step.max(), 0.3)
+
+
 class LandingTest(unittest.TestCase):
     def test_knee_gives_on_a_landing_that_takes_the_weight(self):
         """the left foot steps (up and down); as it lands the right foot lifts: the left leg takes the weight and its knee
@@ -338,6 +392,19 @@ class CliTest(unittest.TestCase):
         line = json.loads(printed.getvalue().strip().splitlines()[-1])
         self.assertTrue(line["ok"])
         printed.getvalue().encode("cp932")                    # the terminal is cp932
+
+    def test_arrays_for_figures(self):
+        """--arrays writes the per-frame curves (the shift, the COM before and after, the pull) for figures and checks"""
+        out = os.path.join(self.dir, "o.vmd")
+        arr = os.path.join(self.dir, "a.npz")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = balance_layer.main([self.dance, self.model, out, "--arrays", arr])
+        self.assertEqual(code, 0)
+        z = np.load(arr)
+        F = fk.last_frame(vmd.load(self.dance)) + 1
+        for name in ("shift", "com_before", "com_after", "pull", "drop", "dip"):
+            self.assertEqual(len(z[name]), F, name)
+        self.assertLess(z["shift"][60, 0], -1.0)                 # the body went over the right foot
 
     def test_same_path_refused(self):
         printed = io.StringIO()
