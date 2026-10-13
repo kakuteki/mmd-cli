@@ -489,6 +489,7 @@ python tools/mv_world.py frame camera.vmd look.json out.png --frame 3085 [--mode
   （`render --prepared` は同じものでないと止まる）。
 - 描く速さは hinata で 1 コマ約 0.4〜0.9 秒（1280x720）。前の板と光のループ（全曲で使い回す 823 枚）と違い、コマごとに描く。
   `--jobs N`（render・prepare）で N 個の処理に分けて描く（各コマは独りで描くので、絵は N に依らずバイト単位で同じ。印にも入らない）。
+  舞台のコマは 1 枚約 380 KB（1280x720 の PNG）で、全曲を prepare すると 30 fps で約 2.9 GB、60 fps で約 5.8 GB。
 
 ### 全曲を区間に分けて描いて繋ぐ（`tools/mv_chunks.py`）
 
