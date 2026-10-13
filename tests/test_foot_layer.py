@@ -159,12 +159,16 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(r["liftoffs"]["flat"], 2)
 
     def test_anatomy_beyond(self):
-        f = fake_foot(5)
-        f["dorsi"][:] = [0, 25, 40, -50, -70]
-        f["inversion"][:] = [0, 33, 40, -22, -30]
-        r = foot_layer.summarize(f, np.ones(5, dtype=bool), 0.0)
+        # the caps: dorsiflexion 36 in the air and 40 on the floor (the weight-bearing lunge), plantarflexion 75,
+        # inversion 36, eversion 25; the soft starts 20, 50, 30, 20
+        f = fake_foot(6)
+        f["dorsi"][:] = [0, 25, 45, -55, -80, 38]
+        f["inversion"][:] = [0, 33, 40, -22, -30, 0]
+        contact = np.array([True, True, True, True, True, False])
+        r = foot_layer.summarize(f, contact, 0.0)
         a = r["anatomy"]
-        self.assertEqual((a["dorsiflexion"]["beyond_reference"], a["dorsiflexion"]["beyond_cap"]), (2, 1))
+        self.assertEqual((a["dorsiflexion"]["beyond_reference"], a["dorsiflexion"]["beyond_cap"]), (3, 2))
+        self.assertEqual(a["dorsiflexion"]["beyond_cap_loaded"], 1)
         self.assertEqual((a["plantarflexion"]["beyond_reference"], a["plantarflexion"]["beyond_cap"]), (2, 1))
         self.assertEqual((a["inversion"]["beyond_reference"], a["inversion"]["beyond_cap"]), (2, 1))
         self.assertEqual((a["eversion"]["beyond_reference"], a["eversion"]["beyond_cap"]), (2, 1))
@@ -273,6 +277,18 @@ class LayerTest(unittest.TestCase):
         after = sorted((k.name, k.frame, k.position, k.rotation, k.interpolation) for k in out.bones if k.name not in written)
         self.assertEqual(before, after)
         self.assertEqual({k.name for k in out.bones} - {k.name for k in m_in.bones}, written - {k.name for k in m_in.bones})
+
+    def test_deep_squat_lifts_the_heel_past_the_loaded_dorsiflexion(self):
+        # a squat so deep (the pelvis down 5.5, the feet flat and back) that the flat foot would dorsiflex past the
+        # weight-bearing lunge's 40 degrees: the heel comes up, the forefoot stays on the floor
+        keys = (key("センター", 0, position=(0, -5.5, 0)), key("左足ＩＫ", 0, position=(0, 0, 1.2)),
+                key("右足ＩＫ", 0, position=(0, 0, 1.2)))
+        f_in, f_out, out, plan = run_layer(*keys)
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(a["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 3.0)
+        self.assertLess(float(b["dorsi"][0]), foot_layer.LOADED_DORSI_CAP + 0.5)
+        self.assertLess(float(b["pitch"][0]), -3.0)                                    # the heel raised
+        self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.003)                   # the forefoot on the floor
 
     def test_unloaded_touch_keeps_its_roll_and_toes(self):
         # the left foot touches the floor far out to the side (a pointed toe out, the weight on the right foot under

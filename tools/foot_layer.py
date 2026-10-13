@@ -65,11 +65,13 @@ SOLE_BAND = 0.03                # units above the lowest vertex that still count
 CONTACT_ENTER = 0.03            # units above the trace's floor: a flat sole this low is on the floor
 CONTACT_EXIT = 0.06             # ... and leaves it above this
 HEEL_UP_DEG = 4.0               # a foot on the floor pitched toes-down more than this stands on its forefoot
-# The pitch of the foot inside Sour's Rin's loafers: the line from the heel's seat (the top of the heel block, about
-# 0.55 above the sole, behind the block's middle) to the ball (足先EX, the forefoot's sole 0.11 + 0.05) rises about
-# 0.41 over 1.0 unit: 22-23 degrees (read from the mesh, tools: _spike/out/stage6/feet/s05_shoe.py).  A barefoot model
-# has 0.  It shifts the anatomical ankle angle (plantarflexion inside the shoe) and the toes' (extension).
-HEEL_PITCH_DEG = 23.0
+# The pitch of the foot inside Sour's Rin's loafers, asin(h / L) (the stage-6 research, 4: h the heel's sole above the
+# forefoot's, L the heel's contact to the metatarsal heads): the heel block stands 0.39 (the mesh: its width changes at
+# y 0.5) to 0.5 (a side render of the rest pose) above the sole, the forefoot's sole is about 0.05 thick, and the
+# heel's back (z 0.95) lies 1.27 behind 足先EX (the ball): 16 to 21 degrees, taken as 20.  A barefoot model has 0.  It
+# shifts the anatomical ankle angle (plantarflexion inside the shoe) and the toes' (extension): the shoe pre-pitches
+# the foot as Hansen & Childress 2004 found ("an overall shift in the direction of plantar flexion").
+HEEL_PITCH_DEG = 20.0
 
 
 def smoothstep(x, lo, hi):
@@ -323,9 +325,20 @@ def contact_mask(flat_low, trace_floor, enter=CONTACT_ENTER, exit_=CONTACT_EXIT)
 PEN_TOL = 0.005                 # units: deeper than this below the floor is a penetration (0.4 mm)
 PLANE_DEPTH = 0.02              # the floor's dark plane lies this far below its lines (tools/make_stage.py)
 TOES_FLAT_DEG = 8.0             # a toe box within this of level lies on the floor (on a raised heel: the toes bent)
-REFERENCE = {                   # (soft start, cap) in degrees; the anatomical angles of measure_feet (see ROM below)
-    "dorsiflexion": (20.0, 36.0), "plantarflexion": (45.0, 67.0), "inversion": (30.0, 36.0), "eversion": (20.0, 25.0),
-    "mtp_extension": (60.0, 90.0)}
+# (soft start, cap) in degrees, the anatomical angles of measure_feet; the sources are _spike/out/stage6/feet/RESEARCH.md
+# and the stage-3 research (the Japanese reference range = JOA):
+#   dorsiflexion: JOA 20; unloaded young women 23.9 +- 6.2 (Moromizato 2016; + 2 SD = 36); loaded, the weight-bearing
+#     lunge 38.8 to 43.2 (Konor 2012, the midfoot included): LOADED_DORSI_CAP for a foot on the floor;
+#   plantarflexion: JOA 45, young women 54.1 +- 6.6 (Moromizato; + 2 SD = 67), ballet dancers en pointe unloaded
+#     77 +- 2.5 (Russell 2010, the midfoot included, which this one-piece foot stands for): 50 to 75;
+#   inversion / eversion: JOA 30 / 20, Boone & Azen 36.2 / 19.2, Roaas & Andersson 27.7 / 27.6: 36 / 25 as caps;
+#   toes (MTP) extension, the shoe's own pitch included: walking 37 to 42 (Halstead 2006, Nawoczenski 1999), the top
+#     of a heel raise 40 to 58 (Houck 2009, Nawoczenski 1999), dancers' releve 50 to 90 barefoot (Veirs 2023, Kulig &
+#     Rowley 2018), less in shoes (45 to 50 in soft ones, Bojsen-Moller & Lamoreux 1979): 50 to 70.
+REFERENCE = {
+    "dorsiflexion": (20.0, 36.0), "plantarflexion": (50.0, 75.0), "inversion": (30.0, 36.0), "eversion": (20.0, 25.0),
+    "mtp_extension": (50.0, 70.0)}
+LOADED_DORSI_CAP = 40.0
 
 
 def angle_steps(q):
@@ -396,10 +409,11 @@ def summarize(f, contact, floor_y, limits=None):
     # the anatomical angles
     loaded = contact
     rom = {}
-    for name, x, m in (("dorsiflexion", f["dorsi"], None), ("plantarflexion", -f["dorsi"], None),
-                       ("inversion", f["inversion"], None), ("eversion", -f["inversion"], None),
-                       ("mtp_extension", f["mtp"], None)):
+    for name, x in (("dorsiflexion", f["dorsi"]), ("plantarflexion", -f["dorsi"]), ("inversion", f["inversion"]),
+                    ("eversion", -f["inversion"]), ("mtp_extension", f["mtp"])):
         start, cap = limits[name]
+        if name == "dorsiflexion":                      # a foot on the floor may go to the weight-bearing lunge's
+            cap = np.where(loaded, max(cap, LOADED_DORSI_CAP), cap)
         rom[name] = {"beyond_reference": int((x > start).sum()), "beyond_cap": int((x > cap).sum()),
                      "beyond_cap_loaded": int(((x > cap) & loaded).sum()), "max": _r(float(x.max()), 1)}
     out["anatomy"] = rom
@@ -472,7 +486,7 @@ def continuous(q):
 def default_params():
     return {"floor_y": 0.0, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "twist": TWIST, "heel_pitch_deg": HEEL_PITCH_DEG,
-            "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH}
+            "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP}
 
 
 def load_shares(shoe, feet, sol, p):
@@ -521,7 +535,9 @@ def foot_targets(o, f, leg, rest, share, near, p):
         sv = unit(knee - ankle)
         d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
         dorsi = d_b - rest["dorsi_bones"] + rest["dorsi"]
-        dd = soft_band(dorsi, lim["plantarflexion"], lim["dorsiflexion"]) - dorsi
+        start, cap = lim["dorsiflexion"]
+        dcap = cap + v * max(0.0, p["loaded_dorsi_cap"] - cap)             # a loaded foot dorsiflexes further
+        dd = np.where(dorsi >= 0.0, soft_limit(dorsi, start, dcap), -soft_limit(-dorsi, *lim["plantarflexion"])) - dorsi
         a = qrot(q, o.a0)
         q = turn_about(np.cross(sv, a), -dd, q)                 # about the shank x foot normal: + lowers dorsiflexion
         d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
