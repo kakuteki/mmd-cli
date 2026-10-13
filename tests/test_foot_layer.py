@@ -125,7 +125,7 @@ class SummaryTest(unittest.TestCase):
     def test_penetration_and_hover(self):
         f = fake_foot(10)
         f["low"][3:5] = [-0.01, -0.05]                  # 0.4 and 4 mm too low; the second also below the dark plane
-        f["flat_low"][6:8] = 0.111                      # in contact but hovering 8.9 mm
+        f["low"][6:8] = 0.111                           # in contact but hovering 8.9 mm
         r = foot_layer.summarize(f, np.ones(10, dtype=bool), 0.0)
         self.assertEqual(r["penetration"]["frames"], 2)
         self.assertEqual(r["penetration"]["below_plane_frames"], 1)
@@ -148,8 +148,8 @@ class SummaryTest(unittest.TestCase):
         F = 40
         f = fake_foot(F)
         contact = np.zeros(F, dtype=bool)
-        contact[10:20] = True                           # forefoot first, the heel down 3 frames later
-        f["flat_heel_low"][10:13] = [0.3, 0.2, 0.1]
+        contact[10:20] = True                           # forefoot first (pitched toes-down), the heel down 3 frames later
+        f["pitch"][10:13] = [-12.0, -8.0, -5.0]
         contact[25:35] = True                           # flat
         r = foot_layer.summarize(f, contact, 0.0)
         self.assertEqual(r["touchdowns"]["count"], 2)

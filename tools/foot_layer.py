@@ -322,7 +322,6 @@ def contact_mask(flat_low, trace_floor, enter=CONTACT_ENTER, exit_=CONTACT_EXIT)
 
 PEN_TOL = 0.005                 # units: deeper than this below the floor is a penetration (0.4 mm)
 PLANE_DEPTH = 0.02              # the floor's dark plane lies this far below its lines (tools/make_stage.py)
-PART_TOL = 0.05                 # units: a part of the sole this much higher than the other is off the floor
 TOES_FLAT_DEG = 8.0             # a toe box within this of level lies on the floor (on a raised heel: the toes bent)
 REFERENCE = {                   # (soft start, cap) in degrees; the anatomical angles of measure_feet (see ROM below)
     "dorsiflexion": (20.0, 36.0), "plantarflexion": (45.0, 67.0), "inversion": (30.0, 36.0), "eversion": (20.0, 25.0),
@@ -347,7 +346,7 @@ def summarize(f, contact, floor_y, limits=None):
     out["penetration"] = {"frames": int(pen.sum()), "below_plane_frames": int((low < floor_y - PLANE_DEPTH).sum()),
                           "deepest_cm": _r(max(0.0, float(floor_y - low.min())) * UNIT_CM, 2),
                           "runs": len(runs(pen))}
-    hov = (f["flat_low"] - floor_y)[contact]
+    hov = (f["low"] - floor_y)[contact]                 # the sole's lowest point as it is (a foot kept on its edge counts)
     out["hover_in_contact_cm"] = stats(hov * UNIT_CM)
     out["hover_in_contact_over_5mm"] = int((hov * UNIT_CM > 0.5).sum())
     roll = np.abs(f["roll"][contact])
@@ -365,19 +364,18 @@ def summarize(f, contact, floor_y, limits=None):
     out["slide_per_contact_cm"] = stats(slides)
     out["slide_contacts_over"] = {"1cm": int((slides > 1).sum()), "3cm": int((slides > 3).sum()),
                                   "10cm": int((slides > 10).sum())}
-    # touch-downs and lift-offs
-    heel_up = f["flat_heel_low"] - f["flat_fore_low"]
+    # touch-downs and lift-offs, by the foot's pitch (the toes bent flat under a raised heel do not change it)
+    pitch = f["pitch"]
     tds, kinds, to_flat = [], {"heel": 0, "fore": 0, "flat": 0}, []
     for a, b in runs(contact):
         if a == 0:
             continue
         tds.append(a)
-        dh0 = heel_up[a]
-        kind = "fore" if dh0 > PART_TOL else ("heel" if dh0 < -PART_TOL else "flat")
+        kind = "fore" if pitch[a] < -HEEL_UP_DEG else ("heel" if pitch[a] > HEEL_UP_DEG else "flat")
         kinds[kind] += 1
         if kind == "fore":
             g = a
-            while g <= b and heel_up[g] > PART_TOL:
+            while g <= b and pitch[g] < -HEEL_UP_DEG:
                 g += 1
             to_flat.append(g - a if g <= b else None)
     flats = [t for t in to_flat if t is not None]
@@ -389,10 +387,9 @@ def summarize(f, contact, floor_y, limits=None):
     for a, b in runs(contact):
         if b == F - 1:
             continue
-        dh0 = heel_up[b]
-        los["fore_last" if dh0 > PART_TOL else ("heel_last" if dh0 < -PART_TOL else "flat")] += 1
+        los["fore_last" if pitch[b] < -HEEL_UP_DEG else ("heel_last" if pitch[b] > HEEL_UP_DEG else "flat")] += 1
     out["liftoffs"] = los
-    hu = contact & (heel_up > PART_TOL)
+    hu = contact & (pitch < -HEEL_UP_DEG)
     out["heel_up_contact_frames"] = int(hu.sum())
     out["heel_up_toe_box_pitch_deg"] = stats(f["toes_pitch"][hu])
     out["heel_up_toe_box_flat_frames"] = int((hu & (np.abs(f["toes_pitch"]) < TOES_FLAT_DEG)).sum())
