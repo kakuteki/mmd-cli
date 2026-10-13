@@ -51,7 +51,8 @@ How:
      (c) each hip's adduction (the hip-to-ankle line out of 下半身's sagittal plane) under the reference range's upper
          proposal (22 degrees; stage 3 research: the Japanese reference 20) and its abduction under 45, or no farther
          than in the dance; each knee under 159 degrees (the upper proposal; the hip kept as far from the foot IK's
-         target as the two-bone leg is at 159, or no nearer than it was).
+         target as the two-bone leg is at 159, or no nearer than it was), a lifted leg's also under the dance's + 5
+         (LIFT_FOLD_DEG: where the carry has not come in yet, as in a kick up in 0.2 s, its shape is kept so).
      (d) never pointing away from the nearest pull: a minimum-jerk smoother rings about 5 % before and after a step;
          people do not move the COM the wrong way before a weight shift (the centre of pressure goes that way, not
          the COM).
