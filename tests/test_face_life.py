@@ -199,13 +199,56 @@ def phrased_face():
     return face
 
 
+def choppy_face():
+    """the synthetic face with short phrases (3 vowels, 8 frames apart) every 60 frames from 300 to 1700: a phrase end
+    every 2 seconds"""
+    face = face_motion()
+    extra = []
+    for a in range(300, 1700, 60):
+        for i, f in enumerate(range(a, a + 24, 8)):
+            v = "あいうえお"[i % 5]
+            extra += [key(v, f - 2, 0.0), key(v, f, 1.0), key(v, f + 4, 1.0), key(v, f + 6, 0.0)]
+    face.morphs = face.morphs + extra
+    return face
+
+
+def long_blinks(b, s, start=150):
+    """the blinks of the tracks that stay shut (まばたき + 笑い at their peak) 3 frames or more: [(the last frame at the
+    level before, the first frame back at the level after)]"""
+    return [(a, z) for a, t0, t1, z in shut_runs(b, s, start, longest=8) if t1 - t0 + 1 >= 3]
+
+
+class LongBlinkTest(unittest.TestCase):
+    """(review of face-v2) no study measured singers' blinks.  Long blinks in conversation (Homke et al. 2017, 2018)
+    are a listener's, at the end of the speaker's turn: no ground for a singer's.  A character's blink looked most
+    natural at 7 to 9 frames and less natural at 11 and 13 (Trutoiu et al. 2011).  So a long blink is kept to 10 to 11
+    frames (shut 3 to 4 frames, a normal one 1 to 2) and two are at least LONG_GAP frames apart (in B2 four came within
+    10 seconds)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runs = []
+        for seed in range(5):
+            t = tracks(face_life.plan(inputs(face=choppy_face(), lines=[(9.0, 58.0)]), seed=seed).motion)
+            cls.runs.append(long_blinks(t["まばたき"], t["笑い"]))
+
+    def test_a_long_blink_lasts_10_to_11_frames(self):
+        lengths = [z - a for run in self.runs for a, z in run]
+        self.assertGreater(len(lengths), 4, lengths)
+        self.assertTrue(all(10 <= n <= 11 for n in lengths), lengths)
+
+    def test_long_blinks_are_apart(self):
+        for run in self.runs:
+            starts = [a for a, _ in run]
+            self.assertTrue(all(b - a >= face_life.LONG_GAP for a, b in zip(starts, starts[1:])), starts)
+
+
 class HumanBlinkTest(unittest.TestCase):
     """a spontaneous blink closes in 2 to 3 frames and opens in 4 to 7, 7 to 12 frames in all as the end of the
     opening is taken (Wu et al. 2014: 7.8 frames from 10 % of the peak speed to 10 %); a character's blink looked most
     natural at 7 to 9 frames, less at 11 and 13 (Trutoiu et al. 2011).  The lid closes 1.4 to 2.6 times as fast as it
-    opens; the opening is fast first and slow at its end.  In conversation a quarter of the blinks are long (607 ms on
-    average), at the end of a speaking unit (Homke et al. 2017, 2018): the human style makes some blinks after a phrase
-    and some where nothing is sung long (12 to 16 frames)"""
+    opens; the opening is fast first and slow at its end.  Some blinks after a phrase and where nothing is sung are
+    long (10 to 11 frames: LongBlinkTest)"""
 
     @classmethod
     def setUpClass(cls):
@@ -223,10 +266,7 @@ class HumanBlinkTest(unittest.TestCase):
         self.assertLess(len(long_), 0.35 * len(self.pooled))
         self.assertTrue(all(x["cause"] in ("phrase_end", "fill") for x in long_), long_)
 
-    def test_a_short_blink_lasts_7_to_10_frames_a_long_one_12_to_16(self):
-        for x in self.pooled:
-            n = x["closing"] + x["hold"] + x["opening"]
-            self.assertTrue(12 <= n <= 16 if x["hold"] >= 2 else 7 <= n <= 10, x)
+    def test_a_short_blink_lasts_7_to_10_frames(self):
         lengths = [z - a for a, _, _, z in self.blinks]
         short = [n for n in lengths if n <= 10]
         self.assertTrue(short and all(7 <= n <= 10 for n in short), lengths)
@@ -739,14 +779,14 @@ class PlanTest(unittest.TestCase):
         runs = face_life.runs(creep)
         self.assertEqual([r for r in runs if r[1] - r[0] + 1 >= 10], [])
 
-    def test_blinks_are_not_one_template_short_7_to_10_frames_long_12_to_16(self):
+    def test_blinks_are_not_one_template_and_last_7_to_11_frames(self):
         blinks = self.result.report["blink"]["new"]["list"]
         self.assertGreater(len(blinks), 8)
         shapes = {(b["closing"], b["hold"], b["opening"]) for b in blinks}
         self.assertGreater(len(shapes), 1)
-        for b in blinks:
-            n = b["closing"] + b["hold"] + b["opening"]
-            self.assertTrue(12 <= n <= 16 if b["hold"] >= face_life.LONG_HOLD[0] else 7 <= n <= 10, b)
+        t = self.t
+        lengths = [z - a for a, _, _, z in shut_runs(t["まばたき"], t["笑い"], longest=8)]
+        self.assertTrue(lengths and all(7 <= n <= 11 for n in lengths), lengths)
 
     def test_a_quick_head_swing_mostly_brings_a_blink(self):
         starts = [b["start"] for b in self.result.report["blink"]["new"]["list"]]

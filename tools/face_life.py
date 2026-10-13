@@ -166,15 +166,20 @@ STYLES = ("human", "v7")
 # taken (Wu et al. 2014: 7.8 frames; Trutoiu et al. 2011: 9 frames measured most often, a character's blink most
 # natural at 7 to 9 frames, less at 11 and 13); the opening is close to an exponential with a time constant of about 2
 # frames (Espinosa et al. 2020).  v7's shapes (CLOSING, OPENING: 7 to 10 frames) are kept; the lid stays shut a frame
-# longer only one time in four (a spontaneous blink barely pauses shut: Malbouisson et al. 2010).  Some blinks are long
-# (in conversation a quarter, 607 ms on average, at the end of a speaking unit: Homke et al. 2017, 2018): a blink after
-# a phrase with P_LONG["phrase_end"], one filled in where nothing is sung with P_LONG["rest"].
+# longer only one time in four (a spontaneous blink barely pauses shut: Malbouisson et al. 2010).
+# Long blinks are a decided value.  No study measured singers' blinks; the long blinks of conversation (Homke et al.
+# 2017, 2018) are a listener's, at the end of the speaker's turn, and no ground for a singer's.  Some blinks after a
+# phrase (P_LONG["phrase_end"]) and where nothing is sung (P_LONG["rest"]) stay shut 3 to 4 frames, 10 to 11 frames in
+# all: a character's blink looked most natural at 7 to 9 frames and already less so at 11 (Trutoiu et al. 2011), so they
+# are kept short of 12; two are at least LONG_GAP frames apart (a review found four within 10 seconds in B2).
 HUMAN_CLOSING_FRAMES = (2, 3)
 HUMAN_HOLD_CHANCE = 0.25
 HUMAN_OPENING_FRAMES = (5, 6)
-LONG_HOLD = (3, 6)              # frames a long blink stays shut beyond the first (12 to 16 frames in all)
-LONG_OPENING = 7
-HUMAN_OPENING = {**OPENING, 7: (0.75, 0.54, 0.37, 0.24, 0.14, 0.06)}
+LONG_CLOSING = 2                # frames a long blink closes in
+LONG_HOLD = (2, 3)              # frames it stays shut beyond the first (10 to 11 frames in all)
+LONG_OPENING = 6
+LONG_GAP = 240                  # frames (8 s) at least between the starts of two long blinks
+HUMAN_OPENING = OPENING
 P_LONG = {"phrase_end": 0.5, "rest": 0.25}
 CLOSURE_CAP = 0.7               # human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that
                                 # follows the eyes down must not shut a smiling eye
@@ -1041,6 +1046,7 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
     fill_blinks(plan_, clear, frames, rng)
     chosen = plan_.chosen()
     drawn = []
+    last_long = None
     for f, cause in chosen:
         if not human:
             closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
@@ -1048,8 +1054,9 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             continue
         closing = rng.choice(closings)
         chance = P_LONG["phrase_end"] if cause == "phrase_end" else P_LONG["rest"] if cause == "fill" and not sung[f] else 0.0
-        if chance and rng.random() < chance:
-            drawn.append((f, cause, closing, rng.randint(*LONG_HOLD), LONG_OPENING))
+        if chance and rng.random() < chance and (last_long is None or f - last_long >= LONG_GAP):
+            drawn.append((f, cause, LONG_CLOSING, rng.randint(*LONG_HOLD), LONG_OPENING))
+            last_long = f
         else:
             drawn.append((f, cause, closing, 1 if rng.random() < HUMAN_HOLD_CHANCE else 0, rng.choice(openings)))
     if human and flashes:
