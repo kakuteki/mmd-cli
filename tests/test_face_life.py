@@ -911,12 +911,28 @@ class SaccadeTest(unittest.TestCase):
 
 
 def real_file(*parts):
-    folder = ROOT
+    """a file of the real song under _spike/ of this tree, of a tree up to 3 folders above it (a worktree), or of
+    MMD_CLI_DATA (a folder holding _spike/: a copy of the tree kept away from the data, as on the render machine)"""
+    folders, folder = [], ROOT
     for _ in range(4):
+        folders.append(folder)
+        folder = os.path.dirname(folder)
+    if os.environ.get("MMD_CLI_DATA"):
+        folders.append(os.environ["MMD_CLI_DATA"])
+    for folder in folders:
         path = os.path.join(folder, *parts)
         if os.path.isfile(path):
             return path
-        folder = os.path.dirname(folder)
+    return None
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop (a fixed path of one
+    machine skipped the real tests on another without a word: review gaze-smooth 13)"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
     return None
 
 
@@ -926,8 +942,8 @@ REAL_DANCE = real_file(*SPIKE, "variants", "dance_final_dn6_twist.vmd")
 REAL_GAZE = real_file(*SPIKE, "variants", "gaze_final_dn6.vmd")
 REAL_CUES = real_file(*SPIKE, "mv", "production", "cues_mv.json")
 REAL_AUDIO = real_file(*SPIKE, "audio", "hibikase_yt_TkroHwQYpFE.webm")
-RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
-REAL = all((REAL_FACE, REAL_DANCE, REAL_GAZE, REAL_CUES, REAL_AUDIO)) and os.path.isfile(RIN)
+RIN = rin_path()
+REAL = all((REAL_FACE, REAL_DANCE, REAL_GAZE, REAL_CUES, REAL_AUDIO, RIN))
 
 
 @unittest.skipUnless(REAL, "the KAZUSA face motion, the dance, the gaze, the cues, the sound or Rin is not here")
@@ -987,6 +1003,18 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(self.report["intro"]["eyes_open"], self.report["intro"]["body_start"])
         lag = self.report["mouth"]["lag_ms"]
         self.assertEqual(lag["before"], lag["new"])
+
+    def test_the_human_targets(self):
+        lid = self.report["blink"]["lid"]
+        # a10's count takes the lid that follows the eyes down (the cover kept) for a half-closed eye too
+        self.assertLess(lid["half_eye"]["new"], 0.55 * lid["half_eye"]["before"])
+        self.assertLess(lid["half_eye_without_the_gaze"], 0.1)
+        minutes = (self.report["frames"][1] + 1) / 30.0 / 60.0
+        flashes = self.report["blink"]["flashes"]
+        self.assertTrue(0 < len(flashes) <= face_life.FLASH_RATE * minutes + 1, flashes)
+        self.assertGreater(self.report["blink"]["long_blinks"], 0)
+        self.assertGreater(self.report["expression"]["kimes"]["found"], 0)
+        self.assertEqual(self.report["style"], "human")
 
 
 STAGE_DANCE = real_file("_spike", "out", "stage1", "breath", "dance_v3_breath.vmd")
