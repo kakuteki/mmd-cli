@@ -428,6 +428,24 @@ class StageFramesTest(unittest.TestCase):
         lines = numpy.abs(blurred - sharp).sum(axis=2) > 30                  # where the average differs from the middle moment
         self.assertGreater(int(lines.sum()), 100)
 
+    def test_jobs_draw_the_same_frames_as_one_process(self):
+        look = world_look()
+        track = mv_world.camera_track(self.camera)
+        lf = mv_look.light_frame_count(look, 30)
+        alone = os.path.join(self.folder, "alone")
+        jobs = os.path.join(self.folder, "jobs")
+        made = mv_world.write_stage(look, alone, SIZE, 30, track, 10, 7, lf, subframes=8, shutter=0.5)
+        split = mv_world.write_stage(look, jobs, SIZE, 30, track, 10, 7, lf, subframes=8, shutter=0.5, jobs=3,
+                                     sources={"camera": self.camera})
+        self.assertEqual((split["first"], split["frames"]), (made["first"], made["frames"]))
+        for index in range(10, 17):
+            with open(made["pattern"] % index, "rb") as f, open(split["pattern"] % index, "rb") as g:
+                self.assertEqual(f.read(), g.read(), index)
+        self.assertEqual(sorted(os.listdir(jobs)), ["stage"])                 # the job files and logs went
+        with self.assertRaises(RuntimeError):                                  # a job that cannot read its camera
+            mv_world.write_stage(look, jobs, SIZE, 30, track, 10, 4, lf, jobs=2,
+                                 sources={"camera": os.path.join(self.folder, "missing.vmd")})
+
     def test_a_camera_file_without_camera_keys_is_refused(self):
         path = os.path.join(self.folder, "empty.vmd")
         with open(path, "wb") as f:

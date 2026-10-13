@@ -217,6 +217,25 @@ class WorldCommandTest(unittest.TestCase):
         self.assertEqual(code, 2, result)                              # prepared without the shutter of 8 subframes
         self.assertIn("prepare", result["error"]["message"])
 
+    def test_jobs_draw_the_stage_in_several_processes_and_change_nothing_else(self):
+        code, one = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
+                            "--from", "0.4", "--to", "1.0"])
+        self.assertEqual(code, 0, one)
+        with open(os.path.join(self.work, "prepared.json"), encoding="utf-8") as f:
+            note = json.load(f)
+        pictures = {n: open(os.path.join(self.work, "stage", n), "rb").read() for n in os.listdir(os.path.join(self.work, "stage"))}
+        code, two = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
+                            "--from", "0.4", "--to", "1.0", "--jobs", "2"])
+        self.assertEqual(code, 0, two)
+        self.assertEqual(two, one)
+        with open(os.path.join(self.work, "prepared.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["key"], note["key"])                 # the jobs are no part of what it is made from
+        self.assertEqual({n: open(os.path.join(self.work, "stage", n), "rb").read()
+                          for n in os.listdir(os.path.join(self.work, "stage"))}, pictures)
+        code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
+                               "--jobs", "0"])
+        self.assertEqual(code, 2, result)
+
     def test_prepare_can_draw_the_stage_of_a_span_only(self):
         # tools/mv_chunks.py --workers prepares the span of its chunks (a preview of 30 s draws 900 frames, not the song's)
         code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,

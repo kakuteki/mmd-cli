@@ -683,7 +683,7 @@ def prepare(look, work, size, fps, cues_path=None, world=None, span=None):
     note = {"key": prepared_key(look, size, fps, cues_path, world), "work": _slashes(work), "layers": layers, "text": plan}
     if world is not None:
         note["stage"] = world_tool().write_stage(look, work, size, fps, world["track"], first, frames, layers["light_frames"],
-                                                 world["subframes"], world["shutter"], world["figure"])
+                                                 world["subframes"], world["shutter"], world["figure"], world["jobs"], world)
     with open(note_path + ".part", "w", encoding="utf-8") as f:
         json.dump(note, f, ensure_ascii=True, indent=1)
     os.replace(note_path + ".part", note_path)
@@ -738,10 +738,10 @@ FLOOR_ALPHA = (226, 252)
 FLOOR_SHARE = 0.05
 
 
-def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter=0.5):
+def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter=0.5, jobs=1):
     """what a stage in the world is drawn from (None for a look fixed to the picture, which reads none of it): the camera
     motion MMD renders with and, when the floor takes her pool of light or her shadows, the dancer (model and motions in the
-    order MMD loads them), and the shutter of the fold (the floor's motion blur)"""
+    order MMD loads them), the shutter of the fold (the floor's motion blur), and how many processes draw its frames"""
     stage = look["stage"]
     if not stage["world"]:
         return None
@@ -749,8 +749,10 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
         raise ValueError("the look places the stage in the world (stage.world 1): give the camera motion MMD renders with, "
                          "--camera CAMERA.vmd (tools/mv_chunks.py gives it with \"world\": true in the plan)")
     check_shutter(subframes, shutter)
+    if isinstance(jobs, bool) or not isinstance(jobs, int) or jobs < 1:
+        raise ValueError("--jobs is the number of processes that draw the stage, from 1, not %r" % (jobs,))
     world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
-             "subframes": int(subframes), "shutter": float(shutter)}
+             "subframes": int(subframes), "shutter": float(shutter), "jobs": jobs}
     world["track"] = world_tool().camera_track(world["camera"])
     if stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         if not model or not motions:
@@ -795,7 +797,7 @@ def render(args):
     fps = args.fps or fps
     check_shutter(args.subframes, args.shutter)
     encoder_args(args.encoder)
-    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
     if world is not None and look["stage"]["floor"]:
         share = floor_share(fg)
         if share > FLOOR_SHARE:
@@ -838,7 +840,7 @@ def render(args):
         plan = text_plan(args.cues, work, size, fps) if args.cues else None
         if world is not None:
             stage = world_tool().write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
-                                         world["subframes"], world["shutter"], world["figure"])
+                                             world["subframes"], world["shutter"], world["figure"], world["jobs"], world)
     folder = os.path.dirname(out)
     if folder:
         os.makedirs(folder, exist_ok=True)
@@ -878,7 +880,7 @@ def prepare_command(args):
     if not args.size or not args.fps:
         raise ValueError("prepare needs --size WxH and --fps N")
     check_encoder(args.encoder)
-    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
     if (args.start is None) != (args.to is None):
         raise ValueError("--from and --to go together: the span of the song whose stage to prepare")
     span = None if args.start is None else (args.start, args.to)
@@ -897,6 +899,11 @@ def _world_arguments(s):
     s.add_argument("--model", help="a stage in the world with a pool of light or shadows: the dancer's model (.pmx)")
     s.add_argument("--motion", action="append", default=[],
                    help="... and her motions (.vmd), each with its own --motion, in the order MMD loads them")
+
+
+def _jobs_argument(s):
+    s.add_argument("--jobs", type=int, default=1,
+                   help="a stage in the world: the processes that draw its frames (default 1; the pictures are the same)")
 
 
 def main(argv=None):
@@ -923,6 +930,7 @@ def main(argv=None):
     s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
     s.add_argument("--fps", type=float, help="frames per second, when it is not to be read from the dancer's file")
     _world_arguments(s)
+    _jobs_argument(s)
     s = sub.add_parser("layers", help="only write the plate, the light loop and the flare")
     s.add_argument("look")
     s.add_argument("work")
@@ -930,6 +938,7 @@ def main(argv=None):
     s.add_argument("--fps", type=float)
     s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
     _world_arguments(s)
+    _jobs_argument(s)                   # taken as render takes it (the drivers hand both the same); layers draws no stage
     s = sub.add_parser("prepare", help="write the layers and the text once, for many renders with --prepared")
     s.add_argument("look")
     s.add_argument("work")
@@ -944,6 +953,7 @@ def main(argv=None):
     s.add_argument("--from", dest="start", type=float,
                    help="a stage in the world: prepare its frames from this second of the song (default: the song's start)")
     s.add_argument("--to", type=float, help="... up to this second (default: the camera motion's last key)")
+    _jobs_argument(s)
     args = p.parse_args(argv)
     if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
         args.fps = int(args.fps)

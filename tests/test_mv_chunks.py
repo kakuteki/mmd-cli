@@ -400,6 +400,16 @@ class WorldPlanTest(unittest.TestCase):
                                           "'C:/MMD/UserFile/Model/Rin/White.pmx' --motion 'C:/work/song/dance.vmd' --motion '%s'"
                                           % LIPS), check)
 
+    def test_stage_jobs_hand_mv_look_the_processes_that_draw_the_stage(self):
+        plan = mv_chunks.check_plan(dict(self.WORLD, stage_jobs=4))
+        chunk = mv_chunks.plan_chunks(SPANS, lead=120)[1]
+        self.assertEqual(mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)[-2:], ["--jobs", "4"])
+        self.assertEqual(mv_chunks.check_plan(self.WORLD)["stage_jobs"], 1)
+        self.assertNotIn("--jobs", mv_chunks.fold_args(mv_chunks.check_plan(self.WORLD), "t", chunk, 240, 0.5))
+        for bad in ({"stage_jobs": 0}, {"stage_jobs": 2.5}, {"stage_jobs": True}, {"stage_jobs": 2, "world": False}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.check_plan(dict(self.WORLD, **bad))
+
     def test_the_workers_prepare_the_stage_of_their_chunks_with_their_shutter(self):
         driver = self.written("two", workers=2)
         prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]

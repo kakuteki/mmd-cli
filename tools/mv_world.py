@@ -33,6 +33,7 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -623,19 +624,67 @@ def _slashes(path):
     return path.replace("\\", "/")
 
 
-def write_stage(look, work, size, fps, track, first, count, light_frames, subframes=1, shutter=1.0, figure=None):
+def _draw(look, size, track, fps, first, count, light_frames, subframes, shutter, figure, pattern):
+    for index in range(int(first), int(first) + int(count)):
+        stage_image(look, size, track, fps, index, light_frames, subframes, shutter, figure).save(pattern % index,
+                                                                                                  compress_level=1)
+
+
+def write_stage(look, work, size, fps, track, first, count, light_frames, subframes=1, shutter=1.0, figure=None, jobs=1,
+                sources=None):
     """the stage of video frames first .. first + count - 1 as WORK/stage/stage_NNNNN.png (the frames of before go first:
-    ffmpeg reads a numbered sequence until a number is missing)"""
+    ffmpeg reads a numbered sequence until a number is missing).  With `jobs` above 1 that many processes of this tool
+    (`draw`) draw a stretch of the frames each, reading the camera motion and the dancer themselves from `sources`
+    ({"camera", "model", "motions"}, the files `track` and `figure` were read from).  Every frame is drawn on its own, so
+    the pictures are the same whatever the jobs"""
     folder = os.path.join(work, "stage")
     os.makedirs(folder, exist_ok=True)
     for name in os.listdir(folder):
         if name.startswith("stage_") and name.endswith(".png"):
             os.remove(os.path.join(folder, name))
     pattern = os.path.join(folder, "stage_%05d.png")
-    for index in range(int(first), int(first) + int(count)):
-        stage_image(look, size, track, fps, index, light_frames, subframes, shutter, figure).save(pattern % index,
-                                                                                                  compress_level=1)
-    return {"pattern": _slashes(pattern), "first": int(first), "frames": int(count)}
+    first, count, jobs = int(first), int(count), max(1, int(jobs))
+    if jobs == 1 or count < 2:
+        _draw(look, size, track, fps, first, count, light_frames, subframes, shutter, figure, pattern)
+    else:
+        if not sources or not sources.get("camera") or (figure is not None and not sources.get("model")):
+            raise ValueError("drawing the stage with jobs needs the files it is drawn from: the camera motion and the dancer")
+        _draw_in_jobs(look, size, fps, sources, first, count, light_frames, subframes, shutter, figure is not None, pattern,
+                      jobs, work)
+    return {"pattern": _slashes(pattern), "first": first, "frames": count}
+
+
+def _draw_in_jobs(look, size, fps, sources, first, count, light_frames, subframes, shutter, dancer, pattern, jobs, work):
+    """`draw` in `jobs` processes, a stretch of the frames each (their job files and logs lie in WORK and go afterwards)"""
+    parts = min(jobs, count)
+    edges = [first + count * k // parts for k in range(parts + 1)]
+    running = []
+    for k in range(parts):
+        job = {"look": look, "size": [int(size[0]), int(size[1])], "fps": fps, "camera": sources["camera"],
+               "model": sources.get("model") if dancer else None, "motions": list(sources.get("motions") or []) if dancer else [],
+               "first": edges[k], "count": edges[k + 1] - edges[k], "light_frames": int(light_frames),
+               "subframes": int(subframes), "shutter": float(shutter), "pattern": pattern}
+        path = os.path.join(work, "stage_job_%d.json" % k)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=True)
+        log = open(os.path.join(work, "stage_job_%d.log" % k), "wb")
+        running.append((path, log, subprocess.Popen([sys.executable, os.path.abspath(__file__), "draw", path],
+                                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)))
+    failed = []
+    for path, log, process in running:
+        process.wait()
+        log.close()
+        with open(log.name, "rb") as f:
+            said = f.read().decode("utf-8", "replace").strip()
+        if process.returncode != 0:
+            failed.append("%s (exit %d): %s" % (os.path.basename(path), process.returncode, said[-400:]))
+        for leftover in (path, log.name):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+    if failed:
+        raise RuntimeError("drawing the stage failed in %d of %d jobs: %s" % (len(failed), parts, " | ".join(failed)))
 
 
 # ---- the command ----------------------------------------------------------------------------
@@ -651,7 +700,17 @@ def main(argv=None):
     s.add_argument("--size", default="1280x720")
     s.add_argument("--model", help="the dancer's model, for the pool and the shadows")
     s.add_argument("--motion", action="append", default=[], help="the dancer's motions, in the order MMD loads them")
+    s = sub.add_parser("draw", help="draw a stretch of the frames of a job file (write_stage with jobs runs these)")
+    s.add_argument("job")
     args = p.parse_args(argv)
+    if args.command == "draw":
+        with open(args.job, encoding="utf-8") as f:
+            job = json.load(f)
+        figure = Figure.from_files(job["model"], job["motions"]) if job["model"] else None
+        _draw(job["look"], tuple(job["size"]), camera_track(job["camera"]), job["fps"], job["first"], job["count"],
+              job["light_frames"], job["subframes"], job["shutter"], figure, job["pattern"])
+        print(json.dumps({"ok": True, "first": job["first"], "frames": job["count"]}))
+        return 0
     try:
         here = os.path.dirname(os.path.abspath(__file__))
         import importlib.util

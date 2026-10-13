@@ -65,7 +65,8 @@ MIN_FRAMES = 3
 UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
-OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world")
+OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
+            "stage_jobs")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
 DISK_MARGIN = 2 * 1024 ** 3
 PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell takes each of these for a single quote
@@ -218,6 +219,12 @@ def check_plan(plan):
     if not isinstance(full["world"], bool):
         raise ValueError("world is true (the look's stage lies in the world: mv_look reads the camera and the dancer) or "
                          "false, not %r" % (full["world"],))
+    full.setdefault("stage_jobs", 1)
+    if not _whole(full["stage_jobs"]) or full["stage_jobs"] < 1:
+        raise ValueError("stage_jobs is the number of processes that draw the stage in the world, from 1, not %r"
+                         % (full["stage_jobs"],))
+    if full["stage_jobs"] > 1 and not full["world"]:
+        raise ValueError("stage_jobs draws a stage in the world: it goes with \"world\": true")
     for key in ("out", "scripts"):
         for folder in watched_folders(full):
             if _inside(full[key], folder):
@@ -277,7 +284,9 @@ def _world_args(plan):
     args = ["--camera", plan["camera"], "--model", plan["model"]]
     for motion in plan["motions"]:
         args += ["--motion", motion]
-    return args
+    if plan["stage_jobs"] > 1:
+        args += ["--jobs", plan["stage_jobs"]]
+    return [str(a) for a in args]
 
 
 def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
