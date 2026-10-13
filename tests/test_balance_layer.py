@@ -212,6 +212,12 @@ class WeightShiftTest(unittest.TestCase):
         self.assertLess(x[self.last], 0.01)
         self.assertLess(x[:10].max(), 0.01)
 
+    def test_no_swing_the_wrong_way(self):
+        """the body does not first lean towards the foot that will lift, nor overshoot past the dance after the
+        landing (a smoother's ringing; people do not move the body the wrong way before shifting the weight)"""
+        towards_lifted = self.shift[:, 0] * CM                  # the left foot lifts: +X is towards it
+        self.assertLess(towards_lifted.max(), 0.2)
+
     def test_smooth_no_one_frame_jump(self):
         step = np.linalg.norm(np.diff(self.shift, axis=0), axis=1) * CM
         self.assertLess(step.max(), 1.5)

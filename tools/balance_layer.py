@@ -2,42 +2,58 @@
 foot, starting before the foot lifts (an anticipatory weight shift), and a foot that lands and takes the weight bends
 its knee.  The feet's IK keys are not touched (the feet stay where they were traced).
 
-    python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--r-bal 1.5] [--acc-max 1.0]
-                                  [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip-deg 10] [--no-dip]
+    python tools/balance_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--arrays a.npz] [--r-bal 1.5]
+                                  [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip-deg 15] [--no-dip]
 
 Why (the analysis a05 of 2026-10-07, REPORT 4.1): the traced dance keeps the body between the feet while one foot is up;
-the centre of mass (COM) is 10.8 cm (v7: 11.3) from the standing foot's centre, sideways, where people keep it within
-a few cm.  The body hangs between the feet like a puppet.  And a foot that lands does not bend its knee.
+the centre of mass (COM) is 10.8 cm (v7: 11.3) from the standing foot's centre, sideways.  People standing on one foot
+keep the centre of pressure, the COM's mean floor point, 3 mm inside the foot's long axis (sway SD 6 mm; Haba & Iwatsuki
+2023, Janura et al. 2019).  The body hangs between the feet like a puppet.  And a foot that lands does not bend its knee.
 
 How:
 1. The body (Body): forward kinematics of the bones (tools/motor_layer.py's numpy FK, mmd_cli.fk's rule), the COM by the
    segment masses of de Leva 1996 Table 4, females (head VERT-CERV, trunk in three parts, arm, forearm, hand WJC-DAC3,
-   thigh, shank KJC-AJC, foot HEEL-TTIP; 99.99 % of the body), with the legs as two bones (thigh and shank from the
-   model's rest lengths) solved to the foot IK's target (the knee bends towards the foot's front; a target out of reach is
-   met by a straight leg pointing at it).  A foot supports while its lowest point (the ankle or the toe over its rest
-   height) is under SUPPORT_H (1.6 cm, a05's FLY).
+   thigh, shank KJC-AJC, foot HEEL-TTIP; 99.99 % of the body), the legs as two bones (thigh and shank from the model's
+   rest lengths) solved to the foot IK's target (the knee bends towards 下半身's front, turned out towards the foot's
+   front as far as the foot lies flat and points that way; a target out of reach is met by a straight leg pointing at
+   it).  A foot supports while its lowest point (the ankle or the toe over its rest height) is under SUPPORT_H (1.6 cm,
+   a05's FLY).
 2. The target: in single support (one foot supports, the other not) the COM's floor point in a band of --r-bal about the
    standing sole's line (heel to toe).  The pull's weight grows with the other foot's height (from 1.6 to CLEAR_CM),
-   ramps up over --lead before that foot lifts (the weight goes over before the foot leaves the floor) and down over
-   --lag after it lands.
-3. The shift x (the COM's move on the floor, every frame) minimizes  sum w |x - d|^2 + LAM |x|^2 + mu |x'''|^2  (d: to the
-   band; mu sets a minimum-jerk smoothness of TAU, Flash & Hogan 1985) subject to
-     (a) |x''| <= --acc-max: the added acceleration.  A body on one foot can only accelerate its COM by moving its
-         centre of pressure under the foot (the linear inverted pendulum: x'' = (g / height) (x - p)); 1 m/s^2 needs the
-         pressure to move about 9 cm.  So a brief step leans only part way (as people do: the faster the steps, the
-         nearer the middle the COM stays), a held stance goes all the way.
-     (b) every foot IK's target stays within its leg's reach after the hips move (or no farther than it already was),
-         with the hips allowed down by --drop-max (the loaded knee bends a little, as in shifting the weight in a wide
-         stance).
-   Solved by ADMM (Boyd et al. 2011): one banded solve per round with a fixed matrix, the bounds projected per frame.
-4. センター: the shift divided by how far the COM follows センター (measured on the body with the knees re-solved: about
-   0.85, the feet stay), corrected twice on the body.  Then the hips go down as far as the legs need to reach (the
-   least drop, widened and smoothed so that it is never short).
+   ramps up over --lead before that foot lifts and down over --lag after it lands.  How far a run is pulled depends on
+   its length T (need_share): on the linear inverted pendulum a COM at rest an offset e outside the foot drifts
+   e (cosh(w T) - 1) (w = sqrt(g / COM height), 1/w = 0.29 s for Rin): a 0.2 s step drifts 0.23 e and the next foot
+   catches it, from about 0.4 s on the body would fall, so the run is pulled min(1, cosh(w T) - 1) of the way.
+3. The shift y (センター's move on the floor, every frame) minimizes
+       sum w |k y - d|^2 + lam |y|^2 + mu |y'''|^2
+   (d: the COM's way to the band times the run's share; k: how far the COM follows センター, measured on the body with
+   the knees re-solved, about 0.85; lam LAM_IN where the pull is, LAM_OUT elsewhere, so a brief step's lean stays short;
+   mu: a minimum-jerk smoothness of TAU, Flash & Hogan 1985) subject to
+     (a) |y''| <= --acc-max.  The body moves its COM by moving its centre of pressure (the linear inverted pendulum:
+         x'' = (g / height) (x - p)); 1 m/s^2 needs it about 9 cm off.  People shifting the weight to lift a leg push
+         it 3.8-6.3 cm towards the lifting leg and start 0.32-0.44 s (lifting a leg) to about 0.6 s (a step) before
+         the foot leaves, and are still about 2 cm short of the standing foot when it does (Hussein et al. 2013,
+         Mouchnino & Blouin 2013); dancers get there in one go (Mouchnino et al. 1992).
+     (b) every foot IK's target within its leg's reach after the hips move (or no farther than it already was), the
+         hips allowed down for it: a leg at its reach stays straight (the hip goes round the ankle), so the drop for one
+         leg is bounded by what bends the other leg, if it is on the floor, KNEE_GIVE_DEG more (at most --drop-max).
+     (c) each hip's adduction (the hip-to-ankle line out of 下半身's sagittal plane) under the reference range's upper
+         proposal (22 degrees; stage 3 research: the Japanese reference 20) and its abduction under 45, or no farther
+         than in the dance.
+     (d) never pointing away from the nearest pull: a minimum-jerk smoother rings about 5 % before and after a step;
+         people do not move the COM the wrong way before a weight shift (the centre of pressure goes that way, not
+         the COM).
+   Solved by ADMM (Boyd et al. 2011): one banded solve per round with a fixed matrix, the bounds projected per frame
+   (Dykstra's projection for the intersection).  Moving センター translates the trunk and the head without turning them:
+   the dancers' "translation strategy in the pelvis" (Krasnow et al. 2011; the trunk kept vertical, Mouchnino et al.
+   1991), against the naive "inclination strategy".
+4. The hips then go down as far as the legs need to reach (the least smooth drop: the same solver, |y''| <= DROP_ACC_MAX).
 5. Landings (--dip-deg, --no-dip): a foot that lands after a swing (a05: off the floor 4 frames, up 1.6 cm) and then
-   takes the weight (the other foot lifts within DIP_WINDOW, or was already up) bends its knee by --dip-deg within
-   DIP_PEAK and comes back by DIP_END: the hips go down by what the two-bone leg needs for that bend, at most DIP_MAX_CM,
-   only as far as the dance does not already bend the knee there.  A tap (the foot lands and lifts again while the other
-   stays down) is left alone.  The drop of 4. and the dip are not added: the hips go down by the larger.
+   takes the weight (the other foot lifts within DIP_WINDOW, or was already up) bends its knee by --dip-deg by DIP_PEAK
+   and comes back by DIP_END (walking: 1-3 degrees at contact, 17 at 0.13 s; Winter 2009 Table A.1, a woman of 156 cm):
+   the hips go down by what the two-bone leg needs for that bend, at most DIP_MAX_CM, only as far as the dance does not
+   already bend the knee there.  A tap (the foot lands and lifts again while the other stays down) is left alone.  The
+   drop of 4. and the dip are not added: the hips go down by the larger.
 
 Written: センター only, a key on every frame (linear), its rotation as the dance had it.  Every other bone, every morph and
 the rest of the file are the dance's own bytes; when nothing is to be done the dance comes back unchanged.
@@ -45,12 +61,13 @@ the rest of the file are the dance's own bytes; when nothing is to be done the d
 Report (--report; in short on stdout): a05_lateral_cm (the analysis's measure: in single support with the other foot
 5 cm up and the standing foot on the floor, the COM's sideways distance from the standing foot's centre along 下半身's
 side axis, + towards the lifted foot, before and after; after_holds: in single-support runs of 0.5 s and more), runs
-(each single-support run: when, which foot, how high the other, the distance before and after, how far short of the
-band and why: reach or acceleration), centre (the shift, its 1-frame step, the added acceleration and the pressure move
-it needs, the drop), apa (how much of the shift is done when the foot lifts, and when it starts), reach (frames whose
-IK target is out of the leg's reach, before and after), knee (flexion on the floor, before and after), hip (adduction:
-the thigh's angle out of 下半身's sagittal plane, against the reference range), landings (the knee's bend within
-0.13 s after a landing, before and after), untouched (the other bones' bytes), solver.
+(each single-support run: when, which foot, how high the other, its need_share, the distance to the sole's line before
+and after and the intended one, how far short and why: reach, hip range or acceleration), centre (the shift, its 1-frame
+step, the added accelerations and the pressure move they need, the drop and the dip), apa (how much of the shift is done
+when the foot lifts, and when it starts), reach (frames whose IK target is out of the leg's reach, before and after),
+knee (flexion on the floor, before and after), hip (adduction against the reference range, before and after), landings
+(the knee's bend within 0.13 s after a landing, before and after), untouched (the other bones' bytes), solver.
+--arrays writes the per-frame curves (the shift, the COM before and after, the pull, the drop, the dip, the knees, ...).
 """
 import argparse
 import importlib.util
@@ -108,9 +125,9 @@ ADMM_ITERS = 800
 ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
 # ---- the landings ------------------------------------------------------------------------------------------------
-DIP_DEG = 10.0                  # the knee's extra bend on a landing that takes the weight
-DIP_PEAK_S = 0.1
-DIP_END_S = 0.35
+DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
+DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
+DIP_END_S = 0.4
 DIP_MAX_CM = 2.5
 DIP_WINDOW_S = 0.3              # the other foot lifts within this after the landing: the landing takes the weight
 GAP = 4                         # a05's swing: at least 4 frames off the floor...
@@ -332,27 +349,6 @@ def smoothstep(x):
     return x * x * (3.0 - 2.0 * x)
 
 
-def running_max(v, r):
-    out = np.array(v, dtype=np.float64, copy=True)
-    for k in range(1, r + 1):
-        out[k:] = np.maximum(out[k:], v[:-k])
-        out[:-k] = np.maximum(out[:-k], v[k:])
-    return out
-
-
-def box(v, r):
-    if r <= 0:
-        return np.array(v, dtype=np.float64)
-    pad = np.concatenate([np.full(r, v[0]), v, np.full(r, v[-1])])
-    c = np.cumsum(np.concatenate([[0.0], pad]))
-    return (c[2 * r + 1:] - c[:-2 * r - 1]) / (2 * r + 1)
-
-
-def envelope(v, r):
-    """a smooth curve never under v: widened by 2r, then two box means of r"""
-    return box(box(running_max(v, 2 * r), r), r)
-
-
 def q_stats(v, qs=(0.5, 0.9, 0.99)):
     v = np.asarray(v, dtype=np.float64)
     if not len(v):
@@ -456,22 +452,6 @@ def proj_half(x, u):
     m = s < 0
     out[m] = x[m] - s[m, None] * u[m]
     return out
-
-
-def proj_discs(x, centres, radii, toward=None, rounds=30):
-    """Dykstra's projection onto the intersection of the discs (per frame) and, with `toward` (unit rows), the
-    half-planes x . toward >= 0"""
-    y = x.copy()
-    sets = [(lambda v, c=c, r=r: proj_disc(v, c, r)) for c, r in zip(centres, radii)]
-    if toward is not None:
-        sets.append(lambda v: proj_half(v, toward))
-    inc = [np.zeros_like(x) for _ in sets]
-    for _ in range(rounds):
-        for j, proj in enumerate(sets):
-            z = proj(y + inc[j])
-            inc[j] = y + inc[j] - z
-            y = z
-    return y
 
 
 def toward_targets(d, reach_frames):
