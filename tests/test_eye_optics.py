@@ -836,11 +836,30 @@ class LidTest(unittest.TestCase):
         rest = tuple(p + o + s for p, o, s in zip(b.position, b.tail["offset"], shift))
         return tuple(a + o for a, o in zip(lp, fk.rotate(lr, tuple(r - c for r, c in zip(rest, b.position)))))
 
-    def test_a_light_the_formula_puts_under_a_lid_stays_below_its_edge(self):
-        """まばたき 0.6 lowers the toy's lid to 17.06 and the gaze 15 degrees down leaves the upper lights up against it
-        (formula A's lag): as the formula puts them they stand over the lid's edge, in front of the lid (a light on
-        the lid's skin, the MV's 167.2 seconds); kept where the lid leaves the iris uncovered, they stay below its edge
-        and seen"""
+    def test_a_light_the_formula_puts_just_under_a_lid_slides_below_its_edge(self):
+        """まばたき 0.53 lowers the toy's lid to 17.088 and the gaze 15 degrees down leaves the upper lights up against
+        it (formula A's lag): as the formula puts them they stand just over the lid's edge, in front of the lid (a
+        light on the lid's skin, the MV's 167.2 seconds); slid back a little (under light.lid_slide) to where the lid
+        leaves the iris uncovered, they stay below its edge and seen"""
+        weight = 0.53
+        model = self.lidded()
+        g = gaze(90, {0: (0.0, -15.0)})
+        result = eye_optics.optics(model, dance(), g, camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET),
+                                   face=self.face({0: weight, 90: weight}))
+        edge = self.EDGE - self.DROP * weight
+        for name in ("右HL２", "左HL２"):
+            k = result.trace["lights"].index(name)
+            for frame in (5, 45, 85):
+                x, y, z = self.light_world(model, [dance(), g, result.motion], frame, name, weight)
+                self.assertLess(y, edge - 0.005, (name, frame))
+                self.assertTrue(0.0 <= result.trace["lid"][frame][k] < 1.0, (name, frame))   # slid back
+                self.assertEqual(result.trace["sink"][frame][k], 0, (name, frame))          # at its drawn height
+            self.assertGreater(result.report["light"]["lids"][name]["slid_frames"], 80)
+
+    def test_a_light_the_formula_puts_well_under_a_lid_stays_under_it(self):
+        """まばたき 0.6 lowers the lid further: the way out from under it is longer than light.lid_slide (a jump the
+        viewer would see), so the lights stay where the formula puts them, brought down onto the iris behind the lid,
+        which covers them as a reflection there would be covered"""
         model = self.lidded()
         g = gaze(90, {0: (0.0, -15.0)})
         result = eye_optics.optics(model, dance(), g, camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET),
@@ -848,12 +867,11 @@ class LidTest(unittest.TestCase):
         edge = self.EDGE - self.DROP * 0.6
         for name in ("右HL２", "左HL２"):
             k = result.trace["lights"].index(name)
-            for frame in (5, 45, 85):
-                x, y, z = self.light_world(model, [dance(), g, result.motion], frame, name, 0.6)
-                self.assertLess(y, edge - 0.01, (name, frame))
-                self.assertTrue(0.0 <= result.trace["lid"][frame][k] < 1.0, (name, frame))   # slid back
-                self.assertEqual(result.trace["sink"][frame][k], 0, (name, frame))          # at its drawn height
-            self.assertGreater(result.report["light"]["lids"][name]["slid_frames"], 80)
+            self.assertEqual(result.trace["lid"][45][k], -1.0, name)
+            self.assertEqual(result.trace["sink"][45][k], 1, name)
+            x, y, z = self.light_world(model, [dance(), g, result.motion], 45, name, 0.6)
+            self.assertGreater(y, edge)                                          # under the lid,
+            self.assertGreater(z, self.LID_Z)                                    # behind it
 
     def test_a_lid_over_the_drawn_place_takes_the_light_down_under_it(self):
         """まばたき 1 lowers the lid over the upper lights' drawn places too, the whole way back covered: the lights
