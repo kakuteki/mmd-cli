@@ -72,6 +72,8 @@ PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell 
 NAME = re.compile(r"[A-Za-z0-9_-]+")
 ABSOLUTE = re.compile(r"([A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
 MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithmetic finite
+MAX_WORKERS = 8                         # each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions)
+ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
 
 
 def _whole(value):
@@ -250,32 +252,174 @@ def _names(plan, tag, chunk):
     return name, "%s/%s.avi" % (plan["out"], name), "%s/%s.mp4" % (plan["out"], name)
 
 
-def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS):
+def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
     """what mv_look gets after `render AVI LOOK MP4` for the chunk: the subframes make the output rate (mv_look divides
-    the rate of the AVI by them), the times are seconds of the song"""
+    the rate of the AVI by them), the times are seconds of the song.  `prepared`: the layers and the text the driver of
+    --workers prepared once (mv_look reads them and writes nothing there); `encoder` nvenc folds with h264_nvenc"""
     fold = ["--cues", plan["cues"]] if plan["cues"] else []
-    fold += ["--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // out_fps, "--shutter", shutter,
-             "--offset", "%.6f" % (chunk["first"] / float(FPS)), "--from", "%.6f" % (chunk["cut"] / float(FPS)),
+    fold += ["--prepared" if prepared else "--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // out_fps,
+             "--shutter", shutter, "--offset", "%.6f" % (chunk["first"] / float(FPS)), "--from", "%.6f" % (chunk["cut"] / float(FPS)),
              "--to", "%.6f" % ((chunk["end"] + 1) / float(FPS))]
+    if encoder != "x264":
+        fold += ["--encoder", encoder]
     return [str(a) for a in fold]
 
 
-def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS):
+def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
     """what makes the chunk's mp4 apart from the contents of the input files: its batch, its look and its fold"""
     parts = [batch_text(plan, chunk, fps, _names(plan, tag, chunk)[1]), plan["look"]] + fold_args(plan, tag, chunk, fps, shutter,
-                                                                                                   out_fps)
+                                                                                                   out_fps, encoder, prepared)
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
 
 
-def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS):
+def _inputs(plan):
+    inputs = [plan["mmd"], plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
+    return inputs + ([plan["cues"]] if plan["cues"] else [])
+
+
+def _python(plan):
+    return "python" if plan["python"] == "python" else _ps(plan["python"])
+
+
+def _look_check(plan, work, out_fps, encoder, prepare=False):
+    """the line that checks the look before MMD renders: `layers` (the driver of one worker), or `prepare` (the one of
+    --workers: the layers and the text, once for every chunk).  With nvenc it also tries h264_nvenc"""
+    line = "$check = Invoke-Native %s tools/mv_look.py %s $look %s --size %dx%d --fps %d" % (
+        _python(plan), "prepare" if prepare else "layers", _ps(work), plan["size"][0], plan["size"][1], out_fps)
+    if prepare and plan["cues"]:
+        line += " --cues %s" % _ps(plan["cues"])
+    if encoder != "x264":
+        line += " --encoder %s" % encoder
+    return line
+
+
+def _stamp_lines():
+    """the size and time of every watched file, as -Resume compares them"""
+    return ["$files = @($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue; "
+            "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } })",
+            "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
+            "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
+            "$stamp = $files -join \"`n\""]
+
+
+def _check_lines(plan, look_check, what):
+    return [look_check,
+            # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
+            "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the look check (not found?)' -f %s; exit 1 }" % _ps(plan["python"]),
+            "if ($LASTEXITCODE -ne 0) { 'STOP: mv_look %s failed on the look {0} ({1}):' -f $look, (Why $LASTEXITCODE); $check; exit 1 }"
+            % what]
+
+
+def _helper_lines():
+    """Invoke-Native, Why and Get-FreeBytes: the same in both drivers"""
+    return ["function Invoke-Native {",
+            "    # an external command, with the last exit code cleared first: one that is not found leaves it as it was.",
+            "    # The rest is an array even for one argument (splatting a lone string passes its characters)",
+            "    $global:LASTEXITCODE = $null",
+            "    $exe = $args[0]",
+            "    $rest = @($args | Select-Object -Skip 1)",
+            "    & $exe @rest",
+            "}",
+            "function Why($code) { if ($null -eq $code) { 'did not run' } else { 'exit ' + $code } }",
+            "if (-not ('MvChunks.Disk' -as [type])) {",
+            "    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition '[DllImport(\"kernel32.dll\", CharSet = CharSet.Unicode, "
+            "SetLastError = true)] public static extern bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, "
+            "out ulong free);'",
+            "}",
+            "function Get-FreeBytes($folder) {",
+            "    # the free space of the volume that holds the folder, for a UNC path or a mounted folder too (PSDrive is not)",
+            "    $a = [uint64]0; $t = [uint64]0; $f = [uint64]0",
+            "    if ([MvChunks.Disk]::GetDiskFreeSpaceEx($folder, [ref]$a, [ref]$t, [ref]$f)) { return $a }",
+            "    return -1",
+            "}"]
+
+
+COUNT_FRAMES = ["function Count-Frames($path) {",
+                "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
+                "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
+                "    if (\"$n\" -match '^\\s*(\\d+)') { return [int]$Matches[1] }",
+                "    return -1",
+                "}"]
+
+
+def _run_chunk_lines(plan, workers):
+    """the function that renders, folds and checks one chunk.  For --workers (workers: True) the disk is shared (Reserve
+    counts what the AVIs under way still have to write), a chunk that is done says so in the folder of the run, and the
+    seconds are those of the run (the workers start after the driver)"""
+    py = _python(plan)
+    if workers:
+        free = ["    if (-not (Reserve $name $avi $need)) { '{0}: not rendered, another chunk failed' -f $name; return }"]
+        skipped, finished = ["        Done $name"], ["    Release $name",
+                                                     "    '{0} {1} frames (want {2}), {3} s (worker {4})' -f $name, $n, $want, (Seconds), $Worker",
+                                                     "    Done $name"]
+    else:
+        free = ["    $free = Get-FreeBytes $out",
+                "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+                "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }"]
+        skipped, finished = [], ["    '{0} {1} frames (want {2}), {3} s' -f $name, $n, $want, [int]$sw.Elapsed.TotalSeconds"]
+    return (["function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
+             "    $made = \"$recipe`n$stamp\"",
+             "    $kept = ''",
+             "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
+             "    if ($raw) { $kept = $raw.Trim() }",
+             "    if ($Resume -and $kept -eq $made -and (Count-Frames $mp4) -eq $want) {",
+             "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue",
+             "        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want"]
+            + skipped +
+            ["        return",
+             "    }",
+             "    if (-not (Test-Path -LiteralPath $batch) -or (Get-FileHash -Algorithm SHA256 -LiteralPath $batch).Hash -ne $bhash) {",
+             "        '{0} STOP: {1} is not the batch this driver was written with (copy all of OUTDIR again)' -f $name, $batch",
+             "        exit 1",
+             "    }",
+             "    $left = @(Get-ChildItem -LiteralPath $out -Filter ($name + '.avi.mmdcli-failed*') | ForEach-Object { $_.FullName })",
+             "    foreach ($old in @($avi) + $left) {",
+             "        if (Test-Path -LiteralPath $old -PathType Container) { '{0} STOP: {1} is a folder, not an earlier attempt' -f $name, $old; exit 1 }",
+             "        if (-not (Test-Path -LiteralPath $old)) { continue }",
+             "        try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }",
+             "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
+             "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
+             "    }",
+             "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }"]
+            + free +
+            ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
+             "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
+             "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
+             "    if ($LASTEXITCODE -ne 0) {",
+             "        '{0} STOP: mv_look failed ({1}); the AVI is kept: {2}' -f $name, (Why $LASTEXITCODE), $avi",
+             "        Get-Content -LiteralPath \"$mp4.look.json\" -ErrorAction SilentlyContinue",
+             "        exit 1",
+             "    }",
+             "    $n = Count-Frames $mp4",
+             "    if ($n -ne $want) { '{0} STOP: {1} frames, want {2}; the AVI is kept: {3}' -f $name, $n, $want, $avi; exit 1 }",
+             "    Set-Content -LiteralPath \"$mp4.recipe\" -Value $made -Encoding UTF8",
+             "    try { Remove-Item -LiteralPath $avi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $avi, $_ }"]
+            + finished + ["}"])
+
+
+def _chunk_call(plan, tag, chunk, fps, shutter, batch_hashes, out_fps, encoder, prepared):
+    name, avi, mp4 = _names(plan, tag, chunk)
+    return "Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
+        _ps(name), _ps("%s/chunk_%s.txt" % (plan["scripts"], name)), _ps(batch_hashes[chunk["index"]]),
+        _ps(recipe(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared)), _ps("%s/%s.json" % (plan["out"], name)), _ps(avi),
+        _ps(mp4), chunk["frames"] * (out_fps // FPS), avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
+        ", ".join(_ps(a) for a in fold_args(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared)))
+
+
+def _join_lines(joined, concat, total):
+    return ["Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue" % _ps(joined),
+            "Invoke-Native ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
+            "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed ({0})' -f (Why $LASTEXITCODE); exit 1 }",
+            "$n = Count-Frames %s" % _ps(joined),
+            "if ($n -ne %d) { 'STOP: the joined video has {0} frames, want {1}' -f $n, %d; exit 1 }" % (total, total)]
+
+
+def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, encoder="x264"):
     sub = fps // out_fps
     per = out_fps // FPS                                    # frames of the video to a frame of the song
     total = sum(c["frames"] for c in chunks) * per
     joined = "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)
     concat = "%s/concat_%s.txt" % (plan["scripts"], tag)
-    py = "python" if plan["python"] == "python" else _ps(plan["python"])
-    inputs = [plan["mmd"], plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
-    inputs += [plan["cues"]] if plan["cues"] else []
     work = "%s/look_work_%s" % (plan["out"], tag)
     lines = ["# %d chunks at %d fps folded to %d fps (%d subframes, shutter %s), %d frames, joined to %s."
              % (len(chunks), fps, out_fps, sub, shutter, total, joined),
@@ -290,101 +434,189 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS):
         lines.append("$env:MMD_CLI_HOME = %s" % _ps(plan["mmd_cli_home"]))
     lines += ["$out = %s" % _ps(plan["out"]),
               "$look = %s" % _ps(plan["look"]),
-              "$inputs = @(%s)" % ", ".join(_ps(i) for i in inputs),
+              "$inputs = @(%s)" % ", ".join(_ps(i) for i in _inputs(plan)),
               "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan)),
               "New-Item -ItemType Directory -Force -Path $out | Out-Null",
               "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }",
-              "$sw = [Diagnostics.Stopwatch]::StartNew()",
-              "function Invoke-Native {",
-              "    # an external command, with the last exit code cleared first: one that is not found leaves it as it was.",
-              "    # The rest is an array even for one argument (splatting a lone string passes its characters)",
-              "    $global:LASTEXITCODE = $null",
-              "    $exe = $args[0]",
-              "    $rest = @($args | Select-Object -Skip 1)",
-              "    & $exe @rest",
+              "$sw = [Diagnostics.Stopwatch]::StartNew()"]
+    lines += _helper_lines() + _stamp_lines()
+    # the look is checked at the rate the fold will draw it at
+    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
+    lines += COUNT_FRAMES + _run_chunk_lines(plan, workers=False)
+    lines += [_chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps, encoder, False) for c in chunks]
+    lines += _join_lines(joined, concat, total)
+    lines.append("'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, [int]$sw.Elapsed.TotalSeconds, %s" % (total, _ps(joined)))
+    return "\r\n".join(lines) + "\r\n"
+
+
+def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, encoder, workers):
+    """the driver of --workers: the same script is the driver (no -Worker) and each of its workers (-Worker k)"""
+    sub = fps // out_fps
+    total = sum(c["frames"] for c in chunks) * (out_fps // FPS)
+    joined = "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)
+    concat = "%s/concat_%s.txt" % (plan["scripts"], tag)
+    work = "%s/look_work_%s" % (plan["out"], tag)
+    run = "%s/run_%s" % (plan["out"], tag)
+    count = min(workers, len(chunks))
+    names = [_names(plan, tag, c)[0] for c in chunks]
+    lines = ["# %d chunks at %d fps folded to %d fps (%d subframes, shutter %s), %d frames, joined to %s."
+             % (len(chunks), fps, out_fps, sub, shutter, total, joined),
+             "# %d workers at a time.  Every worker is this script again (-Worker k): it takes the next chunk no worker has taken"
+             % count,
+             "# (a claim in the folder of the run, made with CreateNew), renders, folds and checks it as the driver of one worker",
+             "# would, and takes the next.  The layers and the text are prepared once, before the first worker starts, and every",
+             "# chunk folds with them (mv_look --prepared).  A failure stops the run: no worker takes another chunk, the chunks under",
+             "# way are finished, and the driver exits with the code of the failure (1; 3 for the disk) without joining.",
+             "# Written by tools/mv_chunks.py --workers %d.  -Resume skips a chunk whose mp4 has its frame count and was made from" % workers,
+             "# the same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
+             "# It does not see fonts, MMD's settings, Python, ffmpeg or files outside the watched folders: after changing",
+             "# any of those, run without -Resume.",
+             "param([switch]$Resume, [int]$Worker = 0)",
+             "$ErrorActionPreference = 'Continue'",
+             "Set-Location -LiteralPath %s" % _ps(plan["mmd_cli"])]
+    if plan["mmd_cli_home"]:
+        lines.append("$env:MMD_CLI_HOME = %s" % _ps(plan["mmd_cli_home"]))
+    lines += ["$out = %s" % _ps(plan["out"]),
+              "$look = %s" % _ps(plan["look"]),
+              "$run = %s" % _ps(run),
+              "$inputs = @(%s)" % ", ".join(_ps(i) for i in _inputs(plan)),
+              "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan)),
+              "$diskWait = 5",
+              "New-Item -ItemType Directory -Force -Path $out | Out-Null",
+              "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }"]
+    lines += _helper_lines() + COUNT_FRAMES
+    lines += ["function Hold($path) {",
+              "    # the file open for this process alone (FileShare None): $null while another process has it open",
+              "    try { return [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }",
+              "    catch { return $null }",
               "}",
-              "function Why($code) { if ($null -eq $code) { 'did not run' } else { 'exit ' + $code } }",
-              "if (-not ('MvChunks.Disk' -as [type])) {",
-              "    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition '[DllImport(\"kernel32.dll\", CharSet = CharSet.Unicode, "
-              "SetLastError = true)] public static extern bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, "
-              "out ulong free);'",
-              "}",
-              "function Get-FreeBytes($folder) {",
-              "    # the free space of the volume that holds the folder, for a UNC path or a mounted folder too (PSDrive is not)",
-              "    $a = [uint64]0; $t = [uint64]0; $f = [uint64]0",
-              "    if ([MvChunks.Disk]::GetDiskFreeSpaceEx($folder, [ref]$a, [ref]$t, [ref]$f)) { return $a }",
-              "    return -1",
-              "}",
-              "$files = @($inputs | ForEach-Object { $i = Get-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue; "
-              "if ($i) { '{0}|{1}|{2}' -f $_, $i.Length, $i.LastWriteTimeUtc.Ticks } else { '{0}|missing' -f $_ } })",
-              "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
-              "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
-              "$stamp = $files -join \"`n\"",
-              # the look is checked at the rate the fold will draw it at
-              "$check = Invoke-Native %s tools/mv_look.py layers $look %s --size %dx%d --fps %d" % (py, _ps(work), plan["size"][0],
-                                                                                                    plan["size"][1], out_fps),
-              # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
-              "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the look check (not found?)' -f %s; exit 1 }" % _ps(plan["python"]),
-              "if ($LASTEXITCODE -ne 0) { 'STOP: mv_look layers failed on the look {0} ({1}):' -f $look, (Why $LASTEXITCODE); $check; exit 1 }",
-              "function Count-Frames($path) {",
-              "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
-              "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
-              "    if (\"$n\" -match '^\\s*(\\d+)') { return [int]$Matches[1] }",
-              "    return -1",
-              "}",
-              "function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
-              "    $made = \"$recipe`n$stamp\"",
-              "    $kept = ''",
-              "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
-              "    if ($raw) { $kept = $raw.Trim() }",
-              "    if ($Resume -and $kept -eq $made -and (Count-Frames $mp4) -eq $want) {",
-              "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue",
-              "        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want",
-              "        return",
+              "function Lock-Disk {",
+              "    # the notes of the AVIs under way are read and written by one worker at a time (each holds it for milliseconds)",
+              "    $lock = $null",
+              "    $waited = [Diagnostics.Stopwatch]::StartNew()",
+              "    while (-not $lock) {",
+              "        $lock = Hold (Join-Path $run 'disk.lock')",
+              "        if ($lock) { break }",
+              "        if ($waited.Elapsed.TotalSeconds -gt 60) { 'STOP: could not open {0} for a minute' -f (Join-Path $run 'disk.lock'); exit 1 }",
+              "        Start-Sleep -Milliseconds 50",
               "    }",
-              "    if (-not (Test-Path -LiteralPath $batch) -or (Get-FileHash -Algorithm SHA256 -LiteralPath $batch).Hash -ne $bhash) {",
-              "        '{0} STOP: {1} is not the batch this driver was written with (copy all of OUTDIR again)' -f $name, $batch",
+              "    return $lock",
+              "}",
+              "function Reserve($name, $avi, $need) {",
+              "    # the AVI starts when the disk holds it with its margin after what the AVIs under way (busy_<chunk> in the folder",
+              "    # of the run: their AVI and need) still have to write.  While those would leave too little it waits; with none",
+              "    # under way and still too little it stops the run (exit 3).  $false when another chunk failed meanwhile",
+              "    while ($true) {",
+              "        if (Test-Path -LiteralPath (Join-Path $run 'stop')) { return $false }",
+              "        $lock = Lock-Disk",
+              "        try {",
+              "            $free = Get-FreeBytes $out",
+              "            if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+              "            $owed = [decimal]0",
+              "            $busy = @(Get-ChildItem -LiteralPath $run -Filter 'busy_*' -File -Force -ErrorAction SilentlyContinue)",
+              "            foreach ($b in $busy) {",
+              "                $note = ([IO.File]::ReadAllText($b.FullName)).Trim().Split('|')",
+              "                $done = 0",
+              "                $i = Get-Item -LiteralPath $note[0] -Force -ErrorAction SilentlyContinue",
+              "                if ($i) { $done = $i.Length }",
+              "                $owed += [math]::Max([decimal]0, [decimal]$note[1] - $done)",
+              "            }",
+              "            if ([decimal]$free - $owed -ge $need) {",
+              "                [IO.File]::WriteAllText((Join-Path $run ('busy_' + $name)), ('{0}|{1}' -f $avi, $need))",
+              "                return $true",
+              "            }",
+              "            if ($busy.Count -eq 0) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
+              "        } finally { $lock.Close() }",
+              "        Start-Sleep -Milliseconds ([int]($diskWait * 1000))",
+              "    }",
+              "}",
+              "function Release($name) {",
+              "    $lock = Lock-Disk",
+              "    try { Remove-Item -LiteralPath (Join-Path $run ('busy_' + $name)) -Force -ErrorAction SilentlyContinue } finally { $lock.Close() }",
+              "}",
+              "function Done($name) { [IO.File]::WriteAllText((Join-Path $run ('done_' + $name)), [string]$Worker) }",
+              "function Seconds { [int]([DateTime]::UtcNow - $since).TotalSeconds }"]
+    lines += _run_chunk_lines(plan, workers=True)
+    lines += ["if ($Worker -gt 0) {",
+              "    # a worker: the stamp of the inputs and the start of the run are the driver's",
+              "    $mine = Hold (Join-Path $run ('worker_' + $Worker + '.lock'))",
+              "    if (-not $mine) { 'STOP: worker {0} could not open its lock in {1}' -f $Worker, $run; exit 1 }",
+              "    if (-not (Test-Path -LiteralPath (Join-Path $run 'started.txt'))) {",
+              "        'STOP: worker {0} found no run in {1}: the driver starts its workers (run it without -Worker)' -f $Worker, $run",
               "        exit 1",
               "    }",
-              "    $left = @(Get-ChildItem -LiteralPath $out -Filter ($name + '.avi.mmdcli-failed*') | ForEach-Object { $_.FullName })",
-              "    foreach ($old in @($avi) + $left) {",
-              "        if (Test-Path -LiteralPath $old -PathType Container) { '{0} STOP: {1} is a folder, not an earlier attempt' -f $name, $old; exit 1 }",
-              "        if (-not (Test-Path -LiteralPath $old)) { continue }",
-              "        try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }",
-              "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
-              "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
+              "    $stamp = [IO.File]::ReadAllText((Join-Path $run 'stamp.txt'))",
+              "    $since = New-Object DateTime -ArgumentList ([int64][IO.File]::ReadAllText((Join-Path $run 'started.txt'))), ([DateTimeKind]::Utc)",
+              "    function Take($name) {",
+              "        # the chunk for this worker alone: the claim is a file made with CreateNew, which fails for every other worker",
+              "        if (Test-Path -LiteralPath (Join-Path $run 'stop')) { return $false }",
+              "        try { [IO.File]::Open((Join-Path $run ('claim_' + $name)), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None).Close(); return $true }",
+              "        catch { return $false }",
               "    }",
-              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }",
-              "    $free = Get-FreeBytes $out",
-              "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
-              "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
-              "    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
-              "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
-              "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
-              "    if ($LASTEXITCODE -ne 0) {",
-              "        '{0} STOP: mv_look failed ({1}); the AVI is kept: {2}' -f $name, (Why $LASTEXITCODE), $avi",
-              "        Get-Content -LiteralPath \"$mp4.look.json\" -ErrorAction SilentlyContinue",
+              "    $through = $false",
+              "    try {"]
+    lines += ["        if (Take %s) { %s }" % (_ps(_names(plan, tag, c)[0]), _chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps,
+                                                                                        encoder, True)) for c in chunks]
+    lines += ["        $through = $true",
+              "    } catch {",
+              "        # an error the steps do not expect (a .NET call that threw): a failure like the others",
+              "        'STOP: worker {0}: {1}' -f $Worker, $_",
               "        exit 1",
+              "    } finally {",
+              "        # a chunk that failed ended this worker (exit 1, or 3 for the disk): no worker takes another chunk",
+              "        if (-not $through) { [IO.File]::WriteAllText((Join-Path $run 'stop'), [string]$Worker) }",
               "    }",
-              "    $n = Count-Frames $mp4",
-              "    if ($n -ne $want) { '{0} STOP: {1} frames, want {2}; the AVI is kept: {3}' -f $name, $n, $want, $avi; exit 1 }",
-              "    Set-Content -LiteralPath \"$mp4.recipe\" -Value $made -Encoding UTF8",
-              "    try { Remove-Item -LiteralPath $avi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $avi, $_ }",
-              "    '{0} {1} frames (want {2}), {3} s' -f $name, $n, $want, [int]$sw.Elapsed.TotalSeconds",
-              "}"]
-    for c in chunks:
-        name, avi, mp4 = _names(plan, tag, c)
-        lines.append("Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
-            _ps(name), _ps("%s/chunk_%s.txt" % (plan["scripts"], name)), _ps(batch_hashes[c["index"]]),
-            _ps(recipe(plan, tag, c, fps, shutter, out_fps)), _ps("%s/%s.json" % (plan["out"], name)), _ps(avi), _ps(mp4),
-            c["frames"] * per, avi_bytes(c, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
-            ", ".join(_ps(a) for a in fold_args(plan, tag, c, fps, shutter, out_fps))))
-    lines += ["Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue" % _ps(joined),
-              "Invoke-Native ffmpeg -v error -y -f concat -safe 0 -i %s -c copy %s" % (_ps(concat), _ps(joined)),
-              "if ($LASTEXITCODE -ne 0) { 'STOP: joining failed ({0})' -f (Why $LASTEXITCODE); exit 1 }",
-              "$n = Count-Frames %s" % _ps(joined),
-              "if ($n -ne %d) { 'STOP: the joined video has {0} frames, want {1}' -f $n, %d; exit 1 }" % (total, total),
-              "'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, [int]$sw.Elapsed.TotalSeconds, %s" % (total, _ps(joined))]
+              "    exit 0",
+              "}",
+              "# the driver: one run at a time; what an earlier run left in the folder of the run goes (a worker of it that is still",
+              "# running holds its lock, which cannot be removed: the run stops)",
+              "New-Item -ItemType Directory -Force -Path $run | Out-Null",
+              "$hold = Hold (Join-Path $run 'lock')",
+              "if (-not $hold) { 'STOP: another run of this driver holds {0}' -f (Join-Path $run 'lock'); exit 1 }",
+              "foreach ($old in @(Get-ChildItem -LiteralPath $run -File -Force | Where-Object { $_.Name -ne 'lock' })) {",
+              "    try { Remove-Item -LiteralPath $old.FullName -Force -ErrorAction Stop }",
+              "    catch { 'STOP: could not remove {0} of an earlier run (a worker of it still running?): {1}' -f $old.FullName, $_; exit 1 }",
+              "}",
+              "$since = [DateTime]::UtcNow",
+              "[IO.File]::WriteAllText((Join-Path $run 'started.txt'), [string]$since.Ticks)"]
+    lines += _stamp_lines()
+    lines += ["[IO.File]::WriteAllText((Join-Path $run 'stamp.txt'), $stamp)"]
+    # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
+    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True), "prepare")
+    lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(work),
+              "$self = (Get-Process -Id $PID).Path",
+              "$count = %d" % count,
+              "$started = @()",
+              "for ($k = 1; $k -le $count; $k++) {",
+              "    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('\"{0}\"' -f $PSCommandPath), '-Worker', $k)",
+              "    if ($Resume) { $a += '-Resume' }",
+              "    $p = $null",
+              "    try { $p = Start-Process -FilePath $self -ArgumentList $a -NoNewWindow -PassThru -ErrorAction Stop; $null = $p.Handle } catch { }",
+              "    if (-not $p) { 'STOP: could not start worker {0}' -f $k; [IO.File]::WriteAllText((Join-Path $run 'stop'), 'driver'); break }",
+              "    $started += $p",
+              "}",
+              "$failed = $null",
+              "while ($true) {",
+              "    foreach ($p in $started) {",
+              "        if (-not $failed -and $p.HasExited -and $p.ExitCode -ne 0) {",
+              "            $failed = $p",
+              "            [IO.File]::WriteAllText((Join-Path $run 'stop'), 'driver')",
+              "        }",
+              "    }",
+              "    if (@($started | Where-Object { -not $_.HasExited }).Count -eq 0) { break }",
+              "    Start-Sleep -Milliseconds 500",
+              "}",
+              "if ($started.Count -lt $count) { exit 1 }",
+              "if ($failed) {",
+              "    'STOP: a worker failed (exit {0}); no chunk was taken after it, the joined video is not made' -f $failed.ExitCode",
+              "    if ($failed.ExitCode -eq 3) { exit 3 }",
+              "    exit 1",
+              "}",
+              "$missing = @(@(%s) | Where-Object { -not (Test-Path -LiteralPath (Join-Path $run ('done_' + $_))) })"
+              % ", ".join(_ps(n) for n in names),
+              "if ($missing.Count -gt 0) { 'STOP: no worker finished {0}' -f ($missing -join ', '); exit 1 }"]
+    lines += _join_lines(joined, concat, total)
+    lines.append("'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, (Seconds), %s" % (total, _ps(joined)))
     return "\r\n".join(lines) + "\r\n"
 
 
@@ -403,13 +635,20 @@ def concat_text(plan, chunks, tag, out_fps=FPS):
     return text
 
 
-def run_tag(tag, out_fps):
+def run_tag(tag, out_fps, encoder="x264"):
     """what names the files of a run: the tag, and at 60 fps the tag with "_60fps" (a run at 60 fps with the tag of a run at
-    30 fps would otherwise remove its chunks, its joined video and its driver)"""
-    return tag if out_fps == FPS else "%s_%dfps" % (tag, out_fps)
+    30 fps would otherwise remove its chunks, its joined video and its driver), and with h264_nvenc "_nvenc" after that (the
+    files of libx264, the encoder of the video to publish, stay as they are)"""
+    tag = tag if out_fps == FPS else "%s_%dfps" % (tag, out_fps)
+    return tag if encoder == "x264" else "%s_%s" % (tag, encoder)
 
 
-def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
+def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encoder="x264"):
+    if not _whole(workers) or not 1 <= workers <= MAX_WORKERS:
+        raise ValueError("--workers is the number of chunks rendered and folded at the same time, 1 to %d, not %r" % (MAX_WORKERS, workers))
+    if encoder not in ENCODERS:
+        raise ValueError("--encoder is x264 (libx264, the default and the encoder of the video to publish) or nvenc (h264_nvenc "
+                         "on an NVIDIA GPU), not %r" % (encoder,))
     if not _whole(out_fps) or out_fps not in OUT_FPS:
         raise ValueError("--out-fps is 30 (the video to publish: the motion asks for 30 fps) or 60 (to watch), not %r" % (out_fps,))
     if fps not in MMD_FPS:
@@ -422,7 +661,7 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
                          "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
     if not NAME.fullmatch(tag):
         raise ValueError("--tag goes into file names: letters, digits, _ and - only")
-    tag = run_tag(tag, out_fps)
+    tag = run_tag(tag, out_fps, encoder)
     os.makedirs(outdir, exist_ok=True)
     batches, hashes = [], {}
     for c in chunks:
@@ -435,7 +674,10 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
         hashes[c["index"]] = hashlib.sha256(data).hexdigest().upper()
     driver = os.path.join(outdir, "render_%s.ps1" % tag)
     with open(driver, "w", encoding="utf-8-sig", newline="") as f:      # PowerShell 5.1 reads a file without a BOM as ANSI
-        f.write(driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps))
+        if workers == 1:
+            f.write(driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder))
+        else:
+            f.write(workers_driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder, workers))
     concat = os.path.join(outdir, "concat_%s.txt" % tag)
     with open(concat, "w", encoding="utf-8", newline="\n") as f:
         f.write(concat_text(plan, chunks, tag, out_fps))
@@ -443,6 +685,10 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
     summary = {"chunks": len(chunks), "frames": sum(c["frames"] for c in chunks) * (out_fps // FPS)}
     if out_fps != FPS:
         summary["out_fps"] = out_fps              # only at 60: the default prints the summary of before, byte for byte
+    if workers != 1:
+        summary["workers"] = workers              # and these two only when they are asked for
+    if encoder != "x264":
+        summary["encoder"] = encoder
     summary.update({"fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
                     "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
                     "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
@@ -464,6 +710,10 @@ def build_parser():
     p.add_argument("--out-fps", type=int, default=FPS,
                    help="the rate of the joined video: 30 (default; to publish) or 60 (to watch; the files get _60fps)")
     p.add_argument("--tag", default="final", help="names the files of this run (default final)")
+    p.add_argument("--workers", type=int, default=1,
+                   help="chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS)
+    p.add_argument("--encoder", default="x264",
+                   help="x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc)")
     return p
 
 
@@ -481,7 +731,8 @@ def main(argv=None):
             if args.last is None:
                 raise ValueError("--cuts needs --last (the last frame of the song)")
             spans = spans_from_cuts(args.cuts, args.last)
-        result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter, args.out_fps)
+        result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter, args.out_fps,
+                       args.workers, args.encoder)
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         return 2

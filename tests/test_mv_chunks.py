@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 from mmd_cli import batch
@@ -65,6 +66,20 @@ GOLDEN_30 = {
 }
 PLAN_B2 = dict(PLAN, python="C:/Program Files/Python 3/python.exe", mmd_cli_home="C:/work/home", name="song", size=[640, 360],
                menu={"298": "on"}, cues=None)
+# The same at --out-fps 60, written with the tool of main afd25c4, before --workers and --encoder
+# (_spike/out/stage5/fast_render/golden_60.py): the version to watch keeps its scripts too
+GOLDEN_60 = {
+    "t": {"chunk_t_60fps_00.txt": "41511cb5ea6ffb62253fc00e7be3f8f7b18623038c99afbc5275897587dd5472",
+          "chunk_t_60fps_01.txt": "5816909f53c59f63b137edfc91ea1898c924aa2d0e93ad6161c067050c7281ee",
+          "chunk_t_60fps_02.txt": "3c13392f9a2039c50d87b585234e418ddc8ef6982bdc49f6c2bd2e9def858cc0",
+          "concat_t_60fps.txt": "ad86cae087c8f5012190c6cc6d61d030c1b02b5729d7f41a0ad8bc5939de005b",
+          "render_t_60fps.ps1": "21309a52b2a6e4503c42c1128f6252b12d490658a8ce0cb8e770e63fa44fa1b5"},
+    "b2": {"chunk_b2_60fps_00.txt": "3b20b916c359d8cc6cf4f4ab59186dee1865bd15d39b347127604d28e86ddd42",
+           "chunk_b2_60fps_01.txt": "34a3cb0ea79f11a51c65d3ae1b17ed7611bcb2700a0d01a150713b3023e3c52d",
+           "chunk_b2_60fps_02.txt": "d2c4c79ae1c75ee5b145969f467fcdfdf99973ed337ed0adf00c4b7ee93c9fcf",
+           "concat_b2_60fps.txt": "9ae0c07ef9cc58bd266cd5d24b4b3f419cf4652eb75b3977d0a3df38a56ecf98",
+           "render_b2_60fps.ps1": "0500d2b4de8c844118aa9dc4ec91b2514a3336b404125b0c06d08a856cda0eac"},
+}
 
 
 class SpansTest(unittest.TestCase):
@@ -236,6 +251,11 @@ def value(args, key):
     return args[args.index(key) + 1]
 
 
+def sha256_of(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
 class OutFpsTest(unittest.TestCase):
     """--out-fps 60 makes a version to watch at home (the one to publish stays at 30 fps, as the motion asks).  MMD renders
     the same AVI and the chunks are the same frames of the song; every frame of the song becomes two frames of the video,
@@ -335,6 +355,128 @@ class OutFpsTest(unittest.TestCase):
         self.assertIn("--fps", str(ctx.exception))
         summary = mv_chunks.write(plan, chunks, folder, "t", 60, 0.5, out_fps=60)       # 60 to 60: no blur, as 30 to 30
         self.assertEqual((summary["subframes"], summary["frames"]), (1, 600))
+
+
+class WorkersScriptTest(unittest.TestCase):
+    """--workers N (N from 2) writes a driver that renders and folds N chunks at the same time.  The batches and the join list
+    are those of one worker; the layers and the text are prepared once and every chunk folds with them (--prepared).
+    --workers 1, the default, writes the scripts of before, byte for byte"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, label, plan=PLAN, spans=SPANS, lead=120, fps=240, shutter=0.5, tag="t", **kw):
+        folder = os.path.join(self.tmp, label)
+        summary = mv_chunks.write(mv_chunks.check_plan(plan), mv_chunks.plan_chunks(spans, lead), folder, tag, fps, shutter, **kw)
+        return summary, hashes(folder)
+
+    def driver(self, summary):
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            return f.read()
+
+    def test_one_worker_writes_the_scripts_of_before_byte_for_byte(self):
+        for out_fps, golden in ((30, GOLDEN_30), (60, GOLDEN_60)):
+            for label, kw in (("default", {}), ("one", {"workers": 1}), ("x264", {"workers": 1, "encoder": "x264"})):
+                self.assertEqual(self.written("%s_%d" % (label, out_fps), out_fps=out_fps, **kw)[1], golden["t"], (label, out_fps))
+            b2 = self.written("b2_%d" % out_fps, PLAN_B2, mv_chunks.spans_from_cuts([40, 90], 119), 30, 120, 0.75, "b2",
+                              out_fps=out_fps, workers=1)[1]
+            self.assertEqual(b2, golden["b2"], out_fps)
+
+    def test_workers_render_the_batches_and_join_the_list_of_one_worker(self):
+        one, one_files = self.written("one")
+        two, two_files = self.written("two", workers=2)
+        self.assertEqual(sorted(one_files), sorted(two_files))
+        for name in one_files:
+            if name != "render_t.ps1":
+                self.assertEqual(two_files[name], one_files[name], name)
+        self.assertNotEqual(two_files["render_t.ps1"], one_files["render_t.ps1"])
+        self.assertEqual(two["workers"], 2)
+        self.assertNotIn("workers", one)
+        self.assertEqual({k: v for k, v in two.items() if k not in ("workers", "driver", "batches", "concat")},
+                         {k: v for k, v in one.items() if k not in ("driver", "batches", "concat")})
+
+    def test_the_driver_of_workers_prepares_once_and_every_chunk_folds_with_the_prepared_layers(self):
+        summary = self.written("two", workers=2)[0]
+        driver = self.driver(summary)
+        self.assertIn("param([switch]$Resume, [int]$Worker = 0)", driver)
+        prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]
+        self.assertEqual(len(prepare), 1, prepare)
+        self.assertTrue(prepare[0].endswith("--size 1280x720 --fps 30 --cues 'C:/work/song/cues.json'"), prepare)
+        self.assertNotIn("tools/mv_look.py layers", driver)
+        takes = re.findall(r"^ +if \(Take '([^']+)'\) \{ Run-Chunk .*\}$", driver, re.M)
+        self.assertEqual(takes, ["t_00", "t_01", "t_02"])
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunk = mv_chunks.plan_chunks(SPANS, lead=120)[2]
+        fold = mv_chunks.fold_args(plan, "t", chunk, 240, 0.5, prepared=True)
+        self.assertEqual(value(fold, "--prepared"), "C:/work/song/out/look_work_t")
+        self.assertNotIn("--work", fold)
+        one = mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)
+        self.assertEqual([a for a in fold if a not in ("--prepared",)], [a for a in one if a not in ("--work",)])
+        # what -Resume compares: a chunk folded with prepared layers is not taken for one folded with its own (nor back)
+        self.assertNotEqual(mv_chunks.recipe(plan, "t", chunk, 240, 0.5, prepared=True), mv_chunks.recipe(plan, "t", chunk, 240, 0.5))
+
+    def test_no_more_workers_start_than_there_are_chunks(self):
+        driver = self.driver(self.written("many", workers=8)[0])
+        self.assertIn("$count = 3", driver)
+        driver = self.driver(self.written("two", workers=2)[0])
+        self.assertIn("$count = 2", driver)
+
+    def test_the_number_of_workers_is_a_whole_number_from_1_to_8(self):
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunks = mv_chunks.plan_chunks(SPANS, lead=0)
+        for workers in (0, -1, 9, "2", 2.0, True, None):
+            with self.assertRaises(ValueError, msg=workers) as ctx:
+                mv_chunks.write(plan, chunks, os.path.join(self.tmp, "w"), "t", 240, 0.5, workers=workers)
+            self.assertIn("--workers", str(ctx.exception))
+
+
+class EncoderScriptTest(unittest.TestCase):
+    """--encoder nvenc folds with h264_nvenc.  Its files carry "_nvenc" after the tag (and after _60fps), so that it removes
+    nothing of a run with libx264, the default and the encoder of the video to publish; the look check tries h264_nvenc
+    before MMD renders"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, folder, **kw):
+        return mv_chunks.write(mv_chunks.check_plan(dict(PLAN)), mv_chunks.plan_chunks(SPANS, 120), os.path.join(self.tmp, folder),
+                               "t", 240, 0.5, **kw)
+
+    def test_nvenc_names_its_files_apart_and_leaves_those_of_libx264_alone(self):
+        self.written("both")
+        summary = self.written("both", encoder="nvenc")
+        files = hashes(os.path.join(self.tmp, "both"))
+        self.assertEqual({n: files[n] for n in GOLDEN_30["t"]}, GOLDEN_30["t"])
+        self.assertEqual(sorted(set(files) - set(GOLDEN_30["t"])), ["chunk_t_nvenc_00.txt", "chunk_t_nvenc_01.txt",
+                                                                   "chunk_t_nvenc_02.txt", "concat_t_nvenc.txt", "render_t_nvenc.ps1"])
+        self.assertEqual((summary["joined"], summary["encoder"]), ("C:/work/song/out/mv_t_nvenc.mp4", "nvenc"))
+        sixty = self.written("sixty", encoder="nvenc", out_fps=60, workers=2)
+        self.assertEqual(sixty["joined"], "C:/work/song/out/mv_t_60fps_nvenc.mp4")
+        self.assertEqual(sorted(os.listdir(os.path.join(self.tmp, "sixty")))[-1], "render_t_60fps_nvenc.ps1")
+
+    def test_every_fold_and_the_look_check_use_nvenc(self):
+        for workers, check in ((1, "layers"), (2, "prepare")):
+            summary = self.written("w%d" % workers, encoder="nvenc", workers=workers)
+            with open(summary["driver"], encoding="utf-8-sig") as f:
+                driver = f.read()
+            folds = re.findall(r"Run-Chunk .* @\((.*)\)", driver)
+            self.assertEqual(len(folds), 3, driver)
+            self.assertTrue(all(f.endswith("'--encoder', 'nvenc'") for f in folds), folds)
+            checks = [l for l in driver.splitlines() if "tools/mv_look.py %s" % check in l]
+            self.assertEqual(len(checks), 1)
+            self.assertIn(" --encoder nvenc", checks[0])
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunk = mv_chunks.plan_chunks(SPANS, lead=120)[1]
+        self.assertNotEqual(mv_chunks.recipe(plan, "t_nvenc", chunk, 240, 0.5, encoder="nvenc"),
+                            mv_chunks.recipe(plan, "t_nvenc", chunk, 240, 0.5))
+
+    def test_an_encoder_it_does_not_know_is_refused(self):
+        for encoder in ("h264", "NVENC", "", None):
+            with self.assertRaises(ValueError, msg=encoder) as ctx:
+                self.written("x", encoder=encoder)
+            self.assertIn("--encoder", str(ctx.exception))
 
 
 class QuoteTest(unittest.TestCase):
@@ -937,6 +1079,344 @@ class DriverTest(unittest.TestCase):
         self.assertIn("Invoke-Native 'C:/Program Files/Python 3/python.exe' tools/mv_look.py render", text)
 
 
+# The stand-ins of DriverTest as scripts on the PATH, for the drivers of --workers: the workers are processes of their own,
+# where the functions of a wrapper do not reach.  Every process logs to a file of its own (STUB_LOG.<pid>).  STUB_SLOW makes a
+# batch take 3 seconds, so that a test knows which chunk is still under way when another one fails
+PATH_STUBS = {
+    "python.ps1": r"""
+$log = $env:STUB_LOG + '.' + $PID
+Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
+if ($args[0] -eq '-m') {
+    if ($env:STUB_SLOW -and (($args -join ' ') -like ('*' + $env:STUB_SLOW + '*'))) { Start-Sleep -Seconds 3 }
+    if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) { $global:LASTEXITCODE = 1; return }
+    $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
+    $r = $render | ConvertFrom-Json
+    Set-Content -LiteralPath $r[2] -Value $r[[array]::IndexOf($r, '--fps') + 1]
+    $global:LASTEXITCODE = 0
+    return
+}
+if ($args[1] -eq 'layers' -or $args[1] -eq 'prepare') {
+    try { $null = Get-Content -LiteralPath $args[2] -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+    catch { '{"ok": false, "error": "the look is not JSON"}'; $global:LASTEXITCODE = 2; return }
+    '{"ok": true}'
+    $global:LASTEXITCODE = 0
+    return
+}
+$avi = $args[2]; $look = $args[3]; $mp4 = $args[4]
+$from = [double]$args[[array]::IndexOf($args, '--from') + 1]
+$to = [double]$args[[array]::IndexOf($args, '--to') + 1]
+$offset = [double]$args[[array]::IndexOf($args, '--offset') + 1]
+$why = $null
+if (-not (Test-Path -LiteralPath $avi)) { $why = 'no such file: ' + $avi }
+elseif (-not (Test-Path -LiteralPath $look)) { $why = 'no look: ' + $look }
+elseif ($offset -gt $from) { $why = '--from is before the dancer' }
+elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
+if ($why) { '{"ok": false, "error": "' + $why + '"}'; $global:LASTEXITCODE = 2; return }
+$rate = [double](Get-Content -LiteralPath $avi -TotalCount 1)
+$sub = [double]$args[[array]::IndexOf($args, '--subframes') + 1]
+$n = [int][math]::Round(($to - $from) * $rate / $sub)
+if ($env:STUB_SHORT -and ($mp4 -like ('*' + $env:STUB_SHORT + '*'))) { $n = $n - 1 }
+Set-Content -LiteralPath $mp4 -Value $n
+'{"ok": true}'
+$global:LASTEXITCODE = 0
+""",
+    "ffprobe.ps1": r"""
+$p = $args[-1]
+if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p }
+""",
+    "ffmpeg.ps1": r"""
+Add-Content -LiteralPath ($env:STUB_LOG + '.' + $PID) -Value ('ffmpeg ' + ($args -join ' ')) -Encoding UTF8
+if ($env:STUB_JOIN_FAILS) { $global:LASTEXITCODE = 1; return }
+$sum = 0
+foreach ($line in Get-Content -LiteralPath $args[[array]::IndexOf($args, '-i') + 1] -Encoding UTF8) {
+    if ($line -match "^file '(.*)'$") { $sum += [int](Get-Content -LiteralPath $Matches[1]) }
+}
+Set-Content -LiteralPath $args[-1] -Value $sum
+$global:LASTEXITCODE = 0
+""",
+}
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class WorkersDriverTest(unittest.TestCase):
+    """The driver of --workers run for real, with python / ffprobe / ffmpeg replaced by the scripts of PATH_STUBS: the workers
+    are PowerShell processes of their own that take the chunks no one has taken, a failure stops the others from taking more,
+    and the driver joins what they made"""
+
+    FILES = DriverTest.FILES
+    setUp = DriverTest.setUp
+    put = DriverTest.put
+    frames = DriverTest.frames
+    batches = DriverTest.batches
+
+    def write(self, workers=2, shutter=0.5, out_fps=30, **plan):
+        b = self.base
+        full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
+                "camera": b + "/camera.vmd", "accessories": [b + "/stage/floor.x", b + "/stage2/prop.x"], "look": self.look, "cues": self.cues,
+                "out": self.out, "scripts": self.scripts, "mmd_cli": b}
+        full.update(plan)
+        self.plan = mv_chunks.check_plan(full)
+        self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240,
+                                       shutter=shutter, out_fps=out_fps, workers=workers)
+        return self.summary
+
+    def run_driver(self, switches="", **env):
+        """(exit code, what the driver and its workers printed, {pid: the calls that process made})"""
+        stubs = os.path.join(self.tmp, "stubs")
+        os.makedirs(stubs, exist_ok=True)
+        for name, text in PATH_STUBS.items():
+            with open(os.path.join(stubs, name), "w", encoding="utf-8-sig", newline="\r\n") as f:
+                f.write(text)
+        for name in os.listdir(self.tmp):
+            if name.startswith("calls.log."):
+                os.remove(os.path.join(self.tmp, name))
+        wrapper = os.path.join(self.tmp, "wrapper.ps1")
+        with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write("%s\n& %s %s\nexit $LASTEXITCODE\n" % (PARSE_FIRST % mv_chunks._ps(self.summary["driver"]),
+                                                           mv_chunks._ps(self.summary["driver"]), switches))
+        env = dict(env, STUB_LOG=os.path.join(self.tmp, "calls.log"), PATH=stubs + os.pathsep + os.environ["PATH"])
+        code, text = run_powershell(wrapper, env, timeout=300)
+        calls = {}
+        for name in os.listdir(self.tmp):
+            if name.startswith("calls.log."):
+                with open(os.path.join(self.tmp, name), encoding="utf-8-sig") as f:
+                    calls[name.split(".")[-1]] = [l.strip() for l in f if l.strip()]
+        return code, text, calls
+
+    @staticmethod
+    def every(calls):
+        return [c for pid in sorted(calls) for c in calls[pid]]
+
+    def rendered(self, calls):
+        """the chunks whose batch ran, in no order"""
+        return sorted(re.search(r"chunk_(t_\d\d)\.txt", c).group(1) for c in self.batches(self.every(calls)))
+
+    def test_every_chunk_is_rendered_once_by_the_workers_and_joined(self):
+        for workers in (2, 3):
+            with self.subTest(workers=workers):
+                self.write(workers=workers)
+                code, text, calls = self.run_driver(STUB_SLOW="chunk_t_00")
+                self.assertEqual(code, 0, text)
+                self.assertEqual(self.rendered(calls), ["t_00", "t_01", "t_02"])
+                self.assertEqual(self.frames("mv_t.mp4"), 300)
+                self.assertIn("joined 300 frames (want 300)", text)
+                self.assertEqual([n for n in os.listdir(self.out) if n.endswith(".avi")], [])
+                # chunk 00 takes 3 s: the others are rendered meanwhile by another process
+                busy = [pid for pid, made in calls.items() if self.batches(made)]
+                self.assertGreaterEqual(len(busy), 2, calls)
+
+    def test_the_layers_are_prepared_once_and_every_chunk_folds_with_them(self):
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        every = self.every(calls)
+        prepares = [c for c in every if "mv_look.py prepare" in c]
+        self.assertEqual(len(prepares), 1, every)
+        self.assertIn(" --size 1280x720 --fps 30 --cues %s home=" % self.cues, prepares[0])
+        self.assertFalse(any("mv_look.py layers" in c for c in every), every)
+        folds = [c for c in every if "mv_look.py render" in c]
+        self.assertEqual(len(folds), 3)
+        self.assertTrue(all(" --prepared %s/look_work_t " % self.out in c for c in folds), folds)
+        self.assertFalse(any(" --work " in c for c in folds), folds)
+
+    def test_a_failed_chunk_stops_the_run_and_no_worker_takes_another_chunk(self):
+        # the batch of chunk 00 fails at once while chunk 01 takes 3 s: its worker finishes it and takes no more
+        self.write()
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_00.json", STUB_SLOW="chunk_t_01")
+        self.assertEqual(code, 1, text)
+        self.assertNotIn("t_02", self.rendered(calls))
+        self.assertFalse(any(c.startswith("ffmpeg") for c in self.every(calls)), calls)
+        self.assertIn("STOP", text)
+        self.assertFalse(os.path.exists(os.path.join(self.out, "mv_t.mp4")))
+
+    def test_a_short_chunk_fails_the_run_and_keeps_its_avi(self):
+        self.write()
+        code, text, calls = self.run_driver(STUB_SHORT="t_01")
+        self.assertEqual(code, 1, text)
+        self.assertTrue(os.path.exists(os.path.join(self.out, "t_01.avi")))
+        self.assertIn("149 frames, want 150", text)
+        self.assertFalse(any(c.startswith("ffmpeg") for c in self.every(calls)), calls)
+
+    def test_resume_after_a_failure_renders_only_the_chunks_that_are_not_complete(self):
+        self.write()
+        self.assertEqual(self.run_driver(STUB_SHORT="t_01")[0], 1)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        rendered = self.rendered(calls)
+        self.assertIn("t_01", rendered)
+        self.assertNotIn("t_00", rendered)                           # finished before the failure stopped the run
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_resume_reaches_every_worker(self):
+        self.write(workers=3)
+        self.assertEqual(self.run_driver()[0], 0)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.rendered(calls), [])                   # every worker skipped what was complete
+        for name in ("t_00", "t_01", "t_02"):
+            self.assertIn("%s skipped: " % name, text)
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_a_look_that_does_not_work_stops_the_run_before_a_worker_starts(self):
+        self.put("look.json", "{not json")
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("the look is not JSON", text)
+        self.assertEqual(self.rendered(calls), [])
+        self.assertEqual(len(calls), 1, calls)                       # the driver alone: no worker was started
+
+    def test_a_second_run_of_the_same_driver_is_refused_while_one_runs(self):
+        self.write()
+        os.makedirs(os.path.join(self.out, "run_t"), exist_ok=True)
+        with open(os.path.join(self.out, "run_t", "lock"), "a"):         # held, as a running driver holds it
+            code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("another run", text)
+        self.assertEqual(self.rendered(calls), [])
+        code, text, calls = self.run_driver()                            # and once it is let go, the run goes
+        self.assertEqual(code, 0, text)
+
+    def test_a_worker_started_by_hand_finds_no_run_and_renders_nothing(self):
+        self.write()
+        os.makedirs(os.path.join(self.out, "run_t"), exist_ok=True)
+        code, text, calls = self.run_driver("-Worker 1")
+        self.assertEqual(code, 1, text)
+        self.assertIn("found no run", text)
+        self.assertEqual(self.rendered(calls), [])
+
+    def test_what_an_earlier_run_left_in_its_folder_does_not_stop_this_one(self):
+        self.write()
+        for name in ("claim_t_00", "done_t_01", "stop", "busy_t_02", "stamp.txt"):
+            self.put("out/run_t/" + name, "left by an earlier run")
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.rendered(calls), ["t_00", "t_01", "t_02"])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_paths_with_typographic_quotes_run_with_workers(self):
+        self.out = self.base + "/Don’t/out ‘x’"
+        self.scripts = self.base + "/Don’t/scripts ‚y‛"
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.frames("mv_t.mp4", self.out), 300)
+
+    def test_too_little_disk_for_an_avi_stops_the_run_before_rendering(self):
+        self.write(avi_bytes_per_pixel=1e6)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.rendered(calls), [])
+        self.assertIn("bytes free, the AVI needs", text)
+
+    def test_at_60_fps_the_workers_make_twice_the_frames(self):
+        self.write(out_fps=60, workers=3)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual([self.frames("t_60fps_%02d.mp4" % i) for i in range(3)], [200, 300, 100])
+        self.assertEqual(self.frames("mv_t_60fps.mp4"), 600)
+        prepares = [c for c in self.every(calls) if "mv_look.py prepare" in c]
+        self.assertIn(" --size 1280x720 --fps 60 --cues ", prepares[0])
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class DiskReserveTest(unittest.TestCase):
+    """the free space of the workers: an AVI starts when the disk holds it with its margin after what the AVIs under way still
+    have to write; it waits while those would leave too little, and stops the run (exit 3) when even alone it does not fit.
+    The function of the driver is run by itself, its measure of the disk given"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        base = self.tmp.replace("\\", "/")
+        plan = mv_chunks.check_plan(dict(PLAN, out=base + "/out", scripts=base + "/scripts"))
+        summary = mv_chunks.write(plan, mv_chunks.plan_chunks(SPANS, lead=120), self.tmp + "/scripts", "t", 240, 0.5, workers=2)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        self.functions = "\n".join(self.function(driver, name) for name in ("Hold", "Lock-Disk", "Reserve"))
+        self.run = base + "/out/run_t"
+        os.makedirs(self.run)
+
+    @staticmethod
+    def function(driver, name):
+        start = re.search(r"^function %s[( ]" % re.escape(name), driver, re.M).start()
+        return driver[start:driver.index("\n}\n", start) + 3]
+
+    def reserve(self, free, busy=(), gone_after=None, stop_after=None):
+        """Reserve 't_02' for an AVI of 1000 bytes (its need, the margin in) with `free` bytes free and the AVIs under way in
+        `busy` [(name, need, written)]; `gone_after`: seconds after which those are done; `stop_after`: after which another
+        chunk fails"""
+        for name, need, written in busy:
+            avi = "%s/%s.avi" % (self.run, name)
+            with open(avi, "wb") as f:
+                f.write(b"\0" * written)
+            with open("%s/busy_%s" % (self.run, name), "w", encoding="utf-8") as f:
+                f.write("%s|%d" % (avi, need))
+        script = os.path.join(self.tmp, "reserve.ps1")
+        with open(script, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            # when Reserve came back, in the ticks of .NET (100 ns from the year 1), to set against the time of the change
+            f.write("$run = %s\n$out = %s\n$diskWait = 0.2\n$sw = [Diagnostics.Stopwatch]::StartNew()\n"
+                    "function Get-FreeBytes($folder) { return %d }\n%s\n"
+                    "$went = Reserve 't_02' %s 1000\n'went {0} after {1:N1} s at {2}' -f $went, $sw.Elapsed.TotalSeconds, "
+                    "[DateTime]::UtcNow.Ticks\nexit 0\n"
+                    % (mv_chunks._ps(self.run), mv_chunks._ps(self.tmp), free, self.functions,
+                       mv_chunks._ps(self.run + "/t_02.avi")))
+        proc = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.changed_at = None
+        for after, change in ((gone_after, self.done), (stop_after, self.failed)):
+            if after is not None:
+                time.sleep(after)
+                self.changed_at = int(time.time() * 1e7) + 621355968000000000      # .NET ticks of the Unix epoch
+                change(busy)
+        out = proc.communicate(timeout=120)[0]
+        return proc.returncode, out.decode("utf-8", "replace"), os.path.exists(self.run + "/busy_t_02")
+
+    def done(self, busy):
+        """the AVIs under way are folded and gone, and so are their notes"""
+        for name, _, _ in busy:
+            os.remove("%s/busy_%s" % (self.run, name))
+            os.remove("%s/%s.avi" % (self.run, name))
+
+    def failed(self, busy):
+        with open(self.run + "/stop", "w") as f:
+            f.write("a chunk failed")
+
+    def test_an_avi_that_fits_starts_and_is_noted_as_under_way(self):
+        code, text, noted = self.reserve(free=1000)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        self.assertTrue(noted)
+
+    def test_it_waits_while_the_avis_under_way_would_leave_too_little(self):
+        # 2400 free, but chunk 00 still has 2000 - 500 to write: 1000 do not fit (900 would be left) until it is done
+        code, text, noted = self.reserve(free=2400, busy=[("t_00", 2000, 500)], gone_after=2)
+        self.assertEqual(code, 0, text)
+        went = int(re.search(r"went True after [\d.]+ s at (\d+)", text).group(1))
+        self.assertGreaterEqual(went, self.changed_at, text)                   # not before chunk 00 was done
+        self.assertTrue(noted)
+
+    def test_what_an_avi_under_way_has_written_is_already_off_the_free_space(self):
+        # 1600 free with 1000 of chunk 00 written: it has 1500 - 1000 = 500 to go, and 1600 - 500 holds 1000
+        code, text, noted = self.reserve(free=1600, busy=[("t_00", 1500, 1000)])         # nothing changes: it goes at once
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        self.assertTrue(noted)
+
+    def test_too_little_even_alone_stops_the_run_with_exit_3(self):
+        code, text, noted = self.reserve(free=999)
+        self.assertEqual(code, 3, text)
+        self.assertIn("999 bytes free, the AVI needs 1000", text)
+        self.assertFalse(noted)
+
+    def test_a_failure_elsewhere_ends_the_wait_without_rendering(self):
+        code, text, noted = self.reserve(free=1500, busy=[("t_00", 2000, 0)], stop_after=1)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went False", text)
+        self.assertFalse(noted)
+
+
 FAKE_MMD = r'''"""tests/test_mv_chunks.py: `python -m mmd_cli --out JSON batch FILE` without MMD (after review 10).  It reads the
 batch as mmd_cli does and writes the AVI MMD would: BGRA, (to - from + 1) * fps / 30 frames, each frame telling its song
 frame (G = 16 * (frame mod 16), B = 16 * (frame // 16 mod 16)) and its subframe (R = 256 / sub * subframe).  A motion
@@ -1002,13 +1482,13 @@ class EndToEndTest(unittest.TestCase):
             json.dump(FLAT_LOOK, f)
         self.fake = self.base + "/fake"
 
-    def render(self, motions, switches="", out_fps=30):
+    def render(self, motions, switches="", out_fps=30, workers=1, out="out"):
         plan = mv_chunks.check_plan({"mmd": "C:/MMD/MikuMikuDance.exe", "model": "C:/MMD/model.pmx", "motions": motions,
-                                     "camera": "C:/work/camera.vmd", "look": self.look, "out": self.base + "/out",
+                                     "camera": "C:/work/camera.vmd", "look": self.look, "out": self.base + "/" + out,
                                      "scripts": self.base + "/scripts", "mmd_cli": self.fake, "size": [self.W, self.H]})
         spans = mv_chunks.spans_from_cuts([40, 90], 119)
         summary = mv_chunks.write(plan, mv_chunks.plan_chunks(spans, lead=30), self.base + "/scripts", "t", 240, 0.5,
-                                  out_fps=out_fps)
+                                  out_fps=out_fps, workers=workers)
         wrapper = os.path.join(self.tmp, "run.ps1")
         with open(wrapper, "w", encoding="utf-8-sig", newline="\r\n") as f:
             f.write("%s\n& %s %s\nexit $LASTEXITCODE\n"
@@ -1046,6 +1526,20 @@ class EndToEndTest(unittest.TestCase):
         frames = self.read_back(joined)
         self.assertEqual([f for f, _, _ in frames], list(range(120)))
         self.assertTrue(all(top < 4 for _, _, top in frames), [round(top) for _, _, top in frames])   # all of it is new
+
+    def test_workers_make_the_video_of_one_worker_byte_for_byte(self):
+        # the real tools/mv_look.py and ffmpeg: chunks folded at the same time with the layers prepared once are the chunks
+        # folded one after the other, each with its layers drawn again
+        for out_fps, workers in ((30, 2), (60, 3)):
+            with self.subTest(out_fps=out_fps, workers=workers):
+                one = self.render(["C:/work/dance.vmd"], out_fps=out_fps, out="one%d" % out_fps)[0]
+                many, text = self.render(["C:/work/dance.vmd"], out_fps=out_fps, workers=workers, out="many%d" % out_fps)
+                tag = "t" if out_fps == 30 else "t_60fps"
+                for name in ["mv_%s.mp4" % tag] + ["%s_%02d.mp4" % (tag, i) for i in range(3)]:
+                    self.assertEqual(sha256_of("%s/many%d/%s" % (self.base, out_fps, name)),
+                                     sha256_of("%s/one%d/%s" % (self.base, out_fps, name)), name)
+                frames = [f for f, _, _ in self.read_back(many)]
+                self.assertEqual(frames, list(range(120)) if out_fps == 30 else [n for n in range(120) for _ in (0, 1)])
 
     def test_at_60_fps_every_song_frame_is_two_frames_from_the_two_halves_of_its_subframes(self):
         joined, text = self.render(["C:/work/dance.vmd"], out_fps=60)
@@ -1128,6 +1622,25 @@ class CliTest(unittest.TestCase):
                                      "largest_avi_gb", "spans", "driver", "batches", "concat", "joined"])
         code, res = self.main(self.plan, os.path.join(self.tmp, "e"), "--shots", self.report, "--tag", "t", "--out-fps", "30")
         self.assertNotIn("out_fps", res)
+
+    def test_workers_and_the_encoder_are_in_the_summary_only_when_they_are_not_the_default(self):
+        code, res = self.main(self.plan, os.path.join(self.tmp, "w"), "--shots", self.report, "--tag", "t", "--workers", "3")
+        self.assertEqual((code, res["workers"], res["joined"]), (0, 3, "C:/work/song/out/mv_t.mp4"))
+        self.assertNotIn("encoder", res)
+        code, res = self.main(self.plan, os.path.join(self.tmp, "n"), "--shots", self.report, "--tag", "t", "--encoder", "nvenc")
+        self.assertEqual((code, res["encoder"], res["joined"]), (0, "nvenc", "C:/work/song/out/mv_t_nvenc.mp4"))
+        self.assertNotIn("workers", res)
+        code, res = self.main(self.plan, os.path.join(self.tmp, "d"), "--shots", self.report, "--tag", "t", "--workers", "1",
+                              "--encoder", "x264")
+        self.assertEqual(list(res), ["ok", "chunks", "frames", "fps", "subframes", "shutter", "codec", "avi_bytes_per_pixel",
+                                     "largest_avi_gb", "spans", "driver", "batches", "concat", "joined"])
+        self.assertEqual(hashes(os.path.join(self.tmp, "d")), GOLDEN_30["t"])
+
+    def test_workers_out_of_range_or_an_unknown_encoder_are_errors_in_json(self):
+        for flag, given in (("--workers", "0"), ("--workers", "9"), ("--workers", "-2"), ("--encoder", "h265"), ("--encoder", "")):
+            code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report, flag, given)
+            self.assertEqual(code, 2, (flag, given))
+            self.assertIn(flag, res["error"], (flag, given))
 
     def test_an_output_rate_other_than_30_or_60_is_refused(self):
         for out_fps in ("50", "120", "0"):

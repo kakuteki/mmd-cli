@@ -400,9 +400,10 @@ alpha つき（BGRA。何も描かれていない所は alpha 0）で書く。�
 人物を高い fps で描けば、出力の 1 コマに入る複数の姿勢を平均して本物の動きのぼかし（モーションブラー）にもできる。
 
 ```
-python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR] [--from 秒] [--to 秒]
-                          [--offset 秒] [--subframes N --shutter S]
-python tools/mv_look.py layers look.json WORK --size WxH --fps N
+python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR | --prepared DIR] [--from 秒] [--to 秒]
+                          [--offset 秒] [--subframes N --shutter S] [--encoder x264|nvenc]
+python tools/mv_look.py layers look.json WORK --size WxH --fps N [--encoder nvenc]
+python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.json] [--encoder nvenc]
 ```
 
 - `look.json` は既定（`DEFAULT_LOOK`）との差分だけを書く。知らない名前は誤りにする。空の `{}` で既定のまま。
@@ -432,6 +433,14 @@ python tools/mv_look.py layers look.json WORK --size WxH --fps N
 - 出力は無音（libx264、crf 16）。全曲 7,743 枚・1280x720 で約 70 秒（hinata 実測）。粒子を入れると大きさは約 2 倍になる。
   240 fps・1280x720 の alpha つき AVI はモーション 1 フレームあたり約 29.5 MB（全曲なら 228 GB）なので、区間に分けて描く。
 - MMD の AVI は 30 fps を 10000000/333333 で書くので、人物は `-r` で層と同じ時計に載せている（載せないと最後の 1 枚が落ちる）。
+- `render` は呼ぶたびに層（板・光のループ・フレア）と合図の連番を全部描き直す（区間に依らず同じもの。60 fps のヒビカセで
+  約 100 秒、光のループ 1,646 枚が約 56 秒）。`prepare` はそれを一度だけ描き、作り元の印 `prepared.json`（look の値・合図の
+  ファイルの中身・大きさ・fps・mv_look と mv_text のコード）を残す。`render --prepared WORK` は印と連番の枚数（抜けも余りも
+  無いこと）を確かめてから使い、WORK には何も書かない。合わなければ「prepare をやり直す」と言って止まる。ffmpeg の引数は
+  `--work WORK` のときと同じなので、同じ AVI からは同じ mp4 になる。フォント（mv_text が探す）は印に入らない。
+  `render --work` と `layers` は、同じフォルダに描く前に印を消す（別の look で描き直した層を前の印が保証しないように）。
+- `--encoder nvenc` は NVIDIA の GPU の h264_nvenc で符号化する（既定は libx264 crf 16。公開する版はこれ）。`-c:v` から画素形式の
+  前までだけが変わる。`layers`・`prepare` に付けると数枚を h264_nvenc で試し、使えない機械では誤りにする。
 
 床は `tools/make_stage.py` で作る（座標軸の格子は軸線ごと消すしかないため）:
 
@@ -459,6 +468,8 @@ python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json [--lead 12
                           [--tag final]
 python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60      # カメラの報告が無いとき
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60     # 手元で見る 60 fps 版
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --workers 2      # 2 区間ずつ同時に描く
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60 --workers 3 --encoder nvenc
 powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
 ```
 
@@ -500,7 +511,49 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   探す）・MMD の設定・Python とその部品・ffmpeg・見ているフォルダの外のファイル（モデルが別の場所から読むテクスチャ）や中の
   ジャンクションの先は見ないので、それらを変えたら `-Resume` なしで流す。時刻を保たない写し方で入力を写し直すと、中身が同じでも
   描き直しになる（安全側）。
-- ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。
+- ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。v7 の場面（モーション 4 本、
+  look v3 の 823 枚の光のループ）では 30 fps で 77 分、60 fps で約 100 分かかった（2026-10-13）。
+
+速くする（`--workers N`・`--encoder nvenc`。どちらも付けなければ台本・連結の一覧・要約は前とバイト単位で同じ）:
+
+- 1 区間の時間（hinata、v7 の区間 04 = 曲 526 コマを 240 fps で描き 406 コマを残す、60 fps、2026-10-13）: MMD の起動と読み込み
+  約 40 秒（1 本の糸で詰まる）、AVI 157 秒（1 枚 37 ms。CPU は 0.3 コア、書き込みは約 100 MB/s で、ディスクでも CPU でもない。
+  画素を 1/4 にすると 2.8 倍速いので、GPU で描いて読み戻す往復が、学習と時分割で分け合う GPU に待たされていると見ている）、
+  mv_look の層と合図 91 秒（区間に依らず毎回同じものを作り直していた）、ffmpeg 17 秒。
+  AVI の 1 枚の時間は GPU の混み具合で大きく変わる: 同じ日の 20 時過ぎ、別案件の GPU の仕事が 4 本増えた（GPU のメモリ 13 → 31 GB）
+  後は 1 枚 130〜141 ms だった（査読の実測）。下の分数は 37 ms のときの値。
+- `--workers N`（1〜8、既定 1）: N 本の作業者が区間を取り合って同時に描き、畳み、最後に駆動台本が繋ぐ。作業者は同じ駆動台本を
+  `-Worker k` で起こしたもので、区間ごとの手順は 1 本ずつのときと同じ。区間は `out/run_<tag>/claim_<区間>` を作成専用で作れた
+  作業者が取る。層と合図は最初に 1 回だけ `mv_look.py prepare` で作り（look と合図の誤りもここで止まる）、どの区間も
+  `--prepared` で畳む（同じ AVI からは 1 本ずつのときとバイト単位で同じ mp4。区間 04 の 30・60 fps で SHA-256 一致）。
+  1 区間でも失敗すると止めの印を置き、どの作業者も次の区間を取らない。描いている区間は終えてから、駆動台本が繋がずに
+  失敗の終了コード（1、容量は 3）で終わる。`-Resume` は作業者にも渡り、終わった区間は飛ばす。空き容量は、描いている
+  最中の AVI がまだ書く分を差し引いて比べ、足りなければ空くまで待つ（1 本だけでも足りなければ 3 で止まる）。同じ駆動台本を
+  2 本同時に流すと 2 本目は止まる。作業者の出力は同じ画面（ログ）に混ざって出る。
+- MMD を同時に描いても、窓・ダイアログ・中継・`MMD_CLI_HOME` の状態はぶつからない（16 本の答えで、答えたダイアログは 1 本ずつの
+  ときと同じ種類と回数）。2 本同時は AVI の速さが 1 本のときと同じで起動が 22 % 遅いだけ、3 本同時は AVI が約 25 %・起動が
+  44 % 遅い。MMD 1 本あたり GPU のメモリ約 330 MiB・私用メモリ約 1 GB。
+- **MMD の物理は描くたびに少し違う**: 同じ台本を 1 本ずつ 2 回描いても AVI は同じにならない。MMD の物理は 60 Hz で進み、240 fps の
+  AVI では 4 コマに 1 度だけ動くが、4 コマのどこで進むか（位相）が描くたびに変わる（査読の 4 回で 0・3・2・0）。最初のコマから
+  少し違い、あとは物理で動く所（リボン・髪・スカート）だけが少しずつ離れる（16/255 より違う画素は曲 85〜90 秒の AVI で平均 0.6〜
+  0.7 %）。同時に描いても違いの大きさは 1 本ずつ描き直したときと同じで、位相が同じなら同時と 1 本ずつの組がいちばん近い。
+  同時に描いた動画は 1 本ずつ描いた動画とバイト単位では同じにならないが、1 本ずつ描き直しても同じにはならない。
+  位相によっては、30 fps の畳み（8 枚のうち先頭 4 枚の平均）に物理の 1 歩の境目が入り、スカートや髪が 2 枚重ねに写る（区間ごとに
+  運で決まる。`--workers` の前からある性質）。
+- `--encoder nvenc`: 畳みの符号化を h264_nvenc（p7・hq・vbr・cq 19・AQ・先読み 32・B フレーム 3）にする。ファイル名に `_nvenc` が
+  付き、libx264 の版（公開する版）を消さない。look の確かめで h264_nvenc を試し、使えない機械では MMD が描く前に止まる。
+  区間 04（60 fps）で畳み 20.3 → 13.5 秒、大きさは libx264 の 2.2 倍。同じグラフの可逆の基準（FFV1）と同じ番号のコマどうしで比べると、
+  曲 84.9〜90.0 秒の区間（60 fps 248 枚）で Y の PSNR 43.3 dB・SSIM 0.969・VMAF 97.2（libx264 crf 16 は 42.5・0.965・96.8、大きさ
+  2.6 倍）。基準を Matroska（時刻が 1 ms 刻み）に書いて ffmpeg の psnr などに時刻で組ませると、3 枚に 1 枚が 1 つ前の基準のコマと
+  比べられて PSNR が 34〜35 dB に下がるので、`setpts=N/(60*TB)` で両方の番号を揃えて比べる。符号化の間 GPU のメモリを約 0.4 GB
+  使う。公開する 30 fps の版は既定（libx264）のまま作る。
+- 実測（hinata、v7 の場面の 3 区間・各 60 コマ・60 fps）: `--workers 1` 528 秒、`--workers 2` 228 秒、`--workers 3` 176 秒
+  （層と合図の準備 85 秒を含む）。全曲（v7 の 21 区間）の見込みは、30 fps でいま 84 分（実際の v7 は 77 分）→ 2 本 37 分・3 本 31 分、
+  60 fps でいま 103 分 → 2 本 39 分・3 本 33 分（NVENC で 1 分ほど短い）。縮む分の半分近くは層と合図を 1 回にする分（約 30 分）。
+  GPU が混んでいた時間の査読の実測（30 fps、曲 0〜89 コマを 3 区間）: `--workers 1` 481 秒、`--workers 2` 253 秒（1.9 倍）。
+  hinata は共有機。作業者 1 本は MMD の間に私用メモリ約 1 GB、畳みの間に約 2.8 GB（mv_look 0.8 GB・ffmpeg 1.4〜2.0 GB）、MMD は
+  GPU のメモリを 1 本約 0.33 GB 使う。学習で GPU のメモリの空きが 3 GB を、物理メモリの空きが 8 GB を切っているときは 1 本、
+  ふだんは 2 本。3 本は両方に余裕があるときだけ。
 
 ### 目を自分から動かす（`tools/eye_gaze.py`、MMD なし）
 
