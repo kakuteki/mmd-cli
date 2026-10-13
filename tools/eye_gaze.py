@@ -1,6 +1,6 @@
 """Give a dancer eyes that look on their own: fixations on where her face is going, saccades that lead the head's
-fast turns, and eye contact with the camera planned where the camera stays within reach, written as a 両目 track to
-load after the dance.
+fast turns, eye contact with the camera planned where the camera stays within reach, and looks at her own hand where
+it comes to rest before her face, written as a 両目 track to load after the dance.
 
     python tools/eye_gaze.py DANCE.vmd CAMERA.vmd MODEL.pmx OUT.vmd [--report r.json] [--debug d.json]
                              [--debug-frames F ...] [--probe P.vmd] [--max-yaw 18] [--max-up 6] [--max-down 10]
@@ -20,7 +20,11 @@ fixations of 0.20 s).  Stage 5 (2026-10-13) smooths them: no one-frame jumps, lo
 that comes back, a sustained fast turn carries the gaze, at most MAX_STEP a frame outside saccades; between saccades
 the gaze still stays put in the world.  (The first form of stage 5 also slid the eyes toward the face's way and
 countered only half of each nod: review gaze-smooth found the gaze then flowed with the head like a doll's eye, on 70 %
-of the steps of a still head.  The slide is gone and the nods are countered in full.)
+of the steps of a still head.  The slide is gone and the nods are countered in full.)  Stage 6 (2026-10-13: "when she
+looks at something near, the eyes come together": at 52 s her fingers are before her face and the eyes stay
+parallel) gives the eyes her hands as targets, so that tools/eye_optics.py, which brings them together on a near hand
+the gaze meets, does so where she looks at one; and it moves the eyes on from the vertical wall, where countering
+every nod in full had left them (frames at the wall up or down 3.3 % -> 12.8 % in stage 5, the iris low in the eye).
 
 Where the camera is, seen from her eyes (sights; mmd_cli/fk.py does the forward kinematics):
 
@@ -59,10 +63,13 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   The eyes move on with a saccade (recentre) only when they would stay more than GAP degrees from the face's way (the
   face target: the head's forward averaged over the frame and the next FACE_AHEAD, seen in the head, plus the offset
   of the last glance, inside the free zone and AVOID degrees off the camera) from LOOK_AHEAD frames on for SUSTAIN
-  more frames (the head has moved on, not nodded with the beat), and not before
-  the shortest fixation: MIN_FIXATION (--min-fixation; 10 frames by default, the first version had 6 and 57 % of its
-  fixations stopped there) plus 0 to FIXATION_SPREAD frames drawn for each fixation (with one fixed length the
-  fixations that wanted to end earlier all ended on it).  After GLANCE frames (drawn from the seed) of one fixation,
+  more frames (the head has moved on, not nodded with the beat); or, up and down, when they would stay pressed
+  beyond the free zone with the face's way WALL_GAP degrees or more the other way for those frames (stage 6: GAP is
+  as large as the whole range up or down, 5.1 and 8.5 degrees to the wall, so up or down alone it hardly ever moved
+  them on; the eyes stayed low for 0.4 s on 2955 to 2967 of the MV v7).  Not before the shortest fixation:
+  MIN_FIXATION (--min-fixation; 10 frames by default, the first version had 6 and 57 % of its fixations stopped
+  there) plus 0 to FIXATION_SPREAD frames drawn for each fixation (with one fixed length the fixations that wanted
+  to end earlier all ended on it).  After GLANCE frames (drawn from the seed) of one fixation,
   a glance: a saccade to a point a few degrees off the face's way.  The analysis measured why the gaze must follow
   the face: the head turns its forward by 10 degrees in 0.2 s (median), so a point held on its own leaves the eyes'
   range in 5 frames.
@@ -93,6 +100,22 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   contact due within QUIET + 4 frames no other saccade starts (it would be followed by the one onto the camera 2 or 3
   frames after landing): a lead due then is the saccade onto the camera, and once on it the eyes wait there for the
   contact.
+* Looks at a hand (state hand, stage 6), planned after the contacts and the leads (hand_runs).  A hand's look point
+  is the mean of its HAND_POINTS (the wrist and the middle finger's tip: the middle of the hand, open or closed).  It
+  is looked at over a run of frames on which it is HAND_NEAR to HAND_FAR metres from the eyes, before her face (in
+  the HAND_ZONE of the limits seen in the head, the free zone, or HAND_REACH degrees beyond it: the face is turned to
+  it), HAND_CAMERA degrees or more off the camera (nearer the camera's line she holds it out to the viewer) and moving
+  under HAND_FAST deg/s seen from the eyes, HAND_MIN frames or more, with the hand under HAND_SLOW deg/s on one frame
+  at least (it comes to rest, or nearly: a person looks at a gesture held still; speakers look at 4 % of their
+  gestures, about 1 s each, Gullberg & Holmqvist 1999, Gullberg & Kita 2009).  Nearer than HAND_NEAR the hand covers
+  or touches the face, the dance's most frequent hand before her face.  The contacts and the leads win.  A saccade
+  (reason hand) lands by the run's first frame where the hand will settle (its first frame under HAND_SLOW): the eyes
+  are there before the hand, as a person's lead the hand she moves (Johansson 2001; Chen 2016: the eyes start about
+  20 ms before a self-moved finger).  Then they follow it HAND_AHEAD frames ahead at most PURSUIT_SPEED deg/s in the
+  world (smooth pursuit of a self-moved target: gain about 0.9, twice the eyes' own top speed, Chen 2016, Gauthier
+  1988), with a saccade that catches up when they trail by more than CATCH_UP degrees, not within CATCH_UP_AFTER
+  frames of a landing.  When the run ends a saccade (hand_away) takes them to the face's way, or the contact or lead
+  that comes then.  Within QUIET + 4 frames of a look no recentre, glance or away starts.
 * Outside the contacts the gaze keeps KEEP_OFF degrees off the camera on every frame, saccades on their way too: a
   pass over the camera would count as a one-frame eye contact.  When the camera passes over the gaze the kept point
   would flip to its other side in one frame (10 degrees with no easing); when it would move FLIP_STEP degrees more
@@ -101,8 +124,8 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
 * A saccade takes saccade_frames(A) frames: 2 under SHORT_SACCADE (15) degrees, 3 up to LONG_SACCADE (35), 4
   beyond (the coordinator, 2026-10-13: no one-frame jumps, and no slower: the main sequence D = 21 + 2.2 A ms puts 5
   to 15 degrees in 1 to 2 frames, and slower eyes look sluggish, Pejsa 2013), along a minimum-jerk profile from where
-  the eyes were to where the target is on each frame of it: the camera, a lead's angle in the head, or the face
-  target (with the offset of a glance or a look away) on that frame.  A goal held still in the world would swing
+  the eyes were to where the target is on each frame of it: the camera, a lead's angle in the head, the hand, or
+  the face target (with the offset of a glance or a look away) on that frame.  A goal held still in the world would swing
   across the eyes' range while the head turns 20 degrees a frame and end the saccade with a jump.  The fixation
   starts where the saccade lands.  A move under MIN_SACCADE is no saccade: the fixation alone moves.
 * Life: a slow drift (a random walk of up to DRIFT_STEP per frame and axis, kept within DRIFT_LIMIT) and a
@@ -115,10 +138,12 @@ and last frame) with the linear curve, under the dance's model name.  Load it af
 dance's single 両目 key.  The rotation is made with mmd_cli.fk.stored, so it follows the one convention of
 mmd_cli/fk.py (KEY_ROTATION_SIGNS).  Keys the dance has on 右目 or 左目 would add to it (the report lists them).
 
-The report (--report, and in short on stdout): the shares of frames in each state (contact, free, lead, in_saccade;
-they add up to 1), the saccades (their reasons: contact, look_away, lead, recentre, glance, away; the list has
-frame, frames, reason and amplitude like the first version's, so the analysis' scripts read it), the contacts (first
-and last frame, seconds, the anchor they hold), the anchors, the cuts, the error on the camera during the contacts,
+The report (--report, and in short on stdout): the shares of frames in each state (contact, free, lead, in_saccade,
+hand; they add up to 1), the saccades (their reasons: contact, look_away, lead, recentre, glance, away, hand,
+hand_away; the list has frame, frames, reason and amplitude like the first version's, so the analysis' scripts read
+it), the contacts (first and last frame, seconds, the anchor they hold), the looks at a hand (hands: first and last
+frame, seconds, the hand, its median distance in metres, the frame it settles; hand_rules: the constants above), the
+anchors, the cuts, the error on the camera during the contacts,
 and measures: the target numbers of the analysis computed on the plan, by the analysts' definitions (eye_measures,
 contact_measures, lead_measure, carried_measure; README: eye_gaze.py), the smoothness of stage 5 (smooth_measures),
 whether the gaze stays put in the world between saccades (world_measures) and the frames at the wall

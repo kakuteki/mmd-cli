@@ -13,7 +13,7 @@ import time
 import unittest
 
 from mmd_cli import fk, mathutil, motion_edit
-from mmd_cli.formats import pmx, vmd
+from mmd_cli.formats import pmx, pmx_edit, vmd
 from tests.test_pmx import APPEND_ROTATE, NORMAL, TAIL_IS_BONE, TRANSLATE, Writer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -795,6 +795,92 @@ class HandTest(unittest.TestCase):
         result = run_gaze(cam_motion=BEHIND)
         self.assertEqual(result.report["hands"], {"count": 0, "frames": 0, "share": 0.0, "list": []})
         self.assertEqual(result.hand_points, {})
+
+    def test_the_eyes_are_where_the_hand_stops_before_it_does(self):
+        # the hand swings in from her side at 170 deg/s and stops before her face: the eyes jump to where it will stop
+        # and are there before it (a person's eyes lead the hand she moves to its target), then hold on it with no
+        # second jump
+        stop = ahead(-6.0, -2.0, 0.30)
+        points = {0: None, 29: None, 30: ahead(-40.0, -2.0, 0.30), 36: stop, 76: stop, 77: None}
+        result = run_hands(hand_dance(points))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 1, result.saccades)
+        landed = into[0]["frame"] + into[0]["frames"] - 1
+        self.assertLess(landed, 36)                                         # before the hand stops
+        sight, look = result.sights[landed], result.looks[landed]
+        self.assertLess(degrees_between(world_gaze(sight, look), tuple(p - e for p, e in zip(stop, sight.eye))), 1.0)
+        for i in range(landed, 76):
+            self.assertLess(self.hand_on(result, i) if i >= 36 else 0.0, 0.5, i)
+
+    def test_a_hand_that_moves_on_faster_than_the_eyes_follow_gets_a_catch_up_saccade(self):
+        # held, then 16 degrees across in 3 frames (160 deg/s, over the 100 the gaze follows a hand) and held again:
+        # the eyes fall behind and one saccade catches them up, not right after the first (CATCH_UP_AFTER frames)
+        a, b = ahead(-8.0, -2.0, 0.30), ahead(8.0, -2.0, 0.30)
+        result = run_hands(hand_dance({0: None, 29: None, 30: a, 60: a, 63: b, 100: b, 101: None}))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 2, result.saccades)
+        first_landed = into[0]["frame"] + into[0]["frames"] - 1
+        self.assertGreaterEqual(into[1]["frame"] - first_landed, eye_gaze.CATCH_UP_AFTER)
+        self.assertTrue(60 <= into[1]["frame"] <= 66, into)
+        for i in range(70, 99):
+            self.assertLess(self.hand_on(result, i), 0.5, i)
+
+
+def load_named(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, "tools", name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class HandVergenceTest(unittest.TestCase):
+    """tools/eye_optics.py brings the eyes together where the gaze meets a near hand (within 12 degrees of it): on the
+    hand this tool looks at, 14 degrees off her face's way, it does; with the eyes turned 10 degrees the other way the
+    same hand is out of its cone and the eyes stay parallel (the stage-5 tool never chose a hand: only a hand the gaze
+    passed by chance brought the eyes together)"""
+
+    def test_eye_optics_converges_on_the_hand_she_looks_at(self):
+        from tests.test_pmx_eyes import EYE_Z, toy_bytes
+        pmx_eyes, eye_optics = load_named("pmx_eyes"), load_named("eye_optics")
+        wrist, tip = (-4.65, 12.41, -0.24), (-6.05, 11.42, -0.26)
+        hand_tip = tuple(w + 0.5 * (t - w) / math.dist(wrist, tip) for w, t in zip(wrist, tip))     # 手先, 4 cm on
+        data, _ = toy_bytes(extra_bones=[("右手首", -1, wrist), ("右中指３先", -1, tip), ("右手先", -1, hand_tip)],
+                            iris_z=-0.96)
+        doc = pmx_edit.loads(data)
+        pmx_eyes.build(doc, share=0.55)
+        model_bytes = pmx_edit.dumps(doc)
+        model = pmx.loads(model_bytes)
+        eye = (0.0, 17.214, EYE_Z)
+        rest = tuple((a + b) / 2.0 for a, b in zip(wrist, tip))
+        point = tuple(e + d * 0.30 / UNIT_M for e, d in zip(eye, direction(-14.0, -2.0)))
+        move = tuple(p - r for p, r in zip(point, rest))
+        keys = [vmd.BoneKey("右目", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("左目", 0, fk.ZERO, fk.IDENTITY),
+                vmd.BoneKey("頭", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("頭", 120, fk.ZERO, fk.IDENTITY)]
+        for frame, m in ((0, fk.ZERO), (39, fk.ZERO), (40, move), (79, move), (80, fk.ZERO), (120, fk.ZERO)):
+            keys += [vmd.BoneKey(name, frame, m, fk.IDENTITY) for name in ("右手首", "右中指３先", "右手先")]
+        dance = vmd.Motion(model_name="toy", bones=keys)
+
+        def key(frame):
+            return motion_edit.camera_key_from_ui({"pos": eye, "distance": 2500.0 / 80.0, "rot": (0.0, 60.0, 0.0),
+                                                   "fov": 30, "perspective": True}, frame=frame)
+        cams = vmd.Motion.for_camera(cameras=[key(0), key(120)])
+        result = eye_gaze.gaze(model, dance, cams, life=False)
+        self.assertEqual([(h["first"], h["last"]) for h in result.report["hands"]["list"]], [(41, 79)])   # 40: it arrives
+        quiet = eye_optics.merge_params(eye_optics.PARAMS, {"pupil": {"unrest": {"amplitude": 0.0}}})
+        optics = eye_optics.optics(model_bytes, dance, result.motion, cams, quiet)
+        verg, labels = optics.trace["vergence"], optics.trace["label"]
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        self.assertEqual(set(labels[41:79]), {"hand"})
+        self.assertGreater(min(verg[52:79]), 0.9 * want, verg[40:80])
+        self.assertLess(max(verg[:36]), 0.05)
+        away = fk.stored(eye_gaze.eye_rotation(10.0, 0.0))
+        elsewhere = vmd.Motion(model_name="toy", bones=[vmd.BoneKey("両目", f, fk.ZERO, away) for f in (0, 120)])
+        alone = eye_optics.optics(model_bytes, dance, elsewhere, cams, quiet)
+        self.assertLess(max(alone.trace["vergence"]), 0.05)
 
 
 class SaccadeTest(unittest.TestCase):
