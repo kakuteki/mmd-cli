@@ -47,8 +47,8 @@ those folders (a texture the model reads from elsewhere) or behind a junction in
 render without -Resume.  The output and scripts folders may not lie in a watched folder.  Before chunk 0 the driver
 checks the look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
-The summary is one line of JSON (frames: of the joined video; spans: frames of the song); an error is
-{"ok": false, "error": ...} with exit code 2.
+The summary is one line of JSON (frames: of the joined video; spans: frames of the song; out_fps only at 60, so that the
+default prints what it printed before --out-fps); an error is {"ok": false, "error": ...} with exit code 2.
 """
 import argparse
 import hashlib
@@ -389,9 +389,12 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS):
 
 
 def concat_text(plan, chunks, tag, out_fps=FPS):
-    """the list ffmpeg joins.  At 60 fps every chunk has its length too: an mp4 keeps it in its edit list in ms, and a chunk of
-    60 fps whose frames of the song are no multiple of 3 came out short (1333 ms for 40 frames: 20475 of 20480 ticks), which
-    put every later chunk 5 ticks early (ffmpeg 8.1, 2026-10-13); concat takes the given length instead"""
+    """the list ffmpeg joins.  At 60 fps every chunk has its length too: an mp4 keeps it in its edit list in ms, and a chunk
+    whose frames of the song leave 1 over 3 can come out 1 ms short, depending on its picture (1333 ms for 40 frames: 20475 of
+    20480 ticks), which puts every later chunk 5 ticks early (ffmpeg 8.0 and 8.1, 2026-10-13); concat takes the given length
+    instead.  The list of 30 fps stays as it was, so that the video to publish keeps its bytes: a 30 fps chunk can come out
+    short as well (chunk 04 of the v7 render: 13533 ms for 406 frames, so the joined video is 5 ticks early from frame 1740 on;
+    review of out-fps)"""
     text = ""
     for c in chunks:
         text += "file '%s'\n" % _names(plan, tag, c)[2].replace("'", "'\\''")
@@ -437,11 +440,14 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS):
     with open(concat, "w", encoding="utf-8", newline="\n") as f:
         f.write(concat_text(plan, chunks, tag, out_fps))
     bpp = plan["avi_bytes_per_pixel"]
-    return {"chunks": len(chunks), "frames": sum(c["frames"] for c in chunks) * (out_fps // FPS), "out_fps": out_fps,
-            "fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
-            "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
-            "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
-            "joined": "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)}
+    summary = {"chunks": len(chunks), "frames": sum(c["frames"] for c in chunks) * (out_fps // FPS)}
+    if out_fps != FPS:
+        summary["out_fps"] = out_fps              # only at 60: the default prints the summary of before, byte for byte
+    summary.update({"fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
+                    "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
+                    "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
+                    "joined": "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)})
+    return summary
 
 
 def build_parser():

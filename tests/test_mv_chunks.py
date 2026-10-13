@@ -1117,8 +1117,17 @@ class CliTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(outdir)), ["chunk_t_60fps_00.txt", "chunk_t_60fps_01.txt", "chunk_t_60fps_02.txt",
                                                       "concat_t_60fps.txt", "render_t_60fps.ps1"])
         code, res = self.main(self.plan, os.path.join(self.tmp, "d"), "--shots", self.report, "--tag", "t")
-        self.assertEqual((code, res["out_fps"], res["frames"], res["subframes"]), (0, 30, 300, 8))
+        self.assertEqual((code, "out_fps" in res, res["frames"], res["subframes"]), (0, False, 300, 8))
         self.assertEqual(hashes(os.path.join(self.tmp, "d")), GOLDEN_30["t"])
+
+    def test_the_default_prints_the_summary_of_before(self):
+        # the names and their order in the line main 60956b2 printed: --out-fps adds nothing at the default
+        code, res = self.main(self.plan, os.path.join(self.tmp, "d"), "--shots", self.report, "--tag", "t")
+        self.assertEqual(code, 0, res)
+        self.assertEqual(list(res), ["ok", "chunks", "frames", "fps", "subframes", "shutter", "codec", "avi_bytes_per_pixel",
+                                     "largest_avi_gb", "spans", "driver", "batches", "concat", "joined"])
+        code, res = self.main(self.plan, os.path.join(self.tmp, "e"), "--shots", self.report, "--tag", "t", "--out-fps", "30")
+        self.assertNotIn("out_fps", res)
 
     def test_an_output_rate_other_than_30_or_60_is_refused(self):
         for out_fps in ("50", "120", "0"):

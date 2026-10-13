@@ -1,5 +1,6 @@
 """tools/mv_look.py: the stage, the light and the glow put around the dancer MMD rendered with an alpha channel."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -706,6 +707,43 @@ class SongClockTest(unittest.TestCase):
             layers = mv_look.write_layers(mv_look.merge_look({"beams": {"loop_seconds": 1}}), os.path.join(self.work, str(fps)),
                                           SIZE, fps)
             self.assertEqual(layers["flare_frames"], frames, fps)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class ThirtyArgvTest(unittest.TestCase):
+    """The video to publish is folded at 30 fps: the ffmpeg argv of mv_look at 30 stays the one main 60956b2 built, byte for
+    byte (the SHA-256 of the argv joined by NUL, written with the tool of 60956b2).  A chunk like v7_04 of the MV (the
+    flare of the look v3 on its first frame, two cues), one into which a punch runs on, and the default look unblurred"""
+
+    V3 = {"flares": [44.467, 86.933, 155.533, 225.8, 241.233], "flare": {"strength": 0.75},
+          "beams": {"loop_seconds": 27.428571, "cycles": [2, 3]}, "bokeh": {"cycles": [2, 3]}}
+    PLAN = {"cues": [{"start": 42.7, "frames": 105, "x": 120, "y": 560, "layer": "front", "pattern": "W/text/cue_l/f%05d.png"},
+                     {"start": 86.933333, "frames": 27, "x": 240, "y": 280, "layer": "back", "pattern": "W/text/cue_h/f%05d.png"}]}
+    GOLDEN = {"v7_04_flare_on_the_cut": "7ff22ffc633cebad18cba8523d5ea55a431cf450ab317d66b0291ff4cf18d411",
+              "punch_carried_into_a_chunk": "3c3b826f7c6d28ab2e652afa6fd28687f7cc237ff48751ce31aac86d2f21a2ba",
+              "default_look_no_blur": "b3483e659532ad12cee21f3ab7101aff4fabed12187656ba181cdd5dae33fba8"}
+
+    def argvs(self):
+        look = mv_look.merge_look(self.V3)
+        common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=8, shutter=0.5, light_frames=823)
+        yield "v7_04_flare_on_the_cut", mv_look.ffmpeg_command(
+            "C:/out/v7_04.avi", "C:/out/v7_04.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
+            start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common)
+        yield "punch_carried_into_a_chunk", mv_look.ffmpeg_command(
+            "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
+            start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)
+        yield "default_look_no_blur", mv_look.ffmpeg_command(
+            "C:/out/y.avi", "C:/out/y.mp4", "W/plate.png", "W/light/light_%05d.png", mv_look.merge_look({}), (1280, 720), 30)
+
+    def test_the_argv_at_30_fps_is_the_one_of_before(self):
+        for name, argv in self.argvs():
+            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+
+    def test_the_counts_of_the_layers_at_30_fps_are_those_of_before(self):
+        # what write_layers hands the argv at 30 (12 flare frames, the loop of v3 in 823): the values of main 60956b2
+        self.assertEqual(mv_look.light_frame_count(mv_look.merge_look(self.V3), 30), 823)
+        self.assertEqual(mv_look.song_frames(12, 30), 12)
+        self.assertEqual(mv_look.song_frames(12.7, 30), 12)                         # main took int() of it too
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
