@@ -223,17 +223,41 @@ def unrolled(o, q_foot):
     return qmul(turn, q_foot), np.degrees(np.where(ok, ang, 0.0))
 
 
-# ---- the rest pose's anatomy ---------------------------------------------------------------------------------------
+# ---- the ankle complex's angles -------------------------------------------------------------------------------------
 
-def rest_anatomy(rig, s, heel_pitch_deg=HEEL_PITCH_DEG):
-    """(dorsiflexion at rest, toes' extension at rest), degrees: the shank's forward lean at rest (the knee ahead of the
-    ankle) less the foot's pitch in the shoe; the toes lie on the shoe's toe box, extended by the same pitch"""
-    side = rig.sides[s]
-    knee = np.array(rig.bones[side.knee].position, dtype=float)
-    ankle = np.array(rig.bones[side.ankle].position, dtype=float)
-    shank = knee - ankle
-    lean = math.degrees(math.atan2(-shank[2], shank[1]))           # the knee toward -Z (forward) leans forward
-    return lean - heel_pitch_deg, heel_pitch_deg
+def ankle_angles(o, ankle, knee, q_shin, q_foot):
+    """(dorsiflexion against the shank as the bones stand, inversion, adduction) in degrees, from the geometry (so that a
+    foot twisted far from the knee does not mix one angle into another, as Euler angles of the 足首 turn do):
+    dorsiflexion = 90 - the angle between the shank (ankle to knee) and the foot's forward axis; inversion = the foot's
+    up axis leaning out of the plane of the shank and the foot, toward the foot's outside (its outer edge down, the
+    sole turned in); adduction = the foot's forward axis turned about the shank from the knee's forward, toward the
+    inside.  The joint coordinate system of the ISB for the ankle (Wu et al. 2002) in spirit: flexion about the
+    medio-lateral axis, inversion about the floating front-back axis, rotation about the vertical."""
+    side_sign = 1.0 if o.name == "左" else -1.0
+    sv = unit(knee - ankle)
+    a, n, _ = foot_axes(o, q_foot)
+    dorsi = 90.0 - np.degrees(np.arccos(np.clip(np.sum(sv * a, axis=-1), -1.0, 1.0)))
+    m = unit(np.cross(a, sv)) * side_sign
+    inv = np.degrees(np.arcsin(np.clip(np.sum(n * m, axis=-1), -1.0, 1.0)))
+    k = qrot(q_shin, np.array([0.0, 0.0, -1.0]))
+    kp = unit(k - np.sum(k * sv, axis=-1, keepdims=True) * sv)
+    ap = unit(a - np.sum(a * sv, axis=-1, keepdims=True) * sv)
+    ang = np.degrees(np.arctan2(np.sum(np.cross(kp, ap) * sv, axis=-1), np.clip(np.sum(kp * ap, axis=-1), -1.0, 1.0)))
+    return dorsi, inv, side_sign * ang
+
+
+def rest_anatomy(rig, o, heel_pitch_deg=HEEL_PITCH_DEG):
+    """the rest pose's (dorsiflexion as the bones stand, inversion, adduction) and the toes' extension in the shoe: the
+    angles are reported against these, plus the anatomical part of the rest: the ankle is plantarflexed in the heeled
+    shoe by its pitch (dorsiflexion = the shank's lean at rest - the pitch) and the toes, lying on the toe box, are
+    extended by the same pitch"""
+    side = rig.sides[o.name]
+    knee = np.array(rig.bones[side.knee].position, dtype=float)[None]
+    ankle = np.array(rig.bones[side.ankle].position, dtype=float)[None]
+    ident = np.array([[0.0, 0.0, 0.0, 1.0]])
+    d, i, a = ankle_angles(o, ankle, knee, ident, ident)
+    return {"dorsi_bones": float(d[0]), "inversion": float(i[0]), "adduction": float(a[0]),
+            "dorsi": float(d[0]) - heel_pitch_deg, "mtp": heel_pitch_deg}
 
 
 # ---- measuring -----------------------------------------------------------------------------------------------------
@@ -258,9 +282,9 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
         flat_leg["q_ex"] = qmul(flat_q, qmul(qconj(leg["q_foot"]), leg["q_ex"]))
         flat_leg["ex"] = leg["ankle"] + qrot(flat_q, qrot(qconj(leg["q_foot"]), leg["ex"] - leg["ankle"]))
         flat_y = sole_world(o, flat_leg)[:, :, 1]
-        a, b, c = xzy_angles(leg["local_foot"])
-        sign = 1.0 if s == "左" else -1.0
-        rest_dorsi, rest_mtp = rest_anatomy(rig, s, heel_pitch_deg)
+        rest = rest_anatomy(rig, o, heel_pitch_deg)
+        dorsi_b, inv, add = ankle_angles(o, leg["ankle"], leg["knee"], leg["q_shin"], leg["q_foot"])
+        rest_dorsi, rest_mtp = rest["dorsi"], rest["mtp"]
         q_toes = qmul(qconj(leg["q_foot"]), leg["q_ex"])                 # 足先EX against the foot: +X lifts the toes
         mtp = np.degrees(2.0 * np.arctan2(q_toes[:, 0], q_toes[:, 3]))
         mtp = (mtp + 180.0) % 360.0 - 180.0
@@ -271,9 +295,11 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
             "fore_low": y[:, o.fore].min(axis=1), "flat_low": flat_y.min(axis=1),
             "flat_heel_low": flat_y[:, o.heel].min(axis=1), "flat_fore_low": flat_y[:, o.fore].min(axis=1),
             "pitch": pitch, "roll": roll, "yaw": yaw,
-            "dorsi": np.degrees(a) + rest_dorsi, "inversion": -sign * np.degrees(b), "adduction": sign * np.degrees(c),
-            "mtp": mtp + rest_mtp, "knee": -np.degrees(leg["knee_angle"]), "reach": leg["reach"],
-            "ankle": leg["ankle"], "q_foot": leg["q_foot"], "q_ex": leg["q_ex"], "q_shin": leg["q_shin"],
+            "dorsi": dorsi_b - rest["dorsi_bones"] + rest_dorsi, "inversion": inv - rest["inversion"],
+            "adduction": add - rest["adduction"],
+            "mtp": mtp + rest_mtp, "reach": leg["reach"],
+            "ankle": leg["ankle"], "knee": leg["knee"], "hip": leg["hip"], "q_foot": leg["q_foot"], "q_ex": leg["q_ex"],
+            "q_shin": leg["q_shin"], "knee_bend": -np.degrees(leg["knee_angle"]),
             "heel_xz": world[:, o.heel][:, :, [0, 2]].mean(axis=1), "fore_xz": world[:, o.fore][:, :, [0, 2]].mean(axis=1),
             "trace_floor": o.floor, "floor": float(floor_y), "rest_dorsi": rest_dorsi, "rest_mtp": rest_mtp,
             "toes_pitch": toes_pitch,
@@ -405,6 +431,11 @@ ON_FLOOR = (0.03, 0.10)         # the band (units above the trace's floor) over 
                                 # the toes take a raised heel: below, on the floor; above, the floor shift alone
 TWIST = (45.0, 70.0)            # adduction / abduction against the shank (soft start, cap), in the air only
 EASE = 4                        # frames over which the flattening and the toes come and go
+LOAD_D0 = 1.0                   # units added to a foot's distance from the pelvis in the load share (8 cm)
+LOAD_SHARE = (0.15, 0.45)       # a foot bearing less of the weight than the first keeps its roll and its toes; more
+                                # than the second: laid flat, the toes bent under a raised heel
+FLAT_PITCH = (30.0, 60.0)       # degrees of pitch from the floor: a sole steeper than the first is laid flat less and
+                                # less, steeper than the second (a foot pointed down at the floor) keeps its roll
 ROUNDS = 3                      # rounds of solving the legs again to put the sole on the floor
 X_AXIS = np.array([1.0, 0.0, 0.0])
 
@@ -444,41 +475,71 @@ def continuous(q):
 def default_params():
     return {"floor_y": 0.0, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "twist": TWIST, "heel_pitch_deg": HEEL_PITCH_DEG,
-            "rounds": ROUNDS}
+            "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH}
 
 
-def foot_targets(o, f, leg, rest_dorsi, rest_mtp, p, s):
-    """the foot's world turn q_t [F, 4] and the toes' turn (degrees of extension added by 足先EX) for one side, and the
-    loading weight w [F]: the roll laid flat as the foot takes weight, the ankle complex inside its range, the toes
-    bent so that a raised heel stands on the ball with the toe box on the floor"""
-    sign = 1.0 if s == "左" else -1.0
+def load_shares(shoe, feet, sol, p):
+    """side -> the share of the body's weight on each foot [F], 0..1: a foot near the floor (the height band) bears it in
+    proportion to its nearness to the pelvis seen from above (1 / (distance + LOAD_D0)^2), the two summing to 1 when
+    either is down.  A foot that only touches the floor away from the body (a pointed toe out to the side) bears
+    little; a single foot on the floor bears all."""
+    hips = 0.5 * (sol["左"]["hip"] + sol["右"]["hip"])
+    near, g = {}, {}
+    for s, o in shoe.sides.items():
+        f = feet[s]
+        e = f["flat_low"] - o.floor
+        near[s] = 1.0 - smoothstep(e, p["load_full"], p["load_none"])
+        centre = 0.5 * (f["heel_xz"] + f["fore_xz"])
+        d = np.linalg.norm(centre - hips[:, [0, 2]], axis=1)
+        g[s] = near[s] / (d + LOAD_D0) ** 2
+    total = sum(g.values())
+    return {s: np.where(total > 1e-9, g[s] / np.maximum(total, 1e-9), 0.0) for s in g}, near
+
+
+def turn_about(axis, deg, q):
+    """q turned further by `deg` degrees about the world axis `axis` [F, 3]"""
+    return qmul(qaxis(unit(axis), np.radians(deg)), q)
+
+
+def foot_targets(o, f, leg, rest, share, near, p):
+    """the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees) and the weights (roll laid flat w,
+    on the floor v) for one side: the roll laid flat as the foot takes weight (by its share of the body's weight and
+    only while its sole faces the floor), the ankle complex inside its range, the toes bent so that a loaded raised
+    heel stands on the ball with the toe box on the floor"""
+    side_sign = 1.0 if o.name == "左" else -1.0
     e = f["flat_low"] - o.floor
-    # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
-    # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
-    w = smooth_max_envelope(1.0 - smoothstep(e, p["load_full"], p["load_none"]), EASE)
     v = 1.0 - smoothstep(e, *p["on_floor"])
     q = leg["q_foot"]
+    pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
+    loaded = smoothstep(share, *p["load_share"])
+    # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
+    # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
+    w = smooth_max_envelope(near * loaded * (1.0 - smoothstep(np.abs(pitch), *p["flat_pitch"])), EASE)
     if p["flatten"]:
         _, ang = unrolled(o, q)
-        axis = qrot(q, o.a0)
-        q = qmul(qaxis(axis, np.radians(w * ang)), q)
+        q = turn_about(qrot(q, o.a0), w * ang, q)
     if p["rom"]:
         lim = p["limits"]
-        loc = qmul(qconj(leg["q_shin"]), q)
-        a, b, c = xzy_angles(loc)
-        dorsi = np.degrees(a) + rest_dorsi
-        inv = -sign * np.degrees(b)
-        add = sign * np.degrees(c)
-        dorsi = soft_band(dorsi, lim["plantarflexion"], lim["dorsiflexion"])
-        inv = soft_band(inv, lim["eversion"], lim["inversion"])
-        add = w * add + (1.0 - w) * soft_band(add, p["twist"], p["twist"])     # no spinning of a loaded foot
-        loc = xzy_quat(np.radians(dorsi - rest_dorsi), np.radians(-sign * inv), np.radians(sign * add))
-        q = qmul(leg["q_shin"], loc)
+        ankle, knee = leg["ankle"], leg["knee"]
+        sv = unit(knee - ankle)
+        d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
+        dorsi = d_b - rest["dorsi_bones"] + rest["dorsi"]
+        dd = soft_band(dorsi, lim["plantarflexion"], lim["dorsiflexion"]) - dorsi
+        a = qrot(q, o.a0)
+        q = turn_about(np.cross(sv, a), -dd, q)                 # about the shank x foot normal: + lowers dorsiflexion
+        d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
+        inv = inv - rest["inversion"]
+        di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
+        q = turn_about(qrot(q, o.a0), side_sign * di, q)        # about the foot's forward axis
+        d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
+        add = add - rest["adduction"]
+        da = (1.0 - v) * (soft_band(add, p["twist"], p["twist"]) - add)   # never spins a foot on the floor
+        q = turn_about(sv, side_sign * da, q)
     toes = np.zeros(len(q))
     if p["toes"]:
         pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
-        room = max(0.0, p["limits"]["mtp_extension"][1] - rest_mtp)
-        toes = smooth_max_envelope(v * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
+        room = max(0.0, p["limits"]["mtp_extension"][1] - rest["mtp"])
+        toes = smooth_max_envelope(v * loaded * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
     return qnormalize_rows(q), toes, w, v
 
 
@@ -516,10 +577,11 @@ def layer(rig, shoe, motion, params=None, log=None):
     feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
     plan = {}
     new_keys = dict(keys)
+    shares, near = load_shares(shoe, feet, sol, p)
     for s, o in shoe.sides.items():
         side = rig.sides[s]
-        rest_dorsi, rest_mtp = rest_anatomy(rig, s, p["heel_pitch_deg"])
-        q_t, toes, w, v = foot_targets(o, feet[s], sol[s], rest_dorsi, rest_mtp, p, s)
+        rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
+        q_t, toes, w, v = foot_targets(o, feet[s], sol[s], rest, shares[s], near[s], p)
         # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in the
         # air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
         low0 = sole_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
@@ -529,7 +591,8 @@ def layer(rig, shoe, motion, params=None, log=None):
         dy = target - low0
         pos, rot = keys[side.leg_ik]
         new_keys[side.leg_ik] = (pos + np.stack([np.zeros(F), dy, np.zeros(F)], axis=1), rot)
-        plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": dy, "d1": d1, "target_low": target}
+        plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": dy, "d1": d1, "target_low": target,
+                   "share": shares[s]}
     out_sol = IK.solve(rig, motion, frames, new_keys)
     # MMD's IK does not always put the ankle on its goal (a nearly straight leg lags behind a lifted goal): push the
     # goal on where the foot bears weight until the sole reaches its planned height; a frame that does not follow
@@ -654,19 +717,52 @@ def main(argv=None):
     off = rig.check_iks(motion)
     if off:
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
-    _, rep, _ = measure_report(rig, shoe, motion, args.floor_y)
+    m_in, rep, contacts = measure_report(rig, shoe, motion, args.floor_y)
     report = {"input": rep, "floor_y": args.floor_y, "heel_pitch_deg": HEEL_PITCH_DEG, "seconds": None}
     if not args.measure_only:
-        raise SystemExit("the layer is not written yet: use --measure-only")
+        if not args.out:
+            raise SystemExit("OUT.vmd is needed unless --measure-only")
+        out, plan = layer(rig, shoe, motion, {"floor_y": args.floor_y})
+        vmd.dump(out, args.out)
+        back = vmd.load(args.out)                       # judge what was written, read back
+        m_out, rep_out, _ = measure_report(rig, shoe, back, args.floor_y, contact_from=contacts)
+        report["output"] = rep_out
+        report["change"] = {TAGS[s]: compare(m_in[s], m_out[s], contacts[s]) for s in m_in}
+        report["unreached"] = {TAGS[s]: {"frames": int((np.abs(pl["miss"]) > 0.025).sum()),
+                                         "worst_cm": _r(float(np.abs(pl["miss"]).max()) * UNIT_CM, 2)}
+                               for s, pl in plan.items()}
+        report["untouched"] = untouched(motion, back, plan)
     report["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
             json.dump(report, fh, ensure_ascii=False, indent=1)
-    for tag, r in rep.items():
-        print("%s contact %d/%d, penetration %d frames (deepest %s cm), roll in contact p50 %s p95 %s, touchdowns %s" % (
-            tag, r["contact_frames"], r["frames"], r["penetration"]["frames"], r["penetration"]["deepest_cm"],
-            r["roll_in_contact_deg"].get("p50"), r["roll_in_contact_deg"].get("p95"), r["touchdowns"]["first"]))
+    for which in ("input", "output"):
+        for tag, r in report.get(which, {}).items():
+            print("%s %s: contact %d/%d, penetration %d frames (deepest %s cm), hover in contact p50 %s cm, roll in "
+                  "contact p50 %s p95 %s" % (
+                      which, tag, r["contact_frames"], r["frames"], r["penetration"]["frames"],
+                      r["penetration"]["deepest_cm"], r["hover_in_contact_cm"].get("p50"),
+                      r["roll_in_contact_deg"].get("p50"), r["roll_in_contact_deg"].get("p95")))
+    if "untouched" in report:
+        print("untouched bones identical: %s" % report["untouched"]["identical"])
     return 0
+
+
+def untouched(before, after, plan):
+    """the bones the layer does not write: their keys byte for byte the same"""
+    written = set()
+    for pl in plan.values():
+        for n in pl["names"].values():
+            if n:
+                written |= {n, fk.vmd_name(n)}
+
+    def rows(m):
+        return sorted((k.name, k.frame, k.position, k.rotation, bytes(k.interpolation)) for k in m.bones
+                      if k.name not in written)
+    a, b = rows(before), rows(after)
+    return {"identical": a == b, "keys": len(a), "written": sorted(written),
+            "morphs_identical": [(k.name, k.frame, k.weight) for k in before.morphs] ==
+                                [(k.name, k.frame, k.weight) for k in after.morphs]}
 
 
 if __name__ == "__main__":

@@ -274,6 +274,32 @@ class LayerTest(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual({k.name for k in out.bones} - {k.name for k in m_in.bones}, written - {k.name for k in m_in.bones})
 
+    def test_unloaded_touch_keeps_its_roll_and_toes(self):
+        # the left foot touches the floor far out to the side (a pointed toe out, the weight on the right foot under
+        # the body): it keeps its roll and its toes are not bent; it still neither sinks nor hovers
+        q = fk.multiply(axis_angle((1, 0, 0), -20.0), rolled("左", 12.0))
+        center = key("センター", 0, position=(0, -1.6, 0))
+        probe = measure(key("左足ＩＫ", 0, q, position=(3.5, 0.0, 0.0)), key("左足首", 0, q), center)["左"]
+        lift = 0.111 - float(probe["low"][0])
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(3.5, lift, 0.0)), key("左足首", 0, q), center)
+        a, b = f_in["左"], f_out["左"]
+        self.assertLess(float(plan["左"]["share"][0]), 0.2)
+        self.assertGreater(float(plan["右"]["share"][0]), 0.8)
+        self.assertAlmostEqual(float(b["roll"][0]), float(a["roll"][0]), delta=1.0)
+        self.assertLess(float(b["mtp"][0] - b["rest_mtp"]), 2.0)
+        self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.003)
+
+    def test_twisted_foot_is_measured_as_twist(self):
+        # the leg at rest (its shank nearly upright), the foot turned 70 degrees about the vertical (toes out) by the
+        # foot IK and by 足首 alike: no dorsiflexion nor inversion appears
+        q = axis_angle((0, 1, 0), -70.0)
+        f = measure(key("左足ＩＫ", 0, q), key("左足首", 0, q))["左"]
+        self.assertAlmostEqual(float(f["adduction"][0]), -70.0, delta=1.5)          # abduction
+        # the rest's shank leans 5.2 degrees forward: across a foot turned 70 degrees that lean is mostly sideways,
+        # an inversion of at most 5.2 sin 70 = 4.9 degrees
+        self.assertLess(abs(float(f["inversion"][0])), 5.0)
+        self.assertLess(abs(float(f["dorsi"][0] - f["rest_dorsi"])), 5.0)
+
     def test_landing_is_smooth(self):
         # the foot comes down over 12 frames rolled 15 degrees and stands 8: no step bigger than the input's
         q = rolled("左", 15.0)
