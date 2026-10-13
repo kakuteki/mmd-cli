@@ -1,6 +1,66 @@
-"""Bake anatomical hands onto a dance (work in progress: the reading of the hand's joints).
+"""Bake anatomical hands onto a dance: the fingers' joints bend as hinges within their range, the DIP follows the PIP,
+a finger pulls its neighbours a little, an open hand relaxes into the cascade and follows the wrist, no finger turns
+faster than a hand can, the DIP moves just after the PIP, and the fingers lag the hand's motion and run on a little
+when it stops.  The choreography's shapes (a pointing finger, a peace sign, a fist) stay.
 
-    python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json]
+    python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 1]
+                               [--speed-max 1900] [--dip-lag 0.75] [--gravity] [--verbose]
+
+Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
+while the hand swings (66 to 72 % of the frames where the wrist turns faster than 90 deg/s or the knuckles move faster
+than 0.5 m/s, for up to 87 frames), every finger and every joint of a finger starts a shape change on the same frame
+(90 to 99 %), a change can turn a finger 115 degrees in one frame (3,470 deg/s; a hand at full speed opens and closes at
+1,350 to 1,450 deg/s, Date 2021), the open hand is flat (the four fingers within 10 degrees of each other on 77 to 88 %
+of its frames), the ring finger's DIP stays straight under a PIP bent 45 to 100 degrees (359 / 851 frames) while the
+middle finger's DIP bends up to 1.7 times its PIP (to 116 degrees), and the index finger's PIP bends sideways by up to
+22 degrees and twists by 45 (a pinch made at the PIP instead of the MP).
+
+The joints are read in the hand's own frame (read_joint; the model's bones at rest give each joint's axes): the long
+fingers' MP, PIP and DIP bend toward the palm's normal (the side the fingers fold to), their side angle is positive
+toward the thumb, their twist is about the segment; the thumb's MP and IP bend toward the pulp (the thumbnail's normal,
+read from the mesh: pulp_from_mesh), and its CMC reads the metacarpal against the index metacarpal (JOA: radial
+abduction in the palm's plane, palmar abduction out of it).  The angles are taken against the rest pose (Sour's Rin's
+rest fingers look straight in the renders although their bones read DIP -13 and IP -17 degrees), the CMC absolutely.
+
+The steps (STEPS, each can be switched off), in this order:
+
+1. hinge: PIP, DIP and the thumb's MP and IP are hinges: their sideways bend and twist are eased (the soft limit of
+   tools/anatomy_layer.py: identity under the start, saturating toward the cap) from 3 to 8 and from 5 to 12 degrees.
+2. coupling: the deep flexor and the oblique retinacular ligament tie the DIP to the PIP (Leijnse 1997: one degree of
+   freedom; DIP / PIP 0.76 Hahn 1995, 0.75-0.77 and the little finger 0.57 Mentzel 2011, 0.16-0.36 in a light grasp
+   Kamper 2003, "the linkage varies greatly"): where the PIP bends (fully from 40 degrees, faded in from 20) the DIP is
+   kept between 0.3 and 1.0 times the PIP by a soft wall 4 degrees inside the band.
+3. enslave: a finger's MP is pulled toward its neighbours' by 0.05 of their difference (the adjacent fingers' passive
+   coupling; Lang & Schieber 2004: 4 to 16 % of the moved finger's motion in the others, mostly the adjacent MCP).
+4. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90) takes
+   the relaxed hand's cascade (more flexion from the index to the little finger: CASCADE) and the tenodesis (per degree
+   of wrist extension against the stretch's mean, MP 0.30, PIP 0.43, DIP 0.16: Su 2005), times --relax-gain.
+5. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
+   SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
+   centred box average, wide only there), so the change keeps its time.
+6. order: the DIP follows its PIP --dip-lag frames late while they move (proximal to distal in 87 % of grasps, Braido &
+   Zhang 2004; the DIP lags the PIP in fist closure, Mentzel 2011; a following finger lags 8 to 36 ms, Li 2004).  The
+   fingers are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
+7. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
+   hand's world angular acceleration about the joint's axis and the joint's world linear acceleration (finger_body,
+   joint_forcing, passive_response).  The masses are Martin 2013's segments (via the research's cylinders), scaled to
+   Rin's fingers (about 0.58 of a grown man's); the stiffness 0.67 N m/rad for a held shape (a moving finger's muscle,
+   Vernooij's model) and 0.21 for the open hand (the upper end of a relaxed MCP, Kuo & Deshpande 2012), scaled as s^3;
+   damping 0.005 N m s/rad.  The lag goes to the MP, 0.35 of it to the PIP and 0.2 to the DIP (the thumb's MP and half
+   to its IP), eased from 6 toward 15 degrees.  Gravity is left out by default: the shape a dancer shows is held
+   against it.
+8. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
+   the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the reference +
+   10 for the caps).
+
+Everything else (the arms, the wrists, the trunk, the legs, every morph) is copied byte for byte; a joint's bone gets a
+key on every frame (the linear curve, the physics bytes of the input's key in force), its key position kept.
+
+The report (--report; in short on stdout) measures the input and the output alike: the range of motion (frames beyond
+the start and the cap), the hinges' sideways bend and twist, DIP / PIP, the open hand's cascade, the largest steps, the
+fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves; and how far each
+joint moved (everywhere, and in the held shapes away from their changes), the steps' own figures (the passive lag per
+finger, its frequencies).
 """
 import argparse
 import importlib.util
@@ -263,7 +323,7 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "coupling", "enslave", "rom", "relax", "speed", "order", "passive")
+STEPS = ("hinge", "coupling", "enslave", "relax", "speed", "order", "passive", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees)
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
