@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import math
 import random
 import os
 import shutil
@@ -12,6 +13,7 @@ from unittest import mock
 
 import numpy as np
 
+from mmd_cli import fk
 from mmd_cli.formats import vmd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -369,6 +371,49 @@ class LidFollowsTheEyesTest(unittest.TestCase):
         moved = np.abs(self.down - self.level) > 0.05
         first = int(np.argmax(moved[690:])) + 690
         self.assertTrue(700 <= first <= 703, first)
+
+
+def nodding(a, z, period=13, swing=4.0, look=-4.0, counter=True):
+    """(head, eyes, the eyes' pitch in the head): head_track's head nodding over [a, z] by `swing` degrees each way
+    every `period` frames, and the eyes `look` degrees down in the head; with `counter` they turn against the nod so
+    that the gaze stays still in the world (a dancer's eyes on the beat: they move in the head without a saccade)"""
+    head, eyes = head_track(), still_eyes()
+    nod = np.zeros(F)
+    nod[a:z + 1] = swing * np.sin(2.0 * np.pi * (np.arange(a, z + 1) - a) / period)
+    pitch = look - nod if counter else np.full(F, look)
+    for f in range(F):
+        h = math.radians(nod[f]) / 2.0
+        head[f] = fk.multiply(tuple(head[f]), (math.sin(h), 0.0, 0.0, math.cos(h)))
+        e = math.radians(pitch[f]) / 2.0
+        eyes[f] = (math.sin(e), 0.0, 0.0, math.cos(e))
+    return head, eyes, pitch
+
+
+class LidFollowsMovingEyesTest(unittest.TestCase):
+    """human style: the upper lid goes with the eyes on every frame, also when they move in the head without a
+    saccade (a person's lid follows the eye's vertical position however the eye moves: Becker and Fuchs 1988).  The
+    dance's eyes turn against the head's nod on the beat all the time; a lid set once per fixation (the median of the
+    eyes between two saccades) stays where the eyes were on average and leaves them behind"""
+
+    @classmethod
+    def setUpClass(cls):
+        head, eyes, cls.pitch = nodding(700, 790)
+        cls.moving = tracks(face_life.plan(inputs(head=head, eyes=eyes), seed=0).motion)["まばたき"]
+        head, eyes, _ = nodding(700, 790, counter=False)
+        cls.still = tracks(face_life.plan(inputs(head=head, eyes=eyes), seed=0).motion)["まばたき"]
+        cls.open = between_blinks(cls.moving, np.zeros(F)) & between_blinks(cls.still, np.zeros(F))
+
+    def test_no_saccade_is_found_in_the_counter_turn(self):
+        head, eyes, _ = nodding(700, 790)
+        self.assertEqual([s for s in face_life.saccades(head, eyes) if 690 <= s["start"] <= 800], [])
+
+    def test_the_lid_goes_with_the_eyes_on_every_frame(self):
+        frames = [f for f in range(703, 788) if self.open[f]]
+        self.assertGreater(len(frames), 40)
+        rise = self.moving[frames] - self.still[frames]
+        expected = face_life.LID_FOLLOW[0] * (-self.pitch[frames] - 4.0)
+        np.testing.assert_allclose(rise, expected, atol=0.02)
+        self.assertGreater(float(np.abs(rise).max()), 0.08)
 
 
 def moving_point(moves, frames=F, rest=(0.0, 10.0, 0.0)):

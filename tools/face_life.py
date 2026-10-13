@@ -70,7 +70,8 @@ numbers above).  "human" (the default since stage 6) changes:
   6 tenths of the open time), only a share of that shows (shown_share, shown_lid): LID_SHOWN[0] while a phrase is sung
   (up to LID_QUIET more for a quiet one), LID_SHOWN[1] at rest, LID_SHOWN[2] for a moment after a phrase; each change
   over a few frames, or at once while the eye is shut when a blink comes near (LID_HIDE).  The lid follows the eyes up
-  and down by LID_FOLLOW a degree, never shutting a smiling eye between the blinks (CLOSURE_CAP).
+  and down by LID_FOLLOW a degree on every frame (lid_follow; v7 sets it once per fixation), never shutting a smiling
+  eye between the blinks (CLOSURE_CAP).
 * The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (LONG_HOLD,
   LONG_OPENING) after some phrases (P_LONG) and where nothing is sung; a blink SMILE_END_BLINK frames before a smile
   falls (P_SMILE_END); none about a flash (FLASH_QUIET).
@@ -195,7 +196,9 @@ LID_FOLLOW = (0.029, 0.021)     # まばたき per degree the eyes look down / u
                                 # down by about the same angle (Becker and Fuchs 1988), the cover over the iris growing by
                                 # 1.1 mm at 30 degrees down and 1.6 mm up (Mastropietro et al. 2009); on Sour's Rin, whose
                                 # lid does not follow the eyes, 0.027 a degree keeps it where it is on the iris (the lid
-                                # moves 0.15 iris radii per 0.1 of まばたき, the iris' top 0.04 per degree: stage 6 q2)
+                                # moves 0.15 iris radii per 0.1 of まばたき, the iris' top 0.04 per degree: stage 6 q2).
+                                # It goes with the eyes' pitch on every frame (lid_follow): the lid follows the eye however
+                                # it moves, and a dancer's eyes move in the head without saccades, turning against the nod
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -1016,7 +1019,7 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
         base = shown_lid(author, share)
         lift = flash_track(flashes, frames)
         base = np.where(author < LID_DEEP, base * (1.0 - lift), base)
-        follow = lid_offset(pitch, sacc, frames, LID_FOLLOW)
+        follow = lid_follow(pitch, LID_FOLLOW)
         lid_info = {"_follow": follow * (base < CLOSED)}
         limit = np.maximum(base, CLOSURE_CAP - smile)          # what the follow may add up to
         base = np.clip(base + follow * (base < CLOSED), 0.0, 1.0)
@@ -1356,9 +1359,15 @@ def shown_lid(author, share):
     return np.where(author <= LID_NEUTRAL, author, low * (1.0 - w) + author * w)
 
 
+def lid_follow(pitch, gains=LID_FOLLOW):
+    """まばたき added for where the eyes look on each frame (human style); gains: まばたき per degree down and up"""
+    p = np.asarray(pitch, float)
+    return gains[0] * np.maximum(0.0, -p) - gains[1] * np.maximum(0.0, p)
+
+
 def lid_offset(pitch, sacc, frames, gains=(LID_DOWN, LID_UP)):
     """まばたき added for where the eyes look, one value per fixation (the median pitch between two saccades),
-    changing with each saccade; gains: まばたき per degree down and up"""
+    changing with each saccade (v7); gains: まばたき per degree down and up"""
     edges = [0] + [s["start"] for s in sacc] + [frames]
     out = np.zeros(frames)
     previous = None
