@@ -147,13 +147,26 @@ LID_DOWN, LID_UP = 0.01, 0.005  # まばたき per degree the eyes look down / u
 # The styles.  "human" (the default since stage 6, face-v2) and "v7" (the face of the MV v7 byte for byte: the tool as
 # it was at main 08894a4).  What "human" changes is listed in the module docstring.
 STYLES = ("human", "v7")
-# A spontaneous blink closes in about 100 ms and opens in about 220 ms (Nakamura et al. 2008); 9 frames at 30 fps were
-# measured most often (Trutoiu et al. 2011).  The closing is drawn from HUMAN_CLOSING_FRAMES (3 twice as often as 2).
-HUMAN_CLOSING_FRAMES = (2, 3, 3)
-HUMAN_OPENING_FRAMES = (7, 8)
-# each step of the opening smaller than the one before, the last ones still more than a10's STEEP when the lid opens
-# from shut to about 0.15 (so that a10's count of a blink's frames sees them)
-HUMAN_OPENING = {7: (0.75, 0.54, 0.37, 0.24, 0.14, 0.06), 8: (0.78, 0.59, 0.43, 0.3, 0.2, 0.12, 0.05)}
+# A spontaneous blink closes in 2 to 3 frames and opens in 4 to 7, 7 to 12 frames in all as the end of the opening is
+# taken (Wu et al. 2014: 7.8 frames; Trutoiu et al. 2011: 9 frames measured most often, a character's blink most
+# natural at 7 to 9 frames, less at 11 and 13); the opening is close to an exponential with a time constant of about 2
+# frames (Espinosa et al. 2020).  v7's shapes (CLOSING, OPENING: 7 to 10 frames) are kept; the lid stays shut a frame
+# longer only one time in four (a spontaneous blink barely pauses shut: Malbouisson et al. 2010).  Some blinks are long
+# (in conversation a quarter, 607 ms on average, at the end of a speaking unit: Homke et al. 2017, 2018): a blink after
+# a phrase with P_LONG["phrase_end"], one filled in where nothing is sung with P_LONG["rest"].
+HUMAN_CLOSING_FRAMES = (2, 3)
+HUMAN_HOLD_CHANCE = 0.25
+HUMAN_OPENING_FRAMES = (5, 6)
+LONG_HOLD = (3, 6)              # frames a long blink stays shut beyond the first (12 to 16 frames in all)
+LONG_OPENING = 7
+HUMAN_OPENING = {**OPENING, 7: (0.75, 0.54, 0.37, 0.24, 0.14, 0.06)}
+P_LONG = {"phrase_end": 0.5, "rest": 0.25}
+CLOSURE_CAP = 0.7               # human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that
+                                # follows the eyes down must not shut a smiling eye
+FLASH_QUIET = (8, 3)            # frames before and after a flash's kime no blink starts (blinks hold off at a moment that
+                                # holds the attention: Shultz et al. 2011)
+SMILE_END_BLINK = 20            # frames before a smile starts to fall a blink is placed (21 on average: Trutoiu 2014)
+P_SMILE_END = 0.6
 LID_NEUTRAL = 0.10              # the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above
                                 # the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2)
 LID_SHOWN = (0.2, 0.35, 0.8)    # the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung
@@ -165,9 +178,11 @@ LID_RELAX_AFTER = 6             # frames after a phrase's last vowel the lid sta
 LID_RELAX_HOLD = 24             # frames the relaxed lid holds before it goes back to rest
 LID_RELAX_BACK = 12             # frames it takes to go back (the lid opening: slow is no creep)
 LID_SHORT_GAP = 20              # frames: phrases this close keep the lid as in a phrase between them
-LID_FOLLOW = (0.027, 0.021)     # まばたき per degree the eyes look down / up: what keeps Sour's Rin's upper lid where it is
-                                # on the iris (stage 6 face-v2 q2: the lid moves 0.15 iris radii per 0.1 of まばたき, the
-                                # iris' top 0.04 per degree)
+LID_FOLLOW = (0.029, 0.021)     # まばたき per degree the eyes look down / up.  A person's upper lid follows the eye up and
+                                # down by about the same angle (Becker and Fuchs 1988), the cover over the iris growing by
+                                # 1.1 mm at 30 degrees down and 1.6 mm up (Mastropietro et al. 2009); on Sour's Rin, whose
+                                # lid does not follow the eyes, 0.027 a degree keeps it where it is on the iris (the lid
+                                # moves 0.15 iris radii per 0.1 of まばたき, the iris' top 0.04 per degree: stage 6 q2)
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -940,6 +955,13 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
     clear[:min(frames, opened + KEEP_CLEAR)] = True
     for e in longs:
         clear[max(0, e["cs"] - KEEP_CLEAR):e["oe"] + KEEP_CLEAR + 1] = True
+    flashes, sung = None, None
+    if human:
+        # the eyes opened for a moment at some kimes where she sings; no blink starts about them
+        sung = singing(phrases, inp.lines, frames)
+        flashes = choose_flashes(accents or [], sung, frames, opened)
+        for k in flashes:
+            clear[max(0, k - FLASH_QUIET[0]):min(frames, k + FLASH_QUIET[1] + 1)] = True
     budget = int(round(RATE * (frames - opened) / FPS / 60.0))
     plan_ = Schedule(clear, frames, budget, [e["t0"] for e in longs])
     shifts = sorted(gaze_shift_sizes(inp.head, inp.eyes), key=lambda fs: (-fs[1], fs[0]))      # the largest first
@@ -953,6 +975,10 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             f = a + rng.randint(*PHRASE_BLINK)
             if f + 10 <= z:
                 plan_.add(f, "phrase_end")
+    if human:
+        for f in smile_falls(smile):
+            if rng.random() < P_SMILE_END:
+                plan_.add(f - SMILE_END_BLINK + rng.randint(-3, 3), "smile_end")
     for s in sorted(sacc, key=lambda x: -x["amplitude"]):
         if s["amplitude"] >= BIG_SACCADE and rng.random() < P_SACCADE:
             plan_.add(s["start"] - 1 + rng.randint(0, 1), "saccade")
@@ -960,22 +986,32 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
     chosen = plan_.chosen()
     drawn = []
     for f, cause in chosen:
-        closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
-        drawn.append((f, cause, closing, hold, rng.choice(openings)))
-    flashes = None
+        if not human:
+            closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
+            drawn.append((f, cause, closing, hold, rng.choice(openings)))
+            continue
+        closing = rng.choice(closings)
+        chance = P_LONG["phrase_end"] if cause == "phrase_end" else P_LONG["rest"] if cause == "fill" and not sung[f] else 0.0
+        if chance and rng.random() < chance:
+            drawn.append((f, cause, closing, rng.randint(*LONG_HOLD), LONG_OPENING))
+        else:
+            drawn.append((f, cause, closing, 1 if rng.random() < HUMAN_HOLD_CHANCE else 0, rng.choice(openings)))
     if human:
         # the lid's level (the blinks first: a change of the shown share near one happens while the eye is shut), the
-        # eyes opened for a moment at some kimes where she sings, the lid following the eyes up and down
+        # flashes, the lid following the eyes up and down, and never a smiling eye shut between the blinks
         share = shown_share(phrases, frames, inp.voice, [(f, f + c, f + c + h + o) for f, _, c, h, o in drawn])
         base = shown_lid(author, share)
-        flashes = choose_flashes(accents or [], singing(phrases, inp.lines, frames), frames, opened)
         lift = flash_track(flashes, frames)
         base = np.where(author < LID_DEEP, base * (1.0 - lift), base)
         follow = lid_offset(pitch, sacc, frames, LID_FOLLOW)
         lid_info = {"_follow": follow * (base < CLOSED)}
+        limit = np.maximum(base, CLOSURE_CAP - smile)          # what the follow may add up to
         base = np.clip(base + follow * (base < CLOSED), 0.0, 1.0)
+        capped = base > limit + 1e-9
+        base = np.minimum(base, limit)
         lid_info.update({"author_mean": _r(author[opened:].mean()), "shown_mean": _r(base[opened:].mean()),
-                         "shares": list(LID_SHOWN), "follow_per_degree": list(LID_FOLLOW)})
+                         "shares": list(LID_SHOWN), "follow_per_degree": list(LID_FOLLOW),
+                         "frames_capped_for_the_smile": int(capped.sum())})
     b = base.copy()
     out = []
     for f, cause, closing, hold, opening in drawn:
@@ -989,7 +1025,9 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
         out.append({"start": int(f), "cause": cause, "closing": closing, "hold": hold, "opening": opening})
     b = without_creep(b, opened)
     info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out, "lid": lid_info,
-            "by_cause": {c: sum(1 for x in out if x["cause"] == c) for c in ("gaze_shift", "saccade", "phrase_end", "fill")},
+            "by_cause": {c: sum(1 for x in out if x["cause"] == c)
+                         for c in ("gaze_shift", "saccade", "phrase_end", "smile_end", "fill")},
+            "long_blinks": sum(1 for x in out if x["hold"] >= LONG_HOLD[0]) if human else 0,
             "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE),
             "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
     if flashes is not None:
@@ -1184,6 +1222,20 @@ FLASH_GAP = 60                  # frames between two of them at least
 FLASH_STRENGTH = 60             # percentile of the kimes' speed a kime reaches to get one
 FLASH_SHAPE = (5, 3, 8)         # frames opening (ending a frame before the kime), held, closing again
 FLASH_SUNG = 9                  # frames around a lyric line or a phrase that count as singing
+
+
+def smile_falls(smile, top=0.25, gone=0.1, steep=0.005):
+    """the frames where 笑い (a per-frame track) starts to fall from `top` or more to under `gone`: from where it goes
+    under `gone`, back while it falls by more than `steep` a frame (a slow drift of the hold before is no part of it)"""
+    s = np.asarray(smile, float)
+    out = []
+    for g in np.where((s[:-1] >= gone) & (s[1:] < gone))[0] + 1:
+        f = int(g)
+        while f > 0 and s[f - 1] - s[f] > steep:
+            f -= 1
+        if s[f] >= top:
+            out.append(f)
+    return out
 
 
 def choose_flashes(accents, sung, frames, start=0):
