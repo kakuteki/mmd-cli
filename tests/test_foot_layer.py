@@ -121,6 +121,22 @@ def fake_foot(F, floor=0.0):
             "q_foot": q, "q_ex": q.copy()}
 
 
+class SpreadTest(unittest.TestCase):
+    def test_a_short_correction_is_spread_over_its_neighbours(self):
+        # a correction of two frames (the peak of a kick past the range) comes in and goes out over EASE frames each
+        # way, its peak kept, its sign kept, the far frames untouched
+        x = np.zeros(21)
+        x[10:12] = [-10.0, -8.0]
+        x[2] = 3.0
+        y = foot_layer.spread(x)
+        self.assertEqual(float(y[10]), -10.0)
+        self.assertTrue(np.all(np.abs(np.diff(y[5:17])) < 6.5))           # no snap: at most 0.65 of the peak a frame
+        self.assertTrue(np.all(y[6:16] < 0.0))
+        self.assertEqual(float(y[16]), 0.0)
+        self.assertGreater(float(y[1]), 0.0)                               # the other sign stays separate
+        self.assertEqual(float(y[2]), 3.0)
+
+
 class SummaryTest(unittest.TestCase):
     def test_penetration_and_hover(self):
         f = fake_foot(10)

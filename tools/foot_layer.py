@@ -239,8 +239,11 @@ def ankle_angles(o, ankle, knee, q_shin, q_foot):
     sv = unit(knee - ankle)
     a, n, _ = foot_axes(o, q_foot)
     dorsi = 90.0 - np.degrees(np.arccos(np.clip(np.sum(sv * a, axis=-1), -1.0, 1.0)))
-    m = unit(np.cross(a, sv)) * side_sign
-    inv = np.degrees(np.arcsin(np.clip(np.sum(n * m, axis=-1), -1.0, 1.0)))
+    # the roll about the foot's own axis from the neutral roll of that axis: the up axis that lies in the plane of the
+    # shank and the foot, on the shank's side (an angle over -180..180, so that a foot rolled past 90 is not read back
+    # as less and a correction never turns the wrong way)
+    n0 = unit(sv - np.sum(sv * a, axis=-1, keepdims=True) * a)
+    inv = side_sign * np.degrees(np.arctan2(np.sum(n * np.cross(a, n0), axis=-1), np.sum(n * n0, axis=-1)))
     k = qrot(q_shin, np.array([0.0, 0.0, -1.0]))
     kp = unit(k - np.sum(k * sv, axis=-1, keepdims=True) * sv)
     ap = unit(a - np.sum(a * sv, axis=-1, keepdims=True) * sv)
@@ -430,8 +433,12 @@ def compare(f_in, f_out, contact):
     d = np.abs(np.sum(f_in["q_foot"] * f_out["q_foot"], axis=1))
     turn = np.degrees(2.0 * np.arccos(np.clip(d, -1.0, 1.0)))
     move = np.linalg.norm(f_out["ankle"] - f_in["ankle"], axis=1) * UNIT_CM
+    over = angle_steps(f_out["q_foot"]) - angle_steps(f_in["q_foot"])          # the layer's own one-frame turns
+    worst = np.argsort(-over)[:5]
     return {"foot_turn_deg": {"contact": stats(turn[contact]), "air": stats(turn[~contact])},
-            "ankle_move_cm": {"contact": stats(move[contact]), "air": stats(move[~contact])}}
+            "ankle_move_cm": {"contact": stats(move[contact]), "air": stats(move[~contact])},
+            "step_over_input_deg": {"over_10": int((over > 10).sum()), "over_20": int((over > 20).sum()),
+                                    "worst": [[int(i), _r(float(over[i]), 1)] for i in worst]}}
 
 
 # ---- the layer -----------------------------------------------------------------------------------------------------
@@ -506,6 +513,13 @@ def load_shares(shoe, feet, sol, p):
     return {s: np.where(total > 1e-9, g[s] / np.maximum(total, 1e-9), 0.0) for s in g}, near
 
 
+def spread(x, radius=None):
+    """a correction spread over the neighbouring frames (each side's largest kept, raised cosine of EASE frames): a
+    range passed for one or two frames (the peak of a kick) is corrected without the foot snapping in and out"""
+    radius = EASE if radius is None else radius
+    return smooth_max_envelope(np.maximum(x, 0.0), radius) - smooth_max_envelope(np.maximum(-x, 0.0), radius)
+
+
 def turn_about(axis, deg, q):
     """q turned further by `deg` degrees about the world axis `axis` [F, 3]"""
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
@@ -538,11 +552,11 @@ def foot_targets(o, f, leg, rest, share, near, p):
         dcap = cap + v * max(0.0, p["loaded_dorsi_cap"] - cap)             # a loaded foot dorsiflexes further
         dd = np.where(dorsi >= 0.0, soft_limit(dorsi, start, dcap), -soft_limit(-dorsi, *lim["plantarflexion"])) - dorsi
         a = qrot(q, o.a0)
-        q = turn_about(np.cross(sv, a), -dd, q)                 # about the shank x foot normal: + lowers dorsiflexion
+        q = turn_about(np.cross(sv, a), -spread(dd), q)         # about the shank x foot normal: + lowers dorsiflexion
         d_b, inv, add = ankle_angles(o, ankle, knee, leg["q_shin"], q)
         inv = inv - rest["inversion"]
         di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
-        q = turn_about(qrot(q, o.a0), side_sign * di, q)        # about the foot's forward axis
+        q = turn_about(qrot(q, o.a0), side_sign * spread(di), q)   # about the foot's forward axis
     toes = np.zeros(len(q))
     if p["toes"]:
         pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
