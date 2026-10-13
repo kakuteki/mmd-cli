@@ -1,10 +1,12 @@
 """Bake anatomical hands onto a dance: the fingers' joints bend as hinges within their range, the DIP follows the PIP,
-a finger pulls its neighbours a little, an open hand relaxes into the cascade and follows the wrist, no finger turns
-faster than a hand can, the DIP moves just after the PIP, and the fingers lag the hand's motion and run on a little
-when it stops.  The choreography's shapes (a pointing finger, a peace sign, a fist) stay.
+a finger pulls its neighbours a little, an open hand curls a little toward a relaxed hand and follows the wrist, no
+finger turns faster than a hand can, the joints of a finger move in their order, and the fingers lag the hand's motion
+and run on a little when it stops (not where the hand touches the face, the body or the other arm).  The
+choreography's held shapes (a pointing finger, a peace sign, a fist, a heart) keep their fingertips within a few mm;
+the open hands do not: every open hand is curled alike, the stretched ones too (the report's shape: open_still).
 
-    python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 1]
-                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5]
+    python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 0.25]
+                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--no-contact]
                                [--gravity] [--verbose]
 
 Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
@@ -27,24 +29,32 @@ The steps (STEPS, each can be switched off), in this order:
 
 1. hinge: PIP, DIP and the thumb's MP and IP are hinges: their sideways bend and twist are eased (the soft limit of
    tools/anatomy_layer.py: identity under the start, saturating toward the cap) from 3 to 8 and from 5 to 12 degrees.
-   (The thumb's MP has a second, small axis, Hollister 1995; it is held to the same band here.)
+   The thumb's MP has a second axis (Hollister 1995): its sideways bend is eased from 12 to 20 (passively 12 - 14,
+   Kim 2014, Patel 2013; about 20 each way in active circumduction, Tanaka 2024).
 2. reach: the hinges and the coupling undo shapes the trace made at the wrong joint (the thumbs of a heart bent 41
    degrees sideways at the MP, a pinch made at the index's PIP, a fist hooked at the DIP); each finger is fitted back
    to the input's outline (its outer joints and its tip, in the hand) by the joints that can move that way: a long
    finger's MP (flexion, sideways) and its PIP with the DIP inside the coupling's band, the thumb's CMC (radial and
    palmar abduction) and its MP and IP flexion; angles past the soft start of their range cost (REACH).  What the
-   range cannot give stays lost: the heart's thumb tip ends some 10 mm from the trace's.
+   range cannot give stays lost: the heart's thumb tip ends some 8 mm from the trace's.
 3. coupling: the deep flexor and the oblique retinacular ligament tie the DIP to the PIP (Leijnse 1997: one degree of
    freedom; DIP / PIP 0.76 Hahn 1995, 0.75-0.77 and the little finger 0.57 Mentzel 2011, 0.16-0.36 in a light grasp
    Kamper 2003, "the linkage varies greatly"): where the PIP bends (fully from 40 degrees, faded in from 20) the DIP is
-   kept between 0.3 and 1.0 times the PIP by a soft wall 4 degrees inside the band (after reach, it catches what the
-   fit left outside).
+   kept between the finger's least ratio (the slopes of Kamper 2003's grasps: index 0.32, middle 0.36, ring 0.16,
+   little 0.25; slopes of whole grasps taken as the least ratio of a frame) and 1.0 times the PIP (no source: it only
+   takes away a DIP bent past its PIP's angle) by a soft wall 4 degrees inside the band (after reach, it catches what
+   the fit left outside).
 4. enslave: a finger's MP is pulled toward its neighbours' by 0.05 of their difference (the adjacent fingers' passive
    coupling; Lang & Schieber 2004: 4 to 16 % of the moved finger's motion in the others, mostly the adjacent MCP).
 5. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90)
-   leans by --relax-gain (0.25) toward the relaxed hand held in the air (Varghese 2020, the wrist 15 - 20 degrees
-   extended: MCP 26-33, PIP 39-45, DIP 14-16, the index the least bent) moved with the wrist by the tenodesis (MP
-   0.30, PIP 0.43, DIP 0.16 degrees per degree of wrist extension, Su 2005; it acts on relaxed fingers only).
+   leans by --relax-gain (0.25) toward the relaxed hand Varghese 2020 measured (seated, the hand well supported, the
+   forearm supinated - the palm up -, the wrist 15 - 20 degrees extended, completely relaxed: MCP 26-33, PIP 39-45,
+   DIP 14-16, the index the least bent), moved with the wrist by the tenodesis (MP 0.30, PIP 0.43, DIP 0.16 degrees
+   per degree of wrist extension, Su 2005, relaxed fingers; the wrist is taken within the +-60 degrees Su measured).
+   It does not tell a hand the choreography stretches (a palm shown, a hand laid on the face) from a relaxed one: in
+   Hibikase every open hand held still has its fingertips moved, the median 9 - 14 mm and the 95th percentile 16 - 23
+   mm (the report's shape open_still).  A hand that touches the face, the chest, the waist or the other arm and hand
+   (contact_weights, from the distances motor_layer uses) is not curled: the fingers lie on what they touch.
 6. order: within each change of a finger's shape its joints move out of step, by shares of the change's length
    (Carpinella 2011: closing a fist the MCP's speed peaks 11.4 % after the PIP's, opening the hand the PIP's 7.4 %
    after the MCP's; the DIP follows the PIP, Mentzel 2011), at most --order-max frames; holds are untouched.  The fingers
@@ -56,16 +66,18 @@ The steps (STEPS, each can be switched off), in this order:
    surface, Kry & Pai 2006; 2 to 5 times a relaxed one, Milner & Franklin 1998) and 0.21 for the open hand (the upper
    end of a relaxed MCP, Kuo & Deshpande 2012), scaled as s^3; damping ratio 0.85 (no swing back: the hand CG of
    Pollard & Zordan 2005 damps past critical, a pressed fingertip 0.83-1.15).  The lag goes to the MP, 0.35 of it to
-   the PIP and 0.2 to the DIP (the thumb's MP and half to its IP), eased from 4 toward 10 degrees (purposeful
-   movements keep the distal joints' passive motion to a few degrees: Koshland 2000, Hore).  Gravity is left out by
-   default: the shape a dancer shows is held against it.
+   the PIP and 0.2 to the DIP (the thumb's MP and half to its IP), eased from 4 toward 10 degrees.  No study measured
+   how far the fingers trail a moving hand (research B 3); the cap is ours: in purposeful arm movements the passive
+   motion of the next joint out, the wrist, is often 1 - 5 degrees (Koshland 2000, which measured the wrist, not the
+   fingers), and 5 degrees of a finger is seen (Jorg 2011).  Not where the hand touches something (as relax).
+   Gravity is left out by default: the shape a dancer shows is held against it.
 8. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
    SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
    centred box average, wide only there), so the change keeps its time; last of the timing steps, so that what the
    order and the lag add is held to the speed too.
 9. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
    the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the reference +
-   10 for the caps).
+   10 for the caps; the MCP's sideways range by finger from Latz 2019: MP_SIDE).
 
 Not done here (the fingers' delay against the wrist is the arm chain's timing, tools/motor_layer.py's finger_delay; the
 wrist's range is tools/anatomy_layer.py's): measured in the report only, the wrist outside its circumduction ellipse
@@ -78,9 +90,12 @@ The report (--report; in short on stdout) measures the input and the output alik
 the start and the cap), the hinges' sideways bend and twist, DIP / PIP, the open hand's cascade, the largest steps, the
 fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves, the wrist; and how
 far each joint moved (everywhere, and in the held shapes away from their changes), how far each finger left the
-choreography's place in the hand (shape: its outer joints and tip, mm; "static" is the shape of each frame before the
-timing steps, "output" the output), the steps' own figures (the fit's distances before and after, the passive lag per
-finger, its frequencies).
+choreography's place in the hand (shape: its outer joints and tip, mm, in the held shapes and in the open hands held
+still apart; "static" is the shape of each frame before the timing steps, "output" the output), the steps' own figures
+(the frames where the hand touches something, the fit's distances before and after, the passive lag per finger, its
+frequencies).
+
+Do not use it with tools/anatomy_layer.py's --tenodesis (off by default): this layer has its own.
 """
 import argparse
 import importlib.util

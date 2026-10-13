@@ -674,8 +674,9 @@ class EnslaveTest(unittest.TestCase):
 
 
 class RelaxTest(unittest.TestCase):
-    """an open hand that is not a fist or a pointing hand leans toward the relaxed hand held in the air (Varghese 2020:
-    the index the least bent) and follows the wrist (the tenodesis), gently: it stays an open hand"""
+    """an open hand that is not a fist or a pointing hand leans toward the relaxed hand (Varghese 2020: seated, the hand
+    supported, the palm up; the index the least bent) and follows the wrist (the tenodesis), gently: it stays an open
+    hand"""
 
     def sums(self, dance, frame=30):
         out = hand_layer.layer(MODEL, dance, only("relax"), pulp=PULP).motion
@@ -857,7 +858,8 @@ class LayerPassiveTest(unittest.TestCase):
 
     def test_the_lag_does_not_ring(self):
         # a dancer's fingers trail and catch up without swinging back and forth (the hand CG of Pollard & Zordan 2005
-        # damps them past critical; Koshland 2000: the distal joints cancel the interaction torques)
+        # damps them away; Koshland 2000: in purposeful movements the muscles cancel the interaction torques at the
+        # wrist)
         arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
         for shape in ("open", "fist"):
             d = self.dev(shape, arm)
@@ -1136,8 +1138,9 @@ class PromiseTest(unittest.TestCase):
         self.assertGreater(float(d[27:32].max()), 0.3)        # it stops: they run on toward the palm
 
     def test_the_lag_stays_a_few_degrees_however_hard_the_swing(self):
-        # Koshland 2000: in purposeful movements the distal joints' passive motion is a few degrees; the layer eases
-        # the lag toward 10 degrees at the MP
+        # no study measured how far the fingers trail; the wrist's passive motion in purposeful movements is often
+        # 1 - 5 degrees (Koshland 2000) and 5 degrees of a finger is seen (Jorg 2011): the layer eases the lag toward
+        # 10 degrees at the MP
         arm = [(0, 0.0), (20, 0.0), (22, 110.0), (24, 0.0), (26, 110.0), (LAST, 110.0)]
         d = LayerPassiveTest().dev("open", arm)
         self.assertGreater(np.abs(d).max(), 3.0)
