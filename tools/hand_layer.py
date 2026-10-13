@@ -968,6 +968,10 @@ def layer(model, motion, params=None, pulp=None, log=None):
         ext = {s: (-w[0] if w is not None else np.zeros(F)) for s, w in wrist.items()}
         report["steps"]["relax_frames"] = {s: int((r > 0.5).sum()) for s, r in
                                            relax(hands, ang, ext, p["relax_gain"]).items()}
+    # the shape the layer holds in each frame (the timing steps below move it in time): measured with the range applied
+    static = {b: a.copy() for b, a in ang.items()}
+    if p["rom"]:
+        rom(hands, static)
     if p["order"]:
         report["steps"]["order"] = order(hands, ang, p["order_max"], p["order_scale"])
     sides = [s for s, _ in SIDES if s + "手首" in P and s in hands]
@@ -985,7 +989,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     report["input"] = measure(hands, ang_in, loc, world, P, wrist)
     report["output"] = measure(hands, ang, out_loc, world, P, wrist)
     report["change"] = change(hands, ang_in, ang, held)
-    report["shape"] = shape_shift(hands, ang_in, ang, held)
+    report["shape"] = {"static": shape_shift(hands, ang_in, static, held), "output": shape_shift(hands, ang_in, ang, held)}
     return Result(out_motion, report)
 
 

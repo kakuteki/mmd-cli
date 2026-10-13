@@ -569,8 +569,8 @@ class ReachTest(unittest.TestCase):
     def test_the_report_measures_how_far_each_finger_left_the_choreography(self):
         steps = ["hinge", "reach", "coupling", "rom"]
         dance, out = self.run_one(HOOK, steps)
-        rep = hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).report["shape"]["左"]
-        alone = hand_layer.layer(MODEL, dance, only("hinge", "coupling", "rom"), pulp=PULP).report["shape"]["左"]
+        rep = hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).report["shape"]["output"]["左"]
+        alone = hand_layer.layer(MODEL, dance, only("hinge", "coupling", "rom"), pulp=PULP).report["shape"]["output"]["左"]
         moved = self.moved_mm(dance, out, "中指")
         self.assertAlmostEqual(rep["中指"]["tip_mm"]["held_still"]["max"], moved[-1], delta=0.05)
         self.assertAlmostEqual(rep["中指"]["outline_mm"]["held_still"]["max"], moved.mean(), delta=0.05)
@@ -743,6 +743,15 @@ class LayerPassiveTest(unittest.TestCase):
     def test_a_fist_moves_less_than_an_open_hand(self):
         arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
         self.assertLess(np.abs(self.dev("fist", arm)).max(), 0.7 * np.abs(self.dev("open", arm)).max())
+
+    def test_the_report_keeps_the_held_shape_apart_from_the_lag(self):
+        # the shape of each frame (what the choreography holds) is measured before the timing: the lag moves the
+        # fingers of the output, not the shape
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        dance = hand_dance([(0, "open"), (LAST, "open")], arm=arm, centre=False)
+        shape = hand_layer.layer(MODEL, dance, only("passive"), pulp=PULP).report["shape"]
+        self.assertAlmostEqual(shape["static"]["左"]["中指"]["tip_mm"]["all"]["max"], 0.0, delta=1e-6)
+        self.assertGreater(shape["output"]["左"]["中指"]["tip_mm"]["all"]["max"], 0.5)
 
     def test_the_lag_does_not_ring(self):
         # a dancer's fingers trail and catch up without swinging back and forth (the hand CG of Pollard & Zordan 2005
