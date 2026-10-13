@@ -567,9 +567,12 @@ class FlashTest(unittest.TestCase):
         lines = [(8.0, 57.0)]                                                # she sings all along
         result = face_life.plan(inputs(parts={"右手首": moving_point(moves)}, lines=lines), seed=0)
         flashes = result.report["blink"]["flashes"]
-        self.assertGreater(len(flashes), 3)
+        # the blinks are many here and a flash a blink runs into gives way (FlashClashTest): a few are left
+        self.assertGreaterEqual(len(flashes), 2)
         self.assertTrue(all(b - a >= face_life.FLASH_GAP for a, b in zip(flashes, flashes[1:])), flashes)
-        self.assertLessEqual(len(flashes) / ((1700 - 240) / FPS / 60.0), face_life.FLASH_RATE + 0.5)
+        window = int(60 * FPS)
+        self.assertLessEqual(max(sum(1 for g in flashes if f <= g < f + window) for f in range(0, F, 10)),
+                             face_life.FLASH_RATE)
 
     def test_the_v7_style_has_none(self):
         result = face_life.plan(inputs(parts={"右手首": moving_point([(612, 5, (3.0, 0.0, 0.0))])}), seed=0, style="v7")
@@ -640,6 +643,37 @@ class FlashQuietTest(unittest.TestCase):
         for k in flashes:
             near = [f for f in starts if k - face_life.FLASH_QUIET[0] <= f <= k + face_life.FLASH_QUIET[1]]
             self.assertEqual(near, [], (k, near))
+
+
+class FlashClashTest(unittest.TestCase):
+    """(review of face-v2) a blink that started before the quiet window (a long one lasts longer than it) must not run
+    into a flash: the eye would open from the blink straight to its widest.  And no minute has more flashes than
+    FLASH_RATE, not only the song on average"""
+
+    def test_no_blink_runs_into_a_flash(self):
+        clashes = []
+        for seed in range(8):
+            moves, sign = [], 1.0
+            for f in range(240, 1700, 25):
+                moves.append((f, 5, (3.0 * sign, 0.0, 0.0)))
+                sign = -sign
+            result = face_life.plan(inputs(face=phrased_face(), parts={"右手首": moving_point(moves)},
+                                           lines=[(8.0, 57.0)]), seed=seed)
+            t = tracks(result.motion)
+            c = t["まばたき"] + t["笑い"]
+            for k in result.report["blink"]["flashes"]:
+                if c[k - 6:k + 9].max() >= 0.8:
+                    clashes.append((seed, k))
+        self.assertEqual(clashes, [])
+
+    def test_no_minute_has_more_flashes_than_the_rate(self):
+        accents = [{"frame": f, "speed": 30.0 + (f % 7), "part": "右手首"} for f in range(100, 1800, 70)]
+        accents += [{"frame": f, "speed": 40.0, "part": "右手首"} for f in range(1900, 5400, 400)]
+        chosen = face_life.choose_flashes(accents, np.ones(5400, bool), 5400, 0)
+        self.assertGreater(len(chosen), 8)
+        window = int(60 * face_life.FPS)
+        most = max(sum(1 for g in chosen if f <= g < f + window) for f in range(0, 5400, 10))
+        self.assertLessEqual(most, face_life.FLASH_RATE, chosen)
 
 
 class HumanReportTest(unittest.TestCase):

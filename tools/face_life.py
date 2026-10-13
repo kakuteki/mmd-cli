@@ -1052,6 +1052,16 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
             drawn.append((f, cause, closing, rng.randint(*LONG_HOLD), LONG_OPENING))
         else:
             drawn.append((f, cause, closing, 1 if rng.random() < HUMAN_HOLD_CHANCE else 0, rng.choice(openings)))
+    if human and flashes:
+        # a blink that started before the quiet window can still run into a flash (it opens over several frames): the
+        # eye would open from the blink straight to its widest.  The flash gives way (the blinks come first)
+        up, held, down = FLASH_SHAPE
+        spans = [(f, f + c + h + o) for f, _, c, h, o in drawn]
+
+        def clashes(k):
+            first, last = k - up, k - 1 + held + down - 2       # the frames on which the flash opens the eye
+            return any(a <= last and z >= first - 1 for a, z in spans)
+        flashes = [k for k in flashes if not clashes(k)]
     if human:
         # the lid's level (the blinks first: a change of the shown share near one happens while the eye is shut), the
         # flashes, the lid following the eyes up and down, and never a smiling eye shut between the blinks
@@ -1307,9 +1317,16 @@ def choose_flashes(accents, sung, frames, start=0):
     for k in candidates:
         if len(chosen) >= budget:
             break
-        if all(abs(k["frame"] - c) >= FLASH_GAP for c in chosen):
+        if all(abs(k["frame"] - c) >= FLASH_GAP for c in chosen) and _within_rate(chosen, k["frame"]):
             chosen.append(k["frame"])
     return sorted(chosen)
+
+
+def _within_rate(chosen, f, rate=FLASH_RATE, window=int(round(60 * FPS))):
+    """adding a flash at f keeps every stretch of `window` frames at `rate` flashes or fewer (not only the mean)"""
+    near = sorted([c for c in chosen if abs(c - f) < window] + [f])
+    n = int(rate)
+    return all(near[i + n] - near[i] >= window for i in range(len(near) - n))
 
 
 def flash_track(flashes, frames):
