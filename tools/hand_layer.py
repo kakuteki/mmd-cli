@@ -76,8 +76,10 @@ key on every frame (the linear curve, the physics bytes of the input's key in fo
 
 The report (--report; in short on stdout) measures the input and the output alike: the range of motion (frames beyond
 the start and the cap), the hinges' sideways bend and twist, DIP / PIP, the open hand's cascade, the largest steps, the
-fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves; and how far each
-joint moved (everywhere, and in the held shapes away from their changes), the steps' own figures (the passive lag per
+fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves, the wrist; and how
+far each joint moved (everywhere, and in the held shapes away from their changes), how far each finger left the
+choreography's place in the hand (shape: its outer joints and tip, mm; "static" is the shape of each frame before the
+timing steps, "output" the output), the steps' own figures (the fit's distances before and after, the passive lag per
 finger, its frequencies).
 """
 import argparse
