@@ -200,7 +200,8 @@ PARAMS = {
         "guard": ["face", "目", "hair"],      # nothing of these may lie between a light and its iris
         "guard_margin": 0.01,                # model units about a light's centre the guard also looks
         "hug_height": 0.002,                 # model units in front of its iris a light under them is brought down to
-        "hide_depth": 0.02,                  # model units behind its iris a light is put when that is not enough
+        "hide_depth": 0.2,                   # model units behind its iris a light is put when that is not enough (into
+                                             # the eyeball: beside the iris the eye white lies up to 0.2 behind its rim)
     },
     "vergence": {
         "ipd_mm": 61.5,                      # women's mean (Murray 2017)
@@ -1531,6 +1532,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                 final = disc_coordinates(cam, target, centre, ax, ay, normal, ix, iy)
                 got = seen_at(final) if final is not None else None
                 unseen = got is None or math.hypot(*got[1]) > 1.0
+                if unseen:
+                    # behind the iris on the camera's line through where its centre shows (the iris covers it there;
+                    # beside the iris, in the socket, nothing may)
+                    mid_iris = disc_coordinates(cam, iris_point((0.0, 0.0), heights[e], geo, bone, moved_iris),
+                                                centre, ax, ay, normal, ix, iy)
+                    if mid_iris is not None and seen_at(mid_iris) is not None:
+                        target = on_disc(mid_iris)
             radial = fk.rotate(fk.multiply(hr, fallback), FORWARD)     # where the append alone points the light
             turn = light_turn(pivot, c["depth"], radial, target, _unit(_sub(cam, target)), lp["damping"], offset=drag)
             key = _soft_turn(fk.multiply(inv, fk.multiply(turn, hr)), lp["key_cap"])   # the turn in the head
@@ -1542,12 +1550,13 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
             def ride(wanted, dragged_too=False):
                 """the bone's move that puts the light on the camera's line through its target, `wanted` in front of
                 its iris' surface (the face's morphs on its quad left out, or with them: `dragged_too`), and the
-                height it ends at"""
+                height it ends at; at most light.ride_cap, and as much further as it is put behind the surface"""
                 start = target if dragged_too else _sub(target, dragged)
                 place, got = ride_on_iris(start, _unit(_sub(cam, target)), heights[e], bp, bq, iris_rest[e], wanted)
                 move = _sub(place, _add(bare, dragged) if dragged_too else bare)
                 size = math.sqrt(_dot(move, move))
-                return (_scale(move, lp["ride_cap"] / size) if size > lp["ride_cap"] else move), got
+                cap = lp["ride_cap"] + max(0.0, -wanted)
+                return (_scale(move, cap / size) if size > cap else move), got
             shift, height = fk.ZERO, None
             if lp["ride"] and c["name"] in drawn_height and side < 1.0:
                 # on the camera's line through its target, at the height it was drawn in front of its iris' surface
