@@ -538,9 +538,14 @@ def check_physics_align(fps, subframes):
     step of the physics (refused before anything is drawn or read)"""
     if subframes < 2:
         raise ValueError("--physics-align moves the window of the fold within --subframes: give --subframes (2 or more)")
-    if physics_period(fps * subframes) is None:
+    period = physics_period(fps * subframes)
+    if period is None:
         raise ValueError("--physics-align: MMD steps its physics %d times a second, so the dancer's rate (%s fps) must be a whole "
                          "multiple of %d" % (PHYSICS_HZ, _number(fps * subframes), 2 * PHYSICS_HZ))
+    if subframes % period:
+        # the step would fall on another subframe in every output frame: no one shift keeps it out of all their windows
+        raise ValueError("--physics-align: every output frame must hold whole steps of the physics (%d frames of the dancer each), "
+                         "not %d subframes" % (period, subframes))
 
 
 def window_shift(residue, subframes, taken, period):
@@ -561,6 +566,8 @@ def dancer_input(fg, fps, subframes, start=None, duration=None, offset=0.0):
     """the arguments of ffmpeg_command that read the dancer (the excerpt and the rate of its frames), so that the scan for the
     physics reads the very frames the fold reads"""
     offset = float(offset or 0.0)
+    if start is not None and start < offset - 1e-9:
+        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
     clip_start = float(start) if start is not None else offset
     args = []
     if start is not None:
@@ -570,11 +577,13 @@ def dancer_input(fg, fps, subframes, start=None, duration=None, offset=0.0):
     return args + ["-r", _number(fps * subframes), "-i", fg]
 
 
-def lone_pixels(frames):
+def lone_counts(frames):
     """for every frame t of a sequence of pictures (h, w, channels): the pixels that moved at t (from t-1) but neither at t-1 nor
-    at t+1.  What the physics moves changes on its steps alone; the body, posed anew on every frame, changes on the frames
-    around them too"""
-    counts = []
+    at t+1 (lone), and those that moved at t and stood still on at least one side (half lone).  What the physics moves changes
+    on its steps alone; the body, posed anew on every frame, changes on the frames around them too.  When the camera moves
+    the cloth as well (on the first frame of a frame of the song), a step right before or after it is no longer lone, but
+    still half lone"""
+    lone, half = [], []
     prev = None
     earlier = latest = None                    # the pixels that moved into frame t-1 and into frame t (None: frame 0)
     for frame in frames:
@@ -582,31 +591,49 @@ def lone_pixels(frames):
         if prev is not None:
             moved = np.abs(frame - prev).max(axis=2) > MOVED          # into this frame, t + 1
             if latest is not None:                                     # frame t is complete
-                lone = latest & ~moved
-                counts[-1] = int((lone if earlier is None else lone & ~earlier).sum())
+                if earlier is None:                                    # frame 1: nothing moved into frame 0
+                    lone[-1] = int((latest & ~moved).sum())
+                    half[-1] = int(latest.sum())
+                else:
+                    lone[-1] = int((latest & ~moved & ~earlier).sum())
+                    half[-1] = int((latest & ~(moved & earlier)).sum())
             earlier, latest = latest, moved
-        counts.append(0)
+        lone.append(0)
+        half.append(0)
         prev = frame
     if latest is not None:                                             # the last frame: nothing after it
-        counts[-1] = int((latest if earlier is None else latest & ~earlier).sum())
-    return counts
+        lone[-1] = int((latest if earlier is None else latest & ~earlier).sum())
+        half[-1] = int(latest.sum())
+    return lone, half
 
 
-def physics_residues(lone, period, window):
+def lone_pixels(frames):
+    """the lone counts of lone_counts"""
+    return lone_counts(frames)[0]
+
+
+def physics_residues(lone, period, window, half=None):
     """per window of `window` frames: the residue t mod period on which the physics steps, or None where the window cannot tell
     (the cloth at rest).  The camera moves once a frame of the song (2 * period frames), which makes everything that stands
     still in the world change alone on one residue of 2 * period; the physics changes alone on two, r and r + period.  So a
-    residue r is scored by the smaller of the sums on r and on r + period"""
+    residue r is scored by the smaller of the sums on r and on r + period.  A window the lone pixels cannot tell is scored
+    again by the half lone ones (`half`), if given"""
     song = 2 * period
-    found = []
-    for a in range(0, len(lone), window):
+
+    def tell(counts, a):
         sums = [0] * song
-        for t in range(a, min(len(lone), a + window)):
-            sums[t % song] += lone[t]
+        for t in range(a, min(len(counts), a + window)):
+            sums[t % song] += counts[t]
         score = [min(sums[r], sums[r + period]) for r in range(period)]
         order = sorted(range(period), key=lambda r: (-score[r], r))
         best, second = score[order[0]], score[order[1]]
-        found.append(order[0] if best >= LONE_LEAST and best >= CLEAR * second else None)
+        return order[0] if best >= LONE_LEAST and best >= CLEAR * second else None
+    found = []
+    for a in range(0, len(lone), window):
+        r = tell(lone, a)
+        if r is None and half is not None:
+            r = tell(half, a)
+        found.append(r)
     return found
 
 
@@ -653,22 +680,25 @@ def measure_physics(fg, size, fps, subframes, taken, start=None, duration=None, 
                     return
                 yield np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
         try:
-            lone = lone_pixels(pictures())
+            lone, half = lone_counts(pictures())
         finally:
             reader.stdout.close()
             reader.wait()
             said.seek(0)
             error = said.read().decode("utf-8", "replace")
     if reader.returncode != 0 or not lone:
-        raise RuntimeError("ffmpeg could not read the dancer for its physics (%s): %s" % (reader.returncode, error.strip()[-300:]))
+        code = reader.returncode - 2 ** 32 if reader.returncode >= 2 ** 31 else reader.returncode     # Windows gives it unsigned
+        raise RuntimeError("ffmpeg could not read the dancer for its physics (%s): %s" % (code, error.strip()[-300:]))
     window = PHASE_WINDOW * int(round(rate / float(SONG_FPS)))
-    residues = physics_residues(lone, period, window)
+    residues = physics_residues(lone, period, window, half)
+    alone = physics_residues(lone, period, window)
     segments = [[first, residue, window_shift(residue, subframes, taken, period)]
                 for first, residue in physics_segments(residues, window, subframes)]
     ends = [s[0] for s in segments[1:]] + [int(math.ceil(len(lone) / float(subframes)))]
     longest = max(range(len(segments)), key=lambda i: ends[i] - segments[i][0])
     return {"rate": int(round(rate)) if abs(rate - round(rate)) < 1e-6 else rate, "period": period,
-            "residue": segments[longest][1], "segments": segments, "residues": residues, "frames": len(lone)}
+            "residue": segments[longest][1], "segments": segments, "residues": residues,
+            "told_by_half_lone": sum(1 for a, b in zip(alone, residues) if a is None and b is not None), "frames": len(lone)}
 
 
 # ---- the commands ---------------------------------------------------------------------------

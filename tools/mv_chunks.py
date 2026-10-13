@@ -79,6 +79,7 @@ NAME = re.compile(r"[A-Za-z0-9_-]+")
 ABSOLUTE = re.compile(r"([A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
 MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithmetic finite
 MAX_WORKERS = 8                         # each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions)
+PHYSICS_HZ = 60                         # MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ)
 ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
 
 
@@ -672,6 +673,10 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
                          "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
     if not NAME.fullmatch(tag):
         raise ValueError("--tag goes into file names: letters, digits, _ and - only")
+    if align_physics and (fps % (2 * PHYSICS_HZ) or sub % (fps // PHYSICS_HZ)):
+        # what mv_look --physics-align refuses, found here before MMD renders chunk 0
+        raise ValueError("--align-physics needs --fps 120, 240 or 480: MMD steps its physics %d times a second, and every frame of "
+                         "the video must hold whole steps of it (%d fps does not)" % (PHYSICS_HZ, fps))
     tag = run_tag(tag, out_fps, encoder)
     os.makedirs(outdir, exist_ok=True)
     batches, hashes = [], {}

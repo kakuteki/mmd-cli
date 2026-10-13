@@ -35,30 +35,46 @@ SIZE = (320, 180)
 CLOTH_ROW, BODY_ROW = 110, 50
 
 
-def cloth_dancer(path, rate, frames, steps, size=SIZE, cloth=True):
+def cloth_dancer(path, rate, frames, steps, size=SIZE, cloth=True, pan=0, noise=0):
     """the AVI: every frame of the song is rate / 30 frames; the cloth moves 3 px on the frames in `steps` (and jumps back to
-    where it started on every 30th step, to stay in the picture)"""
+    where it started on every 30th step, to stay in the picture).  With `pan` the camera moves everything (cloth and body too)
+    `pan` px on the first frame of every frame of the song, back and forth, and the cloth is shaded, so that every pixel of it
+    changes when the camera moves (review of the branch: the step next to such a frame had no lone pixel left).  With `noise`
+    that many pixels of a strip at the top take a new grey on every frame and keep it: lone changes on every frame, as the
+    edges of a body in a real picture give them"""
     w, h = size
     song = rate // 30
     ramp = numpy.linspace(40, 250, 24).astype(numpy.uint8)
+    shade = numpy.linspace(60, 250, 40).astype(numpy.uint8) if pan else numpy.full(40, 255, numpy.uint8)
     p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgra", "-s", "%dx%d" % size, "-r", str(rate),
                           "-i", "-", "-c:v", "rawvideo", "-pix_fmt", "bgra", path], stdin=subprocess.PIPE)
     k = 0
+    rng = numpy.random.default_rng(7)
+    strip = numpy.zeros((16, w, 4), numpy.uint8)
+    strip[:, :, 3] = 255
     for t in range(frames):
         if t in steps:
             k += 1
+        if noise:
+            ys, xs = rng.integers(0, 16, noise), rng.integers(0, w, noise)
+            strip[ys, xs, :3] = rng.integers(0, 256, (noise, 1)).astype(numpy.uint8)
+        cam = pan * ((t // song) % 2)                                       # where the camera has put everything this song frame
         f = numpy.zeros((h, w, 4), numpy.uint8)
+        if noise:
+            f[:16] = strip
         stripes = (numpy.arange(w) + 2 * (t // song)) % 16 < 3          # the floor: moved by the camera, once a song frame
         f[150:, stripes, :3] = 128
         f[150:, stripes, 3] = 255
-        x = 20 + t                                                          # the body, shaded: every pixel of it changes
+        x = 20 + t + cam                                                    # the body, shaded: every pixel of it changes
         f[20:80, x:x + 24, 0] = ramp
         f[20:80, x:x + 24, 1] = ramp
         f[20:80, x:x + 24, 2] = ramp
         f[20:80, x:x + 24, 3] = 255
         if cloth:
-            c = 160 + 3 * (k % 30)                                          # back to the left every 30 steps
-            f[90:130, c:c + 40, :] = 255
+            c = 160 + 3 * (k % 30) - cam                                    # back to the left every 30 steps
+            for ch in range(3):
+                f[90:130, c:c + 40, ch] = shade
+            f[90:130, c:c + 40, 3] = 255
         p.stdin.write(f.tobytes())
     p.stdin.close()
     if p.wait() != 0:
@@ -202,6 +218,17 @@ class PhysicsAlignRenderTest(unittest.TestCase):
         self.assertEqual([half_covered(f, CLOTH_ROW) for f in aligned], [0] * 32)
         self.assertTrue(all(abs(solid(f) - 40) <= 1 for f in aligned), [solid(f) for f in aligned])
 
+    def test_a_camera_that_moves_the_cloth_too_does_not_hide_the_step_next_to_it(self):
+        # the camera moves everything (the shaded cloth too) on subframe 0 of every frame of the song; the physics steps next
+        # to it on 1 (residue 1) or on 7 (residue 3): every pixel of the cloth then changes on two frames in a row, none alone
+        for residue in (1, 3):
+            with self.subTest(residue=residue):
+                fg = self.dancer("pan_r%d" % residue, 240, 128, every(4, residue, 128), pan=4, noise=300)
+                code, result = answer(["phase", fg, "--subframes", "8"])
+                self.assertEqual(code, 0, result)
+                self.assertEqual(result["segments"], [[0, residue, residue]], result)
+                self.assertEqual(result["residues"], [residue] * 4, result)
+
     def test_an_excerpt_is_read_as_the_fold_reads_it(self):
         # the chunk's file starts at 10 s of the song; the excerpt from 10.408333 s starts on its 98th frame, 2 past a step of the
         # physics (every 4th frame from frame 3).  Read from the start of the file, the steps would be on residue 3 of the fold's
@@ -230,6 +257,8 @@ class PhysicsAlignArgvTest(unittest.TestCase):
     def test_no_shift_is_the_argv_of_before(self):
         self.assertEqual(self.argv(shifts=[(0, 0)]), self.argv())
         self.assertEqual(self.argv(shifts=None), self.argv())
+        # and that argv picks what main f5991b3 picks: subframe 3 of every 8 (ThirtyArgvTest holds main's whole argv)
+        self.assertIn("select='eq(mod(n,8),3)'", self.argv()[self.argv().index("-filter_complex") + 1])
 
     def test_a_shift_changes_the_picked_frames_only(self):
         before, after = self.argv(), self.argv(shifts=[(0, 2)])
@@ -300,8 +329,28 @@ class PhysicsAlignCommandTest(unittest.TestCase):
         code, result = answer(["render", self.fg, self.look, os.path.join(self.folder, "o.mp4"), "--size", "320x180", "--fps", "240",
                                "--subframes", "8", "--physics-align", "--work", os.path.join(self.folder, "w")])
         self.assertEqual(code, 1, result)
-        self.assertIn("could not read the dancer for its physics", result["error"]["message"])
+        message = result["error"]["message"]
+        self.assertIn("could not read the dancer for its physics", message)
+        self.assertGreater(len(message.split("): ", 1)[-1].strip()), 10, message)        # with what ffmpeg said
+        self.assertNotIn("4294967", message)                                             # its exit code as Windows gives it
         self.assertFalse(os.path.exists(os.path.join(self.folder, "o.mp4")))
+
+    def test_the_window_needs_whole_steps_of_the_physics_in_every_output_frame(self):
+        # 240 fps folded by 5 (48 fps) or 120 fps folded by 3 (40 fps): the step falls on another subframe in every output
+        # frame, and no one shift holds it out of all their windows
+        for fps, subframes in ((48, 5), (40, 3), (80, 3)):
+            code, result = answer(["render", self.fg, self.look, os.path.join(self.folder, "o.mp4"), "--size", "320x180", "--fps",
+                                   str(fps * subframes), "--subframes", str(subframes), "--physics-align"])
+            self.assertEqual(code, 2, (fps, subframes, result))
+            self.assertIn("--physics-align", result["error"]["message"])
+        for fps, subframes in ((30, 8), (60, 4), (30, 16), (60, 8), (30, 4), (60, 2)):
+            mv_look.check_physics_align(fps, subframes)                                 # these fold whole steps
+
+    def test_an_excerpt_from_before_the_dancer_is_refused_before_it_is_read(self):
+        code, result = answer(["phase", self.fg, "--subframes", "8", "--fps", "240", "--size", "320x180", "--offset", "10",
+                               "--from", "9.5", "--to", "10.5"])
+        self.assertEqual(code, 2, result)
+        self.assertIn("before the dancer's file", result["error"]["message"])
 
     def test_aligning_needs_a_rate_of_whole_steps_of_the_physics(self):
         # 90 fps folded by 3: the physics (60 a second) steps every 1.5 frames, no window can follow it
@@ -345,6 +394,19 @@ class AlignPhysicsScriptTest(unittest.TestCase):
         off = mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)
         self.assertEqual([a for a in on if a != "--physics-align"], off)
         self.assertNotEqual(mv_chunks.recipe(plan, "t", chunk, 240, 0.5, align_physics=True), mv_chunks.recipe(plan, "t", chunk, 240, 0.5))
+
+    def test_a_rate_whose_physics_cannot_be_aligned_is_refused_before_mmd_renders(self):
+        # mv_look refuses to align a dancer at 30 or 60 fps (no whole step of the physics in 2 frames or more); found by the
+        # driver only after MMD had rendered chunk 0
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunks = mv_chunks.plan_chunks(SPANS, 120)
+        for fps, out_fps in ((30, 30), (60, 30), (60, 60)):
+            with self.assertRaises(ValueError, msg=(fps, out_fps)) as ctx:
+                mv_chunks.write(plan, chunks, os.path.join(self.tmp, "x"), "t", fps, 0.5, out_fps=out_fps, align_physics=True)
+            self.assertIn("--align-physics", str(ctx.exception))
+        for fps, out_fps in ((120, 30), (240, 30), (480, 30), (120, 60), (240, 60), (480, 60)):
+            mv_chunks.write(plan, chunks, os.path.join(self.tmp, "ok%d_%d" % (fps, out_fps)), "t", fps, 0.5, out_fps=out_fps,
+                            align_physics=True)
 
     def test_the_summary_says_so_only_when_asked(self):
         self.assertNotIn("align_physics", self.written("off")[0])
