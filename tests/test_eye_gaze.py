@@ -152,9 +152,8 @@ UNIT_M = 0.08                               # metres in a unit of the model (Sou
 
 
 def hand_rest(side):
-    """where the hand's look point is at rest: the mean of the model's bones the tool looks at on a hand"""
-    points = [b.position for b in HANDED.bones if b.name in [side + p for p in eye_gaze.HAND_POINTS]]
-    return tuple(sum(p[c] for p in points) / len(points) for c in range(3))
+    """where the hand's look point is at rest (the tool's own hand_points on a still dance, not a copy of its rule)"""
+    return eye_gaze.hand_points(HANDED, head_turn({0: 0.0}, last=1))[side][0]
 
 
 def ahead(yaw, pitch, metres):
@@ -892,7 +891,7 @@ class HandVergenceTest(unittest.TestCase):
         model_bytes = pmx_edit.dumps(doc)
         model = pmx.loads(model_bytes)
         eye = (0.0, 17.214, EYE_Z)
-        rest = tuple((a + b) / 2.0 for a, b in zip(wrist, tip))
+        rest = eye_gaze.hand_points(model, head_turn({0: 0.0}, last=1))["右"][0]      # the hand's look point at rest
         point = tuple(e + d * 0.30 / UNIT_M for e, d in zip(eye, direction(-14.0, -2.0)))
         move = tuple(p - r for p, r in zip(point, rest))
         keys = [vmd.BoneKey("右目", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("左目", 0, fk.ZERO, fk.IDENTITY),
