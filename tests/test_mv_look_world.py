@@ -72,6 +72,15 @@ def answer(argv):
     return code, json.loads(stream.getvalue())
 
 
+def pictures(folder):
+    """name -> bytes of every file in a folder"""
+    found = {}
+    for name in os.listdir(folder):
+        with open(os.path.join(folder, name), "rb") as f:
+            found[name] = f.read()
+    return found
+
+
 def listing(folder):
     found = {}
     for top, _, names in os.walk(folder):
@@ -223,15 +232,14 @@ class WorldCommandTest(unittest.TestCase):
         self.assertEqual(code, 0, one)
         with open(os.path.join(self.work, "prepared.json"), encoding="utf-8") as f:
             note = json.load(f)
-        pictures = {n: open(os.path.join(self.work, "stage", n), "rb").read() for n in os.listdir(os.path.join(self.work, "stage"))}
+        drawn = pictures(os.path.join(self.work, "stage"))
         code, two = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
                             "--from", "0.4", "--to", "1.0", "--jobs", "2"])
         self.assertEqual(code, 0, two)
         self.assertEqual(two, one)
         with open(os.path.join(self.work, "prepared.json"), encoding="utf-8") as f:
             self.assertEqual(json.load(f)["key"], note["key"])                 # the jobs are no part of what it is made from
-        self.assertEqual({n: open(os.path.join(self.work, "stage", n), "rb").read()
-                          for n in os.listdir(os.path.join(self.work, "stage"))}, pictures)
+        self.assertEqual(pictures(os.path.join(self.work, "stage")), drawn)
         code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
                                "--jobs", "0"])
         self.assertEqual(code, 2, result)
