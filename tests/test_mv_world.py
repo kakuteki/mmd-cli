@@ -160,14 +160,25 @@ class BackdropTest(unittest.TestCase):
         rise = focal * (math.tan(haze + math.radians(10)) - math.tan(haze))
         self.assertAlmostEqual(haze_row(level) - haze_row(down), rise, delta=2)
 
-    def test_the_picture_keeps_its_darker_corners(self):
-        # the plate's corners were darker than its middle; in the world they stay a property of the picture
-        look = world_look(radius=0.0)
-        img = mv_world.backdrop(mv_world.View(state((0, 12, 0), 40.0, (0.0, 30.0, 0.0)), (640, 360)), look, 1)
-        flat = mv_look.merge_look({"stage": {"world": 1, "radius": 0.0}, "plate": {"vignette": 0.0}})
-        plain = mv_world.backdrop(mv_world.View(state((0, 12, 0), 40.0, (0.0, 30.0, 0.0)), (640, 360)), flat, 1)
-        self.assertLess(float(img[:20, :20].mean()), 0.75 * float(plain[:20, :20].mean()))
-        self.assertAlmostEqual(float(img[175:185, 315:325].mean()), float(plain[175:185, 315:325].mean()), delta=1.0)
+    def test_the_darker_sides_of_the_plate_lie_on_the_cyc(self):
+        # the plate was darker towards its sides and its top and bottom (plate.vignette): on the cyc that darkness is paint of
+        # the cyc, where the reference camera saw it, so a point of the cyc is as bright from any camera (a darkening fixed
+        # to the picture would follow the camera and pull the backdrop with it; the lens's vignette does that for the picture)
+        look = world_look(plate={"haze": [0, 0, 0], "pool": [0, 0, 0], "base": [100, 100, 100]}, radius=120.0)
+        size = (640, 360)
+        views = [mv_world.View(state((0, 12, 0), 40.0, (0.0, y, 0.0)), size) for y in (0.0, 15.0, -15.0)]
+        for theta, height in ((0.0, 20.0), (25.0, 30.0), (-20.0, 5.0), (10.0, 12.0)):
+            point = (120.0 * math.sin(math.radians(theta)), height, 120.0 * math.cos(math.radians(theta)))
+            seen = []
+            for view in views:
+                u, v, _ = view.project([point])
+                if 2 <= u[0] < size[0] - 2 and 2 <= v[0] < size[1] - 2:
+                    seen.append(float(mv_world.backdrop(view, look, 1)[int(v[0]), int(u[0])].mean()))
+            self.assertGreaterEqual(len(seen), 2, (theta, height))
+            self.assertLess(max(seen) - min(seen), 1.5, (theta, height, seen))
+        # and the sides are darker than the middle, as on the plate
+        middle = mv_world.backdrop(views[0], look, 1)
+        self.assertLess(float(middle[150:210, :20].mean()), 0.8 * float(middle[150:210, 310:330].mean()))
 
 
 @unittest.skipUnless(mv_world, "needs Pillow and numpy")

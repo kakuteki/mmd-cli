@@ -184,10 +184,9 @@ def backdrop(view, look, scale=LIGHT_SCALE):
     img = (np.array(settings["base"], dtype=np.float64)[None, None, :]
            + haze[..., None] * np.array(settings["haze"], dtype=np.float64)[None, None, :] * 0.55
            + pool[..., None] * np.array(settings["pool"], dtype=np.float64)[None, None, :] * 0.55)
-    h, w = img.shape[:2]
-    y = np.linspace(0.0, 1.0, h)[:, None]
-    x = np.linspace(-1.0, 1.0, w)[None, :]
-    dark = 1.0 - float(settings["vignette"]) * np.clip(x ** 2 + (2.0 * y - 1.0) ** 2 * 0.6, 0.0, 1.0)
+    # the plate's darker sides, top and bottom are paint of the cyc too (where the reference camera saw them): a darkening
+    # fixed to the picture would follow the camera and hold the backdrop back (the lens's vignette darkens the picture)
+    dark = 1.0 - float(settings["vignette"]) * np.clip(xs ** 2 + (2.0 * ys - 1.0) ** 2 * 0.6, 0.0, 1.0)
     return img * dark[..., None]
 
 
