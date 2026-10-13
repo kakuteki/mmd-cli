@@ -401,9 +401,10 @@ alpha つき（BGRA。何も描かれていない所は alpha 0）で書く。�
 
 ```
 python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR | --prepared DIR] [--from 秒] [--to 秒]
-                          [--offset 秒] [--subframes N --shutter S] [--encoder x264|nvenc]
+                          [--offset 秒] [--subframes N --shutter S [--physics-align]] [--encoder x264|nvenc]
 python tools/mv_look.py layers look.json WORK --size WxH --fps N [--encoder nvenc]
 python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.json] [--encoder nvenc]
+python tools/mv_look.py phase DANCER.avi --subframes N [--shutter S] [--offset 秒] [--from 秒] [--to 秒]
 ```
 
 - `look.json` は既定（`DEFAULT_LOOK`）との差分だけを書く。知らない名前は誤りにする。空の `{}` で既定のまま。
@@ -430,6 +431,16 @@ python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.j
   （シャッターが S だけ開いている映画のカメラと同じぼけ方。S=0.5 が標準）。MMD v9.32 は 120・240 fps でも中間の姿勢を全部
   別に描く（物理だけは 60 Hz で更新）。120 fps の 2 枚平均は速い手が二重に写るので、30 fps 出力なら 240 fps で描いて
   `--subframes 8 --shutter 0.5`（4 枚平均）にする。alpha の平均は乗算済みにしてから取る。
+- `--physics-align`（`--subframes` と一緒に）: 平均する窓を、物理の 1 歩の中に収まるようにずらす。MMD は高い fps でも、体の姿勢は
+  毎枚変えるが、物理（髪・スカート・リボン）は 1 秒に 60 回（240 fps なら 4 枚に 1 回、480 fps なら 8 枚に 1 回）しか進めず、
+  カメラは曲のコマの頭の 1 枚でしか動かさない（2026-10-13 実測。表示の fps 制限を変えても同じ）。物理がどの枚で進むか（位相）は
+  MMD を起こすたびに変わる。窓（先頭 4 枚）に物理の境目が入ると、スカートや髪が 2 枚重ねに写る（ボタンが 2 つ見える）。
+  このオプションは畳む前に人物のファイルを読み直し（畳みと同じ `-ss`・`-t`・`-r` で、幅 320 に縮めて）、t で変わり t−1 と t+1 では
+  変わらない画素（物理の歩みでだけ変わる所）を数えて位相を決め、各コマの窓をその歩みの中に置く（窓の頭を 0〜3 枚、480 fps なら
+  0〜7 枚後ろへ。体の時刻も同じだけ後ろへずれる）。物理は 1 状態のくっきりした絵になり、体は今までどおりぼける。位相は 4 曲コマ
+  ごとに読み、途中で変われば窓もそこから変える。物理の動かない区間（読めない）は前の窓のまま。ずらしが 0 なら ffmpeg の引数は
+  付けないときと同じ。答えの JSON の `physics` に、1 歩の枚数（`period`）・位相（`residue`）・区切り（`segments`: 出力の先頭の
+  コマ・位相・ずらし）を書く。`phase` は同じ読み取りだけをして答える（何も描かない）。人物の fps は 120 の倍数（1 歩が 2 枚以上）。
 - 出力は無音（libx264、crf 16）。全曲 7,743 枚・1280x720 で約 70 秒（hinata 実測）。粒子を入れると大きさは約 2 倍になる。
   240 fps・1280x720 の alpha つき AVI はモーション 1 フレームあたり約 29.5 MB（全曲なら 228 GB）なので、区間に分けて描く。
 - MMD の AVI は 30 fps を 10000000/333333 で書くので、人物は `-r` で層と同じ時計に載せている（載せないと最後の 1 枚が落ちる）。
@@ -470,6 +481,8 @@ python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60     # 手元で見る 60 fps 版
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --workers 2      # 2 区間ずつ同時に描く
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60 --workers 3 --encoder nvenc
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --align-physics  # 物理の 2 枚重ねを出さない
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --fps 480 --align-physics --workers 2
 powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
 ```
 
@@ -539,7 +552,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   0.7 %）。同時に描いても違いの大きさは 1 本ずつ描き直したときと同じで、位相が同じなら同時と 1 本ずつの組がいちばん近い。
   同時に描いた動画は 1 本ずつ描いた動画とバイト単位では同じにならないが、1 本ずつ描き直しても同じにはならない。
   位相によっては、30 fps の畳み（8 枚のうち先頭 4 枚の平均）に物理の 1 歩の境目が入り、スカートや髪が 2 枚重ねに写る（区間ごとに
-  運で決まる。`--workers` の前からある性質）。
+  運で決まる。`--workers` の前からある性質）。`--align-physics` で直る（下の節）。
 - `--encoder nvenc`: 畳みの符号化を h264_nvenc（p7・hq・vbr・cq 19・AQ・先読み 32・B フレーム 3）にする。ファイル名に `_nvenc` が
   付き、libx264 の版（公開する版）を消さない。look の確かめで h264_nvenc を試し、使えない機械では MMD が描く前に止まる。
   区間 04（60 fps）で畳み 20.3 → 13.5 秒、大きさは libx264 の 2.2 倍。同じグラフの可逆の基準（FFV1）と同じ番号のコマどうしで比べると、
