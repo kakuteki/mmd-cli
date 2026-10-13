@@ -516,6 +516,8 @@ FINGER_RADIUS_MM = 0.07 * MM    # about the half thickness of Rin's fingers (the
 HOOK = {"中指１": (87.9, 1.8, -0.3), "中指２": (68.1, 3.9, 0.0), "中指３": (115.7, 5.1, -0.3)}
 HEART = {"親指０": (6.4, 36.5, 0.6), "親指１": (6.8, -40.8, 10.4), "親指２": (-2.3, -21.2, 17.7)}
 PINCH = {"人指１": (35.0, 14.0, 1.6), "人指２": (46.1, 22.4, -40.7), "人指３": (45.3, 30.5, 3.3)}
+# the ring finger curled with its DIP left straight (frame 4542, the left hand)
+RING_STRAIGHT = {"薬指１": (47.5, 0.6, 0.7), "薬指２": (69.0, 4.3, 2.5), "薬指３": (3.3, 0.2, 0.2)}
 
 
 class ReachTest(unittest.TestCase):
@@ -565,6 +567,22 @@ class ReachTest(unittest.TestCase):
         self.assertGreater(mp_side, PINCH["人指１"][1] + 3.0)            # the sideways bend went to the MP
         self.assertLess(mp_side, hand_layer.ROM["mp"]["side"][1][1])
         self.assertLess(self.moved_mm(dance, out, "人指").max(), FINGER_RADIUS_MM)
+
+    def test_a_dip_left_straight_comes_into_the_band_and_the_tip_stays(self):
+        dance, out = self.run_one(RING_STRAIGHT, ["hinge", "reach", "coupling", "rom"])
+        pip, dip = out_angles(out, "左", "薬指２")[0][30], out_angles(out, "左", "薬指３")[0][30]
+        self.assertGreater(dip, 0.3 * pip - 1.0)                         # the deep flexor bends the DIP with the PIP
+        moved = self.moved_mm(dance, out, "薬指")
+        _, alone = self.run_one(RING_STRAIGHT, ["hinge", "coupling", "rom"])
+        self.assertLess(moved[-1], 0.5 * self.moved_mm(dance, alone, "薬指")[-1])
+        self.assertLess(moved.max(), FINGER_RADIUS_MM)
+
+    def test_the_fit_does_not_push_the_lost_bend_past_a_joint_s_range(self):
+        # the heart's thumb cannot reach the trace's tip inside its range; the fit stops near the start of the range
+        # (the IP's hyperextension from 15 degrees) instead of bending the IP back as far as the last step lets it
+        dance, out = self.run_one(HEART, ["hinge", "reach", "rom"])
+        start = hand_layer.ROM["ip"]["flex"][0][0]
+        self.assertGreater(float(out_angles(out, "左", "親指２")[0][30]), -(start + 5.0))
 
     def test_the_report_measures_how_far_each_finger_left_the_choreography(self):
         steps = ["hinge", "reach", "coupling", "rom"]
