@@ -16,7 +16,7 @@ import numpy as np
 
 from mmd_cli import fk
 from mmd_cli.formats import pmx, pmx_edit, vmd
-from tests.test_leg_ik import REST, axis_angle, key, rest, rin_legs_bytes
+from tests.test_leg_ik import REST, axis_angle, key, rest, rin_legs_bytes  # noqa: F401
 from tests.test_pmx import Writer
 from tests.test_pmx_spine import load_tool
 
@@ -29,6 +29,7 @@ SOLE = [(0.95, 0.111, 0.55, 0.0), (1.25, 0.111, 0.55, 0.0), (0.95, 0.111, 0.9, 0
         (0.75, 0.112, -0.3, 0.1), (1.45, 0.112, -0.3, 0.1), (0.75, 0.112, -0.7, 0.5), (1.45, 0.112, -0.7, 0.5),
         (0.95, 0.13, -1.0, 0.87), (1.2, 0.13, -1.0, 0.87)]
 UPPER = [(1.12, 0.6, 0.2, 0.0), (1.1, 0.45, -0.8, 0.6)]       # the shoe's upper: not the sole
+CAP = (1.07, 0.16, -1.16, 0.87)    # the toe cap's front edge (Rin's: z -1.16, y 0.16): above the sole, lowest when pointed
 
 
 def shoe_model_bytes():
@@ -37,7 +38,7 @@ def shoe_model_bytes():
         out = []
         for side, sx in (("左", 1.0), ("右", -1.0)):
             ankle_d, ex = index[side + "足首D"], index[side + "足先EX"]
-            for x, y, z, wex in SOLE + UPPER:
+            for x, y, z, wex in SOLE + UPPER + [CAP]:
                 raw = w.vertex("BDEF2", (ex, ankle_d), (wex,)) if wex > 0 else w.vertex("BDEF1", (ankle_d,))
                 out.append(struct.pack("<3f", sx * x, y, z) + raw[12:])
         return out
@@ -55,6 +56,17 @@ def motion(*keys):
 
 def measure(*keys, frames=(0,), floor_y=0.0):
     return foot_layer.measure_feet(RIG, SHOE, motion(*keys), list(frames), floor_y)
+
+
+def shoe_point(f, t, p, side="左"):
+    """the world place at frame t of a shoe vertex p = (x, y, z, weight on 足先EX) of the left shoe (mirrored for the
+    right), skinned as MMD does from measured bones (independent of foot_layer's own skinning)"""
+    sx = 1.0 if side == "左" else -1.0
+    a0, e0 = rest("足首", side), rest("足先EX", side)
+    v = np.array([sx * p[0], p[1], p[2]])
+    ankle, qf, qe = f["ankle"][t], f["q_foot"][t], f["q_ex"][t]
+    ex = ankle + leg_ik.qrot(qf, e0 - a0)
+    return (1.0 - p[3]) * (ankle + leg_ik.qrot(qf, v - a0)) + p[3] * (ex + leg_ik.qrot(qe, v - e0))
 
 
 class ShoeTest(unittest.TestCase):
@@ -107,6 +119,14 @@ class MeasureTest(unittest.TestCase):
     def test_toes_key_is_extension(self):
         m = measure(key("左足ＩＫ", 0, position=(0, 1.0, 0)), key("左足先EX", 0, axis_angle((1, 0, 0), 25.0)))["左"]
         self.assertAlmostEqual(float(m["mtp"][0]) - m["rest_mtp"], 25.0, places=3)
+
+    def test_pointed_foot_stands_lowest_on_its_toe_cap(self):
+        # pointed 45 degrees toes-down in the air: the toe cap's front edge, above the sole at rest, is the shoe's lowest
+        f = measure(key("左足ＩＫ", 0, axis_angle((1, 0, 0), -45.0), position=(0, 2.0, 0)))["左"]
+        cap = shoe_point(f, 0, CAP)[1]
+        sole = min(shoe_point(f, 0, p)[1] for p in SOLE)
+        self.assertLess(cap, sole - 0.05)
+        self.assertAlmostEqual(float(f["low"][0]), cap, delta=1e-4)
 
     def test_contact_mask_hysteresis(self):
         # enters at or below 0.111 + 0.03, leaves above 0.111 + 0.06
@@ -368,6 +388,21 @@ class LayerTest(unittest.TestCase):
         self.assertGreater(float(a["dorsi"].min()), 55.0)
         over = foot_layer.angle_steps(b["q_foot"]) - foot_layer.angle_steps(a["q_foot"])
         self.assertLess(float(over.max()), 2.0)
+
+    def test_pointed_toe_cap_is_not_sunk(self):
+        # the trace's foot pointed 45 degrees toes-down with the bottom of its sole just on the trace's floor: the toe cap,
+        # further forward, lies below it.  On the floor no part of the shoe goes below the floor.
+        q = axis_angle((1, 0, 0), -45.0)
+        center = key("センター", 0, position=(0, -0.8, 0))
+        probe = measure(key("左足ＩＫ", 0, q), center)["左"]
+        sole = min(shoe_point(probe, 0, p)[1] for p in SOLE)
+        lift = 0.111 + 0.01 - sole
+        f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, lift, 0)), center, floor_y=0.0)
+        self.assertLess(shoe_point(f_in["左"], 0, CAP)[1], 0.111 - 0.05)                # below the trace's floor
+        b = f_out["左"]
+        points = [shoe_point(b, 0, p)[1] for p in SOLE + UPPER + [CAP]]
+        self.assertGreater(min(points), -foot_layer.PEN_TOL)
+        self.assertAlmostEqual(min(points), 0.0, delta=0.003)                            # on the floor, not above it
 
     def test_untrusted_frames_do_not_spread_into_their_neighbours(self):
         # the foot lifted in the air, pitched 15 degrees down and rolled 10 (inside every range), but for three frames

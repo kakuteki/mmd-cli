@@ -11,10 +11,12 @@ then reach 9 mm further, and where the pelvis is low already they fall short; th
 
 The feet are where MMD's IK puts them (tools/leg_ik.py, checked against MMD's renders).  The shoe is read from the
 model's mesh: its sole is the bottom layer of the vertices skinned on the foot (足首D, 足先EX), each with its weight on
-足先EX (the toes' bone, the ball of the foot), so that the sole bends with the toes as the skin does (linear blend).
+足先EX (the toes' bone, the ball of the foot), so that the sole bends with the toes as the skin does (linear blend); its
+lower shell (SHELL_BAND) adds the toe cap's front edge and the heel's back, which go lowest when the foot is pitched.
 
 Measures, per frame and foot (Measure):
-* the sole's lowest point, and the lowest of its heel and of its forefoot (split at the widest gap along the foot);
+* the shoe's lowest point (its lower shell), and the lowest of the sole's heel and of its forefoot (split at the widest
+  gap along the foot);
 * the foot's world pitch (+ toes up) and roll (+ the lateral edge down, i.e. turned like an inversion) against the
   floor, and its yaw;
 * the anatomical angles of the ankle complex against the shank, in the joint coordinate system of the ISB (Wu et al.
@@ -67,6 +69,9 @@ FPS = 30.0
 SIDES = ("左", "右")
 TAGS = {"左": "L", "右": "R"}
 SOLE_BAND = 0.03                # units above the lowest vertex that still count as the sole's bottom layer
+SHELL_BAND = 0.35               # units above it that the shoe's lower shell takes: the toe cap's front edge and the heel's
+                                # back, which go lowest when the foot is pitched (Rin's cap is 0.6 cm under the sole's
+                                # bottom layer at 40 degrees toes-down, 0.9 cm at 60)
 CONTACT_ENTER = 0.03            # units above the trace's floor: a flat sole this low is on the floor
 CONTACT_EXIT = 0.06             # ... and leaves it above this
 HEEL_UP_DEG = 4.0               # a foot on the floor pitched toes-down more than this stands on its forefoot
@@ -160,6 +165,8 @@ class Shoe:
             o = SoleSide()
             o.name = s
             o.points, o.w_ex = pts[keep], w_ex[keep]
+            shell = pts[:, 1] < low + SHELL_BAND
+            o.shell, o.w_shell = pts[shell], w_ex[shell]
             o.floor = float(low)
             o.ankle = np.array(rig.bones[side.ankle].position, dtype=float)
             o.ex = np.array(rig.bones[ex].position, dtype=float) if ex is not None else o.ankle.copy()
@@ -191,12 +198,23 @@ class Shoe:
         return cls(rig, pmx_edit.load(path))
 
 
-def sole_world(o, leg):
-    """the sole's points [F, N, 3] for one side's solved leg (leg_ik.solve), skinned linearly on the foot and the toes"""
-    pa = leg["ankle"][:, None, :] + qrot(leg["q_foot"][:, None, :], (o.points - o.ankle)[None])
-    pe = leg["ex"][:, None, :] + qrot(leg["q_ex"][:, None, :], (o.points - o.ex)[None])
-    w = o.w_ex[None, :, None]
+def skin(o, leg, points, w_ex):
+    """`points` [N, 3] of one shoe at rest, weighted w_ex [N] on the toes' bone, for one side's solved leg
+    (leg_ik.solve): [F, N, 3], skinned linearly on the foot and the toes as MMD does"""
+    pa = leg["ankle"][:, None, :] + qrot(leg["q_foot"][:, None, :], (points - o.ankle)[None])
+    pe = leg["ex"][:, None, :] + qrot(leg["q_ex"][:, None, :], (points - o.ex)[None])
+    w = w_ex[None, :, None]
     return (1.0 - w) * pa + w * pe
+
+
+def sole_world(o, leg):
+    """the sole's points [F, N, 3] (its bottom layer) for one side's solved leg"""
+    return skin(o, leg, o.points, o.w_ex)
+
+
+def shell_world(o, leg):
+    """the shoe's lower shell [F, N, 3] for one side's solved leg: its lowest point is the shoe's, at any pitch"""
+    return skin(o, leg, o.shell, o.w_shell)
 
 
 def foot_axes(o, q_foot):
@@ -285,6 +303,7 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
         leg = sol[s]
         world = sole_world(o, leg)
         y = world[:, :, 1]
+        low = shell_world(o, leg)[:, :, 1].min(axis=1)
         pitch, roll, yaw = world_pitch_roll(o, leg["q_foot"])
         flat_q, _ = unrolled(o, leg["q_foot"])
         flat_leg = dict(leg)
@@ -292,6 +311,7 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
         flat_leg["q_ex"] = qmul(flat_q, qmul(qconj(leg["q_foot"]), leg["q_ex"]))
         flat_leg["ex"] = leg["ankle"] + qrot(flat_q, qrot(qconj(leg["q_foot"]), leg["ex"] - leg["ankle"]))
         flat_y = sole_world(o, flat_leg)[:, :, 1]
+        flat_low = shell_world(o, flat_leg)[:, :, 1].min(axis=1)
         rest = rest_anatomy(rig, o, heel_pitch_deg)
         dorsi_b, inv, add = ankle_angles(o, leg["ankle"], leg["knee"], leg["q_shin"], leg["q_foot"])
         rest_dorsi, rest_mtp = rest["dorsi"], rest["mtp"]
@@ -301,8 +321,8 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
         toes_fwd = qrot(leg["q_ex"], o.a0)
         toes_pitch = np.degrees(np.arcsin(np.clip(toes_fwd[:, 1], -1.0, 1.0)))   # the toe box against the floor
         out[s] = {
-            "frames": np.array(frames), "low": y.min(axis=1), "heel_low": y[:, o.heel].min(axis=1),
-            "fore_low": y[:, o.fore].min(axis=1), "flat_low": flat_y.min(axis=1),
+            "frames": np.array(frames), "low": low, "heel_low": y[:, o.heel].min(axis=1),
+            "fore_low": y[:, o.fore].min(axis=1), "flat_low": flat_low,
             "flat_heel_low": flat_y[:, o.heel].min(axis=1), "flat_fore_low": flat_y[:, o.fore].min(axis=1),
             "pitch": pitch, "roll": roll, "yaw": yaw,
             "dorsi": dorsi_b - rest["dorsi_bones"] + rest_dorsi, "inversion": inv - rest["inversion"],
@@ -622,11 +642,12 @@ def qnormalize_rows(q):
     return q / np.linalg.norm(q, axis=1, keepdims=True)
 
 
-def sole_at(o, ankle, q_foot, toes):
-    """the sole's points [F, N, 3] for the ankle at `ankle`, the foot turned q_foot and the toes extended `toes` degrees"""
+def shell_at(o, ankle, q_foot, toes):
+    """the shoe's lower shell [F, N, 3] for the ankle at `ankle`, the foot turned q_foot and the toes extended `toes`
+    degrees"""
     q_ex = qmul(q_foot, qaxis(np.broadcast_to(X_AXIS, ankle.shape), np.radians(toes)))
     ex = ankle + qrot(q_foot, o.ex - o.ankle)
-    return sole_world(o, {"ankle": ankle, "q_foot": q_foot, "ex": ex, "q_ex": q_ex})
+    return shell_world(o, {"ankle": ankle, "q_foot": q_foot, "ex": ex, "q_ex": q_ex})
 
 
 def smooth_max_envelope(x, radius):
@@ -673,7 +694,7 @@ def layer(rig, shoe, motion, params=None, log=None):
 
     def lowest(s, sol_):
         pl = plan[s]
-        return sole_at(shoe.sides[s], sol_[s]["ankle"], pl["q_t"], pl["toes"])[:, :, 1].min(axis=1)
+        return shell_at(shoe.sides[s], sol_[s]["ankle"], pl["q_t"], pl["toes"])[:, :, 1].min(axis=1)
 
     def set_dy(s, dy):
         side = rig.sides[s]
@@ -693,7 +714,7 @@ def layer(rig, shoe, motion, params=None, log=None):
             q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p)
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
             # the air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
-            low0 = sole_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
+            low0 = shell_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
             target = v * floor_y + (1.0 - v) * (low0 + d1)
             target = target + smooth_max_envelope(floor_y - target, 3)
