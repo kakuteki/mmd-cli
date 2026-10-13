@@ -747,9 +747,12 @@ def layer(rig, shoe, motion, params=None, log=None):
     * the toes: a loaded foot with its heel raised stands on the ball, 足先EX extending the toes so that the toe box
       lies on the floor (up to the cap of the MTP's extension);
     * the height: the trace's floor moved onto the floor (params["floor_y"]; by default the trace's own: no shift),
-      the sole of a foot on the floor (the ON_FLOOR band) exactly on it, nothing below it.  MMD's IK is solved again
-      and the foot IK's goal pushed on where the ankle lags behind it (ROUNDS); the frames that do not follow are
-      left at their best and listed (miss);
+      the shoe of a foot on the floor (the ON_FLOOR band; judged as the trace's model stood with
+      params["trace_toe_extra"], 0 by default) exactly on it, a standing foot's lift of BRIDGE frames or fewer bridged,
+      the correction carried into the frames around a contact over EASE frames (put down before the landing, let go
+      after the lift-off: eased_correction), nothing below the floor.  MMD's IK is solved again and the foot IK's goal
+      pushed on where the ankle lags behind it (ROUNDS); the frames that do not follow are left at their best and
+      listed (miss);
     * twice: the range is checked again against the shank that MMD reaches with the new heights.
     The keys, on every frame (build): 足ＩＫ's height (its horizontal place and its turn as the input has them),
     つま先ＩＫ's goal on the turned toe, 足首's turn (the start of the toe IK), 足先EX's bend.  Nothing else changes."""
@@ -786,7 +789,8 @@ def layer(rig, shoe, motion, params=None, log=None):
             rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
             q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p)
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
-            # the air keeps its path), the sole of a foot on the floor exactly on it (v), nothing below it
+            # the air keeps its path), the shoe of a foot on the floor exactly on it (v), that correction eased into
+            # the frames around (eased_correction), nothing below the floor
             low0 = shell_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
             gap = floor_y - low0 - d1                     # what putting the sole on the floor adds to the shift
