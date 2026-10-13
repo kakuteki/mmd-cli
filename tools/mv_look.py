@@ -1,8 +1,17 @@
 """Put a stage, light and glow around the dancer MMD rendered with an alpha channel: nothing happens in MMD.
 
-    python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR]
-                                   [--from SECONDS] [--to SECONDS] [--size WxH] [--fps N]
-    python tools/mv_look.py layers look.json WORK --size WxH --fps N
+    python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR | --prepared DIR]
+                                   [--from SECONDS] [--to SECONDS] [--size WxH] [--fps N] [--encoder x264|nvenc]
+    python tools/mv_look.py layers look.json WORK --size WxH --fps N [--encoder x264|nvenc]
+    python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.json] [--encoder x264|nvenc]
+
+`prepare` draws the layers and the text once, for many renders (tools/mv_chunks.py --workers folds several chunks at the
+same time): it writes them under WORK with prepared.json, the note of what they were made from (the look, the cue file,
+the size, the rate and the code of this tool and tools/mv_text.py).  `render --prepared WORK` uses them as they are and
+writes nothing there, after checking that note and that every frame is there and none more; its argv is the one
+`render --work WORK` builds, so the video is the same byte for byte.  --encoder nvenc encodes with h264_nvenc on an NVIDIA
+GPU instead of libx264 crf 16 (the default, and the encoder of the video to publish); with it `layers` and `prepare`
+also encode a few frames to see that h264_nvenc works on the machine.
 
 MMD writes the picture with an alpha channel when its background is blackened (menu 282, `mmd menu set 282
 on`): both the PNG of `render image` and the uncompressed AVI of `render avi --codec 未圧縮` are BGRA with
@@ -41,6 +50,7 @@ The output has no sound: the song is added afterwards (ffmpeg -i OUT.mp4 -i song
 """
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 import math
@@ -76,6 +86,12 @@ DEFAULT_LOOK = {
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
 SONG_FPS = 30                    # the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song
+# the encoders of --encoder: libx264 (the default, and the one of the video to publish) and h264_nvenc on an NVIDIA GPU
+ENCODERS = ("x264", "nvenc")
+X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "16"]
+NVENC = ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1",
+         "-rc-lookahead", "32", "-bf", "3", "-profile:v", "high"]
+PREPARED = "prepared.json"       # what `prepare` made its layers and text from (render --prepared checks it)
 
 
 # ---- the look -------------------------------------------------------------------------------
@@ -285,15 +301,39 @@ def _visible(start, frames, fps, clip_start, clip_duration):
     return offset, skip
 
 
+def encoder_args(encoder):
+    """the ffmpeg arguments of an encoder of --encoder, from -c:v on (the pixel format and the file follow them)"""
+    if encoder == "x264":
+        return list(X264)
+    if encoder == "nvenc":
+        return ["-c:v", "h264_nvenc"] + NVENC
+    raise ValueError("--encoder is x264 (libx264, the default) or nvenc (h264_nvenc on an NVIDIA GPU), not %r" % (encoder,))
+
+
+def check_encoder(encoder):
+    """nvenc: encode a few frames with h264_nvenc (it needs an NVIDIA GPU, its driver and an ffmpeg built with it), so that
+    a machine without it is found before anything is rendered.  libx264 is not tried: the default does what it did"""
+    args = encoder_args(encoder)
+    if encoder == "x264":
+        return
+    done = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30", "-frames:v", "3"]
+                          + args + ["-pix_fmt", "yuv420p", "-f", "null", "-"], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
+    if done.returncode != 0:
+        raise ValueError("the encoder %s (%s) does not work here: %s" % (encoder, args[1], (done.stderr or "").strip()[-300:]))
+
+
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
-                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None):
+                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None, encoder="x264"):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
     rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
     `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it at that time,
     and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
-    (tools/mv_chunks.py) then hide in the cuts (review 10)"""
+    (tools/mv_chunks.py) then hide in the cuts (review 10).  `encoder` (ENCODERS) changes the arguments from -c:v to the
+    pixel format and nothing else"""
     w, h = size
+    coding = encoder_args(encoder)
     taken = check_shutter(subframes, shutter)
     offset = float(offset or 0.0)
     if start is not None and start < offset - 1e-9:
@@ -404,8 +444,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     lay(overlays["front"])
     lay(overlays["flare"])
     parts.append("[%s]format=yuv420p[out]" % state["label"])
-    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps),
-             "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
+    argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
 
 
@@ -502,6 +542,82 @@ def text_plan(cues_path, work, size, fps):
     return module.render_sequences(doc, os.path.join(work, "text"), size=size, fps=fps)
 
 
+# ---- layers prepared once for many renders ---------------------------------------------------
+
+def _same_folder(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def prepared_key(look, size, fps, cues_path):
+    """what the layers and the text of `prepare` are made from: the values of the look, the size and the rate of the video,
+    the bytes of the cue file, and the code that draws them (this tool and tools/mv_text.py).  The fonts mv_text finds on
+    the machine are not in it (tools/mv_chunks.py -Resume does not see them either)"""
+    digest = hashlib.sha256(json.dumps({"look": look, "size": [int(size[0]), int(size[1])], "fps": fps},
+                                       sort_keys=True).encode("utf-8"))
+    here = os.path.dirname(os.path.abspath(__file__))
+    for label, path in (("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
+                        ("mv_text", os.path.join(here, "mv_text.py"))):
+        digest.update(("\0%s\0" % label).encode("ascii"))
+        if path is None:
+            digest.update(b"none")
+            continue
+        try:
+            with open(path, "rb") as f:
+                digest.update(hashlib.sha256(f.read()).digest())
+        except OSError:
+            digest.update(b"missing")
+    return digest.hexdigest()
+
+
+def prepare(look, work, size, fps, cues_path=None):
+    """write the plate, the light loop, the flare and the text sequences under `work` once, and then PREPARED, the note of
+    what they were made from.  The old note goes first, so that a prepare that fails half way leaves no note that vouches
+    for half written layers"""
+    work = os.path.abspath(work)
+    os.makedirs(work, exist_ok=True)
+    note_path = os.path.join(work, PREPARED)
+    if os.path.exists(note_path):
+        os.remove(note_path)
+    layers = write_layers(look, work, size, fps)
+    plan = text_plan(cues_path, work, size, fps) if cues_path else None
+    note = {"key": prepared_key(look, size, fps, cues_path), "work": _slashes(work), "layers": layers, "text": plan}
+    with open(note_path + ".part", "w", encoding="utf-8") as f:
+        json.dump(note, f, ensure_ascii=True, indent=1)
+    os.replace(note_path + ".part", note_path)
+    return note
+
+
+def _whole_sequence(pattern, frames):
+    """frames 0 .. frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered sequence until a
+    number is missing, so a frame more would lengthen the loop, the flare or the cue"""
+    return all(os.path.isfile(pattern % i) for i in range(int(frames))) and not os.path.exists(pattern % int(frames))
+
+
+def load_prepared(work, look, size, fps, cues_path=None):
+    """the layers and the text plan `prepare` wrote under `work`, after checking that they were made there, from this look,
+    cue file, size and rate, by this code, and that every frame of them is there (and none more).  Nothing is written"""
+    again = "run `mv_look.py prepare` again"
+    note_path = os.path.join(os.path.abspath(work), PREPARED)
+    try:
+        with open(note_path, encoding="utf-8") as f:
+            note = json.load(f)
+        layers, plan = note["layers"], note["text"]
+    except OSError:
+        raise ValueError("%s holds no prepared layers (no %s): run `mv_look.py prepare` first" % (work, PREPARED))
+    except (ValueError, KeyError, TypeError):
+        raise ValueError("%s is not a note of `prepare`: %s" % (note_path, again))
+    if not isinstance(note.get("work"), str) or not _same_folder(note["work"], work):
+        raise ValueError("the layers in %s were prepared in %s, and their paths name that folder: %s" % (work, note.get("work"), again))
+    if note.get("key") != prepared_key(look, size, fps, cues_path):
+        raise ValueError("the layers in %s were prepared from another look, cue file, size or rate, or by another version of "
+                         "tools/mv_look.py or tools/mv_text.py: %s" % (work, again))
+    sequences = [(layers["light_pattern"], layers["light_frames"]), (layers["flare_pattern"], layers["flare_frames"])]
+    sequences += [(cue["pattern"], cue["frames"]) for cue in (plan or {}).get("cues", [])]
+    if not os.path.isfile(layers["plate"]) or not all(_whole_sequence(p, n) for p, n in sequences):
+        raise ValueError("the layers in %s are not as `prepare` left them (a frame is missing or one too many): %s" % (work, again))
+    return layers, plan
+
+
 def render(args):
     fg = os.path.abspath(args.dancer)
     if not os.path.isfile(fg):
@@ -514,13 +630,19 @@ def render(args):
     size = parse_size(args.size) if args.size else size
     fps = args.fps or fps
     check_shutter(args.subframes, args.shutter)
+    encoder_args(args.encoder)
     if args.subframes > 1:
         # the dancer's file runs at `subframes` times the output rate
         out_fps = fps / float(args.subframes)
         fps = int(round(out_fps)) if abs(out_fps - round(out_fps)) < 1e-3 else out_fps
-    work = os.path.abspath(args.work or out + ".work")
-    layers = write_layers(look, work, size, fps)
-    plan = text_plan(args.cues, work, size, fps) if args.cues else None
+    if args.prepared:
+        # the layers and the text `prepare` wrote once for many renders (tools/mv_chunks.py --workers): read, never written
+        work = os.path.abspath(args.prepared)
+        layers, plan = load_prepared(work, look, size, fps, args.cues)
+    else:
+        work = os.path.abspath(args.work or out + ".work")
+        layers = write_layers(look, work, size, fps)
+        plan = text_plan(args.cues, work, size, fps) if args.cues else None
     start = args.start
     duration = None if args.to is None else args.to - (start or 0.0)
     if duration is not None and duration <= 0:
@@ -531,13 +653,17 @@ def render(args):
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
                           start=start, duration=duration, offset=args.offset, subframes=args.subframes,
-                          shutter=args.shutter, light_frames=layers["light_frames"])
+                          shutter=args.shutter, light_frames=layers["light_frames"], encoder=args.encoder)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
               "shutter": args.shutter, "work": work, "light_frames": layers["light_frames"],
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
               "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
               "ffmpeg": done.returncode}
+    if args.prepared:
+        result["prepared"] = True
+    if args.encoder != "x264":
+        result["encoder"] = args.encoder
     if done.returncode != 0 or not os.path.exists(out):
         raise RuntimeError("ffmpeg failed (%d): %s" % (done.returncode, done.stderr.strip()[-600:]))
     return result
@@ -547,7 +673,19 @@ def layers_command(args):
     look = load_look(args.look)
     if not args.size or not args.fps:
         raise ValueError("layers needs --size WxH and --fps N")
+    check_encoder(args.encoder)
     return write_layers(look, os.path.abspath(args.work), parse_size(args.size), args.fps)
+
+
+def prepare_command(args):
+    look = load_look(args.look)
+    if not args.size or not args.fps:
+        raise ValueError("prepare needs --size WxH and --fps N")
+    check_encoder(args.encoder)
+    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues)
+    plan = note["text"]
+    return dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
+                warnings=plan["warnings"] if plan else [])
 
 
 def main(argv=None):
@@ -558,7 +696,11 @@ def main(argv=None):
     s.add_argument("look", help="look.json: the settings that differ from the default")
     s.add_argument("out", help="the video to write (.mp4)")
     s.add_argument("--cues", help="text cues for tools/mv_text.py")
-    s.add_argument("--work", help="where the layers go (default: OUT.work)")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--work", help="where the layers go (default: OUT.work)")
+    g.add_argument("--prepared", help="use the layers and the text `prepare` wrote in this folder, writing nothing there")
+    s.add_argument("--encoder", choices=ENCODERS, default="x264",
+                   help="x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU)")
     s.add_argument("--offset", type=float, default=0.0,
                    help="the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame)")
     s.add_argument("--subframes", type=int, default=1,
@@ -574,11 +716,20 @@ def main(argv=None):
     s.add_argument("work")
     s.add_argument("--size")
     s.add_argument("--fps", type=float)
+    s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
+    s = sub.add_parser("prepare", help="write the layers and the text once, for many renders with --prepared")
+    s.add_argument("look")
+    s.add_argument("work")
+    s.add_argument("--size")
+    s.add_argument("--fps", type=float)
+    s.add_argument("--cues", help="text cues for tools/mv_text.py")
+    s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
     args = p.parse_args(argv)
     if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
         args.fps = int(args.fps)
+    commands = {"render": render, "layers": layers_command, "prepare": prepare_command}
     try:
-        result = render(args) if args.command == "render" else layers_command(args)
+        result = commands[args.command](args)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": {"type": "ValueError", "message": str(exc)}}, ensure_ascii=True))
         return 2

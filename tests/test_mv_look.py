@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -985,6 +986,334 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(len([n for n in names if n.startswith("light_")]), 10)
         with Image.open(result["plate"]) as plate:
             self.assertEqual(plate.size, SIZE)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class SixtyArgvTest(unittest.TestCase):
+    """The version at 60 fps (tools/mv_chunks.py --out-fps 60) keeps its argv too when --encoder and --prepared come in: the
+    SHA-256 of the argv of ThirtyArgvTest's chunks at the rate and layers of 60 fps, written with the tool of main afd25c4
+    (_spike/out/stage5/fast_render/golden_argv60.py)"""
+
+    GOLDEN = {"v7_04_flare_on_the_cut_60": "ded9433c9f18bb601fc385999787fa362f8df32ee83bbc61996223440c60eea3",
+              "punch_carried_into_a_chunk_60": "f2cc475670d792a2aabac545b46b19083b0a98679938f8db0e90601bf717f587"}
+
+    def test_the_argv_at_60_fps_is_the_one_of_before(self):
+        look = mv_look.merge_look(ThirtyArgvTest.V3)
+        common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=24, subframes=4, shutter=0.5, light_frames=1646)
+        argvs = {"v7_04_flare_on_the_cut_60": mv_look.ffmpeg_command(
+                     "C:/out/v7_04.avi", "C:/out/v7_04.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 60,
+                     plan=ThirtyArgvTest.PLAN, start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common),
+                 "punch_carried_into_a_chunk_60": mv_look.ffmpeg_command(
+                     "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 60,
+                     plan=ThirtyArgvTest.PLAN, start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)}
+        for name, argv in argvs.items():
+            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class EncoderArgvTest(unittest.TestCase):
+    """--encoder nvenc encodes on the GPU (h264_nvenc).  Everything before the encoder (the inputs, the graph, the rate) is
+    the argv of libx264, and libx264 stays the default"""
+
+    def argv(self, **kw):
+        return mv_look.ffmpeg_command("C:/out/a.avi", "C:/out/a.mp4", "W/plate.png", "W/light/light_%05d.png",
+                                      mv_look.merge_look(ThirtyArgvTest.V3), (1280, 720), 60, plan=ThirtyArgvTest.PLAN,
+                                      flare_pattern="W/flare/flare_%05d.png", flare_frames=24, start=1334 / 30.0,
+                                      duration=406 / 30.0, offset=1214 / 30.0, subframes=4, shutter=0.5, light_frames=1646, **kw)
+
+    def test_libx264_at_crf_16_is_the_default(self):
+        argv = self.argv()
+        self.assertEqual(argv, self.argv(encoder="x264"))
+        self.assertEqual(argv[argv.index("-c:v"):], ["-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+                                                     "-movflags", "+faststart", "C:/out/a.mp4"])
+
+    def test_nvenc_changes_the_encoder_and_nothing_before_it(self):
+        x264, nvenc = self.argv(), self.argv(encoder="nvenc")
+        cut = x264.index("-c:v")
+        self.assertEqual(nvenc[:cut], x264[:cut])
+        self.assertEqual(nvenc[cut:cut + 2], ["-c:v", "h264_nvenc"])
+        self.assertEqual(nvenc[cut + 2:-5], mv_look.NVENC)
+        self.assertEqual(nvenc[-5:], ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "C:/out/a.mp4"])
+        self.assertNotIn("libx264", nvenc)
+        self.assertNotIn("-crf", nvenc)
+
+    def test_an_encoder_it_does_not_know_is_refused(self):
+        for encoder in ("h264", "", None, "NVENC"):
+            with self.assertRaises(ValueError, msg=encoder):
+                self.argv(encoder=encoder)
+
+
+class FakeRun:
+    """stands in for subprocess.run inside mv_look: records each argv, writes the output file ffmpeg would, and answers as
+    `answer` says (the return code of an encoder check)"""
+
+    def __init__(self, answer=0):
+        self.calls = []
+        self.answer = answer
+
+    def __call__(self, argv, **kw):
+        self.calls.append(list(argv))
+        if argv[0] == "ffmpeg" and argv[-1] not in ("-", "NUL") and self.answer == 0:
+            with open(argv[-1], "wb") as f:
+                f.write(b"mp4")
+        return subprocess.CompletedProcess(argv, self.answer, "", "ffmpeg said no" if self.answer else "")
+
+
+def tool_answer(argv):
+    """mv_look.main(argv) as the drivers run it: the exit code and its one line of JSON"""
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        code = mv_look.main(argv)
+    return code, json.loads(stream.getvalue())
+
+
+def listing(folder):
+    """every file under folder with its size and time of writing"""
+    found = {}
+    for top, _, names in os.walk(folder):
+        for name in names:
+            path = os.path.join(top, name)
+            found[os.path.relpath(path, folder)] = (os.path.getsize(path), os.stat(path).st_mtime_ns)
+    return found
+
+
+def font_book_or_skip():
+    """the cue tests draw text: skipped on a machine with no Japanese font (as tests/test_mv_text.py does)"""
+    spec = importlib.util.spec_from_file_location("mv_text", os.path.join(ROOT, "tools", "mv_text.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        module.FontBook()
+    except ValueError as exc:
+        raise unittest.SkipTest(str(exc))
+
+
+CUES = {"fps": 30, "size": [320, 180],
+        "cues": [{"id": "a1", "start": 0.2, "end": 0.9, "text": "ABC", "style": "caption", "anim": "rise", "x": "left", "y": "top"},
+                 {"id": "b2", "start": 0.4, "end": 1.2, "text": "HIBI", "style": "logo", "anim": "fade", "layer": "back"}]}
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class PreparedLayersTest(unittest.TestCase):
+    """`prepare` writes the layers and the text sequences once, with a note of what they were made from (tools/mv_chunks.py
+    --workers folds several chunks at the same time, and they share one set); `render --prepared WORK` uses them as they
+    are, after checking that they were made from the same look, cues, size and rate by the same tools, and builds the argv
+    that `render --work WORK` builds"""
+
+    def setUp(self):
+        font_book_or_skip()
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.look = self.put("look.json", {"beams": {"loop_seconds": 1}, "flares": [0.5], "flare": {"frames": 4}})
+        self.cues = self.put("cues.json", CUES)
+        self.work = os.path.join(self.folder, "work")
+        self.fg = os.path.join(self.folder, "fg.avi")
+        open(self.fg, "wb").close()                          # never read: the size and the rate are given
+
+    def put(self, name, doc):
+        path = os.path.join(self.folder, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        return path
+
+    def prepare(self, *extra, **kw):
+        code, result = tool_answer(["prepare", kw.get("look", self.look), kw.get("work", self.work), "--size", "320x180",
+                                    "--fps", "30", "--cues", self.cues] + list(extra))
+        self.assertEqual(code, 0, result)
+        return result
+
+    def render(self, *extra, **kw):
+        fake = FakeRun()
+        with unittest.mock.patch.object(mv_look.subprocess, "run", fake):
+            code, result = tool_answer(["render", self.fg, kw.get("look", self.look), os.path.join(self.folder, "out.mp4"),
+                                        "--size", kw.get("size", "320x180"), "--fps", kw.get("fps", "120"), "--subframes", "4",
+                                        "--offset", "0.2", "--from", "0.3", "--to", "1.0"] + list(extra))
+        return code, result, [c for c in fake.calls if c[0] == "ffmpeg"]
+
+    def test_prepare_writes_the_layers_the_text_and_what_they_were_made_from(self):
+        result = self.prepare()
+        self.assertEqual((result["light_frames"], result["flare_frames"], result["cues"]), (30, 4, 2))
+        names = sorted(os.listdir(self.work))
+        self.assertEqual(names, ["flare", "light", "plate.png", "prepared.json", "text"])
+        self.assertEqual(len(os.listdir(os.path.join(self.work, "light"))), 30)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "text"))), ["cue_a1", "cue_b2"])
+        with open(os.path.join(self.work, "prepared.json"), encoding="utf-8") as f:
+            note = json.load(f)
+        self.assertEqual(sorted(note), ["key", "layers", "text", "work"])
+
+    def test_render_with_prepared_layers_writes_nothing_and_builds_the_argv_of_its_work_folder(self):
+        self.prepare()
+        before = listing(self.work)
+        code, result, prepared = self.render("--prepared", self.work, "--cues", self.cues)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(listing(self.work), before)                         # read only: the other chunks use them too
+        self.assertEqual((result["work"], result["prepared"]), (os.path.abspath(self.work), True))
+        code, result, worked = self.render("--work", self.work, "--cues", self.cues)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared, worked)                                   # so the video is the same, byte for byte
+
+    def test_layers_prepared_from_something_else_are_refused(self):
+        self.prepare()
+        other_look = self.put("other.json", {"beams": {"loop_seconds": 1}, "flares": [0.6], "flare": {"frames": 4}})
+        other_cues = self.put("other_cues.json", dict(CUES, cues=CUES["cues"][:1]))
+        for label, kw, extra in (("another look", {"look": other_look}, ["--cues", self.cues]),
+                                 ("another rate", {"fps": "240"}, ["--cues", self.cues]),
+                                 ("another size", {"size": "160x90"}, ["--cues", self.cues]),
+                                 ("no cues", {}, []),
+                                 ("other cues", {}, ["--cues", other_cues])):
+            code, result, calls = self.render("--prepared", self.work, *extra, **kw)
+            self.assertEqual(code, 2, (label, result))
+            self.assertIn("prepare", result["error"]["message"], label)
+            self.assertEqual(calls, [], label)
+
+    def test_a_prepared_folder_short_of_a_frame_or_with_one_too_many_is_refused(self):
+        self.prepare()
+        cue = os.path.join(self.work, "text", "cue_a1")
+
+        def one_more_cue_frame():                     # right after its last: ffmpeg would read it (a gap further on it would not)
+            shutil.copyfile(os.path.join(cue, "f00000.png"), os.path.join(cue, "f%05d.png" % len(os.listdir(cue))))
+        for label, change in (("a light frame gone", lambda: os.remove(os.path.join(self.work, "light", "light_00003.png"))),
+                              ("a flare frame more", lambda: shutil.copyfile(os.path.join(self.work, "flare", "flare_00000.png"),
+                                                                            os.path.join(self.work, "flare", "flare_00004.png"))),
+                              ("a cue frame more", one_more_cue_frame)):
+            self.prepare()                                                    # whole again
+            change()
+            code, result, calls = self.render("--prepared", self.work, "--cues", self.cues)
+            self.assertEqual(code, 2, (label, result))
+            self.assertIn("prepare", result["error"]["message"], label)
+        self.prepare()
+        moved = os.path.join(self.folder, "moved")
+        shutil.copytree(self.work, moved)                                     # its patterns still name the old folder
+        code, result, calls = self.render("--prepared", moved, "--cues", self.cues)
+        self.assertEqual(code, 2, result)
+        self.assertIn("prepare", result["error"]["message"])
+
+    def test_a_folder_that_was_never_prepared_is_refused(self):
+        code, result, calls = self.render("--prepared", os.path.join(self.folder, "nothing"), "--cues", self.cues)
+        self.assertEqual(code, 2, result)
+        self.assertIn("prepare", result["error"]["message"])
+
+    def test_prepared_and_work_do_not_go_together(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            mv_look.main(["render", self.fg, self.look, os.path.join(self.folder, "o.mp4"), "--work", self.work,
+                          "--prepared", self.work])
+
+    def test_prepare_again_clears_what_a_longer_loop_left(self):
+        self.prepare()
+        self.put("look.json", {"beams": {"loop_seconds": 0.5}, "flares": [0.5], "flare": {"frames": 2}})
+        result = self.prepare()
+        self.assertEqual((result["light_frames"], result["flare_frames"]), (15, 2))
+        self.assertEqual(len(os.listdir(os.path.join(self.work, "light"))), 15)
+        code, result, calls = self.render("--prepared", self.work, "--cues", self.cues)
+        self.assertEqual(code, 0, result)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class EncoderCheckTest(unittest.TestCase):
+    """the look check of the drivers (`layers`, `prepare`) with --encoder nvenc also encodes a few frames with h264_nvenc,
+    so that a machine without it stops the run before MMD renders; libx264 is not tried (the default does what it did)"""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.look = os.path.join(self.folder, "look.json")
+        with open(self.look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"loop_seconds": 0.2}}, f)
+
+    def check(self, answer, *extra):
+        fake = FakeRun(answer)
+        with unittest.mock.patch.object(mv_look.subprocess, "run", fake):
+            code, result = tool_answer(["layers", self.look, os.path.join(self.folder, "w"), "--size", "64x36", "--fps", "30"]
+                                       + list(extra))
+        return code, result, fake.calls
+
+    def test_nvenc_that_does_not_work_stops_the_check(self):
+        code, result, calls = self.check(1, "--encoder", "nvenc")
+        self.assertEqual(code, 2, result)
+        self.assertIn("h264_nvenc", result["error"]["message"])
+        self.assertIn("ffmpeg said no", result["error"]["message"])
+        self.assertEqual(len(calls), 1)
+        self.assertIn("h264_nvenc", calls[0])
+
+    def test_nvenc_that_works_passes(self):
+        code, result, calls = self.check(0, "--encoder", "nvenc")
+        self.assertEqual(code, 0, result)
+        self.assertEqual(len(calls), 1)
+
+    def test_the_default_runs_no_encoder(self):
+        code, result, calls = self.check(1)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(calls, [])
+
+
+def nvenc_works():
+    """h264_nvenc encodes here (an NVIDIA GPU, a driver and an ffmpeg built with it); False otherwise"""
+    if not FFMPEG:
+        return False
+    done = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30", "-frames:v", "3",
+                           "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True, stdin=subprocess.DEVNULL)
+    return done.returncode == 0
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class PreparedRenderTest(unittest.TestCase):
+    """rendered for real: a chunk folded with prepared layers is the chunk folded with its own work folder, byte for byte; and
+    with --encoder nvenc (where h264_nvenc works) it has the same frames, close to those of libx264"""
+
+    @classmethod
+    def setUpClass(cls):
+        font_book_or_skip()
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg120.avi")
+        graph = ("color=c=black@0.0:s=%dx%d:r=120,format=rgba[stage];color=c=white:s=60x90:r=120,format=rgba[box];"
+                 "[stage][box]overlay=x='40+2*n':y=40:shortest=1" % SIZE)              # a box moving 2 px a subframe
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-filter_complex", graph, "-frames:v", "144", "-c:v", "rawvideo",
+                        "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        cls.look = os.path.join(cls.folder, "look.json")
+        with open(cls.look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"loop_seconds": 1}, "flares": [0.5], "flare": {"frames": 4}, "lens": {"grain": 0}}, f)
+        cls.cues = os.path.join(cls.folder, "cues.json")
+        with open(cls.cues, "w", encoding="utf-8") as f:
+            json.dump(CUES, f)
+        cls.prepared = os.path.join(cls.folder, "prepared")
+        cls.codes = [tool_answer(["prepare", cls.look, cls.prepared, "--size", "%dx%d" % SIZE, "--fps", "30",
+                                  "--cues", cls.cues])[0]]
+        common = ["--cues", cls.cues, "--subframes", "4", "--offset", "0.1", "--from", "0.2", "--to", "1.1"]
+        for name, extra in (("worked", ["--work", os.path.join(cls.folder, "work")]), ("prepared", ["--prepared", cls.prepared])):
+            cls.codes.append(tool_answer(["render", cls.fg, cls.look, os.path.join(cls.folder, name + ".mp4")] + common + extra)[0])
+        cls.nvenc = nvenc_works()
+        if cls.nvenc:
+            cls.codes.append(tool_answer(["render", cls.fg, cls.look, os.path.join(cls.folder, "nvenc.mp4"), "--prepared",
+                                          cls.prepared, "--encoder", "nvenc"] + common)[0])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def frames(self, name):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", os.path.join(self.folder, name + ".mp4"), "-f", "rawvideo",
+                              "-pix_fmt", "rgb24", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1] * 3
+        return [numpy.frombuffer(raw[i * n:(i + 1) * n], dtype=numpy.uint8).astype(numpy.int16) for i in range(len(raw) // n)]
+
+    def test_prepared_layers_give_the_video_of_the_work_folder_byte_for_byte(self):
+        self.assertTrue(all(code == 0 for code in self.codes), self.codes)
+        self.assertEqual(file_bytes(os.path.join(self.folder, "prepared.mp4")), file_bytes(os.path.join(self.folder, "worked.mp4")))
+        self.assertEqual(len(self.frames("prepared")), 27)
+
+    def test_nvenc_gives_the_same_frames_close_to_libx264(self):
+        if not self.nvenc:
+            self.skipTest("h264_nvenc does not work on this machine")
+        self.assertTrue(all(code == 0 for code in self.codes), self.codes)
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,pix_fmt",
+                                "-of", "csv=p=0", os.path.join(self.folder, "nvenc.mp4")],
+                               check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(probe.stdout.strip(), "h264,yuv420p")
+        x264, nvenc = self.frames("prepared"), self.frames("nvenc")
+        self.assertEqual(len(nvenc), len(x264))
+        gaps = [float(numpy.abs(a - b).mean()) for a, b in zip(x264, nvenc)]
+        self.assertLess(max(gaps), 2.0, [round(g, 2) for g in gaps])
 
 
 if __name__ == "__main__":
