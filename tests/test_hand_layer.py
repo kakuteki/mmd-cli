@@ -978,5 +978,90 @@ class RealDanceTest(unittest.TestCase):
         self.assertLess(b["under_0.3"], a["under_0.3"] / 4.0)
 
 
+# ---- the promises no test held before (the review's mutants): the wrist's sides, the lag's direction and size, -----
+# ---- the DIP's measured range, the bones the layer writes, the thumb's speed ------------------------------------
+
+
+def flex_axis_of_the_wrist(side):
+    """the axis a positive turn about which bends the hand toward the palm (worked out here from the bones)"""
+    n = palm_normal(side)
+    d_h = unit(POS[side + "中指１"] - POS[side + "手首"])
+    axis = unit(np.cross(d_h, n))
+    return axis if float(rotate(axis_angle(axis, 30.0), d_h) @ n) > float(d_h @ n) else -axis
+
+
+def wrist_dance(side, keys_deg, axis):
+    keys = untouched_keys(LAST, centre=False) + shape_keys(side, 0, "open") + shape_keys(side, LAST, "open")
+    keys += [key(side + "手首", f, axis_angle(axis, d)) for f, d in keys_deg]
+    return vmd.Motion(model_name="d", bones=keys)
+
+
+class PromiseTest(unittest.TestCase):
+    def test_the_wrist_reads_palmar_flexion_and_radial_deviation_by_their_own_sides(self):
+        # judged here by where the hand goes: toward the palm is palmar flexion (+), toward the thumb radial (+)
+        for side in ("左", "右"):
+            fa = flex_axis_of_the_wrist(side)
+            thumb_side = unit(POS[side + "人指１"] - POS[side + "小指１"])
+            d_h = unit(POS[side + "中指１"] - POS[side + "手首"])
+            n = palm_normal(side)
+            ra = n if float((rotate(axis_angle(n, 20.0), d_h) - d_h) @ thumb_side) > 0 else -n
+            for axis, sign_flex, sign_radial in ((fa, 1, 0), (-fa, -1, 0), (ra, 0, 1), (-ra, 0, -1)):
+                m = wrist_dance(side, [(0, 25.0), (LAST, 25.0)], axis)
+                loc = hand_layer.joint_locals(m, [side + "手捩", side + "手首"], LAST + 1)[0]
+                flex, radial = hand_layer.wrist_angles(MODEL, loc, LAST + 1)[side]
+                if sign_flex:
+                    self.assertAlmostEqual(float(flex[10]), 25.0 * sign_flex, delta=1.0, msg=side)
+                if sign_radial:
+                    self.assertAlmostEqual(float(radial[10]), 25.0 * sign_radial, delta=1.0, msg=side)
+
+    def test_the_fingers_trail_a_hand_that_starts_to_bend_and_run_on_when_it_stops(self):
+        side = "左"
+        m = wrist_dance(side, [(0, 0.0), (20, 0.0), (28, 40.0), (LAST, 40.0)], flex_axis_of_the_wrist(side))
+        out = hand_layer.layer(MODEL, m, only("passive"), pulp=PULP).motion
+        ref = hand_layer.layer(MODEL, m, only(), pulp=PULP).motion
+        d = out_angles(out, side, "中指１")[0] - out_angles(ref, side, "中指１")[0]
+        self.assertLess(float(d[20:24].min()), -0.3)          # the hand speeds up toward the palm: the fingers bend back
+        self.assertLess(float(d[20:24].max()), 0.05)
+        self.assertGreater(float(d[27:32].max()), 0.3)        # it stops: they run on toward the palm
+
+    def test_the_lag_stays_a_few_degrees_however_hard_the_swing(self):
+        # Koshland 2000: in purposeful movements the distal joints' passive motion is a few degrees; the layer eases
+        # the lag toward 10 degrees at the MP
+        arm = [(0, 0.0), (20, 0.0), (22, 110.0), (24, 0.0), (26, 110.0), (LAST, 110.0)]
+        d = LayerPassiveTest().dev("open", arm)
+        self.assertGreater(np.abs(d).max(), 3.0)
+        self.assertLess(np.abs(d).max(), 10.0)
+
+    def test_a_dip_bent_116_degrees_comes_below_the_measured_range(self):
+        # the DIP's active flexion: 82-85 degrees on average (Mohamed Ibrahim 2024; mean + 2 SD about 90)
+        out = StaticTest().run_one({"中指２": (100.0, 0.0, 0.0), "中指３": (116.0, 0.0, 0.0)}, ["rom"])
+        self.assertLess(float(out_angles(out, "左", "中指３")[0][0]), 92.0)
+
+    def test_only_the_finger_joints_are_rewritten(self):
+        # every bone but the fingers' MP, PIP, DIP and the thumb's CMC, MP, IP keeps its keys byte for byte, the wrist
+        # and the metacarpals next to them included
+        keys = untouched_keys(LAST)
+        for side in ("左", "右"):
+            for b in ("手首", "手捩", "人指０", "中指０"):
+                keys += [key(side + b, 0, axis_angle((1, 0, 0), 4.0)), key(side + b, 40, axis_angle((0, 1, 0), 9.0))]
+            keys += shape_keys(side, 0, "open") + shape_keys(side, 25, "fist")
+        dance = vmd.Motion(model_name="d", bones=keys)
+        out = hand_layer.layer(MODEL, dance, pulp=PULP).motion
+        joints = {j.bone for h in HANDS.values() for j in h.joints}
+
+        def rest(m):
+            return vmd.dumps(vmd.Motion(model_name="x", bones=[k for k in m.bones if k.name not in joints], morphs=list(m.morphs)))
+        self.assertEqual(rest(dance), rest(out))
+
+    def test_a_thumb_snap_is_held_to_the_speed_too(self):
+        keys = untouched_keys(LAST)
+        for f, (mp, ip) in ((0, (0.0, 0.0)), (30, (0.0, 0.0)), (31, (50.0, 75.0)), (LAST, (50.0, 75.0))):
+            keys += [key("左親指１", f, flexed("左", "親指１", mp)), key("左親指２", f, flexed("左", "親指２", ip))]
+        dance = vmd.Motion(model_name="d", bones=keys)
+        out = hand_layer.layer(MODEL, dance, only("speed"), pulp=PULP).motion
+        s = sum(out_angles(out, "左", b)[0] for b in ("親指１", "親指２"))
+        self.assertLess(float(np.abs(np.diff(s)).max()), hand_layer.SPEED_MAX_DEG_S / 30.0 + 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
