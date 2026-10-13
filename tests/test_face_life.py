@@ -311,36 +311,35 @@ def pitched_eyes(spans):
 
 class HumanLidTest(unittest.TestCase):
     """the lid between the blinks.  The KAZUSA motion holds the upper lid low (まばたき 0.22 to 0.38) through its serious
-    face; the synthetic face holds 0.26 from the wake-up on.  The human style shows only part of the author's lowering
-    above the neutral lid: little while a phrase is sung, more after it; the lid follows the eyes up and down"""
+    face; the synthetic face holds 0.26 from the wake-up on.  That is the author's expression (a cool serious face, review
+    of face-v2): the human style keeps most of the lowering above the neutral lid, a little less while a phrase is sung,
+    never more than the author's; the lid follows the eyes up and down (what took the sleepy depth away)"""
 
     @classmethod
     def setUpClass(cls):
         cls.result = face_life.plan(inputs(), seed=0)
         cls.t = tracks(cls.result.motion)
         cls.open = between_blinks(cls.t["まばたき"], cls.t["笑い"])
-        cls.v7 = tracks(face_life.plan(inputs(), seed=0, style="v7").motion)
 
-    def test_the_authors_low_lid_shows_only_in_part(self):
+    def test_the_authors_low_lid_shows_nearly_in_full_and_never_deeper(self):
         b, s = self.t["まばたき"], self.t["笑い"]
         lid = b[self.open & (s < 0.01)]
         self.assertGreaterEqual(lid.min(), face_life.LID_NEUTRAL - 1e-6)
         self.assertLessEqual(lid.max(), 0.26 + 1e-6)
-        self.assertLess(float(np.mean(lid)), 0.10 + 0.6 * (0.26 - 0.10))
+        self.assertGreater(float(np.mean(lid)), 0.10 + 0.8 * (0.26 - 0.10))
 
-    def test_the_eyes_are_more_open_while_a_phrase_is_sung_than_after_it(self):
+    def test_while_she_sings_the_lid_stays_lowered(self):
+        b = self.t["まばたき"]
+        sung = [f for f in range(604, 634) if self.open[f]]       # the phrase of 600 to 636
+        self.assertTrue(sung)
+        self.assertGreater(float(np.mean(b[sung])), 0.10 + 0.7 * (0.26 - 0.10))
+
+    def test_the_eyes_are_a_little_more_open_while_a_phrase_is_sung_than_after_it(self):
         b = self.t["まばたき"]
         sung = [f for f in range(604, 634) if self.open[f]]       # the phrase of 600 to 636
         after = [f for f in range(652, 676) if self.open[f]]      # its end and the pause before 680
         self.assertTrue(sung and after)
-        self.assertLess(float(np.mean(b[sung])), float(np.mean(b[after])) - 0.04)
-
-    def test_half_closed_eyes_take_much_less_time_than_in_v7(self):
-        open7 = between_blinks(self.v7["まばたき"], self.v7["笑い"])
-        half7 = float((self.v7["まばたき"][open7] >= 0.2).mean())
-        half = float((self.t["まばたき"][self.open] >= 0.2).mean())
-        self.assertGreater(half7, 0.9)
-        self.assertLess(half, 0.5 * half7)
+        self.assertLess(float(np.mean(b[sung])), float(np.mean(b[after])) - 0.015)
 
     def test_the_lid_changes_quickly_and_never_creeps(self):
         b = self.t["まばたき"]
@@ -1173,10 +1172,23 @@ class RealSongTest(unittest.TestCase):
         self.assertEqual(lag["before"], lag["new"])
 
     def test_the_human_targets(self):
-        lid = self.report["blink"]["lid"]
-        # a10's count takes the lid that follows the eyes down (the cover kept) for a half-closed eye too
-        self.assertLess(lid["half_eye"]["new"], 0.55 * lid["half_eye"]["before"])
-        self.assertLess(lid["half_eye_without_the_gaze"], 0.1)
+        # (review of face-v2) the serious face keeps the author's lowered lid while she sings, with its sleepy depth gone:
+        # the lid as it would be with the eyes level (まばたき less what it follows the eyes by) stays lowered (the
+        # author's serious face: 0.22 to 0.38; neutral 0.10) and seldom goes past 0.42 (on Sour's Rin the upper lid then
+        # hides the iris' top more than 0.7 of its radius above the centre: the heavy, sleepy eye)
+        inp = face_life.load(REAL_FACE, self.dance, self.gaze, RIN, None, REAL_CUES)
+        follow = face_life.lid_follow(face_life.eye_pitch(inp.eyes))
+        t = tracks(vmd.load(self.out), inp.frames)
+        b, s, serious = t["まばたき"], t.get("笑い", np.zeros(inp.frames)), t["真面目"]
+        sung = np.zeros(inp.frames, bool)
+        for p in face_life.lip_timing.phrases(face_life.lip_timing.onsets(vmd.load(REAL_FACE)), face_life.PHRASE_GAP):
+            sung[max(0, p.start - 9):p.end + 10] = True
+        open_ = between_blinks(b, s, start=self.report["intro"]["eyes_open"] + 30)
+        sel = open_ & (s < 0.01) & (serious >= 0.5) & sung
+        level = (b - follow)[sel]
+        self.assertGreater(int(sel.sum()), 500)
+        self.assertGreater(float(np.median(level)), 0.2)
+        self.assertLess(float((level > 0.42).mean()), 0.05)
         minutes = (self.report["frames"][1] + 1) / 30.0 / 60.0
         flashes = self.report["blink"]["flashes"]
         self.assertTrue(0 < len(flashes) <= face_life.FLASH_RATE * minutes + 1, flashes)

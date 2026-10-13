@@ -67,8 +67,9 @@ What is done (the numbers are the constants below):
 Styles (--style).  "v7" writes the face of the MV v7 again, byte for byte (the tool as it was at main 08894a4: the
 numbers above).  "human" (the default since stage 6) changes:
 * The lid between the blinks.  Where the author held it lower than LID_NEUTRAL (KAZUSA's serious face: 0.22 to 0.38,
-  6 tenths of the open time), only a share of that shows (shown_share, shown_lid): LID_SHOWN[0] while a phrase is sung
-  (up to LID_QUIET more for a quiet one), LID_SHOWN[1] at rest, LID_SHOWN[2] for a moment after a phrase; each change
+  6 tenths of the open time; her expression, kept), a share of that shows (shown_share, shown_lid): LID_SHOWN[0] while
+  a phrase is sung (up to LID_QUIET more for a quiet one, never all of it and more), LID_SHOWN[1] at rest,
+  LID_SHOWN[2] for a moment after a phrase; each change
   over a few frames, or at once while the eye is shut when a blink comes near (LID_HIDE).  The lid follows the eyes up
   and down by LID_FOLLOW a degree on every frame (lid_follow; v7 sets it once per fixation), never shutting a smiling
   eye between the blinks (CLOSURE_CAP).  まばたき's keys are those straight lines need to stay within
@@ -193,9 +194,15 @@ SMILE_END_BLINK = 21            # frames before a smile has fallen (its last mov
 P_SMILE_END = 0.6
 LID_NEUTRAL = 0.10              # the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above
                                 # the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2)
-LID_SHOWN = (0.2, 0.35, 0.8)    # the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung
-                                # (the loudest), at rest, and in the relaxing after a phrase
-LID_QUIET = 0.25                # the quietest phrase shows this much more of it than the loudest (ranked by the voice)
+LID_SHOWN = (0.85, 0.95, 1.0)   # the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung
+                                # (the loudest), at rest, and in the relaxing after a phrase.  A decided value, chosen by
+                                # looking (stage 6 face-v2, review fix 1: 0.2 to 0.85 drawn side by side with v7): the
+                                # lowered lid is the author's expression (KAZUSA's cool serious face), which a person's
+                                # neutral lid range does not bind; with the lid following the eyes on every frame, 0.85
+                                # keeps the serious face's usual lid of v7 (the upper lid 0.40 iris radii above the
+                                # centre, v7 0.41) and leaves out its sleepy depth (under 0.30: v7 24 %, now 1 %)
+LID_QUIET = 0.25                # the quietest phrase shows this much more of it than the loudest (ranked by the voice),
+                                # never more than all of it
 LID_DEEP = 0.5                  # from here to CLOSED the author's lid (a long closure, the wake-up) is blended back in
 LID_STEP = 6                    # frames a change of the shown share takes
 LID_RELAX_AFTER = 6             # frames after a phrase's last vowel the lid starts to relax
