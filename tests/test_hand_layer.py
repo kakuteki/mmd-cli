@@ -436,10 +436,12 @@ class StaticTest(unittest.TestCase):
         return hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP).motion
 
     def test_a_pip_bent_sideways_comes_back_into_its_plane(self):
-        out = self.run_one({"人指２": (40.0, 20.0, 30.0)}, ["hinge"])
+        # a hinge: no sideways bend of 10 degrees or a twist of 15 is left (the trace's pinch bends the PIP 22 degrees
+        # sideways and twists it 45)
+        out = self.run_one({"人指２": (40.0, 22.0, 45.0)}, ["hinge"])
         fl, sd, tw = out_angles(out, "左", "人指２")
-        self.assertLess(np.abs(sd).max(), hand_layer.HINGE["side"][1] + 0.01)
-        self.assertLess(np.abs(tw).max(), hand_layer.HINGE["twist"][1] + 0.01)
+        self.assertLess(np.abs(sd).max(), 10.0)
+        self.assertLess(np.abs(tw).max(), 15.0)
         self.assertAlmostEqual(float(fl[0]), 40.0, delta=2.0)
 
     def test_a_small_sideways_bend_is_left(self):
@@ -449,14 +451,17 @@ class StaticTest(unittest.TestCase):
         self.assertAlmostEqual(float(tw[0]), 3.0, places=3)
 
     def test_a_dip_left_straight_under_a_bent_pip_follows_it(self):
+        # the deep flexor bends the DIP with the PIP: in a grasp at least about a quarter of it (DIP / PIP 0.16 to
+        # 0.36 in Kamper 2003's grasps, 0.57 to 0.77 in a fist)
         out = self.run_one({"薬指２": (80.0, 0.0, 0.0), "薬指３": (0.0, 0.0, 0.0)}, ["coupling"])
         dip = out_angles(out, "左", "薬指３")[0]
-        self.assertGreater(float(dip[0]), hand_layer.COUPLING["low"] * 80.0 - 6.0)
+        self.assertGreater(float(dip[0]), 0.25 * 80.0)
 
     def test_a_dip_bent_far_beyond_its_pip_comes_back(self):
+        # DIP / PIP 1.7 (the trace's middle finger): no study shows the DIP bending past its PIP's angle
         out = self.run_one({"中指２": (50.0, 0.0, 0.0), "中指３": (85.0, 0.0, 0.0)}, ["coupling"])
         dip = out_angles(out, "左", "中指３")[0]
-        self.assertLess(float(dip[0]), hand_layer.COUPLING["high"] * 50.0 + 6.0)
+        self.assertLess(float(dip[0]), 1.05 * 50.0)
 
     def test_a_fist_that_couples_well_is_left(self):
         out = self.run_one({"中指２": (95.0, 0.0, 0.0), "中指３": (70.0, 0.0, 0.0)}, ["coupling", "rom"])
@@ -480,10 +485,14 @@ class EnslaveTest(unittest.TestCase):
         return {f: float(out_angles(out, "左", f + "１")[0][30]) for f in hand_layer.LONG}
 
     def test_a_pointing_index_bends_a_little_and_the_middle_finger_opens_a_little(self):
+        # the others' MPs bent 80 degrees pull the pointing index's a little (Lang & Schieber 2004: the passive
+        # coupling moves the other fingers by 4 to 16 % of a finger's motion), and it pulls the middle finger's back;
+        # the ring and the little finger, between equals, stay
         got = self.mp("point")
-        k = hand_layer.ENSLAVE
-        self.assertAlmostEqual(got["人指"], 0.0 + k * 80.0, delta=0.05)
-        self.assertAlmostEqual(got["中指"], 80.0 - k * 80.0, delta=0.05)
+        self.assertGreater(got["人指"], 2.0)
+        self.assertLess(got["人指"], 0.16 * 80.0)
+        self.assertLess(got["中指"], 80.0 - 2.0)
+        self.assertGreater(got["中指"], 80.0 - 0.16 * 80.0)
         self.assertAlmostEqual(got["薬指"], 80.0, delta=0.05)
         self.assertAlmostEqual(got["小指"], 80.0, delta=0.05)
 
@@ -495,14 +504,36 @@ class EnslaveTest(unittest.TestCase):
 
 
 class RelaxTest(unittest.TestCase):
-    """an open hand that is not a fist or a pointing hand takes the relaxed hand's cascade, gently"""
+    """an open hand that is not a fist or a pointing hand leans toward the relaxed hand held in the air (Varghese 2020:
+    the index the least bent) and follows the wrist (the tenodesis), gently: it stays an open hand"""
 
-    def test_an_open_hand_fans_from_the_index_to_the_little_finger(self):
-        dance = hand_dance([(0, "open"), (LAST, "open")])
+    def sums(self, dance, frame=30):
         out = hand_layer.layer(MODEL, dance, only("relax"), pulp=PULP).motion
-        sums = [sum(float(out_angles(out, "左", f + p)[0][30]) for p in ("１", "２", "３")) for f in hand_layer.LONG]
-        self.assertTrue(all(b > a + 1.0 for a, b in zip(sums, sums[1:])), sums)
-        self.assertLess(max(sums), 60.0)                                  # still an open hand
+        return [sum(float(out_angles(out, "左", f + p)[0][frame]) for p in ("１", "２", "３")) for f in hand_layer.LONG]
+
+    def test_a_flat_open_hand_curls_a_little_the_index_least(self):
+        s = self.sums(hand_dance([(0, "open"), (LAST, "open")]))
+        self.assertGreater(min(s), 8.0)                                  # no longer flat
+        self.assertLess(max(s), 45.0)                                    # still an open hand
+        self.assertEqual(int(np.argmin(s)), 0, s)                        # the index the least bent
+
+    def test_the_relaxed_fingers_curl_more_with_the_wrist_bent_back(self):
+        # tenodesis: wrist extension tightens the long flexors, palmar flexion lets the fingers open (Su 2005)
+        keys = [k for k in untouched_keys()]
+        keys += shape_keys("左", 0, "open") + shape_keys("左", LAST, "open")
+        d_f = (0.7970, -0.6038, 0.0151)
+        n = palm_normal("左")
+        side_axis = np.cross(unit(POS["左中指１"] - POS["左手首"]), n)
+        # the hand turned about the wrist's flexion axis: one way at frame 0, the other at LAST, through the middle
+        for f, deg in ((0, -40.0), (LAST, 40.0)):
+            keys.append(key("左手首", f, axis_angle(side_axis, deg)))
+        dance = vmd.Motion(model_name="d", bones=keys)
+        early, late = self.sums(dance, 3), self.sums(dance, LAST - 3)
+        wrist = hand_layer.wrist_angles(MODEL, hand_layer.joint_locals(dance, ["左手捩", "左手首"], LAST + 1)[0], LAST + 1)["左"][0]
+        more_bent = late if wrist[LAST - 3] < wrist[3] else early      # the frame with the wrist more extended
+        less_bent = early if more_bent is late else late
+        self.assertGreater(sum(more_bent), sum(less_bent) + 4.0)
+        del d_f
 
     def test_a_fist_and_a_pointing_finger_are_left(self):
         for shape, finger in (("fist", "中指"), ("point", "人指")):
@@ -534,17 +565,35 @@ class SpeedTest(unittest.TestCase):
 
 
 class OrderTest(unittest.TestCase):
-    def test_the_dip_moves_a_little_after_the_pip_and_meets_the_shape(self):
-        dance = hand_dance([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
-        out = hand_layer.layer(MODEL, dance, only("order"), pulp=PULP).motion
-        pip, dip = out_angles(out, "左", "中指２")[0], out_angles(out, "左", "中指３")[0]
+    """the joints of a finger do not start together: closing a fist the PIP leads (the MCP's peak 11 % of the motion
+    later, Carpinella 2011) and the DIP follows the PIP (Mentzel 2011); opening the hand the MCP leads (the PIP's peak
+    7 % later)"""
 
-        def t10(x):
-            return float(np.interp(0.1 * x[-1], x[15:35], np.arange(15, 35)))
-        self.assertGreater(t10(dip) - t10(pip), 0.25)
-        self.assertLess(t10(dip) - t10(pip), 1.5)
-        self.assertAlmostEqual(float(dip[40]), 70.0, places=3)
-        self.assertAlmostEqual(float(dip[10]), 0.0, places=3)
+    @staticmethod
+    def middle(x, a, b, frac=0.5):
+        """the (sub-frame) time where x has gone frac of its way from frame a to frame b"""
+        y = (x[a:b + 1] - x[a]) / (x[b] - x[a])
+        return float(np.interp(frac, y, np.arange(a, b + 1)))
+
+    def run_(self, shapes):
+        out = hand_layer.layer(MODEL, hand_dance(shapes), only("order"), pulp=PULP).motion
+        return [out_angles(out, "左", "中指" + p)[0] for p in ("１", "２", "３")]
+
+    def test_closing_the_pip_leads_the_mcp_and_the_dip_follows(self):
+        mp, pip, dip = self.run_([(0, "open"), (20, "open"), (30, "fist"), (LAST, "fist")])
+        t_mp, t_pip, t_dip = (self.middle(x, 15, 40) for x in (mp, pip, dip))
+        self.assertGreater(t_mp - t_pip, 0.4)
+        self.assertLess(t_mp - t_pip, 2.0)
+        self.assertGreater(t_dip - t_pip, 0.4)
+        self.assertAlmostEqual(float(dip[45]), 70.0, places=3)           # the shape is met
+        self.assertAlmostEqual(float(mp[10]), 0.0, places=3)             # and the hold before is untouched
+
+    def test_opening_the_mcp_leads(self):
+        mp, pip, dip = self.run_([(0, "fist"), (20, "fist"), (30, "open"), (LAST, "open")])
+        t_mp, t_pip = self.middle(mp, 15, 40), self.middle(pip, 15, 40)
+        self.assertGreater(t_pip - t_mp, 0.25)
+        self.assertLess(t_pip - t_mp, 2.0)
+        self.assertAlmostEqual(float(pip[45]), 0.0, places=3)
 
 
 class LayerPassiveTest(unittest.TestCase):
@@ -569,6 +618,18 @@ class LayerPassiveTest(unittest.TestCase):
     def test_a_fist_moves_less_than_an_open_hand(self):
         arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
         self.assertLess(np.abs(self.dev("fist", arm)).max(), 0.7 * np.abs(self.dev("open", arm)).max())
+
+    def test_the_lag_does_not_ring(self):
+        # a dancer's fingers trail and catch up without swinging back and forth (the hand CG of Pollard & Zordan 2005
+        # damps them past critical; Koshland 2000: the distal joints cancel the interaction torques)
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        for shape in ("open", "fist"):
+            d = self.dev(shape, arm)
+            after = d[29:]                                   # the swing stopped at 28
+            peak = np.abs(d[26:31]).max()
+            # past the swing, no swing back the other way bigger than a tenth of the deviation at the stop
+            sign = np.sign(d[np.argmax(np.abs(d[26:31])) + 26])
+            self.assertLess(max(0.0, float((-sign * after).max())), 0.1 * peak + 1e-6, shape)
 
 
 class ReportTest(unittest.TestCase):
@@ -599,6 +660,25 @@ class ReportTest(unittest.TestCase):
 
     def test_the_change_is_reported_per_joint(self):
         self.assertIn("held_still", self.result.report["change"]["左"]["左中指２"])
+
+    def test_the_wrist_is_read_against_its_circumduction_ellipse(self):
+        # Gracia-Ibanez 2020's dominant hand: 35 degrees of radial-ulnar and 73.2 of flexion-extension about (-8.2,
+        # -1.8), the long axis 13.2 degrees toward the dart thrower's line.  At neutral flexion, 45 degrees of radial
+        # deviation is outside, 10 inside; 60 of palmar flexion with 10 of ulnar deviation inside.
+        inside = hand_layer.wrist_inside(np.array([10.0, 45.0, -10.0]), np.array([0.0, 0.0, 60.0]))
+        np.testing.assert_array_equal(inside, [True, False, True])
+        # the dart thrower's line is longer than the opposite one: 60 degrees along radial extension -> ulnar flexion
+        # stays inside where 60 along radial flexion -> ulnar extension does not
+        r = math.radians(45.0)
+        dtm = hand_layer.wrist_inside(np.array([-60.0 * math.sin(r)]), np.array([60.0 * math.cos(r)]))
+        odtm = hand_layer.wrist_inside(np.array([60.0 * math.sin(r)]), np.array([60.0 * math.cos(r)]))
+        self.assertTrue(dtm[0])
+        self.assertFalse(odtm[0])
+
+    def test_the_report_counts_the_wrist_outside_its_ellipse(self):
+        r = self.result.report["input"]["左"]["wrist"]
+        for key_ in ("outside_ellipse", "fist_beyond_flexion", "frames"):
+            self.assertIn(key_, r)
 
 
 def read_bytes(path):

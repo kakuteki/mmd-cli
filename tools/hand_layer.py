@@ -4,7 +4,8 @@ faster than a hand can, the DIP moves just after the PIP, and the fingers lag th
 when it stops.  The choreography's shapes (a pointing finger, a peace sign, a fist) stay.
 
     python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 1]
-                               [--speed-max 1900] [--dip-lag 0.75] [--gravity] [--verbose]
+                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5]
+                               [--gravity] [--verbose]
 
 Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
 while the hand swings (66 to 72 % of the frames where the wrist turns faster than 90 deg/s or the knuckles move faster
@@ -32,26 +33,35 @@ The steps (STEPS, each can be switched off), in this order:
    kept between 0.3 and 1.0 times the PIP by a soft wall 4 degrees inside the band.
 3. enslave: a finger's MP is pulled toward its neighbours' by 0.05 of their difference (the adjacent fingers' passive
    coupling; Lang & Schieber 2004: 4 to 16 % of the moved finger's motion in the others, mostly the adjacent MCP).
-4. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90) takes
-   the relaxed hand's cascade (more flexion from the index to the little finger: CASCADE) and the tenodesis (per degree
-   of wrist extension against the stretch's mean, MP 0.30, PIP 0.43, DIP 0.16: Su 2005), times --relax-gain.
-5. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
-   SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
-   centred box average, wide only there), so the change keeps its time.
-6. order: the DIP follows its PIP --dip-lag frames late while they move (proximal to distal in 87 % of grasps, Braido &
-   Zhang 2004; the DIP lags the PIP in fist closure, Mentzel 2011; a following finger lags 8 to 36 ms, Li 2004).  The
-   fingers are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
-7. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
+4. relax: an open hand (the long fingers' mean MP + PIP + DIP at most 30 degrees, fading out by 70, none above 90)
+   leans by --relax-gain (0.25) toward the relaxed hand held in the air (Varghese 2020, the wrist 15 - 20 degrees
+   extended: MCP 26-33, PIP 39-45, DIP 14-16, the index the least bent) moved with the wrist by the tenodesis (MP
+   0.30, PIP 0.43, DIP 0.16 degrees per degree of wrist extension, Su 2005; it acts on relaxed fingers only).
+5. order: within each change of a finger's shape its joints move out of step, by shares of the change's length
+   (Carpinella 2011: closing a fist the MCP's speed peaks 11.4 % after the PIP's, opening the hand the PIP's 7.4 %
+   after the MCP's; the DIP follows the PIP, Mentzel 2011), at most --order-max frames; holds are untouched.  The fingers
+   are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
+6. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
    hand's world angular acceleration about the joint's axis and the joint's world linear acceleration (finger_body,
    joint_forcing, passive_response).  The masses are Martin 2013's segments (via the research's cylinders), scaled to
-   Rin's fingers (about 0.58 of a grown man's); the stiffness 0.67 N m/rad for a held shape (a moving finger's muscle,
-   Vernooij's model) and 0.21 for the open hand (the upper end of a relaxed MCP, Kuo & Deshpande 2012), scaled as s^3;
-   damping 0.005 N m s/rad.  The lag goes to the MP, 0.35 of it to the PIP and 0.2 to the DIP (the thumb's MP and half
-   to its IP), eased from 6 toward 15 degrees.  Gravity is left out by default: the shape a dancer shows is held
-   against it.
+   Rin's fingers (about 0.58 of a grown man's); the stiffness 1.0 N m/rad for a held shape (a finger stroking a
+   surface, Kry & Pai 2006; 2 to 5 times a relaxed one, Milner & Franklin 1998) and 0.21 for the open hand (the upper
+   end of a relaxed MCP, Kuo & Deshpande 2012), scaled as s^3; damping ratio 0.85 (no swing back: the hand CG of
+   Pollard & Zordan 2005 damps past critical, a pressed fingertip 0.83-1.15).  The lag goes to the MP, 0.35 of it to
+   the PIP and 0.2 to the DIP (the thumb's MP and half to its IP), eased from 4 toward 10 degrees (purposeful
+   movements keep the distal joints' passive motion to a few degrees: Koshland 2000, Hore).  Gravity is left out by
+   default: the shape a dancer shows is held against it.
+7. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
+   SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
+   centred box average, wide only there), so the change keeps its time; last of the timing steps, so that what the
+   order and the lag add is held to the speed too.
 8. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
    the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the reference +
    10 for the caps).
+
+Not done here (the fingers' delay against the wrist is the arm chain's timing, tools/motor_layer.py's finger_delay; the
+wrist's range is tools/anatomy_layer.py's): measured in the report only, the wrist outside its circumduction ellipse
+(Gracia-Ibanez 2020) and, in a fist, beyond the fist's smaller palmar flexion and ulnar deviation (Gehrmann 2008).
 
 Everything else (the arms, the wrists, the trunk, the legs, every morph) is copied byte for byte; a joint's bone gets a
 key on every frame (the linear curve, the physics bytes of the input's key in force), its key position kept.
@@ -323,7 +333,7 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "coupling", "enslave", "relax", "speed", "order", "passive", "rom")
+STEPS = ("hinge", "coupling", "enslave", "relax", "order", "passive", "speed", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees)
 HINGE = {"side": (3.0, 8.0), "twist": (5.0, 12.0)}
@@ -344,32 +354,62 @@ ROM = {
     "ip": {"flex": ((15.0, 30.0), (80.0, 90.0))},
 }
 SPEED_MAX_DEG_S = 1900.0         # a finger's MP + PIP + DIP together, degrees per second
-DIP_LAG_FRAMES = 0.75            # the DIP follows the PIP this many frames late while they move
-ORDER_SPEED = (60.0, 240.0)      # degrees per second of the PIP or the DIP over which the lag fades in
+# the order of a finger's joints within a change of its shape, as shares of the change's length (frames, at most
+# ORDER_MAX): closing, the MCP's speed peaks 11.4 % after the PIP's (Carpinella 2011) and the DIP follows the PIP
+# (Mentzel 2011; the 10 % is ours); opening, the PIP peaks 7.4 % after the MCP (Carpinella 2011) and the DIP moves with
+# the PIP.  --order-scale multiplies them
+ORDER = {"close": {"mp": 0.114, "pip": 0.0, "dip": 0.10}, "open": {"mp": 0.0, "pip": 0.074, "dip": 0.074}}
+ORDER_MAX = 1.5
+ORDER_SPEED = 60.0               # degrees per second of a finger's MP + PIP + DIP: it is changing its shape
 # the relaxed hand: an open hand (the four fingers' mean MP + PIP + DIP under OPEN[0], none over OPEN[2]) is relaxed
-# (fully at OPEN[0], not at all from OPEN[1]); it takes the cascade (degrees of MP, PIP, DIP added per finger) and the
-# wrist's tenodesis (degrees per degree of wrist extension against the hold's mean), times RELAX_GAIN
+# (fully at OPEN[0], not at all from OPEN[1]); it leans by RELAX_GAIN toward the relaxed hand held in the air with the
+# wrist 15 - 20 degrees extended (Varghese 2020: office workers' dominant hands, MCP, PIP, DIP), moved with the wrist by
+# the tenodesis (Su 2005: degrees per degree of wrist extension) from that 17.5 degrees
 OPEN = (30.0, 70.0, 90.0)
-CASCADE = {"人指": (0.0, 0.0, 0.0), "中指": (3.0, 4.0, 2.0), "薬指": (6.0, 8.0, 4.0), "小指": (9.0, 12.0, 6.0)}
+RELAXED_AIR = {"人指": (27.1, 38.7, 13.8), "中指": (33.2, 40.7, 14.2), "薬指": (29.3, 44.8, 14.3), "小指": (26.2, 43.1, 16.1)}
+RELAXED_WRIST = 17.5
 TENODESIS = {"mp": 0.30, "pip": 0.43, "dip": 0.16}
-RELAX_GAIN = 1.0
+RELAX_GAIN = 0.25
 # the passive lag: one body per finger turning at its MP (the thumb at its MP) against a spring and a damper
 SEGMENT_MASS = {"人指": (19.1, 8.1, 6.0), "中指": (20.0, 9.6, 6.5), "薬指": (17.0, 8.9, 5.5), "小指": (10.8, 5.3, 4.3),
                 "親指": (12.0, 6.0)}
 REF_LENGTH_M = {"人指": 0.099, "中指": 0.109, "薬指": 0.102, "小指": 0.082, "親指": 0.06}
 REF_INERTIA = {"人指": 9.5e-5, "中指": 1.26e-4, "薬指": 9.9e-5, "小指": 4.6e-5, "親指": 4.0e-5}
-STIFFNESS = {"held": 0.67, "open": 0.21}           # N m/rad at the MP of a grown finger
-DAMPING = 0.005                                     # N m s/rad
+# N m/rad at the MP of a grown finger: a held shape (a finger stroking a surface, Kry & Pai 2006: about 1.0; a held
+# finger is 2 to 5 times the relaxed one, Milner & Franklin 1998) and the open hand (the upper end of a relaxed MCP,
+# Kuo & Deshpande 2012)
+STIFFNESS = {"held": 1.0, "open": 0.21}
+# the damping ratio: a dancer's fingers trail and catch up without swinging back (a pressed fingertip 0.83 - 1.15,
+# Kry & Pai 2006, Hajian & Howe 1997; the physical hands of the CG damp past critical, Pollard & Zordan 2005 about 1.7)
+ZETA = {"held": 0.85, "open": 0.85}
 PASSIVE_SHARE = {"mp": 1.0, "pip": 0.35, "dip": 0.2, "tmp": 1.0, "ip": 0.5}
-PASSIVE_CAP = (6.0, 15.0)                           # degrees: the lag is eased from the start toward the cap
+PASSIVE_CAP = (4.0, 10.0)                           # degrees: the lag is eased from the start toward the cap
 ACC_SMOOTH = 1                                      # frames each way of the triangle that smooths the accelerations
+# the active circumduction of the wrist as an ellipse (Gracia-Ibanez 2020, dominant hand): x radial (+) / ulnar
+# deviation, y palmar flexion (+) / extension, degrees: the centre, the half axes (across, along) and the long axis's
+# tilt from the flexion-extension line toward the dart thrower's line (radial extension <-> ulnar flexion)
+WRIST_ELLIPSE = {"centre": (-8.2, -1.8), "half_axes": (35.0, 73.2), "tilt_deg": 13.2}
+# a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free
+# hand's active palmar flexion and ulnar deviation (Gracia-Ibanez 2020, table 1)
+FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
 
 
 def default_params():
     p = {s: True for s in STEPS}
-    p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, dip_lag=DIP_LAG_FRAMES, gravity=False,
-             stiffness=dict(STIFFNESS), damping=DAMPING, passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE)
+    p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
+             stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE)
     return p
+
+
+def wrist_inside(radial, flex):
+    """True where the wrist (radial deviation, palmar flexion; degrees, arrays) lies within WRIST_ELLIPSE"""
+    cx, cy = WRIST_ELLIPSE["centre"]
+    a, b = WRIST_ELLIPSE["half_axes"]
+    t = math.radians(WRIST_ELLIPSE["tilt_deg"])
+    x, y = np.asarray(radial, dtype=float) - cx, np.asarray(flex, dtype=float) - cy
+    along = -math.sin(t) * x + math.cos(t) * y        # the long axis points to ulnar flexion
+    across = math.cos(t) * x + math.sin(t) * y
+    return (along / b) ** 2 + (across / a) ** 2 <= 1.0
 
 
 soft_limit, soft_band, smoothstep, runs = A.soft_limit, A.soft_band, A.smoothstep, A.runs
@@ -516,24 +556,21 @@ def relaxedness(hand, ang):
 
 
 def relax(hands, ang, wrist_ext, gain):
-    """the cascade and the tenodesis on the relaxed hand: added flexion = gain x r x (CASCADE + TENODESIS x (wrist
-    extension - its mean over the relaxed stretch))"""
+    """the relaxed hand: each joint of a relaxed hand leans toward the relaxed hand in the air at the wrist's angle,
+    flexion += gain x r x (RELAXED_AIR + TENODESIS x (wrist extension - RELAXED_WRIST) - flexion)"""
     out = {}
     for side, hand in hands.items():
         r = relaxedness(hand, ang)
         if r is None:
             continue
         w = wrist_ext[side]
-        base = np.zeros_like(w)
-        for a, b in runs(r > 0.0):
-            seg = slice(a, b + 1)
-            base[seg] = np.average(w[seg], weights=r[seg] + 1e-9)
         for f, js in chains(hand).items():
-            if f == THUMB:
+            if f == THUMB or f not in RELAXED_AIR:
                 continue
             for i, k in enumerate(("mp", "pip", "dip")):
-                add = gain * r * (CASCADE[f][i] + TENODESIS[k] * (w - base))
-                ang[js[k].bone][0] = ang[js[k].bone][0] + add
+                cur = ang[js[k].bone][0]
+                target = RELAXED_AIR[f][i] + TENODESIS[k] * (w - RELAXED_WRIST)
+                ang[js[k].bone][0] = cur + gain * r * (target - cur)
         out[side] = r
     return out
 
@@ -588,19 +625,38 @@ def time_shift(x, lag):
     return np.interp(t, np.arange(len(x)), x)
 
 
-def order(hands, ang, lag):
-    """the DIP follows its PIP `lag` frames late while the two move (faded in by ORDER_SPEED; a hold is untouched)"""
+def order(hands, ang, longest, scale=1.0):
+    """the joints of each long finger moved out of step within each change of its shape (a run where its MP + PIP +
+    DIP changes faster than ORDER_SPEED): every joint is read lag frames earlier, lag = ORDER[closing or opening][joint]
+    x scale x the change's length in frames (at most `longest`), faded in and out over the change; holds are untouched"""
+    report = {"changes": 0}
     for hand in hands.values():
         for f, js in chains(hand).items():
-            if f == THUMB or "pip" not in js or "dip" not in js:
+            if f == THUMB or not all(k in js for k in ("mp", "pip", "dip")):
                 continue
-            pip, dip = ang[js["pip"].bone], ang[js["dip"].bone]
-            sp = np.maximum(np.abs(np.gradient(pip[0])), np.abs(np.gradient(dip[0]))) * FPS
-            a = smoothstep(sp, *ORDER_SPEED)
-            reach = int(np.ceil(lag)) + 2
-            a = np.array([a[max(0, t - reach):t + reach + 1].max() for t in range(len(a))])
-            for i in range(3):
-                dip[i] = time_shift(dip[i], lag * a)
+            bones = {k: ang[js[k].bone] for k in ("mp", "pip", "dip")}
+            s = sum(b[0] for b in bones.values())
+            moving = np.abs(np.gradient(s)) * FPS > ORDER_SPEED
+            lags = {k: np.zeros(len(s)) for k in bones}
+            for a, b in runs(moving):
+                way = "close" if s[min(b + 1, len(s) - 1)] > s[max(a - 1, 0)] else "open"
+                n = b - a + 1
+                report["changes"] += 1
+                for k in bones:
+                    lam = min(longest, ORDER[way][k] * scale * n)
+                    if lam <= 0.0:
+                        continue
+                    # the lag held through the change and ramped in and out over ceil(lam) + 1 frames each side
+                    reach = int(np.ceil(lam)) + 1
+                    lo, hi = max(0, a - reach), min(len(s), b + reach + 1)
+                    t = np.arange(lo, hi)
+                    w = np.minimum(1.0, np.minimum(t - (a - reach), (b + reach) - t) / reach)
+                    lags[k][lo:hi] = np.maximum(lags[k][lo:hi], lam * np.clip(w, 0.0, 1.0))
+            for k, arr in bones.items():
+                if lags[k].any():
+                    for i in range(3):
+                        arr[i] = time_shift(arr[i], lags[k])
+    return report
 
 
 # ---- step 4: the passive lag --------------------------------------------------------------------------------------
@@ -632,7 +688,7 @@ def finger_body(hand, finger, params):
     omega, zeta = {}, {}
     for state, k_ref in params["stiffness"].items():
         omega[state] = math.sqrt(k_ref * s ** 3 / I)
-        zeta[state] = params["damping"] / (2.0 * math.sqrt(k_ref * REF_INERTIA[finger]))
+        zeta[state] = params["zeta"][state]
     return Body(finger, seq[0], coeff, omega, zeta, s)
 
 
@@ -714,9 +770,9 @@ def passive(hands, ang, loc, world, P, params, held):
     return report
 
 
-def wrist_extension(model, loc, F):
-    """side -> the wrist's extension (degrees, palmar flexion negative) against the forearm, from 手捩 and 手首's locals
-    (as tools/anatomy_layer.arm_angles reads it); zeros where the model has no arm"""
+def wrist_angles(model, loc, F):
+    """side -> (palmar flexion, radial deviation) of the hand against the forearm (degrees, as
+    tools/anatomy_layer.arm_angles reads them) from 手捩 and 手首's locals, or None where the model has no arm"""
     out = {}
     try:
         sides = A.rest_sides(model)
@@ -725,14 +781,17 @@ def wrist_extension(model, loc, F):
     for side, _ in SIDES:
         S = sides.get(side)
         if S is None or side + "手捩" not in loc or side + "手首" not in loc:
-            out[side] = np.zeros(F)
+            out[side] = None
             continue
         qf = qmul(loc[side + "手捩"], loc[side + "手首"])
         tf = twist(qf, S.d_f)
         s_loc = qmul(qconj(aa(S.d_f, tf)), qf)
         ch = qrot(s_loc, S.d_h)
         mh = unit(S.n - (S.n @ S.d_h) * S.d_h)
-        out[side] = -np.degrees(np.arctan2(ch @ mh, ch @ S.d_h))
+        k = np.cross(S.d_h, mh)
+        flex = np.degrees(np.arctan2(ch @ mh, ch @ S.d_h))
+        radial = np.degrees(np.arcsin(np.clip(ch @ k, -1, 1))) * np.sign(k @ S.r)
+        out[side] = (flex, radial)
     return out
 
 
@@ -770,24 +829,27 @@ def layer(model, motion, params=None, pulp=None, log=None):
         enslave(hands, ang, p["enslave_share"])
     relaxed = {s: relaxedness(h, ang) for s, h in hands.items()}
     held = {s: (1.0 - r) if r is not None else np.ones(F) for s, r in relaxed.items()}
+    wrist = wrist_angles(model, loc, F)
     if p["relax"]:
+        ext = {s: (-w[0] if w is not None else np.zeros(F)) for s, w in wrist.items()}
         report["steps"]["relax_frames"] = {s: int((r > 0.5).sum()) for s, r in
-                                           relax(hands, ang, wrist_extension(model, loc, F), p["relax_gain"]).items()}
-    if p["speed"]:
-        report["steps"]["speed_spread_steps"] = speed_limit(hands, ang, p["speed_max"])
+                                           relax(hands, ang, ext, p["relax_gain"]).items()}
     if p["order"]:
-        order(hands, ang, p["dip_lag"])
+        report["steps"]["order"] = order(hands, ang, p["order_max"], p["order_scale"])
     sides = [s for s, _ in SIDES if s + "手首" in P and s in hands]
     world = hand_world(model, motion, F, sides) if sides else {}
     if p["passive"]:
         report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held)
+    if p["speed"]:
+        # after the lag and the order, so that what they add is held to the speed too
+        report["steps"]["speed_spread_steps"] = speed_limit(hands, ang, p["speed_max"])
     if p["rom"]:
         rom(hands, ang)               # once, last: the soft limit is not idempotent
     out_loc = compose_all(hands, ang)
     out_motion = A.build(motion, None, out_loc, {b: keypos[b] for b in out_loc}, F)
     report["untouched"] = untouched(motion, out_motion, out_motion.labels)
-    report["input"] = measure(hands, ang_in, loc, world, P)
-    report["output"] = measure(hands, ang, out_loc, world, P)
+    report["input"] = measure(hands, ang_in, loc, world, P, wrist)
+    report["output"] = measure(hands, ang, out_loc, world, P, wrist)
     report["change"] = change(hands, ang_in, ang, held)
     return Result(out_motion, report)
 
@@ -804,13 +866,31 @@ def untouched(before, after, labels):
 
 # ---- the measures -------------------------------------------------------------------------------------------------
 
-def measure(hands, ang, loc, world, P):
+def measure(hands, ang, loc, world, P, wrist=None):
     """per side: the range of motion (frames beyond the start and the cap, each way), the hinge joints' sideways bend
     and twist, DIP / PIP, the open hand's cascade, the largest steps, the shape changes' speed and the DIP's onset
-    after the PIP's, and the fingers held dead still while the hand moves"""
+    after the PIP's, the fingers held dead still while the hand moves, and the wrist (outside its circumduction
+    ellipse; in a fist, beyond the fist's palmar flexion and ulnar deviation; the direction of its motion)"""
     out = {}
     for side, hand in hands.items():
         r = {"rom": {}, "hinge": {}, "coupling": {}}
+        w = (wrist or {}).get(side)
+        if w is not None:
+            flex, radial = w
+            sums = finger_sums(hand, ang)
+            fist = np.all(np.stack([sums[f] for f in LONG if f in sums]) > 120.0, axis=0) if sums else np.zeros(len(flex), bool)
+            d_f, d_r = np.diff(flex), np.diff(radial)
+            moving = np.hypot(d_f, d_r) * FPS > 30.0
+            line = np.mod(np.degrees(np.arctan2(d_r[moving], -d_f[moving])), 180.0)   # 0: flexion-extension, 90: deviation
+            hist, _ = np.histogram(line, bins=[0, 22.5, 67.5, 112.5, 157.5, 180])
+            r["wrist"] = {"frames": int(len(flex)), "outside_ellipse": int((~wrist_inside(radial, flex)).sum()),
+                          "fist_frames": int(fist.sum()),
+                          "fist_beyond_flexion": int((fist & (flex > FIST_WRIST["flexion"])).sum()),
+                          "fist_beyond_ulnar": int((fist & (-radial > FIST_WRIST["ulnar"])).sum()),
+                          "flexion": stats(flex), "radial": stats(radial),
+                          "moving_frames": int(moving.sum()),
+                          "direction": {"flexion_extension": int(hist[0] + hist[4]), "dart_thrower": int(hist[1]),
+                                        "deviation": int(hist[2]), "opposite_dart_thrower": int(hist[3])}}
         for j in hand.joints:
             lim = ROM[kind_of(j)]
             row = {}
@@ -976,21 +1056,24 @@ def main(argv=None):
     ap.add_argument("--speed-max", type=float, default=SPEED_MAX_DEG_S,
                     help="degrees per second of a finger's MP + PIP + DIP, past which a change is spread (default %g)"
                          % SPEED_MAX_DEG_S)
-    ap.add_argument("--dip-lag", type=float, default=DIP_LAG_FRAMES,
-                    help="frames the DIP follows its PIP while they move (default %g)" % DIP_LAG_FRAMES)
+    ap.add_argument("--order-scale", type=float, default=1.0,
+                    help="the joints' lags within a change of shape times this (default 1; 0 moves them together)")
+    ap.add_argument("--order-max", type=float, default=ORDER_MAX,
+                    help="the longest lag of a joint within a change, frames (default %g)" % ORDER_MAX)
     ap.add_argument("--gravity", action="store_true", help="let gravity bend the fingers too (off: the dancer holds "
                                                             "the shape she shows against it)")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = ap.parse_args(argv)
     params = default_params()
     params.update({s: not getattr(a, "no_" + s) for s in STEPS})
-    params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, dip_lag=a.dip_lag, gravity=a.gravity)
+    params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
+                  gravity=a.gravity)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if not a.speed_max > 0.0:
             raise ValueError("--speed-max must be above 0")
-        if a.dip_lag < 0.0 or a.relax_gain < 0.0:
-            raise ValueError("--dip-lag and --relax-gain must not be negative")
+        if a.order_scale < 0.0 or a.order_max < 0.0 or a.relax_gain < 0.0:
+            raise ValueError("--order-scale, --order-max and --relax-gain must not be negative")
         result = run(a.dance, a.model, a.out, a.report, params, log)
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
