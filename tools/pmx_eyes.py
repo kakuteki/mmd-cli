@@ -15,9 +15,11 @@ image in the cornea and moves with the cornea's centre of curvature, K = 4.67 mm
 The share by default (--share not given) keeps that lag on the model's iris (RESEARCH 5.1, formula A): the model's
 pupil lies D_p in front of the eye's bone and its iris is r wide (half), so a turn by theta moves the pupil
 D_p sin(theta) and the light should follow D_p sin(theta) - 0.79 r sin(theta): share 1 - 0.79 r / D_p.  Sour's Rin:
-r 0.1625 across X, D_p 0.415, 0.69 (its iris crossed 4.5 % of its radius a degree, a human's 3.5 %).  The head-relative
-ratios of a human eye (formula B, 0.60 across and 0.48 up and down, Ohlendorf 2022) would leave the light 30 % further
-behind on this iris: with 0.55 the upper light left the iris for the eye white at a 15-degree gaze (stage 5 probe).
+r 0.1625 across X, D_p 0.415, 0.69 (its pupil crossed 4.5 % of its iris' radius a degree, a human's 3.5 %: 1.29
+times; the rim of its dish-shaped iris, which the light is measured from, 1.4 to 1.5 times).  The standard for the look
+is a person's ratio of the light's move to the iris' (formula B, 0.60 across and 0.48 up and down, Ohlendorf 2022);
+formula A is used because Sour's Rin's lights were drawn near the iris' rim and B would press them against it in more
+of the frames (stage 5 review Q2: 36 to 39 % of the open-eye frames for the upper lights against A's 27 to 29 %).
 Up and down formula A gives 0.58 on this iris (its half height 0.222): one append ratio cannot hold both, so the
 append takes the share across (the gaze moves mostly sideways, up to 18 degrees against 6 up and 10 down) and
 tools/eye_optics.py, which keys every frame from formula A, sets the rest.

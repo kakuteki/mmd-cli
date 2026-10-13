@@ -89,6 +89,10 @@ def keys_of(motion, name):
     return sorted((k for k in motion.bones if k.name == name), key=lambda k: k.frame)
 
 
+def keys_of_morph(motion, name):
+    return sorted((k for k in motion.morphs if k.name == name), key=lambda k: k.frame)
+
+
 def morph_at(motion, name, frame):
     """a morph's weight at a frame as MMD shows it: straight between keys, held before the first and after the last"""
     keys = sorted((k for k in motion.morphs if k.name == name), key=lambda k: k.frame)
@@ -163,34 +167,51 @@ class VergenceGeometryTest(unittest.TestCase):
             self.assertAlmostEqual(sum(a * b / n for a, b in zip(seen, want)), 1.0, 9)
 
 
-class VergenceTimeTest(unittest.TestCase):
+class VergencePhaseTest(unittest.TestCase):
+    """the vergence is in phase with the look at a hand: it starts a little ahead of the look (the eyes lead a target
+    the hand moves, Erkelens 1989), opens from the look's last frame, and is 0 on every frame on the camera"""
     P = eye_optics.PARAMS["vergence"]
 
-    def track(self, demands):
-        return eye_optics.vergence_track(demands, 30.0, self.P["latency"], self.P["duration"], self.P["max_speed"])
+    def phase(self, demands, labels):
+        return eye_optics.vergence_in_phase(demands, labels, 30.0, self.P["lead"], self.P["duration"], self.P["max_speed"])
 
-    def test_a_small_step_waits_then_takes_its_time(self):
-        out = self.track([0.0] * 30 + [2.0] * 90)
-        start = 30 + self.P["latency"] * 30.0
+    def test_converges_through_the_look_and_is_parallel_on_the_camera(self):
+        labels = ["camera"] * 30 + ["free"] * 5 + ["hand"] * 30 + ["free"] * 10 + ["camera"] * 30
+        demands = [0.0] * 35 + [5.0] * 30 + [0.0] * 40
+        out = self.phase(demands, labels)
+        first, last = 35, 64
+        start = first - self.P["lead"] * 30.0
         self.assertTrue(all(v == 0.0 for v in out[:int(math.floor(start)) + 1]))
-        five = next(i for i, v in enumerate(out) if v >= 0.1)
-        ninety_five = next(i for i, v in enumerate(out) if v >= 1.9)
+        self.assertGreater(out[first], 0.0)                         # already on its way on the look's first frame
+        peak = max(range(len(out)), key=lambda i: out[i])
+        self.assertTrue(first <= peak <= last, peak)
+        self.assertAlmostEqual(max(out), 5.0, 6)
+        self.assertEqual(max(v for v, lab in zip(out, labels) if lab == "camera"), 0.0)
+        five = next(i for i, v in enumerate(out) if v >= 0.25)
+        ninety_five = next(i for i, v in enumerate(out) if v >= 4.75)
         self.assertAlmostEqual((ninety_five - five) / 30.0, self.P["duration"], delta=1.5 / 30.0)
-        self.assertAlmostEqual(out[-1], 2.0, 9)
-        self.assertTrue(all(b >= a for a, b in zip(out, out[1:])))
+        self.assertGreater(out[last], 4.9)                          # opens from the look's last frame
+        self.assertLess(out[last + 8], 2.0)
+        self.assertTrue(all(b >= a for a, b in zip(out[:first], out[1:first + 1])))
 
-    def test_a_big_step_keeps_under_the_top_speed(self):
-        out = self.track([0.0] * 10 + [6.0] * 120 + [0.0] * 120)
+    def test_a_look_between_two_looks_at_the_camera_rises_less_and_never_on_the_camera(self):
+        labels = ["camera"] * 20 + ["hand"] * 6 + ["camera"] * 20
+        demands = [0.0] * 20 + [5.0] * 6 + [0.0] * 20
+        out = self.phase(demands, labels)
+        self.assertEqual(max(v for v, lab in zip(out, labels) if lab == "camera"), 0.0)
+        peak = max(range(len(out)), key=lambda i: out[i])
+        self.assertTrue(20 <= peak <= 25, peak)
+        self.assertGreater(max(out), 0.3)                           # a glance of 0.2 s: it only begins
+        self.assertLess(max(out), 2.0)
+
+    def test_a_big_angle_keeps_under_the_top_speed(self):
+        labels = ["free"] * 10 + ["hand"] * 60 + ["free"] * 60
+        out = self.phase([0.0] * 10 + [11.6] * 60 + [0.0] * 60, labels)
         speed = max(abs(b - a) for a, b in zip(out, out[1:])) * 30.0
         self.assertLessEqual(speed, self.P["max_speed"] + 1e-6)
-        self.assertAlmostEqual(max(out), 6.0, 6)
-        self.assertAlmostEqual(out[-1], 0.0, 9)
-
-    def test_a_change_during_a_move_carries_on_from_where_it_is(self):
-        out = self.track([0.0] * 10 + [4.0] * 12 + [0.0] * 100)
-        steps = [abs(b - a) for a, b in zip(out, out[1:])]
-        self.assertLess(max(steps), self.P["max_speed"] / 30.0 + 1e-6)
-        self.assertAlmostEqual(out[-1], 0.0, 9)
+        self.assertGreater(speed, 30.0)                             # natural, not the screen experiments' 8 deg/s
+        self.assertAlmostEqual(max(out), 11.6, 6)
+        self.assertEqual(out[-1], 0.0)
 
 
 class TargetTest(unittest.TestCase):
@@ -200,12 +221,14 @@ class TargetTest(unittest.TestCase):
         return [{"camera": camera, "hands": list(hands)} for _ in range(n)]
 
     def test_camera_hand_and_free(self):
+        gap = self.P["gap_frames"] + 4
         rows = self.rows(10, camera=(2.0, 2.5))                           # looking at the camera, 2.5 m off
         rows += self.rows(15, hands=[(3.0, 0.35)])                        # a hand 3 degrees off the gaze, 35 cm off
         rows += self.rows(4, hands=[(3.0, 0.35)])
-        rows += self.rows(4)                                               # (a gap)
+        rows += self.rows(gap)                                             # (a gap too long to bridge)
         rows += self.rows(self.P["hand_frames"] - 1, hands=[(3.0, 0.35)])  # too short
-        rows += self.rows(10, hands=[(3.0, 0.10)])                        # too near to look at
+        rows += self.rows(gap)
+        rows += self.rows(10, hands=[(3.0, 0.08)])                        # too near to look at
         rows += self.rows(10, hands=[(25.0, 0.35)])                       # too far off the gaze
         metres, labels = eye_optics.fixation_targets(rows, self.P)
         self.assertEqual(labels[:10], ["camera"] * 10)
@@ -213,17 +236,41 @@ class TargetTest(unittest.TestCase):
         self.assertEqual(metres[10:29], [0.35] * 19)
         self.assertEqual(set(labels[29:]), {"free"})
 
+    def test_a_short_gap_is_bridged_unless_the_camera_is_looked_at_in_it(self):
+        """the MV's 52 seconds: the fingers come nearer than the hand's near limit for 5 frames in one look"""
+        gap = self.P["gap_frames"]
+        rows = self.rows(8, hands=[(3.0, 0.3)]) + self.rows(gap) + self.rows(8, hands=[(3.0, 0.2)])
+        metres, labels = eye_optics.fixation_targets(rows, self.P)
+        self.assertEqual(labels, ["hand"] * (16 + gap))
+        self.assertEqual(metres[8:8 + gap], [None] * gap)
+        demand = eye_optics.vergence_demand(labels, metres, self.P)
+        self.assertEqual(set(demand), {eye_optics.vergence_degrees(0.25, self.P["ipd_mm"])})   # the median of the seen
+        rows = self.rows(8, hands=[(3.0, 0.3)]) + self.rows(4, camera=(2.0, 2.5)) + self.rows(8, hands=[(3.0, 0.2)])
+        _, labels = eye_optics.fixation_targets(rows, self.P)
+        self.assertEqual(labels, ["hand"] * 8 + ["camera"] * 4 + ["hand"] * 8)
+        rows = self.rows(8, hands=[(3.0, 0.3)]) + self.rows(gap + 1) + self.rows(8, hands=[(3.0, 0.2)])
+        _, labels = eye_optics.fixation_targets(rows, self.P)
+        self.assertEqual(labels[8:9 + gap], ["free"] * (gap + 1))
+
     def test_camera_wins_over_a_hand_further_off_its_line(self):
         rows = self.rows(20, camera=(1.0, 2.5), hands=[(8.0, 0.4)])
         _, labels = eye_optics.fixation_targets(rows, self.P)
         self.assertEqual(set(labels), {"camera"})
 
-    def test_only_a_hand_brings_the_eyes_together(self):
+    def test_only_a_hand_brings_the_eyes_together_by_the_geometric_angle(self):
         labels = ["camera", "camera", "hand", "hand", "free"]
         metres = [1.0, 1.0, 0.3, 0.3, 3.0]
         demand = eye_optics.vergence_demand(labels, metres, self.P)
-        want = self.P["gain"] * eye_optics.vergence_degrees(0.3, self.P["ipd_mm"])
-        self.assertEqual(demand, [0.0, 0.0, want, want, 0.0])
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))           # no share of it: the eyes meet on the hand
+        self.assertAlmostEqual(want, 5.852, 3)
+        self.assertEqual(demand[:2] + demand[4:], [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(demand[2], want, 9)
+        self.assertAlmostEqual(demand[3], want, 9)
+
+    def test_a_hand_nearer_than_15_cm_turns_the_eyes_as_one_at_15_cm(self):
+        demand = eye_optics.vergence_demand(["hand"] * 4, [0.11, 0.12, 0.11, 0.12], self.P)
+        self.assertAlmostEqual(demand[0], eye_optics.vergence_degrees(0.15, self.P["ipd_mm"]), 9)
+        self.assertAlmostEqual(demand[0], 11.59, 2)
 
 
 class LightGeometryTest(unittest.TestCase):
@@ -425,6 +472,17 @@ class OpticsTest(unittest.TestCase):
         self.assertIn("p99", rep["vergence"]["step"])
         self.assertIn("p99", rep["light"]["key_step"])
         self.assertIn("p99", rep["light"]["offset_step"])
+        self.assertEqual(rep["vergence"]["camera_max_degrees"], 0.0)
+        for name in ("右HL２", "右HL", "左HL２", "左HL"):
+            self.assertEqual(rep["light"]["rim"][name]["open_frames"], 91)
+            self.assertEqual(rep["light"]["lids"][name], {"slid_frames": 0, "at_drawn_frames": 0, "slid_max": 0.0,
+                                                          "onto_iris_frames": 0, "behind_iris_frames": 0})
+        self.assertIn("behind_rim_plane_frames", rep["light"])
+        self.assertEqual(len(keys_of_morph(result.motion, "HL消")), 2)       # never on: the first and the last frame
+        doc = pmx_edit.loads(MODEL_BYTES)
+        names = [pmx_eyes.morph_name(doc, m) for m in doc.morphs]
+        self.assertEqual(rep["keys"]["registered"], len(result.motion.morphs) + len(names) - 3)
+        self.assertEqual(rep["keys"]["margin"], 20000 - rep["keys"]["registered"])
 
     def test_a_near_camera_does_not_cross_the_eyes(self):
         result = run(c=camera(0.6))
@@ -519,9 +577,33 @@ class OpticsTest(unittest.TestCase):
         self.assertLessEqual(max(radii), reach + 1e-3)
         self.assertGreater(max(radii), reach - 0.06)          # the slant pushes a light out to the iris' edge
         rep = result.report["light"]
-        self.assertGreater(rep["edge_frames"], 0)
+        pushed = max(r["pushed_over_0.1"] for r in rep["rim"].values())
+        self.assertGreater(pushed, 0.5)                       # held back by the rim more than 0.1 in most frames
         self.assertLessEqual(rep["disc_r"]["max"], reach + 1e-3)
+        self.assertLessEqual(rep["open"]["disc_r"]["max"], reach + 1e-3)
+        self.assertEqual(rep["open"]["light_frames"], 4 * 91)
         self.assertGreater(result.report["ride"]["height"]["min"], 0.0)   # every light in front of its iris' surface
+
+    def test_a_dish_seen_at_a_slant_keeps_the_light_over_the_iris_the_camera_sees(self):
+        """on a tilted dish the deep side seen at a slant shows off where the rim's plane puts it: a light held on that
+        plane alone leaves the iris (the MV's 45.7 and 214 seconds); held where the camera's line meets the dish, it
+        stays within the reach"""
+        model = RideTest.tilted()
+        g = gaze(30, {0: (-15.0, 0.0)})
+
+        def go(seen):
+            p = eye_optics.merge_params(eye_optics.PARAMS, {"light": {"seen": seen}, "pupil": {"unrest": {"amplitude": 0.0}}})
+            return eye_optics.optics(model, dance(30), g, camera(1.0, yaw=30.0, last=30), p)
+        reach = eye_optics.PARAMS["light"]["reach"]
+        held, plane = go(True), go(False)
+        self.assertEqual(held.report["light"]["camera_aside"]["frames_partly"], 0)
+        self.assertTrue(all(uv is not None for row in held.trace["iris"] for uv in row))     # every light over its iris
+        radii = [math.hypot(*uv) for row in held.trace["iris"] for uv in row]
+        self.assertLessEqual(max(radii), reach + 2e-3)
+        self.assertGreater(max(radii), reach - 0.01)                        # held at the reach, not further in
+        off = sum(1 for row in plane.trace["iris"] for uv in row if uv is None)            # beside the iris
+        self.assertGreater(off, 20)
+        self.assertLessEqual(held.report["light"]["disc_r"]["max"], reach + 1e-3)
 
     def test_a_small_cap_holds_the_light(self):
         g = gaze(90, {0: (15.0, 0.0)})
@@ -563,7 +645,7 @@ class OpticsTest(unittest.TestCase):
                 self.assertAlmostEqual(math.hypot(*out), size, 9)
         self.assertGreater(eye_optics.soft_cap((0.9, 0.0), 1.0)[0], eye_optics.soft_cap((0.8, 0.0), 1.0)[0])
 
-    def test_hand_in_front_brings_the_eyes_together_slowly(self):
+    def test_hand_in_front_brings_the_eyes_together_in_phase(self):
         away = tuple(f - r for f, r in zip(FAR, HAND_REST))
         hand = {0: away, 29: away, 30: (0.0, 0.0, 0.0), 89: (0.0, 0.0, 0.0), 90: away, 150: away}
         result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150))
@@ -573,11 +655,36 @@ class OpticsTest(unittest.TestCase):
         def value(f):
             return yaw_of(fk.applied(fk.sample(keys, f, frames)[1]))
         p = eye_optics.PARAMS["vergence"]
-        want = p["gain"] * eye_optics.vergence_degrees(0.3, p["ipd_mm"])
-        self.assertAlmostEqual(value(30 + 7), 0.0, delta=0.05)      # 0.24 s before it starts (keys within 0.05 deg)
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))           # the hand 30 cm in front: the geometric angle
+        self.assertAlmostEqual(value(30 - 3), 0.0, delta=0.05)      # keys within 0.05 degrees
+        self.assertGreater(value(31), 0.3)                          # already on its way as the hand arrives
+        self.assertAlmostEqual(value(60), want, delta=0.05)
         self.assertAlmostEqual(value(89), want, delta=0.05)
-        self.assertLessEqual(max(abs(value(f + 1) - value(f)) for f in range(150)), p["max_speed"] / 30.0 + 1e-3)
+        self.assertAlmostEqual(value(89 + 14), 0.0, delta=0.05)     # parallel again 0.45 s after the hand left
+        self.assertLessEqual(max(abs(value(f + 1) - value(f)) for f in range(150)), p["max_speed"] / 30.0 + 0.1)
         self.assertEqual(result.report["vergence"]["labels"]["hand"], 60)
+        run_ = result.report["vergence"]["hand_runs"][0]
+        self.assertAlmostEqual(run_["reached_within_degrees"], want, delta=0.01)
+        self.assertLess(run_["reached_after_degrees"], want)
+        self.assertTrue(30 <= run_["peak_frame"] <= 89)
+        self.assertEqual(result.report["vergence"]["share"]["hand"], 1.0 - result.report["vergence"]["share"].get("free", 0.0))
+
+    def test_the_vergence_peaks_on_a_short_look_at_the_hand_and_is_0_on_the_camera(self):
+        """she looks at the camera, turns her eyes 10 degrees onto her hand 30 cm off for 10 frames, and back: the eyes
+        converge on the hand and are parallel on every frame on the camera"""
+        offset = (3.75 * math.sin(math.radians(10.0)) + 0.05, 0.0, 3.75 - 3.75 * math.cos(math.radians(10.0)))
+        away = tuple(f - r for f, r in zip(FAR, HAND_REST))
+        hand = {0: away, 39: away, 40: offset, 49: offset, 50: away, 90: away}
+        g = gaze(90, {0: (0.0, 0.0), 40: (10.0, 0.0), 50: (0.0, 0.0)})
+        result = run(d=dance(90, hand=hand), g=g, c=camera(1.0))
+        labels, angle = result.trace["label"], result.trace["vergence"]
+        self.assertEqual(labels[40:50], ["hand"] * 10)
+        self.assertEqual(set(labels[:40] + labels[50:]), {"camera"})
+        self.assertEqual(max(a for a, lab in zip(angle, labels) if lab == "camera"), 0.0)
+        peak = max(range(len(angle)), key=lambda i: angle[i])
+        self.assertTrue(40 <= peak <= 49, peak)
+        self.assertGreater(max(angle), 1.0)
+        self.assertEqual(result.report["vergence"]["camera_max_degrees"], 0.0)
 
     def test_flare_reaches_the_pupil_morph(self):
         result = run(d=dance(150), g=gaze(150), c=camera(2.5, last=150), flares=[1.0])
@@ -592,8 +699,10 @@ class OpticsTest(unittest.TestCase):
 
 
 class KeyTest(unittest.TestCase):
-    """MMD refuses more than 20,000 registered points (a dialog on loading the first version's 8,205 morph keys over
-    the face's 11,745): keys only where straight lines between them miss the values"""
+    """MMD stops loading past 20,000 registered points of a model (its morphs' keys from every motion loaded, one per
+    morph and frame, and one for each morph with no key on frame 0; bone keys are not counted): the first version's
+    8,205 morph keys with the face's 11,745, the dance's and the frame-0 points crossed it.  Keys only where straight
+    lines between them miss the values, and the tool refuses near the limit."""
 
     def test_morph_keys_follow_the_values_within_the_tolerance(self):
         values = [0.1 * math.sin(i / 20.0) + 0.0005 * math.sin(i * 1.7) for i in range(600)]
@@ -621,10 +730,34 @@ class KeyTest(unittest.TestCase):
             got = fk.applied(fk.sample(keys, f, frames)[1])
             self.assertLessEqual(eye_optics._angle(fk.multiply(fk.conjugate(got), turns[f])), 0.05 + 1e-3)
 
-    def test_written_motion_stays_far_under_the_limit(self):
-        result = run(d=dance(300), g=gaze(300, {f: (5.0 * math.sin(f / 9.0), 0.0) for f in range(301)}),
-                     c=camera(2.5, last=300), flares=[2.0])
-        self.assertLess(len(result.motion.morphs), 300)
+    def test_the_pupil_keys_of_a_song_leave_room_under_the_limit(self):
+        """the MV's length (7,743 frames) with its flares, choruses, loudness and the vergence's near response: the
+        pupil's morph keys, with the face's 11,724 (face_v6d) and the model's 133 frame-0 points, stay 5,000 under
+        the limit"""
+        n = 7743
+        p = eye_optics.PARAMS["pupil"]
+        arousal = [0.5 + 0.5 * math.sin(i / 97.0) * math.sin(i / 13.0) for i in range(n)]
+        near = [3.0 if (i // 450) % 4 == 1 and i % 450 < 30 else 0.0 for i in range(n)]
+        pupil = eye_optics.pupil_track(n, [1334.0, 3605.0, 7236.0], arousal, [1800.0, 3857.0, 5966.0], near, p, seed=0)
+        big, thin = eye_optics.pupil_weights(pupil["total"], 1.7057, -0.6098)
+        frames = list(range(n))
+        keys = (eye_optics._morph_keys("瞳大", frames, big) + eye_optics._morph_keys("瞳細", frames, thin)
+                + eye_optics._morph_keys("HL消", frames, [0.0] * n))
+        self.assertLess(len(keys), 20000 - 11724 - 133 - 5000)
+
+    def test_registered_points_count_each_morph_and_frame_once_and_the_frame_0_points(self):
+        a = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("a", 0, 0.0), vmd.MorphKey("a", 5, 1.0),
+                                                 vmd.MorphKey("x", 3, 1.0)])            # x: not the model's
+        b = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("a", 5, 0.5), vmd.MorphKey("b", 10, 1.0)])
+        c = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("c", 0, 0.0), vmd.MorphKey("c", 20, 1.0)])
+        # keys a0 a5 b10 c0 c20, and b and d without a key on frame 0
+        self.assertEqual(eye_optics.registration_points(["a", "b", "c", "d"], [a, b, None, c]), 5 + 2)
+
+    def test_too_many_points_with_the_face_are_refused(self):
+        face = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", f, 0.0) for f in range(19500)])
+        with self.assertRaises(ValueError) as ctx:
+            run(face=face)
+        self.assertIn("20000", str(ctx.exception))
 
 
 class LidTest(unittest.TestCase):
@@ -677,6 +810,71 @@ class LidTest(unittest.TestCase):
         self.assertGreater(abs(free.trace["disc"][10][k][0]), 0.7)                   # the head's turn: near the edge
         self.assertLessEqual(max(math.hypot(*row[k]) for row in held.trace["disc"]), reach + 0.01)
         self.assertLess(held.trace["disc"][10][k][1], free.trace["disc"][10][k][1] - 0.05)   # still dragged down
+
+    EDGE, LID_Z, DROP = 17.30, -1.0, 0.4          # the toy's upper lid: its edge at rest, its depth, まばたき's drop
+
+    @classmethod
+    def lidded(cls):
+        """the toy with an upper lid over each iris (in front of the iris, behind the drawn upper light), that まばたき
+        lowers with the upper lights"""
+        data, _ = toy_bytes(extra_bones=[("右人指３先", -1, HAND_REST)], iris_z=-0.96, lid=(cls.EDGE, cls.LID_Z, cls.DROP))
+        doc = pmx_edit.loads(data)
+        pmx_eyes.build(doc, share=0.55)
+        return pmx_edit.dumps(doc)
+
+    @staticmethod
+    def light_world(model_bytes, motion_list, frame, name, weight):
+        """where MMD shows a light quad's centre: its bone's FK with the まばたき at `weight` on the quad"""
+        model = pmx.loads(model_bytes)
+        doc = pmx_edit.loads(model_bytes)
+        b = next(x for x in model.bones if x.name == name)
+        mine = [v for v, vx in enumerate(doc.vertices) if vx.pairs() and vx.pairs()[0][0] == b.index]
+        blink = pmx_eyes.vertex_morphs(doc)["まばたき"]
+        shift = [weight * sum(blink.get(v, (0.0, 0.0, 0.0))[c] for v in mine) / len(mine) for c in range(3)]
+        lp, lr = fk.Pose(model, eye_optics.merge(*motion_list), [name]).at(frame)[name]
+        rest = tuple(p + o + s for p, o, s in zip(b.position, b.tail["offset"], shift))
+        return tuple(a + o for a, o in zip(lp, fk.rotate(lr, tuple(r - c for r, c in zip(rest, b.position)))))
+
+    def test_a_light_the_formula_puts_under_a_lid_stays_below_its_edge(self):
+        """まばたき 0.6 lowers the toy's lid to 17.06 and the gaze 15 degrees down leaves the upper lights up against it
+        (formula A's lag): as the formula puts them they stand over the lid's edge, in front of the lid (a light on
+        the lid's skin, the MV's 167.2 seconds); kept where the lid leaves the iris uncovered, they stay below its edge
+        and seen"""
+        model = self.lidded()
+        g = gaze(90, {0: (0.0, -15.0)})
+        result = eye_optics.optics(model, dance(), g, camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET),
+                                   face=self.face({0: 0.6, 90: 0.6}))
+        edge = self.EDGE - self.DROP * 0.6
+        for name in ("右HL２", "左HL２"):
+            k = result.trace["lights"].index(name)
+            for frame in (5, 45, 85):
+                x, y, z = self.light_world(model, [dance(), g, result.motion], frame, name, 0.6)
+                self.assertLess(y, edge - 0.01, (name, frame))
+                self.assertTrue(0.0 <= result.trace["lid"][frame][k] < 1.0, (name, frame))   # slid back
+                self.assertEqual(result.trace["sink"][frame][k], 0, (name, frame))          # at its drawn height
+            self.assertGreater(result.report["light"]["lids"][name]["slid_frames"], 80)
+
+    def test_a_lid_over_the_drawn_place_takes_the_light_down_under_it(self):
+        """まばたき 1 lowers the lid over the upper lights' drawn places too: there, at their drawn height, they would
+        stand in front of the lid; they come down onto the iris, behind the lid, which covers them as it covers the
+        iris"""
+        model = self.lidded()
+        result = eye_optics.optics(model, dance(), gaze(), camera(1.0), eye_optics.merge_params(eye_optics.PARAMS, QUIET),
+                                   face=self.face({0: 1.0, 90: 1.0}))
+        mdl = pmx.loads(model)
+        iris = next(b for b in mdl.bones if b.name == "左目子")
+        pose = fk.Pose(mdl, eye_optics.merge(dance(), gaze(), result.motion), ["左目子"])
+        ip, iq = pose.at(45)["左目子"]
+        on_iris = tuple(p + o for p, o in zip(ip, fk.rotate(iq, (0.0, 0.0, -0.96 - iris.position[2]))))
+        normal = fk.rotate(iq, (0.0, 0.0, -1.0))
+        k = result.trace["lights"].index("左HL２")
+        self.assertEqual(result.trace["lid"][45][k], 0.0)                 # at its drawn place
+        self.assertEqual(result.trace["sink"][45][k], 1)                  # brought down onto its iris
+        spot = self.light_world(model, [dance(), gaze(), result.motion], 45, "左HL２", 1.0)
+        height = sum((s - o) * c for s, o, c in zip(spot, on_iris, normal))
+        self.assertLess(height, -0.96 - self.LID_Z)                       # behind the lid (0.04 in front of the iris)
+        self.assertGreater(height, -0.01)
+        self.assertGreater(result.report["light"]["lids"]["左HL２"]["onto_iris_frames"], 80)
 
 class RideTest(unittest.TestCase):
     """each light rides on its iris at the height it was drawn at: its bone moves along the camera's line (keys with
@@ -764,8 +962,9 @@ class CommandTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp)
         self.paths = {}
+        face = vmd.Motion(model_name="toy", morphs=[vmd.MorphKey("まばたき", 0, 0.0), vmd.MorphKey("まばたき", 40, 0.3)])
         for name, data in (("model.pmx", MODEL_BYTES), ("dance.vmd", vmd.dumps(dance())), ("gaze.vmd", vmd.dumps(gaze())),
-                           ("camera.vmd", vmd.dumps(camera()))):
+                           ("camera.vmd", vmd.dumps(camera())), ("face.vmd", vmd.dumps(face))):
             path = os.path.join(self.tmp, name)
             with open(path, "wb") as f:
                 f.write(data)
@@ -775,9 +974,18 @@ class CommandTest(unittest.TestCase):
             json.dump({"flares": [1.0]}, f)
         self.paths["look"] = look
 
-    def args(self, *extra):
+    def args(self, *extra, face=True):
         p = self.paths
-        return [p["model.pmx"], p["dance.vmd"], p["gaze.vmd"], p["camera.vmd"], os.path.join(self.tmp, "out.vmd")] + list(extra)
+        return ([p["model.pmx"], p["dance.vmd"], p["gaze.vmd"], p["camera.vmd"], os.path.join(self.tmp, "out.vmd")]
+                + (["--face", p["face.vmd"]] if face else []) + list(extra))
+
+    def test_refuses_to_go_without_the_face_when_its_morphs_move_the_lights(self):
+        """the toy's まばたき moves its upper lights (as Sour's Rin's closing morphs do): without the face VMD the
+        lights would be kept off the lids and on the iris for a face that is not the one loaded with them"""
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            code = eye_optics.main(self.args(face=False))
+        self.assertEqual(code, 2)
+        self.assertIn("--face", json.loads(printed.getvalue())["error"]["message"])
 
     def test_writes_the_motion_and_the_report(self):
         report = os.path.join(self.tmp, "r.json")
@@ -803,7 +1011,7 @@ class CommandTest(unittest.TestCase):
 
     def test_refuses_an_output_over_an_input(self):
         with contextlib.redirect_stdout(io.StringIO()) as printed:
-            code = eye_optics.main(self.args()[:4] + [self.paths["gaze.vmd"]])
+            code = eye_optics.main(self.args()[:4] + [self.paths["gaze.vmd"], "--face", self.paths["face.vmd"]])
         self.assertEqual(code, 2)
         self.assertFalse(json.loads(printed.getvalue())["ok"])
 
@@ -826,6 +1034,224 @@ class CommandTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as printed:
             self.assertEqual(eye_optics.main(self.args("--params", params)), 2)
         self.assertIn("ipd", printed.getvalue())
+
+
+# ---- the MV itself ----------------------------------------------------------------------------
+
+SONG = os.environ.get("EYE_OPTICS_SONG")
+SONG_KEYS = ("model", "dance", "gaze", "face", "camera")
+BOX = ((-1.4, 1.4), (16.2, 18.4), (-1.8, 0.4))       # about Sour's Rin's eyes: brows, lids, cheeks, fringe
+LIDS = ("face", "目", "hair")
+# where the stage 5 review's ray check of every frame found a light on a lid (POKE) or seen off the iris
+POKED = [723, 2393, 4729, 4742, 5007, 5008, 5016, 5017, 5018, 5019, 5020, 5021, 5022, 6907]
+OFF_IRIS = [1371, 1372, 1373, 1374, 4323, 4324, 4325, 4326, 4327, 6424, 6425, 6426, 6427, 6428, 6429, 6430, 6435, 6436,
+            6437, 6748, 6749, 6750, 7617]
+
+
+def song_paths():
+    """the MV's inputs named by EYE_OPTICS_SONG (a JSON {"model", "dance", "gaze", "face", "camera"}): SkipTest, with
+    the reason, when it is not set; a set variable naming files that are not there fails instead"""
+    if not SONG:
+        raise unittest.SkipTest("EYE_OPTICS_SONG is not set: it names a JSON of the MV's inputs (model, dance, gaze, "
+                                "face, camera), on hinata C:/work/hibikase/stage5/eye/r8/song_inputs.json")
+    with open(SONG, encoding="utf-8") as f:
+        paths = json.load(f)
+    missing = ["%s %s" % (k, paths.get(k)) for k in SONG_KEYS if not paths.get(k) or not os.path.isfile(paths[k])]
+    if missing:
+        raise AssertionError("EYE_OPTICS_SONG (%s) names files that are not there: %s" % (SONG, "; ".join(missing)))
+    return paths
+
+
+def material_table(doc):
+    """[(name, alpha, first face, face count)] of a pmx_edit document's materials"""
+    from mmd_cli.formats.pmx import _Reader
+    r = _Reader(doc.middle, doc.encoding)
+    r.skip(r.i32() * doc.sizes["vertex"])
+    for _ in range(r.i32()):
+        r.text()
+    out, start, texture = [], 0, doc.sizes["texture"]
+    for _ in range(r.i32()):
+        name = r.text()
+        r.text()
+        alpha = struct.unpack_from("<4f", doc.middle, r.pos)[3]
+        r.skip(65 + 2 * texture)
+        r.u8()
+        if r.u8():
+            r.u8()
+        else:
+            r.skip(texture)
+        r.text()
+        count = r.i32()
+        out.append((name, alpha, start // 3, count // 3))
+        start += count
+    return out
+
+
+class RayCheck:
+    """where MMD shows each light quad of Sour's Rin against everything about her eyes, at a frame: the eye region
+    skinned linearly by the bones' FK with the face's and the motion's morphs (physics left out), and rays from the
+    camera (Moller and Trumbore).  A light pokes when nothing visible lies in front of its centre while the lids, the
+    face or the hair cover the iris' rim plane behind it; it is off the iris when seen and its centre's ray meets no
+    triangle of the iris.  (The stage 5 ray check, tools-independent: it reads only the files MMD reads.)"""
+
+    def __init__(self, model_bytes, motion, morph_motions, camera):
+        import numpy as np
+        self.np = np
+        doc = pmx_edit.loads(model_bytes)
+        self.model = model = pmx.loads(model_bytes)
+        self.mats = mats = material_table(doc)
+        faces = np.array(pmx_eyes.middle_tables(doc)[0], dtype=np.int64).reshape(-1, 3)
+        face_mat = np.zeros(len(faces), dtype=np.int64)
+        for k, (_, _, first, count) in enumerate(mats):
+            face_mat[first:first + count] = k
+        rest = np.array([v.position() for v in doc.vertices], dtype=float)
+        inside = np.all([(rest[:, c] >= BOX[c][0]) & (rest[:, c] <= BOX[c][1]) for c in range(3)], axis=0)
+        keep = np.all(inside[faces], axis=1)
+        self.sel = np.nonzero(inside)[0]
+        local = {v: k for k, v in enumerate(self.sel)}
+        bones, weights = [], []
+        for v in self.sel:
+            pairs = [(b, w) for b, w in doc.vertices[v].pairs() if w > 0.0][:4]
+            total = sum(w for _, w in pairs) or 1.0
+            bones.append([b for b, _ in pairs] + [0] * (4 - len(pairs)))
+            weights.append([w / total for _, w in pairs] + [0.0] * (4 - len(pairs)))
+        self.bones, self.weights = np.array(bones, dtype=np.int64), np.array(weights, dtype=float)
+        self.rest = rest[self.sel]
+        self.rest_bones = np.array([b.position for b in model.bones], dtype=float)
+        keyed = {k.name for m in morph_motions for k in m.morphs}
+        self.morphs = {}
+        for name, offsets in pmx_eyes.vertex_morphs(doc).items():
+            if name in keyed:
+                arr = np.zeros_like(self.rest)
+                for v, o in offsets.items():
+                    if v in local:
+                        arr[local[v]] = o
+                if np.abs(arr).max() > 0.0:
+                    self.morphs[name] = arr
+        self.morph_motions = morph_motions
+        visible = np.array([m[1] > 0.0 for m in mats])
+        hl = next(k for k, m in enumerate(mats) if m[0] == "HL")
+        iris = next(k for k, m in enumerate(mats) if m[0] == "瞳")
+        to_local = np.vectorize(lambda v: local.get(int(v), -1))
+        self.occluders = to_local(faces[keep & visible[face_mat] & (face_mat != hl)])
+        self.lids = to_local(faces[keep & np.isin(face_mat, [k for k, m in enumerate(mats) if m[0] in LIDS])])
+        self.iris_tris = to_local(faces[keep & (face_mat == iris)])
+        self.quads = []
+        for q in pmx_eyes.components([tuple(t) for t in faces[face_mat == hl]]):
+            r0 = rest[q].mean(axis=0)
+            self.quads.append((("R" if r0[0] < 0 else "L") + ("U" if r0[1] > 17.15 else "D"), [local[v] for v in q]))
+        eye_idx, _ = pmx_eyes.find_eyes(doc)
+        self.discs = {}
+        iris_v = sorted({int(v) for t in faces[face_mat == iris] for v in t})
+        for e in eye_idx:
+            mine = [v for v in iris_v if pmx_eyes._eye_of(doc, v, eye_idx) == e]
+            bone = max(doc.vertices[mine[0]].pairs(), key=lambda bw: bw[1])[0]
+            pts = rest[mine]
+            centre = np.array([(pts[:, 0].max() + pts[:, 0].min()) / 2, (pts[:, 1].max() + pts[:, 1].min()) / 2,
+                               pts[:, 2].min()])
+            self.discs["R" if centre[0] < 0 else "L"] = (bone, centre)
+        self.pose = fk.Pose(model, motion, [b.name for b in model.bones])
+        self.cams = fk.camera_keys(camera)
+
+    def _rotate(self, q, v):
+        np = self.np
+        u, w = q[:, :3], q[:, 3:4]
+        t = 2.0 * np.cross(u, v)
+        return v + w * t + np.cross(u, t)
+
+    def _hits(self, origin, target, tri):
+        """the ray parameter (target at 1) of each triangle's hit, inf where it misses"""
+        np = self.np
+        d = target - origin
+        e1, e2 = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+        p = np.cross(d, e2)
+        det = np.einsum("ij,ij->i", e1, p)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        s = origin - tri[:, 0]
+        u = np.einsum("ij,ij->i", s, p) * inv
+        q = np.cross(s, e1)
+        v = np.einsum("j,ij->i", d, q) * inv
+        t = np.einsum("ij,ij->i", e2, q) * inv
+        return np.where(ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-9), t, np.inf)
+
+    def frame(self, frame):
+        """[(the quad's tag, seen, poke, off the iris)] at `frame`"""
+        np = self.np
+        x = self.rest.copy()
+        for name, arr in self.morphs.items():
+            w = 0.0
+            for m in self.morph_motions:                      # a later motion's keys on the morph win
+                keys = sorted((k for k in m.morphs if k.name == name), key=lambda k: k.frame)
+                if keys:
+                    before = [k for k in keys if k.frame <= frame]
+                    after = [k for k in keys if k.frame > frame]
+                    if not before:
+                        w = keys[0].weight
+                    elif not after or before[-1].frame == frame:
+                        w = before[-1].weight
+                    else:
+                        a, b = before[-1], after[0]
+                        w = a.weight + (b.weight - a.weight) * (frame - a.frame) / float(b.frame - a.frame)
+            if w:
+                x += w * arr
+        world = self.pose.world(frame)
+        P = np.array([world[i][0] for i in range(len(self.model.bones))], dtype=float)
+        Q = np.array([world[i][1] for i in range(len(self.model.bones))], dtype=float)
+        X = np.zeros_like(x)
+        for k in range(4):
+            b, w = self.bones[:, k], self.weights[:, k]
+            X += w[:, None] * (P[b] + self._rotate(Q[b], x - self.rest_bones[b]))
+        cam = np.array(fk.camera_position(fk.camera_at(self.cams, frame)), dtype=float)
+        occluders, lids, iris = X[self.occluders], X[self.lids], X[self.iris_tris]
+        out = []
+        for tag, q in self.quads:
+            centre = X[q].mean(axis=0)
+            seen = not (self._hits(cam, centre, occluders) < 1.0 - 1e-6).any()
+            bone, dc = self.discs[tag[0]]
+            C = P[bone] + self._rotate(Q[bone:bone + 1], (dc - self.rest_bones[bone])[None])[0]
+            normal = self._rotate(Q[bone:bone + 1], np.array([[0.0, 0.0, -1.0]]))[0]
+            d = centre - cam
+            hit = cam + d * float(np.dot(C - cam, normal) / np.dot(d, normal))
+            poke = seen and bool((self._hits(cam, hit, lids) < 1.0 - 1e-6).any())
+            off = seen and not np.isfinite(self._hits(cam, centre, iris)).any()
+            out.append((tag, seen, poke, off))
+        return out
+
+
+class SongTest(unittest.TestCase):
+    """the MV (hinata's inputs, named by EYE_OPTICS_SONG; skipped with the reason where it is not set): the 52 seconds'
+    look at the fingers converges, the vergence is on the hands and never on the camera, and no light shows on a lid
+    or off the iris where the stage 5 review's ray check of every frame found them"""
+
+    @classmethod
+    def setUpClass(cls):
+        paths = song_paths()
+        with open(paths["model"], "rb") as f:
+            cls.model_bytes = f.read()
+        cls.dance, cls.gaze, cls.face, cls.camera = (vmd.load(paths[k]) for k in ("dance", "gaze", "face", "camera"))
+        cls.result = eye_optics.optics(cls.model_bytes, cls.dance, cls.gaze, cls.camera,
+                                       eye_optics.merge_params(eye_optics.PARAMS, {}), face=cls.face)
+
+    def test_the_52_seconds_look_at_the_fingers_converges_3_degrees_or_more(self):
+        """the coordinator's sample: the left hand's fingers 11 to 50 cm in front of the eyes, 1546 to 1570"""
+        self.assertGreaterEqual(min(self.result.trace["vergence"][1556:1571]), 3.0)
+
+    def test_the_vergence_is_on_the_hands_and_never_on_the_camera(self):
+        rep = self.result.report["vergence"]
+        self.assertGreaterEqual(rep["share"]["hand"], 0.5)
+        self.assertEqual(rep["camera_max_degrees"], 0.0)
+        self.assertLessEqual(rep["step"]["max"], 2.0)
+
+    def test_no_light_on_a_lid_or_off_the_iris_where_the_review_found_them(self):
+        check = RayCheck(self.model_bytes, eye_optics.merge(self.dance, self.gaze, self.result.motion),
+                         [self.face, self.result.motion], self.camera)
+        found = []
+        for frame in POKED + OFF_IRIS:
+            for tag, seen, poke, off in check.frame(frame):
+                if poke or off:
+                    found.append((frame, tag, "poke" if poke else "off the iris"))
+        self.assertEqual(found, [])
 
 
 if __name__ == "__main__":

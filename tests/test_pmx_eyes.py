@@ -36,12 +36,14 @@ def quad(cx, cy, z, half_x, half_y):
             (cx - half_x, cy - half_y, z)]
 
 
-def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), extra_morphs=(), iris_z=None):
+def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), extra_morphs=(), iris_z=None, lid=None):
     """a head with Sour's Rin's eye bones (両目 the handle, 右目 / 左目 turning with it by append ratio 1, the iris on a
     child bone), per eye a pupil quad and two highlight quads at Rin's depths, the morphs that reveal them, 瞳大 and
     まばたき, and one skin triangle.  `extra_bones` [(name, parent index, position)] come after the eyes' (translatable
     when they have no parent), `extra_morphs` [(name, kind)] are empty morphs of that kind (1 vertex, 8 material).
-    `iris_z` adds an iris (a flat quad of the material 瞳, 0.16 by 0.22 about the pupil) at that depth."""
+    `iris_z` adds an iris (a flat quad of the material 瞳, 0.16 by 0.22 about the pupil) at that depth.  `lid`
+    (edge, z, drop) adds an upper lid per eye: a quad of the material face on the head, 0.6 wide and 0.5 high over the
+    iris from the height `edge` up, at depth z, that まばたき lowers by `drop` a unit."""
     w = Writer(bone=2, vertex=2, morph=1, material=1)
     bones = [w.bone("頭", position=(0.0, 16.24, 0.0)),                                                     # 0
              w.bone("両目" if with_handle else "目線", parent=0, position=(0.0, 19.37, -0.26))]              # 1
@@ -55,7 +57,7 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
     for name, parent, position in extra_bones:
         bones.append(w.bone(name, parent=parent, position=position, flags=NORMAL | (TRANSLATE if parent < 0 else 0)))
     positions, weights = [], []
-    pupil, hl2, hl, iris = {}, {}, {}, {}
+    pupil, hl2, hl, iris, lids = {}, {}, {}, {}, {}
     for side, s, bone in (("右", -1.0, 4), ("左", 1.0, 5)):
         if not with_eyes:
             bone = 0
@@ -69,6 +71,11 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
             positions += corners
             weights += [bone] * 4
             {"pupil": pupil, "hl2": hl2, "hl": hl, "iris": iris}[name][side] = list(range(first, first + 4))
+        if lid is not None:
+            first = len(positions)
+            positions += quad(s * 0.507, lid[0] + 0.25, lid[1], 0.3, 0.25)
+            weights += [0] * 4
+            lids[side] = list(range(first, first + 4))
     skin = len(positions)
     positions.append((0.0, 17.0, -1.2))
     weights.append(0)
@@ -81,9 +88,9 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
         return [q[0], q[1], q[2], q[0], q[2], q[3]]
     pupil_faces = tris(pupil["右"]) + tris(pupil["左"]) + (tris(iris["右"]) + tris(iris["左"]) if iris else [])
     hl_faces = tris(hl2["右"]) + tris(hl["右"]) + tris(hl2["左"]) + tris(hl["左"])
-    face_faces = [skin, skin, skin]
+    face_faces = [skin, skin, skin] + [v for side in sorted(lids) for v in tris(lids[side])]
     faces = [w.index(i, "vertex") for i in face_faces + pupil_faces + hl_faces]
-    materials = [w.material("face", faces=3), w.material("瞳", faces=len(pupil_faces)),
+    materials = [w.material("face", faces=len(face_faces)), w.material("瞳", faces=len(pupil_faces)),
                  w.material(material, faces=len(hl_faces))]
 
     def morph(name, offsets, panel=4):
@@ -98,12 +105,13 @@ def toy_bytes(material="HL", with_eyes=True, with_handle=True, extra_bones=(), e
     morphs = [morph("瞳大", big, panel=2), morph("瞳細", thin, panel=2),
               morph("HL", [(v, (0.0, 0.0, HL_PULL)) for v in hl["右"] + hl["左"]]),
               morph("HL２", [(v, (0.0, 0.0, HL2_PULL)) for v in hl2["右"] + hl2["左"]]),
-              morph("まばたき", [(v, (0.0, -0.17, 0.05)) for v in hl2["右"] + hl2["左"]], panel=2)]
+              morph("まばたき", [(v, (0.0, -0.17, 0.05)) for v in hl2["右"] + hl2["左"]]
+                    + [(v, (0.0, -lid[2], 0.0)) for side in sorted(lids) for v in lids[side]], panel=2)]
     morphs += [w.morph(name, kind=kind) for name, kind in extra_morphs]
     morphs.append(w.morph("HL消", kind=8, offsets=1))
     frames = [w.frame("目", items=[("bone", 1)] + ([("bone", 2), ("bone", 3)] if with_eyes else []))]
     return w.build(vertices=vertices, faces=faces, materials=materials, bones=bones, morphs=morphs, frames=frames), \
-        {"pupil": pupil, "hl2": hl2, "hl": hl, "iris": iris, "positions": positions}
+        {"pupil": pupil, "hl2": hl2, "hl": hl, "iris": iris, "lid": lids, "positions": positions}
 
 
 def turn(yaw=0.0, pitch=0.0):
