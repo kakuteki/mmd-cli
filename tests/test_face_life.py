@@ -431,7 +431,6 @@ class BakeWithinTest(unittest.TestCase):
         self.assertEqual((keys[0][0], keys[-1][0]), (0, 599))
 
     def test_a_slow_rise_broken_by_small_dips_stays_without_creep(self):
-        f = np.arange(200)
         v = np.full(200, 0.1)
         i = np.arange(40)
         v[80:120] = 0.1 + 0.0005 * i + 0.0008 * (i % 2)         # up 0.0013, down 0.0003, up ...: no creep; a line within
