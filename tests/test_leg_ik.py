@@ -26,10 +26,11 @@ REST = {
 KNEE_LIMITS = ((-math.pi, 0.0, 0.0), (0.0, 0.0, 0.0))
 
 
-def rin_legs_bytes():
+def rin_legs_bytes(vertices=None):
     """a model with the leg rig of Sour's Rin: the body chain, 腰キャンセル (腰 x -1), the leg IK (40 loops, 2 rad, the knee
-    limited to an X turn of -180..0), the toe IK (3 loops, 4 rad), the D bones (append x 1) and 足先EX"""
-    w = Writer(bone=2)
+    limited to an X turn of -180..0), the toe IK (3 loops, 4 rad), the D bones (append x 1) and 足先EX.  `vertices`, when
+    given, is called with the Writer and the bone indices by name and returns the vertex records."""
+    w = Writer(bone=2, vertex=2)
     rows = [("全ての親", None, "全ての親", NORMAL | TRANSLATE, {}), ("センター", "全ての親", "センター", NORMAL | TRANSLATE, {}),
             ("グルーブ", "センター", "グルーブ", NORMAL | TRANSLATE, {}), ("腰", "グルーブ", "腰", NORMAL, {}),
             ("下半身", "腰", "下半身", NORMAL, {})]
@@ -64,7 +65,7 @@ def rin_legs_bytes():
             args["ik"] = {"target": index[target], "loops": loops, "angle": angle,
                           "links": [(index[l], lim) for l, lim in links]}
         built.append(w.bone(name, **args))
-    return w.build(name="rin-legs", bones=built)
+    return w.build(name="rin-legs", bones=built, vertices=vertices(w, index) if vertices else ())
 
 
 DATA = rin_legs_bytes()
