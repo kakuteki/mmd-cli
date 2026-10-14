@@ -65,6 +65,20 @@ class LookSettingsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 mv_look.merge_look(bad)
 
+    def test_the_stage_section_takes_only_what_the_world_stage_can_draw(self):
+        look = mv_look.merge_look({"stage": {"world": 1, "radius": 0, "pool": 0.5}})
+        self.assertEqual((look["stage"]["world"], look["stage"]["radius"], look["stage"]["pool"]), (1, 0, 0.5))
+        self.assertEqual(look["stage"]["truss"], mv_look.DEFAULT_LOOK["stage"]["truss"])
+        self.assertEqual(mv_look.merge_look({})["stage"]["world"], 0)        # by default fixed to the picture, as before
+        for bad in ({"world": 2}, {"floor": 0.5}, {"radius": -1}, {"specks": 0}, {"pool": 1.5}, {"shadow": -0.1},
+                    {"floor_step": 0}, {"floor_accent_every": 1.5}, {"pool_colour": [1, 2]}, {"wrold": 1},
+                    {"world": 1, "floor": 0, "shadow": 0.5}, {"floor_y": float("nan")}, {"floor_y": "high"}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"stage": bad})
+        # the floor's height: 0 (make_stage.py's floor) unless the look raises it (0.111: where the model's soles stand)
+        self.assertEqual(mv_look.merge_look({})["stage"]["floor_y"], 0.0)
+        self.assertEqual(mv_look.merge_look({"stage": {"floor_y": 0.111}})["stage"]["floor_y"], 0.111)
+
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")
 class PlateTest(unittest.TestCase):
@@ -1243,11 +1257,11 @@ class PreparedLayersTest(unittest.TestCase):
             self.assertEqual(calls, [])
 
     def test_layers_prepared_by_another_version_of_the_tools_are_refused(self):
-        # the note holds the code of mv_look and mv_text (review of fast-render, m15): with a copy of the two tools, a byte
-        # more in either after prepare refuses the layers
+        # the note holds the code of mv_look, mv_text and mv_world (review of fast-render, m15): with a copy of the tools, a
+        # byte more in any of them after prepare refuses the layers
         copy = os.path.join(self.folder, "tools")
         os.makedirs(copy)
-        for name in ("mv_look.py", "mv_text.py"):
+        for name in ("mv_look.py", "mv_text.py", "mv_world.py"):
             shutil.copyfile(os.path.join(ROOT, "tools", name), os.path.join(copy, name))
         spec = importlib.util.spec_from_file_location("mv_look_copy", os.path.join(copy, "mv_look.py"))
         module = importlib.util.module_from_spec(spec)
@@ -1255,7 +1269,7 @@ class PreparedLayersTest(unittest.TestCase):
         look = module.load_look(self.look)
         module.prepare(look, self.work, (320, 180), 30, self.cues)
         module.load_prepared(self.work, look, (320, 180), 30, self.cues)                # as it was: taken
-        for name in ("mv_look.py", "mv_text.py"):
+        for name in ("mv_look.py", "mv_text.py", "mv_world.py"):
             path = os.path.join(copy, name)
             with open(path, "rb") as f:
                 kept = f.read()
