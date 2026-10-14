@@ -476,7 +476,8 @@ def analyze(solved, legend):
         pts = pic["points"]
         ring = [(skirt[(0, c)]["rest"], pts[skirt[(0, c)]["index"]]) for c in range(cols)]
         ring = [(a, b) for a, b in ring if b is not None]
-        rot = fit_rigid([a for a, _ in ring], [b for _, b in ring])[0] if len(ring) >= 3 else None
+        rot, shift = fit_rigid([a for a, _ in ring], [b for _, b in ring]) if len(ring) >= 3 else (None, None)
+        centre = np.mean([skirt[(0, c)]["rest"] for c in range(cols)], axis=0)
         columns, up, top, doubtful = [], 0, None, 0
         for c in range(cols):
             chain = [pts[skirt[(r, c)]["index"]] for r in range(rows)]
@@ -506,7 +507,15 @@ def analyze(solved, legend):
                 if t is not None:
                     up += t > 90.0
                     top = t if top is None or t > top else top
-            columns.append({"tilt": tilts, "hem": hem, "spread": spread, "root_turn": root,
+            twist = None
+            if rot is not None and chain[-1] is not None:
+                # the hem point in the waist ring's frame, its turn about the ring's vertical axis from rest (the sign of
+                # rotation_y: a hem turned by rotation_y(a) about the axis gives a)
+                local = rot.T @ (np.array(chain[-1]) - shift) - centre
+                home = np.array(rest[-1]) - centre
+                d = math.atan2(home[2], home[0]) - math.atan2(local[2], local[0])
+                twist = round(math.degrees(math.atan2(math.sin(d), math.cos(d))), 3)
+            columns.append({"tilt": tilts, "hem": hem, "spread": spread, "root_turn": root, "twist": twist,
                             "bend": [None if b is None else round(b, 3) for b in bends(chain, rest)]})
         contact = {}
         for kind in ("leg", "arm"):
@@ -527,8 +536,12 @@ def analyze(solved, legend):
                         if deepest is None or d > deepest["depth"]:
                             deepest = {"depth": round(d, 4), "row": r, "col": c, "side": side, "from": a_name}
             contact[kind] = {"max_depth": deepest["depth"] if deepest else 0.0, "deepest": deepest, "inside": inside}
+        twists = [col["twist"] for col in columns if col["twist"] is not None]
+        spreads = [col["spread"] for col in columns if col["spread"] is not None]
         out.append({"picture": pic["picture"], "song_frame": pic["song_frame"], "columns": columns, "up": int(up),
-                    "max_tilt": top, "doubtful": doubtful, "legs": contact["leg"], "arms": contact["arm"]})
+                    "max_tilt": top, "doubtful": doubtful, "legs": contact["leg"], "arms": contact["arm"],
+                    "twist": round(sum(twists) / len(twists), 3) if twists else None,
+                    "spread_mean": round(sum(spreads) / len(spreads), 3) if spreads else None})
     return {"rows": rows, "cols": cols, "pictures": out}
 
 

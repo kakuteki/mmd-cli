@@ -362,6 +362,22 @@ class AnalyzeTest(unittest.TestCase):
         self.assertGreater(legs["max_depth"], 0.0)             # column 0 hangs at z -1, -1.5 by the left thigh at x 0.6
         self.assertEqual(legs["deepest"]["side"], "左")
 
+    def test_twist_of_the_hem_against_the_waist_and_the_mean_spread(self):
+        legend = self.legend()
+        turn = probe.rotation_y(math.radians(30.0))            # the whole skirt turned and moved (the body turning)
+        lag = probe.rotation_y(math.radians(-12.0))            # and the hem points 12 degrees behind on top of that
+        pts = [None] * len(legend["markers"])
+        for m in legend["markers"]:
+            p = np.array(m["rest"], float)
+            if m["kind"] == "skirt" and m["row"] == 2:
+                p = lag @ p
+            pts[m["index"]] = list(turn @ p + np.array([1.0, -0.5, 2.0]))
+        out = probe.analyze({"pictures": [{"picture": 0, "song_frame": 1.0, "points": pts}]}, legend)
+        pic = out["pictures"][0]
+        self.assertAlmostEqual(pic["twist"], -12.0, 3)
+        spreads = [probe.tilt(pts[4 + 3 * c], pts[6 + 3 * c]) for c in range(4)]
+        self.assertAlmostEqual(pic["spread_mean"], sum(spreads) / 4.0, 3)
+
     def test_a_body_whose_ends_are_not_its_length_apart_is_left_out(self):
         legend = self.legend()
         pts = [None] * len(legend["markers"])
