@@ -1079,7 +1079,7 @@ class HandVergenceTest(unittest.TestCase):
         with open(trace, encoding="utf-8") as f:
             verg = json.load(f)["vergence"]
         self.assertGreater(min(verg[52:80]), 5.0)
-        self.assertLess(max(verg[:38] + verg[95:]), 0.05)
+        self.assertLess(max(verg[:38] + verg[110:]), 0.05)          # parallel before the look and a second after it
 
 
 class SaccadeTest(unittest.TestCase):

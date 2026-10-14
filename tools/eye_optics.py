@@ -142,24 +142,24 @@ The vergence (keys on 右目 and 左目, after their append from 両目; RESEARC
   geometric angle, RESEARCH 3.2 and the coordinator's probe; 15 cm: 11.6 degrees an eye at most); elsewhere 0.  The
   eyes meet on the point at that distance along the gaze (the gaze may fall short of the aim: at 52 s of the MV the
   raised finger's tip is above the eyes' reach).
-* It is in phase with the look (vergence_in_phase): the eyes start to converge vergence.lead seconds before the run
-  (they lead a target the hand moves by about 90 ms and lag a moving real target by about 125 ms: Erkelens et al.
-  1989, Proc R Soc B 236:417; the gaze's saccade onto the hand starts 2 or 3 frames before the look) and start to
-  diverge on its last frame; they are parallel on every frame on the camera (the rise waits for the last frame on the
-  camera before the run, the fall is over by the next one: a look between two looks at the camera only begins to
-  converge).  Each way runs along a minimum-jerk curve whose 5 to 95 % time is vergence.duration (0.15 s, 0.24 s in
-  all) or longer, so its top speed stays under max_speed (60 deg/s an eye).  This is faster than a person: natural
-  vergence between real targets peaks at about 50 deg/s for a change of 5 degrees (the two eyes together) and 150 to
-  200 for 34 (Erkelens, Steinman & Collewijn 1989, Proc R Soc B 236:441) but takes 0.23 s (5 degrees) to 0.42 s (20)
-  to 90 % without a saccade, and at most about 0.1 s less with one (Collewijn, Erkelens & Steinman 1995, Vision Res
-  35:3335, Fig. 17); this shape's time to 90 % is 0.16 to 0.17 s (a person's about 0.33 s for the 12 degrees and the
-  3 degree saccade at 52 s of the MV, 0.18 and 0.23 s at 163.8 and 182.8 s), and only 3 % of it falls within the
-  saccade (a person's 40 to 70 % with saccades of 10 to 40 degrees, Collewijn 1995).  The coordinator's "0.2 to
-  0.3 s" is taken as the whole of the move so that the eyes come together within the gaze's short looks.  The
-  gaze's looks last 0.3 to 0.6 s; with stage 5's
-  0.25 s from 5 to 95 % (0.41 s in all) the eyes of the MV v8 were past 3 degrees on the last 5 frames of the 0.3 s
-  look at 52 s only (of 6.0), and 55 % of its vergence came after the look.  (Tyler 2015's 0.24 s latency and 8 deg/s,
-  disparity steps on a screen, put the whole vergence after the MV's looks, partly onto the camera: stage 5 review Q1.)
+* It is in phase with the look and timed as a person's (look_timing, vergence_in_time): the eyes start to converge as
+  the saccade onto the hand starts (the report's saccades; the frame before its first is the last at rest), or, for a
+  look with no saccade onto it, vergence.lead seconds before it (a person's eyes lead a target the hand moves by about
+  90 ms and lag a moving real target by about 125 ms: Erkelens et al. 1989, Proc R Soc B 236:417); they start to
+  diverge as the saccade away starts, else on the look's last frame.  Each way is a first-order move (fast at once,
+  then slower and slower: a person's vergence peaks early and ends in a long tail), ended after TAIL time constants,
+  whose time to 90 % is a person's for its size (both eyes) and its saccade's: Collewijn, Erkelens & Steinman 1995,
+  Vision Res 35:3335, Fig. 17 C and D (real targets, means of three subjects; vergence.d90): convergence 0.23 s for 5
+  degrees to 0.42 s for 20 without a saccade, at most about 0.1 s less with one; divergence quicker with a saccade.
+  A person makes about 40 % (10-degree saccade) to 60 % (40) of the convergence within the saccade, more for a small
+  vergence, and 50 % to nearly all of the divergence (ibid., Fig. 18 and text); this shape makes what its first-order
+  move makes in the saccade's frames.  At most max_speed (60 deg/s an eye) either way, and parallel on every frame on
+  the camera: the rise waits for the last frame on the camera before the run, a fall into one is begun early at that
+  speed, so a look between two looks at the camera only begins to converge.  (Stage 5 ran a minimum-jerk curve of a
+  set length, 0.41 s in all, and this branch's first form one of 0.24 s: review eye-optics-v2 found the latter twice
+  as fast as a person at 52 s of the MV, 0.17 s to 90 % against about 0.33 s, with 3 % of it within the saccade.
+  Tyler 2015's 0.24 s latency and 8 deg/s, disparity steps on a screen, put the whole vergence after the MV's looks,
+  partly onto the camera: stage 5 review Q1.)
 * Each eye then turns from the gaze onto the point at that distance along it (right eye -X, left eye +X: inward is
   +yaw for the right eye and -yaw for the left, as the coordinator's vergence probe keys them).
 
@@ -197,8 +197,8 @@ FORWARD = (0.0, 0.0, -1.0)
 UP = (0.0, 1.0, 0.0)
 BIG, THIN, HIDE = "瞳大", "瞳細", "HL消"
 CUT_JUMP, CUT_TURN = 1.0, 5.0   # a camera cut: it moves more than this (units) or turns more (degrees) in a frame
-MIN_JERK_5_95 = 0.6162          # the 5 to 95 % time of a minimum-jerk move, as a share of its whole time
-MIN_JERK_TOP = 1.875            # its top speed, times step / time
+TAIL = 5.0                      # time constants after which a first-order vergence move ends (0.7 % was left)
+X90 = -math.log(1.0 - 0.9 * (1.0 - math.exp(-TAIL)))   # 2.2437: where such a move (ended at TAIL) is 90 % done
 MAX_SPAN = 120                  # frames between two keys at most
 OPEN_LID = 0.45                 # an eye whose closing morphs are at this or less is open (the report's open-eye measures)
 
@@ -234,11 +234,22 @@ PARAMS = {
         "gap_frames": 6,                     # looks at a hand this many frames apart or fewer are one look
         "camera_deg": 4.0,                   # tools/eye_gaze.py counts a gaze this near the camera as eye contact
         "camera_frames": 3,
-        "lead": 0.07,                        # seconds the eyes start before the look (Erkelens 1989: about 90 ms)
-        "duration": 0.15,                    # seconds, 5 to 95 %, each way: 0.24 s in all (the coordinator's 0.2 to
-                                             # 0.3 as the whole move; faster than a person's, see the docstring)
+        "lead": 0.07,                        # seconds the eyes start before a look the report names no saccade onto
+                                             # (Erkelens 1989: they lead a target the hand moves by about 90 ms)
         "max_speed": 60.0,                   # degrees a second an eye (natural gaze shifts reach 50 to 200 with both
                                              # eyes together, Erkelens 1989)
+        "d90": {                             # ms to 90 % of a vergence of `sizes` degrees (both eyes) made with a
+                                             # saccade of `versions` degrees, rows by version: Collewijn, Erkelens &
+                                             # Steinman 1995, Vision Res 35:3335, Fig. 17 C and D (real targets, means
+                                             # of three subjects; read off the figure, about 10 ms; 227 and 418 from
+                                             # its text)
+            "versions": [0.0, 10.0, 20.0, 40.0],
+            "sizes": [5.0, 10.0, 15.0, 20.0],
+            "convergence": [[227.0, 328.0, 372.0, 418.0], [180.0, 310.0, 310.0, 360.0], [145.0, 225.0, 250.0, 325.0],
+                            [150.0, 180.0, 250.0, 375.0]],
+            "divergence": [[280.0, 370.0, 395.0, 435.0], [170.0, 220.0, 340.0, 360.0], [110.0, 190.0, 310.0, 345.0],
+                           [75.0, 140.0, 250.0, 300.0]],
+        },
     },
     "pupil": {
         "iris_mm": 11.82,                    # the visible iris' diameter, to give the pupil in mm
@@ -390,9 +401,12 @@ def fixation_targets(rows, params, looks=(), contacts=()):
 
 
 def gaze_looks(report, gaze_bytes=None, dance_bytes=None):
-    """{"looks": [{"first", "last", "hand", "aim": [(x, y, z) per frame]}], "contacts": [(first, last)]}: the looks at a
-    hand and the eye contacts of tools/eye_gaze.py's --report (the dict read from it; frames as in the gaze VMD, the
-    aims in the world, model units).  With `gaze_bytes` (the gaze VMD as read) the report must name them by its
+    """{"looks": [{"first", "last", "hand", "aim": [(x, y, z) per frame], "into", "away"}], "contacts": [(first, last)]}:
+    the looks at a hand and the eye contacts of tools/eye_gaze.py's --report (the dict read from it; frames as in the
+    gaze VMD, the aims in the world, model units).  "into" is the saccade onto the look (of the report's saccades, the
+    last of reason hand that starts by its first frame and lands no more than 2 frames before it), "away" the first
+    saccade that starts within 3 frames after its last frame, whatever its reason; each {"frame", "frames",
+    "amplitude"} or None.  With `gaze_bytes` (the gaze VMD as read) the report must name them by its
     out_md5: a report of another gaze would bring the eyes together where she looks at nothing near; with `dance_bytes`
     (the dance VMD as read) by its in_md5: the points aimed at are that dance's hands.  ValueError on a
     report without looks at a hand (not eye_gaze's, or from before stage 6), without out_md5 or without the points the
@@ -419,6 +433,8 @@ def gaze_looks(report, gaze_bytes=None, dance_bytes=None):
                              "points the eyes aim at are that dance's hands)" % (named, got))
     looks = []
     try:
+        saccades = [{"frame": int(s["frame"]), "frames": int(s["frames"]), "amplitude": float(s["amplitude"]),
+                     "reason": s.get("reason")} for s in (report.get("saccades") or {}).get("list", [])]
         for h in hands["list"]:
             first, last, aim = int(h["first"]), int(h["last"]), h.get("aim")
             if not isinstance(aim, list):
@@ -428,8 +444,16 @@ def gaze_looks(report, gaze_bytes=None, dance_bytes=None):
             if last < first or len(aim) != last - first + 1:
                 raise ValueError("the gaze report's look at a hand on frames %d to %d has %d aims, not one a frame"
                                  % (first, last, len(aim)))
+            into = [s for s in saccades if s["reason"] == "hand" and s["frame"] <= first
+                    and s["frame"] + s["frames"] - 1 >= first - 2]
+            away = [s for s in saccades if last < s["frame"] <= last + 3]
+
+            def brief(s):
+                return {"frame": s["frame"], "frames": s["frames"], "amplitude": s["amplitude"]}
             looks.append({"first": first, "last": last, "hand": h.get("hand"),
-                          "aim": [tuple(float(c) for c in point) for point in aim]})
+                          "aim": [tuple(float(c) for c in point) for point in aim],
+                          "into": brief(max(into, key=lambda s: s["frame"])) if into else None,
+                          "away": brief(min(away, key=lambda s: s["frame"])) if away else None})
         contacts = [(int(c["first"]), int(c["last"])) for c in (report.get("contacts") or {}).get("list", [])]
     except (KeyError, TypeError) as exc:
         raise ValueError("the gaze report is not tools/eye_gaze.py's: %s %s" % (type(exc).__name__, exc))
@@ -457,34 +481,97 @@ def vergence_demand(labels, metres, params):
     return out
 
 
-def _min_jerk(s):
-    s = min(1.0, max(0.0, s))
-    return s * s * s * (10.0 + s * (6.0 * s - 15.0))
+def rise_share(x):
+    """the share of a first-order move done `x` time constants after it starts, ended after TAIL of them (where 0.7 %
+    was left: it reaches its end there instead of creeping on)"""
+    if x <= 0.0:
+        return 0.0
+    if x >= TAIL:
+        return 1.0
+    return (1.0 - math.exp(-x)) / (1.0 - math.exp(-TAIL))
 
 
-def vergence_in_phase(demands, labels, fps, lead, duration, max_speed):
-    """the vergence per frame, in phase with the looks at a hand (each run of a demand above 0): a minimum-jerk rise
-    that starts `lead` seconds before the run (not before the last frame on the camera ahead of it) and a fall that
-    starts on the run's last frame, or early enough to be over before the next frame on the camera (`labels`); each
-    has its 5 to 95 % time `duration` seconds or longer, so that its top speed stays under `max_speed` (degrees a
-    second).  A run too short for both (a look between two looks at the camera) rises less: the rise and the fall
-    cross below its demand.  Overlapping runs take the larger.  0 on every frame on the camera."""
-    n = len(demands)
+def vergence_d90(table, kind, size, version):
+    """seconds a person's vergence of `size` degrees (both eyes) made with a saccade of `version` degrees takes to 90 %
+    (`kind` "convergence" or "divergence"): bilinear in `table` (vergence.d90, Collewijn 1995 Fig. 17), held at its
+    edges"""
+    def along(xs, ys, x):
+        x = min(max(x, xs[0]), xs[-1])
+        for k in range(len(xs) - 1):
+            if x <= xs[k + 1]:
+                t = (x - xs[k]) / (xs[k + 1] - xs[k])
+                return ys[k] + t * (ys[k + 1] - ys[k])
+        return ys[-1]
+    rows = [along(table["sizes"], row, size) for row in table[kind]]
+    return along(table["versions"], rows, version) / 1000.0
+
+
+def run_timing(run, table, fps):
+    """(the time constants of a run's rise and fall in frames, the seconds to 90 % of each, the vergence it has reached
+    when it starts to diverge): the rise a convergence of 2 x top degrees with the saccade onto the hand, the fall a
+    divergence of what it reached with the saccade away"""
+    d_up = vergence_d90(table, "convergence", 2.0 * run["top"], run["saccade_in"])
+    tau_up = d_up / X90 * fps
+    peak = run["top"] * rise_share((run["fall_at"] - run["rise_at"]) / tau_up)
+    d_down = vergence_d90(table, "divergence", 2.0 * peak, run["saccade_out"])
+    return tau_up, d_down / X90 * fps, d_up, d_down, peak
+
+
+def look_timing(runs, demand, looks, fps, lead):
+    """the runs on a hand ((first, last) frame indices of `demand` above 0) with their timing for vergence_in_time: the
+    rise on the frame before the saccade onto the run's first look starts (the report's "into": the eyes turn and come
+    together at once) with that saccade's size, else `lead` seconds before the run with none (a vergence with no
+    saccade); the fall on the frame before the saccade away from its last look starts, with its size, else on the
+    run's last frame with none"""
+    out = []
+    for a, b in runs:
+        mine = [L for L in looks if L["first"] <= b and L["last"] >= a]
+        head = min(mine, key=lambda L: L["first"]) if mine else None
+        tail = max(mine, key=lambda L: L["last"]) if mine else None
+        if head is not None and head["first"] == a and head.get("into"):
+            rise_at, saccade_in = head["into"]["frame"] - 1.0, head["into"]["amplitude"]
+        else:
+            rise_at, saccade_in = a - lead * fps, 0.0
+        if tail is not None and tail["last"] == b and tail.get("away"):
+            fall_at, saccade_out = max(float(b), tail["away"]["frame"] - 1.0), tail["away"]["amplitude"]
+        else:
+            fall_at, saccade_out = float(b), 0.0
+        out.append({"first": a, "last": b, "top": demand[a], "rise_at": rise_at, "saccade_in": saccade_in,
+                    "fall_at": fall_at, "saccade_out": saccade_out, "into": head.get("into") if head else None,
+                    "away": tail.get("away") if tail else None})
+    return out
+
+
+def vergence_in_time(n, runs, labels, fps, max_speed, table):
+    """the vergence per frame for the runs on a hand (dicts: "first" and "last" frame of the run, "top" degrees an eye,
+    "rise_at" the frame the eyes start to converge (a float: 0 there), "saccade_in" the degrees of the saccade onto the
+    hand, "fall_at" the frame they start to diverge, "saccade_out" those of the saccade away): a first-order rise toward
+    top from rise_at (not before the last frame on the camera ahead of the run) and from fall_at a first-order fall
+    from where it got to, each with a person's time to 90 % for its size and its saccade's (vergence_d90) and ended
+    after TAIL time constants; the larger where runs overlap.  Then 0 on every frame on the camera (`labels`) and at
+    most max_speed / fps a frame either way, by lowering (a rise slowed at its start, a fall into a frame on the camera
+    begun early): a look between two looks at the camera rises less."""
     out = [0.0] * n
-    for a, b in _runs([d > 0.0 for d in demands]):
-        top = demands[a]
-        whole = max(duration / MIN_JERK_5_95, MIN_JERK_TOP * top / max_speed) * fps     # frames, each way
-        start = a - lead * fps
-        before = next((i for i in range(a - 1, max(-1, int(math.floor(start)) - 1), -1) if labels[i] == "camera"), None)
-        if before is not None:
-            start = max(start, float(before))
-        stop = float(b)
-        after = next((i for i in range(b + 1, min(n, b + 2 + int(math.ceil(whole)))) if labels[i] == "camera"), None)
-        if after is not None:
-            stop = min(stop, after - whole)
-        for i in range(max(0, int(math.floor(start))), min(n, int(math.ceil(stop + whole)) + 1)):
-            v = top * min(_min_jerk((i - start) / whole), 1.0 - _min_jerk((i - stop) / whole))
+    for r in runs:
+        before = next((i for i in range(r["first"] - 1, max(-1, int(math.floor(r["rise_at"])) - 1), -1)
+                       if labels[i] == "camera"), None)
+        run = dict(r, rise_at=max(r["rise_at"], float(before)) if before is not None else r["rise_at"])
+        tau_up, tau_down, _, _, peak = run_timing(run, table, fps)
+        a0, a1 = run["rise_at"], run["fall_at"]
+        for i in range(max(0, int(math.floor(a0))), min(n, int(math.ceil(a1 + TAIL * tau_down)) + 1)):
+            if i <= a1:
+                v = run["top"] * rise_share((i - a0) / tau_up)
+            else:
+                v = peak * (1.0 - rise_share((i - a1) / tau_down))
             out[i] = max(out[i], v)
+    for i, lab in enumerate(labels):
+        if lab == "camera":
+            out[i] = 0.0
+    step = max_speed / fps
+    for i in range(n - 2, -1, -1):
+        out[i] = min(out[i], out[i + 1] + step)
+    for i in range(1, n):
+        out[i] = min(out[i], out[i - 1] + step)
     return [v + 0.0 for v in out]
 
 
@@ -1401,7 +1488,8 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
         look_rows.append((look["first"], look["last"], far))
     metres, labels = fixation_targets(rows, vp, look_rows, given["contacts"])
     demand = vergence_demand(labels, metres, vp)
-    angle = vergence_in_phase(demand, labels, FPS, vp["lead"], vp["duration"], vp["max_speed"])
+    timed = look_timing(_runs([d > 0.0 for d in demand]), demand, given["looks"], FPS, vp["lead"])
+    angle = vergence_in_time(n, timed, labels, FPS, vp["max_speed"], vp["d90"])
     turns = []
     for g, a in zip(gaze_head, angle):
         turns.append(vergence_turns(g, half / math.tan(math.radians(a)), half) if a > 1e-9 else (fk.IDENTITY, fk.IDENTITY))
@@ -1714,15 +1802,31 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     for lab in labels:
         counts[lab] = counts.get(lab, 0) + 1
     hand_runs = []
-    for a, b in _runs([lab == "hand" for lab in labels]):
+    for run in timed:
+        a, b = run["first"], run["last"]
         seen_m = [m for m in metres[a:b + 1] if m is not None]
         on = [i for i in range(a, b + 1) if i in aim_at]
         off = [_degrees_between(gaze_world[i], _sub(aim_at[i][0], centres[i])) for i in on]
         later = angle[b + 1:min(n, b + 31)]
+        _, _, d_up, d_down, _ = run_timing(run, vp["d90"], FPS)
+        # how much of the move the saccades carry: the rise reached by the landing of the saccade onto the hand, the
+        # fall made by the landing of the one away (as a share of where it started)
+        into, away = run["into"], run["away"]
+        land_in = into["frame"] + into["frames"] - 1 if into else None
+        land_out = away["frame"] + away["frames"] - 1 if away else None
+        start = angle[int(run["fall_at"])] if 0 <= int(run["fall_at"]) < n else 0.0
         hand_runs.append({"first": frames[a], "last": frames[b], "seconds": _r((b - a + 1) / FPS, 3),
                           "median_m": _r(_median(seen_m), 3),
                           "hand": "/".join(sorted({str(aim_at[i][1]) for i in on})),
                           "aim_off_gaze_degrees": _r(_median(off), 2), "demand_degrees": _r(demand[a], 3),
+                          "rise_at": _r(run["rise_at"], 2), "saccade_in_deg": _r(run["saccade_in"], 3),
+                          "d90_up_s": _r(d_up, 3),
+                          "in_saccade_rise": _r(angle[land_in] / demand[a], 3) if land_in is not None and land_in < n
+                          else None,
+                          "fall_at": _r(run["fall_at"], 2), "saccade_away_deg": _r(run["saccade_out"], 3),
+                          "d90_down_s": _r(d_down, 3),
+                          "in_saccade_fall": _r(1.0 - angle[land_out] / start, 3) if land_out is not None
+                          and land_out < n and start > 0.0 else None,
                           "reached_within_degrees": _r(max(angle[a:b + 1]), 3),
                           "reached_after_degrees": _r(max(later) if later else 0.0, 3),
                           "peak_frame": frames[max(range(max(0, a - 10), min(n, b + 31)), key=lambda j: angle[j])]})

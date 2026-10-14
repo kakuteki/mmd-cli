@@ -190,65 +190,101 @@ class VergenceGeometryTest(unittest.TestCase):
             self.assertAlmostEqual(sum(a * b / n for a, b in zip(seen, want)), 1.0, 9)
 
 
-class VergencePhaseTest(unittest.TestCase):
-    """the vergence is in phase with the look at a hand: it starts a little ahead of the look (the eyes lead a target
-    the hand moves, Erkelens 1989), opens from the look's last frame, and is 0 on every frame on the camera"""
+class VergenceTimeTest(unittest.TestCase):
+    """the vergence follows a person's (review eye-optics-v2 A1, B1): it starts with the saccade onto the hand (the
+    gaze's report), fast and then slower and slower (a first-order move), and takes as long to 90 % as Collewijn,
+    Erkelens & Steinman 1995 measured for its size and the saccade's (Vision Res 35:3335, Fig. 17 C and D: real
+    targets, means of three subjects); it opens the same way from the saccade away; it is 0 on every frame on the camera
+    and moves at most max_speed a second"""
     P = eye_optics.PARAMS["vergence"]
 
-    def phase(self, demands, labels):
-        return eye_optics.vergence_in_phase(demands, labels, 30.0, self.P["lead"], self.P["duration"], self.P["max_speed"])
+    def track(self, top, rise_at=10.0, fall_at=100.0, saccade_in=0.0, saccade_out=0.0, n=160, labels=None, first=None,
+              last=None):
+        run = {"first": int(math.floor(rise_at)) + 1 if first is None else first,
+               "last": int(fall_at) if last is None else last, "top": top, "rise_at": rise_at, "fall_at": fall_at,
+               "saccade_in": saccade_in, "saccade_out": saccade_out}
+        return eye_optics.vergence_in_time(n, [run], labels or ["free"] * n, 30.0, self.P["max_speed"], self.P["d90"])
+
+    @staticmethod
+    def seconds_to(out, start, test):
+        return (next(i for i in range(int(math.ceil(start)), len(out)) if test(out[i])) - start) / 30.0
+
+    def test_the_time_to_90_percent_is_a_persons(self):
+        # (the vergence of both eyes, the saccade with it, ms to 90 %) as Fig. 17 C (convergence) and D (divergence)
+        # shows them: a larger vergence takes longer, a saccade with it shortens it, divergence with one is quicker
+        frame = 1.0 / 30.0
+        for size, saccade, want in ((10.0, 0.0, 328), (10.0, 20.0, 225), (20.0, 0.0, 418), (5.0, 40.0, 150)):
+            out = self.track(size / 2.0, saccade_in=saccade)
+            got = self.seconds_to(out, 10.0, lambda v: v >= 0.9 * size / 2.0)
+            self.assertAlmostEqual(got, want / 1000.0, delta=frame + 0.005, msg=(size, saccade))
+        for size, saccade, want in ((10.0, 0.0, 370), (10.0, 40.0, 140), (20.0, 20.0, 345)):
+            out = self.track(size / 2.0, rise_at=-100.0, fall_at=60.0, saccade_out=saccade, n=140)
+            got = self.seconds_to(out, 60.0, lambda v: v <= 0.1 * size / 2.0)
+            self.assertAlmostEqual(got, want / 1000.0, delta=frame + 0.005, msg=(size, saccade))
+
+    def test_it_starts_with_the_saccade_fast_then_slower_and_slower(self):
+        out = self.track(5.0, rise_at=10.0, saccade_in=10.0)
+        self.assertEqual(max(out[:11]), 0.0)
+        self.assertGreater(out[11], 0.0)
+        steps = [b - a for a, b in zip(out[10:60], out[11:61])]
+        self.assertEqual(max(steps), steps[0])                      # fastest at once (a person's peak comes early)
+        self.assertTrue(all(b <= a + 1e-12 for a, b in zip(steps, steps[1:])))
+        self.assertAlmostEqual(max(out), 5.0, 9)                    # and it gets there
+
+    def test_much_of_it_is_done_within_a_saccade_of_10_degrees_or_more(self):
+        """within a 10-degree saccade about 40 % of a person's convergence is done, within a 40-degree one about 60 %
+        (more for small vergence; Collewijn 1995 Fig. 18), of divergence 50 % to nearly all; eye_gaze's saccades take 2
+        frames under 15 degrees, 3 up to 35 and 4 beyond"""
+        for saccade, frames, low, high in ((10.0, 2, 0.3, 0.6), (40.0, 4, 0.5, 0.95)):
+            out = self.track(5.0, rise_at=10.0, saccade_in=saccade)
+            self.assertTrue(low <= out[10 + frames] / 5.0 <= high, (saccade, out[10 + frames]))
+        out = self.track(5.0, rise_at=-100.0, fall_at=60.0, saccade_out=10.0, n=140)
+        self.assertTrue(0.4 <= 1.0 - out[62] / 5.0 <= 0.8, out[62])
 
     def test_converges_through_the_look_and_is_parallel_on_the_camera(self):
         labels = ["camera"] * 30 + ["free"] * 5 + ["hand"] * 30 + ["free"] * 10 + ["camera"] * 30
-        demands = [0.0] * 35 + [5.0] * 30 + [0.0] * 40
-        out = self.phase(demands, labels)
-        first, last = 35, 64
-        start = first - self.P["lead"] * 30.0
-        self.assertTrue(all(v == 0.0 for v in out[:int(math.floor(start)) + 1]))
-        self.assertGreater(out[first], 0.0)                         # already on its way on the look's first frame
-        peak = max(range(len(out)), key=lambda i: out[i])
-        self.assertTrue(first <= peak <= last, peak)
-        self.assertAlmostEqual(max(out), 5.0, 6)
+        out = self.track(5.0, rise_at=33.0, fall_at=64.0, saccade_in=10.0, saccade_out=10.0, n=105, labels=labels,
+                         first=35, last=64)
         self.assertEqual(max(v for v, lab in zip(out, labels) if lab == "camera"), 0.0)
-        five = next(i for i, v in enumerate(out) if v >= 0.25)
-        ninety_five = next(i for i, v in enumerate(out) if v >= 4.75)
-        self.assertAlmostEqual((ninety_five - five) / 30.0, self.P["duration"], delta=1.5 / 30.0)
-        self.assertGreater(out[last], 4.9)                          # opens from the look's last frame
-        self.assertLess(out[last + 8], 2.0)
-        self.assertTrue(all(b >= a for a, b in zip(out[:first], out[1:first + 1])))
+        self.assertEqual(out[33], 0.0)
+        self.assertGreater(out[34], 0.5)                            # on its way with the saccade
+        self.assertGreater(out[64], 4.95)                           # converged on the look's last frame
+        self.assertAlmostEqual(max(out), 5.0, 6)
+        self.assertTrue(all(b <= a for a, b in zip(out[64:75], out[65:76])))   # then opens, 0 on the camera
+        self.assertLessEqual(max(abs(b - a) for a, b in zip(out, out[1:])), self.P["max_speed"] / 30.0 + 1e-9)
 
     def test_a_look_between_two_looks_at_the_camera_rises_less_and_never_on_the_camera(self):
         labels = ["camera"] * 20 + ["hand"] * 6 + ["camera"] * 20
-        demands = [0.0] * 20 + [5.0] * 6 + [0.0] * 20
-        out = self.phase(demands, labels)
+        out = self.track(5.0, rise_at=19.0, fall_at=25.0, saccade_in=10.0, saccade_out=10.0, n=46, labels=labels,
+                         first=20, last=25)
         self.assertEqual(max(v for v, lab in zip(out, labels) if lab == "camera"), 0.0)
         peak = max(range(len(out)), key=lambda i: out[i])
         self.assertTrue(20 <= peak <= 25, peak)
-        self.assertGreater(max(out), 0.3)                           # a glance of 0.2 s: it only begins
-        self.assertLess(max(out), 2.0)
-
-    def test_a_look_of_0_3_seconds_is_converged_through_most_of_it(self):
-        """the gaze's looks at a hand last 0.3 to 0.6 s (the MV v8's 52 s: 9 frames, 5.3 degrees an eye): the eyes are
-        more than half way from the look's third frame to its last, and most of the vergence (degrees x frames) lies
-        within the look, not after it (a person takes longer: about 0.33 s to 90 % for 10 to 12 degrees, Collewijn et
-        al. 1995 Fig. 17; the shape is chosen to fit the short looks).  At 0.41 s (5 to 95 % 0.25 s, stage 5)
-        the eyes passed 3 degrees on the look's last 4 frames only and 55 % of the vergence came after it"""
-        labels = ["free"] * 20 + ["hand"] * 9 + ["free"] * 30
-        top = 5.3
-        out = self.phase([0.0] * 20 + [top] * 9 + [0.0] * 30, labels)
-        a, b = 20, 28
-        self.assertGreaterEqual(min(out[a + 2:b + 1]), 0.55 * top, out[a:b + 1])
-        self.assertGreaterEqual(sum(out[a:b + 1]) / sum(out), 0.6)
-        self.assertEqual(max(out[b + 10:]), 0.0)                    # parallel again within 0.33 s of the look's end
+        self.assertTrue(1.0 < max(out) < 4.5, max(out))             # a glance of 0.2 s: it is on its way, not there
 
     def test_a_big_angle_keeps_under_the_top_speed(self):
-        labels = ["free"] * 10 + ["hand"] * 60 + ["free"] * 60
-        out = self.phase([0.0] * 10 + [11.6] * 60 + [0.0] * 60, labels)
+        out = self.track(11.6, rise_at=10.0, fall_at=70.0, saccade_in=40.0, saccade_out=40.0, n=140)
         speed = max(abs(b - a) for a, b in zip(out, out[1:])) * 30.0
         self.assertLessEqual(speed, self.P["max_speed"] + 1e-6)
         self.assertGreater(speed, 30.0)                             # natural, not the screen experiments' 8 deg/s
         self.assertAlmostEqual(max(out), 11.6, 6)
         self.assertEqual(out[-1], 0.0)
+
+    def test_the_52_seconds_look_is_past_3_degrees_from_its_third_frame(self):
+        """the MV v8's 52 s: a look of 9 frames (0.3 s) at 6.0 degrees an eye (12 both), the saccade onto the raised
+        finger 3 degrees in 2 frames before it, the one away 10 degrees: a person takes about 0.34 s to 90 % (Fig. 17
+        C), so the eyes are on their way through the look, past 3 degrees from its third frame (the coordinator) and at
+        90 % on its last; they open over a tail of about 0.25 s to 90 % after it"""
+        labels = ["free"] * 20 + ["hand"] * 9 + ["free"] * 40
+        a, b = 20, 28
+        out = self.track(6.0, rise_at=a - 3.0, fall_at=b, saccade_in=3.0, saccade_out=10.0, n=69, labels=labels, first=a,
+                         last=b)
+        self.assertGreaterEqual(min(out[a + 2:b + 1]), 3.0, out[a:b + 1])
+        self.assertLess(out[a - 1], 3.0)                            # not at once
+        self.assertGreaterEqual(out[b], 0.9 * 6.0 - 1e-9)
+        self.assertAlmostEqual(self.seconds_to(out, a - 3.0, lambda v: v >= 0.9 * 6.0), 0.335, delta=1.0 / 30.0 + 0.005)
+        self.assertGreater(out[b + 6], 0.0)                         # the tail after the look
+        self.assertEqual(max(out[b + 30:]), 0.0)                    # parallel within a second
 
 
 class TargetTest(unittest.TestCase):
@@ -701,11 +737,13 @@ class OpticsTest(unittest.TestCase):
             return yaw_of(fk.applied(fk.sample(keys, f, frames)[1]))
         p = eye_optics.PARAMS["vergence"]
         want = math.degrees(math.atan(61.5 / 2.0 / 300.0))           # the hand 30 cm in front: the geometric angle
+        # (the report names no saccade onto this look: the eyes start vergence.lead before it)
         self.assertAlmostEqual(value(30 - 3), 0.0, delta=0.05)      # keys within 0.05 degrees
         self.assertGreater(value(31), 0.3)                          # already on its way as the hand arrives
         self.assertAlmostEqual(value(60), want, delta=0.05)
         self.assertAlmostEqual(value(89), want, delta=0.05)
-        self.assertAlmostEqual(value(89 + 14), 0.0, delta=0.05)     # parallel again 0.45 s after the hand left
+        self.assertTrue(all(value(f + 1) <= value(f) + 0.05 for f in range(89, 130)))   # opening after it
+        self.assertAlmostEqual(value(89 + 30), 0.0, delta=0.05)     # parallel again within a second of the hand leaving
         self.assertLessEqual(max(abs(value(f + 1) - value(f)) for f in range(150)), p["max_speed"] / 30.0 + 0.1)
         rep = result.report["vergence"]
         self.assertEqual((rep["source"], rep["looks"], rep["labels"]["hand"]), ("gaze report", 1, 60))
@@ -730,6 +768,27 @@ class OpticsTest(unittest.TestCase):
             self.assertNotIn("hand", result.report["vergence"]["labels"])
             for k in keys_of(result.motion, "右目") + keys_of(result.motion, "左目"):
                 self.assertAlmostEqual(yaw_of(fk.applied(k.rotation)), 0.0, 9)
+
+    def test_the_eyes_start_to_converge_with_the_saccade_onto_the_hand(self):
+        """the report's saccade onto the look (frame 26, 2 frames, 10 degrees) starts the vergence, and its 11.7
+        degrees (both eyes) with a 10-degree saccade take a person 0.31 s to 90 % (Collewijn 1995 Fig. 17 C)"""
+        away = tuple(f - r for f, r in zip(FAR, HAND_REST))
+        hand = {0: away, 27: away, 28: (0.0, 0.0, 0.0), 89: (0.0, 0.0, 0.0), 90: away, 150: away}
+        rep = gaze_report(look(28, 89))
+        rep["saccades"] = {"list": [{"frame": 26, "frames": 2, "reason": "hand", "amplitude": 10.0},
+                                    {"frame": 90, "frames": 2, "reason": "hand_away", "amplitude": 10.0}]}
+        result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150),
+                     looks=eye_optics.gaze_looks(rep))
+        verg = result.trace["vergence"]
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        self.assertEqual(max(verg[:26]), 0.0)
+        self.assertGreater(verg[26], 0.5)                           # on its way within the saccade
+        self.assertGreater(verg[27] / want, 0.3)                    # at its landing a third of the way
+        t90 = next(i for i in range(25, 89) if verg[i] >= 0.9 * want) - 25
+        self.assertAlmostEqual(t90 / 30.0, 0.31, delta=1.0 / 30.0 + 0.005)
+        run_ = result.report["vergence"]["hand_runs"][0]
+        self.assertEqual((run_["saccade_in_deg"], run_["saccade_away_deg"]), (10.0, 10.0))
+        self.assertAlmostEqual(run_["d90_up_s"], 0.31, delta=0.002)
 
     def test_the_eyes_meet_at_the_distance_of_the_point_she_aims_at(self):
         # the gaze's report names the point 50 cm along the gaze: the eyes meet there, not on the hand 30 cm off that
@@ -1067,6 +1126,22 @@ class GazeReportTest(unittest.TestCase):
         self.assertEqual([(L["first"], L["last"], L["hand"]) for L in got["looks"]], [(30, 49, "右"), (60, 69, "左")])
         self.assertEqual(got["looks"][1]["aim"], [FAR] * 10)
         self.assertEqual(got["contacts"], [(0, 20)])
+
+    def test_the_saccades_onto_and_off_each_look(self):
+        # the saccade that lands on the look (eye_gaze's reason hand, landing by its first frame) and the first one
+        # after it, whatever its reason: the vergence starts and ends with them
+        rep = gaze_report(look(30, 49), motion=gaze())
+        rep["saccades"] = {"list": [{"frame": 10, "frames": 2, "reason": "glance", "amplitude": 4.0},
+                                    {"frame": 28, "frames": 2, "reason": "hand", "amplitude": 12.0},
+                                    {"frame": 40, "frames": 2, "reason": "hand", "amplitude": 4.0},     # a catch-up
+                                    {"frame": 50, "frames": 3, "reason": "hand_away", "amplitude": 20.0},
+                                    {"frame": 70, "frames": 2, "reason": "glance", "amplitude": 3.0}]}
+        got = eye_optics.gaze_looks(rep, vmd.dumps(gaze()))["looks"][0]
+        self.assertEqual(got["into"], {"frame": 28, "frames": 2, "amplitude": 12.0})
+        self.assertEqual(got["away"], {"frame": 50, "frames": 3, "amplitude": 20.0})
+        rep["saccades"]["list"] = [rep["saccades"]["list"][0], rep["saccades"]["list"][4]]   # none near the look
+        got = eye_optics.gaze_looks(rep, vmd.dumps(gaze()))["looks"][0]
+        self.assertEqual((got["into"], got["away"]), (None, None))
 
     def test_a_report_made_on_another_dance_is_refused(self):
         # the points aimed at are the hands of the dance the gaze was made on
@@ -1424,20 +1499,40 @@ class SongTest(unittest.TestCase):
         with open(paths["gaze"], "rb") as f:
             data = f.read()
         cls.gaze = vmd.loads(data)
+        with open(paths["dance"], "rb") as f:
+            dance_data = f.read()
         with open(paths["gaze_report"], encoding="utf-8") as f:
-            cls.looks = eye_optics.gaze_looks(json.load(f), data)
+            cls.looks = eye_optics.gaze_looks(json.load(f), data, dance_data)
         cls.result = eye_optics.optics(cls.model_bytes, cls.dance, cls.gaze, cls.camera,
                                        eye_optics.merge_params(eye_optics.PARAMS, {}), face=cls.face, looks=cls.looks)
 
     def test_the_52_seconds_look_at_the_fingers_converges_3_degrees_or_more(self):
         """the coordinator's sample (1567): the left hand's raised finger before her face, looked at by the gaze on
-        1561 to 1569 (0.3 s): from its third frame on (the vergence takes 0.24 s, rising from the saccade onto the
-        finger) and at 1567 the eyes are 3 degrees or more each"""
+        1561 to 1569 (0.3 s): from its third frame on (the vergence starts with the saccade onto the finger and takes a
+        person's 0.34 s to 90 %) and at 1567 the eyes are 3 degrees or more each"""
         look = [L for L in self.looks["looks"] if L["first"] <= 1567 <= L["last"]]
         self.assertEqual(len(look), 1, self.looks["looks"])
         verg = self.result.trace["vergence"]
         self.assertGreaterEqual(verg[1567], 3.0)
         self.assertGreaterEqual(min(verg[look[0]["first"] + 2:look[0]["last"] + 1]), 3.0, verg[1556:1580])
+
+    def test_each_look_starts_with_its_saccade_and_takes_a_persons_time(self):
+        """each look's vergence starts with the saccade onto it and reaches 90 % in the time Collewijn 1995 (Fig. 17)
+        gives for its size and that saccade's, within a frame (unless the look ends first)"""
+        verg = self.result.trace["vergence"]
+        runs = self.result.report["vergence"]["hand_runs"]
+        self.assertEqual(len(runs), len(self.looks["looks"]))
+        for run_, L in zip(runs, self.looks["looks"]):
+            self.assertIsNotNone(L["into"], L)
+            start = L["into"]["frame"] - 1
+            self.assertEqual(verg[start], 0.0)
+            self.assertGreater(verg[start + 1], 0.0)
+            top = run_["demand_degrees"]
+            reached = [i for i in range(start, L["last"] + 1) if verg[i] >= 0.9 * top - 1e-6]
+            if reached:
+                self.assertAlmostEqual((reached[0] - start) / 30.0, run_["d90_up_s"], delta=1.0 / 30.0 + 0.005, msg=L)
+            else:
+                self.assertLess((L["last"] - start) / 30.0, run_["d90_up_s"] + 1.0 / 30.0, L)
 
     def test_the_vergence_is_on_the_looks_and_never_on_the_camera(self):
         rep = self.result.report["vergence"]
@@ -1452,7 +1547,7 @@ class SongTest(unittest.TestCase):
         verg = self.result.trace["vergence"]
         near = set()
         for L in self.looks["looks"]:
-            near.update(range(L["first"] - 3, L["last"] + 15))
+            near.update(range(L["first"] - 3, L["last"] + 30))      # its rise with the saccade, the tail of its fall
         away = [(i, v) for i, v in enumerate(verg) if i not in near and v > 0.0]
         self.assertEqual(away, [])
 
