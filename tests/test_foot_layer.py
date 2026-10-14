@@ -566,6 +566,32 @@ class LayerTest(unittest.TestCase):
         y = f_out["左"]["ankle"][:, 1]
         self.assertLess(abs(float(y[5] - 0.5 * (y[4] + y[6]))), 0.03)
 
+    def test_a_real_quick_lift_is_not_bridged(self):
+        # standing flat, the foot for a single frame rolled 55 degrees about its own axis and lifted so that, laid flat,
+        # its sole would be only 1.4 cm up (the bridging's old measure), while the shoe itself rises some 7 cm (rolling it
+        # about the ankle swings the sole up): a real quick step, not the trace's jitter, so it is not put down on the
+        # floor - the ankle keeps its height and the toes are not bent (its roll is still eased flat with the frames
+        # around, as any roll of a foot near loaded frames)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        q = rolled("左", 55.0)
+        lift = 0.0
+        for _ in range(4):                                  # the leg's IK is not linear: find the lift by a few probes
+            probe = measure(key("左足ＩＫ", 0, q, position=(0, lift, 0)), key("左足首", 0, q), center)["左"]
+            lift += 0.111 + 0.175 - float(probe["flat_low"][0])
+        keys = [center]
+        for t in range(11):
+            if t == 5:
+                keys += [key("左足ＩＫ", t, q, position=(0, lift, 0)), key("左足首", t, q)]
+            else:
+                keys += [key("左足ＩＫ", t), key("左足首", t)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=11)
+        a, b = f_in["左"], f_out["左"]
+        self.assertAlmostEqual(float(a["flat_low"][5]) - 0.111, 0.175, delta=0.01)
+        self.assertGreater(float(a["low"][5]) - 0.111, 0.4)                       # the shoe itself well up
+        self.assertAlmostEqual(float(b["ankle"][5, 1]), float(a["ankle"][5, 1]), delta=0.01)   # not put down
+        self.assertGreater(float(b["low"][5]) - 0.111, 0.1)
+        self.assertLess(float(b["mtp"][5] - b["rest_mtp"]), 2.0)                  # nor stood on its ball
+
     def test_default_floor_is_the_traces(self):
         # no floor given: the floor is the trace's (where the rest pose's soles stand, 0.111 here), so nothing is moved
         # down: the foot in the air keeps its height, the loaded rolled foot is laid flat with its sole on that floor

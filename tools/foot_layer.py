@@ -354,13 +354,13 @@ def foot_speed(f):
     return v
 
 
-def trace_height(f, o, extra=0.0):
+def trace_height(f, o, extra=0.0, key="flat_low"):
     """the flat sole's lowest point over the trace's floor [F] (units), as the trace's own model stood: a model whose
     foot reached `extra` units further from the ankle to the toe had its toe that much times sin(the toes-down pitch)
     lower, on the floor where this one's stops short.  Only for a foot moving slower than TOE_SLIDE.  0 for the dance's
     own model."""
     gate = 1.0 - smoothstep(foot_speed(f), *TOE_SLIDE)
-    return f["flat_low"] - o.floor - extra * gate * np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
+    return f[key] - o.floor - extra * gate * np.sin(np.radians(np.clip(-f["pitch"], 0.0, 90.0)))
 
 
 def toe_extra_estimate(f, o):
@@ -532,7 +532,8 @@ ROLL_JUMP, FOOT_STILL = 40.0, 15.0   # degrees a frame: a roll that jumps more w
 FLAT_PITCH = (30.0, 60.0)       # degrees of pitch from the floor: a sole steeper than the first is laid flat less and
                                 # less, steeper than the second (a foot pointed down at the floor) keeps its roll
 ROUNDS = 3                      # rounds of solving the legs again to put the sole on the floor
-BRIDGE = 2                      # frames: a standing foot lifted for this long or less (the trace's jitter) stays down
+BRIDGE = 2                      # frames: a standing foot lifted for this long or less (the trace's jitter) stays down,
+BRIDGE_LIFT = 0.1875            # ... when its shoe stays this low (units, 1.5 cm): a real quick step goes higher
 X_AXIS = np.array([1.0, 0.0, 0.0])
 
 
@@ -640,7 +641,8 @@ def foot_targets(o, f, leg, rest, share, near, p):
     heel stands on the ball with the toe box on the floor"""
     side_sign = 1.0 if o.name == "左" else -1.0
     e = trace_height(f, o, p["trace_toe_extra"])
-    v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE)
+    lift = trace_height(f, o, p["trace_toe_extra"], key="low")    # the shoe itself, not laid flat
+    v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE, lift < BRIDGE_LIFT)
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
     loaded = smoothstep(share, *p["load_share"])
@@ -697,13 +699,13 @@ def shell_at(o, ankle, q_foot, toes):
     return shell_world(o, {"ankle": ankle, "q_foot": q_foot, "ex": ex, "q_ex": q_ex})
 
 
-def bridge(v, gap):
+def bridge(v, gap, low=None):
     """the on-floor weights v [F] with the dips of `gap` frames or fewer between two frames on the floor (v >= 0.5) filled
-    to the lower of the two"""
+    to the lower of the two, where the shoe stays low through the dip (low [F] booleans; all, when not given)"""
     v = np.array(v, dtype=float)
     down = v >= 0.5
     for a, b in runs(~down):
-        if a > 0 and b < len(v) - 1 and b - a + 1 <= gap:
+        if a > 0 and b < len(v) - 1 and b - a + 1 <= gap and (low is None or bool(np.all(low[a:b + 1]))):
             v[a:b + 1] = np.maximum(v[a:b + 1], min(v[a - 1], v[b + 1]))
     return v
 
