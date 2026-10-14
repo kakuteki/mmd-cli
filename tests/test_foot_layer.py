@@ -853,6 +853,19 @@ class ToeModelTest(unittest.TestCase):
         self.assertGreater(float(b["low"][0]) - 0.111, 0.01)
         self.assertLess(float(np.linalg.norm(b["ankle"][0] - a["ankle"][0])), 0.005)
 
+    def test_the_reach_fades_out_as_a_share_of_its_cap(self):
+        # between 0.8 and 1 times the reach over the floor the reach fades out.  2.25 cm over it, pointed 40 degrees, the
+        # floor is beyond the cap (more than TOE_FLEX_CAP would be needed): the toes bend by the fading share of the cap,
+        # what the full reach would bend times that share - not that share of the bend the floor would need beyond the
+        # cap (in the dance with the reach asked for, that bent up to 13 degrees further, on 212 frames more than one)
+        reach = foot_layer.TOE_REACH
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(0.9 * reach), toe_model="anatomical",
+                                           toe_reach=reach)
+        share = 1.0 - float(foot_layer.smoothstep(float(f_in["左"]["low"][0]) - 0.111, 0.8 * reach, reach))
+        self.assertGreater(share, 0.3)
+        self.assertLess(share, 0.7)
+        self.assertAlmostEqual(float(bend(f_out["左"])[0]), -share * foot_layer.TOE_FLEX_CAP, delta=0.5)
+
     def test_the_reach_never_bends_the_toes_into_the_floor(self):
         # a still pointed foot 1.2 cm over the floor comes down slowly (7 cm/s) to 0.7 cm and stays: the reach is eased
         # in and out over frames, so it carries the deeper bend of the higher frames onto the lower ones; there the bend
