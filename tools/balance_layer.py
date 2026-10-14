@@ -164,10 +164,18 @@ ADMM_TOL_REACH = 0.05           # cm
 SET_MARGIN = 0.001              # m: the bounds are solved this much tighter, so the converged curve is inside the true ones
 REACH_NO_WORSE_M = 0.0005       # m: "no worse than the dance" bounds allow this much, so the dance itself (no shift) is
 RANGE_NO_WORSE_M = 0.002        # inside them, not on their edge (on the edge, the smallest miss of the solve could only be
-                                # undone by no shift at all).  A leg already past its reach: 0.5 mm (under the 1 mm of a
-                                # new IK miss); a hip already past its range, a knee past 159 degrees: 2 mm along the
-                                # hip-to-ankle line (0.2 degrees), more than the solve's miss (1.1 mm after 800 rounds on v7)
+RANGE_NO_WORSE_DEG = 0.2        # undone by no shift at all).  A leg already past its reach: 0.5 mm (under the 1 mm of a
+                                # new IK miss); a knee past 159 degrees: 2 mm along the hip-to-ankle line; a hip already
+                                # past its range: 0.2 degrees of the thigh, more than the solve's miss (1.1 mm after 800
+                                # rounds on v7)
 FIX_HALF = 9                    # frames: the half-width of the smooth cover that brings an unconverged curve inside
+# ---- the catch: a foot that lands catches the body (the extrapolated centre of mass, Hof et al. 2005, Hof 2008) ----
+SOLE_HALF_W_CM = 4.65           # half the sole's width (young Japanese women's foot width 93.2 mm, AIST 1997-98)
+CATCH_MARGIN_CM = 0.0           # at a landing the margin of stability (the landing foot's outer edge along the step minus
+                                # the XcoM) is at least this: a step onto a foot placed beyond the XcoM (Hof 2008)
+CATCH_WEIGHT = 30.0             # the pull on the XcoM at a landing the dance does not catch (against LAM_OUT 0.5 per frame)
+CATCH_FREE_S = 0.2              # the "never away from the nearest pull" half-plane is off this long after such a landing
+XI_RHO = 1.0                    # the catch block's ADMM penalty relative to the per-frame sets' (convergence only)
 IK_ROUNDS = 6                   # with MMD's IK at hand: the rounds of holding back where it would newly fall short
 IK_MISS = 0.05                  # units (4 mm, a05's contact): an ankle this far from its foot IK's target misses it
 IK_WORSE = 0.0125               # units (1 mm): and this much farther than in the dance: a new miss (the review's)
@@ -206,7 +214,8 @@ OPTIONAL = ["頭先", "左中指先", "右中指先", "左中指３", "右中指
 
 def params_default():
     return {"r_bal_cm": R_BAL_CM, "acc_max": ACC_MAX, "lead_s": LEAD_S, "lag_s": LAG_S, "drop_max_cm": DROP_MAX_CM,
-            "dip_deg": DIP_DEG, "dip": True, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM}
+            "dip_deg": DIP_DEG, "dip": True, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
+            "catch": True}
 
 
 # ---- the body ---------------------------------------------------------------------------------------------------
@@ -551,11 +560,28 @@ def toward_targets(d, reach_frames):
     return out
 
 
-def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH, gain=None, warm=None):
-    """x [F, n] (metres): min 1/2 sum w |g x - d|^2 + 1/2 sum lam |x|^2 + mu/2 |x'''|^2 subject to |x''| <= acc_max (per
-    frame) and x = project(x) (a per-frame set, given by its projection); g = gain per frame (1).  ADMM (Boyd et al.
-    2011, over-relaxed 1.6) on the splitting [x'' ; x] = [za ; zx]: the x-step is one banded solve with a fixed
-    matrix.  warm: the state of an earlier solve of a nearby problem (info["_state"]) to start from."""
+def xi_op(x, c):
+    """the XcoM's part of a shift x [F, n] at the frames 1 .. F-2: x(t) + c (x(t+1) - x(t-1)) (c = FPS / (2 w0): the
+    position plus the velocity over w0, by central differences)"""
+    return x[1:-1] + c * (x[2:] - x[:-2])
+
+
+def xi_op_t(z, c, F):
+    """the adjoint of xi_op: z [F-2, n] -> [F, n]"""
+    out = np.zeros((F,) + z.shape[1:])
+    out[1:-1] += z
+    out[2:] += c * z
+    out[:-2] -= c * z
+    return out
+
+
+def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH, gain=None, warm=None, xi=None):
+    """x [F, n] (metres): min 1/2 sum w |g x - d|^2 + 1/2 sum lam |x|^2 + mu/2 |x'''|^2 (+ 1/2 sum xi_w |g Xi x - xi_e|^2)
+    subject to |x''| <= acc_max (per frame), x = project(x) (a per-frame set, given by its projection) and, with xi,
+    Xi x = xi_project(Xi x) on the rows xi_mask (Xi = xi_op: the XcoM's part of the shift; per-row sets); g = gain per
+    frame (1).  ADMM (Boyd et al. 2011, over-relaxed 1.6) on the splitting [x'' ; x ; Xi x] = [za ; zx ; zc]: the
+    x-step is one banded solve with a fixed matrix.  xi: {"c", "mask" [F-2] bool, "project" (per row on [F-2, n]),
+    "w" [F-2], "e" [F-2, n]} or None.  warm: the state of an earlier solve of a nearby problem (info["_state"])."""
     iters = ADMM_ITERS if iters is None else iters
     F, n = d.shape
     lam = np.broadcast_to(np.asarray(lam, dtype=np.float64), (F,))
@@ -563,29 +589,49 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH
     tf = tau_s * FPS
     scale = 1.0 + float(np.median(lam))
     mu = scale * tf ** 6
-    rho = 1.0 if warm is None else warm["rho"]          # both blocks' penalties scale together (residual balancing)
+    rho = 1.0 if warm is None else warm["rho"]          # all blocks' penalties scale together (residual balancing)
+    if xi is not None:
+        c = float(xi["c"])
+        xmask = np.asarray(xi["mask"], dtype=bool)
+        gm = g[1:-1]
+        xw = np.asarray(xi["w"], dtype=np.float64) * gm * gm
+        xi_unit = XI_RHO                                 # the catch block's penalty against the others'
+        stencil_xi = (-c, 1.0, c)
 
     def factor(r):
-        return band_factor(band_terms(F, w * g * g + lam + r * scale, [(mu, D3_STENCIL), (r * scale * tf ** 4, D2_STENCIL)]))
+        stencils = [(mu, D3_STENCIL), (r * scale * tf ** 4, D2_STENCIL)]
+        if xi is not None:
+            stencils.append((xw + r * scale * xi_unit * xmask, stencil_xi))
+        return band_factor(band_terms(F, w * g * g + lam + r * scale, stencils))
     L = factor(rho)
     amax = acc_max * DT * DT
     q = (w * g)[:, None] * d
+    if xi is not None:
+        q = q + xi_op_t((np.asarray(xi["w"], dtype=np.float64) * gm)[:, None] * np.asarray(xi["e"], dtype=np.float64), c, F)
     if warm is None:
         za = np.zeros((F - 2, n))
         ua = np.zeros_like(za)
         zx = project(np.zeros((F, n)))
         ux = np.zeros_like(zx)
+        zc = np.zeros((F - 2, n)) if xi is None else xi["project"](np.zeros((F - 2, n)))
+        uc = np.zeros((F - 2, n))
     else:
         za, ua, zx, ux = (warm[k].copy() for k in ("za", "ua", "zx", "ux"))
+        zc = warm["zc"].copy() if "zc" in warm and xi is not None else (
+            np.zeros((F - 2, n)) if xi is None else xi["project"](np.zeros((F - 2, n))))
+        uc = warm["uc"].copy() if "uc" in warm and xi is not None else np.zeros((F - 2, n))
     alpha = 1.6
-    res_a = res_x = None
+    res_a = res_x = res_c = None
     it = 0
     x = zx
     zx_seen = zx
     rescaled = 0
     for it in range(1, iters + 1):
         rho_a, rho_x = rho * scale * tf ** 4, rho * scale
-        x = band_solve(L, q + rho_a * d2t(za - ua, F) + rho_x * (zx - ux))
+        rhs = q + rho_a * d2t(za - ua, F) + rho_x * (zx - ux)
+        if xi is not None:
+            rhs = rhs + xi_op_t((rho * scale * xi_unit * xmask)[:, None] * (zc - uc), c, F)
+        x = band_solve(L, rhs)
         ax = d2(x)
         ah = alpha * ax + (1.0 - alpha) * za
         va = ah + ua
@@ -595,10 +641,16 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH
         xh = alpha * x + (1.0 - alpha) * zx
         zx = project(xh + ux)
         ux = xh + ux - zx
+        if xi is not None:
+            cx = xi_op(x, c)
+            ch = alpha * cx + (1.0 - alpha) * zc
+            zc = np.where(xmask[:, None], xi["project"](ch + uc), ch + uc)
+            uc = np.where(xmask[:, None], ch + uc - zc, 0.0)
         if it % 10 == 0:
             res_a = float(np.linalg.norm(ax - za, axis=1).max()) / (DT * DT)
             res_x = float(np.linalg.norm(x - zx, axis=1).max()) * 100.0
-            if res_a < ADMM_TOL_ACC and res_x < tol_x_cm:
+            res_c = 0.0 if xi is None or not xmask.any() else float(np.linalg.norm((cx - zc)[xmask], axis=1).max()) * 100.0
+            if res_a < ADMM_TOL_ACC and res_x < tol_x_cm and res_c < tol_x_cm:
                 break
         if it % 50 == 0:
             # residual balancing (Boyd et al. 2011, 3.4.1): the constraints' miss against how much z still moves
@@ -610,14 +662,16 @@ def admm(w, d, lam, project, acc_max, tau_s, iters=None, tol_x_cm=ADMM_TOL_REACH
                 rho *= k
                 ua /= k
                 ux /= k
+                uc /= k
                 L = factor(rho)
                 rescaled += 1
     # x itself (the banded solve's smooth curve), not its per-frame projection: putting each frame back into its set on
     # its own folds the curve where a bound starts to act (the review: 59.23 s, 3.57 m/s^2).  The callers solve with
     # bounds tightened by SET_MARGIN and bring x into the true bounds by a smooth cover (smooth_cover)
     info = {"iterations": it, "residual_acc_m_s2": None if res_a is None else round(res_a, 4),
-            "residual_set_cm": None if res_x is None else round(res_x, 4), "rho": rho,
-            "_state": {"za": za, "ua": ua, "zx": zx, "ux": ux, "rho": rho}}
+            "residual_set_cm": None if res_x is None else round(res_x, 4),
+            "residual_catch_cm": None if res_c is None else round(res_c, 4), "rho": rho,
+            "_state": {"za": za, "ua": ua, "zx": zx, "ux": ux, "zc": zc, "uc": uc, "rho": rho}}
     return x, info
 
 
@@ -668,14 +722,19 @@ def proj_slab(x, m, lo, hi):
     return x - (over / mm)[:, None] * m
 
 
-def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters=None, warm=None):
+def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters=None, warm=None, catches=None):
     """センター's floor shift y [F, 2] (metres): the COM's shift gain * y pulled to d where w > 0 (held back by lam_in
     there, by lam_out elsewhere), minimum jerk, |y''| <= acc_max, y in every disc of `discs` [(centres [F, 2], radii
-    [F])] and every slab of `slabs` [(m [F, 2], lo [F], hi [F])], never pointing away from the nearest pull"""
+    [F])] and every slab of `slabs` [(m [F, 2], lo [F], hi [F])], never pointing away from the nearest pull.
+    catches (catch_terms()): at each landing frame L the XcoM's shift gain_L (Xi y)_L along the step u_L at most hi_L
+    (the landing foot still catches the body), and where the dance does not catch it, (Xi y)_L pulled to e_L"""
     F = len(w)
-    if F < 5 or not np.any(w > 0):
+    has_catch = catches is not None and (np.any(catches["mask"]) or np.any(catches["w"] > 0))
+    if F < 5 or (not np.any(w > 0) and not (catches is not None and np.any(catches["w"] > 0))):
         return np.zeros((F, 2)), {"iterations": 0}
     toward = toward_targets(d, int(round(1.5 * FPS)))
+    if has_catch:
+        toward[catches["free"]] = 0.0                   # a landing pulled back: the pull's direction is the catch's
     # solved inside bounds tightened by SET_MARGIN (each still holds 0, the dance itself)
     sets = []
     for c, r in discs:
@@ -697,19 +756,47 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
                 y = z
         return y
     lam = np.where(w > 0, lam_in, lam_out)
-    y, info = admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain, warm=warm)
+    xi = None
+    if has_catch:
+        nrm, hi_c = catches["n"], catches["hi"]
+        nn = np.linalg.norm(nrm, axis=1)
+        # tightened as the other bounds; one that holds 0 (the dance catches) keeps holding it
+        hi_t = np.where(hi_c >= 0.0, np.maximum(hi_c - SET_MARGIN * nn, 0.0), hi_c - SET_MARGIN * nn)
+
+        def xi_project(v):
+            s = np.sum(v * nrm, axis=1)
+            over = np.maximum(s - hi_t, 0.0)
+            return v - (over / np.maximum(nn * nn, 1e-18))[:, None] * nrm
+        xi = {"c": catches["c"], "mask": catches["mask"], "project": xi_project, "w": catches["w"], "e": catches["e"]}
+    y, info = admm(w, d, lam, project, acc_max, tau_s, iters, gain=gain, warm=warm, xi=xi)
     # into the true bounds: the shift scaled down by a smooth cover of what each frame lacks (the bounds hold 0 and are
-    # convex, so a frame scaled under its own largest scale is inside; scaling keeps the direction, so the half-plane)
+    # convex, so a frame scaled under its own largest scale is inside; scaling keeps the direction, so the half-plane).
+    # A catch bound reads three frames: the scale it asks for is put on its landing frame, where the cover is flat
+    # (the running maximum over +-FIX_HALF), and checked again
     scale = np.ones(F)
     for c, r in discs:
         scale = np.minimum(scale, disc_scale(y, c, r))
     for m, lo, hi in slabs:
         scale = np.minimum(scale, slab_scale(y, m, lo, hi))
     cut = np.clip(smooth_cover(1.0 - scale, FIX_HALF), 0.0, 1.0)
+    out = (1.0 - cut)[:, None] * y
+    if has_catch:
+        rows = np.flatnonzero(catches["mask"] & (catches["hi"] >= 0.0))     # a held-back landing needs the shift
+        for _ in range(6):
+            s = np.sum(xi_op(out, catches["c"])[rows] * catches["n"][rows], axis=1)
+            hi_r = catches["hi"][rows]
+            bad = s > hi_r + 1e-6
+            if not bad.any():
+                break
+            need = np.zeros(F)
+            need[rows[bad] + 1] = 1.0 - np.clip(np.maximum(hi_r[bad], 0.0) / s[bad], 0.0, 1.0)
+            more = np.clip(smooth_cover(need, FIX_HALF), 0.0, 1.0)
+            cut = 1.0 - (1.0 - cut) * (1.0 - more)
+            out = (1.0 - cut)[:, None] * y
     info["bound_cut_max"] = round(float(cut.max()), 5)
     info["_cut"] = cut                                  # per frame (the layer moves it to its arrays)
     info["_raw"] = y
-    return (1.0 - cut)[:, None] * y, info
+    return out, info
 
 
 def solve_drop(need, acc_max, tau_s, iters=None):
@@ -813,6 +900,85 @@ def travels(body, com, a, b, s):
     e = float((com[m, [0, 2]] - here) @ u) * UNIT_M
     w = math.sqrt(G / max(float(com[m, 1]) * UNIT_M, 0.2))
     return v >= TRANSFER_V and e + v / w >= 0.5 * gap * UNIT_M
+
+
+def xcom(com):
+    """the extrapolated centre of mass on the floor [F, 2] (units; Hof et al. 2005): the COM's floor point plus its
+    velocity (central differences) over w0 = sqrt(g / the COM's height), and w0 [F] (1/s)"""
+    F = len(com)
+    v = np.zeros((F, 2))
+    if F >= 3:
+        v[1:-1] = (com[2:, [0, 2]] - com[:-2, [0, 2]]) * FPS / 2.0
+        v[0], v[-1] = v[1], v[-2]
+    w0 = np.sqrt(G / np.maximum(com[:, 1] * UNIT_M, 0.2))
+    return com[:, [0, 2]] + v / w0[:, None], w0
+
+
+def sole_reach(body, s, f, u, here):
+    """how far (units) the sole of foot s at frame f reaches along u from `here` (its farthest corner: the heel-to-toe
+    line widened by SOLE_HALF_W_CM on each side)"""
+    heel, toe = body.sole(s)
+    h, t = heel[f], toe[f]
+    ax = t - h
+    n = float(np.linalg.norm(ax))
+    side = np.array([-ax[1], ax[0]]) / n * (SOLE_HALF_W_CM / CM) if n > 1e-9 else np.zeros(2)
+    corners = np.array([h + side, h - side, t + side, t - side])
+    return float(np.max((corners - here) @ u))
+
+
+def landing_catches(body, com, plan):
+    """the landings that end a single-support run (pulled or transfer; a hovering foot never really left the floor):
+    per landing the frame (the other foot supports again), the stance and landing feet, the step's direction u on the
+    floor (from the stance foot's centre to the landing foot's), the landing foot's outer edge along u, the XcoM along
+    u and the margin of stability (edge - XcoM; Hof et al. 2005: the body is caught when it is >= 0)"""
+    F = body.F
+    xi, w0 = xcom(com)
+    rows = []
+    for i, ((a, b, s), kind) in enumerate(zip(plan["runs"], plan["run_kinds"])):
+        if kind == "hover":
+            continue
+        o = "右" if s == "左" else "左"
+        f = b + 1
+        if f < 1 or f > F - 2 or not plan["sup"][o][f]:
+            continue                                    # the song's end, or the stance foot left first (a hop)
+        here = 0.5 * (body.ankle(s)[f] + body.toe(s)[f])[[0, 2]]
+        there = 0.5 * (body.ankle(o)[f] + body.toe(o)[f])[[0, 2]]
+        gap = float(np.linalg.norm(there - here))
+        if gap < 1e-6:
+            continue
+        u = (there - here) / gap
+        edge = sole_reach(body, o, f, u, here)
+        along = float((xi[f] - here) @ u)
+        rows.append({"run": i, "frame": f, "stance": s, "foot": o, "kind": kind, "u": u, "here": here, "edge": edge,
+                     "xcom": along, "margin": edge - along, "w0": float(w0[f])})
+    return rows
+
+
+def catch_terms(F, catches, gain, run_starts):
+    """the catch's terms for solve_shift: per landing row (frame L, row L - 1 of xi_op) the half-plane
+    gain_L u . (Xi y)_L <= margin - CATCH_MARGIN_CM (metres): where the dance catches the body it keeps catching it (the
+    bound holds 0, the dance itself), where it does not the body is held back on the way until it does (the bound
+    then needs a shift, and a pull of gain_L (Xi y)_L to (margin - CATCH_MARGIN_CM) u leads the solve there), with the
+    "never away from the nearest pull" half-plane off from the run's start to CATCH_FREE_S after the landing"""
+    rows = F - 2
+    c = FPS / (2.0 * float(np.median([r["w0"] for r in catches]))) if catches else 1.0
+    mask = np.zeros(rows, bool)
+    n = np.zeros((rows, 2))
+    hi = np.full(rows, FREE_M)
+    w = np.zeros(rows)
+    e = np.zeros((rows, 2))
+    free = np.zeros(F, bool)
+    for r in catches:
+        k = r["frame"] - 1
+        m = (r["margin"] * CM - CATCH_MARGIN_CM) / CM * UNIT_M                  # metres
+        mask[k] = True
+        n[k] = gain[r["frame"]] * r["u"]
+        hi[k] = m
+        if m < 0.0:
+            w[k] = CATCH_WEIGHT
+            e[k] = m * r["u"]
+            free[max(0, run_starts[r["run"]]):min(F, r["frame"] + int(round(CATCH_FREE_S * FPS)) + 1)] = True
+    return {"c": c, "mask": mask, "n": n, "hi": hi, "w": w, "e": e, "free": free}
 
 
 def need_share(frames, com_height_m):
@@ -920,24 +1086,39 @@ def reach_discs(body, allowance, carry=None):
     return discs
 
 
+def thigh_sine(body, s):
+    """sin of the hip's adduction [F]: the thigh (the hip to the knee the layer solves) out of 下半身's sagittal plane,
+    + towards the other leg (Body.hip_adduction in degrees)"""
+    thigh = body.knee(s) - body.hip(s)
+    thigh /= np.maximum(np.linalg.norm(thigh, axis=1), 1e-9)[:, None]
+    return np.clip(np.sum(thigh * body.medial(s), axis=1), -1.0, 1.0)
+
+
 def range_slabs(body, carry=None):
-    """per leg, the slab of センター floor shifts (metres) that keep the hip's adduction (the hip-to-ankle line out of
-    下半身's sagittal plane, towards the other leg) under HIP_ADDUCTION_DEG[1] and its abduction under
-    HIP_ABDUCTION_DEG, or no farther than they were (linearized: the line's length kept); a carried foot's leg by
-    (1 - carry) of the shift"""
-    slabs = []
+    """per leg, the slab of センター floor shifts (metres) that keep the hip's adduction (the thigh out of 下半身's
+    sagittal plane, towards the other leg: the hip to the knee as the layer solves the leg, as the report measures it)
+    under HIP_ADDUCTION_DEG[1] and its abduction under HIP_ABDUCTION_DEG, or no farther than they were.  Linearized
+    about the dance: the thigh's sine moved by 1 cm of センター along x and along z (the knee solved again, a carried
+    foot going with the body), so the slab is J . y within the room left.  (The hip-to-ankle line, the earlier bound,
+    is off the thigh where the knee points in: the thigh went to 24.7 degrees under it on the MV.)"""
+    F = body.F
     sa, sb = math.sin(math.radians(HIP_ADDUCTION_DEG[1])), math.sin(math.radians(HIP_ABDUCTION_DEG))
+    eps = math.sin(math.radians(RANGE_NO_WORSE_DEG))
+    base = {s: thigh_sine(body, s) for s in SIDES}
+    jac = {s: np.zeros((F, 2)) for s in SIDES}
+    probe = 0.125                                       # units (1 cm)
+    for j, axis in enumerate((0, 2)):
+        sh = np.zeros((F, 3))
+        sh[:, axis] = probe
+        moved = body.moved(sh, carry)
+        for s in SIDES:
+            jac[s][:, j] = (thigh_sine(moved, s) - base[s]) / (probe * UNIT_M)   # per metre of shift
+    slabs = []
     for s in SIDES:
-        D = body.ankle(s) - body.hip(s)
-        n = np.linalg.norm(D, axis=1)
-        m = body.medial(s)
-        dm = np.sum(D * m, axis=1)                      # the line's medial part: n sin(adduction)
-        eps = RANGE_NO_WORSE_M / UNIT_M
-        # adduction: (D - y) . m <= max(sa n, dm)   ->  y . m >= dm - max(sa n, dm)
-        lo = dm - np.maximum(sa * n, dm + eps)
-        # abduction: -(D - y) . m <= max(sb n, -dm)  ->  y . m <= dm + max(sb n, -dm)
-        hi = dm + np.maximum(sb * n, -dm + eps)
-        slabs.append((m[:, [0, 2]] * hip_share(carry, s, body.F)[:, None], lo * UNIT_M, hi * UNIT_M))
+        s0 = base[s]
+        hi = np.maximum(sa, s0 + eps) - s0               # adduction: s0 + J . y <= max(sin 22, s0)
+        lo = -np.maximum(sb, -s0 + eps) - s0             # abduction: s0 + J . y >= -max(sin 45, -s0)
+        slabs.append((jac[s], lo, hi))
     return slabs
 
 
@@ -1112,13 +1293,17 @@ def layer(model, motion, params=None, log=None, ik_check=None):
     w = plan["w"]
     allowance = drop_allowance(body, plan, p["drop_max_cm"], KNEE_GIVE_DEG)
     carry = {s: carry_factor(plan["low"][s], p) for s in SIDES}
-    pulled = bool(np.any(w > 0))
+    catches = landing_catches(body, com0, plan) if p.get("catch", True) else []
+    pulled = bool(np.any(w > 0)) or any(r["margin"] * CM < CATCH_MARGIN_CM for r in catches)
+    cterms = None
     if pulled:
         d = band_target(body, com0, plan, p["r_bal_cm"])
         k = com_response(body, com0, carry)
         discs = reach_discs(body, allowance, carry)
         slabs = range_slabs(body, carry)
         kslabs = knee_slabs(body, carry)
+        if catches:
+            cterms = catch_terms(F, catches, k, [a for a, _, _ in plan["runs"]])
     else:
         d, k = np.zeros((F, 2)), np.ones(F)
     radius = np.full(F, FREE_M)                         # the hold-back: |shift| under this (metres) per frame
@@ -1139,7 +1324,7 @@ def layer(model, motion, params=None, log=None, ik_check=None):
             hold = [(np.zeros((F, 2)), radius)] if held.any() else []
             log("solving the shift over %d frames (%d pull frames, %d held back)" % (F, int(np.sum(w > 0)), int(held.sum())))
             y, info = solve_shift(w, d, k, discs + hold, slabs + kslabs, p["acc_max"], p["tau_s"], p["lam_in"],
-                                  p["lam_out"], warm=warm)
+                                  p["lam_out"], warm=warm, catches=cterms)
             cut = info.pop("_cut", np.zeros(F))
             info.pop("_raw", None)
             warm = info.pop("_state", None)
@@ -1200,7 +1385,7 @@ def layer(model, motion, params=None, log=None, ik_check=None):
                         "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0))}
     after = Body(model, out)
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
-                           unreachable=int(np.sum(~finite)), feet=feet))
+                           unreachable=int(np.sum(~finite)), feet=feet, catches=catches))
     report["seconds"] = round(time.time() - t0, 2)
     foot_code = np.array([{"左": 1, "右": 2}.get(v, 0) for v in plan["foot"]], dtype=np.int8)
     arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
@@ -1294,11 +1479,33 @@ def write_feet(motion, body, feet):
                       lights=motion.lights, shadows=motion.shadows, show_iks=motion.show_iks)
 
 
+def catch_report(after, com1, catches):
+    """the margins of stability at the landings (cm), before (the dance) and after (the same frames, feet and step
+    direction, the moved body's XcoM)"""
+    xi1, _ = xcom(com1)
+    rows = []
+    for r in catches:
+        f = r["frame"]
+        after_m = r["edge"] - float((xi1[f] - r["here"]) @ r["u"])
+        rows.append({"frame": f, "s": round(f / FPS, 2), "stance": r["stance"], "kind": r["kind"],
+                     "margin_cm": [round(r["margin"] * CM, 2), round(after_m * CM, 2)],
+                     "held_back": bool(r["margin"] * CM < CATCH_MARGIN_CM)})
+    b = np.array([r["margin_cm"][0] for r in rows])
+    a = np.array([r["margin_cm"][1] for r in rows])
+    summary = {"landings": len(rows), "before_under_0": int(np.sum(b < 0)), "after_under_0": int(np.sum(a < 0)),
+               "newly_under_0": int(np.sum(a < np.minimum(b, 0.0) - 0.5)),
+               "held_back": int(sum(r["held_back"] for r in rows)),
+               "held_back_caught": int(sum(1 for r in rows if r["held_back"] and r["margin_cm"][1] >= -0.5)),
+               "after_min_cm": round(float(a.min()), 2) if len(a) else None,
+               "margin": "the landing foot's outer edge along the step minus the XcoM (COM + v / w0), cm; >= 0 caught"}
+    return {"landings": rows, "summary": summary}
+
+
 def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over, unreachable,
-             feet=None):
+             feet=None, catches=None):
     F = before.F
     com1 = after.com()
-    rep = {}
+    rep = {"catch": catch_report(after, com1, catches or [])}
     ob, fr = a05_lateral(before, com0)
     oa, fr2 = a05_lateral(after, com1)
     run_len = np.zeros(F, int)
@@ -1528,6 +1735,7 @@ def main(argv=None):
     ap.add_argument("--drop-max", type=float, default=DROP_MAX_CM, help="cm: the hips may go down for the legs' reach")
     ap.add_argument("--dip-deg", type=float, default=DIP_DEG, help="degrees: the knee's bend on a landing")
     ap.add_argument("--no-dip", action="store_true", help="no knee bend on the landings")
+    ap.add_argument("--no-catch", action="store_true", help="no bound or pull on the XcoM at the landings")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
     ap.add_argument("--mmd-ik", help="MMD's IK solver (the feet layer's tools/leg_ik.py): hold the layer back where a foot "
                                      "on the floor would newly fall short of its IK target as MMD solves it (.pmx only)")
@@ -1537,7 +1745,7 @@ def main(argv=None):
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
-                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip}
+                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip, "catch": not args.no_catch}
         ik_check, ik_note = None, None
         if args.mmd_ik:
             ik_check, ik_note = mmd_ik_check(args.mmd_ik, args.model, fk.last_frame(motion) + 1)

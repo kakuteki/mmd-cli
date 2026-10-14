@@ -467,6 +467,103 @@ class TransferStepTest(unittest.TestCase):
         self.assertIn("transfer", kinds)
 
 
+def xcom_margin(body, stance, land):
+    """the margin of stability at frame `land` (cm; Hof et al. 2005): the landing foot's outer edge along the step (from the
+    stance foot's centre towards the landing foot's; the sole's half width 4.65 cm, a step to the side) minus the
+    extrapolated centre of mass there (COM + v / w0, v by central differences, w0 = sqrt(g / COM height))"""
+    other = "右" if stance == "左" else "左"
+    com = body.com()
+    here = 0.5 * (body.ankle(stance)[land] + body.toe(stance)[land])[[0, 2]]
+    there = 0.5 * (body.ankle(other)[land] + body.toe(other)[land])[[0, 2]]
+    u = (there - here) / np.linalg.norm(there - here)
+    v = (com[land + 1, [0, 2]] - com[land - 1, [0, 2]]) * FPS / 2.0
+    w0 = math.sqrt(9.81 / (com[land, 1] * 0.08))
+    xcom = com[land, [0, 2]] + v / w0
+    return float((there - here) @ u + 4.65 / CM - (xcom - here) @ u) * CM
+
+
+def first_landing(motion, foot="左"):
+    """the first frame the foot supports again after it was up (1.6 cm) in the first half of the dance"""
+    sup = balance_layer.Body(MODEL, motion).height(foot) * CM < 1.6
+    up = np.flatnonzero(~sup)
+    up = up[up < 60]
+    return int(up[-1] + 1)
+
+
+def swing_onto_the_landing_foot(last=119):
+    """the left foot up 10 cm for half a second (the right one stands), the body setting off towards the left foot as it
+    lands (36 cm/s), then the right foot up and the left one holding: the dance's landing catches the body (the margin
+    of stability 3.6 cm); held over the right foot and swung over to the left one, the body would come in too fast"""
+    motion = dance(last=last)
+    left = foot_track("左足ＩＫ", last, (1.0, 0.0, 0.0), [(35, 39, 48, 52, 1.25)])
+    right = foot_track("右足ＩＫ", last, (-1.0, 0.0, 0.0), [(56, 60, 95, 99, 1.25)])
+    travel = [key("センター", f, (1.8 * smooth((f - 44) / 14.0), -0.6, 0.0)) for f in range(last + 1)]
+    motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "右足ＩＫ", "センター")] + left + right + travel
+    return motion
+
+
+def falling_step(last=119):
+    """standing on the right foot, the left foot steps 16 cm up and lands where it was while the body travels 29 cm
+    towards it (up to 52 cm/s): the XcoM at the landing is 5 cm past the left foot's outer edge (the dance's landing does
+    not catch the body); then the right foot lifts and the left one holds the body alone"""
+    motion = dance(last=last)
+    left = []
+    for f in range(last + 1):
+        y = 2.0 * min(smooth((f - 40) / 4.0), 1.0 - smooth((f - 48) / 4.0))
+        left.append(key("左足ＩＫ", f, (1.0, y, 0.0)))
+    right = foot_track("右足ＩＫ", last, (-1.0, 0.0, 0.0), [(56, 62, 90, 96, 2.0)])
+    travel = [key("センター", f, (-0.9 + 3.6 * smooth((f - 36) / 20.0), -0.6, 0.0)) for f in range(last + 1)]
+    motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "右足ＩＫ", "センター")] + left + right + travel
+    return motion
+
+
+class CatchTest(unittest.TestCase):
+    """a foot that lands catches the body (Hof et al. 2005, Hof 2008): at the landing the extrapolated centre of mass
+    (XcoM = COM + v / w0) is not past the landing foot's outer edge along the step (the margin of stability >= 0)"""
+
+    def test_swing_over_to_the_landing_foot_keeps_the_catch(self):
+        """the layer holds the body over the right foot while the left one is up and then takes it over to the left one,
+        which stands alone next: it must not throw the XcoM past the left foot as it lands (the static pulls of the two
+        runs made it -3.3 cm here; the dance's own margin is +3.6 cm)"""
+        motion = swing_onto_the_landing_foot()
+        land = first_landing(motion)
+        result = balance_layer.layer(MODEL, motion)
+        before = xcom_margin(balance_layer.Body(MODEL, motion), "右", land)
+        after = xcom_margin(balance_layer.Body(MODEL, result.motion), "右", land)
+        self.assertGreater(before, 2.0)                                       # the fixture: the dance catches
+        self.assertGreater(after, -0.5)
+        shift = centre_offsets(motion, result.motion, 119)
+        self.assertGreater(-shift[40:47, 0].min() * CM, 4.0)                 # still over the right foot while up
+
+    def test_landing_that_does_not_catch_is_held_back(self):
+        """the dance's left foot lands 5 cm short of catching the body and then holds it alone: the layer holds the body
+        back on the way so the left foot catches it (a step whose next foot is placed beyond the XcoM, Hof 2008)"""
+        motion = falling_step()
+        land = first_landing(motion)
+        result = balance_layer.layer(MODEL, motion)
+        before = xcom_margin(balance_layer.Body(MODEL, motion), "右", land)
+        after = xcom_margin(balance_layer.Body(MODEL, result.motion), "右", land)
+        self.assertLess(before, -4.0)                                         # the fixture: the dance does not catch
+        self.assertGreater(after, -0.5)
+        # the feet stay where the dance put them (the foot that lands is not moved out to catch the body)
+        for s in ("左", "右"):
+            b = world(motion, [s + "足ＩＫ"], 119)[s + "足ＩＫ"][0]
+            a = world(result.motion, [s + "足ＩＫ"], 119)[s + "足ＩＫ"][0]
+            sup = balance_layer.Body(MODEL, motion).height(s) < balance_layer.SUPPORT_H
+            np.testing.assert_allclose(a[sup], b[sup], atol=1e-6)
+
+    def test_report_names_the_landings(self):
+        motion = falling_step()
+        land = first_landing(motion)
+        rep = balance_layer.layer(MODEL, motion).report["catch"]
+        row = [r for r in rep["landings"] if r["frame"] == land][0]
+        self.assertEqual(row["stance"], "右")
+        self.assertLess(row["margin_cm"][0], -4.0)
+        self.assertGreater(row["margin_cm"][1], -0.5)
+        self.assertGreaterEqual(rep["summary"]["before_under_0"], 1)
+        self.assertEqual(rep["summary"]["newly_under_0"], 0)
+
+
 class ReachTest(unittest.TestCase):
     def test_wide_stance_low_foot_stops_at_the_reach(self):
         """feet 70 cm apart, the left foot only 6 cm up: the body cannot get over the right foot with the left leg still
@@ -535,6 +632,26 @@ class RangeTest(unittest.TestCase):
         self.assertTrue(np.all(after <= np.maximum(22.0, before) + 1.5), float(np.max(after - np.maximum(22.0, before))))
         run = [r for r in result.report["runs"] if r["first"] <= 60 <= r["last"]][0]
         self.assertIn("hip range", run["limited_by"])
+
+    def test_thigh_kept_in_its_range(self):
+        """the range is the thigh's (the hip to the knee), as the report measures it, not the hip-to-ankle line's: the
+        standing foot turned in 30 degrees and the pelvis tilted 20 degrees, the knee points in and the thigh is 2 degrees
+        more adducted than the line; carrying the body over the foot must stop when the thigh is at 22 degrees (the line
+        alone let it go to 23.9)"""
+        last = 119
+        motion = dance(last=last, spread=0.5, left_lifts=LIFT_RIGHT_STANDS, pelvis_roll_deg=-20.0)
+        h = math.radians(-30.0) / 2.0
+        for k in motion.bones:
+            if k.name == "右足ＩＫ":
+                k.rotation = fk.stored((0.0, math.sin(h), 0.0, math.cos(h)))
+        result = balance_layer.layer(MODEL, motion)
+        before = balance_layer.Body(MODEL, motion).hip_adduction("右")
+        after = balance_layer.Body(MODEL, result.motion).hip_adduction("右")
+        self.assertTrue(19.0 < before[60] < 22.0)                             # the fixture: near the range, inside it
+        self.assertLessEqual(float(np.max(after - np.maximum(22.0, before))), 0.3)
+        shift = centre_offsets(motion, result.motion, last)
+        self.assertGreater(-shift[55:80, 0].min() * CM, 1.0)                 # it still goes towards the right foot
+        self.assertEqual(result.report["hip"]["over_22_newly_R"], 0)
 
     def test_straight_legs_do_not_buckle(self):
         """straight legs (センター at its rest height): the hips may go down for a leg to reach its foot only as far as
