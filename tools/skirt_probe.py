@@ -7,6 +7,8 @@ markers found again in the rendered AVI, and the tilt of every skirt rigid body 
                                      [--around MODEL.pmx DANCE.vmd FIRST LAST] [--last-frame 7742]
     python tools/skirt_probe.py track AVI LEGEND.json CAMERA.json OUT.json [--first SONG_FRAME] [--fps 60]
     python tools/skirt_probe.py angles TRACK.json LEGEND.json OUT.json
+    python tools/skirt_probe.py solve SIDE_TRACK.json FRONT_TRACK.json LEGEND.json OUT.json [--max-gap 0.1]
+    python tools/skirt_probe.py analyze SOLVED.json LEGEND.json OUT.json
 
 Why markers: MMD's physics cannot be read back from MMD, and it differs from render to render (it grows from a ~100
 pixel difference in the first picture of two renders of the same span), so everything is measured in one render.  The
@@ -23,7 +25,12 @@ mmd_cli.fk: a positive distance puts the camera in front of the look-at point).
 Angles: a skirt bone r and the next bone r + 1 of the same column are the two ends of rigid body r (the joints sit on the
 bones), so the body's tilt from hanging straight down is acos(-(y[r+1] - y[r]) / L[r]) with L the rest length: 0
 hanging, 90 horizontal, more than 90 pointing up.  The hem's elevation is asin((y[hem] - y[waist]) / sum(L)): -90
-hanging straight, 0 level with the waist ring, positive above it.
+hanging straight, 0 level with the waist ring, positive above it.  From heights alone (`angles`, one render) a body near
+vertical is poorly measured (a pixel moves acos near 1 by degrees); `solve` takes a side and a front render of the same
+span and gives every marker seen in both its three coordinates (the renders differ a little: the heights must agree
+within --max-gap), and `analyze` measures in 3D: the tilts, the bend at every joint against its rest angle, the spread of
+the waist-to-hem line, the root body's turn on the waist (the frame fitted to the waist ring), and how deep skirt markers
+sit in the thigh and arm capsules (the model's own capsule radii, kept in the legend with the skirt joints' limits).
 
 The measuring copy is for this work only and is not to be distributed (Sour's ReadMe allows editing; distribution would
 need the ReadMe and an editor's ReadMe).
@@ -124,7 +131,37 @@ def build_markers(doc, size=SIZE, body=BODY_BONES):
         pts = [doc.bones[grid[(r, c)]].position for r in range(rows)]
         lengths[str(c)] = [round(math.dist(a, b), 6) for a, b in zip(pts, pts[1:])]
     return {"rows": rows, "cols": cols, "size": size, "markers": markers, "lengths": lengths,
-            "missing_body": [n for n in body if n not in names]}
+            "missing_body": [n for n in body if n not in names], "capsules": _capsules(doc, names),
+            "joints": _skirt_joints(doc)}
+
+
+def _capsules(doc, names):
+    """CAPSULES with the radius of the model's own capsule rigid body on the first bone, where it has one"""
+    bodies = [(rb.bone, pmx_edit.rigid_body(rb)) for rb in doc.rigid_bodies]
+    out = []
+    for side, kind, a, b, radius in CAPSULES:
+        for bone, body in bodies:
+            if a in names and bone == names[a] and body.shape == 2:
+                radius = round(body.size[0], 4)
+                break
+        out.append([side, kind, a, b, radius])
+    return out
+
+
+def _skirt_joints(doc):
+    """per skirt body 'row_col': the joint that hangs it (named like the body): its parent body, the rotation limits per
+    axis in degrees and the rotation springs"""
+    names = [pmx_edit.rigid_names(doc, rb)[0] for rb in doc.rigid_bodies]
+    out = {}
+    for j in pmx_edit.joints(doc):
+        m = SKIRT.match(j.name)
+        if m and 0 <= j.a < len(names):
+            out["%s_%s" % (m.group(1), m.group(2))] = {
+                "parent": names[j.a],
+                **{axis: [round(math.degrees(j.rotate_lower[k]), 3), round(math.degrees(j.rotate_upper[k]), 3)]
+                   for k, axis in enumerate("xyz")},
+                "spring": [round(v, 4) for v in j.spring_rotate]}
+    return out
 
 
 # ---- the camera -----------------------------------------------------------------------------------------------------
@@ -304,6 +341,185 @@ def angles(tracked, legend):
     return {"camera": cam, "rows": rows, "cols": cols, "pictures": out}
 
 
+# ---- three dimensions from two renders --------------------------------------------------------------------------------
+#
+# MMD's physics differs from render to render, but little: on the 213.4 s turn the markers' heights in three renders
+# differed by 0.005-0.03 unit on average (0.2 at most).  So a side render (yaw +-90) and a front render (yaw 0 / 180) of
+# the same span give every marker seen in both its three coordinates; the two heights must agree within max_gap.
+
+MAX_GAP = 0.1
+CAPSULES = (("左", "leg", "左足D", "左ひざD", 0.987), ("右", "leg", "右足D", "右ひざD", 0.987),
+            ("左", "arm", "左腕", "左ひじ", 0.395), ("右", "arm", "右腕", "右ひじ", 0.395),
+            ("左", "arm", "左ひじ", "左手首", 0.296), ("右", "arm", "右ひじ", "右手首", 0.296))
+# Sour's Rin's collision capsules: the thigh 右足/左足 (radius 0.987), the upper arm 右腕 (0.395), the forearm 右ひじ (0.296)
+
+
+def _rows(cam, uv):
+    """the two linear equations (n . P = n . eye) a picture point (u, v) gives on the world point P"""
+    import numpy as np
+    eye, fwd, right, up = (np.array(v) for v in _frame(cam))
+    f = _focal(cam)
+    w, h = cam["size"]
+    ku, kv = (uv[0] - w / 2.0) / f, (h / 2.0 - uv[1]) / f
+    nu, nv = right - ku * fwd, up - kv * fwd
+    return (nu, float(nu @ eye)), (nv, float(nv @ eye))
+
+
+def point_from_views(a, b, cam_a, cam_b):
+    """(the world point drawn at a = (u, v) by cam_a and at b by cam_b, |its height from a - its height from b|)"""
+    import numpy as np
+    fa, fb = np.array(_frame(cam_a)[1]), np.array(_frame(cam_b)[1])
+    if abs(float(fa @ fb)) > 0.5:
+        raise ValueError("the two cameras must look across each other (side and front)")
+    (ua, va), (ub, vb) = _rows(cam_a, a), _rows(cam_b, b)
+    A = np.array([ua[0], va[0], ub[0], vb[0]])
+    y = np.array([ua[1], va[1], ub[1], vb[1]])
+    p = np.linalg.lstsq(A, y, rcond=None)[0]
+    pa = np.linalg.solve(A[[0, 1, 2]], y[[0, 1, 2]])
+    pb = np.linalg.solve(A[[0, 2, 3]], y[[0, 2, 3]])
+    return p, float(abs(pa[1] - pb[1]))
+
+
+def solve(track_a, track_b, legend, max_gap=MAX_GAP):
+    """the markers' world positions picture by picture from a side and a front render of the same span"""
+    pa, pb = track_a["pictures"], track_b["pictures"]
+    if len(pa) != len(pb) or any(abs(x["song_frame"] - y["song_frame"]) > 1e-6 for x, y in zip(pa, pb)):
+        raise ValueError("the two renders do not hold the same pictures (%d and %d)" % (len(pa), len(pb)))
+    least_a, least_b = occluded(track_a), occluded(track_b)
+    out = []
+    for x, y in zip(pa, pb):
+        points, gaps, rejected = [], [], 0
+        for i in range(len(legend["markers"])):
+            ma, mb = x["markers"][i], y["markers"][i]
+            if ma is None or mb is None or ma[2] < least_a.get(i, 0) or mb[2] < least_b.get(i, 0):
+                points.append(None)
+                gaps.append(None)
+                continue
+            p, gap = point_from_views(ma[:2], mb[:2], track_a["camera"], track_b["camera"])
+            if gap > max_gap:
+                rejected += 1
+                points.append(None)
+            else:
+                points.append([round(float(v), 5) for v in p])
+            gaps.append(round(gap, 5))
+        out.append({"picture": x["picture"], "song_frame": x["song_frame"], "points": points, "gaps": gaps,
+                    "rejected": rejected})
+    return {"cameras": [track_a["camera"], track_b["camera"]], "max_gap": max_gap, "pictures": out}
+
+
+def tilt(p, q):
+    """degrees between p -> q and straight down"""
+    d = [q[k] - p[k] for k in range(3)]
+    n = math.sqrt(sum(v * v for v in d))
+    return math.degrees(math.acos(max(-1.0, min(1.0, -d[1] / n))))
+
+
+def _angle(a, b):
+    na, nb = math.sqrt(sum(v * v for v in a)), math.sqrt(sum(v * v for v in b))
+    return math.degrees(math.acos(max(-1.0, min(1.0, sum(x * y for x, y in zip(a, b)) / (na * nb)))))
+
+
+def bends(now, rest):
+    """per inner point of a chain: the angle between the links meeting there, less the same angle at rest (None where a
+    point is missing)"""
+    out = []
+    for k in range(1, len(now) - 1):
+        a, b, c = now[k - 1], now[k], now[k + 1]
+        if a is None or b is None or c is None:
+            out.append(None)
+            continue
+        d0, d1 = [b[i] - a[i] for i in range(3)], [c[i] - b[i] for i in range(3)]
+        r0 = [rest[k][i] - rest[k - 1][i] for i in range(3)]
+        r1 = [rest[k + 1][i] - rest[k][i] for i in range(3)]
+        out.append(_angle(d0, d1) - _angle(r0, r1))
+    return out
+
+
+def capsule_depth(p, a, b, r):
+    """how deep p lies inside the capsule of radius r round the segment a-b (0 outside)"""
+    ab = [b[i] - a[i] for i in range(3)]
+    ap = [p[i] - a[i] for i in range(3)]
+    t = max(0.0, min(1.0, sum(x * y for x, y in zip(ab, ap)) / max(1e-12, sum(x * x for x in ab))))
+    d = math.sqrt(sum((ap[i] - t * ab[i]) ** 2 for i in range(3)))
+    return max(0.0, r - d)
+
+
+def rotation_y(angle):
+    import numpy as np
+    c, s = math.cos(angle), math.sin(angle)
+    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+
+def fit_rigid(src, dst):
+    """(R, t) with dst ~ R src + t (least squares, Kabsch)"""
+    import numpy as np
+    a, b = np.array(src, float), np.array(dst, float)
+    ca, cb = a.mean(0), b.mean(0)
+    u, _, vt = np.linalg.svd((a - ca).T @ (b - cb))
+    d = np.sign(np.linalg.det(vt.T @ u.T))
+    rot = vt.T @ np.diag([1.0, 1.0, d]) @ u.T
+    return rot, cb - rot @ ca
+
+
+def analyze(solved, legend):
+    """per picture: per column the bodies' tilts, the hem's elevation, the spread of the waist-to-hem line, the bends at
+    the joints (against rest), the root body's turn on the waist (the ring's fitted frame); how many bodies point above
+    horizontal; how deep skirt markers sit in the thigh and arm capsules"""
+    import numpy as np
+    rows, cols = legend["rows"], legend["cols"]
+    skirt = {(m["row"], m["col"]): m for m in legend["markers"] if m["kind"] == "skirt"}
+    body = {m["name"]: m["index"] for m in legend["markers"] if m["kind"] == "body"}
+    caps = [c for c in legend.get("capsules", CAPSULES) if c[2] in body and c[3] in body]
+    out = []
+    for pic in solved["pictures"]:
+        pts = pic["points"]
+        ring = [(skirt[(0, c)]["rest"], pts[skirt[(0, c)]["index"]]) for c in range(cols)]
+        ring = [(a, b) for a, b in ring if b is not None]
+        rot = fit_rigid([a for a, _ in ring], [b for _, b in ring])[0] if len(ring) >= 3 else None
+        columns, up, top = [], 0, None
+        for c in range(cols):
+            chain = [pts[skirt[(r, c)]["index"]] for r in range(rows)]
+            rest = [skirt[(r, c)]["rest"] for r in range(rows)]
+            tilts = [None if a is None or b is None else round(tilt(a, b), 3) for a, b in zip(chain, chain[1:])]
+            length = sum(legend["lengths"][str(c)])
+            hem = spread = None
+            if chain[0] is not None and chain[-1] is not None:
+                hem = round(math.degrees(math.asin(max(-1.0, min(1.0, (chain[-1][1] - chain[0][1]) / length)))), 3)
+                spread = round(tilt(chain[0], chain[-1]), 3)
+            root = None
+            if rot is not None and chain[0] is not None and chain[1] is not None:
+                rest_dir = rot @ (np.array(rest[1]) - np.array(rest[0]))
+                root = round(_angle(rest_dir, [chain[1][k] - chain[0][k] for k in range(3)]), 3)
+            for t in tilts:
+                if t is not None:
+                    up += t > 90.0
+                    top = t if top is None or t > top else top
+            columns.append({"tilt": tilts, "hem": hem, "spread": spread, "root_turn": root,
+                            "bend": [None if b is None else round(b, 3) for b in bends(chain, rest)]})
+        contact = {}
+        for kind in ("leg", "arm"):
+            deepest, inside = None, 0
+            for side, k, a_name, b_name, radius in caps:
+                if k != kind:
+                    continue
+                a, b = pts[body[a_name]], pts[body[b_name]]
+                if a is None or b is None:
+                    continue
+                for (r, c), m in skirt.items():
+                    p = pts[m["index"]]
+                    if p is None:
+                        continue
+                    d = capsule_depth(p, a, b, radius)
+                    if d > 0:
+                        inside += 1
+                        if deepest is None or d > deepest["depth"]:
+                            deepest = {"depth": round(d, 4), "row": r, "col": c, "side": side, "from": a_name}
+            contact[kind] = {"max_depth": deepest["depth"] if deepest else 0.0, "deepest": deepest, "inside": inside}
+        out.append({"picture": pic["picture"], "song_frame": pic["song_frame"], "columns": columns, "up": int(up),
+                    "max_tilt": top, "legs": contact["leg"], "arms": contact["arm"]})
+    return {"rows": rows, "cols": cols, "pictures": out}
+
+
 # ---- the command line -----------------------------------------------------------------------------------------------
 
 def _write(path, data):
@@ -352,8 +568,18 @@ def main(argv=None):
     s.add_argument("out")
     s.add_argument("--first", type=float, default=0.0, help="the song frame of the AVI's first picture")
     s.add_argument("--fps", type=float, default=60.0)
-    s = sub.add_parser("angles", help="the skirt bodies' tilts and the hem's elevation per picture")
+    s = sub.add_parser("angles", help="the skirt bodies' tilts and the hem's elevation per picture (one side render)")
     s.add_argument("track")
+    s.add_argument("legend")
+    s.add_argument("out")
+    s = sub.add_parser("solve", help="the markers' world positions from a side and a front render of the same span")
+    s.add_argument("side", help="the track of the side render (yaw 90 or -90)")
+    s.add_argument("front", help="the track of the front render (yaw 0 or 180)")
+    s.add_argument("legend")
+    s.add_argument("out")
+    s.add_argument("--max-gap", type=float, default=MAX_GAP, help="the most the two heights may differ (default %g)" % MAX_GAP)
+    s = sub.add_parser("analyze", help="tilts, bends, spread and contact with legs and arms per picture (from solve)")
+    s.add_argument("solved")
     s.add_argument("legend")
     s.add_argument("out")
     a = ap.parse_args(argv)
@@ -387,7 +613,7 @@ def main(argv=None):
             seen = [sum(1 for m in row["markers"] if m is not None) for row in tracked["pictures"]]
             result = {"out": os.path.abspath(a.out), "pictures": len(seen), "seen_min": min(seen) if seen else 0,
                       "seen_max": max(seen) if seen else 0, "markers": len(legend["markers"])}
-        else:
+        elif a.command == "angles":
             with open(a.track, encoding="utf-8") as f:
                 tracked = json.load(f)
             with open(a.legend, encoding="utf-8") as f:
@@ -397,6 +623,26 @@ def main(argv=None):
             hems = [c["hem"] for p in out["pictures"] for c in p["columns"] if c["hem"] is not None]
             result = {"out": os.path.abspath(a.out), "pictures": len(out["pictures"]),
                       "hem_max": max(hems) if hems else None}
+        elif a.command == "solve":
+            loaded = []
+            for path in (a.side, a.front, a.legend):
+                with open(path, encoding="utf-8") as f:
+                    loaded.append(json.load(f))
+            out = solve(loaded[0], loaded[1], loaded[2], a.max_gap)
+            _json(a.out, out)
+            seen = [sum(1 for p in pic["points"] if p is not None) for pic in out["pictures"]]
+            result = {"out": os.path.abspath(a.out), "pictures": len(seen), "seen_min": min(seen) if seen else 0,
+                      "rejected": sum(pic["rejected"] for pic in out["pictures"])}
+        else:
+            with open(a.solved, encoding="utf-8") as f:
+                solved = json.load(f)
+            with open(a.legend, encoding="utf-8") as f:
+                legend = json.load(f)
+            out = analyze(solved, legend)
+            _json(a.out, out)
+            tops = [p["max_tilt"] for p in out["pictures"] if p["max_tilt"] is not None]
+            result = {"out": os.path.abspath(a.out), "pictures": len(out["pictures"]), "max_tilt": max(tops) if tops else None,
+                      "pictures_up": sum(1 for p in out["pictures"] if p["up"])}
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

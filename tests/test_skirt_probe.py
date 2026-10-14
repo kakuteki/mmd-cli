@@ -115,6 +115,11 @@ class MarkersTest(unittest.TestCase):
         self.assertEqual(model.counts["materials"], 1 + 2 + 12)
         self.assertEqual(model.counts["faces"], 1 + 8 * 14)
 
+    def test_without_physics_the_legend_falls_back_to_the_default_capsules(self):
+        legend = probe.build_markers(toy_doc(), size=0.05)
+        self.assertEqual(legend["joints"], {})
+        self.assertEqual([tuple(c) for c in legend["capsules"]], [tuple(c) for c in probe.CAPSULES])
+
     def test_a_model_without_a_skirt_is_refused(self):
         w = Writer()
         doc = pmx_edit.loads(w.build(bones=[w.bone("上半身")]))
@@ -239,8 +244,168 @@ class AnglesTest(unittest.TestCase):
         self.assertIsNone(hem)
 
 
+SIDE = {"look": [0.5, 10.0, -8.0], "yaw": 90.0, "pitch": 0.0, "distance": 700.0, "fov": 1.0, "size": [1280, 720]}
+FRONT = dict(SIDE, yaw=0.0)
+
+
+class SolveTest(unittest.TestCase):
+    def test_points_come_back_from_a_side_and_a_front_view(self):
+        rng = np.random.RandomState(1)
+        for p in rng.uniform(-4, 4, size=(20, 3)) + np.array(SIDE["look"]):
+            q, gap = probe.point_from_views(probe.project(p, SIDE), probe.project(p, FRONT), SIDE, FRONT)
+            self.assertTrue(np.allclose(q, p, atol=1e-6), (q, p))
+            self.assertLess(gap, 1e-6)
+
+    def test_a_height_the_views_disagree_on_is_reported(self):
+        p = np.array([1.0, 11.0, -7.0])
+        q, gap = probe.point_from_views(probe.project(p, SIDE), probe.project(p + [0.0, 0.3, 0.0], FRONT), SIDE, FRONT)
+        self.assertAlmostEqual(gap, 0.3, 2)
+        self.assertAlmostEqual(q[1], 11.15, 2)
+
+    def test_the_two_cameras_must_look_across_each_other(self):
+        with self.assertRaises(ValueError):
+            probe.point_from_views((640, 360), (640, 360), SIDE, SIDE)
+
+    def test_tracks_are_joined_picture_by_picture(self):
+        legend = {"markers": [{"index": 0}, {"index": 1}, {"index": 2}]}
+        pts = [np.array([0.5, 10.0, -8.0]), np.array([1.0, 9.0, -7.5]), np.array([0.0, 11.0, -8.5])]
+
+        def view(cam, hide=None, lift=None):
+            rows = []
+            for k in range(2):
+                ms = []
+                for i, p in enumerate(pts):
+                    if hide == (k, i):
+                        ms.append(None)
+                        continue
+                    u, v = probe.project(p + (np.array([0.0, lift[1], 0.0]) if lift and lift[0] == (k, i) else 0.0), cam)
+                    ms.append([u, v, 30])
+                rows.append({"picture": k, "song_frame": 100 + k / 2.0, "markers": ms})
+            return {"camera": cam, "first": 100, "fps": 60, "pictures": rows}
+        solved = probe.solve(view(SIDE, hide=(0, 1)), view(FRONT, lift=((1, 2), 0.5)), legend, max_gap=0.2)
+        p0, p1 = solved["pictures"]
+        self.assertIsNone(p0["points"][1])
+        self.assertTrue(np.allclose(p0["points"][0], pts[0], atol=1e-6))
+        self.assertIsNone(p1["points"][2])                    # 0.5 apart in height: left out
+        self.assertEqual(p1["rejected"], 1)
+        with self.assertRaises(ValueError):
+            probe.solve(view(SIDE), {"camera": FRONT, "first": 100, "fps": 60, "pictures": []}, legend)
+
+
+class GeometryTest(unittest.TestCase):
+    def test_tilt_from_straight_down(self):
+        self.assertAlmostEqual(probe.tilt((0, 0, 0), (0, -1, 0)), 0.0)
+        self.assertAlmostEqual(probe.tilt((0, 0, 0), (1, 0, 0)), 90.0)
+        self.assertAlmostEqual(probe.tilt((0, 0, 0), (1, 1, 0)), 135.0)
+
+    def test_bends_against_the_rest_shape(self):
+        h = math.sqrt(3.0) / 2.0
+        rest = [(0, 0, 0), (0, -1, 0), (0.5, -1 - h, 0), (0.5, -2 - h, 0)]       # the second link 30 deg out at rest
+        now = [(0, 0, 0), (0, -1, 0), (0.0, -2.0, 0), (h, -2.5, 0)]               # straightened, then 60 deg out
+        bends = probe.bends(now, rest)
+        self.assertAlmostEqual(bends[0], -30.0, 3)
+        self.assertAlmostEqual(bends[1], 60.0 - 30.0, 3)
+        self.assertEqual(probe.bends([(0, 0, 0), None, (0, -2, 0)], rest[:3]), [None])
+
+    def test_depth_inside_a_capsule(self):
+        a, b = (0, 0, 0), (0, -4, 0)
+        self.assertAlmostEqual(probe.capsule_depth((0.5, -2, 0), a, b, 0.987), 0.487, 6)
+        self.assertEqual(probe.capsule_depth((2.0, -2, 0), a, b, 0.987), 0.0)
+        self.assertAlmostEqual(probe.capsule_depth((0, 0.5, 0), a, b, 0.987), 0.487, 6)       # past the end: the round cap
+
+    def test_waist_frame_from_the_ring(self):
+        ring_rest = [(math.cos(t), 13.0, math.sin(t)) for t in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
+        turn = probe.rotation_y(math.radians(40))
+        moved = [tuple(turn @ np.array(p) + np.array([2.0, -1.0, 0.5])) for p in ring_rest]
+        rot, t = probe.fit_rigid(ring_rest, moved)
+        self.assertTrue(np.allclose(rot, turn, atol=1e-9))
+        self.assertTrue(np.allclose(t, [2.0, -1.0, 0.5], atol=1e-9))
+
+
+class AnalyzeTest(unittest.TestCase):
+    def legend(self):
+        markers, i = [], 0
+        for n in ("左足D", "左ひざD", "右足D", "右ひざD"):
+            markers.append({"index": i, "name": n, "kind": "body", "row": None, "col": None, "rest": [0, 0, 0]})
+            i += 1
+        rest = {}
+        for c in range(4):
+            a = 2 * math.pi * c / 4
+            for r in range(3):
+                p = [(1.0 + 0.5 * r) * math.sin(a), 13.0 - r, -(1.0 + 0.5 * r) * math.cos(a)]
+                rest[(r, c)] = p
+                markers.append({"index": i, "name": "スカート_%d_%d" % (r, c), "kind": "skirt", "row": r, "col": c, "rest": p})
+                i += 1
+        lengths = {str(c): [round(math.dist(rest[(r, c)], rest[(r + 1, c)]), 6) for r in range(2)] for c in range(4)}
+        return {"rows": 3, "cols": 4, "markers": markers, "lengths": lengths}
+
+    def test_a_flipped_column_and_a_leg_through_the_skirt(self):
+        legend = self.legend()
+        pts = [None] * len(legend["markers"])
+        for m in legend["markers"]:
+            pts[m["index"]] = list(m["rest"])
+        # legs: the left thigh straight down at x 0.6, the right one far away
+        pts[0], pts[1], pts[2], pts[3] = [0.6, 10.5, -1.5], [0.6, 6.5, -1.5], [-5, 10.5, 0], [-5, 6.5, 0]
+        flip = {m["row"]: m["index"] for m in legend["markers"] if m["kind"] == "skirt" and m["col"] == 1}
+        pts[flip[1]] = [2.0, 12.9, 0.0]          # column 1 (x +) out to just below level
+        pts[flip[2]] = [2.8, 13.5, 0.0]          # then up
+        solved = {"pictures": [{"picture": 0, "song_frame": 10.0, "points": pts}]}
+        out = probe.analyze(solved, legend)
+        col1 = out["pictures"][0]["columns"][1]
+        self.assertAlmostEqual(col1["tilt"][0], math.degrees(math.acos(0.1 / math.hypot(1.0, 0.1))), 3)
+        self.assertAlmostEqual(col1["tilt"][1], math.degrees(math.acos(-0.6)), 3)
+        self.assertGreater(col1["hem"], 0.0)
+        col0 = out["pictures"][0]["columns"][0]                # at rest: the hem 2 below the waist
+        self.assertLess(col0["hem"], -50.0)
+        self.assertEqual(out["pictures"][0]["up"], 1)          # one body points above horizontal
+        legs = out["pictures"][0]["legs"]
+        self.assertGreater(legs["max_depth"], 0.0)             # column 0 hangs at z -1, -1.5 by the left thigh at x 0.6
+        self.assertEqual(legs["deepest"]["side"], "左")
+
+
+class CommandLineTest(unittest.TestCase):
+    def test_solve_and_analyze_from_files(self):
+        legend = AnalyzeTest().legend()
+        pts = {m["index"]: np.array(m["rest"], float) + np.array([0.5, -2.0, -8.0]) for m in legend["markers"]}
+        pts[0], pts[1], pts[2], pts[3] = (np.array(v, float) for v in ([1.1, 8.5, -9.5], [1.1, 4.5, -9.5], [-4.5, 8.5, -8], [-4.5, 4.5, -8]))
+
+        def view(cam):
+            rows = [{"picture": k, "song_frame": 50 + k / 2.0,
+                     "markers": [list(probe.project(pts[i], cam)) + [30] for i in range(len(pts))]} for k in range(3)]
+            return {"camera": cam, "first": 50, "fps": 60, "pictures": rows}
+        tmp = tempfile.mkdtemp()
+        try:
+            paths = {k: os.path.join(tmp, k + ".json") for k in ("a", "b", "legend", "solved", "analyzed")}
+            for k, v in (("a", view(SIDE)), ("b", view(FRONT)), ("legend", legend)):
+                with open(paths[k], "w", encoding="utf-8") as f:
+                    json.dump(v, f, ensure_ascii=False)
+            self.assertEqual(probe.main(["solve", paths["a"], paths["b"], paths["legend"], paths["solved"]]), 0)
+            self.assertEqual(probe.main(["analyze", paths["solved"], paths["legend"], paths["analyzed"]]), 0)
+            out = json.loads(read(paths["analyzed"]).decode("utf-8"))
+            self.assertEqual(len(out["pictures"]), 3)
+            col = out["pictures"][2]["columns"][0]
+            self.assertAlmostEqual(col["tilt"][0], probe.tilt(legend["markers"][4]["rest"], legend["markers"][5]["rest"]), 3)
+            self.assertEqual(out["pictures"][0]["up"], 0)
+            self.assertEqual(probe.main(["solve", paths["a"], paths["a"], paths["legend"], paths["solved"]]), 2)
+        finally:
+            shutil.rmtree(tmp)
+
+
 @unittest.skipUnless(os.path.isfile(RIN), "the Sour Rin model is not here")
 class SourRinMarkersTest(unittest.TestCase):
+    def test_the_legend_holds_the_capsules_and_the_joint_limits_of_the_model(self):
+        doc = pmx_edit.load(RIN)
+        legend = probe.build_markers(doc)
+        caps = {(c[2], c[3]): c[4] for c in legend["capsules"]}
+        self.assertAlmostEqual(caps[("右足D", "右ひざD")], 0.987, 3)
+        self.assertAlmostEqual(caps[("左腕", "左ひじ")], 0.395, 3)
+        self.assertAlmostEqual(caps[("右ひじ", "右手首")], 0.296, 3)
+        j = legend["joints"]["1_0"]
+        self.assertAlmostEqual(j["x"][1], 4.2, 1)
+        self.assertEqual(j["parent"], "スカート_0_0")
+        self.assertEqual(legend["joints"]["0_3"]["parent"], "上半身")
+        self.assertEqual(len(legend["joints"]), 112)
+
     def test_every_skirt_bone_and_the_body_bones_get_a_marker(self):
         doc = pmx_edit.load(RIN)
         legend = probe.build_markers(doc)
