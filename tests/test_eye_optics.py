@@ -92,13 +92,15 @@ def look(first, last, aim=HAND_REST, hand="右"):
             "settle": first, "aim": [list(aim)] * (last - first + 1)}
 
 
-def gaze_report(*looks, contacts=(), motion=None):
+def gaze_report(*looks, contacts=(), motion=None, on=None):
     """the parts of tools/eye_gaze.py's --report that eye_optics reads: the looks at a hand, the eye contacts and the
     md5 of the 両目 VMD it wrote (of `motion`, when given)"""
     rep = {"hands": {"count": len(looks), "frames": sum(L["last"] - L["first"] + 1 for L in looks), "list": list(looks)},
            "contacts": {"count": len(contacts), "list": [{"first": a, "last": b} for a, b in contacts]}}
     if motion is not None:
         rep["out_md5"] = hashlib.md5(vmd.dumps(motion)).hexdigest()
+    if on is not None:                                      # the dance it was made on
+        rep["in_md5"] = hashlib.md5(vmd.dumps(on)).hexdigest()
     return rep
 
 
@@ -228,8 +230,8 @@ class VergencePhaseTest(unittest.TestCase):
     def test_a_look_of_0_3_seconds_is_converged_through_most_of_it(self):
         """the gaze's looks at a hand last 0.3 to 0.6 s (the MV v8's 52 s: 9 frames, 5.3 degrees an eye): the eyes are
         more than half way from the look's third frame to its last, and most of the vergence (degrees x frames) lies
-        within the look, not after it.  Natural vergence of 10 degrees peaks at 70 to 80 deg/s (Erkelens et al. 1989,
-        236:441: 50 deg/s for 5 degrees to 150 to 200 for 34), about 0.25 s; at 0.41 s (5 to 95 % 0.25 s, stage 5)
+        within the look, not after it (a person takes longer: about 0.33 s to 90 % for 10 to 12 degrees, Collewijn et
+        al. 1995 Fig. 17; the shape is chosen to fit the short looks).  At 0.41 s (5 to 95 % 0.25 s, stage 5)
         the eyes passed 3 degrees on the look's last 4 frames only and 55 % of the vergence came after it"""
         labels = ["free"] * 20 + ["hand"] * 9 + ["free"] * 30
         top = 5.3
@@ -1066,6 +1068,18 @@ class GazeReportTest(unittest.TestCase):
         self.assertEqual(got["looks"][1]["aim"], [FAR] * 10)
         self.assertEqual(got["contacts"], [(0, 20)])
 
+    def test_a_report_made_on_another_dance_is_refused(self):
+        # the points aimed at are the hands of the dance the gaze was made on
+        g = gaze()
+        rep = gaze_report(look(30, 49), motion=g, on=dance(90))
+        self.assertEqual(len(eye_optics.gaze_looks(rep, vmd.dumps(g), vmd.dumps(dance(90)))["looks"]), 1)
+        with self.assertRaises(ValueError) as ctx:
+            eye_optics.gaze_looks(rep, vmd.dumps(g), vmd.dumps(dance(120)))
+        self.assertIn("in_md5", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            eye_optics.gaze_looks(gaze_report(look(30, 49), motion=g), vmd.dumps(g), vmd.dumps(dance(90)))
+        self.assertIn("in_md5", str(ctx.exception))
+
     def test_a_report_of_another_gaze_is_refused(self):
         rep = gaze_report(look(30, 49), motion=gaze(90, {0: (5.0, 0.0)}))
         with self.assertRaises(ValueError) as ctx:
@@ -1110,8 +1124,9 @@ class CommandTest(unittest.TestCase):
             json.dump({"flares": [1.0]}, f)
         self.paths["look"] = look_path
         # tools/eye_gaze.py's report of gaze.vmd: she looks at her hand, 30 cm before her eyes, on frames 30 to 49
-        for name, rep in (("gaze_report.json", gaze_report(look(30, 49), motion=gaze())),
-                          ("other_report.json", gaze_report(look(30, 49), motion=gaze(90, {0: (5.0, 0.0)})))):
+        for name, rep in (("gaze_report.json", gaze_report(look(30, 49), motion=gaze(), on=dance())),
+                          ("other_report.json", gaze_report(look(30, 49), motion=gaze(90, {0: (5.0, 0.0)}), on=dance())),
+                          ("other_dance.json", gaze_report(look(30, 49), motion=gaze(), on=dance(120)))):
             path = os.path.join(self.tmp, name)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(rep, f)
@@ -1153,6 +1168,9 @@ class CommandTest(unittest.TestCase):
 
     def test_refuses_the_report_of_another_gaze(self):
         self.assertIn("out_md5", self.failure(self.args(report="other_report.json")))
+
+    def test_refuses_the_report_of_a_gaze_made_on_another_dance(self):
+        self.assertIn("in_md5", self.failure(self.args(report="other_dance.json")))
 
     def test_writes_the_motion_and_the_report(self):
         report = os.path.join(self.tmp, "r.json")

@@ -1671,8 +1671,11 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(code, 0, result)
         with open(out, "rb") as f:
             written = hashlib.md5(f.read()).hexdigest()
+        with open(self.dance, "rb") as f:
+            read = hashlib.md5(f.read()).hexdigest()
         with open(report, encoding="ascii") as f:
-            self.assertEqual(json.load(f)["out_md5"], written)
+            rep = json.load(f)
+        self.assertEqual((rep["out_md5"], rep["in_md5"]), (written, read))
 
     def test_up_and_down_limits_and_the_pitch_shortcut(self):
         out = os.path.join(self.folder, "o.vmd")

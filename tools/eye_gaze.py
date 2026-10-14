@@ -172,7 +172,8 @@ hand_away, quick, wall; the list has frame, frames, reason and amplitude like th
 it), the contacts (first and last frame, seconds, the anchor they hold), the looks at a hand (hands: first and last
 frame, seconds, the hand, its median distance in metres, the frame it settles, and aim: the world point the eyes aim
 at on each frame of the look, look_aim, which tools/eye_optics.py brings them together on; hand_rules: the constants
-above), out_md5 (the md5 of the VMD written: eye_optics refuses a report of another gaze), the anchors, the cuts, the
+above), out_md5 and in_md5 (the md5 of the VMD written and of the dance read: eye_optics refuses a report of another
+gaze or of another dance, whose hands the points aimed at belong to), the anchors, the cuts, the
 error on the camera during the contacts,
 and measures: the target numbers of the analysis computed on the plan, by the analysts' definitions (eye_measures,
 contact_measures, lead_measure, carried_measure; README: eye_gaze.py), the smoothness of stage 5 (smooth_measures),
@@ -267,7 +268,7 @@ HAND_POINTS = ("手首", "中指３先")      # their mean is the hand's look po
 FINGER_TIPS = ("人指３先", "中指３先", "薬指３先", "小指３先", "親指２先")   # the eyes aim at the one furthest from the wrist
 UNIT_M = 0.08                         # metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80)
 HAND_NEAR, HAND_FAR = 0.18, 0.60      # metres from the eyes: nearer, the hand covers or touches the face; further, beyond
-                                      # an arm's reach (tools/eye_optics.py: hand_m 0.6)
+                                      # an arm's reach
 HAND_ZONE = FREE_SHARE                # shares of the limits within which, or HAND_REACH degrees beyond, a hand lies
 HAND_REACH = 4.0                      # before her face: the face turned to it, the eyes resting near the middle
 HAND_CAMERA = 10.0                    # degrees: a hand nearer the camera's line is held out to the viewer, not looked at
@@ -1678,7 +1679,9 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     check_distinct(dance_path, camera_path, model_path, out_path, report_path, debug_path, probe_path, cues_path)
     dance_full, camera_full, model_full, out_full = (os.path.abspath(p) for p in (dance_path, camera_path, model_path, out_path))
     cues = load_cues(os.path.abspath(cues_path)) if cues_path else None
-    dance = vmd.load(dance_full)
+    with open(dance_full, "rb") as f:
+        dance_bytes = f.read()
+    dance = vmd.loads(dance_bytes)
     camera = vmd.load(camera_full)
     model = load_model(model_full)
     result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed, anchors=song_anchors(cues, chorus),
@@ -1704,7 +1707,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
         summary["cues"] = os.path.abspath(cues_path)
     if report_path:
         full = os.path.abspath(report_path)
-        extra = {"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full,
+        extra = {"in": dance_full, "in_md5": hashlib.md5(dance_bytes).hexdigest(), "camera": camera_full,
+                 "model": model_full, "out": out_full,
                  "out_md5": hashlib.md5(written).hexdigest(), "keys": len(back.bones),
                  "cues": os.path.abspath(cues_path) if cues_path else None, "chorus": [float(c) for c in chorus]}
         write_json(full, dict(extra, **report))

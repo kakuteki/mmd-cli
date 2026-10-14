@@ -143,15 +143,20 @@ The vergence (keys on 右目 and 左目, after their append from 両目; RESEARC
   eyes meet on the point at that distance along the gaze (the gaze may fall short of the aim: at 52 s of the MV the
   raised finger's tip is above the eyes' reach).
 * It is in phase with the look (vergence_in_phase): the eyes start to converge vergence.lead seconds before the run
-  (they lead a target the hand moves by about 90 ms and lag a moving real target by under 125 ms: Erkelens et al.
+  (they lead a target the hand moves by about 90 ms and lag a moving real target by about 125 ms: Erkelens et al.
   1989, Proc R Soc B 236:417; the gaze's saccade onto the hand starts 2 or 3 frames before the look) and start to
   diverge on its last frame; they are parallel on every frame on the camera (the rise waits for the last frame on the
   camera before the run, the fall is over by the next one: a look between two looks at the camera only begins to
   converge).  Each way runs along a minimum-jerk curve whose 5 to 95 % time is vergence.duration (0.15 s, 0.24 s in
-  all) or longer, so its top speed stays under max_speed (60 deg/s an eye).  Natural vergence between real targets
-  peaks at about 50 deg/s for a change of 5 degrees (the two eyes together) and 150 to 200 for 34 (Erkelens, Steinman
-  & Collewijn 1989, Proc R Soc B 236:441), so the 6 to 11 degrees of a hand 30 to 60 cm off take about 0.2 to 0.27 s:
-  the coordinator's "0.2 to 0.3 s" as the whole of the move.  The gaze's looks last 0.3 to 0.6 s; with stage 5's
+  all) or longer, so its top speed stays under max_speed (60 deg/s an eye).  This is faster than a person: natural
+  vergence between real targets peaks at about 50 deg/s for a change of 5 degrees (the two eyes together) and 150 to
+  200 for 34 (Erkelens, Steinman & Collewijn 1989, Proc R Soc B 236:441) but takes 0.23 s (5 degrees) to 0.42 s (20)
+  to 90 % without a saccade, and at most about 0.1 s less with one (Collewijn, Erkelens & Steinman 1995, Vision Res
+  35:3335, Fig. 17); this shape's time to 90 % is 0.16 to 0.17 s (a person's about 0.33 s for the 12 degrees and the
+  3 degree saccade at 52 s of the MV, 0.18 and 0.23 s at 163.8 and 182.8 s), and only 3 % of it falls within the
+  saccade (a person's 40 to 70 % with saccades of 10 to 40 degrees, Collewijn 1995).  The coordinator's "0.2 to
+  0.3 s" is taken as the whole of the move so that the eyes come together within the gaze's short looks.  The
+  gaze's looks last 0.3 to 0.6 s; with stage 5's
   0.25 s from 5 to 95 % (0.41 s in all) the eyes of the MV v8 were past 3 degrees on the last 5 frames of the 0.3 s
   look at 52 s only (of 6.0), and 55 % of its vergence came after the look.  (Tyler 2015's 0.24 s latency and 8 deg/s,
   disparity steps on a screen, put the whole vergence after the MV's looks, partly onto the camera: stage 5 review Q1.)
@@ -231,7 +236,7 @@ PARAMS = {
         "camera_frames": 3,
         "lead": 0.07,                        # seconds the eyes start before the look (Erkelens 1989: about 90 ms)
         "duration": 0.15,                    # seconds, 5 to 95 %, each way: 0.24 s in all (the coordinator's 0.2 to
-                                             # 0.3; natural vergence of 6 to 11 degrees, Erkelens 1989, 236:441)
+                                             # 0.3 as the whole move; faster than a person's, see the docstring)
         "max_speed": 60.0,                   # degrees a second an eye (natural gaze shifts reach 50 to 200 with both
                                              # eyes together, Erkelens 1989)
     },
@@ -384,11 +389,12 @@ def fixation_targets(rows, params, looks=(), contacts=()):
     return metres, labels
 
 
-def gaze_looks(report, gaze_bytes=None):
+def gaze_looks(report, gaze_bytes=None, dance_bytes=None):
     """{"looks": [{"first", "last", "hand", "aim": [(x, y, z) per frame]}], "contacts": [(first, last)]}: the looks at a
     hand and the eye contacts of tools/eye_gaze.py's --report (the dict read from it; frames as in the gaze VMD, the
     aims in the world, model units).  With `gaze_bytes` (the gaze VMD as read) the report must name them by its
-    out_md5: a report of another gaze would bring the eyes together where she looks at nothing near.  ValueError on a
+    out_md5: a report of another gaze would bring the eyes together where she looks at nothing near; with `dance_bytes`
+    (the dance VMD as read) by its in_md5: the points aimed at are that dance's hands.  ValueError on a
     report without looks at a hand (not eye_gaze's, or from before stage 6), without out_md5 or without the points the
     eyes aim at (eye_gaze of main 03fae09 or before: run it again, the gaze VMD comes out the same)."""
     hands = report.get("hands") if isinstance(report, dict) else None
@@ -403,6 +409,14 @@ def gaze_looks(report, gaze_bytes=None):
         if named != got:
             raise ValueError("the gaze report is of another gaze: its out_md5 is %s, the gaze VMD's %s (give the "
                              "--report tools/eye_gaze.py wrote with this gaze)" % (named, got))
+    if dance_bytes is not None:
+        named, got = report.get("in_md5"), hashlib.md5(dance_bytes).hexdigest()
+        if not named:
+            raise ValueError("the gaze report names no in_md5 (the md5 of the dance it was made on): run "
+                             "tools/eye_gaze.py again with --report")
+        if named != got:
+            raise ValueError("the gaze report was made on another dance: its in_md5 is %s, the dance VMD's %s (the "
+                             "points the eyes aim at are that dance's hands)" % (named, got))
     looks = []
     try:
         for h in hands["list"]:
@@ -1888,14 +1902,16 @@ def run(model_path, dance_path, gaze_path, camera_path, out_path, face_path=None
         all_flares = sorted(set(float(t) for t in look.get("flares", [])) | set(all_flares))
     with open(model_path, "rb") as f:
         model_bytes = f.read()
-    dance = vmd.load(dance_path)
+    with open(dance_path, "rb") as f:
+        dance_bytes = f.read()
+    dance = vmd.loads(dance_bytes)
     with open(gaze_path, "rb") as f:
         gaze_bytes = f.read()
     gaze = vmd.loads(gaze_bytes)
     looks = None
     if gaze_report_path:
         with open(gaze_report_path, encoding="utf-8") as f:
-            looks = gaze_looks(json.load(f), gaze_bytes)
+            looks = gaze_looks(json.load(f), gaze_bytes, dance_bytes)
     camera = vmd.load(camera_path)
     model = pmx.loads(model_bytes)
     eye_names = {"右目", "左目"} | {b.name for b in model.bones if (b.name_en or "").startswith(pmx_eyes.EN_PREFIX)}
