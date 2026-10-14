@@ -657,15 +657,23 @@ def foot_targets(o, f, leg, rest, share, near, p):
     # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
     # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
     w = smooth_max_envelope(near * loaded * (1.0 - smoothstep(np.abs(pitch), *p["flat_pitch"])), EASE)
-    # laying flat moves the roll against the shank, which the range's correction then holds inside the subtalar caps;
-    # where that roll is not read with trust (roll_reliable: the foot near the shank's line, or its reading jumping), the
-    # correction does not come back to it, so the foot is not laid flat there either (eased like the corrections)
-    d_b0, inv0, _ = ankle_angles(o, leg["ankle"], leg["knee"], leg["q_shin"], q)
-    ok = roll_reliable(inv0 - rest["inversion"], d_b0, q)
-    w = w * (1.0 - smooth_max_envelope(1.0 - ok, EASE))
     if p["flatten"]:
         _, ang = unrolled(o, q)
-        q = turn_about(qrot(q, o.a0), w * ang, q)
+        turn = w * ang
+        if p["rom"]:
+            # laying flat turns the foot about its own forward axis, so the roll against the shank (the subtalar
+            # joint's inversion and eversion) moves with it one for one.  Where that roll is read with trust the range's
+            # correction below holds it inside the subtalar caps; where it is not (roll_reliable: the foot near the
+            # shank's line, or its reading jumping) that correction does not come back to it.  So the laying flat itself
+            # stops at the caps (the foot stays on that edge as far as the joint cannot take): a turn back toward the
+            # middle of the range is kept whole, and the foot is never turned past flat to the other side
+            lim = p["limits"]
+            _, inv0, _ = ankle_angles(o, leg["ankle"], leg["knee"], leg["q_shin"], q)
+            inv0 = inv0 - rest["inversion"]
+            change = side_sign * turn
+            held = np.clip(inv0 + change, -lim["eversion"][1], lim["inversion"][1]) - inv0
+            turn = side_sign * np.clip(held, np.minimum(change, 0.0), np.maximum(change, 0.0))
+        q = turn_about(qrot(q, o.a0), turn, q)
     if p["rom"]:
         lim = p["limits"]
         ankle, knee = leg["ankle"], leg["knee"]
@@ -800,8 +808,9 @@ def layer(rig, shoe, motion, params=None, log=None):
     Per frame and foot, from the feet as MMD's IK puts them:
     * the load: a foot near the floor bears the body's weight in proportion to its nearness to the pelvis seen from
       above (load_shares); a loaded foot whose sole faces the floor has its roll laid flat (the sole flat across the
-      floor, the subtalar joint taking the shank's lean), eased in and out over EASE frames, where the roll against the
-      shank is read with trust (roll_reliable: the subtalar caps can then hold it);
+      floor, the subtalar joint taking the shank's lean), eased in and out over EASE frames, as far as the subtalar
+      joint takes it (the laying flat stops at the subtalar caps: where the roll against the shank is not read with
+      trust, roll_reliable, the range's correction does not come back to it);
     * the range: the ankle complex's angles held inside REFERENCE by a soft limit (a foot on the floor may dorsiflex to
       LOADED_DORSI_CAP), except where the shank swings faster than SHANK_SWING a frame or the roll's reference cannot
       be trusted (roll_reliable): there the input's foot stays;

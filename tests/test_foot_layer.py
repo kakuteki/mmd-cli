@@ -330,7 +330,8 @@ class LayerTest(unittest.TestCase):
         # a wide, deep stance (the feet 6 units out to the sides, the pelvis down 5): the shank leans in so far that the
         # foot, laid flat on the floor, would invert some 45 degrees against it, past the cap 36; and the ankle is so
         # dorsiflexed that the roll against the shank is not read with trust (roll_reliable), so the cap's correction
-        # does not come back to it.  Laying flat follows the same trust: the foot stays inside its range (review 3)
+        # does not come back to it.  The laying flat itself stops at the cap: the foot stays inside its range, still
+        # partly on its edge (review 3; inversion 10 -> 35.8, the roll 33 -> 13)
         keys = (key("左足ＩＫ", 0, position=(6.0, 0, 0)), key("右足ＩＫ", 0, position=(-6.0, 0, 0)),
                 key("センター", 0, position=(0, -5.0, 0)))
         f_in, f_out, out, plan = run_layer(*keys)
@@ -338,6 +339,23 @@ class LayerTest(unittest.TestCase):
         for s in ("左", "右"):
             self.assertLess(abs(float(f_in[s]["inversion"][0])), cap)                # the input is inside the range
             self.assertLess(abs(float(f_out[s]["inversion"][0])), cap + 0.5)
+
+    def test_rolled_foot_in_a_deep_squat_is_laid_flat_where_the_subtalar_joint_takes_it(self):
+        # a squat (the pelvis down 3, the feet back 0.8) deep enough that the roll against the shank is read with
+        # little trust (the bone dorsiflexion 54, inside the fade 45-60), the left foot loaded and rolled 15 degrees onto
+        # its outer edge: laying it flat turns the subtalar joint back toward the middle of its range (inversion 36 ->
+        # some 15), so it is laid flat all the same.  Only a laying flat that would pass the caps stops at them
+        # (test_laying_the_roll_flat_does_not_pass_the_subtalar_cap); a fade by the trust alone left this foot rolled
+        # 14.5 degrees and its subtalar joint at 28
+        q = rolled("左", 15.0)
+        keys = (key("左足ＩＫ", 0, q, position=(0, 0, 0.8)), key("左足首", 0, q), key("右足ＩＫ", 0, position=(0, 0, 0.8)),
+                key("センター", 0, position=(0, -3.0, 0)))
+        f_in, f_out, out, plan = run_layer(*keys, floor_y=0.0)
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(a["roll"][0]), 20.0)                                  # the input stands rolled
+        self.assertLess(abs(float(b["roll"][0])), 2.0)
+        self.assertLess(float(b["inversion"][0]), float(a["inversion"][0]) - 10.0)    # back toward the middle
+        self.assertAlmostEqual(float(b["low"][0]), 0.0, delta=0.003)
 
     def test_loaded_foot_dorsiflexes_further_than_a_lifted_one(self):
         # the deep squat of test_deep_squat_lifts_the_heel_past_the_loaded_dorsiflexion at frame 0 (the feet flat on the
