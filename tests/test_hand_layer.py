@@ -858,6 +858,19 @@ class LayerPassiveTest(unittest.TestCase):
         self.assertAlmostEqual(shape["static"]["左"]["中指"]["tip_mm"]["all"]["max"], 0.0, delta=1e-6)
         self.assertGreater(shape["output"]["左"]["中指"]["tip_mm"]["all"]["max"], 0.5)
 
+    def test_the_lag_is_smaller_where_the_arm_stops_on_a_beat(self):
+        # the dancer hits the shape on the beat: the finger held stiffer runs on less past the stop
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        dance = hand_dance([(0, "open"), (LAST, "open")], arm=arm, centre=False)
+        ref = hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion
+        base = out_angles(ref, "左", "中指１")[0]
+        runs_on = []
+        for beats in (None, (28 / 30.0, 0.5)):
+            out = hand_layer.layer(MODEL, dance, only("passive"), pulp=PULP, beats=beats).motion
+            runs_on.append(float(np.abs(out_angles(out, "左", "中指１")[0] - base)[27:36].max()))
+        self.assertGreater(runs_on[0], 0.3)
+        self.assertLess(runs_on[1], 0.6 * runs_on[0])
+
     def test_the_lag_does_not_ring(self):
         # a dancer's fingers trail and catch up without swinging back and forth (the hand CG of Pollard & Zordan 2005
         # damps them away; Koshland 2000: in purposeful movements the muscles cancel the interaction torques at the
@@ -960,6 +973,14 @@ class FollowTest(unittest.TestCase):
         beat = self.shift(shapes, arm=arm, beats=(28 / 30.0, 0.5))[0]
         self.assertGreater(free, 0.15)
         self.assertLess(beat, 0.7 * free)
+
+    def test_a_stop_off_the_beat_keeps_its_lag(self):
+        # the arm stops at 28 and the beats fall at 22 and 37 (6 and 9 frames away): no beat hold, no stiffening
+        arm = [(0, 20.0), (10, 20.0), (28, 80.0), (LAST, 80.0)]
+        shapes = [(0, "open"), (22, "open"), (28, "fist"), (LAST, "fist")]
+        free = self.shift(shapes, arm=arm)[0]
+        off = self.shift(shapes, arm=arm, beats=(22 / 30.0, 0.5))[0]
+        self.assertAlmostEqual(off, free, delta=1e-6)
 
     def test_the_report_s_a09_lag_from_the_wrist_to_the_finger_rises(self):
         # the analysts' a09 measure (the windowed cross-correlation of the angular speeds of the wrist joint and of the
@@ -1245,6 +1266,27 @@ class RealDanceTest(unittest.TestCase):
         params["contact"] = False                                         # the rule off: the curl goes into the face
         loose = self.face_gap_mm(hand_layer.layer(self.model, part, params, pulp=self.pulp).motion, 12, 30)
         self.assertLess(float((loose - before).min()), -2.0)
+
+    def test_the_follow_does_not_bring_a_hand_held_to_the_face_into_it(self):
+        # the follow keeps the input's timing where the hand touches (what it touches holds the fingers)
+        part = crop(self.dance, 7505, 7550)
+        before = self.face_gap_mm(part, 12, 30)
+        params = hand_layer.default_params()
+        params.update(follow=True, follow_scale=2.0)
+        after = self.face_gap_mm(hand_layer.layer(self.model, part, params, pulp=self.pulp).motion, 12, 30)
+        self.assertGreater(float((after - before).min()), -2.0)
+
+    def test_the_follow_keeps_the_pointing_hands_at_52_s(self):
+        # the follow lags a change of shape, not a shape held: the two pointing index fingers stay straight
+        part = crop(self.dance, 1535, 1585)
+        params = hand_layer.default_params()
+        params.update(follow=True, follow_scale=2.0)
+        result = hand_layer.layer(self.model, part, params, pulp=self.pulp)
+        for side in ("左", "右"):
+            ch = result.report["change"][side]
+            self.assertLess(ch[side + "人指２"]["held_still"]["p95"], 3.0, side)
+            self.assertLess(ch[side + "人指３"]["held_still"]["p95"], 3.0, side)
+        self.assertTrue(result.report["untouched"]["identical"])
 
 
 # ---- the promises no test held before (the review's mutants): the wrist's sides, the lag's direction and size, -----
