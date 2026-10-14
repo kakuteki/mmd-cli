@@ -1452,6 +1452,44 @@ python tools/eye_optics.py White_spine_v6_eyes.pmx dance.vmd gaze.vmd camera.vmd
 | 1 コマの最大の変化 | 1.76 度 | 1.53 度 | 1.46 度 |
 | 登録ポイント（余裕） | 12,992（7,008） | 12,626（7,374） | 12,620（7,380） |
 
+### スカートの物理を変え、MMD の絵から剛体の動きを測る（`tools/pmx_skirt.py`・`tools/skirt_probe.py`）
+
+MMD の物理（Bullet 2.75）の結果は MMD から読み出せず、描くたびに少しずつ違う（同じ区間を 2 回描くと 1 枚目から画素が違い、0.3 秒で
+約 1 % の画素へ広がる）。そこで、スカートの骨に平らな色の印だけを描くモデルの写しを作り、横と前から止めたカメラで描いて、印の 3 次元の
+位置を絵から組み立てる。物理を変えるのはモデルの写しで、元のモデルは読むだけ。
+
+```
+python tools/pmx_skirt.py model.pmx model_skirt.pmx --report r.json [--damping LIN ANG] [--ceiling DEG] [--mass-area M] ...
+python tools/skirt_probe.py markers model_skirt.pmx markers.pmx --legend legend.json
+python tools/skirt_probe.py camera cam_side.vmd --around model.pmx dance.vmd FIRST LAST --yaw 90 --size 1280 720
+python tools/skirt_probe.py camera cam_front.vmd --around model.pmx dance.vmd FIRST LAST --yaw 0 --size 1280 720
+（MMD で markers.pmx と踊りを読み、2 台のカメラで同じ区間を 60 fps・未圧縮・背景黒化で描く）
+python tools/skirt_probe.py track side.avi legend.json cam_side.json side.json --first FIRST --fps 60
+python tools/skirt_probe.py track front.avi legend.json cam_front.json front.json --first FIRST --fps 60
+python tools/skirt_probe.py solve side.json front.json legend.json solved.json
+python tools/skirt_probe.py analyze solved.json legend.json analyzed.json
+```
+
+- `pmx_skirt.py`: スカートは スカート_段_列 の剛体（Sour 式リンは 7 段 × 16 列）、それを吊る同じ名前のジョイント、隣の列との スカート横_段_列。
+  処方: `--limit-scale`（吊るジョイントの回転の上限を何倍に）、`--reach`（列ごとに X の上限を一律に縮め、休みの傾き + 上から足した上限が
+  この角を越えないように）、`--spring-scale`、`--ring-rotate`・`--ring-move-scale`（横のつなぎの回転と並進の上限）、`--mass`（段ごと）・
+  `--mass-area`（箱の広い面の面積に比べて）、`--damping`（移動・回転の減衰）、`--ceiling`（剛体ごとの下の端に、胴の剛体からの「天井」の
+  ジョイント: 胴の枠で上向きにだけ高さの上限、回りは自由。真っ直ぐな列がこの角まで傾けて、それ以上は上がらない高さ）。ほかの所は同じ
+  byte のまま（`pmx_edit` の `rigid_body`・`joints`・`geometry` で読み書き）。報告に変えた欄の前と後、列ごとの届く角の前と後。
+- `skirt_probe.py`: `markers` は元の材質をすべて隠し（透明・輪郭なし・影なし）、スカートの骨（裾の先まで 8 段 × 16 列）と体の骨 14 本
+  （上半身・下半身・足D・ひざD・足首D・腕・ひじ・手首）とほかの物理の先 9 本（胸のリボン・襟・頭のリボン・髪）に、平らな色の八面体
+  （半幅 0.07）を付ける。色は各色 30〜255 の 6 段の組み合わせで、どの 2 つもどこかの色が 45 以上離れる。凡例にモデルの円柱の半径
+  （もも 0.987・上腕 0.395・前腕 0.296）と、スカートの吊るジョイントの上限・ばねを入れる。`camera` は距離 700・視野角 1 度の止めたカメラ
+  （ほぼ平行投影）。`track` は不透明な画素だけで印の中心を取る。`solve` は横（yaw 90）と前（yaw 0）の 2 回の描画から印ごとに位置を
+  最小二乗で解き、2 つの高さが 0.1 より食い違うものを外す（2 回の描画の物理の違い: 印の高さの差の平均 0.005〜0.03）。`analyze` は剛体の
+  傾き（真下 0・水平 90）・ジョイントの曲がり（休みとの差）・裾の高さ・根元から裾への線の開き・腰の輪（段 0 の 16 点に合わせた枠）に
+  対する根元の剛体の回りと裾のねじれ（回りの遅れ）・ももと腕の円柱へのめり込み。印の間が休みの長さから 15 % 以上ずれる剛体は測り誤りと
+  して外す。
+
+写しの式の確かめ: FK で位置が分かる印（上半身・下半身・腕・ひじ・手首、1,502 点）で縮尺 0.9997・0.9995、ずれ 0.5 画素、ばらつき
+1.0〜1.1 画素（0.018 単位）。描き始めの絵のスカートの印は FK（骨の休みの形）と平均 1.2 画素で一致する。
+改造したモデルと印の写しはこの作業専用で配布しない（Sour 式の ReadMe は改造を許すが、配布には原作と改造者の ReadMe が要る）。
+
 ## 出力
 
 - 標準出力は常に ASCII。日本語などは `\uXXXX` に逃がすので、端末の文字コードが何であっても壊れない。
