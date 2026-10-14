@@ -22,8 +22,9 @@ the gaze still stays put in the world.  (The first form of stage 5 also slid the
 countered only half of each nod: review gaze-smooth found the gaze then flowed with the head like a doll's eye, on 70 %
 of the steps of a still head.  The slide is gone and the nods are countered in full.)  Stage 6 (2026-10-13: "when she
 looks at something near, the eyes come together": at 52 s her fingers are before her face and the eyes stay
-parallel) gives the eyes her hands as targets, so that tools/eye_optics.py, which brings them together on a near hand
-the gaze meets, does so where she looks at one; it moves the eyes on from the wall, where countering every nod in
+parallel) gives the eyes her hands as targets, and tools/eye_optics.py brings them together on these looks (it reads
+them from the report: at first it found its own, wherever a hand lay near the gaze, and 96 % of its vergence of the MV
+v8 fell where she looked at no hand); it moves the eyes on from the wall, where countering every nod in
 full had left them (frames at the wall up or down 3.3 % -> 12.8 % in stage 5, the iris low in the eye); and, after
 the remeasure of the MV v7 (the head carried the gaze in 57 % of a07's large gaze changes, 1 to 2 % before stage 5;
 with the head at 60 to 120 deg/s the gaze stayed put in the world on 54 % of the steps, 89 % before), it keeps the
@@ -169,8 +170,11 @@ The report (--report, and in short on stdout): the shares of frames in each stat
 hand; they add up to 1), the saccades (their reasons: contact, look_away, lead, recentre, glance, away, hand,
 hand_away, quick, wall; the list has frame, frames, reason and amplitude like the first version's, so the analysis' scripts read
 it), the contacts (first and last frame, seconds, the anchor they hold), the looks at a hand (hands: first and last
-frame, seconds, the hand, its median distance in metres, the frame it settles; hand_rules: the constants above), the
-anchors, the cuts, the error on the camera during the contacts,
+frame, seconds, the hand, its median distance in metres, the frame it settles, and aim: the world point the eyes aim
+at on each frame of the look, look_aim, which tools/eye_optics.py brings them together on; hand_rules: the constants
+above), out_md5 and in_md5 (the md5 of the VMD written and of the dance read: eye_optics refuses a report of another
+gaze or of another dance, whose hands the points aimed at belong to), the anchors, the cuts, the
+error on the camera during the contacts,
 and measures: the target numbers of the analysis computed on the plan, by the analysts' definitions (eye_measures,
 contact_measures, lead_measure, carried_measure; README: eye_gaze.py), the smoothness of stage 5 (smooth_measures),
 whether the gaze stays put in the world between saccades (world_measures) and the frames at the wall
@@ -182,6 +186,7 @@ frames.
 the convention of mmd_cli/fk.py is right.
 """
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -263,7 +268,7 @@ HAND_POINTS = ("手首", "中指３先")      # their mean is the hand's look po
 FINGER_TIPS = ("人指３先", "中指３先", "薬指３先", "小指３先", "親指２先")   # the eyes aim at the one furthest from the wrist
 UNIT_M = 0.08                         # metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80)
 HAND_NEAR, HAND_FAR = 0.18, 0.60      # metres from the eyes: nearer, the hand covers or touches the face; further, beyond
-                                      # an arm's reach (tools/eye_optics.py: hand_m 0.6)
+                                      # an arm's reach
 HAND_ZONE = FREE_SHARE                # shares of the limits within which, or HAND_REACH degrees beyond, a hand lies
 HAND_REACH = 4.0                      # before her face: the face turned to it, the eyes resting near the middle
 HAND_CAMERA = 10.0                    # degrees: a hand nearer the camera's line is held out to the viewer, not looked at
@@ -780,6 +785,15 @@ def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None):
     return sorted(chosen)
 
 
+def look_aim(i, run, hands, aims=None):
+    """the world point the eyes aim at from frame i (an index) of a look at a hand `run` (first, last, side, metres,
+    settle): the aim on the hand (`aims`: hand_aims, else its look point of `hands`) where it settles until it does
+    (the gaze is there before the hand), then HAND_AHEAD frames on, within the run"""
+    a, b, side, _, settle = run
+    points = (aims or {}).get(side) or hands[side]
+    return points[min(b, max(a, settle, i + HAND_AHEAD))]
+
+
 class Turn(NamedTuple):
     """a fast turn of the head (frame indices)"""
     onset: int
@@ -965,9 +979,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
         """the eye angles that look, from frame i, at the aim on the hand of run k where it will be HAND_AHEAD frames
         on, or where it settles if it has not yet (the gaze is there before the hand), within the run; held in the
         contact zone"""
-        a, b, side, _, settle = runs[k]
-        points = (aims or {}).get(side) or hands[side]
-        angles, _ = _seen(seen[i], points[min(b, max(a, settle, i + HAND_AHEAD))], forward, rest)
+        angles, _ = _seen(seen[i], look_aim(i, runs[k], hands, aims), forward, rest)
         return contact_angles(angles, limits)
 
     looks, saccades = [], []
@@ -1554,7 +1566,9 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                        "catch_up_after": CATCH_UP_AFTER, "zone": list(HAND_ZONE), "sides": sorted(hands)},
         "hands": {"count": len(runs), "frames": hand_frames, "share": _r(hand_frames / float(len(seen))),
                   "list": [{"first": a + first, "last": b + first, "seconds": _r((b - a + 1) / FPS, 3), "hand": side,
-                            "metres": _r(metres, 3), "settle": settle + first} for a, b, side, metres, settle in runs]},
+                            "metres": _r(metres, 3), "settle": settle + first,
+                            "aim": [_vec(look_aim(i, (a, b, side, metres, settle), hands, aims)) for i in range(a, b + 1)]}
+                           for a, b, side, metres, settle in runs]},
         "eye": {"bone": EYES, "center": center, "head": parent, "forward": _vec(forward, 6), "forward_from": forward_from},
         "convention": {"key_rotation_signs": list(fk.KEY_ROTATION_SIGNS)},
         "counts": counts, "shares": {state: counts[state] / float(len(looks)) for state in STATES},
@@ -1665,7 +1679,9 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     check_distinct(dance_path, camera_path, model_path, out_path, report_path, debug_path, probe_path, cues_path)
     dance_full, camera_full, model_full, out_full = (os.path.abspath(p) for p in (dance_path, camera_path, model_path, out_path))
     cues = load_cues(os.path.abspath(cues_path)) if cues_path else None
-    dance = vmd.load(dance_full)
+    with open(dance_full, "rb") as f:
+        dance_bytes = f.read()
+    dance = vmd.loads(dance_bytes)
     camera = vmd.load(camera_full)
     model = load_model(model_full)
     result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed, anchors=song_anchors(cues, chorus),
@@ -1675,7 +1691,8 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     if debug_path:
         last = report["frames"][1]
         rows = debug_rows(result, debug_frames if debug_frames else range(report["frames"][0], last + 1, DEBUG_STEP))
-    write_bytes(out_full, vmd.dumps(result.motion))
+    written = vmd.dumps(result.motion)
+    write_bytes(out_full, written)
     back = vmd.load(out_full)
     summary = {"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full, "frames": report["frames"],
                "keys": len(back.bones), "seed": seed, "min_fixation": min_fixation, "limits": report["limits"],
@@ -1690,7 +1707,9 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
         summary["cues"] = os.path.abspath(cues_path)
     if report_path:
         full = os.path.abspath(report_path)
-        extra = {"in": dance_full, "camera": camera_full, "model": model_full, "out": out_full, "keys": len(back.bones),
+        extra = {"in": dance_full, "in_md5": hashlib.md5(dance_bytes).hexdigest(), "camera": camera_full,
+                 "model": model_full, "out": out_full,
+                 "out_md5": hashlib.md5(written).hexdigest(), "keys": len(back.bones),
                  "cues": os.path.abspath(cues_path) if cues_path else None, "chorus": [float(c) for c in chorus]}
         write_json(full, dict(extra, **report))
         summary["report"] = full
