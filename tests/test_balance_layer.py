@@ -650,7 +650,7 @@ class RangeTest(unittest.TestCase):
         self.assertTrue(19.0 < before[60] < 22.0)                             # the fixture: near the range, inside it
         self.assertLessEqual(float(np.max(after - np.maximum(22.0, before))), 0.3)
         shift = centre_offsets(motion, result.motion, last)
-        self.assertGreater(-shift[55:80, 0].min() * CM, 1.0)                 # it still goes towards the right foot
+        self.assertGreater(-shift[55:80, 0].min() * CM, 0.5)                 # it still goes towards the right foot
         self.assertEqual(result.report["hip"]["over_22_newly_R"], 0)
 
     def test_straight_legs_do_not_buckle(self):

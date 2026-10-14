@@ -164,6 +164,8 @@ ADMM_TOL_REACH = 0.05           # cm
 SET_MARGIN = 0.001              # m: the bounds are solved this much tighter, so the converged curve is inside the true ones
 REACH_NO_WORSE_M = 0.0005       # m: "no worse than the dance" bounds allow this much, so the dance itself (no shift) is
 RANGE_NO_WORSE_M = 0.002        # inside them, not on their edge (on the edge, the smallest miss of the solve could only be
+RANGE_LINEAR_DEG = 0.5          # degrees: the thigh's range is solved this much inside (its linear bound missed by up to 0.3
+                                # degrees where the shift turns the thigh 8 degrees, 195 s of the MV)
 RANGE_NO_WORSE_DEG = 0.2        # undone by no shift at all).  A leg already past its reach: 0.5 mm (under the 1 mm of a
                                 # new IK miss); a knee past 159 degrees: 2 mm along the hip-to-ankle line; a hip already
                                 # past its range: 0.2 degrees of the thigh, more than the solve's miss (1.1 mm after 800
@@ -171,8 +173,10 @@ RANGE_NO_WORSE_DEG = 0.2        # undone by no shift at all).  A leg already pas
 FIX_HALF = 9                    # frames: the half-width of the smooth cover that brings an unconverged curve inside
 # ---- the catch: a foot that lands catches the body (the extrapolated centre of mass, Hof et al. 2005, Hof 2008) ----
 SOLE_HALF_W_CM = 4.65           # half the sole's width (young Japanese women's foot width 93.2 mm, AIST 1997-98)
-CATCH_MARGIN_CM = 0.0           # at a landing the margin of stability (the landing foot's outer edge along the step minus
-                                # the XcoM) is at least this: a step onto a foot placed beyond the XcoM (Hof 2008)
+CATCH_MARGIN_CM = 1.0           # at a landing the margin of stability (the landing foot's outer edge along the step minus
+                                # the XcoM) is kept at least this: a step onto a foot placed beyond the XcoM (Hof 2008)
+                                # needs >= 0; the 1 cm is for what the linear bound does not see (the knees solved again,
+                                # the carried foot, the height bound): with 0 the MV kept 4 landings at -0.1 to -0.5 cm
 CATCH_WEIGHT = 30.0             # the pull on the XcoM at a landing the dance does not catch (against LAM_OUT 0.5 per frame)
 CATCH_FREE_S = 0.2              # the "never away from the nearest pull" half-plane is off this long after such a landing
 XI_RHO = 1.0                    # the catch block's ADMM penalty relative to the per-frame sets' (convergence only)
@@ -1111,7 +1115,8 @@ def range_slabs(body, carry=None):
     foot going with the body), so the slab is J . y within the room left.  (The hip-to-ankle line, the earlier bound,
     is off the thigh where the knee points in: the thigh went to 24.7 degrees under it on the MV.)"""
     F = body.F
-    sa, sb = math.sin(math.radians(HIP_ADDUCTION_DEG[1])), math.sin(math.radians(HIP_ABDUCTION_DEG))
+    sa = math.sin(math.radians(HIP_ADDUCTION_DEG[1] - RANGE_LINEAR_DEG))
+    sb = math.sin(math.radians(HIP_ABDUCTION_DEG - RANGE_LINEAR_DEG))
     eps = math.sin(math.radians(RANGE_NO_WORSE_DEG))
     base = {s: thigh_sine(body, s) for s in SIDES}
     jac = {s: np.zeros((F, 2)) for s in SIDES}
