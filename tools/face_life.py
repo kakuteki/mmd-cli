@@ -2,7 +2,7 @@
 and tie them to the dance, the gaze, the sound and the lyrics.  The body is not touched (no bone key is written).
 
     python tools/face_life.py FACE.vmd DANCE.vmd GAZE.vmd MODEL.pmx OUT.vmd [--audio SONG] [--cues cues.json]
-                              [--report r.json] [--seed 0] [--hold NAME=WEIGHT ...]
+                              [--report r.json] [--seed 0] [--hold NAME=WEIGHT ...] [--style human|v7]
 
 FACE is the face motion to rewrite (the KAZUSA "Face&Lips" of the MV: expressions, まばたき, あいうえお), DANCE the dance
 it is loaded after, GAZE the 両目 motion loaded after both (tools/eye_gaze.py), MODEL the model (its morph names, and
@@ -64,6 +64,26 @@ What is done (the numbers are the constants below):
 * The dance's own face keys (the MV's dance keys まばたき on a few frames of the intro) would be merged into the face
   when MMD loads both: OUT holds a key of its own on each of those frames, so that its tracks win.
 
+Styles (--style).  "v7" writes the face of the MV v7 again, byte for byte (the tool as it was at main 08894a4: the
+numbers above).  "human" (the default since stage 6) changes:
+* The lid between the blinks.  Where the author held it lower than LID_NEUTRAL (KAZUSA's serious face: 0.22 to 0.38,
+  6 tenths of the open time; her expression, kept), a share of that shows (shown_share, shown_lid): LID_SHOWN[0] while
+  a phrase is sung (up to LID_QUIET more for a quiet one, never all of it and more), LID_SHOWN[1] at rest,
+  LID_SHOWN[2] for a moment after a phrase; each change
+  over a few frames, or at once while the eye is shut when a blink comes near (LID_HIDE).  The lid follows the eyes up
+  and down by LID_FOLLOW a degree on every frame (lid_follow; v7 sets it once per fixation), never shutting a smiling
+  eye between the blinks (CLOSURE_CAP).  まばたき's keys are those straight lines need to stay within
+  BLINK_KEY_TOLERANCE of every frame (bake_within): a key a frame would crowd MMD's registered points.
+* The blinks: v7's shapes with the lid held shut a frame longer one time in HUMAN_HOLD_CHANCE; long blinks (10 to 11
+  frames: LONG_CLOSING, LONG_HOLD, LONG_OPENING; LONG_GAP apart) after some phrases (P_LONG) and where nothing is sung;
+  a blink SMILE_END_BLINK frames before a smile has fallen (P_SMILE_END); none starting about a flash (FLASH_QUIET), and
+  a flash a blink would run into gives way.
+* The expressions: changes take HUMAN_ONSET_FRAMES / HUMAN_OFFSET_FRAMES / HUMAN_CHANGE_FRAMES and arrive KIME_ARRIVE
+  frames before a kime they can reach (kimes, kime_shift: a fast move of the head or a hand that stops and holds); a
+  held smile eases off by up to HUMAN_WAVE["eye"].  At some kimes where she sings (choose_flashes: at most FLASH_RATE a
+  minute, FLASH_GAP apart) the eyes open for a moment (flash_track) up to the neutral lid: the brows lie under her
+  fringe, the lid carries it.
+
 The report (--report, and in short on stdout) gives, for the expressions, the blinks and the mouth, the measures of
 the analyses a11, a10 and a12 before (FACE) and after (OUT).  Read expression.stretched_frames for how long a change of
 the face now takes: a11's ramp_frames counts every pair of neighbouring keys, after the rewrite mostly the keys of the
@@ -107,6 +127,10 @@ ALIGN = 9                       # frames a change may move toward the fastest tu
 ALIGN_RATIO = 1.5
 ALIGN_LEAD = 2                  # frames the face starts changing before the head turns fastest
 WAVE = {"brow": 0.15, "eye": 0.12, "mouth": 0.25}            # how far the envelope lowers a held weight
+HUMAN_WAVE = {"brow": 0.15, "eye": 0.2, "mouth": 0.25}       # human style: a held smile eases off by up to a fifth.  A
+                                                             # decided value, set by Hyde et al. 2013 (toon characters'
+                                                             # whole motion scaled to 80-120 % was not told apart): their
+                                                             # condition was the size of the whole motion, not a hold
 ENVELOPE_STEP = (35, 70)        # frames between the keys of the envelope
 ENVELOPE_MIN_STEP = 0.15        # the envelope changes by at least this from one key to the next
 SLOW = 20                       # frames: a change between two keys this far apart is a drift, and is waved too
@@ -138,6 +162,64 @@ KEEP_CLEAR = 15                 # frames around the long closures and after the 
 BASE_SWITCH = 8                 # frames over which the lid level changes where an old blink hid the change
 CREEP_LONGEST = 9               # frames: the lid never closes slowly for longer (a10 counts 10 and more as a creep)
 LID_DOWN, LID_UP = 0.01, 0.005  # まばたき per degree the eyes look down / up
+
+# The styles.  "human" (the default since stage 6, face-v2) and "v7" (the face of the MV v7 byte for byte: the tool as
+# it was at main 08894a4).  What "human" changes is listed in the module docstring.
+STYLES = ("human", "v7")
+# A spontaneous blink closes in 2 to 3 frames and opens in 4 to 7, 7 to 12 frames in all as the end of the opening is
+# taken (Wu et al. 2014: 7.8 frames; Trutoiu et al. 2011: 9 frames measured most often, a character's blink most
+# natural at 7 to 9 frames, less at 11 and 13); the opening is close to an exponential with a time constant of about 2
+# frames (Espinosa et al. 2020).  v7's shapes (CLOSING, OPENING: 7 to 10 frames) are kept; the lid stays shut a frame
+# longer only one time in four (a spontaneous blink barely pauses shut: Malbouisson et al. 2010).
+# Long blinks are a decided value.  No study measured singers' blinks; the long blinks of conversation (Homke et al.
+# 2017, 2018) are a listener's, at the end of the speaker's turn, and no ground for a singer's.  Some blinks after a
+# phrase (P_LONG["phrase_end"]) and where nothing is sung (P_LONG["rest"]) stay shut 3 to 4 frames, 10 to 11 frames in
+# all: a character's blink looked most natural at 7 to 9 frames and already less so at 11 (Trutoiu et al. 2011), so they
+# are kept short of 12; two are at least LONG_GAP frames apart (a review found four within 10 seconds in B2).
+HUMAN_CLOSING_FRAMES = (2, 3)
+HUMAN_HOLD_CHANCE = 0.25
+HUMAN_OPENING_FRAMES = (5, 6)
+LONG_CLOSING = 2                # frames a long blink closes in
+LONG_HOLD = (2, 3)              # frames it stays shut beyond the first (10 to 11 frames in all)
+LONG_OPENING = 6
+LONG_GAP = 240                  # frames (8 s) at least between the starts of two long blinks
+HUMAN_OPENING = OPENING
+P_LONG = {"phrase_end": 0.5, "rest": 0.25}
+CLOSURE_CAP = 0.7               # human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that
+                                # follows the eyes down must not shut a smiling eye.  A decided value, under a10's "shut" 0.8
+FLASH_QUIET = (8, 3)            # frames before and after a flash's kime no blink starts (blinks hold off at a moment that
+                                # holds the attention: Shultz et al. 2011)
+SMILE_END_BLINK = 21            # frames before a smile has fallen (its last moving frame) a blink is placed: in natural
+                                # smiles of light conversation blinks came 21 frames on average before the offset, the last
+                                # frame the lip corners move, 38 by chance (Trutoiu 2014, 5.3; 30 fps)
+P_SMILE_END = 0.6
+LID_NEUTRAL = 0.10              # the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above
+                                # the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2)
+LID_SHOWN = (0.85, 0.95, 1.0)   # the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung
+                                # (the loudest), at rest, and in the relaxing after a phrase.  A decided value, chosen by
+                                # looking (stage 6 face-v2, review fix 1: 0.2 to 0.85 drawn side by side with v7): the
+                                # lowered lid is the author's expression (KAZUSA's cool serious face), which a person's
+                                # neutral lid range does not bind; with the lid following the eyes on every frame, 0.85
+                                # keeps the serious face's usual lid of v7 (the upper lid 0.40 iris radii above the
+                                # centre, v7 0.41) and leaves out its sleepy depth (under 0.30: v7 24 %, now 1 %)
+LID_QUIET = 0.25                # the quietest phrase shows this much more of it than the loudest (ranked by the voice),
+                                # never more than all of it
+LID_DEEP = 0.5                  # from here to CLOSED the author's lid (a long closure, the wake-up) is blended back in
+LID_STEP = 6                    # frames a change of the shown share takes
+LID_RELAX_AFTER = 6             # frames after a phrase's last vowel the lid starts to relax
+LID_RELAX_HOLD = 24             # frames the relaxed lid holds before it goes back to rest
+LID_RELAX_BACK = 12             # frames it takes to go back (the lid opening: slow is no creep)
+LID_SHORT_GAP = 20              # frames: phrases this close keep the lid as in a phrase between them
+LID_FOLLOW = (0.029, 0.021)     # まばたき per degree the eyes look down / up.  A person's upper lid follows the eye up and
+                                # down by about the same angle (Becker and Fuchs 1988), the cover over the iris growing by
+                                # 1.1 mm at 30 degrees down and 1.6 mm up (Mastropietro et al. 2009); on Sour's Rin, whose
+                                # lid does not follow the eyes, 0.027 a degree keeps it where it is on the iris (the lid
+                                # moves 0.15 iris radii per 0.1 of まばたき, the iris' top 0.04 per degree: stage 6 q2).
+                                # It goes with the eyes' pitch on every frame (lid_follow): the lid follows the eye however
+                                # it moves, and a dancer's eyes move in the head without saccades, turning against the nod
+BLINK_KEY_TOLERANCE = 0.001     # human style: まばたき's keys are those straight lines need to stay this near every frame
+                                # (bake_within; eye_optics' keys.morph).  Following the eyes the lid bends on most frames:
+                                # a key a frame took 4,000 of the 20,000 points MMD registers for a model's morph keys
 
 VOWELS = ("あ", "い", "う", "え", "お")
 SMALL_VOWELS = ("い", "う")
@@ -182,6 +264,7 @@ class Inputs:
     morphs: Optional[set] = None        # the model's morph names (None: take every morph as there)
     dance_morph_keys: List[tuple] = field(default_factory=list)   # (name, frame) of the dance's morph keys
     head_pos: Optional[np.ndarray] = None   # [F, 3] world position of 頭 (for how intense the dance is)
+    parts: Optional[dict] = None        # {bone: [F, 3] world positions} of KIME_PARTS (the body's accents, human style)
 
 
 @dataclass
@@ -232,6 +315,42 @@ def bake(values, places=6):
     bend = np.abs(v[:-2] - 2.0 * v[1:-1] + v[2:]) > 10.0 ** -places
     keep = [0] + [i + 1 for i in np.where(bend)[0]] + [n - 1]
     return [(int(i), float(v[i])) for i in keep]
+
+
+def bake_within(values, tolerance, start=0, places=6):
+    """[(frame, weight)] of a per-frame curve: the keys that straight lines between them need to stay within
+    `tolerance` of every frame (from the first frame on, each next key as far on as the line still fits).  A stretch
+    where the lines would make a creep the curve has not (creep_runs from `start`: a rise broken by small dips drawn
+    straight) keeps all of bake's keys"""
+    v = np.round(np.asarray(values, float), places)
+    n = len(v)
+    if n <= 2:
+        return bake(v, places)
+    keep = {0}
+    i = 0
+    while i < n - 1:
+        j = i + 1
+        while j + 1 < n:
+            k = j + 1
+            x = np.arange(i, k + 1)
+            if np.abs(v[i] + (v[k] - v[i]) * (x - i) / float(k - i) - v[i:k + 1]).max() > tolerance:
+                break
+            j = k
+        keep.add(j)
+        i = j
+    exact = [f for f, _ in bake(v, places)]
+    before = set(creep_runs(v, start))
+    for _ in range(10):
+        frames_ = sorted(keep)
+        drawn = np.interp(np.arange(n), frames_, v[frames_])
+        new = [r for r in creep_runs(drawn, start) if r not in before]
+        if not new:
+            break
+        for s, e in new:
+            keep.update(f for f in exact if s - 1 <= f <= e + 1)
+    else:
+        keep = set(exact)
+    return [(int(f), float(v[f])) for f in sorted(keep)]
 
 
 def runs(mask):
@@ -337,6 +456,64 @@ def eye_pitch(eyes):
     return np.degrees(np.arcsin(np.clip(d[:, 1] / np.linalg.norm(d, axis=1), -1.0, 1.0)))
 
 
+KIME_PARTS = ("頭", "右手首", "左手首")
+KIME_PEAK = 75                  # percentile of a part's speed (from the body's start) the peak before a stop reaches
+KIME_MIN_SPEED = 8.0            # model units a second the peak reaches at least (0.64 m/s at 8 cm a unit)
+KIME_LOOK = 8                   # frames before the stop the peak is looked for in
+KIME_DROP = 0.25                # the speed falls below this share of the peak (tools/motor_layer.py's stops_and_hits)
+KIME_HOLD = 6                   # frames the part then stays under it: the pose is held
+KIME_MERGE = 4                  # frames: stops of several parts this close are one accent
+KIME_ARRIVE = 1                 # frames before a kime a change of the face arrives (human style).  A decided value: never
+                                # after the kime.  The face and the body are both picture: the tolerance of sound against
+                                # picture in broadcasting (ITU-R BT.1359-1) is no ground for it
+HUMAN_ONSET_FRAMES = (14, 18)   # human style: a rise from nothing (onsets of 4 and 7 frames looked faker than 16,
+HUMAN_OFFSET_FRAMES = (15, 20)  # Krumhuber and Kappas 2005; spontaneous smiles rise in 17 to 18 frames and fall in 17
+HUMAN_CHANGE_FRAMES = (13, 17)  # to 19, Schmidt et al. 2006), a fall to nothing, any other change
+
+
+def point_speed(p):
+    """model units a second of a [F, 3] track (central differences)"""
+    v = np.zeros_like(p)
+    v[1:-1] = (p[2:] - p[:-2]) * (FPS / 2.0)
+    if len(p) > 1:
+        v[0], v[-1] = (p[1] - p[0]) * FPS, (p[-1] - p[-2]) * FPS
+    return np.linalg.norm(v, axis=1)
+
+
+def kimes(parts, start=0):
+    """the body's accents ("決め"): [{"frame", "speed", "part"}] sorted by frame.  For each part ({name: [F, 3] world
+    positions}) a stop is a frame where the speed falls below KIME_DROP of its peak over the KIME_LOOK frames before
+    (the peak at least the part's KIME_PEAK percentile from `start` on and KIME_MIN_SPEED), taken at the slowest of
+    the next 6 frames, and a kime when the part then stays under that for KIME_HOLD frames.  Stops of several parts
+    within KIME_MERGE frames are one; it keeps the frame and the speed of the fastest"""
+    found = []
+    for name, p in parts.items():
+        s = point_speed(np.asarray(p, float))
+        n_all = len(s)
+        if n_all <= start + KIME_LOOK + KIME_HOLD + 6:
+            continue
+        thr = max(float(np.percentile(s[start:], KIME_PEAK)), KIME_MIN_SPEED)
+        n = max(start + KIME_LOOK, 1)
+        while n < n_all - KIME_HOLD - 6:
+            pk = float(s[n - KIME_LOOK:n].max())
+            if pk >= thr and s[n] < KIME_DROP * pk <= s[n - 1]:
+                m = n + int(np.argmin(s[n:n + 6]))
+                if (s[m:m + KIME_HOLD] < KIME_DROP * pk).all():
+                    found.append((m, pk, name))
+                n += 4
+            else:
+                n += 1
+    found.sort()
+    merged = []
+    for f, pk, name in found:
+        if merged and f - merged[-1]["frame"] <= KIME_MERGE:
+            if pk > merged[-1]["speed"]:
+                merged[-1] = {"frame": int(f), "speed": float(pk), "part": name}
+            continue
+        merged.append({"frame": int(f), "speed": float(pk), "part": name})
+    return merged
+
+
 def body_start(head_rot, head_pos=None, moves=BODY_MOVES):
     """the first frame on which the head has turned or moved away from where it is on frame 0"""
     turned = _angles_between(qrot(head_rot, FORWARD), qrot(head_rot[:1], FORWARD)[0]) > moves[0]
@@ -389,9 +566,10 @@ def episodes(closure, start):
     return out
 
 
-def blink_profile(closing, hold, opening):
-    """the lid from the frame before the closing (0) to the frame the opening ends (0): 1 is shut"""
-    return [0.0] + list(CLOSING[closing]) + [1.0] * (1 + hold) + list(OPENING[opening]) + [0.0]
+def blink_profile(closing, hold, opening, openings=None):
+    """the lid from the frame before the closing (0) to the frame the opening ends (0): 1 is shut.  openings: the
+    table of the opening's shapes (OPENING, v7's, or HUMAN_OPENING)"""
+    return [0.0] + list(CLOSING[closing]) + [1.0] * (1 + hold) + list((openings or OPENING)[opening]) + [0.0]
 
 
 def creep_runs(b, start):
@@ -404,8 +582,11 @@ def creep_runs(b, start):
 
 # ---- the plan -------------------------------------------------------------------------------
 
-def plan(inp, seed=0, hold=None):
-    """the new face motion and the report.  hold: {morph: weight} kept on every frame (see check_hold)"""
+def plan(inp, seed=0, hold=None, style="human"):
+    """the new face motion and the report.  hold: {morph: weight} kept on every frame (see check_hold); style: "human"
+    or "v7" (STYLES)"""
+    if style not in STYLES:
+        raise ValueError("the style is one of %s, not %r" % (", ".join(STYLES), style))
     rng = random.Random(seed)
     frames = inp.frames
     original = morph_keys(inp.face)
@@ -418,9 +599,10 @@ def plan(inp, seed=0, hold=None):
     start = inp.body_start
     keys, intro = wake_up(keys, frames, start)
     env = envelope([(p.start, p.end) for p in phrases], frames, rng)
-    expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has)
+    accents = kimes(inp.parts, start or 0) if style == "human" and inp.parts else []
+    expressions, events, stretched = rewrite_expressions(keys, env, speed, frames, rng, has, kimes=accents, style=style)
     smile = track(expressions.get(SMILE, keys.get(SMILE, [])), frames)
-    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng)
+    blink, blink_info = rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style, phrases, accents)
     if blink is not None and SMILE in expressions:
         allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
         expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
@@ -452,12 +634,23 @@ def plan(inp, seed=0, hold=None):
     blink_report["new"]["closure_max"] = _r(shut_new.max(), 3)
     blink_report["new"]["closure_over_the_author"] = _r(max(0.0, float(shut_new.max() - max(1.0, author.max()))), 3)
     blink_report["before"]["closure_max"] = _r(author.max(), 3)
+    lid = dict(blink_report.get("lid") or {})
+    follow = lid.pop("_follow", None)
+    b_new, s_new = track(new.get(BLINK, []), frames), track(new.get(SMILE, []), frames)
+    lid["half_eye"] = {"before": half_eye(track(original.get(BLINK, []), frames), track(original.get(SMILE, []), frames)),
+                       "new": half_eye(b_new, s_new)}
+    if follow is not None:
+        lid["half_eye_without_the_gaze"] = half_eye(b_new, s_new, minus=follow)
+    blink_report["lid"] = lid
     report = {
-        "frames": [0, frames - 1], "seed": seed, "intro": intro,
+        "frames": [0, frames - 1], "seed": seed, "style": style, "intro": intro,
         "expression": {"before": measure_expressions(original, frames, speed),
                        "new": measure_expressions(new, frames, speed), "changes": len(events),
-                       "moved_to_head": sum(1 for e in events if e["shift"] != 0),
-                       "stretched_frames": _dist([e - s for _, s, e in stretched])},
+                       "moved_to_head": sum(1 for e in events if e["shift"] != 0 and e.get("kime") is None),
+                       "stretched_frames": _dist([e - s for _, s, e in stretched]),
+                       "kimes": {"found": len(accents),
+                                 "per_min": _r(len(accents) / max(1e-9, (frames - (start or 0)) / FPS / 60.0), 2),
+                                 "changes_on_one": sum(1 for e in events if e.get("kime") is not None)}},
         "blink": blink_report,
         "mouth": dict(mouth_info, **measure_mouth(original, new, frames, inp, intro)),
         "held": dict(hold),
@@ -654,8 +847,25 @@ def _kind(v0, v1):
     return "change"
 
 
-def rewrite_expressions(keys, env, speed, frames, rng, has):
-    """the new keys of the expression morphs (and of the mouth corners that follow 笑い and 真面目), the changes"""
+def kime_shift(end, kimes, reach=ALIGN):
+    """(frames to move a change of the face so that it arrives KIME_ARRIVE frames before the strongest kime it can
+    reach by moving at most `reach` frames, that kime's frame); (None, None) without one"""
+    best = None
+    for k in kimes or ():
+        shift = k["frame"] - KIME_ARRIVE - end
+        if abs(shift) <= reach and (best is None or k["speed"] > best[2]):
+            best = (int(round(shift)), int(k["frame"]), k["speed"])
+    return (best[0], best[1]) if best else (None, None)
+
+
+def rewrite_expressions(keys, env, speed, frames, rng, has, kimes=None, style="v7"):
+    """the new keys of the expression morphs (and of the mouth corners that follow 笑い and 真面目), the changes.  In the
+    human style a change takes HUMAN_ONSET_FRAMES / HUMAN_OFFSET_FRAMES / HUMAN_CHANGE_FRAMES and arrives a frame before
+    a kime it can reach (kime_shift; else the v7 rule of the head's fastest turn)"""
+    human = style == "human"
+    onset_frames = HUMAN_ONSET_FRAMES if human else ONSET_FRAMES
+    offset_frames = HUMAN_OFFSET_FRAMES if human else OFFSET_FRAMES
+    change_frames = HUMAN_CHANGE_FRAMES if human else CHANGE_FRAMES
     sources = {name: keys[name] for name in EXPRESSIONS if name in keys and has(name)}
     for name, follows, share in (CORNERS_UP, CORNERS_DOWN):
         if follows in sources and has(name):
@@ -673,11 +883,20 @@ def rewrite_expressions(keys, env, speed, frames, rng, has):
     for event in events:
         centers = [(ramps[n][i][0] + ramps[n][i][2]) / 2.0 for n, i in event["members"]]
         center = float(np.mean(centers))
-        lengths = {"onset": rng.randint(*ONSET_FRAMES), "offset": rng.randint(*OFFSET_FRAMES),
-                   "change": rng.randint(*CHANGE_FRAMES)}
+        lengths = {"onset": rng.randint(*onset_frames), "offset": rng.randint(*offset_frames),
+                   "change": rng.randint(*change_frames)}
         delays = {part: rng.randint(*span) for part, span in DELAY.items()}
-        shift = align_shift(center, speed)
+        shift, kime = (None, None)
+        if human:
+            end = max(int(round((ramps[n][i][0] + ramps[n][i][2]) / 2.0 + delays[PART[n]]
+                                - lengths[_kind(ramps[n][i][1], ramps[n][i][3])] / 2.0))
+                      + lengths[_kind(ramps[n][i][1], ramps[n][i][3])] for n, i in event["members"])
+            shift, kime = kime_shift(end, kimes)
+        if shift is None:
+            shift = align_shift(center, speed)
         event.update(center=center, shift=shift)
+        if human:
+            event["kime"] = kime
         for name, i in event["members"]:
             r = ramps[name][i]
             length = lengths[_kind(r[1], r[3])]
@@ -692,7 +911,7 @@ def rewrite_expressions(keys, env, speed, frames, rng, has):
             placed.append([span[0], span[1], span[2], r[1], r[3], r[0], r[2]])
         placed = resolve(placed, frames)
         stretched += [(name, p[0], p[1]) for p in placed if not p[2]]
-        out[name] = modulate(sources[name], placed, env, PART[name], frames)
+        out[name] = modulate(sources[name], placed, env, PART[name], frames, HUMAN_WAVE if human else WAVE)
     return out, events, stretched
 
 
@@ -743,10 +962,10 @@ def align_shift(center, speed, length=13.0):
     return int(round(peak - ALIGN_LEAD - start))
 
 
-def modulate(source, placed, env, part, frames):
+def modulate(source, placed, env, part, frames, wave=WAVE):
     """the keys of one morph: each change at its new frames, and the weight between changes lowered along the envelope
-    (delayed like the part), so that it never holds still"""
-    amount = WAVE[part]
+    (delayed like the part) by up to wave[part] of it, so that it never holds still"""
+    amount = wave[part]
     delay = DELAY[part][0]
     ef = np.array([f for f, _ in env], float) + delay
     er = np.array([r for _, r in env], float)
@@ -784,8 +1003,12 @@ def modulate(source, placed, env, part, frames):
 
 # ---- blinks ---------------------------------------------------------------------------------
 
-def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
+def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="v7", phrases=(), accents=None):
     """the new まばたき keys and what was done"""
+    human = style == "human"
+    closings = HUMAN_CLOSING_FRAMES if human else CLOSING_FRAMES
+    openings = HUMAN_OPENING_FRAMES if human else OPENING_FRAMES
+    table = HUMAN_OPENING if human else OPENING
     b_keys = keys.get(BLINK)
     if not b_keys:
         return None, {"list": []}
@@ -798,12 +1021,21 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
     base = base_track(b_keys, longs, frames, intro, events)
     pitch = eye_pitch(inp.eyes)
     sacc = saccades(inp.head, inp.eyes)
-    base = base + lid_offset(pitch, sacc, frames) * (base < CLOSED)
-    base = np.clip(base, 0.0, 1.0)
+    lid_info = {}
+    author = base
+    if not human:
+        base = np.clip(base + lid_offset(pitch, sacc, frames) * (base < CLOSED), 0.0, 1.0)
     clear = np.zeros(frames, bool)
     clear[:min(frames, opened + KEEP_CLEAR)] = True
     for e in longs:
         clear[max(0, e["cs"] - KEEP_CLEAR):e["oe"] + KEEP_CLEAR + 1] = True
+    flashes, sung = None, None
+    if human:
+        # the eyes opened for a moment at some kimes where she sings; no blink starts about them
+        sung = singing(phrases, inp.lines, frames)
+        flashes = choose_flashes(accents or [], sung, frames, opened)
+        for k in flashes:
+            clear[max(0, k - FLASH_QUIET[0]):min(frames, k + FLASH_QUIET[1] + 1)] = True
     budget = int(round(RATE * (frames - opened) / FPS / 60.0))
     plan_ = Schedule(clear, frames, budget, [e["t0"] for e in longs])
     shifts = sorted(gaze_shift_sizes(inp.head, inp.eyes), key=lambda fs: (-fs[1], fs[0]))      # the largest first
@@ -817,17 +1049,59 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
             f = a + rng.randint(*PHRASE_BLINK)
             if f + 10 <= z:
                 plan_.add(f, "phrase_end")
+    if human:
+        for _, end in smile_falls(smile):
+            if rng.random() < P_SMILE_END:
+                plan_.add(end - SMILE_END_BLINK + rng.randint(-3, 3), "smile_end")
     for s in sorted(sacc, key=lambda x: -x["amplitude"]):
         if s["amplitude"] >= BIG_SACCADE and rng.random() < P_SACCADE:
             plan_.add(s["start"] - 1 + rng.randint(0, 1), "saccade")
     fill_blinks(plan_, clear, frames, rng)
     chosen = plan_.chosen()
+    drawn = []
+    last_long = None
+    for f, cause in chosen:
+        if not human:
+            closing, hold = rng.choice(closings), (1 if rng.random() < 0.4 else 0)
+            drawn.append((f, cause, closing, hold, rng.choice(openings)))
+            continue
+        closing = rng.choice(closings)
+        chance = P_LONG["phrase_end"] if cause == "phrase_end" else P_LONG["rest"] if cause == "fill" and not sung[f] else 0.0
+        if chance and rng.random() < chance and (last_long is None or f - last_long >= LONG_GAP):
+            drawn.append((f, cause, LONG_CLOSING, rng.randint(*LONG_HOLD), LONG_OPENING))
+            last_long = f
+        else:
+            drawn.append((f, cause, closing, 1 if rng.random() < HUMAN_HOLD_CHANCE else 0, rng.choice(openings)))
+    if human and flashes:
+        # a blink that started before the quiet window can still run into a flash (it opens over several frames): the
+        # eye would open from the blink straight to its widest.  The flash gives way (the blinks come first)
+        up, held, down = FLASH_SHAPE
+        spans = [(f, f + c + h + o) for f, _, c, h, o in drawn]
+
+        def clashes(k):
+            first, last = k - up, k - 1 + held + down - 2       # the frames on which the flash opens the eye
+            return any(a <= last and z >= first - 1 for a, z in spans)
+        flashes = [k for k in flashes if not clashes(k)]
+    if human:
+        # the lid's level (the blinks first: a change of the shown share near one happens while the eye is shut), the
+        # flashes, the lid following the eyes up and down, and never a smiling eye shut between the blinks
+        share = shown_share(phrases, frames, inp.voice, [(f, f + c, f + c + h + o) for f, _, c, h, o in drawn])
+        base = shown_lid(author, share)
+        lift = flash_track(flashes, frames)             # the lid up to the neutral lid at most, not the model's widest eye
+        base = np.where(author < LID_DEEP, base - lift * np.maximum(0.0, base - LID_NEUTRAL), base)
+        follow = lid_follow(pitch, LID_FOLLOW)
+        lid_info = {"_follow": follow * (base < CLOSED)}
+        limit = np.maximum(base, CLOSURE_CAP - smile)          # what the follow may add up to
+        base = np.clip(base + follow * (base < CLOSED), 0.0, 1.0)
+        capped = base > limit + 1e-9
+        base = np.minimum(base, limit)
+        lid_info.update({"author_mean": _r(author[opened:].mean()), "shown_mean": _r(base[opened:].mean()),
+                         "shares": list(LID_SHOWN), "follow_per_degree": list(LID_FOLLOW),
+                         "frames_capped_for_the_smile": int(capped.sum())})
     b = base.copy()
     out = []
-    for f, cause in chosen:
-        closing, hold = rng.choice(CLOSING_FRAMES), (1 if rng.random() < 0.4 else 0)
-        opening = rng.choice(OPENING_FRAMES)
-        prof = blink_profile(closing, hold, opening)
+    for f, cause, closing, hold, opening in drawn:
+        prof = blink_profile(closing, hold, opening, table)
         for i, p in enumerate(prof):
             g = f + i
             if g >= frames:
@@ -836,11 +1110,15 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng):
             b[g] = max(b[g], base[g] + (peak - base[g]) * p)
         out.append({"start": int(f), "cause": cause, "closing": closing, "hold": hold, "opening": opening})
     b = without_creep(b, opened)
-    info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out,
-            "by_cause": {c: sum(1 for x in out if x["cause"] == c) for c in ("gaze_shift", "saccade", "phrase_end", "fill")},
+    info = {"old_blinks": len(blink_pulses(b_keys, intro)), "long_closures_kept": len(longs), "list": out, "lid": lid_info,
+            "by_cause": {c: sum(1 for x in out if x["cause"] == c)
+                         for c in ("gaze_shift", "saccade", "phrase_end", "smile_end", "fill")},
+            "long_blinks": sum(1 for x in out if x["hold"] >= LONG_HOLD[0]) if human else 0,
             "saccades_found": len(sacc), "big_saccades": sum(1 for s in sacc if s["amplitude"] >= BIG_SACCADE),
             "gaze_shifts": len(shifts), "budget": budget, "gaze_quota": quota}
-    return bake(b), info
+    if flashes is not None:
+        info["flashes"] = flashes
+    return (bake_within(b, BLINK_KEY_TOLERANCE, opened) if human else bake(b)), info
 
 
 class Schedule:
@@ -1022,9 +1300,156 @@ def blink_pulses(b_keys, intro):
     return out
 
 
-def lid_offset(pitch, sacc, frames):
+LID_HIDE = 3                    # frames: a blink this near a change of the shown share takes it into its shut frames
+FLASH_RATE = 5.0                # human style: eyes opened for a moment at a kime, at most this many in any minute.  The
+                                # flash is a decided value: Sour's Rin's brows lie under her fringe, so the lid carries the
+                                # accent, with no study behind a lid for the brows; the rate was set by fast brow movements
+                                # in conversation (2.4 to 7.2 a minute, Cave et al. 1996: brows, speech, another condition)
+FLASH_GAP = 60                  # frames between two of them at least
+FLASH_STRENGTH = 60             # percentile of the kimes' speed a kime reaches to get one
+FLASH_SHAPE = (5, 3, 8)         # frames opening (ending a frame before the kime), held, closing again (decided values)
+FLASH_SUNG = 9                  # frames around a lyric line or a phrase that count as singing
+
+
+def smile_falls(smile, top=0.25, gone=0.1, steep=0.005):
+    """[(start, end)] of each fall of 笑い (a per-frame track) from `top` or more to under `gone`: from where it goes
+    under `gone`, back while it falls by more than `steep` a frame (a slow drift of the hold before is no part of it) to
+    the start, on while it still falls by more than that to the end (the last frame the smile moves: Trutoiu's offset)"""
+    s = np.asarray(smile, float)
+    out = []
+    for g in np.where((s[:-1] >= gone) & (s[1:] < gone))[0] + 1:
+        f = int(g)
+        while f > 0 and s[f - 1] - s[f] > steep:
+            f -= 1
+        z = int(g)
+        while z + 1 < len(s) and s[z] - s[z + 1] > steep:
+            z += 1
+        if s[f] >= top:
+            out.append((f, z))
+    return out
+
+
+def choose_flashes(accents, sung, frames, start=0):
+    """the kimes (frames) that get a flash: where she sings (`sung` per frame), at least the FLASH_STRENGTH percentile
+    of the kimes' speed, the strongest first, never two within FLASH_GAP frames, at most FLASH_RATE a minute"""
+    if not accents:
+        return []
+    threshold = float(np.percentile([k["speed"] for k in accents], FLASH_STRENGTH))
+    candidates = sorted((k for k in accents if 0 <= k["frame"] < frames and sung[k["frame"]] and k["speed"] >= threshold),
+                        key=lambda k: (-k["speed"], k["frame"]))
+    budget = int(FLASH_RATE * max(0, frames - start) / FPS / 60.0)
+    chosen = []
+    for k in candidates:
+        if len(chosen) >= budget:
+            break
+        if all(abs(k["frame"] - c) >= FLASH_GAP for c in chosen) and _within_rate(chosen, k["frame"]):
+            chosen.append(k["frame"])
+    return sorted(chosen)
+
+
+def _within_rate(chosen, f, rate=FLASH_RATE, window=int(round(60 * FPS))):
+    """adding a flash at f keeps every stretch of `window` frames at `rate` flashes or fewer (not only the mean)"""
+    near = sorted([c for c in chosen if abs(c - f) < window] + [f])
+    n = int(rate)
+    return all(near[i + n] - near[i] >= window for i in range(len(near) - n))
+
+
+def flash_track(flashes, frames):
+    """per frame 0..1: how far the eyes are opened by the flashes (1 at the widest, a frame before each kime)"""
+    up, held, down = FLASH_SHAPE
+    out = np.zeros(frames)
+    for k in flashes:
+        top = k - 1
+        for i in range(1, up + 1):
+            f = top - up + i
+            if 0 <= f < frames:
+                out[f] = max(out[f], float(smoothstep(i / float(up))))
+        for f in range(top, min(frames, top + held)):
+            out[f] = 1.0
+        for i in range(1, down + 1):
+            f = top + held - 1 + i
+            if 0 <= f < frames:
+                out[f] = max(out[f], float(1.0 - smoothstep(i / float(down))))
+    return out
+
+
+def singing(phrases, lines, frames):
+    """per frame: inside a lyric line (seconds) or a phrase of vowels, give or take FLASH_SUNG frames"""
+    out = np.zeros(frames, bool)
+    for p in phrases:
+        out[max(0, p.start - FLASH_SUNG):min(frames, p.end + FLASH_SUNG + 1)] = True
+    for a, z in lines:
+        out[max(0, int(a * FPS) - FLASH_SUNG):min(frames, int(z * FPS) + FLASH_SUNG + 1)] = True
+    return out
+
+
+def shown_share(phrases, frames, voice=None, blinks=()):
+    """per frame, the share of the author's lowering of the lid that shows (human style).  At rest LID_SHOWN[1]; in a
+    phrase LID_SHOWN[0] for the loudest phrase and up to LID_QUIET more for the quietest (the mean centre power of the
+    voice over the phrase, ranked; without the voice all at LID_SHOWN[0]); from LID_RELAX_AFTER frames after a phrase's
+    last vowel LID_SHOWN[2] for LID_STEP + LID_RELAX_HOLD frames, then rest again.  Phrases less than LID_SHORT_GAP
+    frames apart are one; a phrase wins over the relaxing of the one before.  Each change moves over a few frames: the
+    opening for a phrase over the LID_STEP frames before its first vowel, a lowering over LID_STEP frames, the opening
+    back to rest over LID_RELAX_BACK frames; but where a blink comes within LID_HIDE frames of them (`blinks`: [(its
+    first frame, its first shut frame, its last frame)]), the change happens at once on its first shut frame"""
+    rest, relaxed = float(LID_SHOWN[1]), float(LID_SHOWN[2])
+    target = np.full(frames, rest)
+    spans = []
+    for p in phrases:
+        if spans and p.start - spans[-1][1] <= LID_SHORT_GAP:
+            spans[-1][1] = max(spans[-1][1], p.end)
+        else:
+            spans.append([p.start, p.end])
+    if not spans:
+        return target
+    loud = []
+    for a, z in spans:
+        v = _voice_at(voice, _seconds(a), _seconds(z + 1)) if voice is not None else None
+        loud.append(-99.0 if v is None else v)
+    quiet = 1.0 - _rank(loud) if voice is not None and len(spans) > 1 else np.zeros(len(spans))
+    for a, z in spans:
+        z0 = min(frames, z + LID_RELAX_AFTER)
+        target[z0:min(frames, z0 + LID_STEP + LID_RELAX_HOLD)] = relaxed
+    firsts = set()
+    for (a, z), q in zip(spans, quiet):
+        target[a:min(frames, z + LID_RELAX_AFTER)] = min(1.0, LID_SHOWN[0] + LID_QUIET * float(q))
+        firsts.add(a)
+    out = target.copy()
+    blinks = sorted(blinks)
+    for c in (np.where(np.abs(np.diff(target)) > 1e-12)[0] + 1).tolist():
+        v1 = float(target[c])
+        if c in firsts and v1 < target[c - 1]:
+            ws, we = max(0, c - LID_STEP), c
+        else:
+            ws, we = c, min(frames, c + (LID_STEP if v1 > target[c - 1] else LID_RELAX_BACK))
+        v0 = float(out[ws - 1]) if ws > 0 else float(target[0])
+        hidden = next((shut for first, shut, last in blinks if last >= ws - LID_HIDE and first <= we + LID_HIDE), None)
+        if hidden is not None:
+            lo, hi = min(ws, hidden), max(we, hidden)
+            out[lo:hidden] = v0
+            out[hidden:hi] = v1
+        elif we > ws:
+            out[ws:we] = v0 + (v1 - v0) * smoothstep((np.arange(ws, we) - ws + 1) / float(we - ws))
+    return out
+
+
+def shown_lid(author, share):
+    """the lid between the blinks (human style): a level the author lowered below LID_NEUTRAL shows by `share` of it;
+    from LID_DEEP on it blends back to the author's (a long closure, the eyes opening at the start, stay as they were)"""
+    low = LID_NEUTRAL + share * np.maximum(0.0, author - LID_NEUTRAL)
+    w = np.clip((author - LID_DEEP) / (CLOSED - LID_DEEP), 0.0, 1.0)
+    return np.where(author <= LID_NEUTRAL, author, low * (1.0 - w) + author * w)
+
+
+def lid_follow(pitch, gains=LID_FOLLOW):
+    """まばたき added for where the eyes look on each frame (human style); gains: まばたき per degree down and up"""
+    p = np.asarray(pitch, float)
+    return gains[0] * np.maximum(0.0, -p) - gains[1] * np.maximum(0.0, p)
+
+
+def lid_offset(pitch, sacc, frames, gains=(LID_DOWN, LID_UP)):
     """まばたき added for where the eyes look, one value per fixation (the median pitch between two saccades),
-    changing with each saccade"""
+    changing with each saccade (v7); gains: まばたき per degree down and up"""
     edges = [0] + [s["start"] for s in sacc] + [frames]
     out = np.zeros(frames)
     previous = None
@@ -1033,7 +1458,7 @@ def lid_offset(pitch, sacc, frames):
             continue
         settle = min(z, a + 3) if a > 0 else a
         p = float(np.median(pitch[settle:z])) if z > settle else float(pitch[a])
-        value = LID_DOWN * max(0.0, -p) - LID_UP * max(0.0, p)
+        value = gains[0] * max(0.0, -p) - gains[1] * max(0.0, p)
         out[a:z] = value
         if previous is not None and a > 0:
             n = min(3, z - a)
@@ -1410,6 +1835,25 @@ def _shift_test(ev, ref, span, before, after, rng):
             "p_greater": _r((null >= observed).mean(), 4)}
 
 
+HALF = 0.2                      # まばたき from which the eye counts as half closed between the blinks (a10's base)
+
+
+def half_eye(b, s, minus=None):
+    """the remeasure's half-closed eye (a10's "base"): from the first frame まばたき stays under 0.5 for 30 frames, outside
+    the closures of まばたき + 笑い (closing start to opening end), the share of frames with まばたき (less `minus`, the
+    lid's following of the eyes) at HALF or more"""
+    low = b < 0.5
+    start = next((f for f in range(len(b) - 30) if low[f:f + 30].all()), None)
+    if start is None:
+        return None
+    mask = np.zeros(len(b), bool)
+    mask[start:] = True
+    for e in episodes(b + s, start):
+        mask[e["cs"]:e["oe"] + 1] = False
+    v = b - minus if minus is not None else b
+    return _r(float((v[mask] >= HALF).mean()), 4) if mask.any() else None
+
+
 def measure_blinks(keys, frames, inp, onsets, opened):
     """a10: the closures, the creep of the lid, the shapes, the intervals and the ties to the gaze and the phrases"""
     b = track(keys.get(BLINK, []), frames)
@@ -1601,16 +2045,20 @@ def load(face_path, dance_path, gaze_path, model_path, audio_path=None, cues_pat
     names = [b.name for b in model.bones]
     if "頭" not in names:
         raise ValueError("the model has no bone 頭: the head cannot be followed")
-    head_track = fk.world_track(model, dance, ["頭"], 0, frames - 1)["頭"]
+    watched = ["頭"] + [n for n in KIME_PARTS if n != "頭" and n in names]
+    tracks_ = fk.world_track(model, dance, watched, 0, frames - 1)
+    head_track = tracks_["頭"]
     head = np.array([q for _, q in head_track], float)
     head_pos = np.array([p for p, _ in head_track], float)
+    parts = {n: np.array([p for p, _ in tracks_[n]], float) for n in watched}
     eyes = eye_track(dance, gaze, frames)
     dance_keys = sorted({(k.name, k.frame) for k in dance.morphs})
     del dance
     voice = voice_power(audio_path) if audio_path else None
     lines = read_lines(cues_path) if cues_path else []
     return Inputs(face=face, frames=frames, head=head, eyes=eyes, body_start=body_start(head, head_pos), voice=voice,
-                  lines=lines, morphs={m.name for m in model.morphs}, dance_morph_keys=dance_keys, head_pos=head_pos)
+                  lines=lines, morphs={m.name for m in model.morphs}, dance_morph_keys=dance_keys, head_pos=head_pos,
+                  parts=parts)
 
 
 # ---- the command ----------------------------------------------------------------------------
@@ -1657,18 +2105,21 @@ def summary_of(report):
 
 
 def run(face_path, dance_path, gaze_path, model_path, out_path, audio_path=None, cues_path=None, report_path=None, seed=0,
-        hold=None):
+        hold=None, style="human"):
     started = time.time()
+    if style not in STYLES:
+        raise ValueError("the style is one of %s, not %r" % (", ".join(STYLES), style))
     check_distinct(face_path, dance_path, gaze_path, model_path, out_path, report_path, audio_path, cues_path)
     paths = [os.path.abspath(p) for p in (face_path, dance_path, gaze_path, model_path, out_path)]
     inp = load(paths[0], paths[1], paths[2], paths[3], audio_path and os.path.abspath(audio_path),
                cues_path and os.path.abspath(cues_path))
-    result = plan(inp, seed, hold)
+    result = plan(inp, seed, hold, style)
     write_bytes(paths[4], vmd.dumps(result.motion))
     back = vmd.load(paths[4])
     files = {"face": paths[0], "dance": paths[1], "gaze": paths[2], "model": paths[3], "out": paths[4],
              "audio": audio_path and os.path.abspath(audio_path), "cues": cues_path and os.path.abspath(cues_path)}
-    summary = dict(files, keys=len(back.morphs), seed=seed, held=result.report["held"], **summary_of(result.report))
+    summary = dict(files, keys=len(back.morphs), seed=seed, style=style, held=result.report["held"],
+                   **summary_of(result.report))
     if report_path:
         full = os.path.abspath(report_path)
         write_bytes(full, (json.dumps(dict(files, keys=len(back.morphs), **result.report), ensure_ascii=True, indent=1)
@@ -1692,10 +2143,13 @@ def main(argv=None):
     p.add_argument("--hold", action="append", metavar="NAME=WEIGHT",
                    help="keep a morph the face motion does not animate at WEIGHT (0 to 1) on every frame; repeatable "
                         "(Sour's Rin: --hold 瞳1off=1 shows the dark pupil, --hold HL２=1 the catchlight)")
+    p.add_argument("--style", choices=STYLES, default="human",
+                   help="human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; "
+                        "v7: the face of the MV v7 again, byte for byte")
     args = p.parse_args(argv)
     try:
         result = run(args.face, args.dance, args.gaze, args.model, args.out, args.audio, args.cues, args.report, args.seed,
-                     parse_hold(args.hold))
+                     parse_hold(args.hold), style=args.style)
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
