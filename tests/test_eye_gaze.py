@@ -13,7 +13,7 @@ import time
 import unittest
 
 from mmd_cli import fk, mathutil, motion_edit
-from mmd_cli.formats import pmx, vmd
+from mmd_cli.formats import pmx, pmx_edit, vmd
 from tests.test_pmx import APPEND_ROTATE, NORMAL, TAIL_IS_BONE, TRANSLATE, Writer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -34,9 +34,21 @@ FORWARD = (0.0, 0.0, -1.0)
 LIMITS = eye_gaze.Limits()
 
 
-def rin_like_bytes(tip=(0.0, 19.4, -0.83)):
+# the hands, laid out as Sour's Rin's: the wrist, which a dance moves by its translation here, and the finger tips on it
+# (the points tools/eye_gaze.py looks at), as offsets from the wrist on her left (mirrored on her right)
+WRISTS = {"右": (-4.652, 12.41, -0.237), "左": (4.652, 12.41, -0.237)}
+TIPS = (("人指３先", (1.294, -0.954, -0.181)), ("中指３先", (1.401, -0.985, -0.026)), ("親指２先", (0.644, -0.92, -0.552)),
+        ("小指３先", (1.15, -0.84, 0.244)))
+# a hand that points up: the index finger raised 1.6 units (13 cm) above the wrist, the other fingers curled before the
+# palm (the MV's 52 s)
+POINTING = (("人指３先", (0.25, 1.6, -0.25)), ("中指３先", (0.55, 0.45, -0.4)), ("親指２先", (0.3, 0.5, -0.5)),
+            ("小指３先", (0.5, 0.35, -0.3)))
+
+
+def rin_like_bytes(tip=(0.0, 19.4, -0.83), hands=False, fingers=TIPS):
     """a body, a neck and a head with the eye bones laid out as on Sour's Rin: 両目 a handle above the head with its
-    tip (両目先) straight ahead unless `tip` says otherwise, the eyes lower, each turning with 両目 (append ratio 1)"""
+    tip (両目先) straight ahead unless `tip` says otherwise, the eyes lower, each turning with 両目 (append ratio 1);
+    with `hands` the wrists (translatable, on 上半身) and their finger tips (`fingers`: offsets from the left wrist)"""
     w = Writer(bone=2)
     bones = [("全ての親", -1, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", 0, (0.0, 8.0, 0.0), {"flags": NORMAL | TRANSLATE}),
@@ -47,10 +59,18 @@ def rin_like_bytes(tip=(0.0, 19.4, -0.83)):
              ("左目", 4, (0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
              ("右目", 4, (-0.41, 17.2, -0.56), {"flags": NORMAL | APPEND_ROTATE, "append": (5, 1.0)}),
              ("両目先", 5, tuple(tip), {})]
+    if hands:
+        for side, s in (("右", -1.0), ("左", 1.0)):
+            wx, wy, wz = WRISTS[side]
+            wrist = len(bones)
+            bones.append((side + "手首", 2, (wx, wy, wz), {"flags": NORMAL | TRANSLATE}))
+            for name, (dx, dy, dz) in fingers:
+                bones.append((side + name, wrist, (wx + s * dx, wy + dy, wz + dz), {}))
     return w.build(name="rin-like", bones=[w.bone(n, parent=p, position=pos, **kw) for n, p, pos, kw in bones])
 
 
 MODEL = pmx.loads(rin_like_bytes())
+HANDED = pmx.loads(rin_like_bytes(hands=True))
 
 
 def head_turn(degrees_by_frame, axis="y", last=LAST):
@@ -130,6 +150,41 @@ def restless(seed, last=600):
         rot = (rng.uniform(-6, 6), rng.uniform(-15, 15), 0.0)
         cams += [cam(start, rot), cam(start + 89, rot)]
     return vmd.Motion(model_name="dancer", bones=keys), camera(*cams)
+
+
+UNIT_M = 0.08                               # metres in a unit of the model (Sour's Rin: 1 unit = 8 cm)
+
+
+def hand_rest(side):
+    """where the hand's look point is at rest (the tool's own hand_points on a still dance, not a copy of its rule)"""
+    return eye_gaze.hand_points(HANDED, head_turn({0: 0.0}, last=1))[side][0]
+
+
+def hand_aim_rest(side):
+    """where the eyes aim on the hand at rest (the tool's own hand_aims on a still dance): on the open hand of the
+    model, the middle finger's tip, 7 cm below and to the outside of the look point"""
+    return eye_gaze.hand_aims(HANDED, head_turn({0: 0.0}, last=1))[side][0]
+
+
+def ahead(yaw, pitch, metres):
+    """the world point `metres` from the eye center in the direction (yaw, pitch) of the head at rest"""
+    return tuple(e + d * metres / UNIT_M for e, d in zip(EYE_CENTER, direction(yaw, pitch)))
+
+
+def hand_dance(points, side="右", head=None, axis="y", last=LAST, at=hand_rest):
+    """a still dance whose hand `side` is at points {frame: world point, or None for by her side}, straight between
+    keys, and whose head turns by {frame: degrees} about `axis`; the point is where `at` puts the hand at rest (its
+    look point, or with hand_aim_rest where the eyes aim on it)"""
+    keys = list(head_turn(head or {0: 0.0}, axis=axis, last=last).bones)
+    rest = at(side)
+    for frame, point in sorted(points.items()):
+        move = (0.0, 0.0, 0.0) if point is None else tuple(p - r for p, r in zip(point, rest))
+        keys.append(vmd.BoneKey(side + "手首", frame, move, fk.IDENTITY))
+    return vmd.Motion(model_name="dancer", bones=keys)
+
+
+def run_hands(dance, cam_motion=BEHIND, **kw):
+    return eye_gaze.gaze(HANDED, dance, cam_motion, life=False, **kw)
 
 
 class WhereSheLooksTest(unittest.TestCase):
@@ -292,7 +347,7 @@ class FixationTest(unittest.TestCase):
         nod = {int(round(7.5 * k)): (8.0 if k % 2 else -8.0) for k in range(0, 29)}
         dance = head_turn(nod, axis="x", last=210)
         result = eye_gaze.gaze(MODEL, dance, camera(cam(0, (0.0, 180.0, 0.0)), cam(210, (0.0, 180.0, 0.0))), life=False)
-        self.assertEqual([s for s in result.saccades if s["reason"] in ("recentre", "away")], [])
+        self.assertEqual([s for s in result.saccades if s["reason"] != "glance"], [])
         heads = [fk.rotate(s.head, FORWARD) for s in result.sights]
         pitch = lambda v: math.degrees(math.atan2(v[1], math.hypot(v[0], v[2])))
         head_range = max(pitch(h) for h in heads[30:]) - min(pitch(h) for h in heads[30:])
@@ -306,10 +361,46 @@ class FixationTest(unittest.TestCase):
         self.assertGreater(head_range, 14.0)
         self.assertLess(max(gaze) - min(gaze), 0.3 * head_range, (head_range, max(gaze) - min(gaze)))
 
+    def test_a_beat_nod_that_presses_the_eyes_to_their_wall_moves_nothing(self):
+        # stage 6: the head nods 10 degrees up and down twice a second (80 deg/s).  Countered, the eyes go beyond their
+        # free zone up and down on every nod, but the head lets go of them before a press has lasted long enough for a
+        # saccade off the wall (a nod with the beat comes back: a saccade on every nod would make the iris bob; review
+        # gaze-v8, 5.4 (1)).  Only glances
+        nod = {int(round(7.5 * k)): (10.0 if k % 2 else -10.0) for k in range(0, 29)}
+        dance = head_turn(nod, axis="x", last=210)
+        result = eye_gaze.gaze(MODEL, dance, camera(cam(0, (0.0, 180.0, 0.0)), cam(210, (0.0, 180.0, 0.0))), life=False)
+        free = eye_gaze.free_zone(LIMITS)
+        beyond = [i for i, look in enumerate(result.looks) if look.base[1] > free.up or look.base[1] < -free.down]
+        self.assertGreater(len(beyond), 30, len(beyond))              # the nods press the eyes beyond the free zone
+        self.assertEqual([s for s in result.saccades if s["reason"] != "glance"], [])
+
+    def test_eyes_held_low_by_a_head_that_settled_up_come_back_soon(self):
+        # stage 6: the head tips 7.5 degrees up in 10 frames and stays (the camera behind her).  Holding the gaze, the
+        # eyes would turn 7.5 degrees down, three quarters of their range below: the iris low in the eye (on 2955 to
+        # 2967 of the MV v7 it stayed so for 0.4 s, the gap to the face's way under 8 degrees).  Pressed beyond the
+        # free zone with the face's way well above, a saccade off the wall takes them the way the head went within
+        # half a second of its settling (seed 0 glances only at 62), and they stay near the middle
+        dance = head_turn({0: 0.0, 30: 0.0, 40: 7.5}, axis="x")
+        result = run_gaze(dance=dance, cam_motion=BEHIND)
+        pitch = lambda v: math.degrees(math.atan2(v[1], math.hypot(v[0], v[2])))
+        self.assertAlmostEqual(pitch(fk.rotate(result.sights[45].head, FORWARD)), 7.5, places=3)    # tipped up
+        back = [s for s in result.saccades if s["reason"] == "wall"]
+        self.assertTrue(back and 30 <= back[0]["frame"] <= 55, result.saccades)
+        landed = back[0]["frame"] + back[0]["frames"] - 1
+        self.assertGreater(result.looks[landed].base[1] - result.looks[back[0]["frame"] - 1].base[1], 3.0)   # up
+        self.assertLess(max(abs(look.base[1]) for look in result.looks[max(landed + 1, 45):91]), 2.0)
+
+    def test_the_same_turn_sideways_keeps_the_gaze_where_it_was(self):
+        # the same 7.5 degrees sideways are 42 % of the eyes' range, inside the free zone: they keep the gaze
+        dance = head_turn({0: 0.0, 30: 0.0, 40: 7.5})
+        result = run_gaze(dance=dance, cam_motion=BEHIND)
+        self.assertEqual([s for s in result.saccades if s["reason"] in ("recentre", "wall", "quick")], [])
+        self.assertAlmostEqual(result.looks[55].base[0], -7.5, delta=0.3)
+
     def test_a_fast_shake_that_comes_back_is_countered(self):
         # the head shakes 12 degrees and back at 180 deg/s, twice: fast, but no gaze shift (it comes back), so the
-        # eyes turn against all of it (a person's gain stays near 1 at 2 to 6 Hz); only a sustained fast turn holds
-        # the counter-rotation off (review gaze-smooth 1.10).  Stage 5 first held it off by the head's speed alone
+        # eyes turn against all of it (a person's gain stays near 1 at 2 to 6 Hz; review gaze-smooth 1.10), as they
+        # do every turn of the head (stage 6).  Stage 5 first held it off by the head's speed alone
         shake = head_turn({0: 0.0, 40: 0.0, 42: 12.0, 44: 0.0, 46: 12.0, 48: 0.0})
         result = run_gaze(dance=shake, cam_motion=BEHIND)
         self.assertGreaterEqual(len(eye_gaze.fast_turns(result.sights, FORWARD)[1]), 1)     # fast enough to be a turn
@@ -325,30 +416,48 @@ class FixationTest(unittest.TestCase):
         self.assertGreater(head_path, 30.0)
         self.assertLess(gaze_path, 0.1 * head_path)
 
-    def test_after_a_sustained_turn_the_reflex_comes_back_over_three_frames(self):
-        # the head turns 60 degrees at 300 deg/s and at once comes back 18 at 135 deg/s (slower than a fast turn):
-        # inside the turn the eyes counter a fifth of it, and as it ends the counter-rotation comes back over 3
-        # frames, not in one (the coordinator, 2026-10-13: a step where it comes back is ramped over 2 to 3 frames)
-        dance = head_turn({0: 0.0, 60: 0.0, 66: 60.0, 70: 42.0, LAST: 42.0})
+    def test_in_a_sustained_fast_turn_the_reflex_counters_the_head_and_a_quick_phase_goes_its_way(self):
+        # stage 6 (the coordinator, after the remeasure of the MV v7: the head carried the gaze in 57 % of a07's
+        # large gaze changes): the reflex is off only while the eyes jump.  The head turns 60 degrees at 300 deg/s
+        # and at once comes back 18 at 135 deg/s.  From the onset the eyes turn against the head, all of it up to
+        # MAX_STEP a frame (the head's 10 degrees a frame is more); at the back of the free zone a quick phase takes
+        # them the way of the turn, not sooner than QUICK_AFTER frames after the lead's landing.  Stage 5 held the
+        # reflex off inside the turn: the eyes stayed where the lead put them and the head carried the gaze.  The
+        # head turns 90 degrees at 300 deg/s here, then comes back 18 at 135 deg/s and stands
+        dance = head_turn({0: 0.0, 60: 0.0, 69: 90.0, 73: 72.0, LAST: 72.0})
         result = run_gaze(dance=dance, cam_motion=BEHIND)
         moving = set()
         for s in result.saccades:
             moving.update(range(s["frame"], s["frame"] + s["frames"]))
-        self.assertEqual(moving & set(range(61, 69)), set(), result.saccades)
         yaw = lambda v: math.degrees(math.atan2(v[0], -v[2]))
         heads = [yaw(fk.rotate(s.head, FORWARD)) for s in result.sights]
-        share = lambda i: (result.looks[i].base[0] - result.looks[i - 1].base[0]) / -(heads[i] - heads[i - 1])
-        self.assertLess(max(share(i) for i in range(62, 67)), 0.3)          # held off inside the turn
-        self.assertTrue(0.3 < share(67) < 0.6 < share(68) < 0.9, (share(67), share(68)))
-        for i in (69, 70):
-            if i not in moving and i - 1 not in moving:
-                self.assertGreater(share(i), 0.95, i)
+        free = eye_gaze.free_zone(LIMITS)
+        countered = 0
+        for i in range(62, 70):
+            a, b = result.looks[i - 1].base[0], result.looks[i].base[0]
+            if i not in moving and i - 1 not in moving and abs(a) <= free.yaw and abs(b) <= free.yaw:
+                self.assertAlmostEqual(a - b, min(heads[i] - heads[i - 1], eye_gaze.MAX_STEP), delta=0.05)
+                countered += 1
+        self.assertGreaterEqual(countered, 2)
+        quick = [s for s in result.saccades if s["reason"] == "quick"]
+        self.assertTrue(quick and 61 <= quick[0]["frame"] <= 69, result.saccades)
+        before = result.saccades[result.saccades.index(quick[0]) - 1]
+        self.assertEqual(before["reason"], "lead")
+        self.assertGreaterEqual(quick[0]["frame"] - (before["frame"] + before["frames"] - 1), 4)      # 0.13 s
+        landed = quick[0]["frame"] + quick[0]["frames"] - 1
+        self.assertGreater(result.looks[landed].base[0] - result.looks[quick[0]["frame"] - 1].base[0], 5.0)
+        # between saccades, with the eyes inside the free zone and the head under MAX_STEP a frame (from frame 70),
+        # the gaze stays put in the world
+        inside = lambda i: max(abs(result.looks[i].base[0]), abs(result.looks[i + 1].base[0])) <= free.yaw
+        steps = world_steps_outside_saccades(result, first=70, keep=inside)
+        self.assertGreater(len(steps), 20)
+        self.assertLess(max(steps), 0.1)
 
-    def test_a_long_spin_holds_the_reflex_off_to_its_end(self):
-        # a spin of 2 s at 600 deg/s (review gaze-smooth Q5, kept as it was): the reflex is held off to the end of the
-        # fast run, not only over the 20 frames in which the turn's furthest point is looked for; countered there,
-        # the eyes are thrown to the back wall every few frames.  Outside saccades they turn back by less than a
-        # third of the head's 20 degrees a frame
+    def test_a_long_spin_beats_with_quick_phases_its_way(self):
+        # a spin of 2 s at 600 deg/s (review gaze-smooth Q5): countered, the eyes reach the back wall in 3 frames (8
+        # degrees a frame, the head's 20 is more), and quick phases take them the way of the spin again and again,
+        # QUICK_AFTER to QUICK_AFTER + QUICK_SPREAD frames after each landing (drawn for each, so they do not beat
+        # at one rhythm), never to the edge; outside saccades they turn at most MAX_STEP a frame
         spin = head_turn(dict([(0, 0.0), (30, 0.0)] + [(30 + 5 * k, 100.0 * k) for k in range(1, 13)]), last=LAST)
         result = run_gaze(dance=spin, cam_motion=BEHIND)
         moving = set()
@@ -356,8 +465,21 @@ class FixationTest(unittest.TestCase):
             moving.update(range(s["frame"], s["frame"] + s["frames"]))
         steps = [abs(result.looks[i].base[0] - result.looks[i - 1].base[0]) for i in range(32, 91)
                  if i not in moving and i - 1 not in moving]
-        self.assertGreater(len(steps), 30)
-        self.assertLess(max(steps), 20.0 / 3.0)
+        self.assertGreater(len(steps), 20)
+        self.assertLessEqual(max(steps), eye_gaze.MAX_STEP + 1e-6)
+        quick = [s for s in result.saccades if s["reason"] == "quick" and 32 <= s["frame"] <= 85]
+        self.assertGreaterEqual(len(quick), 5, result.saccades)
+        waits = []
+        for s in quick:
+            k = result.saccades.index(s)
+            before = result.saccades[k - 1]
+            waits.append(s["frame"] - (before["frame"] + before["frames"] - 1))
+            landed = s["frame"] + s["frames"] - 1
+            self.assertGreater(result.looks[landed].base[0] - result.looks[s["frame"] - 1].base[0], 10.0, s)
+        self.assertTrue(all(4 <= w <= 9 for w in waits),                   # 0.13 to 0.3 s: a slow phase of a person's OKN is 0.26 s
+                        waits)
+        self.assertGreaterEqual(len(set(waits)), 3, waits)
+        self.assertLess(max(abs(look.base[0]) for look in result.looks), eye_gaze.EDGE * LIMITS.yaw)
 
 
 class LeadTest(unittest.TestCase):
@@ -385,7 +507,7 @@ class LeadTest(unittest.TestCase):
             others = [s for s in result.saccades if s["reason"] != "lead" and onset - eye_gaze.QUIET - 6 <= s["frame"] < onset]
             self.assertEqual(others, [])
 
-    def test_the_lead_waits_head_still_then_rides_the_fast_turn(self):
+    def test_the_lead_waits_head_still_then_the_reflex_counters_the_turn(self):
         result = self.fast_turn()
         lead = [s for s in result.saccades if s["reason"] == "lead"][0]
         landed = lead["frame"] + lead["frames"] - 1
@@ -394,19 +516,40 @@ class LeadTest(unittest.TestCase):
             self.assertAlmostEqual(result.looks[i].base[0], result.looks[landed].base[0], places=6)
         for i in range(landed + 1, 61):
             self.assertEqual(result.looks[i].state, "lead")
-        # while the head turns at 300 deg/s (a sustained turn of 60 degrees) the counter-rotation is held off: the
-        # eyes have jumped first and the head carries the gaze on, so the eyes stay on the side of the turn instead
-        # of being thrown to the far edge; the turn goes on in the world with the head
-        for i in range(61, 67):
-            self.assertGreater(result.looks[i].base[0], 0.0, i)
-        a = world_gaze(result.sights[61], result.looks[61])
-        b = world_gaze(result.sights[66], result.looks[66])
-        self.assertGreater(degrees_between(a, b), 25.0)
-        # once the turn is over the counter-rotation is back: the gaze stays put where it arrived (a person's
-        # reflex returns about 40 ms after the gaze lands; review gaze-smooth 1.10)
+        # from the onset (the head at 300 deg/s, a sustained turn of 60 degrees) the reflex counters it, MAX_STEP a
+        # frame (stage 6, the coordinator: the reflex is off only while the eyes jump, until they land; stage 5 held
+        # it off through the turn and the head carried the gaze): on the onset the gaze becomes a point in the world
+        # where the lead put it, and from the next frame the eyes turn back against the head
+        self.assertEqual(result.looks[61].state, "free")
+        for i in (62, 63):
+            self.assertAlmostEqual(result.looks[i - 1].base[0] - result.looks[i].base[0], eye_gaze.MAX_STEP, places=6)
+        # pressed against the back of their range, the eyes do not stay there: the next saccade (a quick phase in
+        # the turn, or off the wall after it) takes them the way of the turn again
+        after = [s for s in result.saccades if s["frame"] > landed][0]
+        self.assertIn(after["reason"], ("quick", "wall"), result.saccades)
+        self.assertLessEqual(after["frame"], 70, result.saccades)
+        self.assertGreater(result.looks[after["frame"] + after["frames"] - 1].base[0],
+                           result.looks[after["frame"] - 1].base[0] + 5.0)
+        # once the turn is over the gaze stays put where it arrived (review gaze-smooth 1.10)
         steps = world_steps_outside_saccades(result, first=68)
         self.assertGreater(len(steps), 30)
         self.assertLess(max(steps), 0.1)
+
+    def test_a_lead_never_jumps_back_against_its_turn(self):
+        # review gaze-v8 (3.5): eyes already beyond the lead's cap the way of the turn were taken 2 degrees back by the
+        # lead, and the quick phase after it went 15 to 25 degrees forward: a reversal (22 times in the MV v8).  Here
+        # the head turns to her right at 60 deg/s, so the countered eyes are pressed to her left, then turns fast to
+        # her left: the lead keeps them where they are or takes them further its way
+        dance = head_turn({0: 0.0, 20: 0.0, 45: -50.0, 50: -50.0, 56: 10.0, LAST: 10.0})
+        result = run_gaze(dance=dance, cam_motion=BEHIND)
+        onset = 51
+        cap = eye_gaze.LEAD_SHARE * LIMITS.yaw
+        self.assertGreater(result.looks[onset - 8].base[0], cap, [round(look.base[0], 1) for look in result.looks[30:56]])
+        for s in result.saccades:
+            if onset - 12 <= s["frame"] <= onset:
+                before = result.looks[s["frame"] - 1].base[0]
+                after = result.looks[s["frame"] + s["frames"] - 1].base[0]
+                self.assertGreaterEqual(after - before, -0.01, (s, before, after))
 
     def test_a_turn_with_a_dip_gets_one_lead(self):
         # the head turns 30 degrees, slows for a frame, and turns 30 more: two runs above TURN_SPEED with the same
@@ -624,6 +767,252 @@ class ContactTest(unittest.TestCase):
         self.assertLess(c.error, 0.3)
 
 
+class HandTest(unittest.TestCase):
+    """stage 6 (the request: "near things bring the eyes together"; the MV's 52 seconds, fingers before her face and
+    the eyes parallel): the eyes choose her hand as their target where it holds still or moves slowly near before her
+    face and within their reach, jump onto it, follow it, and jump off it when it goes"""
+
+    def hand_on(self, result, i):
+        """degrees between the gaze written on frame i and where the eyes aim on the hand (the tip of its longest
+        finger, review gaze-v8), seen from the eyes"""
+        sight, look = result.sights[i], result.looks[i]
+        point = result.hand_aims["右"][i]
+        return degrees_between(world_gaze(sight, look), tuple(p - e for p, e in zip(point, sight.eye)))
+
+    def test_a_hand_held_before_her_face_is_looked_at(self):
+        # the tip of her middle finger held 30 cm before her face (the look point that chooses the look, the middle of
+        # the hand, is 7 cm above and inside it): the eyes are on the finger's tip
+        point = ahead(-6.0, -4.0, 0.30)
+        result = run_hands(hand_dance({0: None, 39: None, 40: point, 79: point, 80: None}, at=hand_aim_rest))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        self.assertEqual(hands[0]["hand"], "右")
+        self.assertTrue(abs(hands[0]["first"] - 40) <= 1 and abs(hands[0]["last"] - 79) <= 1, hands)
+        self.assertAlmostEqual(hands[0]["metres"], 0.30, delta=0.01)
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 1, result.saccades)
+        landed = into[0]["frame"] + into[0]["frames"] - 1
+        self.assertTrue(38 <= landed <= 41, into)
+        for i in range(landed + 1, 79):
+            self.assertEqual(result.looks[i].state, "hand", i)
+            self.assertLess(self.hand_on(result, i), 0.5, i)
+        # she looks away from it as it goes, with a saccade that starts by 3 frames after
+        after = [s for s in result.saccades if s["frame"] >= 79]
+        self.assertTrue(after and after[0]["frame"] <= 82 and after[0]["reason"] == "hand_away", result.saccades)
+        self.assertGreater(self.hand_on(result, after[0]["frame"] + after[0]["frames"] - 1), 3.0)
+        self.assertEqual(result.report["counts"]["hand"], sum(1 for look in result.looks if look.state == "hand"))
+
+    def test_a_raised_finger_draws_the_eyes_up_to_it(self):
+        # the MV's 52 s: her index finger raised before her face, the other fingers curled before the palm.  Aimed at
+        # the middle of the hand (stage 6 first), the eyes looked down at the cuff, 24 degrees off the finger's tip,
+        # 6 to 9 degrees down in the head (review gaze-v8).  They aim at the tip of the finger furthest from the wrist:
+        # it is above their reach, so they go up as far as they reach and the gaze runs along the raised finger
+        model = pmx.loads(rin_like_bytes(hands=True, fingers=POINTING))
+        wrist = ahead(-4.0, -14.0, 0.33)                     # the wrist low before her face, the finger up past her eyes
+        move = tuple(w - r for w, r in zip(wrist, WRISTS["右"]))
+        keys = list(head_turn({0: 0.0}).bones) + [vmd.BoneKey("右手首", f, m, fk.IDENTITY) for f, m in
+                                                  ((0, fk.ZERO), (39, fk.ZERO), (40, move), (79, move), (80, fk.ZERO))]
+        result = eye_gaze.gaze(model, vmd.Motion(model_name="dancer", bones=keys), BEHIND, life=False)
+        self.assertEqual(len(result.report["hands"]["list"]), 1, result.report["hands"])
+        mirror = lambda d: (-d[0], d[1], d[2])
+        offsets = {name: mirror(d) for name, d in POINTING}
+        finger = lambda k: tuple(w + k * d for w, d in zip(wrist, offsets["人指３先"]))     # wrist to the raised tip
+        curled = tuple(w + d for w, d in zip(wrist, offsets["中指３先"]))
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 1, result.saccades)
+        landed = into[0]["frame"] + into[0]["frames"] - 1
+        up = eye_gaze.contact_zone(LIMITS).up
+        for i in range(landed + 1, 79):
+            sight, look = result.sights[i], result.looks[i]
+            self.assertEqual(look.state, "hand", i)
+            self.assertGreater(look.base[1], up - 0.5, i)                # up toward the finger, as far as they reach
+            g = world_gaze(sight, look)
+            toward = lambda p: tuple(a - e for a, e in zip(p, sight.eye))
+            # on the raised finger and well off the curled fingers before the palm
+            self.assertLess(min(degrees_between(g, toward(finger(k / 10.0))) for k in range(0, 11)), 1.5, i)
+            self.assertGreater(degrees_between(g, toward(curled)), 5.0, i)
+
+    def test_the_eyes_follow_a_hand_that_moves_slowly_ahead_of_it(self):
+        # the hand moves 16 degrees across before her face in 2 seconds: the eyes follow it with no saccade (a person
+        # tracks the hand she moves herself smoothly, the eyes a little ahead of it)
+        a, b = ahead(-12.0, -4.0, 0.30), ahead(4.0, -2.0, 0.30)
+        result = run_hands(hand_dance({0: None, 29: None, 30: a, 90: b, 91: None}, at=hand_aim_rest))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        self.assertTrue(abs(hands[0]["first"] - 30) <= 1 and abs(hands[0]["last"] - 90) <= 1, hands)
+        starts = [s["frame"] for s in result.saccades if 33 <= s["frame"] <= 88]
+        self.assertEqual(starts, [], result.saccades)
+        rest = eye_gaze.angles_of(FORWARD)
+        for i in range(34, 88):
+            self.assertLess(self.hand_on(result, i), 1.5, i)
+            step = math.hypot(result.looks[i].base[0] - result.looks[i - 1].base[0],
+                              result.looks[i].base[1] - result.looks[i - 1].base[1])
+            self.assertLess(step, 0.6, i)
+            # ahead of the hand: on the side it moves to (her left, +yaw)
+            aim, _ = eye_gaze._seen(result.sights[i], result.hand_aims["右"][i], FORWARD, rest)
+            self.assertGreater(result.looks[i].base[0], aim[0], i)
+
+    def test_a_hand_that_waves_fast_before_her_face_is_not_looked_at(self):
+        # 24 degrees across and back every 6 frames for 2 seconds (240 deg/s): too fast to follow
+        points = {0: None, 29: None}
+        for k, frame in enumerate(range(30, 91, 3)):
+            points[frame] = ahead(-12.0 if k % 2 else 12.0, -2.0, 0.30)
+        points[91] = None
+        result = run_hands(hand_dance(points))
+        self.assertEqual(result.report["hands"]["list"], [])
+        self.assertNotIn("hand", {look.state for look in result.looks})
+
+    def test_a_hand_out_of_reach_too_far_or_too_near_is_not_looked_at(self):
+        # at her chest (35 degrees below the eyes: they turn 10 at most), at arm's length and more (90 cm), and on her
+        # face (12 cm: a hand over the eyes is no target to look at)
+        for point in (ahead(-4.0, -35.0, 0.30), ahead(-4.0, -2.0, 0.90), ahead(-4.0, -2.0, 0.12)):
+            result = run_hands(hand_dance({0: None, 39: None, 40: point, 79: point, 80: None}))
+            self.assertEqual(result.report["hands"]["list"], [], point)
+
+    def test_a_brief_visit_is_not_a_look(self):
+        # a hand held before her face for 8 frames (0.27 s) is passed by, not looked at: a person's look at a gesture
+        # lasts 0.46 s on average (Gullberg & Holmqvist 2006), and 5 of the 9 looks of the MV v8 that put the eyes on
+        # the hand for only 2 to 4 frames between two large jumps looked like the eyes darting there and back (review
+        # gaze-v8).  Held 10 frames, it is looked at
+        point = ahead(-6.0, -4.0, 0.30)
+        for last, looked in ((43, 0), (48, 0), (50, 1)):
+            result = run_hands(hand_dance({0: None, 39: None, 40: point, last: point, last + 1: None}, at=hand_aim_rest))
+            self.assertEqual(len(result.report["hands"]["list"]), looked, (last, result.report["hands"]["list"]))
+
+    def test_a_hand_held_out_toward_the_camera_is_not_looked_at(self):
+        # the camera is in reach of the eyes for 40 frames only (no contact) and her hand is held on its line: she
+        # shows the hand to the viewer (the MV's 24.9 and 43 seconds); looking at it would cross the eyes at the viewer
+        cams = camera(cam(0, (0.0, 40.0, 0.0)), cam(30, (0.0, 40.0, 0.0)), cam(31, (0.0, 8.0, 0.0)), cam(70, (0.0, 8.0, 0.0)),
+                      cam(71, (0.0, 40.0, 0.0)), cam(LAST, (0.0, 40.0, 0.0)))
+        yaw, pitch = expected_yaw((0.0, 8.0, 0.0))
+        point = ahead(yaw, pitch, 0.35)
+        result = run_hands(hand_dance({0: None, 33: None, 34: point, 67: point, 68: None}), cam_motion=cams)
+        self.assertEqual(result.contacts, [])
+        self.assertEqual(result.report["hands"]["list"], [])
+
+    def test_a_palm_shown_to_the_viewer_is_not_looked_at(self):
+        # the MV's 120.6 and 178.4 s: hands raised before her face with the palms turned to the viewer, a gesture to
+        # the viewer; looking at it, her eyes dropped to the backs of her own hands (review gaze-v8).  The model's palm
+        # faces down at rest: filmed from below (the camera 70 degrees down, out of the eyes' reach) the palm of the
+        # hand held before her face faces the camera and is not looked at; filmed from behind it is
+        point = ahead(-6.0, -4.0, 0.30)
+        dance = hand_dance({0: None, 39: None, 40: point, 79: point, 80: None}, at=hand_aim_rest)
+        below = camera(cam(0, (-70.0, 0.0, 0.0)), cam(LAST, (-70.0, 0.0, 0.0)))
+        self.assertLess(fk.camera_position(fk.camera_at(fk.camera_keys(below), 40, [0, LAST]))[1], 0.0)   # below her
+        result = run_hands(dance, cam_motion=below)
+        self.assertEqual(result.contacts, [])
+        self.assertEqual(result.report["hands"]["list"], [])
+        self.assertEqual(len(run_hands(dance).report["hands"]["list"]), 1)
+
+    def test_an_eye_contact_wins_over_her_hand(self):
+        point = ahead(-8.0, -2.0, 0.30)
+        result = run_hands(hand_dance({0: None, 39: None, 40: point, 79: point, 80: None}), cam_motion=IN_FRONT)
+        self.assertEqual(result.contacts, [(0, LAST)])
+        self.assertEqual(result.report["hands"]["list"], [])
+
+    def test_a_lead_wins_over_her_hand(self):
+        # the head turns 60 degrees fast from frame 61 while the hand is held before her face (40 to 100): the eyes
+        # still lead the turn, and they leave the hand for it
+        point = ahead(-6.0, -2.0, 0.30)
+        result = run_hands(hand_dance({0: None, 39: None, 40: point, 100: point, 101: None},
+                                      head={0: 0.0, 60: 0.0, 66: 60.0}))
+        leads = [s for s in result.saccades if s["reason"] == "lead"]
+        self.assertEqual(len(leads), 1, result.saccades)
+        for h in result.report["hands"]["list"]:
+            self.assertLess(h["last"], leads[0]["frame"], h)
+
+    def test_a_model_without_hands_looks_at_none(self):
+        result = run_gaze(cam_motion=BEHIND)
+        self.assertEqual(result.report["hands"], {"count": 0, "frames": 0, "share": 0.0, "list": []})
+        self.assertEqual(result.hand_points, {})
+
+    def test_the_eyes_are_where_the_hand_stops_before_it_does(self):
+        # the hand swings in from her side at 170 deg/s and stops before her face: the eyes jump to where it will stop
+        # and are there before it (a person's eyes lead the hand she moves to its target), then hold on it with no
+        # second jump
+        stop = ahead(-6.0, -4.0, 0.30)
+        points = {0: None, 29: None, 30: ahead(-40.0, -4.0, 0.30), 36: stop, 76: stop, 77: None}
+        result = run_hands(hand_dance(points, at=hand_aim_rest))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 1, result.saccades)
+        landed = into[0]["frame"] + into[0]["frames"] - 1
+        self.assertLess(landed, 36)                                         # before the hand stops
+        sight, look = result.sights[landed], result.looks[landed]
+        self.assertLess(degrees_between(world_gaze(sight, look), tuple(p - e for p, e in zip(stop, sight.eye))), 1.0)
+        for i in range(landed, 76):
+            self.assertLess(self.hand_on(result, i) if i >= 36 else 0.0, 0.5, i)
+
+    def test_a_hand_that_moves_on_faster_than_the_eyes_follow_gets_a_catch_up_saccade(self):
+        # held, then 16 degrees across in 3 frames (160 deg/s, over the 100 the gaze follows a hand) and held again:
+        # the eyes fall behind and one saccade catches them up, not right after the first (CATCH_UP_AFTER frames)
+        a, b = ahead(-14.0, -4.0, 0.30), ahead(2.0, -4.0, 0.30)
+        result = run_hands(hand_dance({0: None, 29: None, 30: a, 60: a, 63: b, 100: b, 101: None}, at=hand_aim_rest))
+        hands = result.report["hands"]["list"]
+        self.assertEqual(len(hands), 1, hands)
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        self.assertEqual(len(into), 2, result.saccades)
+        first_landed = into[0]["frame"] + into[0]["frames"] - 1
+        self.assertGreaterEqual(into[1]["frame"] - first_landed, 3)        # not right after a landing (0.1 s)
+        self.assertTrue(60 <= into[1]["frame"] <= 66, into)
+        for i in range(70, 99):
+            self.assertLess(self.hand_on(result, i), 0.5, i)
+
+
+def load_named(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(ROOT, "tools", name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class HandVergenceTest(unittest.TestCase):
+    """tools/eye_optics.py brings the eyes together where the gaze meets a near hand (within 12 degrees of it): on the
+    hand this tool looks at, 14 degrees off her face's way, it does; with the eyes turned 10 degrees the other way the
+    same hand is out of its cone and the eyes stay parallel (the stage-5 tool never chose a hand: only a hand the gaze
+    passed by chance brought the eyes together)"""
+
+    def test_eye_optics_converges_on_the_hand_she_looks_at(self):
+        from tests.test_pmx_eyes import EYE_Z, toy_bytes
+        pmx_eyes, eye_optics = load_named("pmx_eyes"), load_named("eye_optics")
+        wrist, tip = (-4.65, 12.41, -0.24), (-6.05, 11.42, -0.26)
+        hand_tip = tuple(w + 0.5 * (t - w) / math.dist(wrist, tip) for w, t in zip(wrist, tip))     # 手先, 4 cm on
+        data, _ = toy_bytes(extra_bones=[("右手首", -1, wrist), ("右中指３先", -1, tip), ("右手先", -1, hand_tip)],
+                            iris_z=-0.96)
+        doc = pmx_edit.loads(data)
+        pmx_eyes.build(doc, share=0.55)
+        model_bytes = pmx_edit.dumps(doc)
+        model = pmx.loads(model_bytes)
+        eye = (0.0, 17.214, EYE_Z)
+        rest = eye_gaze.hand_points(model, head_turn({0: 0.0}, last=1))["右"][0]      # the hand's look point at rest
+        point = tuple(e + d * 0.30 / UNIT_M for e, d in zip(eye, direction(-14.0, -2.0)))
+        move = tuple(p - r for p, r in zip(point, rest))
+        keys = [vmd.BoneKey("右目", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("左目", 0, fk.ZERO, fk.IDENTITY),
+                vmd.BoneKey("頭", 0, fk.ZERO, fk.IDENTITY), vmd.BoneKey("頭", 120, fk.ZERO, fk.IDENTITY)]
+        for frame, m in ((0, fk.ZERO), (39, fk.ZERO), (40, move), (79, move), (80, fk.ZERO), (120, fk.ZERO)):
+            keys += [vmd.BoneKey(name, frame, m, fk.IDENTITY) for name in ("右手首", "右中指３先", "右手先")]
+        dance = vmd.Motion(model_name="toy", bones=keys)
+
+        def key(frame):
+            return motion_edit.camera_key_from_ui({"pos": eye, "distance": 2500.0 / 80.0, "rot": (0.0, 60.0, 0.0),
+                                                   "fov": 30, "perspective": True}, frame=frame)
+        cams = vmd.Motion.for_camera(cameras=[key(0), key(120)])
+        result = eye_gaze.gaze(model, dance, cams, life=False)
+        self.assertEqual([(h["first"], h["last"]) for h in result.report["hands"]["list"]], [(41, 79)])   # 40: it arrives
+        quiet = eye_optics.merge_params(eye_optics.PARAMS, {"pupil": {"unrest": {"amplitude": 0.0}}})
+        optics = eye_optics.optics(model_bytes, dance, result.motion, cams, quiet)
+        verg, labels = optics.trace["vergence"], optics.trace["label"]
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        self.assertEqual(set(labels[41:79]), {"hand"})
+        self.assertGreater(min(verg[52:79]), 0.9 * want, verg[40:80])
+        self.assertLess(max(verg[:36]), 0.05)
+        away = fk.stored(eye_gaze.eye_rotation(10.0, 0.0))
+        elsewhere = vmd.Motion(model_name="toy", bones=[vmd.BoneKey("両目", f, fk.ZERO, away) for f in (0, 120)])
+        alone = eye_optics.optics(model_bytes, dance, elsewhere, cams, quiet)
+        self.assertLess(max(alone.trace["vergence"]), 0.05)
+
+
 class SaccadeTest(unittest.TestCase):
     def test_no_saccade_is_a_single_frame(self):
         # stage 5: a one-frame jump reads as a teleport at 30 fps.  The coordinator's lengths (2026-10-13, after the
@@ -639,8 +1028,8 @@ class SaccadeTest(unittest.TestCase):
 
     def test_outside_saccades_the_eyes_turn_at_most_max_step_a_frame(self):
         # the head of `restless` snaps 15 to 50 degrees in 7 frames: counter-rotating all of it would move the eyes
-        # up to 10 degrees a frame with no saccade.  Outside saccades they turn at most 8 degrees a frame (inside a
-        # sustained fast turn the counter-rotation is held off; elsewhere the rest is carried by the head)
+        # up to 10 degrees a frame with no saccade.  Outside saccades they turn at most 8 degrees a frame (the rest
+        # is carried by the head)
         runs = [(restless(seed), seed) for seed in range(3)]
         # and a head that snaps 60 degrees in one frame (a flick, too short for a fast turn's lead)
         runs.append(((head_turn({0: 0.0, 40: 0.0, 41: 60.0, LAST: 60.0}), BEHIND), 0))
@@ -699,13 +1088,16 @@ class SaccadeTest(unittest.TestCase):
         self.fail("no lead of 2 frames or more in 6 seeds")
 
     def test_free_saccades_wait_for_the_shortest_fixation(self):
+        # recentres and glances wait MIN_FIXATION frames or more after a landing; quick phases and saccades off the
+        # wall QUICK_AFTER or more (stage 6)
+        waits = {"recentre": eye_gaze.MIN_FIXATION, "glance": eye_gaze.MIN_FIXATION, "quick": 4, "wall": 4}
         for seed in range(3):
             dance, cams = restless(seed)
             result = run_gaze(dance=dance, cam_motion=cams, seed=seed)
             for before, after in zip(result.saccades, result.saccades[1:]):
-                if after["reason"] in ("recentre", "glance"):
+                if after["reason"] in waits:
                     landed = before["frame"] + before["frames"] - 1
-                    self.assertGreaterEqual(after["frame"] - landed, eye_gaze.MIN_FIXATION, (before, after))
+                    self.assertGreaterEqual(after["frame"] - landed, waits[after["reason"]], (before, after))
 
     def test_the_shortest_fixation_can_be_chosen(self):
         # stage 5: 9 to 12 frames by default (the stage-1 tool had 6, and 57 % of its fixations stopped there)
@@ -733,9 +1125,10 @@ class SaccadeTest(unittest.TestCase):
         # frames (the seed): with one fixed shortest length, fixations whose gap had opened earlier all ended on it
         # (review eye, finding 2: 57 % of them at 6 frames; with 10 frames and no spread 24 % stopped at 10)
         spread = eye_gaze.FIXATION_SPREAD
-        # the head turns on and on at 90 deg/s (no fast turn), so the gaze is always behind where the face goes and
-        # each fixation ends at the earliest it may
-        keys = {f: 3.0 * f for f in range(0, 301, 10)}
+        # the head turns on and on at 24 deg/s (no fast turn), so the gaze is always behind where the face goes and
+        # each fixation ends at the earliest it may (faster, the head presses the eyes to their wall before the
+        # shortest fixation is over, and a saccade off the wall comes first: stage 6)
+        keys = {f: 0.8 * f for f in range(0, 301, 10)}
         dance = head_turn(keys, last=300)
         lengths = []
         for seed in range(2):
@@ -1017,12 +1410,24 @@ class MeasureTest(unittest.TestCase):
         # the steps touching a listed saccade's frames are left out, and the still ones touching a contact
         m = run(1.0, 0.0, saccades=[{"frame": 10, "frames": 2}], contacts=[(40, 49)])
         self.assertEqual((m["steady_steps"], m["still_steps"]), (27, 19))
-        # the head's speed bands: 15.3 deg/s is in both, 14 only the still one, 117 only the steady one, 121.5 neither
-        for per_frame, steady, still in ((0.51, 30, 60), (14.0 / 30.0, 0, 60), (4.05, 0, 30), (3.9, 30, 30)):
+        # the head's speed bands: 15.3 deg/s is in both, 14 only the still one, 117 only the steady one, 121.5 neither;
+        # the steady steps split as the remeasure of stage 6 splits its W2, the head at 15 to 60 and 60 to 120 deg/s
+        for per_frame, steady, still, slow, fast in ((0.51, 30, 60, 30, 0), (14.0 / 30.0, 0, 60, 0, 0),
+                                                     (4.05, 0, 30, 0, 0), (3.9, 30, 30, 0, 30), (1.9, 30, 30, 30, 0),
+                                                     (2.1, 30, 30, 0, 30)):
             heads = [eye_gaze.eye_rotation(per_frame * min(f, 30), 0.0) for f in range(61)]
             angles = [(-per_frame * min(f, 30), 0.0) for f in range(61)]
             m = eye_gaze.world_measures(heads, angles, [])
             self.assertEqual((m["steady_steps"], m["still_steps"]), (steady, still), per_frame)
+            bands = m["steady_by_head"]
+            self.assertEqual((bands["15_60"]["steps"], bands["60_120"]["steps"]), (slow, fast), per_frame)
+        # the head at 90 deg/s for 30 frames: the eye counters all of it on the first 15, then 80 % (the gaze moves
+        # 18 deg/s): half the steps of the 60 to 120 band are steady
+        heads = [eye_gaze.eye_rotation(3.0 * min(f, 30), 0.0) for f in range(61)]
+        angles = [(-3.0 * min(f, 15) - 2.4 * max(0, min(f, 30) - 15), 0.0) for f in range(61)]
+        bands = eye_gaze.world_measures(heads, angles, [])["steady_by_head"]
+        self.assertEqual(bands["60_120"], {"steps": 30, "share": 0.5})
+        self.assertEqual(bands["15_60"], {"steps": 0, "share": 0.0})
 
     def test_the_frames_at_the_wall(self):
         # the eyes at WALL_SEEN of a limit or beyond, sideways and up or down; a fixation pressed against its wall
@@ -1100,7 +1505,9 @@ class OutputTest(unittest.TestCase):
                                                    "fixation_median_s", "reversals_per_second", "world_gaze",
                                                    "wall_share"})
         self.assertEqual(set(report["measures"]["world_gaze"]), {"gain_yaw", "gain_pitch", "steady_steps",
-                                                                 "steady_share", "still_steps", "flow_share"})
+                                                                 "steady_share", "steady_by_head", "still_steps",
+                                                                 "flow_share"})
+        self.assertEqual(set(report["measures"]["world_gaze"]["steady_by_head"]), {"15_60", "60_120"})
         self.assertEqual(report["zones"]["wall"], {k: round(v, 4) for k, v in report["zones"]["wall"].items()})
         self.assertEqual(set(report["measures"]["eye_steps"]), {"max", "p99", "outside_saccades_max",
                                                                 "outside_saccades_p99"})
@@ -1360,7 +1767,10 @@ class RealSongTest(unittest.TestCase):
     15 to 120 deg/s the gaze stayed under 10 deg/s on 15 % of the steps (the stage-1 tool 88 %), and with the head
     under 20 deg/s it moved more than 0.1 degree a frame on 73 % (1 %).  The fix keeps the gaze in the world (66 %
     and 13 %) with 1.43 saccades a second and fixations of 0.47 s.  The head carries a07's large gaze changes 62 %
-    by the list's split and 82 % by v_sac (2.7 % and 37 % before stage 5); a target of stage 1, not of stage 5"""
+    by the list's split and 82 % by v_sac (2.7 % and 37 % before stage 5); a target of stage 1, not of stage 5.
+    Stage 6 keeps the reflex on in the fast turns, with quick phases: 32 % and 70 %, the gaze put with the head at
+    60 to 120 deg/s on 63 % of the steps, 1.80 saccades a second (0.33 of them quick phases), fixations of 0.40 s,
+    0.17 reversals a second, 2 looks at a hand"""
 
     def test_the_whole_song_meets_the_targets(self):
         folder = tempfile.mkdtemp()
@@ -1388,14 +1798,20 @@ class RealSongTest(unittest.TestCase):
         self.assertLess(m["edge_longest_s"], 1.0)
         self.assertLess(m["eccentric_15_share"], 0.10)
         self.assertGreaterEqual(m["contact"]["episode_median_s"], 1.5, m["contact"])
-        # stage 5 (the coordinator's acceptance of the review fix): fewer saccades, none of one frame, fixations of
-        # 0.4 s or more (median), at most 8 degrees a frame outside saccades, few reversals (0.05 a second, the
-        # stage-1 tool 0.76)
+        # stage 5 (the coordinator's acceptance of the review fix): fewer saccades, none of one frame, long fixations
+        # (median), at most 8 degrees a frame outside saccades, few reversals (0.05 a second, the stage-1 tool 0.76)
         saccades = report["saccades"]["list"]
         rate = len(saccades) / (7743 / 30.0)
-        self.assertTrue(0.5 <= rate <= 1.6, rate)
+        # stage 6: the quick phases of the sustained fast turns come on top of the 1.6 (the coordinator: the
+        # saccades that are added must be those); the stage-1 tool had 2.98 a second
+        others = len([s for s in saccades if s["reason"] != "quick"]) / (7743 / 30.0)
+        self.assertTrue(0.5 <= others <= 1.6, others)
+        self.assertLessEqual(rate, 2.0)
         self.assertEqual([s for s in saccades if s["frames"] < 2], [])
-        self.assertGreaterEqual(m["fixation_median_s"], 0.4, m)
+        # the median fixation: 0.4 s or more in stage 5; 0.33 s or more from stage 6 (the coordinator, 2026-10-14: a
+        # lead no longer jumps back against its turn, which took the median to 0.367 s; a person's free viewing of a
+        # scene fixates 330 ms on average, Rayner 1998 table 1, and the stage-1 tool's 0.20 s is what is kept off)
+        self.assertGreaterEqual(m["fixation_median_s"], 0.33, m)
         self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], 8.0 + 0.005, m["eye_steps"])
         # inside saccades: a 35-degree saccade in 3 frames moves 58 % of it in its middle frame
         self.assertLess(m["eye_steps"]["max"], 0.59 * 35.0 + 1.0, m["eye_steps"])
@@ -1409,6 +1825,16 @@ class RealSongTest(unittest.TestCase):
         self.assertLessEqual(world["flow_share"], 0.2, world)
         self.assertGreaterEqual(world["gain_yaw"], 0.75, world)
         self.assertGreaterEqual(world["gain_pitch"], 0.5, world)
+        # stage 6 (the remeasure of the MV v7: the reflex held off through the sustained fast turns let the head carry
+        # the gaze): with the head at 60 to 120 deg/s the gaze stays put on 60 % of the steps or more (v7: 54 %), and
+        # the head carries few of a07's large gaze changes (v7: 57 %; stage 1's target was a few %)
+        self.assertGreaterEqual(world["steady_by_head"]["60_120"]["share"], 0.6, world)
+        self.assertLessEqual(m["head_carried"]["share"], 0.35, m["head_carried"])
+        # stage 6: she looks at her hands somewhere in the song, each look 0.3 s or more (review gaze-v8, 6: a change of
+        # the looks' choice passed every test)
+        looks = report["hands"]["list"]
+        self.assertGreaterEqual(len(looks), 1, report["hands"])
+        self.assertTrue(all(h["last"] - h["first"] + 1 >= 9 for h in looks), looks)
         # the plan's own measures say the same as the files
         self.assertAlmostEqual(report["measures"]["edge_share"], m["edge_share"], places=2)
         self.assertAlmostEqual(report["measures"]["contact"]["episode_median_s"], m["contact"]["episode_median_s"], places=1)
@@ -1445,11 +1871,15 @@ class OlderSongTest(unittest.TestCase):
         self.assertLess(m["edge_longest_s"], 1.0)
         self.assertEqual([s for s in report["saccades"]["list"] if s["frames"] < 2], [])
         self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], 8.0 + 0.005, m["eye_steps"])
-        self.assertLessEqual(len(report["saccades"]["list"]) / (7743 / 30.0), 1.6)
+        others = [s for s in report["saccades"]["list"] if s["reason"] != "quick"]
+        self.assertLessEqual(len(others) / (7743 / 30.0), 1.6)
+        self.assertLessEqual(len(report["saccades"]["list"]) / (7743 / 30.0), 2.0)
         for s in [c for c in report["contacts"]["list"]]:
             self.assertGreaterEqual(s["last"] - s["first"] + 1, eye_gaze.CONTACT_MIN)
         self.assertGreaterEqual(m["world_gaze"]["steady_share"], 0.6, m["world_gaze"])
         self.assertLessEqual(m["world_gaze"]["flow_share"], 0.2, m["world_gaze"])
+        self.assertGreaterEqual(m["world_gaze"]["steady_by_head"]["60_120"]["share"], 0.6, m["world_gaze"])
+        self.assertLessEqual(m["head_carried"]["share"], 0.35, m["head_carried"])
 
 
 if __name__ == "__main__":
