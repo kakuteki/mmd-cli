@@ -183,6 +183,15 @@ IK_HALF = 2                     # frames on each side of a new miss whose shift 
 KEPT_MIN = 0.02                 # a foot carried 98 % and more: its leg sets no bound on the shift
 FREE_M = 1.0e3                  # m: the radius (or slab side) of a bound that does not bound
 CARRY_HALF = 6                  # frames: the half-width of the carry's smoothing (it changes over about 0.4 s)
+# ---- the vertical: the pelvis never goes down faster than DOWN_ACC_MAX -------------------------------------------
+G_MMD = 98.0                    # units/s^2: MMD's gravity as saba, three.js, MMDAgent-EX and babylon-mmd all have it (9.8 x
+                                # 10; MMD's own default is not documented; the skirt research, question 4)
+DOWN_ACC_MAX = 78.0             # units/s^2 (0.8 of G_MMD): the pelvis's downward acceleration, the dance's and the layer's
+                                # together, at most this.  A body the floor holds up cannot fall faster than gravity, and a
+                                # waist going down faster than MMD's gravity throws the skirt up (the effective gravity on
+                                # it, g - a_down, turns upwards); 0.8 keeps a margin for what the 30 fps second difference
+                                # does not show (the keys' interpolation inside a frame) and for MMD's own gravity being
+                                # known only from its reimplementations
 # ---- the landings ------------------------------------------------------------------------------------------------
 DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
 DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
@@ -215,7 +224,7 @@ OPTIONAL = ["頭先", "左中指先", "右中指先", "左中指３", "右中指
 def params_default():
     return {"r_bal_cm": R_BAL_CM, "acc_max": ACC_MAX, "lead_s": LEAD_S, "lag_s": LAG_S, "drop_max_cm": DROP_MAX_CM,
             "dip_deg": DIP_DEG, "dip": True, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
-            "catch": True}
+            "catch": True, "vertical": True}
 
 
 # ---- the body ---------------------------------------------------------------------------------------------------
@@ -1161,6 +1170,55 @@ def drop_needed(body, tol_cm=REACH_TOL_CM, before=None):
     return np.maximum(need, 0.0)
 
 
+def down_acc(y):
+    """the downward acceleration [F] (units/s^2, + down) of a height curve y [F] (units): its 30 fps second differences
+    (0 on the first and the last frame)"""
+    a = np.zeros(len(y))
+    if len(y) >= 3:
+        a[1:-1] = -(y[2:] - 2.0 * y[1:-1] + y[:-2]) * FPS * FPS
+    return a
+
+
+def lower_hull(g):
+    """the lower convex hull of the points (t, g[t]) (t = 0 .. F-1), evaluated at every t"""
+    g = np.asarray(g, dtype=np.float64)
+    hull = []
+    for t in range(len(g)):
+        while len(hull) >= 2:
+            a, b = hull[-2], hull[-1]
+            if (g[b] - g[a]) * (t - a) >= (g[t] - g[a]) * (b - a):
+                hull.pop()                              # b is not under the line from a to t
+            else:
+                break
+        hull.append(t)
+    return np.interp(np.arange(len(g)), hull, g[hull])
+
+
+def vertical_fix(heights, cap=None):
+    """the largest lowering z <= 0 [F] (units, added to every curve of `heights` [k, F]) after which none of them goes
+    down faster than `cap` (units/s^2): the second differences must satisfy z'' >= b = (the largest of the curves'
+    downward accelerations - cap) / FPS^2.  With B a curve whose second differences are b, z - B must be convex and
+    under -B, so the largest such z is B + hull(-B), the lower convex hull: with g = -B, z = hull(g) - g.  Where the
+    curves keep under the cap nothing changes; elsewhere the body goes down earlier and lower, along a stretch at the cap
+    (a parabola) that leaves the dance and joins it again where g touches its hull: at the lowest points, which stay
+    where and when they are (the arrival is not delayed; the fall starts earlier)"""
+    cap = DOWN_ACC_MAX if cap is None else cap
+    H = np.atleast_2d(np.asarray(heights, dtype=np.float64))
+    F = H.shape[1]
+    if F < 3:
+        return np.zeros(F)
+    a = np.max([down_acc(h) for h in H], axis=0)
+    b = (a - cap) / (FPS * FPS)
+    if not np.any(b[1:-1] > 0.0):
+        return np.zeros(F)
+    B = np.zeros(F)
+    for t in range(1, F - 1):
+        B[t + 1] = 2.0 * B[t] - B[t - 1] + b[t]
+    g = -B
+    z = lower_hull(g) - g
+    return np.minimum(z, 0.0)
+
+
 def touchdowns(body):
     """[(frame, foot)] of a05's touchdowns: on the floor again after GAP frames off it in which it rose SWING_MIN_H"""
     out = []
@@ -1356,6 +1414,11 @@ def layer(model, motion, params=None, log=None, ik_check=None):
         moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1), carry)
         dip, landings = landing_dips(moved, plan, p, dip_cap)   # on the body already moved and dropped: they add up
         shift[:, 1] = -(drop + dip)
+        # the pelvis and センター never go down faster than DOWN_ACC_MAX, the dance's motion and the layer's together:
+        # lowered only, the lowest points kept (the layer moves both by the same height)
+        vfix = vertical_fix([body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)]) if p.get("vertical", True) \
+            else np.zeros(F)
+        shift[:, 1] += vfix
         floor = shift.copy()
         floor[:, 1] = 0.0
         feet = {s: carry[s][:, None] * floor for s in SIDES}     # the carried feet's world move (units)
@@ -1385,7 +1448,7 @@ def layer(model, motion, params=None, log=None, ik_check=None):
                         "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0))}
     after = Body(model, out)
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
-                           unreachable=int(np.sum(~finite)), feet=feet, catches=catches))
+                           unreachable=int(np.sum(~finite)), feet=feet, catches=catches, vfix=vfix))
     report["seconds"] = round(time.time() - t0, 2)
     foot_code = np.array([{"左": 1, "右": 2}.get(v, 0) for v in plan["foot"]], dtype=np.int8)
     arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
@@ -1394,7 +1457,9 @@ def layer(model, motion, params=None, log=None, ik_check=None):
               "knee_tight": plan["knee_tight"], "bound_cut": cut,
               "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
               "low_L": plan["low"]["左"], "low_R": plan["low"]["右"], "carry_L": carry["左"], "carry_R": carry["右"],
-              "foot_move_L": feet["左"], "foot_move_R": feet["右"]}
+              "foot_move_L": feet["左"], "foot_move_R": feet["右"], "vertical_fix": vfix,
+              "down_acc_pelvis_before": down_acc(body.p("下半身")[:, 1]),
+              "down_acc_pelvis_after": down_acc(after.p("下半身")[:, 1])}
     for s, tag in (("左", "L"), ("右", "R")):
         arrays["knee_before_" + tag] = body.knee_flexion(s)
         arrays["knee_after_" + tag] = after.knee_flexion(s)
@@ -1501,11 +1566,42 @@ def catch_report(after, com1, catches):
     return {"landings": rows, "summary": summary}
 
 
+def vertical_report(before, after, vfix):
+    """the pelvis's and センター's downward acceleration (units/s^2, 30 fps), the dance's and the result's, against
+    DOWN_ACC_MAX and MMD's gravity; the lowering (cm) and its stretches: how deep, how long, and how far the top before
+    each lowest point moved in time (frames, - earlier)"""
+    rep = {"bound_units_s2": DOWN_ACC_MAX, "g_mmd_units_s2": G_MMD}
+    for name, tag in (("下半身", "pelvis"), (CENTRE, "centre")):
+        a0, a1 = down_acc(before.p(name)[:, 1]), down_acc(after.p(name)[:, 1])
+        rep[tag] = {"dance_max": round(float(a0.max()), 1), "after_max": round(float(a1.max()), 1),
+                    "dance_over_bound": int(np.sum(a0 > DOWN_ACC_MAX + 0.5)), "after_over_bound": int(np.sum(a1 > DOWN_ACC_MAX + 0.5)),
+                    "dance_over_g": int(np.sum(a0 > G_MMD)), "after_over_g": int(np.sum(a1 > G_MMD)),
+                    "at_6400_6406": [[round(float(v), 1) for v in a0[6400:6407]], [round(float(v), 1) for v in a1[6400:6407]]]
+                    if len(a0) > 6406 else None}
+    low = -vfix * CM
+    rep["frames_lowered"] = int(np.sum(low > 1e-4))
+    rep["lowered_cm"] = q_stats(low[low > 1e-4], (0.5, 0.9, 0.99)) or {"max": 0.0}
+    y0, y1 = before.p("下半身")[:, 1], after.p("下半身")[:, 1]
+    spans = []
+    for a, b in runs(low > 1e-4):
+        top0 = a + int(np.argmax(y0[a:b + 1]))
+        top1 = a + int(np.argmax(y1[a:b + 1]))
+        spans.append({"first": a, "last": b, "s": [round(a / FPS, 2), round(b / FPS, 2)], "frames": b - a + 1,
+                      "lowered_cm_max": round(float(low[a:b + 1].max()), 2), "top_moved_frames": top1 - top0,
+                      "top_lowered_cm": round(float((y0[top0] - y1[top1]) * CM), 2)})
+    rep["stretches"] = {"count": len(spans), "frames_median": int(np.median([r["frames"] for r in spans])) if spans else 0,
+                        "deepest": sorted(spans, key=lambda r: -r["lowered_cm_max"])[:30]}
+    rep["_spans"] = spans
+    return rep
+
+
 def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over, unreachable,
-             feet=None, catches=None):
+             feet=None, catches=None, vfix=None):
     F = before.F
     com1 = after.com()
     rep = {"catch": catch_report(after, com1, catches or [])}
+    rep["vertical"] = vertical_report(before, after, np.zeros(F) if vfix is None else vfix)
+    rep["vertical"].pop("_spans", None)
     ob, fr = a05_lateral(before, com0)
     oa, fr2 = a05_lateral(after, com1)
     run_len = np.zeros(F, int)
@@ -1736,6 +1832,7 @@ def main(argv=None):
     ap.add_argument("--dip-deg", type=float, default=DIP_DEG, help="degrees: the knee's bend on a landing")
     ap.add_argument("--no-dip", action="store_true", help="no knee bend on the landings")
     ap.add_argument("--no-catch", action="store_true", help="no bound or pull on the XcoM at the landings")
+    ap.add_argument("--no-vertical", action="store_true", help="no bound on the pelvis's downward acceleration")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
     ap.add_argument("--mmd-ik", help="MMD's IK solver (the feet layer's tools/leg_ik.py): hold the layer back where a foot "
                                      "on the floor would newly fall short of its IK target as MMD solves it (.pmx only)")
@@ -1745,7 +1842,8 @@ def main(argv=None):
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
-                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip, "catch": not args.no_catch}
+                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip, "catch": not args.no_catch,
+                  "vertical": not args.no_vertical}
         ik_check, ik_note = None, None
         if args.mmd_ik:
             ik_check, ik_note = mmd_ik_check(args.mmd_ik, args.model, fk.last_frame(motion) + 1)

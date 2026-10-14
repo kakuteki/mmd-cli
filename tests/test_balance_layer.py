@@ -738,6 +738,92 @@ class LandingTest(unittest.TestCase):
         self.assertEqual(result.report["landings"]["dipped"], 0)
 
 
+def pelvis_down_acc(motion, last):
+    """the pelvis's (下半身) downward acceleration per frame (model units/s^2, + down; 30 fps second differences of its
+    world height)"""
+    y = world(motion, ["下半身"], last)["下半身"][0][:, 1]
+    a = np.zeros(len(y))
+    a[1:-1] = -(y[2:] - 2.0 * y[1:-1] + y[:-2]) * FPS * FPS
+    return a
+
+
+def bounce_on_landing(last=149):
+    """the landing of LandingTest, with the dance's own bounce on it: センター rises 4 cm and turns down again at its top
+    in a frame (a tent from 0.43 to 0.57 s around 1.6 s: 150 units/s^2 down at the top, over MMD's gravity, as the
+    traced dance does at 213.3 s)"""
+    motion = dance(last=last, left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
+    centre = [key("センター", f, (0.0, -0.6 + 0.5 * max(0.0, 1.0 - abs(f - 48) / 3.0), 0.0)) for f in range(last + 1)]
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+    return motion
+
+
+def bouncing(last=119):
+    """both feet on the floor, センター bouncing between the beats (every second): up 4 cm and down again in 0.27 s (a
+    tent of 8 frames), its top turned in a frame (225 units/s^2 down there, past MMD's gravity, as the traced dance
+    does at 213.3 s); down on the beats"""
+    motion = dance(last=last)
+    centre = []
+    for f in range(last + 1):
+        h = 0.5 * max(0.0, 1.0 - abs((f % 30) - 15) / 4.0)
+        centre.append(key("センター", f, (0.0, -1.1 + h, 0.0)))
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+    return motion
+
+
+class VerticalTest(unittest.TestCase):
+    """MMD's gravity is 98 units/s^2 (saba, three.js, MMDAgent-EX and babylon-mmd: 9.8 x 10): a waist that goes down
+    faster than that throws the skirt up, and a body held up by the floor cannot fall faster than gravity.  The layer
+    keeps the pelvis's downward acceleration (the dance's and its own) under DOWN_ACC_MAX by lowering the body only
+    (the lowest points stay where and when the dance has them, on the beat; the fall starts earlier)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.last = 119
+        cls.motion = bouncing(cls.last)
+        cls.result = balance_layer.layer(MODEL, cls.motion)
+        cls.y0 = world(cls.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+        cls.y1 = world(cls.result.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+
+    def test_bound_under_mmd_gravity(self):
+        self.assertLess(balance_layer.DOWN_ACC_MAX, 98.0 * 0.85)
+        self.assertGreater(pelvis_down_acc(self.motion, self.last).max(), 98.0)          # the fixture is past g
+        self.assertLessEqual(pelvis_down_acc(self.result.motion, self.last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+
+    def test_lowered_only_and_the_lows_kept(self):
+        self.assertLessEqual(float(np.max(self.y1 - self.y0)), 1e-6)                        # never raised
+        lows = [f for f in range(1, self.last) if self.y0[f] < self.y0[f - 1] and self.y0[f] <= self.y0[f + 1]]
+        self.assertTrue(lows)
+        for f in lows:
+            self.assertLess(abs(self.y1[f] - self.y0[f]) * CM, 0.05, f)                    # where and when
+        self.assertGreater(float(np.max(self.y0 - self.y1)) * CM, 0.5)                     # the tops rounded
+
+    def test_fall_starts_earlier(self):
+        """between two beats the top comes no later than the dance's, and lower"""
+        for a in (30, 60):
+            top0 = a + int(np.argmax(self.y0[a:a + 30]))
+            top1 = a + int(np.argmax(self.y1[a:a + 30]))
+            self.assertLessEqual(top1, top0)
+            self.assertLess(self.y1[top1], self.y0[top0])
+
+    def test_feet_stay(self):
+        self.assertEqual(others(self.motion, skip=("センター",)), others(self.result.motion, skip=("センター",)))
+
+    def test_landing_dip_under_the_bound(self):
+        last = 149
+        motion = dance(last=last, left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
+        result = balance_layer.layer(MODEL, motion)
+        self.assertLessEqual(pelvis_down_acc(result.motion, last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertGreaterEqual(result.report["landings"]["dipped"], 1)
+
+    def test_report_names_the_vertical(self):
+        rep = self.result.report["vertical"]
+        self.assertEqual(rep["bound_units_s2"], balance_layer.DOWN_ACC_MAX)
+        self.assertGreater(rep["pelvis"]["dance_max"], 98.0)
+        self.assertLessEqual(rep["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertGreater(rep["lowered_cm"]["max"], 0.5)
+        self.assertGreater(rep["frames_lowered"], 0)
+
+
 class NothingToDoTest(unittest.TestCase):
     def test_both_feet_down_gives_the_input_back(self):
         motion = dance(last=59)
