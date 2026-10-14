@@ -97,7 +97,8 @@ def build_parser():
     p.add_argument("--pid", type=int, help="the MMD process to talk to (default: the one started by 'mmd launch')")
     p.add_argument("--out", help="write the JSON result to this file as UTF-8 (stdout then only points to it)")
     p.add_argument("--timeout", type=float,
-                   help="seconds to wait for MMD (default 120; render avi, when this is not given, allows 60 s plus 2 s per frame)")
+                   help="seconds to wait for MMD (default 120; render avi, when this is not given, allows 60 s plus 2 s per frame of the "
+                        "motion, and at least 0.25 s per frame of the AVI)")
     p.add_argument("--in-place", action="store_true",
                    help="allow saving into a project file that was not opened through mmd-cli")
     p.add_argument("--in-user-session", action="store_true",

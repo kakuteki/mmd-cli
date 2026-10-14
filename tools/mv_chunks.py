@@ -2,7 +2,7 @@
 channel, folded to 30 fps (or 60) with motion blur and the look of tools/mv_look.py, checked frame by frame, then joined.
 
     python tools/mv_chunks.py PLAN.json OUTDIR (--shots CAMERA_REPORT.json | --cuts F [F ...] --last F)
-                              [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30] [--tag final]
+                              [--lead 120] [--fps 240] [--shutter 0.5] [--out-fps 30] [--tag final] [--align-physics]
 
 Why chunks: an uncompressed BGRA AVI at 240 fps and 1280x720 takes 29.5 MB per frame of the song (228 GB for a song
 of 4 minutes 18 seconds), one shot of it some 17 GB at most.  A seam is hidden by the camera cut, and every chunk starts
@@ -17,6 +17,12 @@ round(shutter x fps / 60) of its fps / 60 subframes (4 and 2 at 240 fps); the ef
 as at 30 (mv_look counts them in frames of the song).  The files of a run at 60 fps carry "_60fps" after the tag
 (render_final_60fps.ps1, final_60fps_00.mp4, <name>_final_60fps.mp4), so that it removes nothing of a run at 30 fps of
 the same tag.
+
+MMD steps its physics (hair, skirt, ribbons) 60 times a second whatever --fps, on a frame that changes from render to
+render; where that step falls inside the frames a fold averages, the cloth shows twice.  --align-physics folds every chunk
+with mv_look --physics-align, which reads the steps from the chunk's AVI and puts the window of every frame within one
+step.  --fps 480 halves the gaps between the copies of a fast hand (the window takes 8 of 16 subframes) for twice the
+AVI and about twice MMD's time.
 
 PLAN.json names the files on the render machine, as absolute paths with forward slashes:
     {"mmd": ".../MikuMikuDance.exe", "model": ".../model.pmx", "motions": [".../dance.vmd", ".../lips.vmd"],
@@ -73,6 +79,7 @@ NAME = re.compile(r"[A-Za-z0-9_-]+")
 ABSOLUTE = re.compile(r"([A-Za-z]:[\\/]|[\\/]{2}[^\\/])")
 MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithmetic finite
 MAX_WORKERS = 8                         # each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions)
+PHYSICS_HZ = 60                         # MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ)
 ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
 
 
@@ -252,23 +259,27 @@ def _names(plan, tag, chunk):
     return name, "%s/%s.avi" % (plan["out"], name), "%s/%s.mp4" % (plan["out"], name)
 
 
-def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
+def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False, align_physics=False):
     """what mv_look gets after `render AVI LOOK MP4` for the chunk: the subframes make the output rate (mv_look divides
     the rate of the AVI by them), the times are seconds of the song.  `prepared`: the layers and the text the driver of
-    --workers prepared once (mv_look reads them and writes nothing there); `encoder` nvenc folds with h264_nvenc"""
+    --workers prepared once (mv_look reads them and writes nothing there); `encoder` nvenc folds with h264_nvenc;
+    `align_physics`: mv_look --physics-align (the window of every frame within one step of MMD's physics)"""
     fold = ["--cues", plan["cues"]] if plan["cues"] else []
     fold += ["--prepared" if prepared else "--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // out_fps,
              "--shutter", shutter, "--offset", "%.6f" % (chunk["first"] / float(FPS)), "--from", "%.6f" % (chunk["cut"] / float(FPS)),
              "--to", "%.6f" % ((chunk["end"] + 1) / float(FPS))]
     if encoder != "x264":
         fold += ["--encoder", encoder]
+    if align_physics:
+        fold += ["--physics-align"]
     return [str(a) for a in fold]
 
 
-def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False):
+def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False, align_physics=False):
     """what makes the chunk's mp4 apart from the contents of the input files: its batch, its look and its fold"""
     parts = [batch_text(plan, chunk, fps, _names(plan, tag, chunk)[1]), plan["look"]] + fold_args(plan, tag, chunk, fps, shutter,
-                                                                                                   out_fps, encoder, prepared)
+                                                                                                   out_fps, encoder, prepared,
+                                                                                                   align_physics)
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -397,13 +408,14 @@ def _run_chunk_lines(plan, workers):
             + finished + ["}"])
 
 
-def _chunk_call(plan, tag, chunk, fps, shutter, batch_hashes, out_fps, encoder, prepared):
+def _chunk_call(plan, tag, chunk, fps, shutter, batch_hashes, out_fps, encoder, prepared, align_physics=False):
     name, avi, mp4 = _names(plan, tag, chunk)
     return "Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
         _ps(name), _ps("%s/chunk_%s.txt" % (plan["scripts"], name)), _ps(batch_hashes[chunk["index"]]),
-        _ps(recipe(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared)), _ps("%s/%s.json" % (plan["out"], name)), _ps(avi),
-        _ps(mp4), chunk["frames"] * (out_fps // FPS), avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
-        ", ".join(_ps(a) for a in fold_args(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared)))
+        _ps(recipe(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared, align_physics)), _ps("%s/%s.json" % (plan["out"], name)),
+        _ps(avi), _ps(mp4), chunk["frames"] * (out_fps // FPS),
+        avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
+        ", ".join(_ps(a) for a in fold_args(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared, align_physics)))
 
 
 def _join_lines(joined, concat, total):
@@ -414,7 +426,7 @@ def _join_lines(joined, concat, total):
             "if ($n -ne %d) { 'STOP: the joined video has {0} frames, want {1}' -f $n, %d; exit 1 }" % (total, total)]
 
 
-def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, encoder="x264"):
+def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, encoder="x264", align_physics=False):
     sub = fps // out_fps
     per = out_fps // FPS                                    # frames of the video to a frame of the song
     total = sum(c["frames"] for c in chunks) * per
@@ -443,13 +455,13 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, enco
     # the look is checked at the rate the fold will draw it at
     lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
     lines += COUNT_FRAMES + _run_chunk_lines(plan, workers=False)
-    lines += [_chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps, encoder, False) for c in chunks]
+    lines += [_chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps, encoder, False, align_physics) for c in chunks]
     lines += _join_lines(joined, concat, total)
     lines.append("'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, [int]$sw.Elapsed.TotalSeconds, %s" % (total, _ps(joined)))
     return "\r\n".join(lines) + "\r\n"
 
 
-def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, encoder, workers):
+def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, encoder, workers, align_physics=False):
     """the driver of --workers: the same script is the driver (no -Worker) and each of its workers (-Worker k)"""
     sub = fps // out_fps
     total = sum(c["frames"] for c in chunks) * (out_fps // FPS)
@@ -556,7 +568,7 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "    $through = $false",
               "    try {"]
     lines += ["        if (Take %s) { %s }" % (_ps(_names(plan, tag, c)[0]), _chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps,
-                                                                                        encoder, True)) for c in chunks]
+                                                                                        encoder, True, align_physics)) for c in chunks]
     lines += ["        $through = $true",
               "    } catch {",
               "        # an error the steps do not expect (a .NET call that threw): a failure like the others",
@@ -643,7 +655,7 @@ def run_tag(tag, out_fps, encoder="x264"):
     return tag if encoder == "x264" else "%s_%s" % (tag, encoder)
 
 
-def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encoder="x264"):
+def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encoder="x264", align_physics=False):
     if not _whole(workers) or not 1 <= workers <= MAX_WORKERS:
         raise ValueError("--workers is the number of chunks rendered and folded at the same time, 1 to %d, not %r" % (MAX_WORKERS, workers))
     if encoder not in ENCODERS:
@@ -661,6 +673,10 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
                          "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
     if not NAME.fullmatch(tag):
         raise ValueError("--tag goes into file names: letters, digits, _ and - only")
+    if align_physics and (fps % (2 * PHYSICS_HZ) or sub % (fps // PHYSICS_HZ)):
+        # what mv_look --physics-align refuses, found here before MMD renders chunk 0
+        raise ValueError("--align-physics needs --fps 120, 240 or 480: MMD steps its physics %d times a second, and every frame of "
+                         "the video must hold whole steps of it (%d fps does not)" % (PHYSICS_HZ, fps))
     tag = run_tag(tag, out_fps, encoder)
     os.makedirs(outdir, exist_ok=True)
     batches, hashes = [], {}
@@ -675,9 +691,9 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
     driver = os.path.join(outdir, "render_%s.ps1" % tag)
     with open(driver, "w", encoding="utf-8-sig", newline="") as f:      # PowerShell 5.1 reads a file without a BOM as ANSI
         if workers == 1:
-            f.write(driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder))
+            f.write(driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder, align_physics))
         else:
-            f.write(workers_driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder, workers))
+            f.write(workers_driver_text(plan, chunks, tag, fps, shutter, hashes, out_fps, encoder, workers, align_physics))
     concat = os.path.join(outdir, "concat_%s.txt" % tag)
     with open(concat, "w", encoding="utf-8", newline="\n") as f:
         f.write(concat_text(plan, chunks, tag, out_fps))
@@ -689,6 +705,8 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
         summary["workers"] = workers              # and these two only when they are asked for
     if encoder != "x264":
         summary["encoder"] = encoder
+    if align_physics:
+        summary["align_physics"] = True           # the folds read MMD's physics and move their window (mv_look --physics-align)
     summary.update({"fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
                     "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
                     "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
@@ -714,6 +732,9 @@ def build_parser():
                    help="chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS)
     p.add_argument("--encoder", default="x264",
                    help="x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc)")
+    p.add_argument("--align-physics", action="store_true",
+                   help="fold every chunk with mv_look --physics-align: the window of every frame within one step of MMD's "
+                        "physics (60 a second), so that hair and skirt show once")
     return p
 
 
@@ -732,7 +753,7 @@ def main(argv=None):
                 raise ValueError("--cuts needs --last (the last frame of the song)")
             spans = spans_from_cuts(args.cuts, args.last)
         result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter, args.out_fps,
-                       args.workers, args.encoder)
+                       args.workers, args.encoder, args.align_physics)
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         return 2

@@ -26,6 +26,8 @@ _IMAGE_EXTENSIONS = (".png", ".bmp", ".jpg", ".dds", ".dib", ".pfm", ".hdr")
 # 254 transparent ground shadow, 277 anti-aliasing, 298 mip map, 282 black background (the PNG and the
 # uncompressed AVI then carry an alpha channel), 285 physics floor, 295 the motion capture figure
 CHECK_ITEMS = frozenset((215, 221, 254, 277, 298, 282, 285, 295))
+# `render avi` without --timeout waits 60 s and 2 s per frame of the motion, and at least this per frame of the AVI
+AVI_FRAME_SECONDS = 0.25
 
 
 class MmdError(Exception):
@@ -1345,7 +1347,9 @@ class Mmd:
         self.require_ready()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if timeout is None:
-            timeout = max(self.timeout, 60.0 + 2.0 * (end - start + 1))
+            # 2 s per frame of the motion, and at least AVI_FRAME_SECONDS per frame of the AVI (480 fps writes 16 of them for
+            # each frame of the motion, and one took up to 0.14 s while the GPU was shared: review of fast-render, 2026-10-13)
+            timeout = max(self.timeout, 60.0 + max(2.0 * (end - start + 1), AVI_FRAME_SECONDS * expected_avi_frames(start, end, fps)))
         used = {}
         problem = []
 

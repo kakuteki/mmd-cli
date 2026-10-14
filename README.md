@@ -401,9 +401,10 @@ alpha つき（BGRA。何も描かれていない所は alpha 0）で書く。�
 
 ```
 python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR | --prepared DIR] [--from 秒] [--to 秒]
-                          [--offset 秒] [--subframes N --shutter S] [--encoder x264|nvenc]
+                          [--offset 秒] [--subframes N --shutter S [--physics-align]] [--encoder x264|nvenc]
 python tools/mv_look.py layers look.json WORK --size WxH --fps N [--encoder nvenc]
 python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.json] [--encoder nvenc]
+python tools/mv_look.py phase DANCER.avi --subframes N [--shutter S] [--offset 秒] [--from 秒] [--to 秒]
 ```
 
 - `look.json` は既定（`DEFAULT_LOOK`）との差分だけを書く。知らない名前は誤りにする。空の `{}` で既定のまま。
@@ -430,6 +431,18 @@ python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.j
   （シャッターが S だけ開いている映画のカメラと同じぼけ方。S=0.5 が標準）。MMD v9.32 は 120・240 fps でも中間の姿勢を全部
   別に描く（物理だけは 60 Hz で更新）。120 fps の 2 枚平均は速い手が二重に写るので、30 fps 出力なら 240 fps で描いて
   `--subframes 8 --shutter 0.5`（4 枚平均）にする。alpha の平均は乗算済みにしてから取る。
+- `--physics-align`（`--subframes` と一緒に）: 平均する窓を、物理の 1 歩の中に収まるようにずらす。MMD は高い fps でも、体の姿勢は
+  毎枚変えるが、物理（髪・スカート・リボン）は 1 秒に 60 回（240 fps なら 4 枚に 1 回、480 fps なら 8 枚に 1 回）しか進めず、
+  カメラは曲のコマの頭の 1 枚でしか動かさない（2026-10-13 実測。表示の fps 制限を変えても同じ）。物理がどの枚で進むか（位相）は
+  MMD を起こすたびに変わる。窓（先頭 4 枚）に物理の境目が入ると、スカートや髪が 2 枚重ねに写る（ボタンが 2 つ見える）。
+  このオプションは畳む前に人物のファイルを読み直し（畳みと同じ `-ss`・`-t`・`-r` で、幅 320 に縮めて）、t で変わり t−1 と t+1 では
+  変わらない画素（物理の歩みでだけ変わる所）を数えて位相を決め、各コマの窓をその歩みの中に置く（窓の頭を 0〜3 枚、480 fps なら
+  0〜7 枚後ろへ。体の時刻も同じだけ後ろへずれる）。物理は 1 状態のくっきりした絵になり、体は今までどおりぼける。位相は 4 曲コマ
+  ごとに読み、途中で変われば窓もそこから変える。物理の動かない区間（読めない）は前の窓のまま。ずらしが 0 なら ffmpeg の引数は
+  付けないときと同じ。答えの JSON の `physics` に、1 歩の枚数（`period`）・位相（`residue`）・区切り（`segments`: 出力の先頭の
+  コマ・位相・ずらし）を書く。`phase` は同じ読み取りだけをして答える（何も描かない）。人物の fps は 120 の倍数（1 歩が 2 枚以上）で、
+  出力の 1 コマが歩みの整数個になる折り方だけ（30・60 fps の出力なら 120・240・480 fps の人物）。カメラの動きが布も動かして
+  歩みの画素が 2 枚続けて変わる所は、片側だけ静かな画素でも数え直す（答えの `told_by_half_lone` が数え直して決まった窓の数）。
 - 出力は無音（libx264、crf 16）。全曲 7,743 枚・1280x720 で約 70 秒（hinata 実測）。粒子を入れると大きさは約 2 倍になる。
   240 fps・1280x720 の alpha つき AVI はモーション 1 フレームあたり約 29.5 MB（全曲なら 228 GB）なので、区間に分けて描く。
 - MMD の AVI は 30 fps を 10000000/333333 で書くので、人物は `-r` で層と同じ時計に載せている（載せないと最後の 1 枚が落ちる）。
@@ -470,6 +483,8 @@ python tools/mv_chunks.py plan.json OUTDIR --cuts 2577 5064 --last 7742 --fps 60
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60     # 手元で見る 60 fps 版
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --workers 2      # 2 区間ずつ同時に描く
 python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --out-fps 60 --workers 3 --encoder nvenc
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --align-physics  # 物理の 2 枚重ねを出さない
+python tools/mv_chunks.py plan.json OUTDIR --shots camera_report.json --fps 480 --align-physics --workers 2
 powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]         # 描画機で
 ```
 
@@ -539,7 +554,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   0.7 %）。同時に描いても違いの大きさは 1 本ずつ描き直したときと同じで、位相が同じなら同時と 1 本ずつの組がいちばん近い。
   同時に描いた動画は 1 本ずつ描いた動画とバイト単位では同じにならないが、1 本ずつ描き直しても同じにはならない。
   位相によっては、30 fps の畳み（8 枚のうち先頭 4 枚の平均）に物理の 1 歩の境目が入り、スカートや髪が 2 枚重ねに写る（区間ごとに
-  運で決まる。`--workers` の前からある性質）。
+  運で決まる。`--workers` の前からある性質）。`--align-physics` で直る（下の節）。
 - `--encoder nvenc`: 畳みの符号化を h264_nvenc（p7・hq・vbr・cq 19・AQ・先読み 32・B フレーム 3）にする。ファイル名に `_nvenc` が
   付き、libx264 の版（公開する版）を消さない。look の確かめで h264_nvenc を試し、使えない機械では MMD が描く前に止まる。
   区間 04（60 fps）で畳み 20.3 → 13.5 秒、大きさは libx264 の 2.2 倍。同じグラフの可逆の基準（FFV1）と同じ番号のコマどうしで比べると、
@@ -554,6 +569,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   hinata は共有機。作業者 1 本は MMD の間に私用メモリ約 1 GB、畳みの間に約 2.8 GB（mv_look 0.8 GB・ffmpeg 1.4〜2.0 GB）、MMD は
   GPU のメモリを 1 本約 0.33 GB 使う。学習で GPU のメモリの空きが 3 GB を、物理メモリの空きが 8 GB を切っているときは 1 本、
   ふだんは 2 本。3 本は両方に余裕があるときだけ。
+
+物理の 2 枚重ねと手の写し（`--align-physics`・`--fps 480`。付けなければ台本・連結の一覧・要約は前とバイト単位で同じ）:
+
+- `--align-physics`: どの区間も `mv_look.py render --physics-align` で畳む（窓を物理の 1 歩の中に置く。mv_look の節）。作り方の印に
+  入るので、付けた区間と付けない区間は `-Resume` で取り違えない。区間ごとの位相とずらしは `<mp4>.look.json` の `physics` に残る。
+  要約の行には `"align_physics": true` が増える。ファイル名は変えないので、付けない版と並べて見るときは `--tag` を分ける。
+  `--fps` は 120・240・480 だけ（30・60 では物理を揃えられないので、MMD が描く前に断る）。
+  揃えると窓が後ろへずれるので、絵は音より先に出る量が増える（240 fps で 6.2 → 最大 18.8 ms、480 fps で最大 21.9 ms。口の開ききりは
+  声よりさらに最大 12.5〜14.6 ms 先になる。人が音の遅れに気付く量（約 125 ms）よりずっと小さい。2026-10-14 の査読）。
+- 物理の位相（hinata、v7 の場面、2026-10-13〜14）: MMD を起こすたびに変わり、1 本の MMD が描く区間の中では変わらない（最長の
+  区間 4,624 枚・480 fps で 9,248 枚でも、4 曲コマごとの余りは全部同じ）。240 fps で MMD を起こした 15 回（査読の 4 回を含む）の
+  余り（4 で割って）は 0 が 7 回・1 が 3 回・2 が 1 回・3 が 4 回で、今の畳み（余り 0 だけが 1 枚）では 15 区間のうち 8 区間で
+  スカートや髪が 2 枚重ねに写っていた（重みは 1:3・2:2・3:1）。480 fps の 9 回（8 で割って 0・2・2・2・4・4・6・6・7）では、
+  16 枚中の先頭 8 枚の窓が 1 枚になるのは 1 回だけ。
+- `--fps 480`: 曲の 1 コマを 16 枚描き、30 fps の 1 コマは 16 枚中 8 枚の平均（シャッター 0.5）。手の写しの間隔は半分になる
+  （違和感の分析 a17 の物差しで、間隔 6 px を超えるコマ 11.50 → 0.95 %、10 px 超 2.34 → 0.04 %。v7 の骨の投影から）。
+  物理は 480 fps でも 1/60 秒（8 枚）ごとなので、`--align-physics` と一緒に使う。絵で測った間隔（63.23 秒の右手、a17 の自己相関）は
+  240 fps 12.1 px・480 fps 6.3 px（骨の投影からの見込み 13.7・6.8 px）。
+  AVI は 2 倍（区間ごとに 7.5〜17.0 GB → 15.1〜34.1 GB。MMD は 34 GB の AVI も書けた）。MMD が書く時間は 1 枚あたりほぼ同じ
+  （80〜94 ms）なので曲の 1 コマあたり約 2 倍（0.65 → 1.3〜1.5 秒）。揃えた畳みは 1 区間 6〜16 秒 → 10〜31 秒（読み直し込み）。
+  本物の駆動台本で冒頭 30 秒（3 区間）を `--align-physics --workers 2` で描くと 240 fps 631 秒・480 fps 1,022 秒（2026-10-14 の
+  GPU が空いていた時間、1 枚 67〜83 ms）、同時に置かれた AVI は最大 15.6 GB と 31.2 GB。全曲（21 区間・助走込みで曲の 10,143 コマ）を
+  2 本で描くなら、480 fps の AVI は一度に 2 区間ぶん（隣り合う区間 13・14 で約 67 GB）と余り 2 GiB ずつが要る。
+  `render avi` の既定の待ち時間は、480 fps では AVI の 1 枚あたり 0.25 秒（曲の 1 コマ 4 秒）にした（2 秒では GPU が混むと足りない）。
 
 ### 目を自分から動かす（`tools/eye_gaze.py`、MMD なし）
 
@@ -1317,7 +1356,8 @@ mmd-cli は各コマンドの実行中、前面を固定する（`LockSetForegro
 - 再生中は `stop` と `state` 以外のコマンドを受け付けない。
 - 1 つの MMD に対して、同時に 2 つのコマンドを走らせない。
 - `mmd open` は、MMD の仕様どおり確認なしで現在のプロジェクトを破棄する。
-- AVI の書き出しは時間がかかる。既定の待ち時間は 1 フレームあたり 2 秒を上乗せしている。足りなければ `--timeout`。
+- AVI の書き出しは時間がかかる。既定の待ち時間は 60 秒に、モーションの 1 フレームあたり 2 秒、ただし AVI の 1 枚あたり 0.25 秒を下回らない分を
+  上乗せしている（480 fps はモーションの 1 フレームが 16 枚なので 4 秒。GPU を分け合っているときは 1 枚 0.14 秒かかった）。足りなければ `--timeout`。
 - MME（MikuMikuEffect）を入れた MMD では確かめていない。
 - MMD 自身が画面中央に出す確認ダイアログ（モデル情報など）は、生成と同時に可視になるため、隠すまでの最大 1 フレーム
   （約 16 ms）だけ画面に出ることがある（実機試験の見張りで 10 ms 間隔の 1 標本だけ記録される）。ファイルダイアログは
