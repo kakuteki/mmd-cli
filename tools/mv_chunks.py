@@ -71,7 +71,8 @@ MIN_FRAMES = 3
 UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
-OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name")
+OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
+            "stage_jobs")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
 DISK_MARGIN = 2 * 1024 ** 3
 PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell takes each of these for a single quote
@@ -81,6 +82,7 @@ MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithm
 MAX_WORKERS = 8                         # each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions)
 PHYSICS_HZ = 60                         # MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ)
 ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
+STAGE_JOBS = 4                          # the processes that draw a stage in the world ("world": true) unless stage_jobs says
 
 
 def _whole(value):
@@ -221,6 +223,18 @@ def check_plan(plan):
     full.setdefault("name", "mv")
     if not isinstance(full["name"], str) or not NAME.fullmatch(full["name"]):
         raise ValueError("name goes into a file name: letters, digits, _ and - only")
+    full.setdefault("world", False)
+    if not isinstance(full["world"], bool):
+        raise ValueError("world is true (the look's stage lies in the world: mv_look reads the camera and the dancer) or "
+                         "false, not %r" % (full["world"],))
+    # 4 processes draw a stage in the world by default (review of stage-world on hinata: 4 cores and under 2 GB while the stage
+    # is drawn, the whole song in 12 to 15 minutes, 3 to 4 times one process)
+    full.setdefault("stage_jobs", STAGE_JOBS if full["world"] else 1)
+    if not _whole(full["stage_jobs"]) or full["stage_jobs"] < 1:
+        raise ValueError("stage_jobs is the number of processes that draw the stage in the world, from 1, not %r"
+                         % (full["stage_jobs"],))
+    if full["stage_jobs"] > 1 and not full["world"]:
+        raise ValueError("stage_jobs draws a stage in the world: it goes with \"world\": true")
     for key in ("out", "scripts"):
         for folder in watched_folders(full):
             if _inside(full[key], folder):
@@ -272,7 +286,20 @@ def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepa
         fold += ["--encoder", encoder]
     if align_physics:
         fold += ["--physics-align"]
-    return [str(a) for a in fold]
+    return [str(a) for a in fold + _world_args(plan)]
+
+
+def _world_args(plan):
+    """with "world": true, what a stage in the world is drawn from: the camera motion and the dancer (mv_look reads the
+    dancer only for a pool of light or shadows)"""
+    if not plan["world"]:
+        return []
+    args = ["--camera", plan["camera"], "--model", plan["model"]]
+    for motion in plan["motions"]:
+        args += ["--motion", motion]
+    if plan["stage_jobs"] > 1:
+        args += ["--jobs", plan["stage_jobs"]]
+    return [str(a) for a in args]
 
 
 def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False, align_physics=False):
@@ -292,15 +319,23 @@ def _python(plan):
     return "python" if plan["python"] == "python" else _ps(plan["python"])
 
 
-def _look_check(plan, work, out_fps, encoder, prepare=False):
+def _look_check(plan, work, out_fps, encoder, prepare=False, chunks=None, subframes=1, shutter=0.5):
     """the line that checks the look before MMD renders: `layers` (the driver of one worker), or `prepare` (the one of
-    --workers: the layers and the text, once for every chunk).  With nvenc it also tries h264_nvenc"""
+    --workers: the layers and the text, once for every chunk).  With nvenc it also tries h264_nvenc.  With "world": true it
+    reads the camera and the dancer too, and `prepare` draws the stage of the chunks' span with the folds' shutter"""
     line = "$check = Invoke-Native %s tools/mv_look.py %s $look %s --size %dx%d --fps %d" % (
         _python(plan), "prepare" if prepare else "layers", _ps(work), plan["size"][0], plan["size"][1], out_fps)
     if prepare and plan["cues"]:
         line += " --cues %s" % _ps(plan["cues"])
     if encoder != "x264":
         line += " --encoder %s" % encoder
+    world = _world_args(plan)
+    if world:
+        line += " " + " ".join(a if a.startswith("--") or a.isdigit() else _ps(a) for a in world)
+        if prepare:
+            # the stage of the chunks only (a preview's chunks lie apart in the song: the frames between them are not drawn)
+            line += " --subframes %d --shutter %s" % (subframes, shutter)
+            line += "".join(" --span %.6f %.6f" % (c["cut"] / float(FPS), (c["end"] + 1) / float(FPS)) for c in chunks)
     return line
 
 
@@ -594,7 +629,8 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
     lines += _stamp_lines()
     lines += ["[IO.File]::WriteAllText((Join-Path $run 'stamp.txt'), $stamp)"]
     # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
-    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True), "prepare")
+    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True, chunks=chunks, subframes=sub,
+                                            shutter=shutter), "prepare")
     lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(work),
               "$self = (Get-Process -Id $PID).Path",
               "$count = %d" % count,

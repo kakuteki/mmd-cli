@@ -67,6 +67,22 @@ import tempfile
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+
+_WORLD = []
+
+
+def world_tool():
+    """tools/mv_world.py (tools/ is no package: loaded from its file, once), only for a look whose stage lies in the world:
+    it reads the camera and the dancer with mmd_cli, which a look fixed to the picture does without"""
+    if not _WORLD:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_world.py")
+        spec = importlib.util.spec_from_file_location("mv_world", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _WORLD.append(module)
+    return _WORLD[0]
+
+
 DEFAULT_LOOK = {
     # colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)
     "plate": {"base": [10, 12, 20], "haze": [34, 44, 78], "pool": [70, 86, 140], "horizon": 0.68, "vignette": 0.45},
@@ -88,6 +104,19 @@ DEFAULT_LOOK = {
     # every frame (0 none, up to about 10); both lie under the text in front
     "lens": {"vignette": 0.3, "grain": 3},
     "flares": [],
+    # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py, which says how);
+    # world 0 keeps them fixed to the picture, as before
+    "stage": {"world": 0,           # 1: the stage lies in the world and follows the camera (render needs --camera)
+              "radius": 120.0,      # the cyc: a cylinder round the stage centre, MMD units (0: infinitely far)
+              "truss": 60.0,        # the beams hang from a truss this far behind the stage centre
+              "specks": 160.0,      # the specks lie on the cyc over this many degrees round the stage centre
+              "floor": 1,           # 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it
+              "floor_half": 60.0, "floor_step": 5.0, "floor_line": 0.06, "floor_accent_every": 4,   # make_stage.py's floor
+              "floor_y": 0.0,       # its height (make_stage --height): 0.111 is where the model's soles stand (2026-10-14)
+              "pool": 0.0,          # a pool of light on the floor round the dancer, 0 none to 1 (needs her motion)
+              "pool_radius": 14.0,  # its size (a standard deviation, MMD units)
+              "pool_colour": [34, 32, 30],      # what it adds to the floor at its middle at 1
+              "shadow": 0.0},       # the shadows of her feet and body on the floor, 0 none to 1 (needs her motion)
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -139,7 +168,34 @@ def merge_look(overrides):
         # a motion with a part of a period per loop would jump where the loop starts again
         if not all(int(v) == v and v >= 1 for v in look[name]["cycles"]):
             raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
+    _check_stage(look["stage"])
     return look
+
+
+def _check_stage(stage):
+    """the values of the stage section that tools/mv_world.py can draw (see its docstring)"""
+    for key in ("world", "floor"):
+        if stage[key] not in (0, 1):
+            raise ValueError("stage.%s is 0 or 1, not %r" % (key, stage[key]))
+    for key in ("floor_half", "floor_step", "floor_line", "pool_radius"):
+        if not stage[key] > 0:
+            raise ValueError("stage.%s must be above 0, not %r" % (key, stage[key]))
+    if stage["radius"] < 0:
+        raise ValueError("stage.radius is the radius of the cyc, or 0 for one infinitely far: not %r" % (stage["radius"],))
+    if not math.isfinite(stage["floor_y"]):
+        raise ValueError("stage.floor_y is the height of the floor in MMD units, not %r" % (stage["floor_y"],))
+    if not 0 < stage["specks"] <= 360:
+        raise ValueError("stage.specks is the degrees round the stage the specks lie over, above 0 up to 360: not %r"
+                         % (stage["specks"],))
+    if int(stage["floor_accent_every"]) != stage["floor_accent_every"] or stage["floor_accent_every"] < 0:
+        raise ValueError("stage.floor_accent_every is a whole number, 0 for no accent lines")
+    for key in ("pool", "shadow"):
+        if not 0 <= stage[key] <= 1:
+            raise ValueError("stage.%s is 0 (none) to 1, not %r" % (key, stage[key]))
+    if any(c < 0 for c in stage["pool_colour"]):
+        raise ValueError("stage.pool_colour is r, g, b from 0")
+    if stage["world"] and not stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
+        raise ValueError("stage.pool and stage.shadow light and darken the floor this tool draws: they need stage.floor 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------
@@ -258,18 +314,22 @@ def flare_frame(size, settings, index):
 
 def write_layers(look, work, size, fps):
     """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are.  A note of
-    `prepare` in `work` goes first: it vouches for the layers prepare drew, not for these"""
+    `prepare` in `work` goes first: it vouches for the layers prepare drew, not for these.  A stage in the world (look
+    stage.world) has no plate and no loop of light: the frames of the stage (tools/mv_world.py) hold them"""
     os.makedirs(work, exist_ok=True)
     forget_prepared(work)
-    plate_path = os.path.join(work, "plate.png")
-    plate(size, look["plate"]).save(plate_path)
-    light_dir = os.path.join(work, "light")
-    os.makedirs(light_dir, exist_ok=True)
     small = (max(2, size[0] // LIGHT_SCALE), max(2, size[1] // LIGHT_SCALE))
     count = light_frame_count(look, fps)
-    _clear_frames(light_dir, "light_")
-    for i in range(count):
-        light_frame(small, look, i, count).save(os.path.join(light_dir, "light_%05d.png" % i))
+    plate_path = light_pattern = None
+    if not look["stage"]["world"]:
+        plate_path = os.path.join(work, "plate.png")
+        plate(size, look["plate"]).save(plate_path)
+        light_dir = os.path.join(work, "light")
+        os.makedirs(light_dir, exist_ok=True)
+        _clear_frames(light_dir, "light_")
+        for i in range(count):
+            light_frame(small, look, i, count).save(os.path.join(light_dir, "light_%05d.png" % i))
+        light_pattern = _slashes(os.path.join(light_dir, "light_%05d.png"))
     flare_dir = os.path.join(work, "flare")
     os.makedirs(flare_dir, exist_ok=True)
     # flare.frames are frames of the song: at 60 fps the flare has twice the frames and fades in steps half as large
@@ -278,7 +338,7 @@ def write_layers(look, work, size, fps):
     _clear_frames(flare_dir, "flare_")
     for i in range(flare_frames):
         flare_frame(small, flare, i).save(os.path.join(flare_dir, "flare_%05d.png" % i))
-    return {"plate": plate_path, "light_pattern": _slashes(os.path.join(light_dir, "light_%05d.png")), "light_frames": count,
+    return {"plate": plate_path, "light_pattern": light_pattern, "light_frames": count,
             "flare_pattern": _slashes(os.path.join(flare_dir, "flare_%05d.png")), "flare_frames": flare_frames}
 
 
@@ -333,18 +393,22 @@ def check_encoder(encoder):
 
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
                    start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None, encoder="x264",
-                   shifts=None):
+                   stage=None, shifts=None):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
     rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
     `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it at that time,
     and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
     (tools/mv_chunks.py) then hide in the cuts (review 10).  `encoder` (ENCODERS) changes the arguments from -c:v to the
-    pixel format and nothing else.  `shifts` (measure_physics) move the window of the fold; without them, or with shifts
+    pixel format and nothing else.  `stage` ({"pattern", "first"}: the frames of tools/mv_world.py, numbered by the frame
+    of the video from the song's start, and the excerpt's first) takes the place of the plate and the light for a look
+    whose stage lies in the world.  `shifts` (measure_physics) move the window of the fold; without them, or with shifts
     of 0, the argv is the one of before"""
     w, h = size
     coding = encoder_args(encoder)
     taken = check_shutter(subframes, shutter)
+    if (stage is not None) != bool(look["stage"]["world"]):
+        raise ValueError("a stage in the world (look stage.world 1) is drawn from its frames, and only such a stage is")
     offset = float(offset or 0.0)
     if start is not None and start < offset - 1e-9:
         raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
@@ -357,12 +421,19 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
-    argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path]
-    # the light is one loop repeated over the whole song: an excerpt drops the loop's first frames up to its song time
-    # (one input, trimmed in the graph; two inputs joined with concat came out a frame off for a first part of 1 or 3)
-    phase = int(round(clip_start * fps)) % int(light_frames) if light_frames else 0
-    argv += ["-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
-    next_input = 3
+    if stage is not None:
+        # every frame of the stage is its own (the camera moves): the excerpt reads them from its first
+        argv += ["-r", _number(fps * subframes), "-i", fg, "-framerate", str(fps), "-start_number", str(int(stage["first"])),
+                 "-i", stage["pattern"]]
+        next_input = 2
+        phase = 0
+    else:
+        argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path]
+        # the light is one loop repeated over the whole song: an excerpt drops the loop's first frames up to its song time
+        # (one input, trimmed in the graph; two inputs joined with concat came out a frame off for a first part of 1 or 3)
+        phase = int(round(clip_start * fps)) % int(light_frames) if light_frames else 0
+        argv += ["-stream_loop", "-1", "-framerate", str(fps), "-i", light_pattern]
+        next_input = 3
     overlays = {"back": [], "front": [], "flare": []}
     for cue in (plan or {}).get("cues", []):
         seen = _visible(cue["start"], cue["frames"], fps, clip_start, duration)
@@ -390,10 +461,13 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         overlays["flare"].append((next_input, offset, 0, 0, (w, h)))
         next_input += 1
 
-    light_in = "[2:v]trim=start_frame=%d,setpts=PTS-STARTPTS," % phase if phase else "[2:v]"
-    parts = ["[1:v]scale=%d:%d,format=gbrp[plate]" % (w, h),
-             "%sscale=%d:%d:flags=bilinear,format=gbrp[light]" % (light_in, w, h),
-             "[plate][light]blend=all_mode=screen[stage]"]
+    if stage is not None:
+        parts = ["[1:v]format=gbrp[stage]"]
+    else:
+        light_in = "[2:v]trim=start_frame=%d,setpts=PTS-STARTPTS," % phase if phase else "[2:v]"
+        parts = ["[1:v]scale=%d:%d,format=gbrp[plate]" % (w, h),
+                 "%sscale=%d:%d:flags=bilinear,format=gbrp[light]" % (light_in, w, h),
+                 "[plate][light]blend=all_mode=screen[stage]"]
     state = {"label": "stage", "n": 0}
 
     def lay(items):
@@ -774,15 +848,25 @@ def _same_folder(a, b):
     return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
-def prepared_key(look, size, fps, cues_path):
+def prepared_key(look, size, fps, cues_path, world=None):
     """what the layers and the text of `prepare` are made from: the values of the look, the size and the rate of the video,
-    the bytes of the cue file, and the code that draws them (this tool and tools/mv_text.py).  The fonts mv_text finds on
-    the machine are not in it (tools/mv_chunks.py -Resume does not see them either)"""
-    digest = hashlib.sha256(json.dumps({"look": look, "size": [int(size[0]), int(size[1])], "fps": fps},
-                                       sort_keys=True).encode("utf-8"))
+    the bytes of the cue file, and the code that draws them (this tool, tools/mv_text.py and tools/mv_world.py).  For a
+    stage in the world (`world`, see world_inputs) also the bytes of the camera motion and of the dancer's files, the code
+    that reads them (mmd_cli/fk.py and the readers of vmd and pmx) and the shutter.  The fonts mv_text finds on the machine
+    are not in it (tools/mv_chunks.py -Resume does not see them either)"""
+    values = {"look": look, "size": [int(size[0]), int(size[1])], "fps": fps}
+    if world is not None:
+        values["shutter"] = [int(world["subframes"]), float(world["shutter"])]
+    digest = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8"))
     here = os.path.dirname(os.path.abspath(__file__))
-    for label, path in (("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
-                        ("mv_text", os.path.join(here, "mv_text.py"))):
+    files = [("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
+             ("mv_text", os.path.join(here, "mv_text.py")), ("mv_world", os.path.join(here, "mv_world.py"))]
+    if world is not None:
+        package = os.path.join(os.path.dirname(here), "mmd_cli")
+        files += [("camera", world["camera"]), ("model", world["model"])] + [("motion", m) for m in world["motions"]]
+        files += [("fk", os.path.join(package, "fk.py")), ("vmd", os.path.join(package, "formats", "vmd.py")),
+                  ("pmx", os.path.join(package, "formats", "pmx.py"))]
+    for label, path in files:
         digest.update(("\0%s\0" % label).encode("ascii"))
         if path is None:
             digest.update(b"none")
@@ -795,52 +879,167 @@ def prepared_key(look, size, fps, cues_path):
     return digest.hexdigest()
 
 
-def prepare(look, work, size, fps, cues_path=None):
+def stage_spans(spans, fps):
+    """the video frames (first, count) of spans of the song in seconds (from, to): the frames an excerpt --from --to of
+    render shows"""
+    frames = []
+    for span in spans:
+        if not span[1] > span[0] >= 0:
+            raise ValueError("a span of the song to prepare is from and to in seconds, from 0 on and to after from: not %r"
+                             % (list(span),))
+        first = int(round(span[0] * fps))
+        frames.append((first, max(1, int(round(span[1] * fps)) - first)))
+    return frames
+
+
+def prepare(look, work, size, fps, cues_path=None, world=None, spans=None):
     """write the plate, the light loop, the flare and the text sequences under `work` once, and then PREPARED, the note of
     what they were made from.  The old note goes first, so that a prepare that fails half way leaves no note that vouches
-    for half written layers"""
+    for half written layers.  A stage in the world (`world`, see world_inputs) draws its frames in place of the plate and
+    the light loop: for the whole song (as far as the camera motion has keys), or for `spans` (seconds of the song, from and
+    to: the chunks of tools/mv_chunks.py --workers; the frames between them are not drawn)"""
     work = os.path.abspath(work)
     os.makedirs(work, exist_ok=True)
     note_path = os.path.join(work, PREPARED)
+    if world is not None:
+        if spans:
+            ranges = stage_spans(spans, fps)
+        else:
+            ranges = [(0, int(round((world["track"][1][-1] + 1) * fps / float(SONG_FPS))))]
     forget_prepared(work)
     layers = write_layers(look, work, size, fps)
     plan = text_plan(cues_path, work, size, fps) if cues_path else None
-    note = {"key": prepared_key(look, size, fps, cues_path), "work": _slashes(work), "layers": layers, "text": plan}
+    note = {"key": prepared_key(look, size, fps, cues_path, world), "work": _slashes(work), "layers": layers, "text": plan}
+    if world is not None:
+        note["stage"] = world_tool().write_stage(look, work, size, fps, world["track"], None, None, layers["light_frames"],
+                                                 world["subframes"], world["shutter"], world["figure"], world["jobs"], world,
+                                                 spans=ranges)
     with open(note_path + ".part", "w", encoding="utf-8") as f:
         json.dump(note, f, ensure_ascii=True, indent=1)
     os.replace(note_path + ".part", note_path)
     return note
 
 
-def _whole_sequence(pattern, frames):
-    """frames 0 .. frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered sequence until a
-    number is missing, so a frame more would lengthen the loop, the flare or the cue"""
-    return all(os.path.isfile(pattern % i) for i in range(int(frames))) and not os.path.exists(pattern % int(frames))
+def _whole_sequence(pattern, frames, first=0):
+    """frames first .. first + frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered
+    sequence until a number is missing, so a frame more would lengthen the loop, the flare or the cue"""
+    first, last = int(first), int(first) + int(frames)
+    return all(os.path.isfile(pattern % i) for i in range(first, last)) and not os.path.exists(pattern % last)
 
 
-def load_prepared(work, look, size, fps, cues_path=None):
-    """the layers and the text plan `prepare` wrote under `work`, after checking that they were made there, from this look,
-    cue file, size and rate, by this code, and that every frame of them is there (and none more).  Nothing is written"""
+def load_prepared(work, look, size, fps, cues_path=None, world=None):
+    """the layers, the text plan and the stage (None but in the world) `prepare` wrote under `work`, after checking that
+    they were made there, from this look, cue file, size and rate (and camera, dancer and shutter), by this code, and that
+    every frame of them is there (and none more).  Nothing is written"""
     again = "run `mv_look.py prepare` again"
     note_path = os.path.join(os.path.abspath(work), PREPARED)
     try:
         with open(note_path, encoding="utf-8") as f:
             note = json.load(f)
-        layers, plan = note["layers"], note["text"]
+        layers, plan, stage = note["layers"], note["text"], note.get("stage")
     except OSError:
         raise ValueError("%s holds no prepared layers (no %s): run `mv_look.py prepare` first" % (work, PREPARED))
     except (ValueError, KeyError, TypeError):
         raise ValueError("%s is not a note of `prepare`: %s" % (note_path, again))
     if not isinstance(note.get("work"), str) or not _same_folder(note["work"], work):
         raise ValueError("the layers in %s were prepared in %s, and their paths name that folder: %s" % (work, note.get("work"), again))
-    if note.get("key") != prepared_key(look, size, fps, cues_path):
-        raise ValueError("the layers in %s were prepared from another look, cue file, size or rate, or by another version of "
-                         "tools/mv_look.py or tools/mv_text.py: %s" % (work, again))
-    sequences = [(layers["light_pattern"], layers["light_frames"]), (layers["flare_pattern"], layers["flare_frames"])]
+    if note.get("key") != prepared_key(look, size, fps, cues_path, world):
+        raise ValueError("the layers in %s were prepared from another look, cue file, size or rate (or camera, dancer or "
+                         "shutter), or by another version of tools/mv_look.py, mv_text.py or mv_world.py: %s" % (work, again))
+    sequences = [(layers["flare_pattern"], layers["flare_frames"])]
     sequences += [(cue["pattern"], cue["frames"]) for cue in (plan or {}).get("cues", [])]
-    if not os.path.isfile(layers["plate"]) or not all(_whole_sequence(p, n) for p, n in sequences):
+    if world is None:
+        sequences.append((layers["light_pattern"], layers["light_frames"]))
+        whole = os.path.isfile(layers["plate"])
+    else:
+        whole = isinstance(stage, dict) and isinstance(stage.get("spans"), list) and len(stage["spans"]) > 0
+        for span in (stage.get("spans") or []) if whole else []:
+            if not (isinstance(span, list) and len(span) == 2 and all(isinstance(v, int) for v in span) and span[0] >= 0
+                    and _whole_sequence(stage["pattern"], span[1], span[0])):
+                whole = False
+    if not whole or not all(_whole_sequence(p, n) for p, n in sequences):
         raise ValueError("the layers in %s are not as `prepare` left them (a frame is missing or one too many): %s" % (work, again))
-    return layers, plan
+    return layers, plan, stage
+
+
+# ---- the stage in the world (tools/mv_world.py) ------------------------------------------------
+
+# the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251.  A dancer's file
+# with more of a picture than FLOOR_SHARE at these was rendered with the floor (her own pixels are opaque or clear).  The
+# check looks at FLOOR_SAMPLES pictures from the first to near the end of the file: a chunk that begins on a close-up shows no
+# floor at first (review of stage-world: 14 of the 64 shots of camera A)
+FLOOR_ALPHA = (226, 252)
+FLOOR_SHARE = 0.05
+FLOOR_SAMPLES = 8
+
+
+def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter=0.5, jobs=1):
+    """what a stage in the world is drawn from (None for a look fixed to the picture, which reads none of it): the camera
+    motion MMD renders with and, when the floor takes her pool of light or her shadows, the dancer (model and motions in the
+    order MMD loads them), the shutter of the fold (the floor's motion blur), and how many processes draw its frames"""
+    stage = look["stage"]
+    if not stage["world"]:
+        return None
+    if not camera:
+        raise ValueError("the look places the stage in the world (stage.world 1): give the camera motion MMD renders with, "
+                         "--camera CAMERA.vmd (tools/mv_chunks.py gives it with \"world\": true in the plan)")
+    check_shutter(subframes, shutter)
+    if isinstance(jobs, bool) or not isinstance(jobs, int) or jobs < 1:
+        raise ValueError("--jobs is the number of processes that draw the stage, from 1, not %r" % (jobs,))
+    world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
+             "subframes": int(subframes), "shutter": float(shutter), "jobs": jobs}
+    world["track"] = world_tool().camera_track(world["camera"])
+    if stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
+        if not model or not motions:
+            raise ValueError("stage.pool and stage.shadow follow the dancer: give --model MODEL.pmx and her --motion files, "
+                             "in the order MMD loads them")
+        world["model"], world["motions"] = os.path.abspath(model), [os.path.abspath(m) for m in motions]
+        world["figure"] = world_tool().Figure.from_files(world["model"], world["motions"])
+    return world
+
+
+def _alpha_at(fg, seconds):
+    """the alpha of the picture of the dancer's file at `seconds` (from its start), or None and ffmpeg's words"""
+    seek = ["-ss", "%.6f" % seconds] if seconds > 0 else []
+    done = subprocess.run(["ffmpeg", "-v", "error"] + seek + ["-i", fg, "-frames:v", "1", "-vf", "alphaextract", "-f",
+                                                              "rawvideo", "-pix_fmt", "gray", "-"],
+                          capture_output=True, stdin=subprocess.DEVNULL)
+    data = np.frombuffer(done.stdout or b"", dtype=np.uint8)
+    if done.returncode != 0 or data.size == 0:
+        return None, (done.stderr or b"").decode("utf-8", "replace").strip()
+    return data, ""
+
+
+def floor_share(fg, samples=FLOOR_SAMPLES):
+    """the largest share of a picture of the dancer's file at the alpha of the floor accessory (FLOOR_ALPHA), over `samples`
+    pictures from the first to near the end of the file (ffmpeg seeks to each: an AVI holds an index)"""
+    first, said = _alpha_at(fg, 0.0)
+    if first is None:
+        raise ValueError("cannot read the first picture of %s: %s" % (fg, said[-300:]))
+
+    def share(alpha):
+        return float(((alpha >= FLOOR_ALPHA[0]) & (alpha <= FLOOR_ALPHA[1])).mean())
+    shares = [share(first)]
+    try:
+        count, rate = dancer_frames(fg), probe(fg)[1]
+    except ValueError:
+        count, rate = 0, None                    # a file whose length ffprobe cannot read: its first picture only
+    if count > 2 and samples > 1:
+        for k in range(1, samples):
+            data, _ = _alpha_at(fg, ((count - 2) * k // (samples - 1) + 0.5) / float(rate))
+            if data is not None:
+                shares.append(share(data))
+    return max(shares)
+
+
+def dancer_frames(fg):
+    """the number of frames of the dancer's file (its header)"""
+    done = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=nb_frames", "-of",
+                           "csv=p=0", fg], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    try:
+        return int((done.stdout or "").strip())
+    except ValueError:
+        raise ValueError("cannot read how many frames %s has: give --to" % fg)
 
 
 def render(args):
@@ -856,24 +1055,53 @@ def render(args):
     fps = args.fps or fps
     taken = check_shutter(args.subframes, args.shutter)
     encoder_args(args.encoder)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
+    if world is not None and look["stage"]["floor"]:
+        share = floor_share(fg)
+        if share > FLOOR_SHARE:
+            raise ValueError("%.0f %% of a picture of the dancer's file has the alpha of MMD's floor accessory (%d to %d): the look "
+                             "draws the floor itself (stage.floor 1), so leave the floor accessory out of the MMD render "
+                             "(the plan's accessories), or let MMD draw it with stage.floor 0" % ((100 * share,) + FLOOR_ALPHA))
     if args.subframes > 1:
         # the dancer's file runs at `subframes` times the output rate
         out_fps = fps / float(args.subframes)
         fps = int(round(out_fps)) if abs(out_fps - round(out_fps)) < 1e-3 else out_fps
     if args.physics_align:
         check_physics_align(fps, args.subframes)
-    if args.prepared:
-        # the layers and the text `prepare` wrote once for many renders (tools/mv_chunks.py --workers): read, never written
-        work = os.path.abspath(args.prepared)
-        layers, plan = load_prepared(work, look, size, fps, args.cues)
-    else:
-        work = os.path.abspath(args.work or out + ".work")
-        layers = write_layers(look, work, size, fps)
-        plan = text_plan(args.cues, work, size, fps) if args.cues else None
     start = args.start
     duration = None if args.to is None else args.to - (start or 0.0)
     if duration is not None and duration <= 0:
         raise ValueError("--to must be after --from")
+    if world is not None:
+        # the frames of the video this excerpt shows, numbered from the song's start (the stage's frames are)
+        offset = float(args.offset or 0.0)
+        clip_start = float(start) if start is not None else offset
+        first = int(round(clip_start * fps))
+        if duration is not None:
+            count = int(round(duration * fps))
+        else:
+            count = dancer_frames(fg) // int(args.subframes) - int(round((clip_start - offset) * fps))
+        if count < 1:
+            raise ValueError("the excerpt has no frame of the dancer")
+    stage = None
+    if args.prepared:
+        # the layers and the text `prepare` wrote once for many renders (tools/mv_chunks.py --workers): read, never written
+        work = os.path.abspath(args.prepared)
+        layers, plan, drawn = load_prepared(work, look, size, fps, args.cues, world)
+        if world is not None:
+            if not any(f <= first and first + count <= f + n for f, n in drawn["spans"]):
+                raise ValueError("the stage prepared in %s has the frames %s of the video, and this excerpt needs %d to %d: "
+                                 "prepare the span of every chunk" % (work, ", ".join("%d to %d" % (f, f + n - 1)
+                                                                                      for f, n in drawn["spans"]),
+                                                                      first, first + count - 1))
+            stage = {"pattern": drawn["pattern"], "first": first, "frames": count}
+    else:
+        work = os.path.abspath(args.work or out + ".work")
+        layers = write_layers(look, work, size, fps)
+        plan = text_plan(args.cues, work, size, fps) if args.cues else None
+        if world is not None:
+            stage = world_tool().write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
+                                             world["subframes"], world["shutter"], world["figure"], world["jobs"], world)
     folder = os.path.dirname(out)
     if folder:
         os.makedirs(folder, exist_ok=True)
@@ -883,7 +1111,7 @@ def render(args):
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
                           start=start, duration=duration, offset=args.offset, subframes=args.subframes,
-                          shutter=args.shutter, light_frames=layers["light_frames"], encoder=args.encoder,
+                          shutter=args.shutter, light_frames=layers["light_frames"], encoder=args.encoder, stage=stage,
                           shifts=[(s[0], s[2]) for s in physics["segments"]] if physics else None)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
@@ -891,6 +1119,8 @@ def render(args):
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
               "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
               "ffmpeg": done.returncode}
+    if stage is not None:
+        result["stage"] = {"first": stage["first"], "frames": stage["frames"]}
     if args.prepared:
         result["prepared"] = True
     if args.encoder != "x264":
@@ -907,6 +1137,8 @@ def layers_command(args):
     if not args.size or not args.fps:
         raise ValueError("layers needs --size WxH and --fps N")
     check_encoder(args.encoder)
+    # a stage in the world: its camera and dancer are read here, so that a wrong one stops a run before MMD renders
+    world_inputs(look, args.camera, args.model, args.motion)
     return write_layers(look, os.path.abspath(args.work), parse_size(args.size), args.fps)
 
 
@@ -935,10 +1167,31 @@ def prepare_command(args):
     if not args.size or not args.fps:
         raise ValueError("prepare needs --size WxH and --fps N")
     check_encoder(args.encoder)
-    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues)
+    if (args.start is None) != (args.to is None):
+        raise ValueError("--from and --to go together: the span of the song whose stage to prepare")
+    spans = [tuple(span) for span in args.span] + ([] if args.start is None else [(args.start, args.to)])
+    stage_spans(spans, args.fps)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
+    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues, world, spans)
     plan = note["text"]
-    return dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
-                warnings=plan["warnings"] if plan else [])
+    result = dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
+                  warnings=plan["warnings"] if plan else [])
+    if "stage" in note:
+        result["stage"] = {"first": note["stage"]["first"], "frames": note["stage"]["frames"], "spans": note["stage"]["spans"]}
+    return result
+
+
+def _world_arguments(s):
+    """what a look whose stage lies in the world is drawn from (a look fixed to the picture reads none of it)"""
+    s.add_argument("--camera", help="a stage in the world: the camera motion (.vmd) MMD renders the dancer with")
+    s.add_argument("--model", help="a stage in the world with a pool of light or shadows: the dancer's model (.pmx)")
+    s.add_argument("--motion", action="append", default=[],
+                   help="... and her motions (.vmd), each with its own --motion, in the order MMD loads them")
+
+
+def _jobs_argument(s):
+    s.add_argument("--jobs", type=int, default=1,
+                   help="a stage in the world: the processes that draw its frames (default 1; the pictures are the same)")
 
 
 def main(argv=None):
@@ -967,6 +1220,8 @@ def main(argv=None):
     s.add_argument("--to", type=float, help="end of an excerpt, in seconds of the song")
     s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
     s.add_argument("--fps", type=float, help="frames per second, when it is not to be read from the dancer's file")
+    _world_arguments(s)
+    _jobs_argument(s)
     s = sub.add_parser("phase", help="where MMD's physics steps in the dancer's file and the window --physics-align would take")
     s.add_argument("dancer", help="the video MMD wrote with an alpha channel")
     s.add_argument("--subframes", type=int, required=True, help="as for render")
@@ -982,6 +1237,8 @@ def main(argv=None):
     s.add_argument("--size")
     s.add_argument("--fps", type=float)
     s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
+    _world_arguments(s)
+    _jobs_argument(s)                   # taken as render takes it (the drivers hand both the same); layers draws no stage
     s = sub.add_parser("prepare", help="write the layers and the text once, for many renders with --prepared")
     s.add_argument("look")
     s.add_argument("work")
@@ -989,6 +1246,17 @@ def main(argv=None):
     s.add_argument("--fps", type=float)
     s.add_argument("--cues", help="text cues for tools/mv_text.py")
     s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
+    _world_arguments(s)
+    s.add_argument("--subframes", type=int, default=1,
+                   help="a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur)")
+    s.add_argument("--shutter", type=float, default=0.5, help="a stage in the world: the renders' --shutter")
+    s.add_argument("--from", dest="start", type=float,
+                   help="a stage in the world: prepare its frames from this second of the song (default: the song's start)")
+    s.add_argument("--to", type=float, help="... up to this second (default: the camera motion's last key)")
+    s.add_argument("--span", nargs=2, type=float, action="append", default=[], metavar=("FROM", "TO"),
+                   help="a stage in the world: prepare the frames of this span of the song only (seconds); give one for every "
+                        "chunk (tools/mv_chunks.py --workers does): the frames between them are not drawn")
+    _jobs_argument(s)
     args = p.parse_args(argv)
     if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
         args.fps = int(args.fps)

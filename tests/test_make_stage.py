@@ -72,9 +72,28 @@ class FloorTest(unittest.TestCase):
         plain = make_stage.floor(half=20.0, step=5.0, line=0.05, accent_every=0)
         self.assertEqual(set(plain.face_materials), {0, 1})
 
+    def test_the_floor_can_stand_at_the_height_of_the_soles(self):
+        # 2026-10-14: on the floor the choreography was made on, the model's soles stand 0.111 above y 0 (the feet layer's
+        # measure): the floor goes up to them, the lines and the plane alike, nothing moves sideways
+        flat = make_stage.floor(half=20.0, step=5.0, line=0.05, accent_every=4)
+        raised = make_stage.floor(half=20.0, step=5.0, line=0.05, accent_every=4, height=0.111)
+        self.assertEqual(len(raised.vertices), len(flat.vertices))
+        self.assertEqual((raised.faces, raised.face_materials), (flat.faces, flat.face_materials))
+        for (x, y, z), (x0, y0, z0) in zip(raised.vertices, flat.vertices):
+            self.assertEqual((x, z), (x0, z0))
+            self.assertAlmostEqual(y - y0, 0.111, places=9)
+
+    def test_the_files_mmd_renders_are_these_floors(self):
+        # the bytes of the floor on the renderer (hinata C:/work/hibikase/stage/stage_floor.x) and of its copy raised to the
+        # soles (C:/work/hibikase/stage6/feet/stage/stage_floor_y0111.x, every vertex 0.0111 up in the file's numbers)
+        import hashlib
+        for height, md5 in ((0.0, "cb731baa98e268705c424854548e98bd"), (0.111, "57c6d8a0d7c6f37bbe59e68b59676df5")):
+            text = make_stage.x_text(make_stage.floor(60.0, 5.0, 0.06, 4, height=height))
+            self.assertEqual(hashlib.md5(text.encode("ascii")).hexdigest(), md5, height)
+
     def test_bad_measures_are_errors(self):
         for kw in ({"half": 0.0}, {"step": 0.0}, {"step": -5.0}, {"line": 0.0}, {"half": 3.0, "step": 5.0},
-                   {"accent_every": -1}):
+                   {"accent_every": -1}, {"height": float("nan")}, {"height": float("inf")}):
             args = dict({"half": 60.0, "step": 5.0, "line": 0.06, "accent_every": 4}, **kw)
             with self.assertRaises(ValueError, msg=kw):
                 make_stage.floor(**args)
@@ -151,8 +170,18 @@ class CommandTest(unittest.TestCase):
             data = f.read()
         parsed = parse_x(data.decode("ascii"))
         self.assertEqual((result["vertices"], result["faces"]), (len(parsed["vertices"]), len(parsed["faces"])))
-        self.assertEqual((result["half"], result["step"]), (40.0, 5.0))
+        self.assertEqual((result["half"], result["step"], result["height"]), (40.0, 5.0, 0.0))
         self.assertEqual(os.listdir(os.path.dirname(out)), ["floor.x"])   # no .part left behind
+
+    def test_height_raises_the_floor_in_the_file(self):
+        out = os.path.join(self.folder, "floor_raised.x")
+        code, result = run([out, "--height", "0.111"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["height"], 0.111)
+        with open(out, "rb") as f:
+            parsed = parse_x(f.read().decode("ascii"))
+        heights = sorted({round(y, 4) for _, y, _ in parsed["vertices"]})
+        self.assertEqual(heights, [0.0091, 0.0111])                      # the plane 0.02 below the lines, a tenth in the file
 
     def test_bad_measures_exit_2_and_write_nothing(self):
         out = os.path.join(self.folder, "floor.x")
