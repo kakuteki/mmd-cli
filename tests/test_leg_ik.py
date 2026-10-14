@@ -171,6 +171,24 @@ class LegTest(unittest.TestCase):
         self.assertLess(length(a["ankle"][0] - b["ankle"][0]), 4e-3)        # the ankle reaches the goal either way
         self.assertGreater(length(a["knee"][0] - b["knee"][0]), 0.5)          # the knee does not
 
+    def test_nearly_straight_leg_lags_behind_a_lifted_goal_as_mmd_does(self):
+        # MMD's own renders of Sour's Rin (the feet layer's probe, _spike/out/stage6/feet/probe/probe_check.json, and the
+        # review's renders ik3): the standing leg's foot IK lifted 0.1, 0.25 and 0.5 leaves the ankle 0.085, 0.172 and
+        # 0.125 short of its goal, the shoe drawn where this solve puts it (a solve run to convergence draws it 0.9 to
+        # 1.8 cm higher).  MMD stops the leg IK at the first loop that does not bring the ankle closer.
+        for lift, short in ((0.1, 0.085), (0.25, 0.172), (0.5, 0.125)):
+            leg = self.solve(key("左足ＩＫ", 0, position=(0.0, lift, 0.0)))["左"]
+            self.assertAlmostEqual(float(leg["reach"][0]), short, delta=0.01)
+
+    def test_first_loop_mirrors_a_knee_step_past_its_limit(self):
+        # a goal in front of the standing ankle: the knee's first plane step comes out bending it backward (past the limit
+        # 0); saba (and MMD, the review's renders ik3) mirror it into the range in the first loop, so the knee bends
+        # forward some 30 degrees and the ankle reaches the goal.  Clamped instead, the knee stays near 22 degrees and the
+        # ankle 0.18 short.
+        leg = self.solve(key("左足ＩＫ", 0, position=(0.0, 0.5, -1.5)))["左"]
+        self.assertLess(float(leg["reach"][0]), 0.02)
+        self.assertGreater(-math.degrees(float(leg["knee_angle"][0])), 27.0)
+
     def test_frames_together_equal_frames_alone(self):
         keys = [key("左足ＩＫ", 0, position=(0.0, 0.0, 0.0)), key("左足ＩＫ", 10, position=(1.0, 4.0, -2.0)),
                 key("左足ＩＫ", 20, position=(-0.5, 1.0, 1.0)), key("センター", 0), key("センター", 20, position=(0, -1.5, 0))]

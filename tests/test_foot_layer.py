@@ -308,16 +308,37 @@ class LayerTest(unittest.TestCase):
         self.assertLess(float(f_in["左"]["low"][0]), -0.05)
         self.assertGreater(float(f_out["左"]["low"][0]), -foot_layer.PEN_TOL)
 
-    def test_roll_past_the_subtalar_cap_stays_on_its_edge(self):
-        # the shank leaning out 40 degrees over a foot the trace keeps level: inverting so much is past the cap, so the
-        # foot keeps part of its roll and stands on its edge (the edge on the floor, the foot inside its range)
-        lean = axis_angle((0, 0, 1), -40.0)                         # the thigh turned so that the shank leans out
-        f_in, f_out, out, plan = run_layer(key("センター", 0, position=(0, -1.5, 0)), key("左足", 0, lean),
-                                           key("左足ＩＫ", 0, position=(0.8, 0.0, 0.0)), floor_y=0.0)
-        b = f_out["左"]
-        cap = foot_layer.REFERENCE["inversion"][1]
-        self.assertLess(abs(float(b["inversion"][0])), cap + 0.5)
-        self.assertGreater(float(b["low"][0]), -foot_layer.PEN_TOL)
+    def test_roll_past_the_subtalar_cap_is_turned_back_inside_it(self):
+        # (replaces test_roll_past_the_subtalar_cap_stays_on_its_edge, whose input never came near the cap: inversion -5
+        # in, 1.7 out, so that turning the correction the wrong way passed it)  In the air, away from the floor and the
+        # load, the foot rolled about its own axis past each cap: 50 degrees outer edge down (an inversion of some 75
+        # against the shank) and 40 degrees inner edge down (an eversion of some 62).  Each is turned back about the
+        # foot's own axis into its range, on the side it was rolled to (not through flat to the other side); its pitch
+        # is kept.
+        for deg, name, sign in ((50.0, "inversion", 1.0), (-40.0, "eversion", -1.0)):
+            q = rolled("左", deg)
+            f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, 3.0, -1.0)), key("左足首", 0, q),
+                                               key("センター", 0, position=(0, -1.0, 0)))
+            a, b = f_in["左"], f_out["左"]
+            start, cap = foot_layer.REFERENCE[name]
+            self.assertGreater(sign * float(a["inversion"][0]), cap + 10.0)          # the input is well past the cap
+            self.assertLessEqual(sign * float(b["inversion"][0]), cap + 0.01)        # the output inside it
+            self.assertGreater(sign * float(b["inversion"][0]), start)               # by the soft limit, not flattened
+            self.assertAlmostEqual(float(b["pitch"][0]), float(a["pitch"][0]), delta=0.5)
+
+    def test_loaded_foot_dorsiflexes_further_than_a_lifted_one(self):
+        # the deep squat of test_deep_squat_lifts_the_heel_past_the_loaded_dorsiflexion at frame 0 (the feet flat on the
+        # floor, loaded), and the same pose lifted 1 unit from frame 10 on (the feet in the air): the same ankle angle in,
+        # but the loaded foot may go to the weight-bearing lunge's 40 degrees, the lifted one only to 36
+        keys = [key("センター", 0, position=(0, -3.5, 0)), key("左足ＩＫ", 0, position=(0, 0, 1.2)),
+                key("右足ＩＫ", 0, position=(0, 0, 1.2)), key("センター", 10, position=(0, -2.5, 0)),
+                key("左足ＩＫ", 10, position=(0, 1.0, 1.2)), key("右足ＩＫ", 10, position=(0, 1.0, 1.2)),
+                key("センター", 20, position=(0, -2.5, 0)), key("左足ＩＫ", 20, position=(0, 1.0, 1.2)),
+                key("右足ＩＫ", 20, position=(0, 1.0, 1.2))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=21)
+        a, b = f_in["左"], f_out["左"]
+        self.assertAlmostEqual(float(a["dorsi"][0]), float(a["dorsi"][15]), delta=0.1)   # the same angle in
+        self.assertGreater(float(b["dorsi"][0]), float(b["dorsi"][15]) + 1.0)
 
     def test_raised_heel_stands_on_the_ball_with_the_toes_flat(self):
         # the foot pitched 25 degrees toes-down with its rigid tip on the trace's floor (the trace's tiptoe)
