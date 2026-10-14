@@ -78,9 +78,10 @@ HEEL_UP_DEG = 4.0               # a foot on the floor pitched toes-down more tha
 # The pitch of the foot inside Sour's Rin's loafers, asin(h / L) (the stage-6 research, 4: h the heel's sole above the
 # forefoot's, L the heel's contact to the metatarsal heads): the heel block stands 0.39 (the mesh: its width changes at
 # y 0.5) to 0.5 (a side render of the rest pose) above the sole, the forefoot's sole is about 0.05 thick, and the
-# heel's back (z 0.95) lies 1.27 behind 足先EX (the ball): 16 to 21 degrees, taken as 20.  A barefoot model has 0.  It
-# shifts the anatomical ankle angle (plantarflexion inside the shoe) and the toes' (extension): the shoe pre-pitches
-# the foot as Hansen & Childress 2004 found ("an overall shift in the direction of plantar flexion").
+# heel's back (z 0.95) lies 1.27 behind 足先EX (the ball): 16 to 21 degrees, taken as 20 (the size is this estimate
+# from the mesh, not from a source).  A barefoot model has 0.  It shifts the anatomical ankle angle (plantarflexion
+# inside the shoe) and the toes' (extension): the direction is what Hansen & Childress 2004 found for heeled shoes (10
+# women walking in heels of 37 and 71 mm: "an overall shift in the direction of plantar flexion").
 HEEL_PITCH_DEG = 20.0
 
 
@@ -394,8 +395,10 @@ TOES_FLAT_DEG = 8.0             # a toe box within this of level lies on the flo
 # and the stage-3 research (the Japanese reference range = JOA):
 #   dorsiflexion: JOA 20; unloaded young women 23.9 +- 6.2 (Moromizato 2016; + 2 SD = 36); loaded, the weight-bearing
 #     lunge 38.8 to 43.2 (Konor 2012, the midfoot included): LOADED_DORSI_CAP for a foot on the floor;
-#   plantarflexion: JOA 45, young women 54.1 +- 6.6 (Moromizato; + 2 SD = 67), ballet dancers en pointe unloaded
-#     77 +- 2.5 (Russell 2010, the midfoot included, which this one-piece foot stands for): 50 to 75;
+#   plantarflexion: JOA 45, young women 54.1 +- 6.6 (Moromizato; + 2 SD = 67); trained female ballet dancers (15,
+#     21 +- 3 years) 77 +- 2.5 non-weight-bearing by goniometer and 83 +- 2.2 weight-bearing en pointe (Russell 2010,
+#     the abstract; the midfoot included, which this one-piece foot stands for): 50 to 75, a dancer's range chosen to
+#     keep the choreography's pointed feet (far past JOA's 45; the coordinator's choice);
 #   inversion / eversion: JOA 30 / 20, Boone & Azen 36.2 / 19.2, Roaas & Andersson 27.7 / 27.6: 36 / 25 as caps;
 #   toes (MTP) extension, the shoe's own pitch included: walking 37 to 42 (Halstead 2006, Nawoczenski 1999), the top
 #     of a heel raise 40 to 58 (Houck 2009, Nawoczenski 1999), dancers' releve 50 to 90 barefoot (Veirs 2023, Kulig &
