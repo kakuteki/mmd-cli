@@ -115,6 +115,16 @@ class MarkersTest(unittest.TestCase):
         self.assertEqual(model.counts["materials"], 1 + 2 + 12)
         self.assertEqual(model.counts["faces"], 1 + 8 * 14)
 
+    def test_other_physics_bones_get_markers_of_their_own_kind(self):
+        doc = toy_doc()
+        doc.bones.append(pmx_edit.new_bone("髪先", position=(0.0, 16.0, 1.0), parent=0))
+        legend = probe.build_markers(doc, size=0.05, body=("上半身",), others=("髪先", "ない骨"))
+        other = [m for m in legend["markers"] if m["kind"] == "other"]
+        self.assertEqual([m["name"] for m in other], ["髪先"])
+        self.assertEqual(legend["missing_other"], ["ない骨"])
+        self.assertEqual(len(legend["markers"]), 1 + 12 + 1)
+        self.assertEqual(legend["markers"][-1]["kind"], "other")          # after the skirt: the others' colours come last
+
     def test_without_physics_the_legend_falls_back_to_the_default_capsules(self):
         legend = probe.build_markers(toy_doc(), size=0.05)
         self.assertEqual(legend["joints"], {})
@@ -444,6 +454,8 @@ class SourRinMarkersTest(unittest.TestCase):
         skirt = [m for m in legend["markers"] if m["kind"] == "skirt"]
         self.assertEqual(len(skirt), 128)
         self.assertEqual(legend["missing_body"], [])
+        self.assertEqual(legend["missing_other"], [])
+        self.assertEqual(len([m for m in legend["markers"] if m["kind"] == "other"]), len(probe.OTHER_BONES))
         self.assertEqual(len(legend["lengths"]), 16)
         self.assertTrue(all(len(v) == 7 for v in legend["lengths"].values()))
         g = pmx_edit.geometry(doc)

@@ -51,6 +51,9 @@ from mmd_cli.formats import pmx_edit, vmd  # noqa: E402
 SKIRT = re.compile(r"^スカート_(\d+)_(\d+)$")
 BODY_BONES = ("上半身", "下半身", "左足D", "右足D", "左ひざD", "右ひざD", "左足首D", "右足首D",
               "左腕", "右腕", "左ひじ", "右ひじ", "左手首", "右手首")
+# the other physics of Sour's Rin, to see that a skirt change leaves them alone: the tips of the chest ribbon, the sailor
+# collar, the head ribbon and three hair strands (markers after the skirt's, so the earlier markers keep their colours)
+OTHER_BONES = ("左胸リボン3", "右胸リボン3", "左領3", "右領3", "左リボン2", "右リボン2", "後髮B_3", "前髮7_3", "アホ毛2")
 SIZE = 0.07                     # a marker's half width (model units; 0.56 cm)
 LEVELS = (30, 75, 120, 165, 210, 255)
 MIN_SUM = 150                   # no colour darker than this (sum of the channels)
@@ -98,12 +101,13 @@ _AXES = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
 _FACES = ((2, 0, 4), (2, 4, 1), (2, 1, 5), (2, 5, 0), (3, 4, 0), (3, 1, 4), (3, 5, 1), (3, 0, 5))   # an octahedron
 
 
-def build_markers(doc, size=SIZE, body=BODY_BONES):
+def build_markers(doc, size=SIZE, body=BODY_BONES, others=OTHER_BONES):
     """turn `doc` (pmx_edit.Document) into the measuring copy; returns the legend"""
     rows, cols, grid = skirt_grid(doc)
     names = {b.name: i for i, b in enumerate(doc.bones)}
     wanted = [(n, names[n], "body", None, None) for n in body if n in names]
     wanted += [(doc.bones[grid[(r, c)]].name, grid[(r, c)], "skirt", r, c) for r in range(rows) for c in range(cols)]
+    wanted += [(n, names[n], "other", None, None) for n in others if n in names]
     colours = palette(len(wanted))
     g = pmx_edit.geometry(doc)
     for m in g.materials:                       # the model's own materials: not drawn
@@ -131,8 +135,8 @@ def build_markers(doc, size=SIZE, body=BODY_BONES):
         pts = [doc.bones[grid[(r, c)]].position for r in range(rows)]
         lengths[str(c)] = [round(math.dist(a, b), 6) for a, b in zip(pts, pts[1:])]
     return {"rows": rows, "cols": cols, "size": size, "markers": markers, "lengths": lengths,
-            "missing_body": [n for n in body if n not in names], "capsules": _capsules(doc, names),
-            "joints": _skirt_joints(doc)}
+            "missing_body": [n for n in body if n not in names], "missing_other": [n for n in others if n not in names],
+            "capsules": _capsules(doc, names), "joints": _skirt_joints(doc)}
 
 
 def _capsules(doc, names):
