@@ -261,6 +261,55 @@ class WorldCommandTest(unittest.TestCase):
         self.assertEqual(code, 2, result)                              # from 0.3 s: a frame before the prepared ones
         self.assertIn("stage", result["error"]["message"])
 
+    def prepared_render(self, start, to):
+        fake = FakeRun()
+        with unittest.mock.patch.object(mv_look.subprocess, "run", fake):
+            code, result = answer(["render", self.fg, self.world, os.path.join(self.folder, "o.mp4"), "--size", "320x180",
+                                   "--fps", "30", "--offset", "0.2", "--from", start, "--to", to,
+                                   "--prepared", self.work, "--camera", self.camera])
+        return code, result, [c for c in fake.calls if c[0] == "ffmpeg"]
+
+    def test_prepare_draws_only_the_spans_it_is_given(self):
+        # the chunks of a preview lie apart in the song (tools/mv_chunks.py --workers gives a --span for each): the stage of
+        # the frames between them is not drawn, and render --prepared reads the span of its own excerpt
+        code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera,
+                               "--span", "1.2", "1.5", "--span", "0.4", "0.6"])
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["stage"]["spans"], [[12, 6], [36, 9]])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.work, "stage"))),
+                         ["stage_%05d.png" % n for n in list(range(12, 18)) + list(range(36, 45))])
+        pattern = os.path.join(os.path.abspath(self.work), "stage", "stage_%05d.png").replace("\\", "/")
+        for start, to, first in (("0.4", "0.6", "12"), ("1.2", "1.5", "36"), ("1.3", "1.4", "39")):
+            code, result, calls = self.prepared_render(start, to)
+            self.assertEqual(code, 0, result)
+            self.assertEqual(calls[-1][calls[-1].index(pattern) - 3:calls[-1].index(pattern) - 1], ["-start_number", first])
+        code, result, calls = self.prepared_render("0.5", "1.3")              # across the frames between the spans
+        self.assertEqual(code, 2, result)
+        self.assertIn("stage", result["error"]["message"])
+        self.assertEqual(calls, [])
+        for bad in (["--span", "0.6", "0.4"], ["--span", "-0.2", "0.4"], ["--from", "0.4"]):
+            code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera",
+                                   self.camera] + bad)
+            self.assertEqual(code, 2, (bad, result))
+
+    def test_a_camera_that_rolls_stops_the_run_before_any_stage_is_drawn(self):
+        keys = []
+        for frame in range(60):
+            values = {"distance": 40.0, "pos": (0.0, 12.0, 0.0), "rot": (0.0, 0.0, 4.0 if frame >= 30 else 0.0), "fov": 30,
+                      "perspective": True}
+            keys.append(motion_edit.camera_key_from_ui(values, frame=frame))
+        rolled = os.path.join(self.folder, "rolled.vmd")
+        with open(rolled, "wb") as f:
+            f.write(vmd.dumps(vmd.Motion.for_camera(cameras=keys)))
+        for command in ("prepare", "layers"):
+            code, result = answer([command, self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", rolled])
+            self.assertEqual(code, 2, (command, result))
+            self.assertIn("line of sight", result["error"]["message"])
+            self.assertFalse(os.path.exists(os.path.join(self.work, "stage")), command)
+        code, result, calls = self.render(self.world, "--work", self.work, "--camera", rolled)  # an excerpt before the roll
+        self.assertEqual(code, 2, result)
+        self.assertEqual(calls, [])
+
     def test_an_excerpt_past_the_prepared_stage_is_refused(self):
         code, result = answer(["prepare", self.world, self.work, "--size", "320x180", "--fps", "30", "--camera", self.camera])
         self.assertEqual(code, 0, result)
@@ -285,6 +334,18 @@ class FloorShareTest(unittest.TestCase):
                             "color=c=black@0.0:s=320x180:r=30,format=rgba," + fill, "-frames:v", "3", "-c:v", "rawvideo",
                             "-pix_fmt", "bgra", path], check=True, stdin=subprocess.DEVNULL)
             self.assertAlmostEqual(mv_look.floor_share(path), expect, delta=0.02, msg=name)
+
+    def test_a_floor_that_comes_into_the_picture_later_in_the_file_is_found(self):
+        # a chunk that begins on a close-up (no floor in sight) and pulls back later: pictures from all through the file are
+        # looked at, not the first one alone (review of stage-world: 14 of the 64 shots of camera A show no floor)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "late.avi")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=c=black@0.0:s=320x180:r=30,format=rgba,"
+                        "drawbox=x=0:y=72:w=320:h=108:color=0x10121e@0.92:t=fill:replace=1:enable='gte(n,30)'",
+                        "-frames:v", "48", "-c:v", "rawvideo", "-pix_fmt", "bgra", path], check=True, stdin=subprocess.DEVNULL)
+        self.assertGreater(mv_look.floor_share(path), 0.5)
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
