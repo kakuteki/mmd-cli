@@ -586,8 +586,9 @@ class KimeAlignTest(unittest.TestCase):
 
 
 class FlashTest(unittest.TestCase):
-    """human style: at some of the kimes where she sings, the eyes open for a moment (the lid to the model's open
-    eye, at its widest a frame before the kime), a few a minute, never two within FLASH_GAP frames"""
+    """human style: at some of the kimes where she sings, the eyes open for a moment (the lid up to the neutral lid,
+    not wider: the serious face's lowered lid opened to the model's widest eye looked startled; at its widest a frame
+    before the kime), a few a minute, never two within FLASH_GAP frames"""
 
     def plan_with(self, moves, seed=0):
         hand = moving_point(moves)
@@ -602,7 +603,7 @@ class FlashTest(unittest.TestCase):
         b = tracks(result.motion)["まばたき"]
         plain = tracks(face_life.plan(inputs(), seed=0).motion)["まばたき"]
         if between_blinks(b, np.zeros(F))[k - 1]:
-            self.assertLess(b[k - 1], 0.02)
+            self.assertAlmostEqual(float(b[k - 1]), face_life.LID_NEUTRAL, delta=0.02)
         self.assertLess(float(b[k - 1]), float(plain[k - 1]) - 0.08)
         np.testing.assert_allclose(b[k + 12:k + 20], plain[k + 12:k + 20], atol=1e-6)
 

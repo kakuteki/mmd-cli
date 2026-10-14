@@ -81,7 +81,8 @@ numbers above).  "human" (the default since stage 6) changes:
 * The expressions: changes take HUMAN_ONSET_FRAMES / HUMAN_OFFSET_FRAMES / HUMAN_CHANGE_FRAMES and arrive KIME_ARRIVE
   frames before a kime they can reach (kimes, kime_shift: a fast move of the head or a hand that stops and holds); a
   held smile eases off by up to HUMAN_WAVE["eye"].  At some kimes where she sings (choose_flashes: at most FLASH_RATE a
-  minute, FLASH_GAP apart) the eyes open for a moment (flash_track): the brows lie under her fringe, the lid carries it.
+  minute, FLASH_GAP apart) the eyes open for a moment (flash_track) up to the neutral lid: the brows lie under her
+  fringe, the lid carries it.
 
 The report (--report, and in short on stdout) gives, for the expressions, the blinks and the mouth, the measures of
 the analyses a11, a10 and a12 before (FACE) and after (OUT).  Read expression.stretched_frames for how long a change of
@@ -1086,8 +1087,8 @@ def rewrite_blinks(keys, frames, smile, inp, onsets, intro, events, rng, style="
         # flashes, the lid following the eyes up and down, and never a smiling eye shut between the blinks
         share = shown_share(phrases, frames, inp.voice, [(f, f + c, f + c + h + o) for f, _, c, h, o in drawn])
         base = shown_lid(author, share)
-        lift = flash_track(flashes, frames)
-        base = np.where(author < LID_DEEP, base * (1.0 - lift), base)
+        lift = flash_track(flashes, frames)             # the lid up to the neutral lid at most, not the model's widest eye
+        base = np.where(author < LID_DEEP, base - lift * np.maximum(0.0, base - LID_NEUTRAL), base)
         follow = lid_follow(pitch, LID_FOLLOW)
         lid_info = {"_follow": follow * (base < CLOSED)}
         limit = np.maximum(base, CLOSURE_CAP - smile)          # what the follow may add up to
