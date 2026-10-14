@@ -348,9 +348,9 @@ def passive_response(forcing, omega, zeta, fps, substeps=8):
 
 def follow_response(target, omega, zeta, fps, substeps=8):
     """x [F, J] of joints that follow  x'' + 2 zeta omega x' + omega^2 (x - target) = 0  from rest at target[0], the
-    target [F, J] taken as linear between frames, omega and zeta [J] or [F, J] (the frame's values through its interval).
-    The target itself is interpolated, not omega^2 times it: where omega changes from one frame to the next (a hand
-    opening from a held shape), a forcing omega(t-1)^2 target would ask for (omega(t-1) / omega(t))^2 times the target.
+    target [F, J] taken as linear between frames, omega and zeta [J] or [F, J] (the frame's values through its
+    interval).  The target itself is interpolated, not omega^2 times it: where omega changes from one frame to the next
+    (a hand opening from a held shape), a forcing omega(t-1)^2 target would ask for (omega(t-1) / omega(t))^2 times it.
     Implicit Euler as passive_response: v' = (v + dt omega^2 (target - x)) / (1 + 2 zeta omega dt + omega^2 dt^2)"""
     target = np.asarray(target, dtype=float)
     F, J = target.shape
