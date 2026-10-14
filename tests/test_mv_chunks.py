@@ -388,7 +388,7 @@ class WorldPlanTest(unittest.TestCase):
         plain = mv_chunks.fold_args(mv_chunks.check_plan(dict(PLAN, accessories=[])), "t", chunk, 240, 0.5)
         self.assertEqual(fold[:len(plain)], plain)
         self.assertEqual(fold[len(plain):], ["--camera", PLAN["camera"], "--model", PLAN["model"],
-                                             "--motion", "C:/work/song/dance.vmd", "--motion", LIPS])
+                                             "--motion", "C:/work/song/dance.vmd", "--motion", LIPS, "--jobs", "4"])
         self.assertNotEqual(mv_chunks.recipe(plan, "t", chunk, 240, 0.5),
                             mv_chunks.recipe(mv_chunks.check_plan(dict(PLAN, accessories=[])), "t", chunk, 240, 0.5))
 
@@ -397,15 +397,20 @@ class WorldPlanTest(unittest.TestCase):
         check = [l for l in driver.splitlines() if l.startswith("$check = ")]
         self.assertEqual(len(check), 1)
         self.assertTrue(check[0].endswith("--size 1280x720 --fps 30 --camera 'C:/work/song/camera.vmd' --model "
-                                          "'C:/MMD/UserFile/Model/Rin/White.pmx' --motion 'C:/work/song/dance.vmd' --motion '%s'"
-                                          % LIPS), check)
+                                          "'C:/MMD/UserFile/Model/Rin/White.pmx' --motion 'C:/work/song/dance.vmd' --motion '%s' "
+                                          "--jobs 4" % LIPS), check)
 
     def test_stage_jobs_hand_mv_look_the_processes_that_draw_the_stage(self):
-        plan = mv_chunks.check_plan(dict(self.WORLD, stage_jobs=4))
+        # 4 by default with "world": true (the review's measure on hinata: 4 cores and under 2 GB, the whole song in 12 to
+        # 15 minutes, 3 to 4 times one process); a plan fixed to the picture draws no stage and hands none
         chunk = mv_chunks.plan_chunks(SPANS, lead=120)[1]
-        self.assertEqual(mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)[-2:], ["--jobs", "4"])
-        self.assertEqual(mv_chunks.check_plan(self.WORLD)["stage_jobs"], 1)
-        self.assertNotIn("--jobs", mv_chunks.fold_args(mv_chunks.check_plan(self.WORLD), "t", chunk, 240, 0.5))
+        self.assertEqual(mv_chunks.check_plan(self.WORLD)["stage_jobs"], 4)
+        self.assertEqual(mv_chunks.fold_args(mv_chunks.check_plan(self.WORLD), "t", chunk, 240, 0.5)[-2:], ["--jobs", "4"])
+        plan = mv_chunks.check_plan(dict(self.WORLD, stage_jobs=8))
+        self.assertEqual(mv_chunks.fold_args(plan, "t", chunk, 240, 0.5)[-2:], ["--jobs", "8"])
+        self.assertNotIn("--jobs", mv_chunks.fold_args(mv_chunks.check_plan(dict(self.WORLD, stage_jobs=1)), "t", chunk, 240, 0.5))
+        self.assertEqual(mv_chunks.check_plan(dict(PLAN))["stage_jobs"], 1)
+        self.assertNotIn("--jobs", mv_chunks.fold_args(mv_chunks.check_plan(dict(PLAN)), "t", chunk, 240, 0.5))
         for bad in ({"stage_jobs": 0}, {"stage_jobs": 2.5}, {"stage_jobs": True}, {"stage_jobs": 2, "world": False}):
             with self.assertRaises(ValueError, msg=bad):
                 mv_chunks.check_plan(dict(self.WORLD, **bad))
@@ -415,10 +420,22 @@ class WorldPlanTest(unittest.TestCase):
         prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]
         self.assertEqual(len(prepare), 1)
         self.assertIn(" --camera 'C:/work/song/camera.vmd' ", prepare[0])
-        self.assertTrue(prepare[0].endswith("--subframes 8 --shutter 0.5 --from 0.000000 --to 10.000000"), prepare)
+        spans = " --span 0.000000 3.333333 --span 3.333333 8.333333 --span 8.333333 10.000000"
+        self.assertTrue(prepare[0].endswith("--jobs 4 --subframes 8 --shutter 0.5" + spans), prepare)
         sixty = self.written("sixty", workers=2, out_fps=60)
         prepare = [l for l in sixty.splitlines() if "tools/mv_look.py prepare" in l]
-        self.assertTrue(prepare[0].endswith("--subframes 4 --shutter 0.5 --from 0.000000 --to 10.000000"), prepare)
+        self.assertTrue(prepare[0].endswith("--subframes 4 --shutter 0.5" + spans), prepare)
+
+    def test_the_workers_prepare_only_the_stage_of_their_chunks(self):
+        # chunks apart in the song (the excerpts of a preview): the stage between them is not drawn.  The review of
+        # stage-world drew 3,901 frames for the 242 of two chunks of camera A, 84 % of the run
+        folder = os.path.join(self.tmp, "apart")
+        summary = mv_chunks.write(mv_chunks.check_plan(self.WORLD), mv_chunks.plan_chunks([(2100, 2220), (5880, 6000)], 120),
+                                  folder, "t", 240, 0.5, workers=2)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            prepare = [l for l in f.read().splitlines() if "tools/mv_look.py prepare" in l]
+        self.assertTrue(prepare[0].endswith("--span 70.000000 74.033333 --span 196.000000 200.033333"), prepare)
+        self.assertNotIn(" --from ", prepare[0])
 
 
 class WorkersScriptTest(unittest.TestCase):

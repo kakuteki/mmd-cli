@@ -484,7 +484,8 @@ MMD はアクセサリをファイルの数値の 10 倍で表示するので、
   各本は円錐で、前の画面の下向きの薄れを、基準のカメラで見た高さで付ける。
 - **玉ボケ**: 幕の少し手前（半径の 85〜100 %）、幕の周り `stage.specks` 度（既定 160）に、前の画面と同じ密度で。漂いと瞬きは前と同じ。
 - **床**（`stage.floor` 1、既定）: `make_stage.py` の床（同じ寸法・線）を、v7 が見せた色で描く。**MMD には床のアクセサリを読ませない**
-  （計画の `accessories` を空に）。読ませたままだと、人物のファイルの最初の絵に床の alpha（226〜252）が写り、5 % を超えると止まる。
+  （計画の `accessories` を空に）。読ませたままだと、人物のファイルの絵に床の alpha（226〜252）が写り、5 % を超えると止まる
+  （最初の絵から終わり近くまでの 8 枚を見る。寄りで始まる区間は最初の絵に床が映らないため）。
   `stage.floor` 0 なら床は MMD が描き、幕と光だけを世界に置く。床の高さは `stage.floor_y`（既定 0。`make_stage.py --height` と
   同じ数を書く。靴底の高さの床なら 0.111）で、線・縁・光だまり・影はこの高さの面に描く。
 - **光だまりと影**（`stage.pool`・`stage.shadow`、0〜1、既定 0）: 人物のまわりの床を照らし（センターを 90 コマで均した所、`pool_radius`・
@@ -495,21 +496,25 @@ MMD はアクセサリをファイルの数値の 10 倍で表示するので、
 MMD は 1 コマ離れたカメラのキーの間を補間しない（240 fps の 8 枚が全部そのコマのカメラ。査読の R1・R1b で測った）ので、コマごとにキーのある
 カメラ（MV のカメラは全部そう）では、舞台はそのコマのカメラで 1 回描く。キーが 2 コマ以上離れたカメラで、シャッターが開いている間
 （`--subframes 8 --shutter 0.5` なら 3/8 コマ）に床が 1 px 以上動くコマだけ、その瞬間の平均でぼかす。カメラが視線の周りに回る（窓の Z 角）
-ものは、MMD の回し方を測っていないので断る。
+もの（MMD の回し方を測っていない）、真上を越えて見る（窓の X が 90 度以上）もの、正射影（パースの切）のキーがあるものは、カメラを読む
+ときに全部のキーを見て断る（舞台を 1 枚も描く前に止まる）。
 
 ```
 python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd [--model rin.pmx --motion dance.vmd ...] ...
 python tools/mv_look.py prepare look.json WORK --size 1280x720 --fps 30 --camera camera.vmd [...] [--subframes 8 --shutter 0.5]
-                        [--from 秒 --to 秒]
+                        [--from 秒 --to 秒] [--span 秒 秒 ...]
 python tools/mv_world.py frame camera.vmd look.json out.png --frame 3085 [--model ... --motion ...]    # 1 コマだけ見る
 ```
 
 - 画面に固定した look（`stage.world` 0、既定）は `--camera` などを読まず、ffmpeg の引数も前とバイト単位で同じ。
 - 世界の look では、舞台のコマ（`WORK/stage/stage_NNNNN.png`、曲の頭からの動画のコマ番号）を描いて読む。`render` は抜粋の分だけ、
-  `prepare` は曲全体（カメラの最後のキーまで）か `--from`〜`--to` の分を描き、印にカメラ・人物のファイル・シャッターも入れる
-  （`render --prepared` は同じものでないと止まる）。
+  `prepare` は曲全体（カメラの最後のキーまで）か、`--from`〜`--to` と `--span 秒 秒`（いくつでも）の分だけを描き（間のコマは描かない。
+  重なる・接する区間は 1 回）、印にカメラ・人物のファイル・シャッターと描いた区間も入れる（`render --prepared` は同じものでないと止まり、
+  抜粋が描いた区間の 1 つに収まらなくても止まる）。
 - 描く速さは hinata で 1 コマ約 0.4〜0.9 秒（1280x720）。前の板と光のループ（全曲で使い回す 823 枚）と違い、コマごとに描く。
   `--jobs N`（render・prepare）で N 個の処理に分けて描く（各コマは独りで描くので、絵は N に依らずバイト単位で同じ。印にも入らない）。
+  査読の hinata の測り（2026-10-14、240 コマ）: 1 処理 1 コアで 1 コマ 0.33 秒（コマごとにキーのあるカメラ）、`--jobs 4` で 4 コア・
+  2 GB 未満・1 コマ 0.12 秒。全曲 7,743 コマは 1 処理で約 41 分、`--jobs 4` で 12〜15 分。
   舞台のコマは 1 枚約 380 KB（1280x720 の PNG）で、全曲を prepare すると 30 fps で約 2.9 GB、60 fps で約 5.8 GB。
 
 ### 全曲を区間に分けて描いて繋ぐ（`tools/mv_chunks.py`）
@@ -553,9 +558,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   `name`（繋いだ動画は `out/<name>_<tag>.mp4`）。`size` は縦横とも偶数（動画は yuv420p）。知らない項目は誤りにする
   （綴りの誤りが黙って無視されないように）。
   `world`（true か false、既定 false）: look の舞台が世界にある（`stage.world` 1）とき true にする。畳みと look の確かめ（`layers`・
-  `prepare`）に計画の `camera`・`model`・`motions` を `--camera`・`--model`・`--motion` で渡し、--workers の `prepare` には区間全体の
-  `--from`・`--to` とシャッター（`--subframes`・`--shutter`）も渡す。床を舞台が描くなら `accessories` から床を外す。false の計画の台本は前と同じ。
-  `stage_jobs`（既定 1、world のときだけ）: 舞台のコマを描く処理の数（mv_look の `--jobs`）。
+  `prepare`）に計画の `camera`・`model`・`motions` を `--camera`・`--model`・`--motion` で渡し、--workers の `prepare` には区間ごとの
+  `--span`（区間の頭のカットから終わりまで。離れた区間の間は描かない）とシャッター（`--subframes`・`--shutter`）も渡す。床を舞台が
+  描くなら `accessories` から床を外す。false の計画の台本は前と同じ。
+  `stage_jobs`（world のとき既定 4、world でないときは 1 だけ）: 舞台のコマを描く処理の数（mv_look の `--jobs`）。4 で 4 コア・2 GB 未満
+  （上の測り）。hinata が空いていれば 8 も使える。
   `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。
 - `--shots` は `tools/make_camera.py --report` の報告で、描くカメラと同じショットのもの（`--handheld` はショットを変えない）。
   ショットに抜けや重なりがあれば誤り。区間は 3 枚以上（1〜2 枚の区間は `-c copy` の連結で時刻が乱れる）。`--fps` は MMD が書く

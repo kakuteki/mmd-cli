@@ -82,6 +82,7 @@ MAX_BYTES_PER_PIXEL = 1e6               # no AVI comes near; it keeps the arithm
 MAX_WORKERS = 8                         # each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions)
 PHYSICS_HZ = 60                         # MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ)
 ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
+STAGE_JOBS = 4                          # the processes that draw a stage in the world ("world": true) unless stage_jobs says
 
 
 def _whole(value):
@@ -226,7 +227,9 @@ def check_plan(plan):
     if not isinstance(full["world"], bool):
         raise ValueError("world is true (the look's stage lies in the world: mv_look reads the camera and the dancer) or "
                          "false, not %r" % (full["world"],))
-    full.setdefault("stage_jobs", 1)
+    # 4 processes draw a stage in the world by default (review of stage-world on hinata: 4 cores and under 2 GB while the stage
+    # is drawn, the whole song in 12 to 15 minutes, 3 to 4 times one process)
+    full.setdefault("stage_jobs", STAGE_JOBS if full["world"] else 1)
     if not _whole(full["stage_jobs"]) or full["stage_jobs"] < 1:
         raise ValueError("stage_jobs is the number of processes that draw the stage in the world, from 1, not %r"
                          % (full["stage_jobs"],))
@@ -328,10 +331,11 @@ def _look_check(plan, work, out_fps, encoder, prepare=False, chunks=None, subfra
         line += " --encoder %s" % encoder
     world = _world_args(plan)
     if world:
-        line += " " + " ".join(a if a.startswith("--") else _ps(a) for a in world)
+        line += " " + " ".join(a if a.startswith("--") or a.isdigit() else _ps(a) for a in world)
         if prepare:
-            line += " --subframes %d --shutter %s --from %.6f --to %.6f" % (
-                subframes, shutter, chunks[0]["cut"] / float(FPS), (chunks[-1]["end"] + 1) / float(FPS))
+            # the stage of the chunks only (a preview's chunks lie apart in the song: the frames between them are not drawn)
+            line += " --subframes %d --shutter %s" % (subframes, shutter)
+            line += "".join(" --span %.6f %.6f" % (c["cut"] / float(FPS), (c["end"] + 1) / float(FPS)) for c in chunks)
     return line
 
 
