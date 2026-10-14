@@ -567,10 +567,11 @@ class LayerTest(unittest.TestCase):
 
     def test_heel_up_landing_settles_onto_the_ball_without_a_jump(self):
         # the foot comes down on its tip (pitched 38 degrees) and stays: loaded, its toes bend and the ankle lowers 2.7 cm
-        # until the ball stands on the floor.  That is eased over the frames before the landing: the layer adds less than
-        # 1 cm a frame to the ankle's own motion (all of it in the landing's frame was 2.9 cm)
+        # until the ball stands on the floor.  The merged layer (toe_model v1) eases that over the frames before the
+        # landing, its toes bent up in the air: it adds less than 1 cm a frame to the ankle's own motion (all of it in the
+        # landing's frame was 2.9 cm).  (The anatomical toes settle after the touch: ToeModelTest.)
         lifts = [0.5, 0.4, 0.3, 0.2, 0.1, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(38.0, lifts), frames=len(lifts))
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(38.0, lifts), frames=len(lifts), toe_model="v1")
         a, b = f_in["左"], f_out["左"]
         self.assertGreater(float(b["mtp"][-1] - b["rest_mtp"]), 20.0)                 # the toes bent in the end
         self.assertLess(float(b["ankle"][-1, 1]), float(a["ankle"][-1, 1]) - 0.1)      # the ankle lowered onto the ball
@@ -666,6 +667,213 @@ class LayerTest(unittest.TestCase):
         self.assertAlmostEqual(float(f_out["右"]["ankle"][0, 1] - f_in["右"]["ankle"][0, 1]), 0.0, delta=0.003)
 
 
+def bend(f):
+    """the toes' bend added by 足先EX [F] (degrees, + extension: the toe box turned up against the foot)"""
+    return f["mtp"] - f["rest_mtp"]
+
+
+class ToeModelTest(unittest.TestCase):
+    """the toes (足先EX) of the anatomical model (toe_model "anatomical"): the floor bends them, the air does not; once on
+    its ball a foot stays on it until it leaves; after the toe-off they return over a time; in the air they follow the
+    ankle a little; a still pointed foot just over the floor reaches it with its toes.  "v1" is the merged layer."""
+
+    heel_up_keys = LayerTest.heel_up_keys
+    pointed_over_the_floor = LayerTest.pointed_over_the_floor
+
+    def test_v1_reproduces_the_merged_layer(self):
+        # the keys the merged layer (4ce0cf5) wrote on two scenes, recorded: a heel-up landing that settles onto the ball
+        # (its toes bent up from 3 cm over the floor on), and standing on the ball then lifted into a kick
+        landing = self.heel_up_keys(38.0, [0.5, 0.4, 0.3, 0.2, 0.1, 0.03] + [0.0] * 9)
+        kick = self.heel_up_keys(30.0, [0.0] * 5 + [0.5 * k for k in range(1, 10)])
+        expected = {
+            "landing": ([1.057019, 0.922065, 0.730555, 0.517442, 0.325932, 0.220978] + [0.221012] * 9,
+                        [0.0, 3.49222, 12.63495, 23.936, 33.07874, 36.57095] + [36.57052] * 9),
+            "kick": ([0.234739] * 5 + [0.760424, 1.327668, 1.910785, 2.478029, 3.003713, 3.503713, 4.003713, 4.503713,
+                                       5.003713],
+                     [29.9764] * 5 + [27.11391, 19.61981, 10.35659, 2.86249] + [0.0] * 5)}
+        for name, keys in (("landing", landing), ("kick", kick)):
+            out, plan = foot_layer.layer(RIG, SHOE, motion(*keys), {"toe_model": "v1"})
+            ik = sorted((k.frame, k.position[1]) for k in out.bones if k.name == "左足ＩＫ")
+            ex = sorted((k.frame, k.rotation) for k in out.bones if k.name == "左足先EX")
+            heights, toes = expected[name]
+            self.assertEqual(len(ik), len(heights))
+            for (_, y), want in zip(ik, heights):
+                self.assertAlmostEqual(y, want, delta=2e-5)
+            for (_, q), want in zip(ex, toes):
+                self.assertAlmostEqual(math.degrees(2.0 * math.atan2(q[0], q[3])), want, delta=2e-3)
+
+    def test_toes_do_not_bend_up_before_the_forefoot_lands(self):
+        # the heel-up landing: the foot comes down on its tip (pitched 38 degrees) and stays, loaded.  The toes bend when
+        # the floor bends them: while the shoe is still a centimetre or more over the floor they keep their shape in the
+        # air (the merged layer bent them 3.5 to 33 degrees there, from 3 cm up); standing, the toe box lies on the floor
+        lifts = [0.5, 0.4, 0.3, 0.2, 0.1, 0.03] + [0.0] * 9
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(38.0, lifts), frames=len(lifts), toe_model="anatomical")
+        b = f_out["左"]
+        up = (b["low"] - 0.111) * foot_layer.UNIT_CM >= 1.0
+        self.assertGreater(int(up.sum()), 2)
+        self.assertLess(float(bend(b)[up].max()), 0.5)
+        self.assertGreater(float(bend(b)[-1]), 20.0)                                   # on the ball in the end
+        self.assertLess(abs(float(b["toes_pitch"][-1])), 3.0)
+
+    def test_landing_on_the_tip_settles_onto_the_ball_after_the_touch(self):
+        # the same landing (the tip down at frame 5, pitched 38 degrees, loaded): nothing is added before the touch (the
+        # trace's landing keeps its time), and the ankle comes down onto the ball after it, as the toes are pressed
+        # flat: over three frames or more, the largest frame taking less than half of it, each frame less than the last
+        # (no second push)
+        lifts = [0.5, 0.4, 0.3, 0.2, 0.1, 0.03] + [0.0] * 9
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(38.0, lifts), frames=len(lifts), toe_model="anatomical")
+        a, b = f_in["左"], f_out["左"]
+        added = np.diff(b["ankle"][:, 1]) - np.diff(a["ankle"][:, 1])        # added[t - 1]: from frame t - 1 to t
+        touch = 5
+        self.assertLess(float(np.abs(added[:touch - 1]).max()), 1e-4)            # nothing before the touch
+        total = float(b["ankle"][-1, 1] - a["ankle"][-1, 1])
+        self.assertLess(total, -0.25)                                             # 2 cm or more onto the ball
+        down = -added[touch - 1:]
+        self.assertGreaterEqual(int((down > 0.15 * -total).sum()), 3)
+        self.assertLess(float(down.max()), 0.5 * -total)
+        self.assertTrue(np.all(np.diff(down) <= 1e-4))
+
+    def test_toes_come_down_with_the_heel(self):
+        # standing on the ball (pitched 30 degrees, loaded), then the heel comes down to the floor over two frames and the
+        # foot stands flat: the toe box comes down with the heel, so the tip does not stay up off the floor (the merged
+        # layer kept the toes bent for four frames after, the tip up to 2 cm over the floor in the dance)
+        q30, flat = axis_angle((1, 0, 0), -30.0), (0.0, 0.0, 0.0, 1.0)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        right = key("右足ＩＫ", 0, position=(0, 2.5, 0.8))
+        probe = measure(key("左足ＩＫ", 0, q30, position=(0, 0.5, -0.3)), center, right)["左"]
+        base = 0.5 + 0.111 - float(probe["low"][0])
+        keys = [center, right]
+        for t in range(14):
+            if t <= 5:
+                keys.append(key("左足ＩＫ", t, q30, position=(0, base, -0.3)))
+            elif t >= 8:
+                keys.append(key("左足ＩＫ", t, flat, position=(0, 0.0, -0.3)))
+        f_in, f_out, out, plan = run_layer(*keys, frames=14, toe_model="anatomical")
+        b = f_out["左"]
+        self.assertGreater(float(bend(b)[3]), 20.0)                                    # on the ball first
+        for t in range(9, 14):                                                          # flat on the floor after
+            self.assertLess(abs(float(b["pitch"][t])), 2.0)
+            self.assertLess(abs(float(bend(b)[t])), 1.0)
+            self.assertLess(float(b["low"][t]) - 0.111, 0.01)
+
+    def push_off_keys(self):
+        """the left foot on its ball (pitched 25 degrees, its rigid tip on the trace's floor in the trace), the right foot
+        flat on the floor; the pelvis moves from between them onto the right foot (frames 3 to 10: the left foot's share
+        of the weight falls from a half to some 5 %), then the left foot is lifted from frame 14"""
+        q = axis_angle((1, 0, 0), -25.0)
+        keys = [key("センター", 0, position=(0, -1.2, 0)), key("センター", 3, position=(0, -1.2, 0)),
+                key("センター", 10, position=(-2.0, -1.2, 0)), key("センター", 22, position=(-2.0, -1.2, 0)),
+                key("右足ＩＫ", 0, position=(-1.0, 0.0, 0.0)), key("右足ＩＫ", 22, position=(-1.0, 0.0, 0.0))]
+        probe = measure(key("左足ＩＫ", 0, q, position=(1.0, 0.5, 0.0)), key("センター", 0, position=(0, -1.2, 0)))["左"]
+        base = 0.5 + 0.111 - float(probe["low"][0])
+        keys += [key("左足ＩＫ", 0, q, position=(1.0, base, 0.0)), key("左足ＩＫ", 13, q, position=(1.0, base, 0.0)),
+                 key("左足ＩＫ", 22, q, position=(1.0, base + 3.0, 0.0))]
+        return keys
+
+    def test_a_foot_on_its_ball_stays_on_it_until_it_leaves(self):
+        # the weight moves onto the other foot while the left foot stands on its ball; it pushes off from the ball as a
+        # foot does (the toes flat on the floor until they leave), not rolling up onto the rigid tip of the shoe, which a
+        # foot in loafers cannot stand on: the toe box stays on the floor and the ankle does not rise until the lift (the
+        # merged layer straightened the toes as the share fell: the toe box tipped 25 degrees down onto its rigid tip and
+        # the ankle rose 1.8 cm while the foot stood)
+        f_in, f_out, out, plan = run_layer(*self.push_off_keys(), frames=23, toe_model="anatomical")
+        self.assertGreater(float(plan["左"]["share"][2]), 0.4)
+        self.assertLess(float(plan["左"]["share"][12]), 0.1)
+        b = f_out["左"]
+        for t in range(0, 14):
+            self.assertLess(abs(float(b["toes_pitch"][t])), 3.0)
+            self.assertAlmostEqual(float(b["ankle"][t, 1]), float(b["ankle"][2, 1]), delta=0.03)
+
+    def test_toes_return_over_a_time_after_the_toe_off(self):
+        # lifted off the ball (frame 14 on): the toes are not snapped back in the first frame (a joint does not turn 25
+        # degrees in 33 ms of its own) and are back near their shape in the air a quarter second (8 frames) later
+        f_in, f_out, out, plan = run_layer(*self.push_off_keys(), frames=23, toe_model="anatomical")
+        k = bend(f_out["左"])
+        last, end = 13, float(bend(f_out["左"])[-1])               # the last frame on the floor; 9 frames after it
+        span = float(k[last]) - end
+        self.assertGreater(float(k[last]), 15.0)                                       # on the ball until it leaves
+        self.assertGreater(float(k[last + 1]) - end, 0.4 * span)                       # not snapped back
+        self.assertLess(abs(float(k[last + 8]) - end), 0.15 * span)                    # mostly back by 0.27 s
+        self.assertTrue(np.all(np.diff(k[last:]) < 0.5))                               # one way, no bounce
+
+    def test_toe_box_keeps_the_shoes_shape_in_the_air(self):
+        # in the air, away from the floor, the toe box keeps the shoe's own shape whether the foot is level, pointed or
+        # flexed (no measured angle of relaxed or pointed toes in the air was found, and a loafer hides the toes: what
+        # bends the shoe is the floor)
+        for pitch in (20.0, 0.0, -30.0, -55.0):
+            q = axis_angle((1, 0, 0), pitch)
+            f_in, f_out, out, plan = run_layer(key("左足ＩＫ", 0, q, position=(0, 3.0, -1.0)), key("左足首", 0, q),
+                                               key("センター", 0, position=(0, -1.0, 0)), toe_model="anatomical")
+            self.assertGreater(float(f_out["左"]["low"][0]) - 0.111, 1.0)                # in the air
+            self.assertLess(abs(float(bend(f_out["左"])[0])), 0.5)
+
+    def test_still_pointed_foot_just_over_the_floor_reaches_it_with_its_toes(self):
+        # a still foot pointed 40 degrees whose tip stops 0.8 cm over the floor (the trace's model had longer toes): its
+        # toes bend down so that the shoe's tip is on the floor; the ankle and the foot do not move
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(0.1), toe_model="anatomical",
+                                           toe_reach=foot_layer.TOE_REACH)
+        a, b = f_in["左"], f_out["左"]
+        self.assertAlmostEqual(float(a["low"][0]), 0.111 + 0.1, delta=0.003)
+        self.assertAlmostEqual(float(b["low"][0]), 0.111, delta=0.005)
+        self.assertLess(float(bend(b)[0]), -3.0)
+        self.assertGreater(float(bend(b)[0]), -foot_layer.TOE_FLEX_CAP - 1e-6)
+        self.assertLess(float(np.linalg.norm(b["ankle"][0] - a["ankle"][0])), 0.005)
+        self.assertLess(float(turn_between(a["q_foot"][0], b["q_foot"][0])), 0.3)
+
+    def test_the_reach_is_off_by_default(self):
+        # without asking for it the still pointed foot 0.8 cm over the floor keeps its hover and its shoe's shape
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(0.1))
+        self.assertAlmostEqual(float(f_out["左"]["low"][0]), float(f_in["左"]["low"][0]), delta=0.003)
+        self.assertLess(abs(float(bend(f_out["左"])[0])), 0.5)
+
+    def test_pointed_foot_far_over_the_floor_does_not_reach(self):
+        # 4 cm over the floor: out of the toes' reach; they keep their shape in the air and the shoe stays where it was
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(0.5), toe_model="anatomical",
+                                           toe_reach=foot_layer.TOE_REACH)
+        a, b = f_in["左"], f_out["左"]
+        self.assertGreater(float(b["low"][0]) - 0.111, 0.4)
+        self.assertLess(abs(float(bend(b)[0])), 0.5)
+
+    def test_pointed_foot_swinging_past_does_not_reach(self):
+        # the same 0.8 cm over the floor, but swinging past at 150 cm/s: a step's swing, not a resting toe
+        ik, center = self.pointed_over_the_floor(0.1)
+        x, y, z = ik.position
+        keys = [center] + [key("左足ＩＫ", t, axis_angle((1, 0, 0), -40.0), position=(x, y, z - 0.625 * (t - 3)))
+                           for t in range(7)]
+        f_in, f_out, out, plan = run_layer(*keys, frames=7, toe_model="anatomical", toe_reach=foot_layer.TOE_REACH)
+        self.assertGreater(float(f_out["左"]["low"][3]) - 0.111, 0.05)
+
+    def test_toes_stay_in_their_range_and_above_the_floor(self):
+        # every scene above: the bend inside the toes' range (extension up to the cap less the shoe's own, flexion up to
+        # TOE_FLEX_CAP), the shoe never under the floor, also between the frames as MMD draws them
+        room = foot_layer.REFERENCE["mtp_extension"][1] - foot_layer.HEEL_PITCH_DEG
+        scenes = [self.heel_up_keys(38.0, [0.5, 0.4, 0.3, 0.2, 0.1, 0.03] + [0.0] * 9), self.push_off_keys(),
+                  list(self.pointed_over_the_floor(0.1))]
+        for keys in scenes:
+            m_in = motion(*keys)
+            F = fk.last_frame(m_in) + 1
+            out, plan = foot_layer.layer(RIG, SHOE, m_in, {"toe_model": "anatomical", "toe_reach": foot_layer.TOE_REACH})
+            f = foot_layer.measure_feet(RIG, SHOE, out, range(F))["左"]
+            self.assertLess(float(bend(f).max()), room + 1e-6)
+            self.assertGreater(float(bend(f).min()), -foot_layer.TOE_FLEX_CAP - 1e-6)
+            self.assertGreater(float(f["low"].min()), 0.111 - foot_layer.PEN_TOL)
+            if F > 1:
+                sub = np.arange(0.0, F - 1 + 1e-9, 0.125)
+                sol = leg_ik.solve(RIG, out, sub)
+                low = foot_layer.shell_world(SHOE.sides["左"], sol["左"])[:, :, 1].min(axis=1)
+                self.assertGreater(float(low.min()), 0.111 - foot_layer.PEN_TOL)
+
+    def test_anatomical_toes_touch_only_the_feet(self):
+        q = rolled("左", 15.0)
+        m_in = motion(key("左足ＩＫ", 0, q), key("左足首", 0, q), key("センター", 0, position=(0.1, -0.5, 0.2)),
+                      key("下半身", 0, axis_angle((0, 1, 0), 10.0)), key("左足", 0, axis_angle((0, 1, 0), 5.0)))
+        out, _ = foot_layer.layer(RIG, SHOE, m_in, {"toe_model": "anatomical"})
+        written = {"左足ＩＫ", "右足ＩＫ", "左つま先ＩＫ", "右つま先ＩＫ", "左足首", "右足首", "左足先EX", "右足先EX"}
+        before = sorted((k.name, k.frame, k.position, k.rotation, k.interpolation) for k in m_in.bones if k.name not in written)
+        after = sorted((k.name, k.frame, k.position, k.rotation, k.interpolation) for k in out.bones if k.name not in written)
+        self.assertEqual(before, after)
+
+
 class CommandTest(unittest.TestCase):
     def write_inputs(self, folder):
         src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
@@ -716,6 +924,30 @@ class CommandTest(unittest.TestCase):
             self.assertGreater(between["output"]["L"]["checked"], 0)
             self.assertEqual(between["output"]["L"]["below"], 0)
             self.assertIn("raised_frames", between["layer"]["L"])
+        finally:
+            shutil.rmtree(folder)
+
+    def test_toes_option_and_their_report(self):
+        # --toes picks the toes' model (anatomical by default, v1 the merged layer's), --toe-reach-cm the reach (off by
+        # default); the report has the toes' measures of the input and of the output read back
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            for extra, mode, reach in (([], "anatomical", 0.0), (["--toes", "v1"], "v1", 0.0),
+                                       (["--toe-reach-cm", "2.5"], "anatomical", 2.5)):
+                out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    r = json.load(fh)
+                self.assertEqual(r["toe_model"], mode)
+                self.assertEqual(r["toe_reach_cm"], reach)
+                for which in ("input", "output"):
+                    t = r["toes"][which]["L"]
+                    for k in ("push_off", "on_the_tip_frames", "bent_up_in_the_air", "tip_up_on_the_floor",
+                              "still_pointed_hover", "bend_deg", "bend_step_deg"):
+                        self.assertIn(k, t)
+                self.assertTrue(r["untouched"]["identical"])
         finally:
             shutil.rmtree(folder)
 
