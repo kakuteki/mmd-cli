@@ -118,11 +118,24 @@ def reference_view(size):
 
 
 def camera_track(path):
-    """(keys, frames) of a camera motion: what view_at reads"""
+    """(keys, frames) of a camera motion: what view_at reads.  Every key is looked at here, so that a camera the stage cannot
+    be drawn for stops a render or a prepare before its first frame (View refuses the same while drawing): one that turns
+    about its line of sight (window Z: which way MMD turns the picture has not been measured), one that looks over the top
+    (window X of 90 degrees or more) and an orthographic one (perspective off: the stage is drawn in perspective)"""
     try:
         keys = fk.camera_keys(vmd.load(path))
     except OSError as exc:
         raise ValueError("cannot read the camera motion %s: %s" % (path, exc))
+    for k in keys:
+        roll, tilt = math.degrees(k.rotation[2]), -math.degrees(k.rotation[0])
+        if abs(roll) > 1e-6:
+            raise ValueError("the camera turns about its line of sight (window Z %.3f degrees) at frame %d of %s: the stage in "
+                             "the world does not know which way MMD turns the picture then" % (roll, k.frame, path))
+        if abs(tilt) >= 90.0:
+            raise ValueError("the camera looks over the top (window X %.3f degrees) at frame %d of %s" % (tilt, k.frame, path))
+        if not k.perspective:
+            raise ValueError("the camera is orthographic (perspective off) at frame %d of %s: the stage in the world is drawn "
+                             "in perspective" % (k.frame, path))
     return keys, [k.frame for k in keys]
 
 
@@ -645,45 +658,80 @@ def _slashes(path):
     return path.replace("\\", "/")
 
 
-def _draw(look, size, track, fps, first, count, light_frames, subframes, shutter, figure, pattern):
-    for index in range(int(first), int(first) + int(count)):
-        stage_image(look, size, track, fps, index, light_frames, subframes, shutter, figure).save(pattern % index,
-                                                                                                  compress_level=1)
+def _draw(look, size, track, fps, ranges, light_frames, subframes, shutter, figure, pattern):
+    for first, count in ranges:
+        for index in range(int(first), int(first) + int(count)):
+            stage_image(look, size, track, fps, index, light_frames, subframes, shutter, figure).save(pattern % index,
+                                                                                                      compress_level=1)
+
+
+def merge_spans(spans):
+    """(first, count) stretches of video frames, sorted, with the ones that overlap or touch made one"""
+    merged = []
+    for first, count in sorted((int(f), int(n)) for f, n in spans):
+        if count < 1 or first < 0:
+            raise ValueError("a span of the stage is a first frame from 0 and a count from 1, not %r" % ([first, count],))
+        if merged and first <= merged[-1][0] + merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], first + count - merged[-1][0])
+        else:
+            merged.append([first, count])
+    if not merged:
+        raise ValueError("no span of the stage to draw")
+    return merged
 
 
 def write_stage(look, work, size, fps, track, first, count, light_frames, subframes=1, shutter=1.0, figure=None, jobs=1,
-                sources=None):
+                sources=None, spans=None):
     """the stage of video frames first .. first + count - 1 as WORK/stage/stage_NNNNN.png (the frames of before go first:
-    ffmpeg reads a numbered sequence until a number is missing).  With `jobs` above 1 that many processes of this tool
-    (`draw`) draw a stretch of the frames each, reading the camera motion and the dancer themselves from `sources`
-    ({"camera", "model", "motions"}, the files `track` and `figure` were read from).  Every frame is drawn on its own, so
-    the pictures are the same whatever the jobs"""
+    ffmpeg reads a numbered sequence until a number is missing).  `spans` ((first, count) stretches, in place of first and
+    count) draws those frames only: the chunks of a preview lie apart in the song, and the frames between them are not
+    drawn.  With `jobs` above 1 that many processes of this tool (`draw`) draw a share of the frames each, reading the
+    camera motion and the dancer themselves from `sources` ({"camera", "model", "motions"}, the files `track` and `figure`
+    were read from).  Every frame is drawn on its own, so the pictures are the same whatever the jobs.  The answer:
+    {"pattern", "spans" (merged), "first" (the first frame drawn), "frames" (how many)}"""
+    ranges = merge_spans(spans if spans is not None else [(first, count)])
     folder = os.path.join(work, "stage")
     os.makedirs(folder, exist_ok=True)
     for name in os.listdir(folder):
         if name.startswith("stage_") and name.endswith(".png"):
             os.remove(os.path.join(folder, name))
     pattern = os.path.join(folder, "stage_%05d.png")
-    first, count, jobs = int(first), int(count), max(1, int(jobs))
-    if jobs == 1 or count < 2:
-        _draw(look, size, track, fps, first, count, light_frames, subframes, shutter, figure, pattern)
+    total, jobs = sum(n for _, n in ranges), max(1, int(jobs))
+    if jobs == 1 or total < 2:
+        _draw(look, size, track, fps, ranges, light_frames, subframes, shutter, figure, pattern)
     else:
         if not sources or not sources.get("camera") or (figure is not None and not sources.get("model")):
             raise ValueError("drawing the stage with jobs needs the files it is drawn from: the camera motion and the dancer")
-        _draw_in_jobs(look, size, fps, sources, first, count, light_frames, subframes, shutter, figure is not None, pattern,
+        _draw_in_jobs(look, size, fps, sources, ranges, light_frames, subframes, shutter, figure is not None, pattern,
                       jobs, work)
-    return {"pattern": _slashes(pattern), "first": first, "frames": count}
+    return {"pattern": _slashes(pattern), "first": ranges[0][0], "frames": total, "spans": ranges}
 
 
-def _draw_in_jobs(look, size, fps, sources, first, count, light_frames, subframes, shutter, dancer, pattern, jobs, work):
-    """`draw` in `jobs` processes, a stretch of the frames each (their job files and logs lie in WORK and go afterwards)"""
-    parts = min(jobs, count)
-    edges = [first + count * k // parts for k in range(parts + 1)]
-    running = []
+def _shares(ranges, parts):
+    """the frames of `ranges` cut into `parts` shares of (nearly) the same number of frames, each a list of ranges"""
+    frames = [i for first, count in ranges for i in range(first, first + count)]
+    edges = [len(frames) * k // parts for k in range(parts + 1)]
+    shares = []
     for k in range(parts):
+        mine = frames[edges[k]:edges[k + 1]]
+        share = []
+        for i in mine:
+            if share and i == share[-1][0] + share[-1][1]:
+                share[-1][1] += 1
+            else:
+                share.append([i, 1])
+        shares.append(share)
+    return shares
+
+
+def _draw_in_jobs(look, size, fps, sources, ranges, light_frames, subframes, shutter, dancer, pattern, jobs, work):
+    """`draw` in `jobs` processes, a share of the frames each (their job files and logs lie in WORK and go afterwards)"""
+    parts = min(jobs, sum(n for _, n in ranges))
+    running = []
+    for k, share in enumerate(_shares(ranges, parts)):
         job = {"look": look, "size": [int(size[0]), int(size[1])], "fps": fps, "camera": sources["camera"],
                "model": sources.get("model") if dancer else None, "motions": list(sources.get("motions") or []) if dancer else [],
-               "first": edges[k], "count": edges[k + 1] - edges[k], "light_frames": int(light_frames),
+               "ranges": share, "light_frames": int(light_frames),
                "subframes": int(subframes), "shutter": float(shutter), "pattern": pattern}
         path = os.path.join(work, "stage_job_%d.json" % k)
         with open(path, "w", encoding="utf-8") as f:
@@ -721,16 +769,16 @@ def main(argv=None):
     s.add_argument("--size", default="1280x720")
     s.add_argument("--model", help="the dancer's model, for the pool and the shadows")
     s.add_argument("--motion", action="append", default=[], help="the dancer's motions, in the order MMD loads them")
-    s = sub.add_parser("draw", help="draw a stretch of the frames of a job file (write_stage with jobs runs these)")
+    s = sub.add_parser("draw", help="draw the frames of a job file (write_stage with jobs runs these)")
     s.add_argument("job")
     args = p.parse_args(argv)
     if args.command == "draw":
         with open(args.job, encoding="utf-8") as f:
             job = json.load(f)
         figure = Figure.from_files(job["model"], job["motions"]) if job["model"] else None
-        _draw(job["look"], tuple(job["size"]), camera_track(job["camera"]), job["fps"], job["first"], job["count"],
+        _draw(job["look"], tuple(job["size"]), camera_track(job["camera"]), job["fps"], job["ranges"],
               job["light_frames"], job["subframes"], job["shutter"], figure, job["pattern"])
-        print(json.dumps({"ok": True, "first": job["first"], "frames": job["count"]}))
+        print(json.dumps({"ok": True, "ranges": job["ranges"]}))
         return 0
     try:
         here = os.path.dirname(os.path.abspath(__file__))

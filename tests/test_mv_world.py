@@ -597,6 +597,46 @@ class StageFramesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             mv_world.camera_track(path)
 
+    def test_a_camera_that_rolls_is_orthographic_or_looks_over_the_top_is_refused_when_it_is_read(self):
+        # the stage cannot be drawn for such a key (View refuses it): reading the camera looks at every key, so that a render
+        # or a prepare stops before its first frame is drawn, and says at which frame
+        for change in ({"rot": (0.0, 10.0, 5.0)}, {"perspective": False}, {"rot": (95.0, 0.0, 0.0)}):
+            keys = []
+            for frame in range(61):
+                values = {"distance": 40.0, "pos": (0.0, 12.0, 0.0), "rot": (0.0, 10.0, 0.0), "fov": 30, "perspective": True}
+                if frame == 45:
+                    values.update(change)
+                keys.append(motion_edit.camera_key_from_ui(values, frame=frame))
+            path = os.path.join(self.folder, "odd.vmd")
+            with open(path, "wb") as f:
+                f.write(vmd.dumps(vmd.Motion.for_camera(cameras=keys)))
+            with self.assertRaises(ValueError, msg=change) as caught:
+                mv_world.camera_track(path)
+            self.assertIn("45", str(caught.exception))
+
+    def test_spans_draw_only_their_frames(self):
+        # the chunks of a preview lie apart in the song (tools/mv_chunks.py --workers prepares their stage once): the frames
+        # between them are not drawn.  Spans that overlap or touch are drawn once; jobs draw the same pictures
+        look = world_look()
+        track = mv_world.camera_track(self.camera)
+        lf = mv_look.light_frame_count(look, 30)
+        alone, jobs = os.path.join(self.folder, "alone"), os.path.join(self.folder, "jobs")
+        spans = [(20, 2), (10, 3), (12, 4), (22, 1)]
+        made = mv_world.write_stage(look, alone, SIZE, 30, track, None, None, lf, spans=spans)
+        self.assertEqual(made["spans"], [[10, 6], [20, 3]])
+        self.assertEqual((made["first"], made["frames"]), (10, 9))
+        drawn = ["stage_%05d.png" % n for n in list(range(10, 16)) + [20, 21, 22]]
+        self.assertEqual(sorted(os.listdir(os.path.join(alone, "stage"))), drawn)
+        split = mv_world.write_stage(look, jobs, SIZE, 30, track, None, None, lf, jobs=4, sources={"camera": self.camera},
+                                     spans=spans)
+        self.assertEqual(split["spans"], made["spans"])
+        self.assertEqual(sorted(os.listdir(os.path.join(jobs, "stage"))), drawn)
+        for name in drawn:
+            with open(os.path.join(alone, "stage", name), "rb") as f, open(os.path.join(jobs, "stage", name), "rb") as g:
+                self.assertEqual(f.read(), g.read(), name)
+        with self.assertRaises(ValueError):
+            mv_world.write_stage(look, alone, SIZE, 30, track, None, None, lf, spans=[(10, 0)])
+
 
 if __name__ == "__main__":
     unittest.main()
