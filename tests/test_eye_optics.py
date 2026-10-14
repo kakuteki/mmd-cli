@@ -790,6 +790,22 @@ class OpticsTest(unittest.TestCase):
         self.assertEqual((run_["saccade_in_deg"], run_["saccade_away_deg"]), (10.0, 10.0))
         self.assertAlmostEqual(run_["d90_up_s"], 0.31, delta=0.002)
 
+    def test_the_eyes_open_as_the_saccade_away_starts(self):
+        """a saccade away that starts 3 frames after the look's last frame: until it starts the gaze is still on the
+        hand and the eyes stay together; they open with it"""
+        away = tuple(f - r for f, r in zip(FAR, HAND_REST))
+        hand = {0: away, 27: away, 28: (0.0, 0.0, 0.0), 95: (0.0, 0.0, 0.0), 96: away, 150: away}
+        rep = gaze_report(look(28, 89))
+        rep["saccades"] = {"list": [{"frame": 26, "frames": 2, "reason": "hand", "amplitude": 10.0},
+                                    {"frame": 92, "frames": 2, "reason": "hand_away", "amplitude": 10.0}]}
+        result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150),
+                     looks=eye_optics.gaze_looks(rep))
+        verg = result.trace["vergence"]
+        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        self.assertGreater(min(verg[60:92]), 0.99 * want)         # together until the saccade away starts
+        self.assertLess(verg[93], 0.9 * verg[91])                 # opening with it
+        self.assertEqual(result.report["vergence"]["hand_runs"][0]["fall_at"], 91.0)
+
     def test_the_eyes_meet_at_the_distance_of_the_point_she_aims_at(self):
         # the gaze's report names the point 50 cm along the gaze: the eyes meet there, not on the hand 30 cm off that
         # lies on the gaze too
