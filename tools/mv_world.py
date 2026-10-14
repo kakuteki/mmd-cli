@@ -25,13 +25,16 @@ floor MMD drew was black with nothing under her feet.  Here the same pieces lie 
   the ankles and toes (the IK bones), the pelvis and the centre, by forward kinematics (mmd_cli/fk.py).
 
 A frame of the stage is drawn at the moment of its video frame; with motion blur (the dancer rendered at `subframes` times the
-rate and `shutter` of each frame averaged) the floor is the average of the moments the shutter is open, like the dancer
-(mv_look --subframes 8 --shutter 0.5 averages subframes 0..3), and the rest is drawn at their mean.  The camera follows the
-module docstring of mmd_cli/fk.py; the projection was checked against MMD's own render of the floor (to 0.15 px at two
-frames of the MV's camera, tests/test_mv_world.py).  A camera that turns about its line of sight (window Z) is refused:
-which way MMD turns the picture has not been measured.
+rate and `shutter` of each frame averaged: mv_look --subframes 8 --shutter 0.5 averages subframes 0..3) the camera is the one
+MMD draws those subframes with (view_at: between keys one frame apart MMD keeps the earlier one, so a camera with a key on every
+frame, as all the MV's are, stands still for the 8 subframes and only the dancer moves).  Where the camera does move while the
+shutter is open (keys further apart) the floor is the average of those moments, and the rest is drawn at their mean.  The
+camera follows the module docstring of mmd_cli/fk.py; the projection was checked against MMD's own render of the floor (to
+0.15 px at two frames of the MV's camera, tests/test_mv_world.py).  A camera that turns about its line of sight (window Z) is
+refused: which way MMD turns the picture has not been measured.
 """
 import argparse
+import bisect
 import copy
 import json
 import math
@@ -124,8 +127,14 @@ def camera_track(path):
 
 
 def view_at(track, frame, size):
-    """the camera at `frame` of the song (a fraction falls between two keys, as MMD draws it at a higher rate)"""
+    """the camera at `frame` of the song as MMD draws it at a higher rate: between two keys one frame apart it keeps the
+    earlier key (the camera of a cut, or of a motion with a key on every frame, moves at whole frames only), between keys
+    further apart it follows their curve (fk.camera_at).  Measured on 240 fps renders of the cameras D, A and B and of a
+    camera with keys 2 and 1 frames apart (review of stage-world, R1 and R1b)"""
     keys, frames = track
+    i = bisect.bisect_right(frames, frame)
+    if 0 < i < len(frames) and frames[i] - frames[i - 1] == 1:
+        frame = frames[i - 1]
     return View(fk.camera_at(keys, frame, frames), size)
 
 
@@ -602,8 +611,8 @@ def floor_moves(a, b, half, height=0.0):
 
 def floor_moments(track, times, size, half, height=0.0):
     """the moments the floor is drawn at for a frame whose shutter is open at `times`: all of them when the floor moves
-    SHARP_ENOUGH or more in that time (their average is its motion blur), else only their middle (it is sharp then: on the
-    MV's camera it moves at most 2.6 px, under 1 px in 90 % of the frames)"""
+    SHARP_ENOUGH or more in that time (their average is its motion blur), else only their middle (it is sharp then).  A
+    camera with a key on every frame does not move while the shutter is open (view_at): its floor is drawn once"""
     middle = sum(times) / len(times)
     if len(times) > 1 and floor_moves(view_at(track, times[0], size), view_at(track, times[-1], size), half,
                                       height) >= SHARP_ENOUGH:

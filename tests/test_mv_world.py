@@ -19,6 +19,9 @@ if numpy is not None:
     sys.path.insert(0, ROOT)
     from mmd_cli import fk, motion_edit
     from mmd_cli.formats import vmd
+    from tests.test_fk import build_model, close
+    from tests.test_fk import key as bone_key
+    from tests.test_fk import motion as bone_motion
 
 
 def load(name):
@@ -70,6 +73,11 @@ class ViewTest(unittest.TestCase):
         u, v, _ = view.project([(1.0, 13.0, 0.0), (0.0, 13.0 + 38.0 * math.tan(math.radians(15)), 0.0)])
         self.assertGreater(u[0], 640.0)
         self.assertAlmostEqual(v[1], 0.0, places=6)          # 15 degrees above the axis: the top of a picture 30 degrees tall
+
+    def test_a_camera_that_turns_about_its_line_of_sight_is_refused(self):
+        # which way MMD turns the picture for a roll (window Z) has not been measured: no stage is drawn for it
+        with self.assertRaises(ValueError):
+            mv_world.View(state(angles=(0.0, 0.0, 5.0)), SIZE)
 
     def test_a_ray_goes_through_its_pixel(self):
         view = mv_world.View(state((0.5, 12.0, -8.0), 40.0, (10.0, 22.0, 0.0)), SIZE)
@@ -237,6 +245,59 @@ class LightTest(unittest.TestCase):
         self.assertEqual(one.tobytes(), two.tobytes())
 
 
+# a rig with the bones the shadows and the pool are read from (MMD's X is her left, she faces -Z)
+RIG = (("全ての親", -1, (0.0, 0.0, 0.0), {}), ("センター", 0, (0.0, 8.0, 0.0), {}), ("下半身", 1, (0.0, 10.0, 0.0), {}),
+       ("左足ＩＫ", 0, (1.0, 1.7, 0.0), {}), ("左つま先ＩＫ", 3, (1.0, 0.1, -1.6), {}),
+       ("右足ＩＫ", 0, (-1.0, 1.7, 0.0), {}), ("右つま先ＩＫ", 5, (-1.0, 0.1, -1.6), {}))
+
+
+@unittest.skipUnless(mv_world, "needs Pillow and numpy")
+class FigureTest(unittest.TestCase):
+    """where the shadows and the pool are drawn from: the IK bones of her feet, her lower body and her centre"""
+
+    def setUp(self):
+        self.model = build_model(*RIG)
+
+    def test_the_feet_are_the_ik_bones_and_the_body_is_the_lower_body(self):
+        # by frame 10 the left foot steps 2 forward and lifts 1, and the centre moves 3 to her right
+        dance = bone_motion(bone_key("左足ＩＫ", 0), bone_key("左足ＩＫ", 10, pos=(0.0, 1.0, -2.0)),
+                            bone_key("センター", 0), bone_key("センター", 10, pos=(-3.0, 0.0, 0.0)))
+        state = mv_world.Figure(self.model, dance).state(10)
+        (left_ankle, left_toe), (right_ankle, right_toe) = state.feet
+        close(self, left_ankle, (1.0, 2.7, -2.0))
+        close(self, left_toe, (1.0, 1.1, -3.6))                 # the toe IK goes with the leg IK, its parent
+        close(self, right_ankle, (-1.0, 1.7, 0.0))
+        close(self, right_toe, (-1.0, 0.1, -1.6))
+        close(self, state.pelvis, (-3.0, 10.0, 0.0))            # the lower body, not the centre 2 below it
+
+    def test_the_pool_follows_the_centre_averaged_over_90_frames(self):
+        # the centre steps 9 to her left at frame 45: the pool is there by half at that frame and wholly 45 frames later
+        dance = bone_motion(bone_key("センター", 0), bone_key("センター", 44), bone_key("センター", 45, pos=(9.0, 0.0, 0.0)),
+                            bone_key("センター", 200, pos=(9.0, 0.0, 0.0)))
+        figure = mv_world.Figure(self.model, dance)
+        self.assertAlmostEqual(figure.state(45).centre[0], 9.0 * 46 / 91, places=6)
+        self.assertAlmostEqual(figure.state(150).centre[0], 9.0, places=6)
+        self.assertAlmostEqual(figure.state(0).centre[0], 0.0, places=6)
+
+    def test_the_height_of_a_foot_on_the_floor_is_the_low_end_of_the_song(self):
+        # on the floor for 30 frames, a unit up for 70: the feet's rest is the height on the floor, not the typical one
+        keys = [bone_key(name, f, pos=(0.0, 0.0 if f < 30 else 1.0, 0.0)) for name in ("左足ＩＫ", "右足ＩＫ") for f in range(100)]
+        figure = mv_world.Figure(self.model, bone_motion(*keys))
+        close(self, figure.rest, (1.7, 0.1))
+
+    def test_a_later_motion_replaces_the_keys_of_an_earlier_one_on_the_same_frame(self):
+        # as MMD reads motions one after another (the feet a later layer moved are the ones on the floor)
+        dance = bone_motion(bone_key("左足ＩＫ", 0), bone_key("左足ＩＫ", 10, pos=(0.0, 0.0, -2.0)))
+        later = bone_motion(bone_key("左足ＩＫ", 10, pos=(0.0, 0.0, -5.0)))
+        figure = mv_world.Figure(self.model, mv_world.merge_motions([dance, later]))
+        close(self, figure.state(10).feet[0][0], (1.0, 1.7, -5.0))
+        close(self, figure.state(0).feet[0][0], (1.0, 1.7, 0.0))
+
+    def test_a_model_without_the_bones_is_refused(self):
+        with self.assertRaises(ValueError):
+            mv_world.Figure(build_model(*RIG[:5]), bone_motion(bone_key("センター", 0)))
+
+
 class FakeFigure:
     """feet planted or lifted where a test puts them (what Figure.state gives: ankle and toe of each foot, pelvis, centre)"""
 
@@ -383,16 +444,17 @@ class FloorTest(unittest.TestCase):
         self.assertLess(float(numpy.abs(rab * cab[..., None] - both).max()), 1e-6)
 
 
-def camera_file(folder, shots):
-    """a camera motion with a key on every frame: shots are (first, last, Y angle at first, Y angle at last)"""
+def camera_file(folder, shots, step=1, name="camera.vmd"):
+    """a camera motion with a key on every `step`-th frame (every frame by default, as the MV's cameras): shots are (first,
+    last, Y angle at first, Y angle at last)"""
     keys = []
     for first, last, y0, y1 in shots:
-        for frame in range(first, last + 1):
+        for frame in list(range(first, last, step)) + [last]:
             t = (frame - first) / float(max(1, last - first))
             values = {"distance": 40.0, "pos": (0.0, 12.0, 0.0), "rot": (0.0, y0 + (y1 - y0) * t, 0.0), "fov": 30,
                       "perspective": True}
             keys.append(motion_edit.camera_key_from_ui(values, frame=frame))
-    path = os.path.join(folder, "camera.vmd")
+    path = os.path.join(folder, name)
     with open(path, "wb") as f:
         f.write(vmd.dumps(vmd.Motion.for_camera(cameras=keys)))
     return path
@@ -410,10 +472,21 @@ class StageFramesTest(unittest.TestCase):
         view = mv_world.view_at(track, 30, SIZE)
         expect = fk.camera_position(fk.camera_at(fk.camera_keys(vmd.load(self.camera)), 30))
         self.assertLess(max(abs(a - b) for a, b in zip(view.eye, expect)), 1e-9)
-        half = mv_world.view_at(track, 30.5, SIZE)                          # between two keys: a straight line
-        later = mv_world.view_at(track, 31, SIZE)
-        mid = [(a + b) / 2 for a, b in zip(view.forward, later.forward)]
-        self.assertLess(max(abs(a - b) for a, b in zip(half.forward, mid)), 1e-3)
+
+    def test_between_keys_one_frame_apart_mmd_keeps_the_earlier_one(self):
+        # measured on 240 fps renders (review of stage-world, R1 and R1b): MMD does not move the camera between two keys one
+        # frame apart (the MV's cameras have a key on every frame), and follows the curve between keys further apart
+        track = mv_world.camera_track(self.camera)
+        here, later = mv_world.view_at(track, 30, SIZE), mv_world.view_at(track, 31, SIZE)
+        for t in (30.125, 30.5, 30.875):
+            self.assertLess(float(numpy.abs(mv_world.view_at(track, t, SIZE).forward - here.forward).max()), 1e-12, t)
+        self.assertGreater(float(numpy.abs(later.forward - here.forward).max()), 1e-3)
+        sparse = mv_world.camera_track(camera_file(self.folder, [(0, 60, -20.0, 20.0)], step=2, name="sparse.vmd"))
+        a, b = mv_world.view_at(sparse, 30, SIZE), mv_world.view_at(sparse, 32, SIZE)
+        mid = (a.forward + b.forward) / 2                                    # keys two frames apart: a straight line
+        half = mv_world.view_at(sparse, 31, SIZE).forward
+        self.assertLess(float(numpy.abs(half / numpy.linalg.norm(half) - mid / numpy.linalg.norm(mid)).max()), 1e-3)
+        self.assertGreater(float(numpy.abs(half - a.forward).max()), 1e-3)
 
     def test_frames_are_numbered_by_the_frame_of_the_video_and_cover_the_excerpt(self):
         look = world_look()
@@ -457,7 +530,8 @@ class StageFramesTest(unittest.TestCase):
         self.assertEqual(mv_world.moments(30, 30), [30.0])
 
     def test_a_floor_that_moves_under_a_pixel_while_the_shutter_is_open_is_drawn_once_in_the_middle(self):
-        track = mv_world.camera_track(self.camera)
+        # keys two frames apart: MMD moves the camera between them
+        track = mv_world.camera_track(camera_file(self.folder, [(0, 60, -20.0, 20.0)], step=2, name="sparse.vmd"))
         times = mv_world.moments(30, 30, 8, 0.5)
         small, big = (160, 90), (1280, 720)          # the same 0.25 degrees of orbit: 0.6 px on the small picture, 4.8 on the big
         moves = [mv_world.floor_moves(mv_world.view_at(track, times[0], s), mv_world.view_at(track, times[-1], s), 60.0)
@@ -467,10 +541,22 @@ class StageFramesTest(unittest.TestCase):
         self.assertEqual(mv_world.floor_moments(track, times, small, 60.0), [30.1875])
         self.assertEqual(mv_world.floor_moments(track, times, big, 60.0), times)
 
+    def test_a_camera_with_a_key_on_every_frame_gives_one_sharp_floor_at_the_frame(self):
+        # the MV's cameras: MMD draws the 8 subframes with the frame's camera, so the floor under her feet is the frame's
+        track = mv_world.camera_track(self.camera)
+        times = mv_world.moments(30, 30, 8, 0.5)
+        size = (1280, 720)
+        self.assertEqual(mv_world.floor_moments(track, times, size, 60.0, 0.111), [30.1875])
+        look = world_look(floor_y=0.111)
+        drawn = mv_world.floor([mv_world.view_at(track, 30.1875, size)], look, size)
+        at_frame = mv_world.floor([mv_world.view_at(track, 30, size)], look, size)
+        self.assertEqual(drawn[0].tobytes(), at_frame[0].tobytes())
+        self.assertEqual(drawn[1].tobytes(), at_frame[1].tobytes())
+
     def test_a_floor_drawn_at_several_moments_is_their_average_in_the_frame(self):
         look = world_look(radius=0.0)
         bare = world_look(radius=0.0, floor=0)
-        track = mv_world.camera_track(self.camera)
+        track = mv_world.camera_track(camera_file(self.folder, [(0, 60, -20.0, 20.0)], step=2, name="sparse.vmd"))
         lf = mv_look.light_frame_count(look, 30)
         size = (1280, 720)
         times = mv_world.moments(30, 30, 8, 0.5)
