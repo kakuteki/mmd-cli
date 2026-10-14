@@ -101,6 +101,12 @@ def luma(mp4, size=SIZE):
     return [numpy.frombuffer(raw[i * w * h:(i + 1) * w * h], dtype=numpy.uint8).reshape(h, w) for i in range(len(raw) // (w * h))]
 
 
+def digests(frames):
+    """the frames as SHA-256: unittest's diff of two lists of frame bytes runs for many minutes when they differ (review of
+    fold-phase: a broken fold then looked like a hung test)"""
+    return [hashlib.sha256(f.tobytes()).hexdigest() for f in frames]
+
+
 def half_covered(frame, row, a=150, b=None):
     """the pixels of a row that are neither the black stage nor the white cloth: the edges of a copy seen through another"""
     line = frame[row, a:b].astype(int)
@@ -159,7 +165,7 @@ class PhysicsAlignRenderTest(unittest.TestCase):
                                     [half_covered(f, CLOTH_ROW) for f in default])
                 else:
                     self.assertEqual([half_covered(f, CLOTH_ROW) for f in default], [0] * 12)
-                    self.assertEqual([f.tobytes() for f in aligned], [f.tobytes() for f in default])
+                    self.assertEqual(digests(aligned), digests(default))
                 # the body is still blurred: 4 copies 1 px apart give its bright edge 3 half covered pixels
                 self.assertTrue(all(half_covered(f, BODY_ROW, 0, 320) >= 2 for f in aligned))
                 physics = result["physics"]
@@ -179,7 +185,7 @@ class PhysicsAlignRenderTest(unittest.TestCase):
         aligned, result = self.fold(fg, "still_aligned", 8, "--physics-align")
         self.assertIsNone(result["physics"]["residue"], result)
         self.assertEqual(result["physics"]["segments"], [[0, None, 0]])
-        self.assertEqual([f.tobytes() for f in aligned], [f.tobytes() for f in default])
+        self.assertEqual(digests(aligned), digests(default))
 
     def test_480_fps_holds_one_step_in_8_of_16_subframes(self):
         fg = self.dancer("r5_480", 480, 128, every(8, 5, 128))
@@ -206,7 +212,7 @@ class PhysicsAlignRenderTest(unittest.TestCase):
                 self.assertTrue(all(abs(solid(f) - 40) <= 1 for f in aligned), [solid(f) for f in aligned])
                 self.assertEqual(result["physics"]["segments"], [[0, residue, shift]])
                 if shift == 0:
-                    self.assertEqual([f.tobytes() for f in aligned], [f.tobytes() for f in default])
+                    self.assertEqual(digests(aligned), digests(default))
                 else:
                     self.assertTrue(all(half_covered(f, CLOTH_ROW) >= 3 for f in default))
 
@@ -303,6 +309,43 @@ class PhysicsShiftTest(unittest.TestCase):
         shift = mv_look.window_shift(1, 8, 6, 4)
         steps = every(4, 1, 64)
         self.assertEqual(sum(1 for j in range(1, 6) if shift + j in steps), 1)
+
+
+@unittest.skipUnless(mv_look, "needs numpy and Pillow")
+class PhysicsReadingTest(unittest.TestCase):
+    """the reading itself, on counts made by hand: which pixels are lone, which windows cannot tell, and how the windows that
+    cannot tell (the cloth at rest) are filled.  Review of fold-phase: none of these rules failed a test when broken"""
+
+    def test_a_pixel_that_moves_on_one_frame_alone_is_lone_and_one_that_moves_on_two_in_a_row_is_not(self):
+        a = numpy.zeros((1, 1, 4), numpy.uint8)
+        b, c = a.copy(), a.copy()
+        b[0, 0, 0], c[0, 0, 0] = 100, 200
+        self.assertEqual(mv_look.lone_counts([a, a, b, b, b]), ([0, 0, 1, 0, 0], [0, 0, 1, 0, 0]))
+        # moved into frame 1 and into frame 2: lone on neither, half lone (still on one side) on both
+        self.assertEqual(mv_look.lone_counts([a, b, c, c, c]), ([0, 0, 0, 0, 0], [0, 1, 1, 0, 0]))
+
+    def test_a_window_whose_two_best_residues_tie_cannot_tell(self):
+        # two song frames of 8 subframes (the step every 4th), 4 times: residues 1 and 2 as lone as each other
+        self.assertEqual(mv_look.physics_residues([0, 30, 30, 0, 0, 30, 30, 0] * 4, 4, 32), [None])
+        self.assertEqual(mv_look.physics_residues([0, 90, 30, 0, 0, 90, 30, 0] * 4, 4, 32), [1])
+
+    def test_a_window_with_hardly_any_lone_pixel_cannot_tell(self):
+        self.assertEqual(mv_look.physics_residues([0, 1, 0, 0, 0, 1, 0, 0] * 4, 4, 32), [None])
+
+    def test_windows_before_the_first_one_that_can_tell_take_its_residue(self):
+        # as p2_240 of the branch's e2 (window 0 could not tell): left unaligned, its frames would fold the step in
+        self.assertEqual(mv_look.physics_segments([None, None, 3, 3], 32, 8), [(0, 3)])
+
+    def test_a_window_that_cannot_tell_takes_the_residue_before_it(self):
+        self.assertEqual(mv_look.physics_segments([1, 1, None, 1, None, None, 1], 32, 8), [(0, 1)])
+
+    def test_one_window_between_two_that_agree_takes_theirs(self):
+        self.assertEqual(mv_look.physics_segments([2, 2, 0, 2, 2], 32, 8), [(0, 2)])
+
+    def test_a_change_held_for_two_windows_starts_a_segment_at_its_first_window(self):
+        self.assertEqual(mv_look.physics_segments([1, 1, 3, 3, 3], 32, 8), [(0, 1), (8, 3)])
+        # at 60 fps (4 subframes) a window of 32 frames of the dancer is 8 output frames
+        self.assertEqual(mv_look.physics_segments([1, 1, 3, 3, 3], 32, 4), [(0, 1), (16, 3)])
 
 
 @unittest.skipUnless(mv_look, "needs numpy and Pillow")
