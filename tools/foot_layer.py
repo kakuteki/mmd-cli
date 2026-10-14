@@ -636,6 +636,7 @@ TOE_REACH = 0.3125              # units (2.5 cm), when asked (--toe-reach-cm; of
                                 # first 18.5 s of the right foot would hold its toe box bent down 17 to 20 degrees)
 TOE_REACH_SPEED = (10.0, 20.0)  # cm/s: a foot moving faster than the first reaches less and less, faster than the second
                                 # not at all (a resting toe stays; a step's swing skims past)
+TOE_REACH_RISE = (1.0, 3.0)     # cm/s up: a foot rising off the floor (after a toe-off) does not reach back for it
 TOE_REACH_PITCH = (5.0, 10.0)   # degrees toes-down: a level foot over the floor does not reach, a pointed one does
 TOE_REACH_TAU = 2.0             # frames: the reach comes and goes this smoothly (a first order run both ways)
 
@@ -900,13 +901,23 @@ def toe_bend(o, f, leg, q, rest, v, loaded, p, floor_y):
     down = np.asarray(v) >= 0.5
     gate = damped_up(run_cummax(np.asarray(v) * np.asarray(loaded), down), TOE_LOAD_TAU)
     air = np.zeros(len(q))                                                    # the shoe's own shape
-    b = release(gate * flat, air, down, TOE_RELEASE_TAU)
+    # the floor bends them as far as the foot is on it (v, the band of heights over the floor): a foot rising out of the
+    # band at a lift-off lets its toes go with the lowering the heights let go by the same v (bent but only partly
+    # lowered, the shoe would float with its toes bent up)
+    b = release(np.asarray(v) * gate * flat, air, down, TOE_RELEASE_TAU)
     # where the foot is off the floor the layer leaves its height to the trace (but for the floor's shift)
     ankle = leg["ankle"] + np.array([0.0, floor_y - o.floor, 0.0])
     off = ~down
     if p.get("toe_reach", 0.0) > 0.0 and off.any():
         gap = shell_low(o, ankle, q, b) - floor_y
+        y = f["ankle"][:, 1]
+        rise = np.zeros(len(y))                                   # cm/s up, the larger of the steps into and out of a frame
+        if len(y) > 1:
+            step = np.diff(y) * FPS * UNIT_CM
+            rise[1:] = step
+            rise[:-1] = np.maximum(rise[:-1], step)
         weight = (off & (gap > 0.0)) * (1.0 - smoothstep(foot_speed(f, vertical=True), *TOE_REACH_SPEED)) \
+            * (1.0 - smoothstep(rise, *TOE_REACH_RISE)) \
             * smoothstep(-pitch, *TOE_REACH_PITCH) * (1.0 - smoothstep(gap, 0.8 * p["toe_reach"], p["toe_reach"]))
         idx = np.flatnonzero(weight > 0.0)
         reach = np.zeros(len(b))

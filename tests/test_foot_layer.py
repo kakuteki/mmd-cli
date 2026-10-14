@@ -843,6 +843,86 @@ class ToeModelTest(unittest.TestCase):
         f_in, f_out, out, plan = run_layer(*keys, frames=7, toe_model="anatomical", toe_reach=foot_layer.TOE_REACH)
         self.assertGreater(float(f_out["左"]["low"][3]) - 0.111, 0.05)
 
+    def test_the_reach_stops_at_its_cap(self):
+        # 1.6 cm over the floor, pointed 40 degrees: the tip would need some 28 degrees of the toes; they bend as far as
+        # TOE_FLEX_CAP and the rest of the hover stays (the ankle and the foot do not move to close it)
+        f_in, f_out, out, plan = run_layer(*self.pointed_over_the_floor(0.2), toe_model="anatomical",
+                                           toe_reach=foot_layer.TOE_REACH)
+        a, b = f_in["左"], f_out["左"]
+        self.assertAlmostEqual(float(bend(b)[0]), -foot_layer.TOE_FLEX_CAP, delta=0.5)
+        self.assertGreater(float(b["low"][0]) - 0.111, 0.01)
+        self.assertLess(float(np.linalg.norm(b["ankle"][0] - a["ankle"][0])), 0.005)
+
+    def test_the_reach_never_bends_the_toes_into_the_floor(self):
+        # a still pointed foot 1.2 cm over the floor comes down slowly (7 cm/s) to 0.7 cm and stays: the reach is eased
+        # in and out over frames, so it carries the deeper bend of the higher frames onto the lower ones; there the bend
+        # stops where the shoe's tip meets the floor, and the ankle stays where the trace has it (bent into the floor, the
+        # heights would lift the foot out of it: 1.8 mm here)
+        q = axis_angle((1, 0, 0), -40.0)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        probe = measure(key("左足ＩＫ", 0, q, position=(0, 0.5, -0.3)), center)["左"]
+        keys = [center]
+        for t in range(18):
+            above = max(0.0875, 0.15 - 0.03 * max(0, t - 7))
+            keys.append(key("左足ＩＫ", t, q, position=(0, 0.5 + 0.111 + above - float(probe["low"][0]), -0.3)))
+        f_in, f_out, out, plan = run_layer(*keys, frames=18, toe_model="anatomical", toe_reach=foot_layer.TOE_REACH)
+        a, b = f_in["左"], f_out["左"]
+        self.assertLess(float(bend(b)[12]), -8.0)                                    # reaching
+        self.assertLess(float(np.abs(b["ankle"][:, 1] - a["ankle"][:, 1]).max()), 0.002)
+        self.assertGreater(float(b["low"].min()), 0.111 - foot_layer.PEN_TOL)
+        sub = np.arange(0.0, 17.0 + 1e-9, 0.125)
+        low = foot_layer.shell_world(SHOE.sides["左"], leg_ik.solve(RIG, out, sub)["左"])[:, :, 1].min(axis=1)
+        self.assertGreater(float(low.min()), 0.111 - foot_layer.PEN_TOL)
+
+    def test_a_foot_rising_off_its_ball_leaves_the_frames_on_the_floor_on_it(self):
+        # standing on the ball (pitched 30 degrees, lowered onto it), then rising slowly (0.24 cm a frame): the lowering
+        # is let go over the frames after the lift and the toes return, so the tip of the first frames in the air would
+        # go under the floor and is raised; that raise does not reach back into the frames still on the floor (they stay
+        # exactly on it, not lifted off it)
+        lifts = [0.0] * 6 + [0.03 * k for k in range(1, 9)]
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(30.0, lifts), frames=len(lifts), toe_model="anatomical")
+        b = f_out["左"]
+        for t in range(7):                                                       # (frame 6 is 0.24 cm up: on the floor)
+            self.assertAlmostEqual(float(b["low"][t]), 0.111, delta=0.003)
+        self.assertGreater(float(b["low"].min()), 0.111 - foot_layer.PEN_TOL)
+        # its toes go with the foot rising out of the band of heights over the floor (the floor bends them as far as the
+        # foot is on it): not bent up in a shoe that is only partly let down
+        k = bend(b)
+        self.assertLess(float(k[7]), 0.75 * float(k[6]))
+
+    def test_a_foot_rising_off_the_floor_does_not_reach_back_for_it(self):
+        # the same slow rise with the reach asked for: a foot pointed 30 degrees just over the floor and slower than the
+        # reach's speed, but rising: its toes are not bent down toward the floor it is leaving
+        lifts = [0.0] * 6 + [0.03 * k for k in range(1, 9)]
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(30.0, lifts), frames=len(lifts), toe_model="anatomical",
+                                           toe_reach=foot_layer.TOE_REACH)
+        self.assertGreater(float(bend(f_out["左"])[7:].min()), -0.5)
+
+    def test_a_new_touch_starts_without_the_last_ones_weight(self):
+        # the left foot on its ball bearing the weight (the right one lifted), lifted for three frames, then touching the
+        # floor out to the side on its tip while the right foot stands under the body: the new touch bears little, so
+        # its toes are not bent (the weight of the last contact does not carry into the next one)
+        q = axis_angle((1, 0, 0), -30.0)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        probe = measure(key("左足ＩＫ", 0, q, position=(0, 0.5, -0.3)), center)["左"]
+        base = 0.5 + 0.111 - float(probe["low"][0])
+        keys = [center, key("右足ＩＫ", 0, position=(0, 2.5, 0.8)), key("右足ＩＫ", 6, position=(0, 2.5, 0.8)),
+                key("右足ＩＫ", 8, position=(0, 0.0, 0.0)), key("右足ＩＫ", 16, position=(0, 0.0, 0.0))]
+        side = measure(key("左足ＩＫ", 0, q, position=(3.5, 0.5, -0.3)), center)["左"]
+        out_base = 0.5 + 0.111 - float(side["low"][0])
+        for t in range(17):
+            if t <= 5:
+                keys.append(key("左足ＩＫ", t, q, position=(0, base, -0.3)))
+            elif t <= 8:
+                keys.append(key("左足ＩＫ", t, q, position=(1.2 * (t - 5), base + 0.6, -0.3)))
+            else:
+                keys.append(key("左足ＩＫ", t, q, position=(3.5, out_base, -0.3)))
+        f_in, f_out, out, plan = run_layer(*keys, frames=17, toe_model="anatomical")
+        self.assertGreater(float(bend(f_out["左"])[3]), 20.0)                       # on its ball first
+        self.assertLess(float(plan["左"]["share"][12]), 0.15)                         # the new touch bears little
+        for t in range(9, 17):
+            self.assertLess(float(bend(f_out["左"])[t]), 1.0)
+
     def test_toes_stay_in_their_range_and_above_the_floor(self):
         # every scene above: the bend inside the toes' range (extension up to the cap less the shoe's own, flexion up to
         # TOE_FLEX_CAP), the shoe never under the floor, also between the frames as MMD draws them
