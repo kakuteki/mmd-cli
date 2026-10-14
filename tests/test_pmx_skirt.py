@@ -51,7 +51,8 @@ def toy_bytes(rows=3, cols=4, limit=10.0, ring=True):
     for r in range(rows):
         for c in range(cols):
             body[(r, c)] = len(rigids)
-            rigids.append(rigid_bytes(w, "スカート_%d_%d" % (r, c), index[(r, c)], mass=0.1 - 0.02 * r))
+            rigids.append(rigid_bytes(w, "スカート_%d_%d" % (r, c), index[(r, c)], mass=0.1 - 0.02 * r,
+                                      size=(0.3 + 0.1 * r, 0.4, 0.1)))
     joints = [joint_bytes(w, "髪", 0, 1, rotate=((rad(-30), rad(-30), rad(-30)), (rad(30), rad(30), rad(30))))]
     for r in range(rows):
         for c in range(cols):
@@ -156,8 +157,50 @@ class ApplyTest(unittest.TestCase):
         self.assertAlmostEqual(one["old"], 0.08, 6)
         self.assertAlmostEqual(one["new"], 0.15, 6)
 
+    def test_mass_by_fabric_area(self):
+        report = skirt.apply(self.doc, {"mass_area": 0.1})
+        bodies, _ = by_name(self.doc)
+        for r, expect in enumerate((0.1, 0.1 * 0.4 / 0.3, 0.1 * 0.5 / 0.3)):          # the face 0.3 + 0.1 r wide, 0.4 high
+            for c in range(4):
+                self.assertAlmostEqual(bodies["スカート_%d_%d" % (r, c)].mass, expect, 6)
+        self.assertEqual(sum(1 for c in report["changes"] if c["field"] == "mass"), 12)
+        with self.assertRaises(ValueError):
+            skirt.apply(pmx_edit.loads(self.data), {"mass_area": 0.1, "mass": [0.1, 0.1, 0.1]})
+
+    def test_ceilings_hold_every_lower_end_below_a_line_from_the_waist(self):
+        before = len(pmx_edit.joints(self.doc))
+        report = skirt.apply(self.doc, {"ceiling": 80.0})
+        js = pmx_edit.joints(self.doc)
+        self.assertEqual(len(js), before + 12)
+        names = [pmx_edit.rigid_names(self.doc, rb)[0] for rb in self.doc.rigid_bodies]
+        bones = {b.name: b.position for b in self.doc.bones}
+        new = {j.name: j for j in js[before:]}
+        self.assertEqual(len(new), 12)
+        step = math.hypot(DR, DY)
+        for r in range(3):
+            for c in range(4):
+                j = new["スカート天井_%d_%d" % (r, c)]
+                self.assertEqual((names[j.a], names[j.b]), ("上半身", "スカート_%d_%d" % (r, c)))
+                low = bones["スカート_%d_%d" % (r + 1, c)]
+                self.assertTrue(all(abs(a - b) < 1e-6 for a, b in zip(j.position, low)))
+                self.assertEqual(j.rotation, (0.0, 0.0, 0.0))
+                ring_y = bones["スカート_0_%d" % c][1]
+                ceiling = ring_y - math.cos(math.radians(80.0)) * step * (r + 1)
+                self.assertAlmostEqual(j.move_upper[1], ceiling - low[1], 5)
+                self.assertGreater(j.move_upper[1], 0.0)
+                self.assertLessEqual(j.move_lower[1], -50.0)
+                self.assertTrue(all(lo > hi for lo, hi in zip(j.rotate_lower, j.rotate_upper)))     # turning: free
+                self.assertEqual((j.spring_move, j.spring_rotate), ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+        self.assertEqual(len(report["added"]), 12)
+        model = pmx.loads(pmx_edit.dumps(self.doc))
+        self.assertEqual(model.counts["joints"], before + 12)
+        again = pmx_edit.loads(pmx_edit.dumps(self.doc))
+        with self.assertRaises(ValueError):                    # a second time: the ceilings are there already
+            skirt.apply(again, {"ceiling": 80.0})
+
     def test_bad_recipes_are_refused(self):
-        for bad in ({"mass": [0.1, 0.1]}, {"damping": [0.5]}, {"limit_scale": -1.0}, {"reach": 0.0}, {"nonsense": 1}):
+        for bad in ({"mass": [0.1, 0.1]}, {"damping": [0.5]}, {"limit_scale": -1.0}, {"reach": 0.0}, {"nonsense": 1},
+                    {"ceiling": 95.0}, {"mass_area": 0.0}):
             with self.assertRaises(ValueError, msg=bad):
                 skirt.apply(pmx_edit.loads(self.data), bad)
         doc = pmx_edit.loads(toy_bytes(ring=False))

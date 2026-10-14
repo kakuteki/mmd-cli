@@ -3,7 +3,8 @@ that hang them (rotation limits, rotation springs) and the ring joints between n
 limits).  Everything else is kept byte for byte (formats.pmx_edit).
 
     python tools/pmx_skirt.py MODEL.pmx OUT.pmx [--report r.json] [--limit-scale S] [--reach DEG] [--spring-scale K]
-                              [--ring-rotate DEG] [--ring-move-scale S] [--mass M0 .. Mn] [--damping LINEAR ANGULAR]
+                              [--ring-rotate DEG] [--ring-move-scale S] [--mass M0 .. Mn | --mass-area M]
+                              [--damping LINEAR ANGULAR] [--ceiling DEG]
 
 The skirt (Sour's Rin: 7 rows x 16 columns): rigid bodies named スカート_row_col, each hung from the body above it (row
 0: from the trunk) by the joint of the same name, and joined to the next column by スカート横_row_col.  Bones named
@@ -18,7 +19,12 @@ Recipe (each optional):
   --ring-rotate DEG   the ring joints' rotation limits set to -DEG .. +DEG on all three axes
   --ring-move-scale S the ring joints' translation limits times S
   --mass M0 .. Mn     the skirt bodies' masses by row
+  --mass-area M       every skirt body's mass in proportion to the area of its box's broad face (the fabric it stands
+                      for), M for the mean face of the top row
   --damping LIN ANG   the skirt bodies' linear and angular damping
+  --ceiling DEG       a joint per skirt body from the trunk (the body the column's top joint hangs from) on the body's
+                      lower end, free but for a ceiling in the trunk's frame: the column's waist point less cos(DEG) times
+                      the chain's rest length down to that point (a straight column could tilt to DEG and no further)
 
 The copy is for this work only and is not to be distributed (Sour's ReadMe allows editing; distribution would need the
 ReadMe and an editor's ReadMe).
@@ -37,7 +43,9 @@ from mmd_cli.formats import pmx_edit  # noqa: E402
 
 NAME = re.compile(r"^スカート_(\d+)_(\d+)$")
 RING = re.compile(r"^スカート横_(\d+)_(\d+)$")
-KEYS = ("limit_scale", "reach", "spring_scale", "ring_rotate", "ring_move_scale", "mass", "damping")
+CEILING = "スカート天井_%d_%d"
+KEYS = ("limit_scale", "reach", "spring_scale", "ring_rotate", "ring_move_scale", "mass", "mass_area", "damping", "ceiling")
+FREE = 100.0                    # a translation range never reached (model units)
 
 
 @dataclass
@@ -118,6 +126,13 @@ def _check(recipe, skirt):
         raise ValueError("ring_rotate must lie between 0 and 180 degrees")
     if recipe.get("mass") is not None and (len(recipe["mass"]) != skirt.rows or min(recipe["mass"]) <= 0.0):
         raise ValueError("mass needs %d positive values, one per row" % skirt.rows)
+    if recipe.get("mass_area") is not None:
+        if not recipe["mass_area"] > 0.0:
+            raise ValueError("mass_area must be positive")
+        if recipe.get("mass") is not None:
+            raise ValueError("give mass or mass_area, not both")
+    if recipe.get("ceiling") is not None and not 0.0 < recipe["ceiling"] < 90.0:
+        raise ValueError("ceiling must lie between 0 and 90 degrees")
     if recipe.get("damping") is not None and (len(recipe["damping"]) != 2 or not all(0.0 <= d <= 1.0 for d in recipe["damping"])):
         raise ValueError("damping needs two values (linear, angular) between 0 and 1")
     if (recipe.get("ring_rotate") is not None or recipe.get("ring_move_scale") is not None) and not skirt.ring:
@@ -175,8 +190,17 @@ def apply(doc, recipe):
             k = recipe["ring_move_scale"]
             joint(j, "move_lower", [v * k for v in j.move_lower])
             joint(j, "move_upper", [v * k for v in j.move_upper])
-    if changes:
+    added = []
+    if recipe.get("ceiling") is not None:
+        added = _ceilings(doc, s, js, recipe["ceiling"])
+    if changes or added:
         pmx_edit.set_joints(doc, js)
+    areas = {}
+    if recipe.get("mass_area") is not None:
+        for k, i in s.bodies.items():
+            half = sorted(pmx_edit.rigid_body(doc.rigid_bodies[i]).size)[-2:]
+            areas[k] = 4.0 * half[0] * half[1]
+        top = sum(areas[(0, c)] for c in range(s.cols)) / s.cols
     for (r, c), i in sorted(s.bodies.items()):
         rb = doc.rigid_bodies[i]
         body = pmx_edit.rigid_body(rb)
@@ -184,6 +208,8 @@ def apply(doc, recipe):
         new = {}
         if recipe.get("mass") is not None:
             new["mass"] = recipe["mass"][r]
+        if areas:
+            new["mass"] = recipe["mass_area"] * areas[(r, c)] / top
         if recipe.get("damping") is not None:
             new["linear_damping"], new["angular_damping"] = recipe["damping"]
         changed = False
@@ -195,8 +221,41 @@ def apply(doc, recipe):
         if changed:
             pmx_edit.set_rigid_body(rb, body)
     after = {str(c): round(reach(s, pmx_edit.joints(doc), c), 4) for c in range(s.cols)}
-    return {"rows": s.rows, "cols": s.cols, "recipe": dict(recipe), "changes": changes, "reach_before": before,
-            "reach_after": after, "rest_tilt": {"%d_%d" % k: round(v, 3) for k, v in sorted(s.rest_tilt.items())}}
+    return {"rows": s.rows, "cols": s.cols, "recipe": dict(recipe), "changes": changes, "added": added,
+            "reach_before": before, "reach_after": after,
+            "rest_tilt": {"%d_%d" % k: round(v, 3) for k, v in sorted(s.rest_tilt.items())}}
+
+
+def _ceilings(doc, s, js, degrees):
+    """append to js, per skirt body, a joint from the trunk body (the one the column's top joint hangs from) to the body,
+    on the body's lower end, that lets that point move freely except upwards past a ceiling in the trunk's frame: the
+    column's waist point (bone 0) less cos(degrees) times the rest length of the chain down to the point, so a straight
+    column could tilt up to `degrees` from straight down and no further.  Turning is free (lower > upper)."""
+    if any(j.name.startswith("スカート天井_") for j in js):
+        raise ValueError("the model has skirt ceiling joints already")
+    bones = {}
+    for b in doc.bones:
+        m = NAME.match(b.name)
+        if m:
+            bones[(int(m.group(1)), int(m.group(2)))] = b.position
+    k = math.cos(math.radians(degrees))
+    added = []
+    for c in range(s.cols):
+        trunk = js[s.vertical[(0, c)]].a
+        ring_y = bones[(0, c)][1]
+        chain = 0.0
+        for r in range(s.rows):
+            a, p = bones[(r, c)], bones[(r + 1, c)]
+            chain += math.dist(a, p)
+            offset = ring_y - k * chain - p[1]
+            if offset <= 0.0:
+                raise ValueError("the lower end of skirt body %d_%d rests above its ceiling" % (r, c))
+            name = CEILING % (r, c)
+            js.append(pmx_edit.Joint(name, "skirt_ceiling_%d_%d" % (r, c), 0, trunk, s.bodies[(r, c)], tuple(p), (0.0, 0.0, 0.0),
+                                     (-FREE, -FREE, -FREE), (FREE, offset, FREE), (1.0, 1.0, 1.0), (-1.0, -1.0, -1.0),
+                                     (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+            added.append({"name": name, "trunk": trunk, "body": s.bodies[(r, c)], "point": _r(p), "rise": round(offset, 6)})
+    return added
 
 
 def _write(path, data):
@@ -227,7 +286,9 @@ def main(argv=None):
     ap.add_argument("--ring-rotate", type=float)
     ap.add_argument("--ring-move-scale", type=float)
     ap.add_argument("--mass", type=float, nargs="+")
+    ap.add_argument("--mass-area", type=float)
     ap.add_argument("--damping", type=float, nargs=2)
+    ap.add_argument("--ceiling", type=float)
     a = ap.parse_args(argv)
     recipe = {k: getattr(a, k) for k in KEYS if getattr(a, k) is not None}
     try:
