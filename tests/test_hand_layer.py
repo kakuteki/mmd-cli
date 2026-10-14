@@ -359,6 +359,8 @@ SHAPES = {   # rest-relative flexion (MP, PIP, DIP) per long finger
     "open": {f: (0.0, 0.0, 0.0) for f in hand_layer.LONG},
     "fist": {f: (80.0, 95.0, 70.0) for f in hand_layer.LONG},
     "point": {"人指": (0.0, 0.0, 0.0), "中指": (80.0, 95.0, 70.0), "薬指": (80.0, 95.0, 70.0), "小指": (80.0, 95.0, 70.0)},
+    "curl": {f: (10.0, 12.0, 5.0) for f in hand_layer.LONG},       # still an open hand (the sum 27 degrees)
+    "grip": {f: (55.0, 70.0, 50.0) for f in hand_layer.LONG},      # still a held shape (the sum 175 degrees)
 }
 
 
@@ -870,6 +872,110 @@ class LayerPassiveTest(unittest.TestCase):
             self.assertLess(max(0.0, float((-sign * after).max())), 0.1 * peak + 1e-6, shape)
 
 
+class FollowTest(unittest.TestCase):
+    """the fingers reach the shape their muscles take them to through their own spring and damper at the MP (the
+    finger's inertia, stiffness and damping: the equilibrium point's lag B / K): a change of shape comes a little after
+    the hand's own timing, an open (relaxed) hand later than a held shape, the tenodesis after the wrist; no swing past
+    the shape; not where the hand touches something, and less where the arm stops on a beat"""
+
+    def shift(self, shapes, arm=None, beats=None, bone="中指１", a=15, b=40, side="左", steps=("follow",), extra=None):
+        dance = hand_dance(shapes, arm=arm, centre=False)
+        p = only(*steps)
+        p.update(extra or {})
+        out = hand_layer.layer(MODEL, dance, p, pulp=PULP, beats=beats).motion
+        ref = hand_layer.layer(MODEL, dance, only(*[s for s in steps if s != "follow"]), pulp=PULP, beats=beats).motion
+        x, r = out_angles(out, side, bone)[0], out_angles(ref, side, bone)[0]
+        return OrderTest.middle(x, a, b) - OrderTest.middle(r, a, b), x, r
+
+    def test_the_scale_stretches_the_lag(self):
+        shapes = [(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")]
+        one = self.shift(shapes)[0]
+        two = self.shift(shapes, extra={"follow_scale": 2.0})[0]
+        self.assertAlmostEqual(two / one, 2.0, delta=0.3)
+
+    def test_a_change_of_shape_comes_a_little_later_and_is_met(self):
+        d, x, r = self.shift([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
+        self.assertGreater(d, 0.15)                                   # after the input's timing
+        self.assertLess(d, 1.5)                                       # by a part of a frame, not by frames
+        np.testing.assert_allclose(x[:20], r[:20], atol=1e-6)         # nothing moves before the change
+        self.assertLess(float(np.abs(x[40:] - r[40:]).max()), 0.2)    # and the fist is met
+
+    def test_an_open_hand_follows_later_than_a_held_shape(self):
+        # a relaxed finger is less stiff than one that holds a shape (Milner & Franklin 1998): it lags more
+        loose = self.shift([(0, "open"), (20, "open"), (26, "curl"), (LAST, "curl")])[0]
+        held = self.shift([(0, "fist"), (20, "fist"), (26, "grip"), (LAST, "grip")])[0]
+        self.assertGreater(held, 0.05)
+        self.assertGreater(loose, 1.5 * held)
+
+    def test_the_fingers_do_not_swing_past_the_shape(self):
+        # a dancer's fingers catch up without swinging back and forth (as the passive lag)
+        for shapes in ([(0, "open"), (20, "open"), (23, "fist"), (LAST, "fist")],
+                       [(0, "fist"), (20, "fist"), (23, "open"), (LAST, "open")]):
+            x, r = self.shift(shapes)[1:]
+            lo, hi = min(r[0], r[-1]), max(r[0], r[-1])
+            self.assertLess(float(x.max()) - hi, 0.01 * (hi - lo), shapes)
+            self.assertLess(lo - float(x.min()), 0.01 * (hi - lo), shapes)
+
+    def test_a_hand_on_something_follows_at_once(self):
+        kept = hand_layer.contact_weights
+        hand_layer.contact_weights = lambda model, motion, F, sides: {s: np.ones(F) for s in sides}
+        try:
+            x, r = self.shift([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])[1:]
+        finally:
+            hand_layer.contact_weights = kept
+        self.assertLess(float(np.abs(x - r).max()), 1e-6)
+
+    def test_a_relaxed_hand_s_tenodesis_follows_the_wrist_late(self):
+        # the open hand curls as the wrist bends back (Su 2005); through the finger's spring and damper the curl comes
+        # after the wrist's turn
+        side = "左"
+        m = wrist_dance(side, [(0, 0.0), (20, 0.0), (26, -40.0), (LAST, -40.0)], flex_axis_of_the_wrist(side))
+        out = hand_layer.layer(MODEL, m, only("relax", "follow"), pulp=PULP).motion
+        ref = hand_layer.layer(MODEL, m, only("relax"), pulp=PULP).motion
+        x, r = out_angles(out, side, "中指１")[0], out_angles(ref, side, "中指１")[0]
+        self.assertGreater(float(r[30] - r[15]), 1.0)                  # the wrist bent back curls the relaxed fingers
+        self.assertGreater(OrderTest.middle(x, 15, 40) - OrderTest.middle(r, 15, 40), 0.2)
+
+    def test_a_shape_met_on_a_beat_hold_comes_nearly_on_time(self):
+        # where the arm stops on a beat (motor_layer's beat hold) the dancer hits the shape: the finger held stiffer
+        # (holding with some force makes it 2 to 4 times as stiff, Milner & Franklin 1998) lags less
+        arm = [(0, 20.0), (10, 20.0), (28, 80.0), (LAST, 80.0)]
+        shapes = [(0, "open"), (22, "open"), (28, "fist"), (LAST, "fist")]
+        free = self.shift(shapes, arm=arm)[0]
+        beat = self.shift(shapes, arm=arm, beats=(28 / 30.0, 0.5))[0]
+        self.assertGreater(free, 0.15)
+        self.assertLess(beat, 0.7 * free)
+
+    def test_the_report_s_a09_lag_from_the_wrist_to_the_finger_rises(self):
+        # the analysts' a09 measure (the windowed cross-correlation of the angular speeds of the wrist joint and of the
+        # middle finger in the hand, uncanny/a09_arcs/scripts/s04_timing.py): fingers keyed on the wrist's own frames
+        # read 0; fingers that follow late read a positive lag of a part of a frame
+        side, last = "左", 300
+        fa = flex_axis_of_the_wrist(side)
+        keys = untouched_keys(last, centre=False)
+        for k in range(0, last - 29, 30):
+            for f, deg, shape in ((k, 0.0, "open"), (k + 6, 45.0, "fist"), (k + 15, 45.0, "fist"), (k + 21, 0.0, "open")):
+                keys.append(key(side + "手首", f, axis_angle(fa, deg)))
+                keys += shape_keys(side, f, shape)
+        dance = vmd.Motion(model_name="d", bones=keys)
+        rep = hand_layer.layer(MODEL, dance, only("follow"), pulp=PULP).report
+        before, after = rep["input"][side]["a09_wrist_finger"], rep["output"][side]["a09_wrist_finger"]
+        self.assertGreater(before["n"], 5)
+        self.assertLess(abs(before["median"]), 0.1)
+        self.assertGreater(after["median"], 0.15)
+        self.assertLess(after["median"], 2.0)
+
+    def test_the_report_gives_each_finger_s_lag(self):
+        dance = hand_dance([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")], centre=False)
+        rep = hand_layer.layer(MODEL, dance, only("follow"), pulp=PULP).report["steps"]["follow"]
+        for side in ("左", "右"):
+            for f in hand_layer.LONG + (hand_layer.THUMB,):
+                row = rep[side][f]
+                self.assertGreater(row["lag_frames_open"], row["lag_frames_held"], (side, f))
+                self.assertGreater(row["lag_frames_held"], 0.0, (side, f))
+        self.assertGreater(rep["左"]["中指"]["deviation_deg"]["max"], 1.0)
+
+
 class ReportTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -981,6 +1087,37 @@ class CommandTest(unittest.TestCase):
             report = read_json(rep)
             self.assertFalse(report["params"]["relax"])
             self.assertFalse(report["params"]["passive"])
+        finally:
+            shutil.rmtree(folder)
+
+    def test_takes_the_beats_and_the_follow_s_switches(self):
+        folder = tempfile.mkdtemp()
+        try:
+            dance_path, model_path = os.path.join(folder, "d.vmd"), os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as fh:
+                fh.write(model_bytes())
+            vmd.dump(hand_dance([(0, "open"), (22, "open"), (28, "fist"), (LAST, "fist")],
+                                arm=[(0, 20.0), (10, 20.0), (28, 80.0), (LAST, 80.0)]), dance_path)
+            beats = os.path.join(folder, "b.json")
+            with open(beats, "w", encoding="utf-8") as fh:
+                json.dump({"first_beat_seconds": 28 / 30.0, "period_seconds": 0.5}, fh)
+            out, rep = os.path.join(folder, "o.vmd"), os.path.join(folder, "r.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = hand_layer.main([dance_path, model_path, out, "--report", rep, "--beats", beats,
+                                        "--follow-scale", "1.5"])
+            self.assertEqual(code, 0)
+            report = read_json(rep)
+            self.assertAlmostEqual(report["beats"][0], 28 / 30.0, places=6)
+            self.assertEqual(report["params"]["follow_scale"], 1.5)
+            self.assertGreater(report["steps"]["beat_hold_frames"]["左"], 0)
+            out2, rep2 = os.path.join(folder, "o2.vmd"), os.path.join(folder, "r2.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = hand_layer.main([dance_path, model_path, out2, "--report", rep2, "--no-follow"])
+            self.assertEqual(code, 0)
+            report2 = read_json(rep2)
+            self.assertFalse(report2["params"]["follow"])
+            self.assertNotIn("follow", report2["steps"])
+            self.assertIsNone(report2["beats"])
         finally:
             shutil.rmtree(folder)
 

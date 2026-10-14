@@ -1,13 +1,15 @@
 """Bake anatomical hands onto a dance: the fingers' joints bend as hinges within their range, the DIP follows the PIP,
 a finger pulls its neighbours a little, an open hand curls a little toward a relaxed hand and follows the wrist, no
-finger turns faster than a hand can, the joints of a finger move in their order, and the fingers lag the hand's motion
-and run on a little when it stops (not where the hand touches the face, the body or the other arm).  The
-choreography's held shapes (a pointing finger, a peace sign, a fist, a heart) keep their fingertips within a few mm;
-the open hands do not: every open hand is curled alike, the stretched ones too (the report's shape: open_still).
+finger turns faster than a hand can, the joints of a finger move in their order, the fingers reach each shape a little
+after the hand's own timing through their own spring and damper (an open hand later than a held shape), and they lag
+the hand's motion and run on a little when it stops (not where the hand touches the face, the body or the other arm;
+less where the arm stops on a beat).  The choreography's held shapes (a pointing finger, a peace sign, a fist, a heart)
+keep their fingertips within a few mm; the open hands do not: every open hand is curled alike, the stretched ones too
+(the report's shape: open_still).
 
     python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 0.25]
-                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--no-contact]
-                               [--gravity] [--verbose]
+                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--follow-scale 1]
+                               [--beats beats.json] [--no-contact] [--gravity] [--verbose]
 
 Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
 while the hand swings (66 to 72 % of the frames where the wrist turns faster than 90 deg/s or the knuckles move faster
@@ -59,7 +61,17 @@ The steps (STEPS, each can be switched off), in this order:
    (Carpinella 2011: closing a fist the MCP's speed peaks 11.4 % after the PIP's, opening the hand the PIP's 7.4 %
    after the MCP's; the DIP follows the PIP, Mentzel 2011), at most --order-max frames; holds are untouched.  The fingers
    are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
-7. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
+7. follow: each finger reaches the shape the steps before give it (the equilibrium its muscles take it to) through
+   the spring and the damper of step 8's body at the MP, every angle of its joints alike (follow_response:
+   x'' + 2 zeta omega x' + omega^2 (x - shape) = 0, omega and zeta step 8's, between the open and the held hand): a
+   change of shape comes about 2 zeta / omega = B / K later than the input's (the equilibrium point's lag: the damping
+   over the stiffness) and is met without swinging past it.  On Rin's fingers that is 0.16 - 0.34 frames in a held
+   shape and 0.34 - 0.73 in an open hand (the thumb the least, the middle finger the most), times --follow-scale; the
+   tenodesis of step 5 follows the wrist as late.  Not where the hand touches something (as relax).  On a beat hold
+   (--beats: the arm's shoulder, elbow and wrist joints still for 4 frames or more from within 2 frames of a beat,
+   motor_layer's) the dancer hits the shape: the finger is KIME_STIFFNESS times as stiff (holding with some force, 2
+   to 4 times, Milner & Franklin 1998) from 3 frames before the hold, and the follow's lag halves (step 8's too).
+8. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
    hand's world angular acceleration about the joint's axis and the joint's world linear acceleration (finger_body,
    joint_forcing, passive_response).  The masses are Martin 2013's segments (via the research's cylinders), scaled to
    Rin's fingers (about 0.58 of a grown man's); the stiffness 1.0 N m/rad for a held shape (a finger stroking a
@@ -69,31 +81,36 @@ The steps (STEPS, each can be switched off), in this order:
    the PIP and 0.2 to the DIP (the thumb's MP and half to its IP), eased from 4 toward 10 degrees.  No study measured
    how far the fingers trail a moving hand (research B 3); the cap is ours: in purposeful arm movements the passive
    motion of the next joint out, the wrist, is often 1 - 5 degrees (Koshland 2000, which measured the wrist, not the
-   fingers), and 5 degrees of a finger is seen (Jorg 2011).  Not where the hand touches something (as relax).
-   Gravity is left out by default: the shape a dancer shows is held against it.
-8. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
+   fingers), and 5 degrees of a finger is seen (Jorg 2011).  Not where the hand touches something (as relax), stiffer
+   on a beat hold (as follow).  Gravity is left out by default: the shape a dancer shows is held against it.
+9. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
    SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
    centred box average, wide only there), so the change keeps its time; last of the timing steps, so that what the
-   order and the lag add is held to the speed too.
-9. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest pose:
-   the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the reference +
-   10 for the caps; the MCP's sideways range by finger from Latz 2019: MP_SIDE).
+   order, the follow and the lag add is held to the speed too.
+10. rom: last, once (the soft limit is not idempotent), every joint is eased into its range (ROM, against the rest
+   pose: the active means of Mohamed Ibrahim 2024 and the Japanese reference for the starts, mean + 2 SD or the
+   reference + 10 for the caps; the MCP's sideways range by finger from Latz 2019: MP_SIDE).
 
-Not done here (the fingers' delay against the wrist is the arm chain's timing, tools/motor_layer.py's finger_delay; the
-wrist's range is tools/anatomy_layer.py's): measured in the report only, the wrist outside its circumduction ellipse
-(Gracia-Ibanez 2020) and, in a fist, beyond the fist's smaller palmar flexion and ulnar deviation (Gehrmann 2008).
+The fingers' timing against the wrist: tools/motor_layer.py, before this layer, reads the fingers' turn in the hand
+0.25 frames after the wrist's time (finger_delay) except where they snap, the arm holds or the hand touches; this layer
+adds the order, the follow and the lag on top (the report's a09_wrist_finger measures what comes of both, by the
+analysts' a09).  Not done here (the wrist's range is tools/anatomy_layer.py's): measured in the report only, the wrist
+outside its circumduction ellipse (Gracia-Ibanez 2020) and, in a fist, beyond the fist's smaller palmar flexion and
+ulnar deviation (Gehrmann 2008).
 
 Everything else (the arms, the wrists, the trunk, the legs, every morph) is copied byte for byte; a joint's bone gets a
 key on every frame (the linear curve, the physics bytes of the input's key in force), its key position kept.
 
 The report (--report; in short on stdout) measures the input and the output alike: the range of motion (frames beyond
 the start and the cap), the hinges' sideways bend and twist, DIP / PIP, the open hand's cascade, the largest steps, the
-fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves, the wrist; and how
-far each joint moved (everywhere, and in the held shapes away from their changes), how far each finger left the
-choreography's place in the hand (shape: its outer joints and tip, mm, in the held shapes and in the open hands held
-still apart; "static" is the shape of each frame before the timing steps, "output" the output), the steps' own figures
-(the frames where the hand touches something, the fit's distances before and after, the passive lag per finger, its
-frequencies).
+fingers' speed, the DIP's onset after the PIP's, the fingers held dead still while the hand moves, the wrist, the a09
+lag from the wrist to the middle finger (a09_wrist_finger: the analysts' windowed cross-correlation of the angular
+speeds, uncanny/a09_arcs/scripts/s04_timing.py; frames, + the finger later); and how far each joint moved (everywhere,
+and in the held shapes away from their changes), how far each finger left the choreography's place in the hand (shape:
+its outer joints and tip, mm, in the held shapes and in the open hands held still apart; "static" is the shape of each
+frame before the timing steps, "output" the output), the steps' own figures (the frames where the hand touches
+something and where the arm holds a beat, the fit's distances before and after, the follow's lag per finger and how far
+it moved the MP, the passive lag per finger, its frequencies).
 
 Do not use it with tools/anatomy_layer.py's --tenodesis (off by default): this layer has its own.
 """
@@ -317,6 +334,34 @@ def passive_response(forcing, omega, zeta, fps, substeps=8):
     return out
 
 
+def follow_response(target, omega, zeta, fps, substeps=8):
+    """x [F, J] of joints that follow  x'' + 2 zeta omega x' + omega^2 (x - target) = 0  from rest at target[0], the
+    target [F, J] taken as linear between frames, omega and zeta [J] or [F, J] (the frame's values through its interval).
+    The target itself is interpolated, not omega^2 times it: where omega changes from one frame to the next (a hand
+    opening from a held shape), a forcing omega(t-1)^2 target would ask for (omega(t-1) / omega(t))^2 times the target.
+    Implicit Euler as passive_response: v' = (v + dt omega^2 (target - x)) / (1 + 2 zeta omega dt + omega^2 dt^2)"""
+    target = np.asarray(target, dtype=float)
+    F, J = target.shape
+    w = np.broadcast_to(np.asarray(omega, dtype=float), (F, J))
+    z = np.broadcast_to(np.asarray(zeta, dtype=float), (F, J))
+    n = max(int(substeps), int(math.ceil(float(w.max(initial=0.0)) / (fps * 0.25))))
+    dt = 1.0 / (fps * n)
+    x, v = target[0].copy(), np.zeros(J)
+    out = np.zeros((F, J))
+    out[0] = x
+    for t in range(1, F):
+        u0, u1 = target[t - 1], target[t]
+        wt, zt = w[t], z[t]
+        k2 = wt * wt * dt
+        den = 1.0 + 2.0 * zt * wt * dt + wt * wt * dt * dt
+        for k in range(n):
+            u = u0 + (u1 - u0) * ((k + 1) / n)
+            v = (v + k2 * (u - x)) / den
+            x = x + dt * v
+        out[t] = x
+    return out
+
+
 def angular_velocity(R, fps):
     """the world angular velocity (rad/s) between frames t and t+1 of world rotations R [F, 4]: [F - 1, 3]"""
     dq = qmul(R[1:], qconj(R[:-1]))
@@ -362,7 +407,7 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "order", "passive", "speed", "rom")
+STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "order", "follow", "passive", "speed", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees).  The thumb's MP has a second axis (Hollister 1995): it
 # moves sideways some 12 - 14 degrees passively (Kim 2014, Patel 2013) and about 20 each way in active circumduction
@@ -447,13 +492,26 @@ FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
 # of the other forearm or hand, fully; none past the second.  Padded by CONTACT_PAD frames each way
 CONTACT_MM = {"face": (70.0, 100.0), "chest": (60.0, 90.0), "waist": (80.0, 110.0), "other": (35.0, 60.0)}
 CONTACT_PAD = 4
+# the follow: each finger reaches the shape its muscles take it to through the passive body's spring and damper (its
+# omega and zeta between the open and the held hand), so a change comes 2 zeta / omega (= B / K) late.  --follow-scale
+# multiplies that time (omega divided by it)
+FOLLOW_SCALE = 1.0
+# a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for
+# HOLD_MIN frames or more, the hold starting within KIME_BEAT frames of a beat.  There the dancer hits the shape: the
+# finger's stiffness times KIME_STIFFNESS (holding with some force makes a finger 2 to 4 times as stiff as relaxed,
+# Milner & Franklin 1998), from KIME_LEAD frames before the hold (ramped in over KIME_RAMP) to HOLD_EXIT frames before
+# its end (ramped out over HOLD_RAMP); the follow's lag and the passive lag shrink there
+HOLD_DEG_S, HOLD_MIN = 5.0, 4
+KIME_BEAT, KIME_LEAD, KIME_RAMP, HOLD_EXIT, HOLD_RAMP = 2, 3, 4, 2, 3
+KIME_STIFFNESS = 4.0
 
 
 def default_params():
     p = {s: True for s in STEPS}
     p["contact"] = True
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
-             stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE)
+             stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE,
+             follow_scale=FOLLOW_SCALE, kime_stiffness=KIME_STIFFNESS)
     return p
 
 
@@ -912,11 +970,19 @@ def smooth_frames(x, reach):
     return out.reshape((len(x),) + x.shape[1:])
 
 
-def passive(hands, ang, loc, world, P, params, held, touch=None):
+def kime_gain(params, kime, side, F):
+    """the factor on omega per frame: sqrt(kime_stiffness) on a beat hold (kime: side -> 0 .. 1), 1 elsewhere"""
+    if kime is None or side not in kime:
+        return np.ones(F)
+    return 1.0 + (math.sqrt(params["kime_stiffness"]) - 1.0) * kime[side]
+
+
+def passive(hands, ang, loc, world, P, params, held, touch=None, kime=None):
     """the fingers' lag (radians -> degrees added to the flexion; the long fingers' MP, PIP, DIP by PASSIVE_SHARE, the
     thumb's MP and IP): each finger's body driven by the hand's world angular acceleration about its MP's axis and the
     MP's world linear acceleration (gravity only when asked: the dancer holds the shape she shows against it), the
-    stiffness between the open and the held hand by `held` (0 .. 1 per frame), the lag eased toward PASSIVE_CAP"""
+    stiffness between the open and the held hand by `held` (0 .. 1 per frame) and up on a beat hold (kime: side -> 0
+    .. 1), the lag eased toward PASSIVE_CAP"""
     report = {}
     for side, hand in hands.items():
         if side not in world:
@@ -946,6 +1012,8 @@ def passive(hands, ang, loc, world, P, params, held, touch=None):
             forcing[:, c] = joint_forcing(alpha, acc, axis, e, gravity=params["gravity"], coeff=b.coeff)
             omega[:, c] = b.omega["open"] + (b.omega["held"] - b.omega["open"]) * h
             zeta[:, c] = b.zeta["open"] + (b.zeta["held"] - b.zeta["open"]) * h
+        if kime is not None and side in kime:
+            omega = omega * kime_gain(params, kime, side, F)[:, None]
         delta = np.degrees(passive_response(forcing, omega, zeta, FPS))
         cap = params["passive_cap"]
         delta = soft_band(delta, cap, cap)
@@ -964,6 +1032,171 @@ def passive(hands, ang, loc, world, P, params, held, touch=None):
                              "zeta_open": _r(b.zeta["open"], 2), "scale": _r(b.scale, 3), "coeff_per_m": _r(b.coeff, 1)}
         report[side] = rep
     return report
+
+
+# ---- step 3b: the follow (the shape reached through the finger's spring and damper) -------------------------------
+
+def follow(hands, ang, held, params, touch=None, kime=None):
+    """each finger's angles (the long fingers' MP, PIP, DIP, the thumb's CMC, MP, IP; flexion, sideways and twist)
+    reached through its own spring and damper at the MP: x'' + 2 zeta omega x' + omega^2 x = omega^2 u, u the shape the
+    steps before give (the equilibrium its muscles take it to), from rest at frame 0, omega and zeta the passive body's
+    (finger_body: between the open and the held hand by `held`, up on a beat hold by kime_gain), omega divided by
+    params["follow_scale"].  A change of shape then comes about 2 zeta / omega (B / K) after the input's timing and is
+    met without swinging past it (zeta 0.85).  touch: side -> 0 .. 1, the hand on something, where the fingers keep the
+    input's timing (what they touch holds them).  Returns side -> finger -> the lag (frames) of the held and the open
+    hand and how far the MP's flexion left the input's timing (degrees)"""
+    report = {}
+    scale = float(params.get("follow_scale", FOLLOW_SCALE))
+    for side, hand in hands.items():
+        h = held[side]
+        F = len(h)
+        cs = chains(hand)
+        gain = kime_gain(params, kime, side, F)
+        cols, W, Z, rows = [], [], [], {}
+        for finger, js in cs.items():
+            if "mp" not in js or (finger != THUMB and "pip" not in js):
+                continue
+            b = finger_body(hand, finger, params)
+            w = (b.omega["open"] + (b.omega["held"] - b.omega["open"]) * h) * gain / scale
+            z = b.zeta["open"] + (b.zeta["held"] - b.zeta["open"]) * h
+            kinds = ("cmc", "mp", "ip") if finger == THUMB else ("mp", "pip", "dip")
+            for k in kinds:
+                if k in js:
+                    for i in range(3):
+                        if k == "mp" and i == 0:
+                            rows[finger] = (len(cols), b)
+                        cols.append((js[k].bone, i))
+                        W.append(w)
+                        Z.append(z)
+        if not cols:
+            continue
+        U = np.stack([ang[bn][i] for bn, i in cols], axis=1)
+        W, Z = np.stack(W, axis=1), np.stack(Z, axis=1)
+        X = follow_response(U, W, Z, FPS)
+        keep = np.ones(F) if touch is None or side not in touch else 1.0 - touch[side]
+        out = U + keep[:, None] * (X - U)
+        for c, (bn, i) in enumerate(cols):
+            ang[bn][i] = out[:, c]
+        rep = {}
+        for finger, (c, b) in rows.items():
+            rep[finger] = {"lag_frames_held": _r(2.0 * b.zeta["held"] / b.omega["held"] * scale * FPS, 3),
+                           "lag_frames_open": _r(2.0 * b.zeta["open"] / b.omega["open"] * scale * FPS, 3),
+                           "deviation_deg": stats(np.abs(out[:, c] - U[:, c]))}
+        report[side] = rep
+    return report
+
+
+def rests(speeds, thr=HOLD_DEG_S, minlen=HOLD_MIN):
+    """[(i, j)]: the runs of steps where every joint's speed (deg/s, per step t -> t+1) is under thr, still on [i, j),
+    at least minlen long (motor_layer's and the analysts' rests)"""
+    still = np.all(np.stack(speeds) < thr, axis=0)
+    return [(a, b + 1) for a, b in runs(still) if b + 1 - a >= minlen]
+
+
+def ramp_weight(n, pieces):
+    """a weight per frame from (rise_start, rise_end, fall_start, fall_end) pieces (motor_layer's): 0 before rise_start,
+    a smoothstep up to 1 at rise_end, 1 to fall_start, a smoothstep down to 0 at fall_end; the max over the pieces"""
+    w = np.zeros(n)
+    f = np.arange(n, dtype=float)
+    for a, b, c, d in pieces:
+        up = np.ones(n) if b <= a else smoothstep(f, a, b)
+        down = np.ones(n) if d <= c else 1.0 - smoothstep(f, c, d)
+        w = np.maximum(w, np.where((f < a) | (f > d), 0.0, np.minimum(up, down)))
+    return w
+
+
+def rotation_speed(q):
+    """deg/s of the turn between consecutive frames of rotations q [F, 4] (the short way): [F - 1]"""
+    dq = qmul(qconj(q[:-1]), q[1:])
+    return np.degrees(2.0 * np.arctan2(np.linalg.norm(dq[:, :3], axis=1), np.abs(dq[:, 3]))) * FPS
+
+
+def beat_holds(model, motion, F, sides, beats):
+    """side -> (0 .. 1 per frame: the beat holds' weight, [[start, end]] of the holds), from the input's arm: the
+    shoulder (肩 -> 腕), the elbow (腕 -> ひじ) and the wrist (ひじ -> 手首) joints' rotation speeds (motor_layer's schedules)"""
+    P = _positions(model)
+    arm = ("肩", "腕", "ひじ", "手首")
+    names = [s + n for s in sides for n in arm if s + n in P]
+    out = {s: (np.zeros(F), []) for s in sides}
+    if not names:
+        return out
+    pose = fk.Pose(model, motion, names)
+    R = {n: np.zeros((F, 4)) for n in names}
+    for f in range(F):
+        at = pose.at(f)
+        for n in names:
+            R[n][f] = at[n][1]
+    t0, per = beats
+    beat_frames = (t0 + np.arange(0, int((F / FPS - t0) / per) + 2) * per) * FPS
+    for s in sides:
+        if not all(s + n in R for n in arm):
+            continue
+        sp = [rotation_speed(qmul(qconj(R[s + a]), R[s + b])) for a, b in zip(arm[:-1], arm[1:])]
+        pieces, holds = [], []
+        for a, b in rests(sp):
+            if len(beat_frames) and np.min(np.abs(beat_frames - a)) <= KIME_BEAT:
+                end = max(a + 1, b - HOLD_EXIT)
+                pieces.append((a - KIME_LEAD - KIME_RAMP, a - KIME_LEAD, max(a, end - HOLD_RAMP), end))
+                holds.append([int(a), int(b)])
+        out[s] = (ramp_weight(F, pieces), holds)
+    return out
+
+
+# ---- the a09 measure: the wrist's and the finger's timing ---------------------------------------------------------
+
+def a09_parabola(y, i):
+    if 0 < i < len(y) - 1:
+        a, b, c = y[i - 1], y[i], y[i + 1]
+        den = a - 2 * b + c
+        if den != 0:
+            return i + 0.5 * (a - c) / den
+    return float(i)
+
+
+def a09_lags(p, d, win=60, step=15, maxlag=6):
+    """the analysts' a09 lags (uncanny/a09_arcs/scripts/s04_timing.py, copied): the windowed cross-correlation of two
+    angular speeds p (the proximal joint) and d (the distal one), 2 s windows every 15 frames, the lag of the peak within
+    +-6 frames refined by a parabola, windows where both move (the speed's SD over 20 deg/s) and the peak over 0.5; +:
+    the distal joint later"""
+    out = []
+    for s in range(0, len(p) - win - 2 * maxlag, step):
+        a = p[s + maxlag:s + maxlag + win]
+        if a.std() < 20:
+            continue
+        cs = []
+        for L in range(-maxlag, maxlag + 1):
+            b = d[s + maxlag + L:s + maxlag + L + win]
+            cs.append(np.nan if b.std() < 20 else np.corrcoef(a, b)[0, 1])
+        cs = np.array(cs)
+        if np.all(np.isnan(cs)):
+            continue
+        i = int(np.nanargmax(cs))
+        if cs[i] < 0.5 or i in (0, len(cs) - 1):
+            continue
+        out.append(a09_parabola(np.nan_to_num(cs, nan=-1), i) - maxlag)
+    return out
+
+
+def a09_summary(lags):
+    v = np.asarray(lags, dtype=float)
+    if v.size == 0:
+        return {"n": 0, "median": None}
+    return {"n": int(v.size), "median": _r(np.median(v), 3), "mean": _r(v.mean(), 3),
+            "share_later": _r(np.mean(v >= 0.5), 3), "share_earlier": _r(np.mean(v <= -0.5), 3),
+            "share_zero": _r(np.mean(np.abs(v) < 0.5), 3)}
+
+
+def a09_wrist_finger(loc, side, F):
+    """the a09 lag from the wrist joint (手捩 x 手首 against ひじ) to the middle finger in the hand (中指０ .. 中指３
+    against 手首) of the locals loc (the chains have no appended or IK bones), or None without them"""
+    ident = np.tile([0.0, 0.0, 0.0, 1.0], (F, 1))
+    if side + "手首" not in loc or side + "中指３" not in loc:
+        return None
+    wq = qmul(loc.get(side + "手捩", ident), loc[side + "手首"])
+    fq = loc.get(side + "中指０", ident)
+    for p in ("１", "２", "３"):
+        fq = qmul(fq, loc.get(side + "中指" + p, ident))
+    return a09_summary(a09_lags(rotation_speed(A.qnorm(wq)), rotation_speed(A.qnorm(fq))))
 
 
 def contact_weights(model, motion, F, sides):
@@ -1050,9 +1283,9 @@ class Result:
     report: dict
 
 
-def layer(model, motion, params=None, pulp=None, log=None):
+def layer(model, motion, params=None, pulp=None, log=None, beats=None):
     """the hands of `motion` made anatomical (see the module docstring); pulp: side -> the thumb's pulp side (from the
-    mesh: pulp_from_mesh), else the palm's normal"""
+    mesh: pulp_from_mesh), else the palm's normal; beats: (the first beat's seconds, the period) for the beat holds"""
     p = default_params()
     p.update(params or {})
     if not motion.bones:
@@ -1067,7 +1300,13 @@ def layer(model, motion, params=None, pulp=None, log=None):
     ang_in = read_all(hands, loc)
     ang = {b: a.copy() for b, a in ang_in.items()}
     report = {"params": {k: v for k, v in p.items()}, "frames": F, "pulp": {s: (v.tolist() if v is not None else None)
-              for s, v in (pulp or {}).items()}, "steps": {}}
+              for s, v in (pulp or {}).items()}, "beats": list(beats) if beats is not None else None, "steps": {}}
+    kime = None
+    if beats is not None and (p["follow"] or p["passive"]):
+        held_beats = beat_holds(model, motion, F, [s for s in hands], beats)
+        kime = {s: w for s, (w, _) in held_beats.items()}
+        report["steps"]["beat_holds"] = {s: hs for s, (_, hs) in held_beats.items()}
+        report["steps"]["beat_hold_frames"] = {s: int((w > 0.5).sum()) for s, w in kime.items()}
     if p["hinge"]:
         hinge(hands, ang)
     if p["reach"]:
@@ -1080,7 +1319,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     held = {s: (1.0 - r) if r is not None else np.ones(F) for s, r in relaxed.items()}
     wrist = wrist_angles(model, loc, F)
     touch = None
-    if p.get("contact", True) and (p["relax"] or p["passive"]):
+    if p.get("contact", True) and (p["relax"] or p["passive"] or p["follow"]):
         touch = contact_weights(model, motion, F, [s for s in hands])
         report["steps"]["contact_frames"] = {s: int((c > 0.5).sum()) for s, c in touch.items()}
     if p["relax"]:
@@ -1093,10 +1332,12 @@ def layer(model, motion, params=None, pulp=None, log=None):
         rom(hands, static)
     if p["order"]:
         report["steps"]["order"] = order(hands, ang, p["order_max"], p["order_scale"])
+    if p["follow"]:
+        report["steps"]["follow"] = follow(hands, ang, held, p, touch, kime)
     sides = [s for s, _ in SIDES if s + "手首" in P and s in hands]
     world = hand_world(model, motion, F, sides) if sides else {}
     if p["passive"]:
-        report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held, touch)
+        report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held, touch, kime)
     if p["speed"]:
         # after the lag and the order, so that what they add is held to the speed too
         report["steps"]["speed_spread_steps"] = speed_limit(hands, ang, p["speed_max"])
@@ -1106,7 +1347,7 @@ def layer(model, motion, params=None, pulp=None, log=None):
     out_motion = A.build(motion, None, out_loc, {b: keypos[b] for b in out_loc}, F)
     report["untouched"] = untouched(motion, out_motion, out_motion.labels)
     report["input"] = measure(hands, ang_in, loc, world, P, wrist)
-    report["output"] = measure(hands, ang, out_loc, world, P, wrist)
+    report["output"] = measure(hands, ang, out_loc, world, P, wrist, around=loc)
     report["change"] = change(hands, ang_in, ang, held)
     report["shape"] = {"static": shape_shift(hands, ang_in, static, held), "output": shape_shift(hands, ang_in, ang, held)}
     return Result(out_motion, report)
@@ -1124,14 +1365,17 @@ def untouched(before, after, labels):
 
 # ---- the measures -------------------------------------------------------------------------------------------------
 
-def measure(hands, ang, loc, world, P, wrist=None):
+def measure(hands, ang, loc, world, P, wrist=None, around=None):
     """per side: the range of motion (frames beyond the start and the cap, each way), the hinge joints' sideways bend
     and twist, DIP / PIP, the open hand's cascade, the largest steps, the shape changes' speed and the DIP's onset
-    after the PIP's, the fingers held dead still while the hand moves, and the wrist (outside its circumduction
-    ellipse; in a fist, beyond the fist's palmar flexion and ulnar deviation; the direction of its motion)"""
+    after the PIP's, the fingers held dead still while the hand moves, the wrist (outside its circumduction ellipse;
+    in a fist, beyond the fist's palmar flexion and ulnar deviation; the direction of its motion) and the a09 lag from
+    the wrist to the middle finger (around: the locals of the bones the layer does not write, 手捩, 手首, 中指０)"""
     out = {}
+    F = len(next(iter(ang.values()))[0]) if ang else 0
     for side, hand in hands.items():
         r = {"rom": {}, "hinge": {}, "coupling": {}}
+        r["a09_wrist_finger"] = a09_wrist_finger(dict(around or {}, **loc), side, F)
         w = (wrist or {}).get(side)
         if w is not None:
             flex, radial = w
@@ -1308,20 +1552,34 @@ def short(report):
         out[side] = {"frozen_share": [a.get("frozen_while_hand_moves", {}).get("share"),
                                       b.get("frozen_while_hand_moves", {}).get("share")],
                      "finger_speed_over_1900": [a["finger_speed_deg_s"]["over_1900"], b["finger_speed_deg_s"]["over_1900"]],
-                     "dip_after_pip_p50": [a["dip_after_pip_frames"].get("p50"), b["dip_after_pip_frames"].get("p50")]}
+                     "dip_after_pip_p50": [a["dip_after_pip_frames"].get("p50"), b["dip_after_pip_frames"].get("p50")],
+                     "a09_wrist_finger": [(a.get("a09_wrist_finger") or {}).get("median"),
+                                          (b.get("a09_wrist_finger") or {}).get("median")]}
     return out
 
 
-def run(dance_path, model_path, out_path, report_path=None, params=None, log=None):
+def read_beats(path):
+    """(the first beat's seconds, the period) from a JSON with first_beat_seconds and period_seconds (motor_layer's)"""
+    with open(path, encoding="utf-8") as f:
+        b = json.load(f)
+    t0, per = float(b["first_beat_seconds"]), float(b["period_seconds"])
+    if not per > 0.0:
+        raise ValueError("the beats' period_seconds must be above 0")
+    return t0, per
+
+
+def run(dance_path, model_path, out_path, report_path=None, params=None, log=None, beats_path=None):
     started = time.time()
-    A.check_distinct(dance_path, model_path, out_path, report_path)
+    A.check_distinct(dance_path, model_path, out_path, report_path, beats_path)
     dance = vmd.load(dance_path)
     model = load_model(model_path)
+    beats = read_beats(beats_path) if beats_path else None
     pulp = pulp_from_mesh(model_path) if model_path.lower().endswith(".pmx") else {}
-    result = layer(model, dance, params, pulp=pulp, log=log)
+    result = layer(model, dance, params, pulp=pulp, log=log, beats=beats)
     A.write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
     report = dict({"in": os.path.abspath(dance_path), "model": os.path.abspath(model_path),
-                   "out": os.path.abspath(out_path)}, **result.report)
+                   "out": os.path.abspath(out_path), "beats_file": beats_path and os.path.abspath(beats_path)},
+                  **result.report)
     summary = dict({"out": os.path.abspath(out_path), "keys": len(result.motion.bones)}, **short(report))
     report["seconds"] = summary["seconds"] = _r(time.time() - started, 1)
     if report_path:
@@ -1349,6 +1607,11 @@ def main(argv=None):
                     help="the longest lag of a joint within a change, frames (default %g)" % ORDER_MAX)
     ap.add_argument("--no-contact", action="store_true", help="relax and lag the fingers of a hand that touches the face, "
                                                                "the body or the other arm too")
+    ap.add_argument("--follow-scale", type=float, default=FOLLOW_SCALE,
+                    help="the follow's lag (2 zeta / omega of each finger's spring and damper) times this (default %g)"
+                         % FOLLOW_SCALE)
+    ap.add_argument("--beats", help="JSON with first_beat_seconds and period_seconds (motor_layer's): the fingers are "
+                                    "stiffer where the arm stops on a beat")
     ap.add_argument("--gravity", action="store_true", help="let gravity bend the fingers too (off: the dancer holds "
                                                             "the shape she shows against it)")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
@@ -1356,14 +1619,16 @@ def main(argv=None):
     params = default_params()
     params.update({s: not getattr(a, "no_" + s) for s in STEPS})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
-                  gravity=a.gravity, contact=not a.no_contact)
+                  gravity=a.gravity, contact=not a.no_contact, follow_scale=a.follow_scale)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if not a.speed_max > 0.0:
             raise ValueError("--speed-max must be above 0")
+        if not a.follow_scale > 0.0:
+            raise ValueError("--follow-scale must be above 0 (--no-follow leaves the step out)")
         if a.order_scale < 0.0 or a.order_max < 0.0 or a.relax_gain < 0.0:
             raise ValueError("--order-scale, --order-max and --relax-gain must not be negative")
-        result = run(a.dance, a.model, a.out, a.report, params, log)
+        result = run(a.dance, a.model, a.out, a.report, params, log, a.beats)
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
