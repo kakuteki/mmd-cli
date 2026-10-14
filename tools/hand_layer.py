@@ -1,14 +1,15 @@
 """Bake anatomical hands onto a dance: the fingers' joints bend as hinges within their range, the DIP follows the PIP,
 a finger pulls its neighbours a little, an open hand curls a little toward a relaxed hand and follows the wrist, no
-finger turns faster than a hand can, the joints of a finger move in their order, the fingers reach each shape a little
-after the hand's own timing through their own spring and damper (an open hand later than a held shape), and they lag
-the hand's motion and run on a little when it stops (not where the hand touches the face, the body or the other arm;
-less where the arm stops on a beat).  The choreography's held shapes (a pointing finger, a peace sign, a fist, a heart)
-keep their fingertips within a few mm; the open hands do not: every open hand is curled alike, the stretched ones too
-(the report's shape: open_still).
+finger turns faster than a hand can, the joints of a finger move in their order, and the fingers lag the hand's motion
+and run on a little when it stops (not where the hand touches the face, the body or the other arm; less where the arm
+stops on a beat, with --beats).  With --follow the fingers also reach each shape a little after the hand's own timing
+through their own spring and damper (an open hand later than a held shape; off by default: dancers' fingers do not
+trail the wrist so).  The choreography's held shapes (a pointing finger, a peace sign, a fist, a heart) keep their
+fingertips within a few mm; the open hands do not: every open hand is curled alike, the stretched ones too (the report's
+shape: open_still).
 
     python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 0.25]
-                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--follow-scale 1]
+                               [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--follow [--follow-scale 0.5]]
                                [--beats beats.json] [--no-contact] [--gravity] [--verbose]
 
 Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
@@ -61,16 +62,27 @@ The steps (STEPS, each can be switched off), in this order:
    (Carpinella 2011: closing a fist the MCP's speed peaks 11.4 % after the PIP's, opening the hand the PIP's 7.4 %
    after the MCP's; the DIP follows the PIP, Mentzel 2011), at most --order-max frames; holds are untouched.  The fingers
    are not staggered against each other: in a grasp the MCPs follow one time course (Santello 2002).
-7. follow: each finger reaches the shape the steps before give it (the equilibrium its muscles take it to) through
-   the spring and the damper of step 8's body at the MP, every angle of its joints alike (follow_response:
-   x'' + 2 zeta omega x' + omega^2 (x - shape) = 0, omega and zeta step 8's, between the open and the held hand): a
-   change of shape comes about 2 zeta / omega = B / K later than the input's (the equilibrium point's lag: the damping
-   over the stiffness) and is met without swinging past it.  On Rin's fingers that is 0.16 - 0.34 frames in a held
-   shape and 0.34 - 0.73 in an open hand (the thumb the least, the middle finger the most), times --follow-scale; the
-   tenodesis of step 5 follows the wrist as late.  Not where the hand touches something (as relax).  On a beat hold
-   (--beats: the arm's shoulder, elbow and wrist joints still for 4 frames or more from within 2 frames of a beat,
-   motor_layer's) the dancer hits the shape: the finger is KIME_STIFFNESS times as stiff (holding with some force, 2
-   to 4 times, Milner & Franklin 1998) from 3 frames before the hold, and the follow's lag halves (step 8's too).
+7. follow (only with --follow): each finger reaches the shape the steps before give it (the equilibrium its muscles
+   take it to) through the spring and the damper of step 8's body at the MP, every angle of its joints alike
+   (follow_response: x'' + 2 zeta omega x' + omega^2 (x - shape) = 0, omega and zeta step 8's, between the open and
+   the held hand): a change of shape comes about 2 zeta / omega = B / K later than the input's (the equilibrium point's
+   lag: the damping over the stiffness) and is met without swinging past it.  On Rin's fingers B / K is 0.16 - 0.34
+   frames in a held shape and 0.34 - 0.73 in an open hand (the thumb the least, the middle finger the most);
+   --follow-scale (0.5) keeps half of it, as the nervous system times a shape's command to the wrist's (the fingers of
+   a throw start to open 4 ms after the wrist starts to flex, Hore, Ritchie & Watts 1999; the wrist and the fingers
+   moved together pull in phase, Dounskaia 2000): 2.6 - 5.6 ms in a held shape, 5.7 - 12 ms in an open hand, and the
+   analysts' a09 from the wrist to the middle finger +0.53 / +0.54 frames on Hibikase's v8 (their aim +0.5).  The
+   tenodesis of step 5 follows the wrist as late.  Not where the hand touches something (as relax).  Off by default:
+   people's fingers do not trail the wrist by the a09 measure (optically captured dancers, FineDance's 197
+   sequences: a median of +0.04 / +0.06 frames, about 0 in K-pop and street dance, +0.2 in Chinese classical dance,
+   the mean of all +0.20 / +0.24; gestures at 120 Hz, BEAT: -3 / -1 ms), and the trace is the dancer's shapes as
+   seen, their mechanical lag in it already; v8's hands read +0.30 / +0.41 without the follow (most of it the order
+   step's).  For a flowing style the follow brings the a09 mean to the dancers' (+0.20 / +0.27).
+   On a beat hold (--beats: the arm's shoulder, elbow and wrist joints still for 4 frames or more from within 2
+   frames of a beat, motor_layer's) the dancer hits the shape: the finger is KIME_STIFFNESS times as stiff (holding
+   with some force, 2 to 4 times, Milner & Franklin 1998; a pinch co-contracted without force 1.9 - 5.3 times, Hoppner
+   2017), from 3 frames before the hold (about 100 ms before an impact, Lacquaniti & Maioli 1989): step 8's lag
+   quarters there (and the follow's halves).
 8. passive: each finger is a body turning at its MP (the thumb at its MP) on a spring and a damper, driven by the
    hand's world angular acceleration about the joint's axis and the joint's world linear acceleration (finger_body,
    joint_forcing, passive_response).  The masses are Martin 2013's segments (via the research's cylinders), scaled to
@@ -492,15 +504,26 @@ FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
 # of the other forearm or hand, fully; none past the second.  Padded by CONTACT_PAD frames each way
 CONTACT_MM = {"face": (70.0, 100.0), "chest": (60.0, 90.0), "waist": (80.0, 110.0), "other": (35.0, 60.0)}
 CONTACT_PAD = 4
-# the follow: each finger reaches the shape its muscles take it to through the passive body's spring and damper (its
-# omega and zeta between the open and the held hand), so a change comes 2 zeta / omega (= B / K) late.  --follow-scale
-# multiplies that time (omega divided by it)
-FOLLOW_SCALE = 1.0
+# the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive
+# body's spring and damper (its omega and zeta between the open and the held hand), so a change comes 2 zeta / omega
+# (= B / K) late.  --follow-scale multiplies that time (omega divided by it).  When on, the scale keeps half of the
+# body's B / K: a shape's command is timed to the wrist's (in a throw the fingers start to open 4 ms after the wrist
+# starts to flex, Hore, Ritchie & Watts 1999; moving the wrist and the fingers together pulls them in phase, the more the
+# faster, Dounskaia 2000, 2009), and half gives 2.6 - 5.6 ms in a held shape, 5.7 - 12 ms in an open hand on Rin's
+# fingers; on Hibikase's v8 the analysts' a09 from the wrist to the middle finger then reads +0.53 / +0.54 frames (their
+# aim +0.5), under the elbow -> wrist +0.56 / +0.60 (a lighter part drags less, Lasseter 1987).  1 is the whole B / K
+# (+0.74 / +0.68).  Off by default because people's fingers do not trail the wrist by that measure: dancers captured
+# optically (FineDance, 197 sequences) read a median of +0.04 / +0.06 frames (K-pop and street dance about 0, Chinese
+# classical dance +0.2, the mean of all +0.20 / +0.24), gestures at 120 Hz -3 / -1 ms (BEAT); the trace is the dancer's
+# shapes as seen, so their mechanical lag is in it already (_spike/out/stage6/fingers/research/R2_human_mocap.md)
+FOLLOW_SCALE = 0.5
 # a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for
 # HOLD_MIN frames or more, the hold starting within KIME_BEAT frames of a beat.  There the dancer hits the shape: the
 # finger's stiffness times KIME_STIFFNESS (holding with some force makes a finger 2 to 4 times as stiff as relaxed,
-# Milner & Franklin 1998), from KIME_LEAD frames before the hold (ramped in over KIME_RAMP) to HOLD_EXIT frames before
-# its end (ramped out over HOLD_RAMP); the follow's lag and the passive lag shrink there
+# Milner & Franklin 1998; a pinch co-contracted at the same force 1.9 - 2.2 times at 20 - 50 % MVC, 5.3 at 10 %,
+# Hoppner 2017), from KIME_LEAD frames before the hold (the stiffness rises some 100 ms before an expected impact,
+# Lacquaniti & Maioli 1989; ramped in over KIME_RAMP) to HOLD_EXIT frames before its end (ramped out over HOLD_RAMP);
+# the follow's lag and the passive lag shrink there
 HOLD_DEG_S, HOLD_MIN = 5.0, 4
 KIME_BEAT, KIME_LEAD, KIME_RAMP, HOLD_EXIT, HOLD_RAMP = 2, 3, 4, 2, 3
 KIME_STIFFNESS = 4.0
@@ -508,6 +531,7 @@ KIME_STIFFNESS = 4.0
 
 def default_params():
     p = {s: True for s in STEPS}
+    p["follow"] = False             # off unless asked (--follow): see FOLLOW_SCALE and the module docstring, step 7
     p["contact"] = True
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
              stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE,
@@ -1595,7 +1619,11 @@ def main(argv=None):
     ap.add_argument("out", help="the dance with the layer (.vmd)")
     ap.add_argument("--report", help="write the measures of the input and the output to this JSON")
     for s in STEPS:
-        ap.add_argument("--no-" + s, action="store_true", help="leave out the step %s" % s)
+        if s != "follow":
+            ap.add_argument("--no-" + s, action="store_true", help="leave out the step %s" % s)
+    ap.add_argument("--follow", action="store_true",
+                    help="add the step follow: the fingers reach each shape through their spring and damper, a little "
+                         "after the hand (off by default: dancers' fingers do not trail the wrist so)")
     ap.add_argument("--relax-gain", type=float, default=RELAX_GAIN,
                     help="the relaxed hand's cascade and tenodesis times this (default %g)" % RELAX_GAIN)
     ap.add_argument("--speed-max", type=float, default=SPEED_MAX_DEG_S,
@@ -1608,8 +1636,8 @@ def main(argv=None):
     ap.add_argument("--no-contact", action="store_true", help="relax and lag the fingers of a hand that touches the face, "
                                                                "the body or the other arm too")
     ap.add_argument("--follow-scale", type=float, default=FOLLOW_SCALE,
-                    help="the follow's lag (2 zeta / omega of each finger's spring and damper) times this (default %g)"
-                         % FOLLOW_SCALE)
+                    help="with --follow, its lag (2 zeta / omega of each finger's spring and damper) times this (default "
+                         "%g)" % FOLLOW_SCALE)
     ap.add_argument("--beats", help="JSON with first_beat_seconds and period_seconds (motor_layer's): the fingers are "
                                     "stiffer where the arm stops on a beat")
     ap.add_argument("--gravity", action="store_true", help="let gravity bend the fingers too (off: the dancer holds "
@@ -1617,15 +1645,15 @@ def main(argv=None):
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = ap.parse_args(argv)
     params = default_params()
-    params.update({s: not getattr(a, "no_" + s) for s in STEPS})
+    params.update({s: not getattr(a, "no_" + s) for s in STEPS if s != "follow"})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
-                  gravity=a.gravity, contact=not a.no_contact, follow_scale=a.follow_scale)
+                  gravity=a.gravity, contact=not a.no_contact, follow=a.follow, follow_scale=a.follow_scale)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if not a.speed_max > 0.0:
             raise ValueError("--speed-max must be above 0")
         if not a.follow_scale > 0.0:
-            raise ValueError("--follow-scale must be above 0 (--no-follow leaves the step out)")
+            raise ValueError("--follow-scale must be above 0 (without --follow the step is left out)")
         if a.order_scale < 0.0 or a.order_max < 0.0 or a.relax_gain < 0.0:
             raise ValueError("--order-scale, --order-max and --relax-gain must not be negative")
         result = run(a.dance, a.model, a.out, a.report, params, log, a.beats)

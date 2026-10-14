@@ -879,9 +879,10 @@ class FollowTest(unittest.TestCase):
     the shape; not where the hand touches something, and less where the arm stops on a beat"""
 
     def shift(self, shapes, arm=None, beats=None, bone="中指１", a=15, b=40, side="左", steps=("follow",), extra=None):
+        # the whole B / K of the body (follow_scale 1), to see the mechanism; the default is tested on its own below
         dance = hand_dance(shapes, arm=arm, centre=False)
         p = only(*steps)
-        p.update(extra or {})
+        p.update({"follow_scale": 1.0}, **(extra or {}))
         out = hand_layer.layer(MODEL, dance, p, pulp=PULP, beats=beats).motion
         ref = hand_layer.layer(MODEL, dance, only(*[s for s in steps if s != "follow"]), pulp=PULP, beats=beats).motion
         x, r = out_angles(out, side, bone)[0], out_angles(ref, side, bone)[0]
@@ -892,6 +893,20 @@ class FollowTest(unittest.TestCase):
         one = self.shift(shapes)[0]
         two = self.shift(shapes, extra={"follow_scale": 2.0})[0]
         self.assertAlmostEqual(two / one, 2.0, delta=0.3)
+
+    def test_the_default_lag_of_a_held_shape_is_a_few_milliseconds(self):
+        # a shape's command is timed to the wrist's: the fingers of a throw start to open 4 ms after the wrist starts to
+        # flex (Hore, Ritchie & Watts 1999); the default keeps half of the body's B / K
+        rep = hand_layer.layer(MODEL, hand_dance([(0, "open"), (LAST, "open")], centre=False), only("follow"),
+                               pulp=PULP).report["steps"]["follow"]
+        for side in ("左", "右"):
+            for f in hand_layer.LONG + (hand_layer.THUMB,):
+                ms = rep[side][f]["lag_frames_held"] / 30.0 * 1000.0
+                self.assertGreater(ms, 1.0, (side, f))
+                self.assertLess(ms, 10.0, (side, f))
+        d = self.shift([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")], extra={"follow_scale": hand_layer.FOLLOW_SCALE})[0]
+        self.assertGreater(d, 0.05)                                   # the default still comes after the input
+        self.assertLess(d, 0.6)
 
     def test_a_change_of_shape_comes_a_little_later_and_is_met(self):
         d, x, r = self.shift([(0, "open"), (20, "open"), (26, "fist"), (LAST, "fist")])
@@ -1103,16 +1118,20 @@ class CommandTest(unittest.TestCase):
                 json.dump({"first_beat_seconds": 28 / 30.0, "period_seconds": 0.5}, fh)
             out, rep = os.path.join(folder, "o.vmd"), os.path.join(folder, "r.json")
             with contextlib.redirect_stdout(io.StringIO()):
-                code = hand_layer.main([dance_path, model_path, out, "--report", rep, "--beats", beats,
+                code = hand_layer.main([dance_path, model_path, out, "--report", rep, "--beats", beats, "--follow",
                                         "--follow-scale", "1.5"])
             self.assertEqual(code, 0)
             report = read_json(rep)
             self.assertAlmostEqual(report["beats"][0], 28 / 30.0, places=6)
+            self.assertTrue(report["params"]["follow"])
             self.assertEqual(report["params"]["follow_scale"], 1.5)
+            self.assertIn("follow", report["steps"])
             self.assertGreater(report["steps"]["beat_hold_frames"]["左"], 0)
+            # without --follow the step is left out (people's fingers do not trail the wrist by the a09 measure)
+            self.assertFalse(hand_layer.default_params()["follow"])
             out2, rep2 = os.path.join(folder, "o2.vmd"), os.path.join(folder, "r2.json")
             with contextlib.redirect_stdout(io.StringIO()):
-                code = hand_layer.main([dance_path, model_path, out2, "--report", rep2, "--no-follow"])
+                code = hand_layer.main([dance_path, model_path, out2, "--report", rep2])
             self.assertEqual(code, 0)
             report2 = read_json(rep2)
             self.assertFalse(report2["params"]["follow"])
