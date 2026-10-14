@@ -1,8 +1,19 @@
 """Put a stage, light and glow around the dancer MMD rendered with an alpha channel: nothing happens in MMD.
 
-    python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR]
-                                   [--from SECONDS] [--to SECONDS] [--size WxH] [--fps N]
-    python tools/mv_look.py layers look.json WORK --size WxH --fps N
+    python tools/mv_look.py render DANCER.avi look.json OUT.mp4 [--cues cues.json] [--work DIR | --prepared DIR]
+                                   [--from SECONDS] [--to SECONDS] [--size WxH] [--fps N] [--encoder x264|nvenc]
+                                   [--subframes N [--shutter S] [--physics-align]]
+    python tools/mv_look.py layers look.json WORK --size WxH --fps N [--encoder x264|nvenc]
+    python tools/mv_look.py prepare look.json WORK --size WxH --fps N [--cues cues.json] [--encoder x264|nvenc]
+    python tools/mv_look.py phase DANCER.avi --subframes N [--shutter S] [--offset S] [--from S] [--to S]
+
+`prepare` draws the layers and the text once, for many renders (tools/mv_chunks.py --workers folds several chunks at the
+same time): it writes them under WORK with prepared.json, the note of what they were made from (the look, the cue file,
+the size, the rate and the code of this tool and tools/mv_text.py).  `render --prepared WORK` uses them as they are and
+writes nothing there, after checking that note and that every frame is there and none more; its argv is the one
+`render --work WORK` builds, so the video is the same byte for byte.  --encoder nvenc encodes with h264_nvenc on an NVIDIA
+GPU instead of libx264 crf 16 (the default, and the encoder of the video to publish); with it `layers` and `prepare`
+also encode a few frames to see that h264_nvenc works on the machine.
 
 MMD writes the picture with an alpha channel when its background is blackened (menu 282, `mmd menu set 282
 on`): both the PNG of `render image` and the uncompressed AVI of `render avi --codec 未圧縮` are BGRA with
@@ -28,7 +39,10 @@ ffmpeg (the compositing), from back to front:
   gives 4 different poses per 30 fps frame), so the dancer can be rendered at N times the output rate and every
   output frame made from the average of the first round(S * N) of its N subframes, like a film camera whose
   shutter is open for S of the frame time (0.5 is the film standard).  The average is taken on premultiplied
-  colours, since a transparent pixel of MMD's output has colour 0;
+  colours, since a transparent pixel of MMD's output has colour 0.  MMD steps its physics (hair, skirt, ribbons) 60 times
+  a second only, on a frame that changes from render to render: with --physics-align the window of every output frame
+  starts where it holds one step of the physics (read from the dancer's file), so that the cloth shows once instead of
+  twice (`phase` shows what it reads);
 * the text cues of the "front" layer;
 * a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
@@ -41,12 +55,14 @@ The output has no sound: the song is added afterwards (ffmpeg -i OUT.mp4 -i song
 """
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 import math
 import os
 import subprocess
 import sys
+import tempfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -76,6 +92,12 @@ DEFAULT_LOOK = {
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
 SONG_FPS = 30                    # the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song
+# the encoders of --encoder: libx264 (the default, and the one of the video to publish) and h264_nvenc on an NVIDIA GPU
+ENCODERS = ("x264", "nvenc")
+X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "16"]
+NVENC = ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1",
+         "-rc-lookahead", "32", "-bf", "3", "-profile:v", "high"]
+PREPARED = "prepared.json"       # what `prepare` made its layers and text from (render --prepared checks it)
 
 
 # ---- the look -------------------------------------------------------------------------------
@@ -235,8 +257,10 @@ def flare_frame(size, settings, index):
 
 
 def write_layers(look, work, size, fps):
-    """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are"""
+    """the plate, the light loop (at half size) and the flare frames under `work`; returns where they are.  A note of
+    `prepare` in `work` goes first: it vouches for the layers prepare drew, not for these"""
     os.makedirs(work, exist_ok=True)
+    forget_prepared(work)
     plate_path = os.path.join(work, "plate.png")
     plate(size, look["plate"]).save(plate_path)
     light_dir = os.path.join(work, "light")
@@ -285,15 +309,41 @@ def _visible(start, frames, fps, clip_start, clip_duration):
     return offset, skip
 
 
+def encoder_args(encoder):
+    """the ffmpeg arguments of an encoder of --encoder, from -c:v on (the pixel format and the file follow them)"""
+    if encoder == "x264":
+        return list(X264)
+    if encoder == "nvenc":
+        return ["-c:v", "h264_nvenc"] + NVENC
+    raise ValueError("--encoder is x264 (libx264, the default) or nvenc (h264_nvenc on an NVIDIA GPU), not %r" % (encoder,))
+
+
+def check_encoder(encoder):
+    """nvenc: encode a few frames with h264_nvenc (it needs an NVIDIA GPU, its driver and an ffmpeg built with it), so that
+    a machine without it is found before anything is rendered.  libx264 is not tried: the default does what it did"""
+    args = encoder_args(encoder)
+    if encoder == "x264":
+        return
+    done = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x144:r=30", "-frames:v", "3"]
+                          + args + ["-pix_fmt", "yuv420p", "-f", "null", "-"], capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL)
+    if done.returncode != 0:
+        raise ValueError("the encoder %s (%s) does not work here: %s" % (encoder, args[1], (done.stderr or "").strip()[-300:]))
+
+
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
-                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None):
+                   start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None, encoder="x264",
+                   shifts=None):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
     rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
     `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it at that time,
     and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
-    (tools/mv_chunks.py) then hide in the cuts (review 10)"""
+    (tools/mv_chunks.py) then hide in the cuts (review 10).  `encoder` (ENCODERS) changes the arguments from -c:v to the
+    pixel format and nothing else.  `shifts` (measure_physics) move the window of the fold; without them, or with shifts
+    of 0, the argv is the one of before"""
     w, h = size
+    coding = encoder_args(encoder)
     taken = check_shutter(subframes, shutter)
     offset = float(offset or 0.0)
     if start is not None and start < offset - 1e-9:
@@ -362,7 +412,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if glow["strength"] > 0 and glow["radius"] > 0:
         t = int(glow["threshold"])
         curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
-        parts += ["[0:v]%sformat=rgba,split=2[fg][fgb]" % _fold(subframes, taken, fps),
+        parts += ["[0:v]%sformat=rgba,split=2[fg][fgb]" % _fold(subframes, taken, fps, shifts),
                   "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
                   "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
                   "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
@@ -370,7 +420,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["[0:v]%sformat=rgba[fg]" % _fold(subframes, taken, fps),
+        parts += ["[0:v]%sformat=rgba[fg]" % _fold(subframes, taken, fps, shifts),
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
     camera = look["camera"]
@@ -404,8 +454,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     lay(overlays["front"])
     lay(overlays["flare"])
     parts.append("[%s]format=yuv420p[out]" % state["label"])
-    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps),
-             "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
+    argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
 
 
@@ -429,19 +479,226 @@ def check_shutter(subframes, shutter):
     return taken
 
 
-def _fold(subframes, taken, fps):
+def _fold(subframes, taken, fps, shifts=None):
     """the filters that fold `subframes` dancer frames into one output frame: the first `taken` of each are
     averaged (motion blur, a shutter open for taken / subframes of the frame time).  The alpha is straight, and a
-    transparent pixel has colour 0, so the colours are premultiplied for the average and divided back after."""
+    transparent pixel has colour 0, so the colours are premultiplied for the average and divided back after.
+    `shifts` ([(first output frame, shift)], see measure_physics) start the window of those frames `shift` subframes later"""
     if subframes == 1:
         return ""
-    return ("format=rgba,premultiply=inplace=1,tmix=frames=%d,select='eq(mod(n,%d),%d)',setpts=N/(%s*TB),"
-            "unpremultiply=inplace=1," % (taken, subframes, taken - 1, _number(fps)))
+    return ("format=rgba,premultiply=inplace=1,tmix=frames=%d,select='%s',setpts=N/(%s*TB),"
+            "unpremultiply=inplace=1," % (taken, _pick(subframes, taken, shifts), _number(fps)))
+
+
+def _pick(subframes, taken, shifts):
+    """the select expression of the fold: dancer frame n is kept (the average of it and the taken - 1 before it) when it ends
+    the window of its output frame.  Without shifts that is subframe taken - 1 of every subframes, as before"""
+    pieces = []
+    for first, shift in shifts or [(0, 0)]:
+        if not pieces or pieces[-1][1] != int(shift):
+            pieces.append((int(first), int(shift)))
+    expr = "%d" % (taken - 1 + pieces[-1][1])
+    for (first, shift), (following, _) in reversed(list(zip(pieces[:-1], pieces[1:]))):
+        expr = "if(lt(n,%d),%d,%s)" % (following * subframes, taken - 1 + shift, expr)
+    return "eq(mod(n,%d),%s)" % (subframes, expr)
 
 
 def _number(value):
     """a short decimal without a trailing zero: 4.0 -> 4, 2.25 -> 2.25"""
     return ("%.3f" % value).rstrip("0").rstrip(".")
+
+
+# ---- MMD's physics and the window of the fold -----------------------------------------------------
+#
+# MMD poses the body anew on every frame of a high rate AVI, but steps the physics (hair, skirt, ribbons) 60 times a second only,
+# and moves the camera on the first frame of every frame of the song only (30 times a second; measured at 240 and 480 fps,
+# 2026-10-13).  On which frame the physics steps (the phase) changes from render to render.  When a step falls inside the
+# window the fold averages, the cloth shows twice (two states, the edge of one seen through the other).  `render
+# --physics-align` reads the steps from the dancer's file and starts the window of every output frame where it holds one state.
+
+PHYSICS_HZ = 60                  # MMD steps its physics this many times a second, whatever the rate of the AVI
+SCAN_WIDTH = 320                 # the dancer is read at this width (area-scaled) to find the steps
+MOVED = 8                        # of 255 in a channel: a pixel that changed by more has moved
+PHASE_WINDOW = 4                 # frames of the song read together for the residue of the steps
+LONE_LEAST = 20                  # lone pixels (at SCAN_WIDTH) a window needs to tell its residue
+CLEAR = 2.0                      # and as many times those of the next residue
+
+
+def physics_period(rate):
+    """frames of the dancer per step of MMD's physics (rate / PHYSICS_HZ), or None at a rate that is not a whole multiple of 120
+    (2 frames or more per step, and a step on the same frame of every frame of the song)"""
+    steps = rate / float(PHYSICS_HZ)
+    if abs(steps - round(steps)) > 1e-6 or round(steps) < 2:
+        return None
+    return int(round(steps))
+
+
+def check_physics_align(fps, subframes):
+    """--physics-align moves the window of the fold: it needs subframes, and a dancer whose rate is a whole number of frames per
+    step of the physics (refused before anything is drawn or read)"""
+    if subframes < 2:
+        raise ValueError("--physics-align moves the window of the fold within --subframes: give --subframes (2 or more)")
+    period = physics_period(fps * subframes)
+    if period is None:
+        raise ValueError("--physics-align: MMD steps its physics %d times a second, so the dancer's rate (%s fps) must be a whole "
+                         "multiple of %d" % (PHYSICS_HZ, _number(fps * subframes), 2 * PHYSICS_HZ))
+    if subframes % period:
+        # the step would fall on another subframe in every output frame: no one shift keeps it out of all their windows
+        raise ValueError("--physics-align: every output frame must hold whole steps of the physics (%d frames of the dancer each), "
+                         "not %d subframes" % (period, subframes))
+
+
+def window_shift(residue, subframes, taken, period):
+    """the first subframe of the window the fold averages (0: the window of before), when the physics steps on the dancer frames
+    t = residue (mod period): the smallest shift from 0 whose window holds no step (a step on its first frame starts the state
+    it shows), or, when no window of `taken` subframes fits in one step, the one with the fewest steps inside.  None: 0"""
+    if residue is None:
+        return 0
+    best = None
+    for shift in range(0, subframes - taken + 1):
+        inside = sum(1 for j in range(1, taken) if (shift + j - residue) % period == 0)
+        if best is None or inside < best[0]:
+            best = (inside, shift)
+    return best[1]
+
+
+def dancer_input(fg, fps, subframes, start=None, duration=None, offset=0.0):
+    """the arguments of ffmpeg_command that read the dancer (the excerpt and the rate of its frames), so that the scan for the
+    physics reads the very frames the fold reads"""
+    offset = float(offset or 0.0)
+    if start is not None and start < offset - 1e-9:
+        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
+    clip_start = float(start) if start is not None else offset
+    args = []
+    if start is not None:
+        args += ["-ss", "%.3f" % (clip_start - offset)]
+    if duration is not None:
+        args += ["-t", "%.3f" % duration]
+    return args + ["-r", _number(fps * subframes), "-i", fg]
+
+
+def lone_counts(frames):
+    """for every frame t of a sequence of pictures (h, w, channels): the pixels that moved at t (from t-1) but neither at t-1 nor
+    at t+1 (lone), and those that moved at t and stood still on at least one side (half lone).  What the physics moves changes
+    on its steps alone; the body, posed anew on every frame, changes on the frames around them too.  When the camera moves
+    the cloth as well (on the first frame of a frame of the song), a step right before or after it is no longer lone, but
+    still half lone"""
+    lone, half = [], []
+    prev = None
+    earlier = latest = None                    # the pixels that moved into frame t-1 and into frame t (None: frame 0)
+    for frame in frames:
+        frame = np.asarray(frame, dtype=np.int16)
+        if prev is not None:
+            moved = np.abs(frame - prev).max(axis=2) > MOVED          # into this frame, t + 1
+            if latest is not None:                                     # frame t is complete
+                if earlier is None:                                    # frame 1: nothing moved into frame 0
+                    lone[-1] = int((latest & ~moved).sum())
+                    half[-1] = int(latest.sum())
+                else:
+                    lone[-1] = int((latest & ~moved & ~earlier).sum())
+                    half[-1] = int((latest & ~(moved & earlier)).sum())
+            earlier, latest = latest, moved
+        lone.append(0)
+        half.append(0)
+        prev = frame
+    if latest is not None:                                             # the last frame: nothing after it
+        lone[-1] = int((latest if earlier is None else latest & ~earlier).sum())
+        half[-1] = int(latest.sum())
+    return lone, half
+
+
+def lone_pixels(frames):
+    """the lone counts of lone_counts"""
+    return lone_counts(frames)[0]
+
+
+def physics_residues(lone, period, window, half=None):
+    """per window of `window` frames: the residue t mod period on which the physics steps, or None where the window cannot tell
+    (the cloth at rest).  The camera moves once a frame of the song (2 * period frames), which makes everything that stands
+    still in the world change alone on one residue of 2 * period; the physics changes alone on two, r and r + period.  So a
+    residue r is scored by the smaller of the sums on r and on r + period.  A window the lone pixels cannot tell is scored
+    again by the half lone ones (`half`), if given"""
+    song = 2 * period
+
+    def tell(counts, a):
+        sums = [0] * song
+        for t in range(a, min(len(counts), a + window)):
+            sums[t % song] += counts[t]
+        score = [min(sums[r], sums[r + period]) for r in range(period)]
+        order = sorted(range(period), key=lambda r: (-score[r], r))
+        best, second = score[order[0]], score[order[1]]
+        return order[0] if best >= LONE_LEAST and best >= CLEAR * second else None
+    found = []
+    for a in range(0, len(lone), window):
+        r = tell(lone, a)
+        if r is None and half is not None:
+            r = tell(half, a)
+        found.append(r)
+    return found
+
+
+def physics_segments(residues, window, subframes):
+    """[(first output frame, residue)] from the windows' residues: a window that cannot tell takes the residue of the window
+    before it (the first ones that of the first window that can), one window whose two neighbours agree takes theirs, and a
+    change of residue starts a segment at its window.  [(0, None)] when no window can tell"""
+    known = [r for r in residues if r is not None]
+    if not known:
+        return [(0, None)]
+    filled, last = [], known[0]
+    for r in residues:
+        last = last if r is None else r
+        filled.append(last)
+    for i in range(1, len(filled) - 1):
+        if filled[i - 1] == filled[i + 1] != filled[i]:
+            filled[i] = filled[i - 1]
+    segments = []
+    for i, r in enumerate(filled):
+        if not segments or segments[-1][1] != r:
+            segments.append((i * window // subframes, r))
+    return segments
+
+
+def measure_physics(fg, size, fps, subframes, taken, start=None, duration=None, offset=0.0):
+    """where MMD's physics steps in the frames the fold reads of the dancer, and the window that follows it: {"rate", "period",
+    "residue" (of the longest segment), "segments": [[first output frame, residue, shift]], "residues" (per window of
+    PHASE_WINDOW frames of the song), "frames"}.  The dancer is read again, at SCAN_WIDTH"""
+    check_physics_align(fps, subframes)
+    rate = fps * subframes
+    period = physics_period(rate)
+    w = min(SCAN_WIDTH, int(size[0]))
+    h = max(2, int(round(size[1] * w / float(size[0]))))
+    argv = (["ffmpeg", "-v", "error"] + dancer_input(fg, fps, subframes, start, duration, offset)
+            + ["-vf", "scale=%d:%d:flags=area" % (w, h), "-f", "rawvideo", "-pix_fmt", "bgra", "-"])
+    with tempfile.TemporaryFile() as said:          # not a pipe: ffmpeg could fill one while the frames are read
+        reader = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=said, stdin=subprocess.DEVNULL)
+
+        def pictures():
+            n = w * h * 4
+            while True:
+                raw = reader.stdout.read(n)
+                if len(raw) < n:
+                    return
+                yield np.frombuffer(raw, dtype=np.uint8).reshape(h, w, 4)
+        try:
+            lone, half = lone_counts(pictures())
+        finally:
+            reader.stdout.close()
+            reader.wait()
+            said.seek(0)
+            error = said.read().decode("utf-8", "replace")
+    if reader.returncode != 0 or not lone:
+        code = reader.returncode - 2 ** 32 if reader.returncode >= 2 ** 31 else reader.returncode     # Windows gives it unsigned
+        raise RuntimeError("ffmpeg could not read the dancer for its physics (%s): %s" % (code, error.strip()[-300:]))
+    window = PHASE_WINDOW * int(round(rate / float(SONG_FPS)))
+    residues = physics_residues(lone, period, window, half)
+    alone = physics_residues(lone, period, window)
+    segments = [[first, residue, window_shift(residue, subframes, taken, period)]
+                for first, residue in physics_segments(residues, window, subframes)]
+    ends = [s[0] for s in segments[1:]] + [int(math.ceil(len(lone) / float(subframes)))]
+    longest = max(range(len(segments)), key=lambda i: ends[i] - segments[i][0])
+    return {"rate": int(round(rate)) if abs(rate - round(rate)) < 1e-6 else rate, "period": period,
+            "residue": segments[longest][1], "segments": segments, "residues": residues,
+            "told_by_half_lone": sum(1 for a, b in zip(alone, residues) if a is None and b is not None), "frames": len(lone)}
 
 
 # ---- the commands ---------------------------------------------------------------------------
@@ -499,7 +756,91 @@ def text_plan(cues_path, work, size, fps):
     spec.loader.exec_module(module)
     with open(cues_path, encoding="utf-8") as f:
         doc = json.load(f)
+    forget_prepared(work)
     return module.render_sequences(doc, os.path.join(work, "text"), size=size, fps=fps)
+
+
+# ---- layers prepared once for many renders ---------------------------------------------------
+
+def forget_prepared(work):
+    """take the note of `prepare` out of `work` before anything draws there: `render --work` and `layers` into a prepared
+    folder would otherwise leave a note that vouches for layers it did not make (review of fast-render, 2-d)"""
+    note_path = os.path.join(os.path.abspath(work), PREPARED)
+    if os.path.exists(note_path):
+        os.remove(note_path)
+
+
+def _same_folder(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def prepared_key(look, size, fps, cues_path):
+    """what the layers and the text of `prepare` are made from: the values of the look, the size and the rate of the video,
+    the bytes of the cue file, and the code that draws them (this tool and tools/mv_text.py).  The fonts mv_text finds on
+    the machine are not in it (tools/mv_chunks.py -Resume does not see them either)"""
+    digest = hashlib.sha256(json.dumps({"look": look, "size": [int(size[0]), int(size[1])], "fps": fps},
+                                       sort_keys=True).encode("utf-8"))
+    here = os.path.dirname(os.path.abspath(__file__))
+    for label, path in (("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
+                        ("mv_text", os.path.join(here, "mv_text.py"))):
+        digest.update(("\0%s\0" % label).encode("ascii"))
+        if path is None:
+            digest.update(b"none")
+            continue
+        try:
+            with open(path, "rb") as f:
+                digest.update(hashlib.sha256(f.read()).digest())
+        except OSError:
+            digest.update(b"missing")
+    return digest.hexdigest()
+
+
+def prepare(look, work, size, fps, cues_path=None):
+    """write the plate, the light loop, the flare and the text sequences under `work` once, and then PREPARED, the note of
+    what they were made from.  The old note goes first, so that a prepare that fails half way leaves no note that vouches
+    for half written layers"""
+    work = os.path.abspath(work)
+    os.makedirs(work, exist_ok=True)
+    note_path = os.path.join(work, PREPARED)
+    forget_prepared(work)
+    layers = write_layers(look, work, size, fps)
+    plan = text_plan(cues_path, work, size, fps) if cues_path else None
+    note = {"key": prepared_key(look, size, fps, cues_path), "work": _slashes(work), "layers": layers, "text": plan}
+    with open(note_path + ".part", "w", encoding="utf-8") as f:
+        json.dump(note, f, ensure_ascii=True, indent=1)
+    os.replace(note_path + ".part", note_path)
+    return note
+
+
+def _whole_sequence(pattern, frames):
+    """frames 0 .. frames - 1 of a printf pattern are there and the next one is not: ffmpeg reads a numbered sequence until a
+    number is missing, so a frame more would lengthen the loop, the flare or the cue"""
+    return all(os.path.isfile(pattern % i) for i in range(int(frames))) and not os.path.exists(pattern % int(frames))
+
+
+def load_prepared(work, look, size, fps, cues_path=None):
+    """the layers and the text plan `prepare` wrote under `work`, after checking that they were made there, from this look,
+    cue file, size and rate, by this code, and that every frame of them is there (and none more).  Nothing is written"""
+    again = "run `mv_look.py prepare` again"
+    note_path = os.path.join(os.path.abspath(work), PREPARED)
+    try:
+        with open(note_path, encoding="utf-8") as f:
+            note = json.load(f)
+        layers, plan = note["layers"], note["text"]
+    except OSError:
+        raise ValueError("%s holds no prepared layers (no %s): run `mv_look.py prepare` first" % (work, PREPARED))
+    except (ValueError, KeyError, TypeError):
+        raise ValueError("%s is not a note of `prepare`: %s" % (note_path, again))
+    if not isinstance(note.get("work"), str) or not _same_folder(note["work"], work):
+        raise ValueError("the layers in %s were prepared in %s, and their paths name that folder: %s" % (work, note.get("work"), again))
+    if note.get("key") != prepared_key(look, size, fps, cues_path):
+        raise ValueError("the layers in %s were prepared from another look, cue file, size or rate, or by another version of "
+                         "tools/mv_look.py or tools/mv_text.py: %s" % (work, again))
+    sequences = [(layers["light_pattern"], layers["light_frames"]), (layers["flare_pattern"], layers["flare_frames"])]
+    sequences += [(cue["pattern"], cue["frames"]) for cue in (plan or {}).get("cues", [])]
+    if not os.path.isfile(layers["plate"]) or not all(_whole_sequence(p, n) for p, n in sequences):
+        raise ValueError("the layers in %s are not as `prepare` left them (a frame is missing or one too many): %s" % (work, again))
+    return layers, plan
 
 
 def render(args):
@@ -513,14 +854,22 @@ def render(args):
     size, fps = probe(fg) if not (args.size and args.fps) else (None, None)
     size = parse_size(args.size) if args.size else size
     fps = args.fps or fps
-    check_shutter(args.subframes, args.shutter)
+    taken = check_shutter(args.subframes, args.shutter)
+    encoder_args(args.encoder)
     if args.subframes > 1:
         # the dancer's file runs at `subframes` times the output rate
         out_fps = fps / float(args.subframes)
         fps = int(round(out_fps)) if abs(out_fps - round(out_fps)) < 1e-3 else out_fps
-    work = os.path.abspath(args.work or out + ".work")
-    layers = write_layers(look, work, size, fps)
-    plan = text_plan(args.cues, work, size, fps) if args.cues else None
+    if args.physics_align:
+        check_physics_align(fps, args.subframes)
+    if args.prepared:
+        # the layers and the text `prepare` wrote once for many renders (tools/mv_chunks.py --workers): read, never written
+        work = os.path.abspath(args.prepared)
+        layers, plan = load_prepared(work, look, size, fps, args.cues)
+    else:
+        work = os.path.abspath(args.work or out + ".work")
+        layers = write_layers(look, work, size, fps)
+        plan = text_plan(args.cues, work, size, fps) if args.cues else None
     start = args.start
     duration = None if args.to is None else args.to - (start or 0.0)
     if duration is not None and duration <= 0:
@@ -528,16 +877,26 @@ def render(args):
     folder = os.path.dirname(out)
     if folder:
         os.makedirs(folder, exist_ok=True)
+    physics = None
+    if args.physics_align:
+        physics = measure_physics(fg, size, fps, args.subframes, taken, start, duration, args.offset)
     argv = ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, fps, plan=plan,
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
                           start=start, duration=duration, offset=args.offset, subframes=args.subframes,
-                          shutter=args.shutter, light_frames=layers["light_frames"])
+                          shutter=args.shutter, light_frames=layers["light_frames"], encoder=args.encoder,
+                          shifts=[(s[0], s[2]) for s in physics["segments"]] if physics else None)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
               "shutter": args.shutter, "work": work, "light_frames": layers["light_frames"],
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
               "cues": len(plan["cues"]) if plan else 0, "warnings": plan["warnings"] if plan else [],
               "ffmpeg": done.returncode}
+    if args.prepared:
+        result["prepared"] = True
+    if args.encoder != "x264":
+        result["encoder"] = args.encoder
+    if physics:
+        result["physics"] = physics
     if done.returncode != 0 or not os.path.exists(out):
         raise RuntimeError("ffmpeg failed (%d): %s" % (done.returncode, done.stderr.strip()[-600:]))
     return result
@@ -547,7 +906,39 @@ def layers_command(args):
     look = load_look(args.look)
     if not args.size or not args.fps:
         raise ValueError("layers needs --size WxH and --fps N")
+    check_encoder(args.encoder)
     return write_layers(look, os.path.abspath(args.work), parse_size(args.size), args.fps)
+
+
+def phase_command(args):
+    """where the physics steps in the frames `render` with the same arguments would fold, and the window it would take (what
+    `render --physics-align` measures), without rendering anything"""
+    fg = os.path.abspath(args.dancer)
+    if not os.path.isfile(fg):
+        raise ValueError("no such file: %s" % fg)
+    size, fps = probe(fg) if not (args.size and args.fps) else (None, None)
+    size = parse_size(args.size) if args.size else size
+    fps = args.fps or fps
+    taken = check_shutter(args.subframes, args.shutter)
+    out_fps = fps / float(args.subframes)
+    fps = int(round(out_fps)) if abs(out_fps - round(out_fps)) < 1e-3 else out_fps
+    check_physics_align(fps, args.subframes)
+    duration = None if args.to is None else args.to - (args.start or 0.0)
+    if duration is not None and duration <= 0:
+        raise ValueError("--to must be after --from")
+    found = measure_physics(fg, size, fps, args.subframes, taken, args.start, duration, args.offset)
+    return dict({"dancer": fg, "fps": fps, "subframes": args.subframes, "shutter": args.shutter, "taken": taken}, **found)
+
+
+def prepare_command(args):
+    look = load_look(args.look)
+    if not args.size or not args.fps:
+        raise ValueError("prepare needs --size WxH and --fps N")
+    check_encoder(args.encoder)
+    note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues)
+    plan = note["text"]
+    return dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
+                warnings=plan["warnings"] if plan else [])
 
 
 def main(argv=None):
@@ -558,27 +949,52 @@ def main(argv=None):
     s.add_argument("look", help="look.json: the settings that differ from the default")
     s.add_argument("out", help="the video to write (.mp4)")
     s.add_argument("--cues", help="text cues for tools/mv_text.py")
-    s.add_argument("--work", help="where the layers go (default: OUT.work)")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--work", help="where the layers go (default: OUT.work)")
+    g.add_argument("--prepared", help="use the layers and the text `prepare` wrote in this folder, writing nothing there")
+    s.add_argument("--encoder", choices=ENCODERS, default="x264",
+                   help="x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU)")
     s.add_argument("--offset", type=float, default=0.0,
                    help="the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame)")
     s.add_argument("--subframes", type=int, default=1,
                    help="the dancer was rendered at this many times the output rate: fold them into one frame (motion blur)")
     s.add_argument("--shutter", type=float, default=0.5,
                    help="with --subframes: the share of a frame the shutter is open (default 0.5, the film standard)")
+    s.add_argument("--physics-align", action="store_true",
+                   help="with --subframes: read where MMD's physics (60 a second) steps in the dancer's file and start the window "
+                        "of every frame where it holds one step (the cloth shows once)")
     s.add_argument("--from", dest="start", type=float, help="start of an excerpt, in seconds of the song")
     s.add_argument("--to", type=float, help="end of an excerpt, in seconds of the song")
     s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
     s.add_argument("--fps", type=float, help="frames per second, when it is not to be read from the dancer's file")
+    s = sub.add_parser("phase", help="where MMD's physics steps in the dancer's file and the window --physics-align would take")
+    s.add_argument("dancer", help="the video MMD wrote with an alpha channel")
+    s.add_argument("--subframes", type=int, required=True, help="as for render")
+    s.add_argument("--shutter", type=float, default=0.5, help="as for render (default 0.5)")
+    s.add_argument("--offset", type=float, default=0.0, help="as for render")
+    s.add_argument("--from", dest="start", type=float, help="as for render")
+    s.add_argument("--to", type=float, help="as for render")
+    s.add_argument("--size", help="WxH, when it is not to be read from the dancer's file")
+    s.add_argument("--fps", type=float, help="frames per second of the dancer, when it is not to be read from the file")
     s = sub.add_parser("layers", help="only write the plate, the light loop and the flare")
     s.add_argument("look")
     s.add_argument("work")
     s.add_argument("--size")
     s.add_argument("--fps", type=float)
+    s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
+    s = sub.add_parser("prepare", help="write the layers and the text once, for many renders with --prepared")
+    s.add_argument("look")
+    s.add_argument("work")
+    s.add_argument("--size")
+    s.add_argument("--fps", type=float)
+    s.add_argument("--cues", help="text cues for tools/mv_text.py")
+    s.add_argument("--encoder", choices=ENCODERS, default="x264", help="nvenc: also check that h264_nvenc works here")
     args = p.parse_args(argv)
     if getattr(args, "fps", None) is not None and args.fps == int(args.fps):
         args.fps = int(args.fps)
+    commands = {"render": render, "layers": layers_command, "prepare": prepare_command, "phase": phase_command}
     try:
-        result = render(args) if args.command == "render" else layers_command(args)
+        result = commands[args.command](args)
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": {"type": "ValueError", "message": str(exc)}}, ensure_ascii=True))
         return 2
