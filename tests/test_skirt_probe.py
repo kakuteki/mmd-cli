@@ -362,6 +362,21 @@ class AnalyzeTest(unittest.TestCase):
         self.assertGreater(legs["max_depth"], 0.0)             # column 0 hangs at z -1, -1.5 by the left thigh at x 0.6
         self.assertEqual(legs["deepest"]["side"], "左")
 
+    def test_a_body_whose_ends_are_not_its_length_apart_is_left_out(self):
+        legend = self.legend()
+        pts = [None] * len(legend["markers"])
+        for m in legend["markers"]:
+            pts[m["index"]] = list(m["rest"])
+        col2 = {m["row"]: m["index"] for m in legend["markers"] if m["kind"] == "skirt" and m["col"] == 2}
+        pts[col2[2]] = [0.0, 13.5, 4.0]          # the lower end of body 1 seen far off: 3.4 instead of 1.12 from its upper end
+        out = probe.analyze({"pictures": [{"picture": 0, "song_frame": 1.0, "points": pts}]}, legend)
+        col = out["pictures"][0]["columns"][2]
+        self.assertIsNotNone(col["tilt"][0])
+        self.assertIsNone(col["tilt"][1])
+        self.assertIsNone(col["hem"])
+        self.assertEqual(out["pictures"][0]["up"], 0)
+        self.assertEqual(out["pictures"][0]["doubtful"], 1)
+
 
 class CommandLineTest(unittest.TestCase):
     def test_solve_and_analyze_from_files(self):

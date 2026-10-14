@@ -348,6 +348,7 @@ def angles(tracked, legend):
 # the same span give every marker seen in both its three coordinates; the two heights must agree within max_gap.
 
 MAX_GAP = 0.1
+LENGTH_TOL = 0.15               # a body's two ends must lie its rest length apart within this share (the joints do not stretch)
 CAPSULES = (("左", "leg", "左足D", "左ひざD", 0.987), ("右", "leg", "右足D", "右ひざD", 0.987),
             ("左", "arm", "左腕", "左ひじ", 0.395), ("右", "arm", "右腕", "右ひじ", 0.395),
             ("左", "arm", "左ひじ", "左手首", 0.296), ("右", "arm", "右ひじ", "右手首", 0.296))
@@ -476,10 +477,21 @@ def analyze(solved, legend):
         ring = [(skirt[(0, c)]["rest"], pts[skirt[(0, c)]["index"]]) for c in range(cols)]
         ring = [(a, b) for a, b in ring if b is not None]
         rot = fit_rigid([a for a, _ in ring], [b for _, b in ring])[0] if len(ring) >= 3 else None
-        columns, up, top = [], 0, None
+        columns, up, top, doubtful = [], 0, None, 0
         for c in range(cols):
             chain = [pts[skirt[(r, c)]["index"]] for r in range(rows)]
             rest = [skirt[(r, c)]["rest"] for r in range(rows)]
+            # a body whose ends are not its rest length apart was mismeasured (a marker taken for another or half hidden):
+            # drop the points every body touching them disowns
+            bad = []
+            for r, length in enumerate(legend["lengths"][str(c)]):
+                a, b = chain[r], chain[r + 1]
+                bad.append(a is not None and b is not None and abs(math.dist(a, b) / length - 1.0) > LENGTH_TOL)
+            doubtful += sum(bad)
+            for r in range(rows):
+                touching = [bad[k] for k in (r - 1, r) if 0 <= k < len(bad)]
+                if touching and all(touching):
+                    chain[r] = None
             tilts = [None if a is None or b is None else round(tilt(a, b), 3) for a, b in zip(chain, chain[1:])]
             length = sum(legend["lengths"][str(c)])
             hem = spread = None
@@ -516,7 +528,7 @@ def analyze(solved, legend):
                             deepest = {"depth": round(d, 4), "row": r, "col": c, "side": side, "from": a_name}
             contact[kind] = {"max_depth": deepest["depth"] if deepest else 0.0, "deepest": deepest, "inside": inside}
         out.append({"picture": pic["picture"], "song_frame": pic["song_frame"], "columns": columns, "up": int(up),
-                    "max_tilt": top, "legs": contact["leg"], "arms": contact["arm"]})
+                    "max_tilt": top, "doubtful": doubtful, "legs": contact["leg"], "arms": contact["arm"]})
     return {"rows": rows, "cols": cols, "pictures": out}
 
 
