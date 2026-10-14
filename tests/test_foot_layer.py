@@ -579,6 +579,34 @@ class LayerTest(unittest.TestCase):
         y = f_out["左"]["ankle"][:, 1]
         self.assertLess(abs(float(y[5] - 0.5 * (y[4] + y[6]))), 0.03)
 
+    def test_nothing_below_the_floor_between_the_frames(self):
+        # MMD draws 240 fps and interpolates the keys between two frames.  A foot touching the floor out to the side
+        # (unloaded: it keeps its roll) on its outer edge at frame 4 and on its inner edge at frame 5, 40 degrees each
+        # way: half way, turned flat about the same ankle, its sole would sink 1.2 cm into the floor.  Checked at the
+        # 1/8 frames as MMD interpolates them, the shoe stays on or above the floor there too.
+        center = key("センター", 0, position=(0, -1.6, 0))
+
+        def on_floor(q):
+            lift = 0.0
+            for _ in range(4):
+                probe = measure(key("左足ＩＫ", 0, q, position=(3.5, lift, 0.0)), key("左足首", 0, q), center)["左"]
+                lift += 0.111 - float(probe["low"][0])
+            return lift
+        keys = [center]
+        for t in range(10):
+            q = rolled("左", 40.0 if t <= 4 else -40.0)
+            keys += [key("左足ＩＫ", t, q, position=(3.5, on_floor(q), 0.0)), key("左足首", t, q)]
+        m_in = motion(*keys)
+        out, plan = foot_layer.layer(RIG, SHOE, m_in, {})
+        self.assertLess(float(plan["左"]["share"][4]), 0.2)                       # unloaded: it keeps its roll
+        sub = np.arange(4.0, 5.0001, 0.125)
+        lows = {}
+        for tag, m in (("in", m_in), ("out", out)):
+            sol = leg_ik.solve(RIG, m, sub)
+            lows[tag] = foot_layer.shell_world(SHOE.sides["左"], sol["左"])[:, :, 1].min(axis=1)
+        self.assertLess(float(lows["in"].min()), 0.111 - 0.1)                      # the input sinks half way
+        self.assertGreater(float(lows["out"].min()), 0.111 - foot_layer.PEN_TOL)  # the output does not
+
     def test_a_real_quick_lift_is_not_bridged(self):
         # standing flat, the foot for a single frame rolled 55 degrees about its own axis and lifted so that, laid flat,
         # its sole would be only 1.4 cm up (the bridging's old measure), while the shoe itself rises some 7 cm (rolling it
@@ -653,6 +681,23 @@ class CommandTest(unittest.TestCase):
                 foot_layer.main([src, model, out, "--report", rep, "--trace-toe-cm", "4.0"])
             with open(rep, encoding="utf-8") as fh:
                 self.assertEqual(json.load(fh)["trace_toe_cm"], 4.0)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_report_checks_between_the_frames(self):
+        # the report measures the shoe at the 1/8 frames MMD draws, on the written dance read back
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                foot_layer.main([src, model, out, "--report", rep])
+            with open(rep, encoding="utf-8") as fh:
+                r = json.load(fh)
+            between = r["between_frames"]
+            self.assertGreater(between["output"]["L"]["checked"], 0)
+            self.assertEqual(between["output"]["L"]["below"], 0)
+            self.assertIn("raised_frames", between["layer"]["L"])
         finally:
             shutil.rmtree(folder)
 

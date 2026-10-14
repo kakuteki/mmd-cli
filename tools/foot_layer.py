@@ -532,6 +532,11 @@ ROLL_JUMP, FOOT_STILL = 40.0, 15.0   # degrees a frame: a roll that jumps more w
 FLAT_PITCH = (30.0, 60.0)       # degrees of pitch from the floor: a sole steeper than the first is laid flat less and
                                 # less, steeper than the second (a foot pointed down at the floor) keeps its roll
 ROUNDS = 3                      # rounds of solving the legs again to put the sole on the floor
+SUB = 8                         # MMD draws 240 fps from the 30 fps keys and interpolates them in between: the frames
+                                # between two keys are checked at 1/SUB
+SUB_NEAR = 0.25                 # units: an interval is checked where either end's planned lowest point is this near the
+                                # floor
+SUB_ROUNDS = 3                  # rounds of raising both frames of an interval whose shoe dips below the floor
 BRIDGE = 2                      # frames: a standing foot lifted for this long or less (the trace's jitter) stays down,
 BRIDGE_LIFT = 0.1875            # ... when its shoe stays this low (units, 1.5 cm): a real quick step goes higher
 X_AXIS = np.array([1.0, 0.0, 0.0])
@@ -731,6 +736,50 @@ def eased_correction(c, v, radius):
     return np.where(down, c, air)
 
 
+def slerp_rows(q0, q1, t):
+    """unit quaternions [N, 4] turned from q0 toward q1 by the share t [N] along the shorter way (MMD's interpolation of
+    a turn on a linear curve)"""
+    d = np.sum(q0 * q1, axis=1)
+    q1 = np.where(d[:, None] < 0.0, -q1, q1)
+    d = np.clip(np.abs(d), -1.0, 1.0)
+    theta = np.arccos(d)
+    sin = np.sin(theta)
+    small = sin < 1e-6
+    safe = np.where(small, 1.0, sin)
+    w0 = np.where(small, 1.0 - t, np.sin((1.0 - t) * theta) / safe)
+    w1 = np.where(small, t, np.sin(t * theta) / safe)
+    return qnormalize_rows(w0[:, None] * q0 + w1[:, None] * q1)
+
+
+def between_keys(rig, motion, keys, written, sub_t):
+    """the rig's keys at the frames sub_t between whole frames: the bones the layer writes (`written`, bone indices, a
+    key on every frame in `keys`) interpolated between their keys as MMD does on a linear curve (the place along the
+    line, the turn along the shorter arc), the rest sampled from the dance with its own curves"""
+    out = IK.sample(rig, motion, sub_t)
+    lo = np.floor(sub_t).astype(int)
+    fr = sub_t - lo
+    for index in written:
+        pos, rot = keys[index]
+        rot = continuous(qnormalize_rows(np.asarray(rot, dtype=float)))
+        out[index] = (pos[lo] * (1.0 - fr)[:, None] + pos[lo + 1] * fr[:, None], slerp_rows(rot[lo], rot[lo + 1], fr))
+    return out
+
+
+def sinks_between(rig, shoe, motion, keys, written, intervals, floor_y):
+    """side -> how far the shoe dips below the floor between the frames t and t + 1 of each interval t in `intervals`
+    [N] (units; negative: it stays above), checked at the SUB - 1 frames in between"""
+    idx = np.asarray(intervals, dtype=int)
+    if not len(idx):
+        return {s: np.zeros(0) for s in shoe.sides}
+    sub_t = (idx[:, None] + np.arange(1, SUB)[None, :] / float(SUB)).ravel()
+    sol = IK.solve(rig, motion, sub_t, between_keys(rig, motion, keys, written, sub_t))
+    out = {}
+    for s, o in shoe.sides.items():
+        low = shell_world(o, sol[s])[:, :, 1].min(axis=1).reshape(len(idx), SUB - 1).min(axis=1)
+        out[s] = floor_y - low
+    return out
+
+
 def smooth_max_envelope(x, radius):
     """a smooth envelope over the positive values of x: each value spread to its neighbours with a raised cosine of
     `radius` frames, the largest kept (so a single frame's raise starts and ends gently)"""
@@ -748,7 +797,8 @@ def layer(rig, shoe, motion, params=None, log=None):
     Per frame and foot, from the feet as MMD's IK puts them:
     * the load: a foot near the floor bears the body's weight in proportion to its nearness to the pelvis seen from
       above (load_shares); a loaded foot whose sole faces the floor has its roll laid flat (the sole flat across the
-      floor, the subtalar joint taking the shank's lean), eased in and out over EASE frames;
+      floor, the subtalar joint taking the shank's lean), eased in and out over EASE frames, where the roll against the
+      shank is read with trust (roll_reliable: the subtalar caps can then hold it);
     * the range: the ankle complex's angles held inside REFERENCE by a soft limit (a foot on the floor may dorsiflex to
       LOADED_DORSI_CAP), except where the shank swings faster than SHANK_SWING a frame or the roll's reference cannot
       be trusted (roll_reliable): there the input's foot stays;
@@ -756,12 +806,14 @@ def layer(rig, shoe, motion, params=None, log=None):
       lies on the floor (up to the cap of the MTP's extension);
     * the height: the trace's floor moved onto the floor (params["floor_y"]; by default the trace's own: no shift),
       the shoe of a foot on the floor (the ON_FLOOR band; judged as the trace's model stood with
-      params["trace_toe_extra"], 0 by default) exactly on it, a standing foot's lift of BRIDGE frames or fewer bridged,
-      the correction carried into the frames around a contact over EASE frames (put down before the landing, let go
-      after the lift-off: eased_correction), nothing below the floor.  MMD's IK is solved again and the foot IK's goal
-      pushed on where the ankle lags behind it (ROUNDS); the frames that do not follow are left at their best and
-      listed (miss);
-    * twice: the range is checked again against the shank that MMD reaches with the new heights.
+      params["trace_toe_extra"], 0 by default) exactly on it, a standing foot's lift of BRIDGE frames or fewer bridged
+      while the shoe itself stays under BRIDGE_LIFT, the correction carried into the frames around a contact over EASE
+      frames (put down before the landing, let go after the lift-off: eased_correction), nothing below the floor.
+      MMD's IK is solved again and the foot IK's goal pushed on where the ankle lags behind it (ROUNDS); the frames
+      that do not follow are left at their best and listed (miss);
+    * twice: the range is checked again against the shank that MMD reaches with the new heights;
+    * between the frames: the keys solved at 1/SUB frames as MMD interpolates them, both frames of an interval whose
+      shoe dips below the floor raised by the dip (SUB_ROUNDS).
     The keys, on every frame (build): 足ＩＫ's height (its horizontal place and its turn as the input has them),
     つま先ＩＫ's goal on the turned toe, 足首's turn (the start of the toe IK), 足先EX's bend.  Nothing else changes."""
     p = default_params()
@@ -835,24 +887,58 @@ def layer(rig, shoe, motion, params=None, log=None):
                 set_dy(s, pl["dy"])
         out_sol = IK.solve(rig, motion, frames, new_keys)
         shank = out_sol
-    # the keys that make MMD's IK put the foot there: 足首 starts the toe IK already on the goal, つま先ＩＫ's goal
-    # lies on the turned toe from the ankle MMD reaches, 足先EX bends the toes
-    for s, o in shoe.sides.items():
-        side = rig.sides[s]
-        pl = plan[s]
-        leg = out_sol[s]
-        local = continuous(qnormalize_rows(qmul(qconj(leg["q_shin"]), pl["q_t"])))
-        t0 = np.array(rig.bones[side.toe].position) - np.array(rig.bones[side.ankle].position)
-        target = leg["ankle"] + qrot(pl["q_t"], t0)
-        d0 = np.array(rig.bones[side.toe_ik].position) - np.array(rig.bones[side.leg_ik].position)
-        toe_key = qrot(qconj(leg["q_ik"]), target - leg["goal_ankle"]) - d0
-        new_keys[side.ankle] = (keys[side.ankle][0], local)
-        new_keys[side.toe_ik] = (toe_key, keys[side.toe_ik][1])
-        toes_q = qaxis(np.broadcast_to(X_AXIS, (F, 3)), np.radians(pl["toes"]))
-        if side.ex is not None:
-            new_keys[side.ex] = (keys[side.ex][0], toes_q)
-        pl["names"] = {"leg_ik": rig.bones[side.leg_ik].name, "toe_ik": rig.bones[side.toe_ik].name,
-                       "ankle": rig.bones[side.ankle].name, "ex": rig.bones[side.ex].name if side.ex is not None else None}
+    def make_keys(out_sol):
+        # the keys that make MMD's IK put the foot there: 足首 starts the toe IK already on the goal, つま先ＩＫ's
+        # goal lies on the turned toe from the ankle MMD reaches, 足先EX bends the toes
+        for s, o in shoe.sides.items():
+            side = rig.sides[s]
+            pl = plan[s]
+            leg = out_sol[s]
+            local = continuous(qnormalize_rows(qmul(qconj(leg["q_shin"]), pl["q_t"])))
+            t0 = np.array(rig.bones[side.toe].position) - np.array(rig.bones[side.ankle].position)
+            target = leg["ankle"] + qrot(pl["q_t"], t0)
+            d0 = np.array(rig.bones[side.toe_ik].position) - np.array(rig.bones[side.leg_ik].position)
+            toe_key = qrot(qconj(leg["q_ik"]), target - leg["goal_ankle"]) - d0
+            new_keys[side.ankle] = (keys[side.ankle][0], local)
+            new_keys[side.toe_ik] = (toe_key, keys[side.toe_ik][1])
+            toes_q = qaxis(np.broadcast_to(X_AXIS, (F, 3)), np.radians(pl["toes"]))
+            if side.ex is not None:
+                new_keys[side.ex] = (keys[side.ex][0], toes_q)
+            pl["names"] = {"leg_ik": rig.bones[side.leg_ik].name, "toe_ik": rig.bones[side.toe_ik].name,
+                           "ankle": rig.bones[side.ankle].name,
+                           "ex": rig.bones[side.ex].name if side.ex is not None else None}
+
+    make_keys(out_sol)
+    written_idx = [i for s in plan for i in (rig.sides[s].leg_ik, rig.sides[s].toe_ik, rig.sides[s].ankle,
+                                               rig.sides[s].ex) if i is not None]
+    # between the frames: MMD draws 240 fps and interpolates the keys there, so a foot turning on the floor from one
+    # frame to the next (from its outer edge to its inner edge, say) can dip into the floor half way although both
+    # frames stand on it.  Where it does, both frames of the interval are raised by the dip (the place of 足ＩＫ is
+    # interpolated along a line, so the whole interval rises with them) and the keys made again (SUB_ROUNDS rounds).
+    for pl in plan.values():
+        pl["sub_raise"] = np.zeros(F)
+    for _ in range(SUB_ROUNDS if F > 1 else 0):
+        near = np.zeros(F - 1, dtype=bool)
+        for pl in plan.values():
+            tl = pl["target_low"] + pl["sub_raise"]
+            near |= np.minimum(tl[:-1], tl[1:]) < floor_y + SUB_NEAR
+        intervals = np.flatnonzero(near)
+        sinks = sinks_between(rig, shoe, motion, new_keys, written_idx, intervals, floor_y)
+        raised = False
+        for s, d in sinks.items():
+            up = np.zeros(F)
+            dip = np.where(d > 0.25 * PEN_TOL, d + 0.25 * PEN_TOL, 0.0)
+            np.maximum.at(up, intervals, dip)
+            np.maximum.at(up, intervals + 1, dip)
+            if up.any():
+                raised = True
+                plan[s]["sub_raise"] = plan[s]["sub_raise"] + up
+                plan[s]["dy"] = plan[s]["dy"] + up
+                set_dy(s, plan[s]["dy"])
+        if not raised:
+            break
+        out_sol = IK.solve(rig, motion, frames, new_keys)
+        make_keys(out_sol)
     written = {}
     for s, pl in plan.items():
         side = rig.sides[s]
@@ -892,6 +978,39 @@ def build(motion, written, F):
 
 
 # ---- the command ---------------------------------------------------------------------------------------------------
+
+def between_report(rig, shoe, motion, floor_y, near=SUB_NEAR):
+    """side tag -> the shoe between the frames as MMD draws it (SUB a frame, the keys interpolated by their own curves):
+    the intervals checked (either end's lowest point within `near` of the floor), those dipping below the floor more
+    than PEN_TOL, the deepest dip (cm) and the worst ones [the 1/SUB frame of the deepest, cm]"""
+    F = fk.last_frame(motion) + 1
+    empty = {"checked": 0, "below": 0, "deepest_cm": 0.0, "worst": []}
+    if F < 2:
+        return {TAGS[s]: dict(empty) for s in shoe.sides}
+    sol = IK.solve(rig, motion, range(F))
+    near_side = {}
+    for s, o in shoe.sides.items():
+        low = shell_world(o, sol[s])[:, :, 1].min(axis=1)
+        near_side[s] = np.minimum(low[:-1], low[1:]) < floor_y + near
+    idx = np.flatnonzero(np.logical_or.reduce(list(near_side.values())))
+    if not len(idx):
+        return {TAGS[s]: dict(empty) for s in shoe.sides}
+    sub_t = (idx[:, None] + np.arange(1, SUB)[None, :] / float(SUB)).ravel()
+    ssol = IK.solve(rig, motion, sub_t)
+    out = {}
+    for s, o in shoe.sides.items():
+        mine = near_side[s][idx]
+        dip = floor_y - shell_world(o, ssol[s])[:, :, 1].min(axis=1).reshape(len(idx), SUB - 1)
+        deepest = dip.max(axis=1)
+        deepest = np.where(mine, deepest, -np.inf)
+        order = np.argsort(-deepest)[:5]
+        out[TAGS[s]] = {"checked": int(mine.sum()), "below": int((deepest > PEN_TOL).sum()),
+                        "deepest_cm": _r(max(0.0, float(deepest.max())) * UNIT_CM, 2),
+                        "worst": [[_r(float(idx[i] + (1 + int(np.argmax(dip[i]))) / float(SUB)), 3),
+                                   _r(float(deepest[i]) * UNIT_CM, 2)] for i in order if np.isfinite(deepest[i])
+                                  and deepest[i] > 0.0]}
+    return out
+
 
 def measure_report(rig, shoe, motion, floor_y, frames=None, contact_from=None, toe_extra=0.0):
     """(measures, report, contacts) of a dance: measure_feet over every frame and summarize per side.  The contact
@@ -955,6 +1074,10 @@ def main(argv=None):
                                          "worst_cm": _r(float(np.abs(pl["miss"]).max()) * UNIT_CM, 2)}
                                for s, pl in plan.items()}
         report["untouched"] = untouched(motion, back, plan)
+        report["between_frames"] = {
+            "input": between_report(rig, shoe, motion, floor_y), "output": between_report(rig, shoe, back, floor_y),
+            "layer": {TAGS[s]: {"raised_frames": int((pl["sub_raise"] > 0.0).sum()),
+                                "max_raise_cm": _r(float(pl["sub_raise"].max()) * UNIT_CM, 2)} for s, pl in plan.items()}}
     report["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
