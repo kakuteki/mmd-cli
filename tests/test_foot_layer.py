@@ -326,6 +326,19 @@ class LayerTest(unittest.TestCase):
             self.assertGreater(sign * float(b["inversion"][0]), start)               # by the soft limit, not flattened
             self.assertAlmostEqual(float(b["pitch"][0]), float(a["pitch"][0]), delta=0.5)
 
+    def test_laying_the_roll_flat_does_not_pass_the_subtalar_cap(self):
+        # a wide, deep stance (the feet 6 units out to the sides, the pelvis down 5): the shank leans in so far that the
+        # foot, laid flat on the floor, would invert some 45 degrees against it, past the cap 36; and the ankle is so
+        # dorsiflexed that the roll against the shank is not read with trust (roll_reliable), so the cap's correction
+        # does not come back to it.  Laying flat follows the same trust: the foot stays inside its range (review 3)
+        keys = (key("左足ＩＫ", 0, position=(6.0, 0, 0)), key("右足ＩＫ", 0, position=(-6.0, 0, 0)),
+                key("センター", 0, position=(0, -5.0, 0)))
+        f_in, f_out, out, plan = run_layer(*keys)
+        cap = foot_layer.REFERENCE["inversion"][1]
+        for s in ("左", "右"):
+            self.assertLess(abs(float(f_in[s]["inversion"][0])), cap)                # the input is inside the range
+            self.assertLess(abs(float(f_out[s]["inversion"][0])), cap + 0.5)
+
     def test_loaded_foot_dorsiflexes_further_than_a_lifted_one(self):
         # the deep squat of test_deep_squat_lifts_the_heel_past_the_loaded_dorsiflexion at frame 0 (the feet flat on the
         # floor, loaded), and the same pose lifted 1 unit from frame 10 on (the feet in the air): the same ankle angle in,

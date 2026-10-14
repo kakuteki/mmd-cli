@@ -649,6 +649,12 @@ def foot_targets(o, f, leg, rest, share, near, p):
     # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
     # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
     w = smooth_max_envelope(near * loaded * (1.0 - smoothstep(np.abs(pitch), *p["flat_pitch"])), EASE)
+    # laying flat moves the roll against the shank, which the range's correction then holds inside the subtalar caps;
+    # where that roll is not read with trust (roll_reliable: the foot near the shank's line, or its reading jumping), the
+    # correction does not come back to it, so the foot is not laid flat there either (eased like the corrections)
+    d_b0, inv0, _ = ankle_angles(o, leg["ankle"], leg["knee"], leg["q_shin"], q)
+    ok = roll_reliable(inv0 - rest["inversion"], d_b0, q)
+    w = w * (1.0 - smooth_max_envelope(1.0 - ok, EASE))
     if p["flatten"]:
         _, ang = unrolled(o, q)
         q = turn_about(qrot(q, o.a0), w * ang, q)
