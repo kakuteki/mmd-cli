@@ -71,13 +71,17 @@ The steps (STEPS, each can be switched off), in this order:
    --follow-scale (0.5) keeps half of it, as the nervous system times a shape's command to the wrist's (the fingers of
    a throw start to open 4 ms after the wrist starts to flex, Hore, Ritchie & Watts 1999; the wrist and the fingers
    moved together pull in phase, Dounskaia 2000): 2.6 - 5.6 ms in a held shape, 5.7 - 12 ms in an open hand, and the
-   analysts' a09 from the wrist to the middle finger +0.53 / +0.54 frames on Hibikase's v8 (their aim +0.5).  The
-   tenodesis of step 5 follows the wrist as late.  Not where the hand touches something (as relax).  Off by default:
-   people's fingers do not trail the wrist by the a09 measure (optically captured dancers, FineDance's 197
-   sequences: a median of +0.04 / +0.06 frames, about 0 in K-pop and street dance, +0.2 in Chinese classical dance,
-   the mean of all +0.20 / +0.24; gestures at 120 Hz, BEAT: -3 / -1 ms), and the trace is the dancer's shapes as
-   seen, their mechanical lag in it already; v8's hands read +0.30 / +0.41 without the follow (most of it the order
-   step's).  For a flowing style the follow brings the a09 mean to the dancers' (+0.20 / +0.27).
+   analysts' a09 from the wrist to the middle finger +0.53 / +0.54 frames on Hibikase's v8 (the report's wrist,
+   手捩 in it).  The tenodesis of step 5 follows the wrist as late.  Not where the hand touches something (as relax).
+   Off by default: in a style near Hibikase's people's fingers do not trail the wrist by the a09 measure (optically
+   captured dancers, FineDance's 197 sequences at 30 fps: a median of +0.04 / +0.06 frames raw, +0.10 / +0.16 with the
+   wrist and the finger through the same zero-phase 6 Hz low-pass, which takes out a sharp peak at 0 of what the two do
+   on the same frames; K-pop-like and street dance 0 or below either way, -0.04 to -0.08 at 6 Hz; Chinese classical
+   and folk dance +0.35 to +0.48 at 6 Hz; gestures at 120 Hz, BEAT: -3 / -1 ms raw, -11 / -5 ms without what is above
+   30 Hz, the fingers ahead).  People's wrist joint holds no twist (FineDance puts the forearm's pronation in the
+   elbow); with the wrist read as theirs (手捩 -> 手首) v8 reads +0.22 / +0.09 without the follow and +0.42 / +0.23
+   with it (the report's a09_wrist_finger, 手捩 in the wrist: +0.30 / +0.41 and +0.53 / +0.54).  For a flowing style
+   (Chinese classical or folk dance) the follow brings the hand toward the dancers'.
    On a beat hold (--beats: the arm's shoulder, elbow and wrist joints still for 4 frames or more from within 2
    frames of a beat, motor_layer's) the dancer hits the shape: the finger is KIME_STIFFNESS times as stiff (holding
    with some force, 2 to 4 times, Milner & Franklin 1998; a pinch co-contracted without force 1.9 - 5.3 times, Hoppner
@@ -510,12 +514,13 @@ CONTACT_PAD = 4
 # body's B / K: a shape's command is timed to the wrist's (in a throw the fingers start to open 4 ms after the wrist
 # starts to flex, Hore, Ritchie & Watts 1999; moving the wrist and the fingers together pulls them in phase, the more the
 # faster, Dounskaia 2000, 2009), and half gives 2.6 - 5.6 ms in a held shape, 5.7 - 12 ms in an open hand on Rin's
-# fingers; on Hibikase's v8 the analysts' a09 from the wrist to the middle finger then reads +0.53 / +0.54 frames (their
-# aim +0.5), under the elbow -> wrist +0.56 / +0.60 (a lighter part drags less, Lasseter 1987).  1 is the whole B / K
-# (+0.74 / +0.68).  Off by default because people's fingers do not trail the wrist by that measure: dancers captured
-# optically (FineDance, 197 sequences) read a median of +0.04 / +0.06 frames (K-pop and street dance about 0, Chinese
-# classical dance +0.2, the mean of all +0.20 / +0.24), gestures at 120 Hz -3 / -1 ms (BEAT); the trace is the dancer's
-# shapes as seen, so their mechanical lag is in it already (_spike/out/stage6/fingers/research/R2_human_mocap.md)
+# fingers; on Hibikase's v8 the analysts' a09 from the wrist to the middle finger then reads +0.53 / +0.54 frames (the
+# report's wrist, 手捩 in it), under the elbow -> wrist +0.56 / +0.60 (a lighter part drags less, Lasseter 1987).  1 is
+# the whole B / K (+0.74 / +0.68).  Off by default because in a style near Hibikase's people's fingers do not trail the
+# wrist by that measure (FineDance, 197 optically captured sequences: K-pop-like and street dance 0 or below, raw and
+# through a zero-phase 6 Hz low-pass; all styles +0.04 / +0.06 raw, +0.10 / +0.16 at 6 Hz; BEAT's gestures at 120 Hz
+# -11 / -5 ms with what is above 30 Hz taken out, the fingers ahead;
+# _spike/out/stage6/fingers/research/R2_human_mocap.md and _spike/out/stage6/review_fingers_lag/REVIEW.md)
 FOLLOW_SCALE = 0.5
 # a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for
 # HOLD_MIN frames or more, the hold starting within KIME_BEAT frames of a beat.  There the dancer hits the shape: the

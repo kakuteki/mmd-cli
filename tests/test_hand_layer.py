@@ -982,6 +982,34 @@ class FollowTest(unittest.TestCase):
         off = self.shift(shapes, arm=arm, beats=(22 / 30.0, 0.5))[0]
         self.assertAlmostEqual(off, free, delta=1e-6)
 
+    def test_a_beat_hold_halves_the_follow_s_lag(self):
+        # four times as stiff (KIME_STIFFNESS: Milner & Franklin 1998, Hoppner 2017) doubles omega, so a change of shape
+        # well inside the hold comes after half the free lag (not a quarter: the stiffness, not omega, is four times)
+        arm = [(0, 20.0), (10, 20.0), (28, 80.0), (LAST, 80.0)]
+        shapes = [(0, "open"), (34, "open"), (40, "fist"), (LAST, "fist")]
+        free = self.shift(shapes, arm=arm, a=30, b=55)[0]
+        beat = self.shift(shapes, arm=arm, beats=(28 / 30.0, 0.5), a=30, b=55)[0]
+        self.assertGreater(free, 0.15)
+        self.assertAlmostEqual(beat / free, 0.5, delta=0.12)
+
+    def test_a_stop_three_frames_off_the_beat_is_no_beat_hold(self):
+        # motor_layer's window: the hold has to start within KIME_BEAT (2) frames of a beat; the arm stops at 28 and the
+        # beats fall at 25 and 40 (3 and 12 frames away)
+        arm = [(0, 20.0), (10, 20.0), (28, 80.0), (LAST, 80.0)]
+        shapes = [(0, "open"), (22, "open"), (28, "fist"), (LAST, "fist")]
+        free = self.shift(shapes, arm=arm)[0]
+        near = self.shift(shapes, arm=arm, beats=(25 / 30.0, 0.5))[0]
+        self.assertAlmostEqual(near, free, delta=1e-6)
+
+    def test_an_arm_still_for_two_frames_on_the_beat_is_no_hold(self):
+        # a hold is the arm still for HOLD_MIN (4) frames or more (motor_layer's): here it stops on the beat at 28 for 2
+        # frames and swings back; the next rest starts at 50, 7 and 8 frames from the beats at 43 and 58
+        arm = [(0, 20.0), (10, 20.0), (28, 80.0), (30, 80.0), (50, 20.0), (LAST, 20.0)]
+        shapes = [(0, "open"), (22, "open"), (28, "fist"), (LAST, "fist")]
+        free = self.shift(shapes, arm=arm)[0]
+        beat = self.shift(shapes, arm=arm, beats=(28 / 30.0, 0.5))[0]
+        self.assertAlmostEqual(beat, free, delta=1e-6)
+
     def test_the_report_s_a09_lag_from_the_wrist_to_the_finger_rises(self):
         # the analysts' a09 measure (the windowed cross-correlation of the angular speeds of the wrist joint and of the
         # middle finger in the hand, uncanny/a09_arcs/scripts/s04_timing.py): fingers keyed on the wrist's own frames
