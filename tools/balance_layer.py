@@ -221,9 +221,11 @@ SPIKE_PER_MIN = 7.2             # left at most, a minute, the largest taken firs
                                 # human baseline, FineDance K-pop / choreography / jazz, 62 sequences); the traced dance 49
 SPIKE_KINK_SHARE = 0.95         # around a spike taken the path's kinks at most this share of SPIKE_T (the speed changes no
                                 # more than the velocity does: |s(k) - s(k-1)| <= |v(k) - v(k-1)|)
-DESPIKE_XZ_CM = 0.3             # a despiked frame moves at most this far on the floor (the legs' reach is solved before it)
-DESPIKE_DOWN_CM = 1.0           # and at most this far down
-DESPIKE_UP_CM = 0.5             # and up (and never past the legs' reach)
+DESPIKE_XZ_CM = 0.5             # a despiked frame moves at most this far on the floor (the legs' reach is solved before it)
+DESPIKE_DOWN_CM = 1.5           # and at most this far down
+DESPIKE_UP_CM = 0.75            # and up (and never past the legs' reach).  On the MV (on what the vertical fix leaves, 161
+                                # spikes): 1 / 0.5 / 0.3 cm leave 47 (10.9 a minute), 1.5 / 0.75 / 0.5 leave 38 (8.8), 2 / 1 /
+                                # 0.5 leave 40: what is left are the deepest bounces' one-frame turns
 DESPIKE_SOFT = 100.0            # the kink bound's weight (against 1 for the change): where the box cannot meet it, smaller
 DESPIKE_HALF = 10               # frames each side of a bounded kink that may move with it
 DESPIKE_ROUNDS = 8

@@ -1262,11 +1262,19 @@ class SongTest(unittest.TestCase):
         cls.result = balance_layer.layer(cls.model, cls.motion, ik_check=check)
         cls.report = cls.result.report
 
-    def test_weight_on_the_standing_foot(self):
+    def test_single_support_as_human_dancers_stand(self):
+        """the human baseline (FineDance K-pop / choreography / jazz, 62 sequences): over all single support (a05) the COM
+        9.0 cm [8.0, 10.3] sideways from the standing foot's centre (the traced dance 11.2; v8, which pulled every single
+        support onto the foot, 5.3); standing still 1.7 cm [-1.8, 3.4] from the support's centre; moving, the XcoM's
+        sideways margin -4.2 cm [-6.1, -3.6] (the layer keeps it from going past the median where it bounds it)"""
         a05 = self.report["a05_lateral_cm"]
-        self.assertGreater(a05["before"]["median"], 9.0)
-        self.assertLess(a05["after"]["median"], a05["before"]["median"] / 2.0)
-        self.assertLess(a05["after_holds"]["median"], 3.0)
+        self.assertGreater(a05["before"]["median"], 10.0)
+        self.assertLess(a05["after"]["median"], a05["before"]["median"])
+        self.assertGreater(a05["after"]["median"], 7.0)                          # not pulled onto the foot (v8 5.3)
+        st = self.report["stance"]
+        self.assertLess(st["still_lateral_cm"]["after"], 4.0)
+        self.assertGreater(st["moving_mos_ml_cm"]["after"], st["moving_mos_ml_cm"]["before"])
+        self.assertGreater(st["moving_mos_ml_cm"]["after"], balance_layer.MOS_ML_MIN_CM - 0.5)
 
     def test_feet_untouched_and_smooth(self):
         """no 1-frame jump: the added acceleration of センター stays at its bound on the floor (the solve's curve is
