@@ -1004,13 +1004,37 @@ class SongTest(unittest.TestCase):
 
     def test_feet_untouched_and_smooth(self):
         """no 1-frame jump: the added acceleration of センター stays at its bound on the floor (the solve's curve is
-        brought into its bounds smoothly, not frame by frame) and at the landing dip's own (2 cm in 0.13 s: about
-        6 m/s^2) upward"""
+        brought into its bounds smoothly, not frame by frame).  Up and down the layer's own acceleration is not bounded
+        by itself any more: where the dance drops the pelvis faster than gravity the layer takes that away"""
         self.assertTrue(self.report["untouched"]["identical"])
         c = self.report["centre"]
         self.assertLess(c["added_acc_h_m_s2"]["p99"], balance_layer.ACC_MAX * 1.05)
         self.assertLess(c["added_acc_h_m_s2"]["max"], balance_layer.ACC_MAX * 1.1)
-        self.assertLess(c["added_acc_v_m_s2"]["max"], 6.5)
+
+    def test_pelvis_never_falls_faster_than_the_bound(self):
+        """the dance drops the pelvis faster than MMD's gravity on hundreds of frames (the tops of its bounces, 732
+        units/s^2 at 132.2 s); after the layer no frame is over DOWN_ACC_MAX, and the dance's lowest points stay"""
+        v = self.report["vertical"]
+        self.assertGreater(v["pelvis"]["dance_over_g"], 100)
+        self.assertLessEqual(v["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertLessEqual(v["centre"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(v["pelvis"]["after_over_g"], 0)
+        y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
+        z = self.result.arrays["vertical_fix"]
+        lows = [f for f in range(1, len(y0) - 1) if y0[f] < y0[f - 1] and y0[f] <= y0[f + 1]]
+        kept = sum(1 for f in lows if abs(z[f]) * CM < 0.05)
+        self.assertGreaterEqual(kept, 0.99 * len(lows))
+        self.assertLessEqual(float(z.max()), 0.0)                                # lowered only
+
+    def test_landings_catch_and_the_thigh_in_range(self):
+        """no landing that the dance catches stops catching the body (its XcoM past the landing foot's edge), the ones
+        it does not catch are held back until they do, and no thigh newly passes 22 degrees of adduction"""
+        catch = self.report["catch"]["summary"]
+        self.assertEqual(catch["newly_under_0"], 0)
+        self.assertEqual(catch["after_under_0"], 0)
+        self.assertEqual(catch["held_back_caught"], catch["held_back"])
+        self.assertEqual(self.report["hip"]["over_22_newly_L"], 0)
+        self.assertEqual(self.report["hip"]["over_22_newly_R"], 0)
 
     def test_reach_not_worse(self):
         """no leg loses its slack to its foot IK below 1.5 cm (or below what the dance had): MMD's IK falls short of the
