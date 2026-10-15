@@ -94,10 +94,12 @@ The layer (numbers: the constants and default_params below):
   capture do not pull it there.  The default puts +0.93 / +0.58 and +0.56 / +0.60 on Hibikase (its input +0.20 / +0.05
   and -0.05 / -0.03).  Matched the other way (the bones cut as FineDance's joints: 肩 -> 腕捩 -> 手捩 -> 手首, people
   -0.26 / -0.09, -0.10 / -0.19, +0.04 / +0.06; K-pop's 35 sequences -0.21 / -0.19, +0.06 / +0.09, -0.03 / -0.04) the
-  default moves elbow -> wrist from -0.07 / 0.00 to +0.95 / +1.06.  So human sets every arm delay and the fingers' delay
-  to 0 (Hibikase: -0.04 / +0.01, -0.09 / 0.00, -0.05 / +0.01 matched so); the tracking (fn, zeta, ff: the run-on past a
-  stop and the settling, which people show too: their held hands come back 0.3 to 0.5 cm), the holds, the beat holds,
-  the contacts and the checks are the default's.
+  default moves elbow -> wrist from -0.07 / 0.00 to +0.95 / +1.06.  People differ by person and style (CMU's modern and
+  Indian dancers +1 to +2 shoulder -> elbow, LaFAN1's 8 dances +0.2 to +0.45 elbow -> wrist, salsa negative); human takes
+  the styles nearest Hibikase's idol dance (FineDance's K-pop, street and jazz, AIST++).  So human sets every arm delay
+  and the fingers' delay to 0 (Hibikase: -0.04 / +0.01, -0.09 / 0.00, -0.05 / +0.01 matched so); the tracking (fn, zeta,
+  ff: the run-on past a stop and the settling, which people show too: their held hands come back 0.3 to 0.5 cm), the
+  holds, the beat holds, the contacts and the checks are the default's.
 * Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  As Kp and Kd scale with the
   inertia, the motion does not depend on it until the torque limit binds: mass and inertia act only through the limit
   on the angular acceleration (limit / inertia), and that binds on 0.1 to 0.3 % of the substeps of the shoulder and the
