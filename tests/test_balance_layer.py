@@ -613,6 +613,30 @@ class MmdIkCheckTest(unittest.TestCase):
         shift = centre_offsets(motion, result.motion, last)
         self.assertGreater(np.abs(shift[:, 0]).max() * CM, 2.0)                        # it still moves the body
 
+    def test_standing_knees_drop_held_back_too(self):
+        """the hips' drop that bends straight standing knees to KNEE_MIN_DEG is held back as well where MMD's IK would
+        newly fall short (on the MV MMD's solver bends a knee that starts nearly straight only so far: at 78.4 s the
+        right ankle fell 1.7 mm further short with 4 mm of drop).  Here a stand-in IK that falls short on a knee bent
+        more than 2 degrees past the dance's"""
+        last = 59
+        motion = dance(last=last, spread=0.0, centre=(0.0, 0.15, 0.0))
+        knee0 = {s: balance_layer.Body(MODEL, motion).knee_flexion(s) for s in ("左", "右")}
+
+        def stand_in(m):
+            body = balance_layer.Body(MODEL, m)
+            return {s: np.maximum(0.0, body.knee_flexion(s) - knee0[s] - 2.0) * 0.02 for s in ("左", "右")}
+
+        before = stand_in(motion)
+        plain = balance_layer.layer(MODEL, motion).motion
+        self.assertGreater(self.new_misses(before, stand_in(plain), motion), 0)       # the fixture: the drop would miss
+        result = balance_layer.layer(MODEL, motion, ik_check=stand_in)
+        self.assertEqual(self.new_misses(before, stand_in(result.motion), motion), 0)
+        rep = result.report["mmd_ik"]
+        self.assertEqual(rep["remaining"], 0)
+        self.assertGreater(rep["drop_held_frames"], 0)
+        down = -centre_offsets(motion, result.motion, last)[:, 1] * CM
+        self.assertGreater(float(down.max()), 0.1)                                    # it still goes down some
+
     def test_report_says_when_not_checked(self):
         result = balance_layer.layer(MODEL, dance(last=119, left_lifts=LIFT_RIGHT_STANDS))
         self.assertFalse(result.report["mmd_ik"]["checked"])

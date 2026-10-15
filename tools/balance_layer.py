@@ -1433,6 +1433,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         d, k = np.zeros((F, 2)), np.ones(F)
     radius = np.full(F, FREE_M)                         # the hold-back: |shift| under this (metres) per frame
     dip_cap = np.ones(F)                                # and the landings' dips scaled by this
+    drop_hold = np.full(F, np.inf)                      # and the standing knees' drop under this (units)
     miss0 = ik_check(motion) if ik_check is not None else None
     ik_rows = []
     warm = None
@@ -1476,10 +1477,13 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         # no standing knee straighter than KNEE_MIN_DEG, within what the other leg allows as the body now stands (the
         # shift onto a foot bends that leg already)
         allow_moved = drop_allowance(moved, plan, p["drop_max_cm"], KNEE_GIVE_DEG, actual=True, ref=body)
-        need = np.maximum(need, knee_min_drop(moved, plan, allow_moved))
+        # (held back where MMD's IK fell short: its solver bends a knee that starts nearly straight only so far, and the
+        # drop bends the other standing knee too; the reach's own drop is never held back)
+        need = np.maximum(need, np.minimum(knee_min_drop(moved, plan, allow_moved), drop_hold))
         finite = np.isfinite(need)
         allow_now = np.minimum(np.where(plan["sup"]["左"], allow_moved["左"], np.inf), np.where(plan["sup"]["右"], allow_moved["右"], np.inf))
         allow_now = np.minimum(allow_now, p["drop_max_cm"] / CM)          # the most the hips may go down on this frame
+        allow_now = np.minimum(allow_now, drop_hold)
         need_m = np.where(finite, need, 0.0) * UNIT_M
         # and no deeper than the needs round about (a minimum-jerk curve between two needs rounds over both)
         drop, info["drop"] = solve_drop(need_m, DROP_ACC_MAX, p["tau_s"],
@@ -1519,9 +1523,11 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
             near[max(0, f - IK_HALF):f + IK_HALF + 1] = True
         radius[near] = np.minimum(radius[near], 0.5 * np.linalg.norm(y[near], axis=1))
         dip_cap[near] *= 0.5
+        drop_hold[near] = np.minimum(drop_hold[near], 0.5 * drop[near])
     report["mmd_ik"] = {"checked": ik_check is not None, "rounds": len(ik_rows) - 1 if ik_rows else 0,
                         "per_round": ik_rows, "remaining": ik_rows[-1]["new_misses"] if ik_rows else None,
-                        "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0))}
+                        "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0)),
+                        "drop_held_frames": int(np.sum(np.isfinite(drop_hold)))}
     after = Body(model, out)
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
                            unreachable=int(np.sum(~finite)), feet=feet, catches=catches, vfix=vfix))
