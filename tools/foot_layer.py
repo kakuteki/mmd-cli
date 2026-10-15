@@ -1,6 +1,7 @@
 """Feet that carry weight: the ankles, the feet and the toes of a dance made anatomical, and their contact with the floor.
 
-    python tools/foot_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--measure-only]
+    python tools/foot_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--toes anatomical|v1]
+        [--toe-reach-cm CM] [--measure-only]
 
 The floor is at the height of the rest pose's soles unless --floor-y gives another (the trace's floor: the tracer stood
 the model there, so the dance is not moved down; 0.111 for Sour's Rin).  tools/make_stage.py's floor lies at y 0, under
@@ -72,6 +73,8 @@ SOLE_BAND = 0.03                # units above the lowest vertex that still count
 SHELL_BAND = 0.35               # units above it that the shoe's lower shell takes: the toe cap's front edge and the heel's
                                 # back, which go lowest when the foot is pitched (Rin's cap is 0.6 cm under the sole's
                                 # bottom layer at 40 degrees toes-down, 0.9 cm at 60)
+TIP_WEIGHT = 0.8                # the toe cap: the shoe's lower shell weighted this much or more on 足先EX
+BALL_WEIGHT = (0.1, 0.55)       # the ball: the sole's bottom weighted between these on 足先EX (under the MTP's line)
 CONTACT_ENTER = 0.03            # units above the trace's floor: a flat sole this low is on the floor
 CONTACT_EXIT = 0.06             # ... and leaves it above this
 HEEL_UP_DEG = 4.0               # a foot on the floor pitched toes-down more than this stands on its forefoot
@@ -321,6 +324,10 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
         mtp = (mtp + 180.0) % 360.0 - 180.0
         toes_fwd = qrot(leg["q_ex"], o.a0)
         toes_pitch = np.degrees(np.arcsin(np.clip(toes_fwd[:, 1], -1.0, 1.0)))   # the toe box against the floor
+        tip_m = o.w_shell >= TIP_WEIGHT
+        ball_m = (o.w_ex >= BALL_WEIGHT[0]) & (o.w_ex <= BALL_WEIGHT[1])
+        tip_low = skin(o, leg, o.shell[tip_m], o.w_shell[tip_m])[:, :, 1].min(axis=1)
+        ball_low = skin(o, leg, o.points[ball_m], o.w_ex[ball_m])[:, :, 1].min(axis=1)
         out[s] = {
             "frames": np.array(frames), "low": low, "heel_low": y[:, o.heel].min(axis=1),
             "fore_low": y[:, o.fore].min(axis=1), "flat_low": flat_low,
@@ -333,7 +340,7 @@ def feet_of(rig, shoe, sol, frames, floor_y=0.0, heel_pitch_deg=HEEL_PITCH_DEG):
             "q_shin": leg["q_shin"], "knee_bend": -np.degrees(leg["knee_angle"]),
             "heel_xz": world[:, o.heel][:, :, [0, 2]].mean(axis=1), "fore_xz": world[:, o.fore][:, :, [0, 2]].mean(axis=1),
             "trace_floor": o.floor, "floor": float(floor_y), "rest_dorsi": rest_dorsi, "rest_mtp": rest_mtp,
-            "toes_pitch": toes_pitch,
+            "toes_pitch": toes_pitch, "tip_low": tip_low, "ball_low": ball_low,
         }
     return out
 
@@ -343,11 +350,15 @@ TOE_SLIDE = (30.0, 80.0)        # cm/s: a pointed foot moving faster than the fi
                                 # floor stays or slides slowly; a step's swing skims past)
 
 
-def foot_speed(f):
+def foot_speed(f, vertical=False):
     """the foot's horizontal speed [F] in cm/s (the middle of its heel and forefoot), the larger of the steps into and
-    out of each frame"""
+    out of each frame; with vertical, the ankle's rise and fall counted in too (a foot coming down to land is not
+    still)"""
     xz = 0.5 * (f["heel_xz"] + f["fore_xz"])
-    step = np.linalg.norm(np.diff(xz, axis=0), axis=1) * FPS * UNIT_CM
+    step = np.linalg.norm(np.diff(xz, axis=0), axis=1)
+    if vertical:
+        step = np.hypot(step, np.diff(f["ankle"][:, 1]))
+    step = step * FPS * UNIT_CM
     v = np.zeros(len(xz))
     if len(step):
         v[1:] = step
@@ -515,6 +526,62 @@ def compare(f_in, f_out, contact):
                                                "worst": [[int(i) + 1, _r(float(rough[i]), 2)] for i in worst_h]}}
 
 
+def toe_summary(f, contact, floor_y):
+    """the report of one foot's toes (the bend of 足先EX, + extension, against the shoe's own shape) with its contact
+    frames `contact` against the visible floor `floor_y`:
+    * push_off: the lift-offs (the last frame of a contact run) from the ball (the heel up), from the rigid tip of the
+      shoe (its tip on the floor, its ball 0.8 cm or more up: the toes not bent) or flat, and the bend at a lift-off
+      with the heel up;
+    * on_the_tip_frames: frames on the floor with the heel up and the toe box tipped more than TOES_FLAT_DEG down;
+    * bent_up_in_the_air: a bend of 5 or more with the shoe a centimetre or more up, split into the frames nearer the
+      next landing than the last lift-off (bent before the forefoot is down) and the others (the return after a lift);
+    * tip_up_on_the_floor: the toes bent (3 or more) with the ball on the floor and the tip over 0.5 cm up;
+    * still_pointed_hover: runs of 3 frames or more of a still foot (under 15 cm/s) pointed more than 10 degrees down
+      whose tip hovers 0.25 to 2.5 cm over the floor, the ball higher (the trace's model's longer toes touched there);
+    * the bend's range and its step from frame to frame."""
+    n = len(contact)
+    k = f["mtp"] - f["rest_mtp"]
+    tip, ball = (f["tip_low"] - floor_y) * UNIT_CM, (f["ball_low"] - floor_y) * UNIT_CM
+    low = (f["low"] - floor_y) * UNIT_CM
+    pitch, box = f["pitch"], f["toes_pitch"]
+    kinds, bends = {"ball": 0, "tip": 0, "flat": 0}, []
+    for a, b in runs(contact):
+        if b >= n - 1:
+            continue
+        if tip[b] < 0.3 and ball[b] > 0.8:
+            kinds["tip"] += 1
+        elif pitch[b] < -HEEL_UP_DEG:
+            kinds["ball"] += 1
+        else:
+            kinds["flat"] += 1
+        if pitch[b] < -HEEL_UP_DEG:
+            bends.append(float(k[b]))
+    up = (low >= 1.0) & (k >= 5.0)
+    index = np.arange(n)
+    last, following = np.full(n, -10 ** 9), np.full(n, 10 ** 9)
+    at = -10 ** 9
+    for i in range(n):
+        at = i if contact[i] else at
+        last[i] = at
+    at = 10 ** 9
+    for i in range(n - 1, -1, -1):
+        at = i if contact[i] else at
+        following[i] = at
+    before = up & ((following - index) < (index - last))
+    lifted = (ball < 0.3) & (tip > 0.5) & (k > 3.0)
+    hover = (~np.asarray(contact)) & (pitch < -10.0) & (foot_speed(f) < 15.0) & (tip > 0.25) & (tip < 2.5) & (ball > tip)
+    hr = [(a, b) for a, b in runs(hover) if b - a + 1 >= 3]
+    return {"push_off": {"count": sum(kinds.values()), "from": kinds, "bend_at_heel_up_toe_off": stats(bends)},
+            "on_the_tip_frames": int((np.asarray(contact) & (pitch < -HEEL_UP_DEG) & (box < -TOES_FLAT_DEG)).sum()),
+            "bent_up_in_the_air": {"frames": int(up.sum()), "before_a_landing": int(before.sum()),
+                                   "after_a_lift_off": int((up & ~before).sum())},
+            "tip_up_on_the_floor": {"frames": int(lifted.sum()), "runs": len(runs(lifted)),
+                                    "tip_max_cm": _r(float(tip[lifted].max()) if lifted.any() else 0.0, 2)},
+            "still_pointed_hover": {"frames": int(sum(b - a + 1 for a, b in hr)), "runs": len(hr),
+                                    "tip_cm": stats(np.concatenate([tip[a:b + 1] for a, b in hr]) if hr else [])},
+            "bend_deg": stats(k), "bend_step_deg": stats(np.abs(np.diff(k)))}
+
+
 # ---- the layer -----------------------------------------------------------------------------------------------------
 
 LOAD_FULL = 0.03                # units above the trace's floor (the flat sole): the foot bears weight below this
@@ -543,6 +610,35 @@ SUB_ROUNDS = 3                  # rounds of raising both frames of an interval w
 BRIDGE = 2                      # frames: a standing foot lifted for this long or less (the trace's jitter) stays down,
 BRIDGE_LIFT = 0.1875            # ... when its shoe stays this low (units, 1.5 cm): a real quick step goes higher
 X_AXIS = np.array([1.0, 0.0, 0.0])
+# The toes (足先EX), toe_model "anatomical" (toe_bend; "v1" is the merged layer: the toes bent by the weight on a raised
+# heel, eased over EASE frames each way).  The sources are in _spike/out/stage6/toes/RESEARCH.md.
+TOE_MODELS = ("anatomical", "v1")
+TOE_FLEX_CAP = 20.0             # degrees the toes bend down against the foot at most (足先EX toward flexion).  Sour's
+                                # Rin's shoe bends with 足先EX over its front half (the weights ramp from 0.06
+                                # at the vamp to 1 at the tip): in MMD's renders a bend of 8 hardly shows, 15 carries the
+                                # line of a pointed foot on, 20 begins to droop, 30 hangs like rubber (stage 6, toes,
+                                # probe2) - the cap is that choice, not a source's number.  At 20 the toes, which lie on the
+                                # toe box extended by the shoe's own pitch at rest (HEEL_PITCH_DEG), are in the line of the
+                                # metatarsals (MTP 0).
+TOE_LOAD_TAU = 1.0              # frames: the weight comes onto the ball through two first-order lags of this (critically
+                                # damped: from naught, half in 1.7 frames = 56 ms, 90 % in 3.9 = 130 ms).  In a run the
+                                # forefoot lands and the toes come down flat in the first 20 to 35 % of a 0.22 to 0.37 s
+                                # contact (Welte 2021, McDonald 2016: some 50 to 130 ms); the force of a landing peaks 40
+                                # to 90 ms after the touch (stage-6 feet research, 5-2)
+TOE_RELEASE_TAU = 2.0           # frames: after the toe-off the toe box returns to the shoe's own shape (first order): a
+                                # 30 degree bend comes back at 350 deg/s at first, about the fastest an MTP turns at a
+                                # push-off (312 deg/s rising in walking, Sichting 2020; 293 to 342 deg/s down at the end of
+                                # a take-off in shoes, Duchene 2026)
+TOE_REACH = 0.3125              # units (2.5 cm), when asked (--toe-reach-cm; off by default): a still pointed foot whose
+                                # shoe hovers lower than this over the floor reaches it with its toes (the trace's model's
+                                # longer toes were on the floor there).  Off by default: a loafer's sole does not bend 15
+                                # to 20 degrees under a light touch, and the coordinator chose to leave these hovers (the
+                                # first 18.5 s of the right foot would hold its toe box bent down 17 to 20 degrees)
+TOE_REACH_SPEED = (10.0, 20.0)  # cm/s: a foot moving faster than the first reaches less and less, faster than the second
+                                # not at all (a resting toe stays; a step's swing skims past)
+TOE_REACH_RISE = (1.0, 3.0)     # cm/s up: a foot rising off the floor (after a toe-off) does not reach back for it
+TOE_REACH_PITCH = (5.0, 10.0)   # degrees toes-down: a level foot over the floor does not reach, a pointed one does
+TOE_REACH_TAU = 2.0             # frames: the reach comes and goes this smoothly (a first order run both ways)
 
 
 def soft_limit(x, start, cap):
@@ -586,7 +682,7 @@ def default_params():
     return {"floor_y": None, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
             "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP,
-            "trace_toe_extra": 0.0}
+            "trace_toe_extra": 0.0, "toe_model": "anatomical", "toe_reach": 0.0}
 
 
 def load_shares(shoe, feet, sol, p):
@@ -642,7 +738,7 @@ def turn_about(axis, deg, q):
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
 
 
-def foot_targets(o, f, leg, rest, share, near, p):
+def foot_targets(o, f, leg, rest, share, near, p, floor_y=None):
     """the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees) and the weights (roll laid flat w,
     on the floor v) for one side: the roll laid flat as the foot takes weight (by its share of the body's weight and
     only while its sole faces the floor), the ankle complex inside its range, the toes bent so that a loaded raised
@@ -703,10 +799,144 @@ def foot_targets(o, f, leg, rest, share, near, p):
         q = turn_about(qrot(q, o.a0), side_sign * trusted(di, ok), q)   # about the foot's forward axis
     toes = np.zeros(len(q))
     if p["toes"]:
-        pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
-        room = max(0.0, p["limits"]["mtp_extension"][1] - rest["mtp"])
-        toes = smooth_max_envelope(v * loaded * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
+        if p.get("toe_model", "anatomical") == "v1":           # (the merged layer's, to the bit: q as it stands)
+            pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
+            room = max(0.0, p["limits"]["mtp_extension"][1] - rest["mtp"])
+            toes = smooth_max_envelope(v * loaded * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
+        else:
+            toes = toe_bend(o, f, leg, qnormalize_rows(q), rest, v, loaded, p, o.floor if floor_y is None else floor_y)
     return qnormalize_rows(q), toes, w, v
+
+
+def run_cummax(x, down):
+    """x [F] made non-decreasing through each run of `down` frames (the largest so far in the run), 0 off them"""
+    out = np.zeros(len(x))
+    for a, b in runs(down):
+        out[a:b + 1] = np.maximum.accumulate(np.asarray(x[a:b + 1], dtype=float))
+    return out
+
+
+def damped_up(x, tau, substeps=8):
+    """x [F] followed where it rises by two first-order lags of `tau` frames in a row (critically damped: a step is
+    taken 26 % in a frame, 59 % in two, 80 % in three), integrated in `substeps` steps a frame so that the frames get
+    the continuous response; where it falls, at once.  From its first value: a foot that is already on its ball when
+    the dance starts is not eased onto it."""
+    x = np.asarray(x, dtype=float)
+    out = np.empty(len(x))
+    k = 1.0 - math.exp(-1.0 / (tau * substeps)) if tau > 0 else 1.0
+    a = b = float(x[0]) if len(x) else 0.0
+    for t, value in enumerate(x):
+        if value <= b:
+            a = b = value
+        else:
+            for _ in range(substeps if tau > 0 else 1):
+                a += (value - a) * k
+                b += (a - b) * k
+        out[t] = b
+    return out
+
+
+def release(b, air, down, tau):
+    """the bend [F]: b on the frames on the floor (down); off the floor, the shape in the air `air` and what the toes had
+    beyond it on the last frame on the floor, going with a first order of `tau` frames; before the first, `air`"""
+    out = np.array(air, dtype=float)
+    last = None
+    for t in range(len(out)):
+        if down[t]:
+            out[t] = b[t]
+            last = t
+        elif last is not None:
+            out[t] = air[t] + (out[last] - air[last]) * math.exp(-(t - last) / tau)
+    return out
+
+
+def smooth_both_ways(x, tau):
+    """x [F] through a first-order filter of `tau` frames run forward, then backward: no lag, a step spread each way"""
+    k = 1.0 - math.exp(-1.0 / tau)
+    y = np.array(x, dtype=float)
+    for t in range(1, len(y)):
+        y[t] = y[t - 1] + (y[t] - y[t - 1]) * k
+    for t in range(len(y) - 2, -1, -1):
+        y[t] = y[t + 1] + (y[t] - y[t + 1]) * k
+    return y
+
+
+def shell_low(o, ankle, q_foot, toes):
+    """the lowest point [F] of the shoe's lower shell for the ankle at `ankle`, the foot turned q_foot, the toes `toes`"""
+    return shell_at(o, ankle, q_foot, toes)[:, :, 1].min(axis=1)
+
+
+def toes_touching(o, ankle, q_foot, hi, lo, floor_y, rounds=30):
+    """per frame the bend between `hi` (the shoe's lowest point above floor_y) and `lo` (more bent down, at or below it)
+    at which the lowest point comes onto floor_y: the bisection, kept on the side above the floor"""
+    a, c = np.array(lo, dtype=float), np.array(hi, dtype=float)
+    for _ in range(rounds):
+        mid = 0.5 * (a + c)
+        below = shell_low(o, ankle, q_foot, mid) < floor_y
+        a = np.where(below, mid, a)
+        c = np.where(below, c, mid)
+    return c
+
+
+def toe_bend(o, f, leg, q, rest, v, loaded, p, floor_y):
+    """the toes' bend [F] (degrees, + extension, the turn of 足先EX against the foot) of the anatomical model for one foot
+    turned q (after the roll and the range), on the floor by v, bearing weight by loaded:
+    * on the floor the floor bends them: a foot on its ball has the toe box lying on the floor (the extension the foot's
+      pitch asks, up to the cap of the MTP's extension as before).  Once a foot bears weight in a run of frames on the
+      floor it stays on its ball until that run ends (a foot pushes off from the ball, it does not climb onto the rigid
+      tip of a loafer as the weight leaves it); the weight coming on is taken smoothly (damped_up, TOE_LOAD_TAU), the
+      heel coming down brings the toes down with it at once (the tip does not stay up off the floor);
+    * nothing is bent before the forefoot is on the floor: in the air the toe box keeps the shoe's own shape, and after
+      the toe-off it returns to it with TOE_RELEASE_TAU.  (No measured angle of relaxed or pointed toes in the air was
+      found; walking keeps the hallux extended through the swing, Nester 2014, and pointe holds the toes in line with the
+      metatarsals - inside a loafer, whose outside differs from the toes inside by 4 to 8 degrees: Bishop 2011,
+      Ferguson 2026.  A toe box bending in the air on its own is what the merged layer showed before a landing);
+    * a still pointed foot whose shoe hovers less than p["toe_reach"] over the floor reaches it with its toes (bent down
+      until the shoe's lowest point is on the floor, up to TOE_FLEX_CAP), the ankle where it is;
+    * never bent down into the floor: the bend toward flexion stops where the shoe's lowest point meets it, the ankle
+      where the trace has it (the layer's heights move a foot off the floor only by the shift of the floor)."""
+    pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
+    room = max(0.0, p["limits"]["mtp_extension"][1] - rest["mtp"])
+    flat = soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room)          # the toe box laid on the floor
+    down = np.asarray(v) >= 0.5
+    gate = damped_up(run_cummax(np.asarray(v) * np.asarray(loaded), down), TOE_LOAD_TAU)
+    air = np.zeros(len(q))                                                    # the shoe's own shape
+    # the floor bends them as far as the foot is on it (v, the band of heights over the floor): a foot rising out of the
+    # band at a lift-off lets its toes go with the lowering the heights let go by the same v (bent but only partly
+    # lowered, the shoe would float with its toes bent up)
+    b = release(np.asarray(v) * gate * flat, air, down, TOE_RELEASE_TAU)
+    # where the foot is off the floor the layer leaves its height to the trace (but for the floor's shift)
+    ankle = leg["ankle"] + np.array([0.0, floor_y - o.floor, 0.0])
+    off = ~down
+    if p.get("toe_reach", 0.0) > 0.0 and off.any():
+        gap = shell_low(o, ankle, q, b) - floor_y
+        y = f["ankle"][:, 1]
+        rise = np.zeros(len(y))                                   # cm/s up, the larger of the steps into and out of a frame
+        if len(y) > 1:
+            step = np.diff(y) * FPS * UNIT_CM
+            rise[1:] = step
+            rise[:-1] = np.maximum(rise[:-1], step)
+        weight = (off & (gap > 0.0)) * (1.0 - smoothstep(foot_speed(f, vertical=True), *TOE_REACH_SPEED)) \
+            * (1.0 - smoothstep(rise, *TOE_REACH_RISE)) \
+            * smoothstep(-pitch, *TOE_REACH_PITCH) * (1.0 - smoothstep(gap, 0.8 * p["toe_reach"], p["toe_reach"]))
+        idx = np.flatnonzero(weight > 0.0)
+        reach = np.zeros(len(b))
+        if len(idx):
+            lo = np.minimum(np.full(len(idx), -TOE_FLEX_CAP), b[idx])
+            low_lo = shell_low(o, ankle[idx], q[idx], lo)
+            r = np.where(low_lo <= floor_y, toes_touching(o, ankle[idx], q[idx], b[idx], lo, floor_y), lo)
+            reach[idx] = weight[idx] * (r - b[idx])
+        b = b + smooth_both_ways(reach, TOE_REACH_TAU)
+    b = np.clip(b, -TOE_FLEX_CAP, room)
+    # never bent down into the floor off it (the frames on it are put on the floor by the heights)
+    low = shell_low(o, ankle, q, b)
+    sunk = off & (b < 0.0) & (low < floor_y)
+    if sunk.any():
+        idx = np.flatnonzero(sunk)
+        hi = np.zeros(len(idx))
+        ok = shell_low(o, ankle[idx], q[idx], hi) >= floor_y
+        b[idx] = np.where(ok, toes_touching(o, ankle[idx], q[idx], hi, b[idx], floor_y), 0.0)
+    return b
 
 
 def qnormalize_rows(q):
@@ -732,19 +962,32 @@ def bridge(v, gap, low=None):
     return v
 
 
-def eased_correction(c, v, radius):
+def eased_correction(c, v, radius, back=True):
     """the height a foot is moved by to put its sole on the floor, c [F] (units; v times the gap), as it is where the
     foot is down (v >= 0.5: the height then follows the floor exactly, the trace's jitter taken out) and carried into
     the frames around them from the nearest down frame with a raised cosine over `radius` frames: the foot is lowered
     before it lands and let go after it lifts, by no more than its landing or lift-off frame needs.  A frame in the air
-    keeps the larger of that and its own (the height band near the floor)."""
+    keeps the larger of that and its own (the height band near the floor).  back=False carries it only forward (let go
+    after a lift-off, nothing taken before a landing: the anatomical toes bend when the forefoot is down, and the
+    foot comes down onto its ball after its toes touch, at the trace's landing)."""
     c = np.asarray(c, dtype=float)
     down = np.asarray(v) >= 0.5
-    pos = smooth_max_envelope(np.where(down, np.maximum(c, 0.0), 0.0), radius)
-    neg = smooth_max_envelope(np.where(down, np.maximum(-c, 0.0), 0.0), radius)
+    envelope = smooth_max_envelope if back else forward_envelope
+    pos = envelope(np.where(down, np.maximum(c, 0.0), 0.0), radius)
+    neg = envelope(np.where(down, np.maximum(-c, 0.0), 0.0), radius)
     carried = np.where(neg > pos, -neg, pos)
     air = np.where(np.abs(carried) > np.abs(c), carried, c)
-    return np.where(down, c, air)
+    out = np.where(down, c, air)
+    if not back:
+        # let go monotonically: a lift-off's last frame on the floor that is only partly down (0.5 <= v < 1) takes v of
+        # its gap, less than the frame after it carries from the full frame before (the raised cosine of two frames):
+        # the foot would rise, then dip back toward the floor it left.  A frame letting go keeps no more than the frame
+        # before it.
+        letgo = ~down & (np.abs(carried) > np.abs(c))
+        for t in range(1, len(out)):
+            if letgo[t] and out[t] * out[t - 1] > 0.0 and abs(out[t]) > abs(out[t - 1]):
+                out[t] = out[t - 1]
+    return out
 
 
 def slerp_rows(q0, q1, t):
@@ -791,6 +1034,15 @@ def sinks_between(rig, shoe, motion, keys, written, intervals, floor_y):
     return out
 
 
+def forward_envelope(x, radius):
+    """smooth_max_envelope spread only to the following frames"""
+    out = np.maximum(x, 0.0).copy()
+    for k in range(1, radius + 1):
+        g = 0.5 * (1.0 + math.cos(math.pi * k / (radius + 1)))
+        out[k:] = np.maximum(out[k:], g * np.maximum(x[:-k], 0.0))
+    return out
+
+
 def smooth_max_envelope(x, radius):
     """a smooth envelope over the positive values of x: each value spread to its neighbours with a raised cosine of
     `radius` frames, the largest kept (so a single frame's raise starts and ends gently)"""
@@ -815,12 +1067,18 @@ def layer(rig, shoe, motion, params=None, log=None):
       LOADED_DORSI_CAP), except where the shank swings faster than SHANK_SWING a frame or the roll's reference cannot
       be trusted (roll_reliable): there the input's foot stays;
     * the toes: a loaded foot with its heel raised stands on the ball, 足先EX extending the toes so that the toe box
-      lies on the floor (up to the cap of the MTP's extension);
+      lies on the floor (up to the cap of the MTP's extension).  params["toe_model"] "anatomical" (the default,
+      toe_bend): the floor bends them as the forefoot takes the weight, a foot once on its ball stays on it until it
+      leaves, the toe box returns to the shoe's shape after the toe-off and keeps it in the air; params["toe_reach"]
+      (units, 0 by default) lets a still pointed foot just over the floor reach it with its toes.  "v1": the merged
+      layer (the bend eased over EASE frames each way by the weight, the heights eased before a landing too);
     * the height: the trace's floor moved onto the floor (params["floor_y"]; by default the trace's own: no shift),
       the shoe of a foot on the floor (the ON_FLOOR band; judged as the trace's model stood with
       params["trace_toe_extra"], 0 by default) exactly on it, a standing foot's lift of BRIDGE frames or fewer bridged
       while the shoe itself stays under BRIDGE_LIFT, the correction carried into the frames around a contact over EASE
-      frames (put down before the landing, let go after the lift-off: eased_correction), nothing below the floor.
+      frames (put down before the landing, let go after the lift-off: eased_correction; with the anatomical toes only
+      after the lift-off: the foot comes down onto its ball after the touch, at the trace's landing), nothing below
+      the floor.
       MMD's IK is solved again and the foot IK's goal pushed on where the ankle lags behind it (ROUNDS); the frames
       that do not follow are left at their best and listed (miss);
     * twice: the range is checked again against the shank that MMD reaches with the new heights;
@@ -859,15 +1117,19 @@ def layer(rig, shoe, motion, params=None, log=None):
             for k in ("ankle", "knee", "q_shin"):
                 leg[k] = shank[s][k]
             rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
-            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p)
+            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y)
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
             # the air keeps its path), the shoe of a foot on the floor exactly on it (v), that correction eased into
             # the frames around (eased_correction), nothing below the floor
             low0 = shell_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
             gap = floor_y - low0 - d1                     # what putting the sole on the floor adds to the shift
-            dy = d1 + eased_correction(v * gap, v, EASE)
-            dy = dy + smooth_max_envelope(floor_y - (low0 + dy), 3)          # nothing below the floor
+            anatomical = p.get("toe_model", "anatomical") != "v1"
+            dy = d1 + eased_correction(v * gap, v, EASE, back=not anatomical)
+            sink = smooth_max_envelope(floor_y - (low0 + dy), 3)              # nothing below the floor
+            if anatomical:                                                     # (a foot on it stays exactly on it)
+                sink = np.where(v >= 0.5, np.maximum(floor_y - (low0 + dy), 0.0), sink)
+            dy = dy + sink
             target = low0 + dy
             plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": target - low0, "d1": d1, "target_low": target,
                        "share": shares[s], "floor_y": floor_y}
@@ -1056,6 +1318,13 @@ def main(argv=None):
                     help="how much further the trace's model's foot reached from the ankle to the toe (cm): its pointed "
                          "toe touched the floor where this model's stops short; the report's "
                          "trace_toe_extra_estimate_cm measures it from the dance")
+    ap.add_argument("--toes", choices=TOE_MODELS, default="anatomical",
+                    help="the toes (足先EX): anatomical (the floor bends them, a foot on its ball stays on it until it "
+                         "leaves, they return over TOE_RELEASE_TAU after it, nothing bent in the air) or v1 (the merged "
+                         "layer's output, unchanged)")
+    ap.add_argument("--toe-reach-cm", type=float, default=0.0,
+                    help="a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, "
+                         "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
@@ -1074,13 +1343,17 @@ def main(argv=None):
     extra = args.trace_toe_cm / UNIT_CM
     m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y, toe_extra=extra)
     report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
-              "heel_pitch_deg": HEEL_PITCH_DEG, "seconds": None}
+              "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "toe_reach_cm": max(0.0, args.toe_reach_cm),
+              "seconds": None}
+    report["toes"] = {"input": {TAGS[s]: toe_summary(m_in[s], contacts[s], floor_y) for s in m_in}}
     if not args.measure_only:
-        out, plan = layer(rig, shoe, motion, {"floor_y": floor_y, "trace_toe_extra": extra})
+        out, plan = layer(rig, shoe, motion, {"floor_y": floor_y, "trace_toe_extra": extra, "toe_model": args.toes,
+                                              "toe_reach": max(0.0, args.toe_reach_cm) / UNIT_CM})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
         m_out, rep_out, _ = measure_report(rig, shoe, back, floor_y, contact_from=contacts)
         report["output"] = rep_out
+        report["toes"]["output"] = {TAGS[s]: toe_summary(m_out[s], contacts[s], floor_y) for s in m_out}
         report["change"] = {TAGS[s]: compare(m_in[s], m_out[s], contacts[s]) for s in m_in}
         report["unreached"] = {TAGS[s]: {"frames": int((np.abs(pl["miss"]) > 0.025).sum()),
                                          "worst_cm": _r(float(np.abs(pl["miss"]).max()) * UNIT_CM, 2)}
@@ -1102,6 +1375,14 @@ def main(argv=None):
                       which, tag, r["contact_frames"], r["frames"], r["penetration"]["frames"],
                       r["penetration"]["deepest_cm"], r["hover_in_contact_cm"].get("p50"),
                       r["roll_in_contact_deg"].get("p50"), r["roll_in_contact_deg"].get("p95")))
+    for which, per in report["toes"].items():
+        for tag, t in per.items():
+            print("toes %s %s: push-offs %s, bend at a heel-up toe-off p50 %s, on the rigid tip %d frames, bent up in the "
+                  "air %d (before a landing %d), tip up on the floor %d, still pointed hover %d frames" % (
+                      which, tag, t["push_off"]["from"], t["push_off"]["bend_at_heel_up_toe_off"].get("p50"),
+                      t["on_the_tip_frames"], t["bent_up_in_the_air"]["frames"],
+                      t["bent_up_in_the_air"]["before_a_landing"], t["tip_up_on_the_floor"]["frames"],
+                      t["still_pointed_hover"]["frames"]))
     if "untouched" in report:
         print("untouched bones identical: %s" % report["untouched"]["identical"])
     return 0
