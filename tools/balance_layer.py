@@ -216,6 +216,11 @@ HIP_ADDUCTION_DEG = (20.0, 22.0)
 HIP_ABDUCTION_DEG = 45.0
 KNEE_FLEXION_DEG = (130.0, 159.0)
 KNEE_GIVE_DEG = 12.0            # the reach's drop bends a leg on the floor by at most this much more
+KNEE_MIN_DEG = 5.0              # a leg on the floor keeps its knee bent at least this much (the two-bone knee from the hip to
+                                # the foot IK's target, a05's measure): human dancers never stand on a straighter knee (0 % of
+                                # the frames on the floor, FineDance; the human baseline of 2026-10-15), the traced dance does
+                                # on 6-8 % (where it puts the standing foot's target out of the leg's reach, and MMD leaves the
+                                # foot short of it).  The hips go down for it within the drop's allowance
 LIFT_FOLD_DEG = 5.0             # a lifted leg's knee folds at most this much past the dance's (195 s of the MV: the heel
                                 # kicked up behind from 3 to 60 cm in 0.2 s, faster than the carry comes in; 150 -> 156)
 
@@ -234,7 +239,7 @@ OPTIONAL = ["頭先", "左中指先", "右中指先", "左中指３", "右中指
 
 def params_default():
     return {"r_bal_cm": R_BAL_CM, "acc_max": ACC_MAX, "lead_s": LEAD_S, "lag_s": LAG_S, "drop_max_cm": DROP_MAX_CM,
-            "dip_deg": DIP_DEG, "dip": True, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
+            "dip_deg": DIP_DEG, "dip": False, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
             "catch": True, "vertical": True, "dip_deg_flat": DIP_DEG_FLAT, "dip_deg_fore": DIP_DEG_FORE}
 
 
@@ -819,20 +824,22 @@ def solve_shift(w, d, gain, discs, slabs, acc_max, tau_s, lam_in, lam_out, iters
     return out, info
 
 
-def solve_drop(need, acc_max, tau_s, iters=None):
-    """the hips' drop y [F] (metres), never under `need` (metres; 0 where nothing is needed): the least smooth curve
-    (minimum jerk, |y''| <= acc_max)"""
+def solve_drop(need, acc_max, tau_s, iters=None, cap=None):
+    """the hips' drop y [F] (metres), never under `need` (metres; 0 where nothing is needed) and, with `cap` [F], never
+    over max(cap, need) (the most the other leg on the floor may bend; the smooth curve otherwise rounds over it between
+    two needs): the least smooth curve (minimum jerk, |y''| <= acc_max)"""
     F = len(need)
     if F < 5 or not np.any(need > 0):
         return np.zeros(F), {"iterations": 0}
     lo = need[:, None]              # not tightened: a straight leg bends degrees for a millimetre more of drop
-    y, info = admm(np.zeros(F), np.zeros((F, 1)), 1.0, lambda v: np.maximum(v, lo), acc_max, tau_s, iters,
+    hi = np.full((F, 1), np.inf) if cap is None else np.maximum(cap, need)[:, None]
+    y, info = admm(np.zeros(F), np.zeros((F, 1)), 1.0, lambda v: np.clip(v, lo, hi), acc_max, tau_s, iters,
                    tol_x_cm=0.01)
     info.pop("_state", None)
     y = y[:, 0]
     raise_ = smooth_cover(np.maximum(need - y, 0.0), FIX_HALF)      # up to the need where the solve left it short
     info["need_raise_cm_max"] = round(float(raise_.max()) * 100.0, 4)
-    return y + raise_, info
+    return np.minimum(y + raise_, hi[:, 0]), info
 
 
 # ---- the plan ---------------------------------------------------------------------------------------------------
@@ -1069,15 +1076,23 @@ def knee_give(L1, L2, flex_deg, give_deg):
     return np.maximum(dist(flex_deg) - dist(flex_deg + give_deg), 0.0)
 
 
-def drop_allowance(body, plan, drop_max_cm, give_deg):
+def drop_allowance(body, plan, drop_max_cm, give_deg, actual=False, ref=None):
     """per leg and frame, how far (units) the hips may go down for that leg to reach its foot: the drop does not bend
     the leg it is for (that leg stays at its reach; the hip goes round the ankle), it bends the other leg if that one is
     on the floor, by at most give_deg more (a straight leg gives about 0.5 cm, one bent 40 degrees 2.9 cm); at most
-    drop_max"""
+    drop_max.  actual: count, for a leg whose target is out of reach, the way back into reach too (the standing knees'
+    drop; the shift's reach bound keeps the plain one, which leaves the shift some room); ref: the body whose knees the
+    give_deg is counted from (the dance's: the shift has bent the leg already)"""
     give = {}
     for s in SIDES:
         L1, L2 = body.legs_rest[s]
-        give[s] = np.where(plan["sup"][s], knee_give(L1, L2, body.knee_flexion(s), give_deg), np.inf)
+        if actual:
+            # from where the hip is now (a target out of reach: first the way back into reach, which bends nothing)
+            flex = (body if ref is None else ref).knee_flexion(s)
+            bent = np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(np.clip(flex + give_deg, 0.0, 180.0))))
+            give[s] = np.where(plan["sup"][s], np.maximum(body.reach(s) - bent, 0.0), np.inf)
+        else:
+            give[s] = np.where(plan["sup"][s], knee_give(L1, L2, body.knee_flexion(s), give_deg), np.inf)
     cap = drop_max_cm / CM
     return {"左": np.minimum(cap, give["右"]), "右": np.minimum(cap, give["左"])}
 
@@ -1164,6 +1179,23 @@ def knee_slabs(body, carry=None, low=None):
         hi = (n - np.minimum(n - RANGE_NO_WORSE_M / UNIT_M, d_lim)) * UNIT_M
         slabs.append((u * hip_share(carry, s, body.F)[:, None], np.full(body.F, -FREE_M), hi))
     return slabs
+
+
+def knee_min_drop(body, plan, allowance):
+    """the drop of the hips (units, per frame) that bends every leg in contact with the floor (its lowest point under
+    CONTACT_EPS, 4 mm: a05's contact, the human baseline's) to KNEE_MIN_DEG (two-bone: the hip within that knee's
+    hip-to-ankle distance of the foot IK's target), at most what the other leg allows (allowance)"""
+    need = np.zeros(body.F)
+    for s in SIDES:
+        L1, L2 = body.legs_rest[s]
+        dmin = math.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * math.cos(math.radians(KNEE_MIN_DEG + 0.5)))
+        D = body.ankle(s) - body.hip(s)
+        rh = np.linalg.norm(D[:, [0, 2]], axis=1)
+        v = -D[:, 1]
+        n = np.where(rh < dmin, v - np.sqrt(np.maximum(dmin * dmin - rh * rh, 0.0)), 0.0)
+        n = np.where(plan["low"][s] < CONTACT_EPS, np.clip(n, 0.0, allowance[s]), 0.0)
+        need = np.maximum(need, n)
+    return need
 
 
 def drop_needed(body, tol_cm=REACH_TOL_CM, before=None):
@@ -1441,8 +1473,17 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         shift[:, [0, 2]] = y / UNIT_M
         moved = body.moved(shift, carry)
         need = drop_needed(moved, before=body)
+        # no standing knee straighter than KNEE_MIN_DEG, within what the other leg allows as the body now stands (the
+        # shift onto a foot bends that leg already)
+        allow_moved = drop_allowance(moved, plan, p["drop_max_cm"], KNEE_GIVE_DEG, actual=True, ref=body)
+        need = np.maximum(need, knee_min_drop(moved, plan, allow_moved))
         finite = np.isfinite(need)
-        drop, info["drop"] = solve_drop(np.where(finite, need, 0.0) * UNIT_M, DROP_ACC_MAX, p["tau_s"])
+        allow_now = np.minimum(np.where(plan["sup"]["左"], allow_moved["左"], np.inf), np.where(plan["sup"]["右"], allow_moved["右"], np.inf))
+        allow_now = np.minimum(allow_now, p["drop_max_cm"] / CM)          # the most the hips may go down on this frame
+        need_m = np.where(finite, need, 0.0) * UNIT_M
+        # and no deeper than the needs round about (a minimum-jerk curve between two needs rounds over both)
+        drop, info["drop"] = solve_drop(need_m, DROP_ACC_MAX, p["tau_s"],
+                                        cap=np.minimum(allow_now * UNIT_M, smooth_cover(need_m, FIX_HALF)))
         drop = drop / UNIT_M
         allow_any = np.maximum(allowance["左"], allowance["右"])
         drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
@@ -1492,7 +1533,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
               "knee_tight": plan["knee_tight"], "bound_cut": cut,
               "drop_allowance_L": allowance["左"], "drop_allowance_R": allowance["右"],
               "low_L": plan["low"]["左"], "low_R": plan["low"]["右"], "carry_L": carry["左"], "carry_R": carry["右"],
-              "foot_move_L": feet["左"], "foot_move_R": feet["右"], "vertical_fix": vfix,
+              "foot_move_L": feet["左"], "foot_move_R": feet["右"], "vertical_fix": vfix, "drop_need": need,
               "down_acc_pelvis_before": down_acc(body.p("下半身")[:, 1]),
               "down_acc_pelvis_after": down_acc(after.p("下半身")[:, 1])}
     for s, tag in (("左", "L"), ("右", "R")):
@@ -1748,6 +1789,12 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
         knee["over_%d_frames_%s" % (KNEE_FLEXION_DEG[0], tag)] = [int(np.sum(kb > KNEE_FLEXION_DEG[0])), int(np.sum(ka > KNEE_FLEXION_DEG[0]))]
         knee["over_%d_newly_%s" % (KNEE_FLEXION_DEG[1], tag)] = int(np.sum((ka > KNEE_FLEXION_DEG[1]) & (ka > kb + 0.5)))
         knee["max_deg_" + tag] = [round(float(kb.max()), 1), round(float(ka.max()), 1)]
+        touch = plan["low"][s] < CONTACT_EPS                # a05's contact (4 mm), as the human baseline counts it
+        knee.setdefault("straight_on_floor_frames", [0, 0])
+        knee.setdefault("contact_frames", 0)
+        knee["straight_on_floor_frames"][0] += int(np.sum(touch & (kb < KNEE_MIN_DEG)))
+        knee["straight_on_floor_frames"][1] += int(np.sum(touch & (ka < KNEE_MIN_DEG)))
+        knee["contact_frames"] += int(np.sum(touch))
         hb, ha = before.hip_adduction(s), after.hip_adduction(s)
         hip["adduction_deg_" + tag] = {"before": q_stats(hb, (0.5, 0.99)), "after": q_stats(ha, (0.5, 0.99))}
         hip["over_%d_frames_%s" % (HIP_ADDUCTION_DEG[0], tag)] = [int(np.sum(hb > HIP_ADDUCTION_DEG[0])), int(np.sum(ha > HIP_ADDUCTION_DEG[0]))]
@@ -1865,7 +1912,9 @@ def main(argv=None):
     ap.add_argument("--lag", type=float, default=LAG_S, help="s: and ends this long after it lands")
     ap.add_argument("--drop-max", type=float, default=DROP_MAX_CM, help="cm: the hips may go down for the legs' reach")
     ap.add_argument("--dip-deg", type=float, default=DIP_DEG, help="degrees: the knee's bend on a landing")
-    ap.add_argument("--no-dip", action="store_true", help="no knee bend on the landings")
+    ap.add_argument("--dip", action="store_true", help="bend the knee on the landings that take the weight (off: human "
+                                                     "dancers land already bent and add 0.3-1.6 degrees)")
+    ap.add_argument("--no-dip", action="store_true", help="(the default) no knee bend on the landings")
     ap.add_argument("--no-catch", action="store_true", help="no bound or pull on the XcoM at the landings")
     ap.add_argument("--no-vertical", action="store_true", help="no bound on the pelvis's downward acceleration")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
@@ -1879,7 +1928,7 @@ def main(argv=None):
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
-                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": not args.no_dip, "catch": not args.no_catch,
+                  "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": bool(args.dip and not args.no_dip), "catch": not args.no_catch,
                   "vertical": not args.no_vertical}
         ik_check, ik_note = None, None
         if args.mmd_ik:

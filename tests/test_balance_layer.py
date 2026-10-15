@@ -701,13 +701,18 @@ class RangeTest(unittest.TestCase):
         self.assertLess(body.knee("左")[60, 1], body.hip("左")[60, 1] - 2.0)   # the knee hangs below the hip
 
 
+DIP = {"dip": True}           # the landings' dip, off by default since the human baseline (HumanKneeTest)
+
+
 class LandingTest(unittest.TestCase):
+    """with the landings' dip asked for (--dip; off by default: human dancers land already bent and add 0.3-1.6 degrees)"""
+
     def test_knee_gives_on_a_landing_that_takes_the_weight(self):
         """the left foot steps (up and down); as it lands the right foot lifts: the left leg takes the weight and its knee
         bends more within 0.15 s, then comes back"""
         last = 149
         motion = dance(last=last, left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
-        result = balance_layer.layer(MODEL, motion)
+        result = balance_layer.layer(MODEL, motion, DIP)
         before = balance_layer.Body(MODEL, motion).knee_flexion("左")
         after = balance_layer.Body(MODEL, result.motion).knee_flexion("左")
         land = 50
@@ -724,7 +729,7 @@ class LandingTest(unittest.TestCase):
         last = 119
         motion = dance(last=last, left_lifts=[(36, 41, 45, 50, 1.0), (62, 68, 90, 96, 2.0)],
                        right_lifts=[(36, 41, 52, 58, 1.0)])
-        result = balance_layer.layer(MODEL, motion)
+        result = balance_layer.layer(MODEL, motion, DIP)
         self.assertGreaterEqual(result.report["landings"]["dipped"], 2)
         down = centre_offsets(motion, result.motion, last)[:, 1] * CM
         acc = np.abs(down[2:] - 2 * down[1:-1] + down[:-2])
@@ -748,7 +753,7 @@ class LandingTest(unittest.TestCase):
             motions[name] = m
         want = {"flat": balance_layer.DIP_DEG_FLAT, "fore": balance_layer.DIP_DEG_FORE, "heel": balance_layer.DIP_DEG}
         for name, m in motions.items():
-            result = balance_layer.layer(MODEL, m)
+            result = balance_layer.layer(MODEL, m, DIP)
             row = [r for r in result.report["landings"]["dips"] if r["foot"] == "左"][0]
             self.assertEqual(row["kind"], name)
             self.assertEqual(row["target_gain_deg"], want[name])
@@ -766,7 +771,7 @@ class LandingTest(unittest.TestCase):
         """the left foot taps the floor and lifts again while the right foot stays down: no weight to take"""
         last = 119
         motion = dance(last=last, left_lifts=[(20, 26, 40, 46, 1.5), (49, 55, 70, 76, 1.5)])
-        result = balance_layer.layer(MODEL, motion)
+        result = balance_layer.layer(MODEL, motion, DIP)
         self.assertEqual(result.report["landings"]["dipped"], 0)
 
 
@@ -843,7 +848,7 @@ class VerticalTest(unittest.TestCase):
     def test_landing_dip_under_the_bound(self):
         last = 149
         motion = dance(last=last, left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
-        result = balance_layer.layer(MODEL, motion)
+        result = balance_layer.layer(MODEL, motion, {"dip": True})
         self.assertLessEqual(pelvis_down_acc(result.motion, last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertGreaterEqual(result.report["landings"]["dipped"], 1)
 
@@ -876,6 +881,37 @@ class SupportFromTest(unittest.TestCase):
             balance_layer.layer(MODEL, dance(last=119), support_motion=dance(last=89))
 
 
+class HumanKneeTest(unittest.TestCase):
+    """human dancers (FineDance, the human baseline of 2026-10-15) land with the knee already bent (37 degrees) and add
+    only 0.3-1.6 degrees in the next 0.2 s, and never stand on a nearly straight knee (under 5 degrees: 0 % of the frames
+    on the floor; the MV 6-8 %, where the dance puts a standing foot's IK target out of the leg's reach)"""
+
+    def test_no_landing_dip_by_default(self):
+        last = 149
+        motion = dance(last=last, left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
+        result = balance_layer.layer(MODEL, motion)
+        self.assertEqual(result.report["landings"]["dipped"], 0)
+        self.assertFalse(balance_layer.params_default()["dip"])
+        self.assertEqual(float(np.abs(result.arrays["dip"]).max()), 0.0)
+        with_dip = balance_layer.layer(MODEL, motion, {"dip": True})
+        self.assertGreater(float(with_dip.arrays["dip"].max()), 0.0)                 # asked for, it is there
+
+    def test_standing_knee_not_straight(self):
+        """センター 1.2 cm higher than the legs reach: both standing knees straight (0 degrees, the targets 0.6 cm out of
+        reach); the hips go down until both bend 5 degrees (and no further than the 2 cm the drop may take)"""
+        last = 59
+        motion = dance(last=last, spread=0.0, centre=(0.0, 0.15, 0.0))
+        before = balance_layer.Body(MODEL, motion)
+        self.assertLess(before.knee_flexion("左")[30], 1.0)                       # the fixture: straight
+        result = balance_layer.layer(MODEL, motion)
+        after = balance_layer.Body(MODEL, result.motion)
+        for s in ("左", "右"):
+            self.assertGreaterEqual(float(after.knee_flexion(s)[5:-5].min()), balance_layer.KNEE_MIN_DEG - 0.2, s)
+        down = -centre_offsets(motion, result.motion, last)[:, 1] * CM
+        self.assertLessEqual(float(down.max()), balance_layer.DROP_MAX_CM + 0.05)
+        self.assertEqual(result.report["knee"]["straight_on_floor_frames"][1], 0)
+
+
 class NothingToDoTest(unittest.TestCase):
     def test_both_feet_down_gives_the_input_back(self):
         motion = dance(last=59)
@@ -894,7 +930,10 @@ class NothingToDoTest(unittest.TestCase):
         self.assertLess(np.abs(body.com()[36:95, 0] - line_x[36:95]).max() * CM, 1.0)    # the fixture is balanced
         result = balance_layer.layer(MODEL, motion)
         shift = centre_offsets(motion, result.motion, last)
-        self.assertLess(np.abs(shift).max() * CM, 1.0)
+        # on the floor plane nothing to do; down only as far as the standing knees must bend 5 degrees (HumanKneeTest:
+        # the body over the right foot stretches the left leg, still on the floor before it lifts, past its reach)
+        self.assertLess(np.abs(shift[:, [0, 2]]).max() * CM, 1.0)
+        self.assertLessEqual(-shift[:, 1].min() * CM, balance_layer.DROP_MAX_CM + 0.05)
 
 
 class ReviewTest(unittest.TestCase):
@@ -1081,6 +1120,9 @@ class SongTest(unittest.TestCase):
     def test_landings_catch_and_the_thigh_in_range(self):
         """no landing that the dance catches stops catching the body (its XcoM past the landing foot's edge), the ones
         it does not catch are held back until they do, and no thigh newly passes 22 degrees of adduction"""
+        straight = self.report["knee"]["straight_on_floor_frames"]
+        self.assertLess(straight[1], straight[0] / 2.0)                          # standing on straight knees: far fewer
+        self.assertEqual(self.report["landings"]["dipped"], 0)                    # no landing dip (human dancers add 0.3-1.6)
         catch = self.report["catch"]["summary"]
         self.assertEqual(catch["newly_under_0"], 0)
         self.assertEqual(catch["after_under_0"], 0)
