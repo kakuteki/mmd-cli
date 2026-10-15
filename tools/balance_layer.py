@@ -154,6 +154,7 @@ LAM_IN = 0.02                   # the pull back to the dance where the pull is (
 LAM_OUT = 0.5                   # and elsewhere: keeps a brief step's lean short (it does not start a second early)
 DROP_MAX_CM = 2.0               # the hips may go down this far for the legs to reach
 DROP_ACC_MAX = 0.5              # m/s^2: the drop's own acceleration (a slow give of the knees)
+DROP_INSIDE_CM = 0.01           # the drop for the legs' reach aims this much inside REACH_TOL_CM
 REACH_TOL_CM = 1.5              # a leg keeps this much slack, or as much as it had: MMD's IK (saba's solve, the feet
                                 # layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK
                                 # target in 70-100 % of the v7 frames with under 1 cm of two-bone slack, 22-26 % at
@@ -1167,11 +1168,12 @@ def knee_slabs(body, carry=None, low=None):
 
 def drop_needed(body, tol_cm=REACH_TOL_CM, before=None):
     """the least drop of the hips (units, per frame) for every IK target to be within its leg's reach (or no farther
-    than in `before`), inf where no drop does it"""
+    than in `before`), inf where no drop does it.  It aims DROP_INSIDE_CM inside the slack: the drop met it with equality,
+    and the rounding put a frame of the MV 1e-9 over it"""
     need = np.zeros(body.F)
     for s in SIDES:
         D = body.ankle(s) - body.hip(s)
-        R = body.leg_length(s) - tol_cm / CM
+        R = body.leg_length(s) - (tol_cm + DROP_INSIDE_CM) / CM
         if before is not None:
             R = np.maximum(R, before.reach(s) + REACH_NO_WORSE_M / UNIT_M)   # as the reach discs allow
         rh = np.linalg.norm(D[:, [0, 2]], axis=1)
