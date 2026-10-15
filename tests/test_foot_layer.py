@@ -903,6 +903,23 @@ class ToeModelTest(unittest.TestCase):
         k = bend(b)
         self.assertLess(float(k[7]), 0.75 * float(k[6]))
 
+    def test_a_foot_leaving_from_its_ball_does_not_tap_the_floor_again(self):
+        # standing on the ball (pitched 40 degrees, loaded), then lifted at a toe-off as the dance does (the trace's
+        # tip 0.5, 1.1, 2, 2.5, 2.8 cm over the floor): the frame leaving the floor is still in the band (on the floor
+        # by about a half), so the layer lets the lowering go by a half there; the frames after it must not take more of
+        # it back (the raised cosine carries 65 % from the full frame two before): the shoe does not come back down to
+        # the floor a frame later (0.92 -> 0.36 cm, the song's left 2309: 1.08 -> 0.11 cm).  The toes returning in the
+        # air may still lower it a little (under 2.4 mm)
+        lifts = [0.0] * 6 + [0.06, 0.14, 0.25, 0.31, 0.35]
+        f_in, f_out, out, plan = run_layer(*self.heel_up_keys(40.0, lifts), frames=len(lifts), toe_model="anatomical")
+        b = f_out["左"]
+        self.assertGreater(float(bend(b)[5]), 20.0)                                    # on the ball before the lift
+        self.assertGreater(float(plan["左"]["v"][6]), 0.5)                            # the leaving frame: partly down
+        self.assertLess(float(plan["左"]["v"][6]), 0.9)
+        low = b["low"]
+        for t in range(6, len(lifts) - 1):
+            self.assertGreater(float(low[t + 1]), float(low[t]) - 0.03)
+
     def test_a_foot_rising_off_the_floor_does_not_reach_back_for_it(self):
         # the same slow rise with the reach asked for: a foot pointed 30 degrees just over the floor and slower than the
         # reach's speed, but rising: its toes are not bent down toward the floor it is leaving

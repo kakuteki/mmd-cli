@@ -977,7 +977,17 @@ def eased_correction(c, v, radius, back=True):
     neg = envelope(np.where(down, np.maximum(-c, 0.0), 0.0), radius)
     carried = np.where(neg > pos, -neg, pos)
     air = np.where(np.abs(carried) > np.abs(c), carried, c)
-    return np.where(down, c, air)
+    out = np.where(down, c, air)
+    if not back:
+        # let go monotonically: a lift-off's last frame on the floor that is only partly down (0.5 <= v < 1) takes v of
+        # its gap, less than the frame after it carries from the full frame before (the raised cosine of two frames):
+        # the foot would rise, then dip back toward the floor it left.  A frame letting go keeps no more than the frame
+        # before it.
+        letgo = ~down & (np.abs(carried) > np.abs(c))
+        for t in range(1, len(out)):
+            if letgo[t] and out[t] * out[t - 1] > 0.0 and abs(out[t]) > abs(out[t - 1]):
+                out[t] = out[t - 1]
+    return out
 
 
 def slerp_rows(q0, q1, t):
