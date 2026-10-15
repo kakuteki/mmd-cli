@@ -252,6 +252,30 @@ class SourRinSkirtTest(unittest.TestCase):
         self.assertAlmostEqual(report["reach_after"]["0"], 80.0, 3)        # the front: 82.9 -> 80
         pmx.loads(pmx_edit.dumps(doc))
 
+    def test_the_recommended_ceiling_on_sour_rin(self):
+        with open(RIN, "rb") as f:
+            data = f.read()
+        doc = pmx_edit.loads(data)
+        report = skirt.apply(doc, {"ceiling": 70.0})
+        self.assertEqual((len(report["changes"]), len(report["added"])), (0, 112))
+        out = pmx_edit.loads(pmx_edit.dumps(doc))
+        names = [pmx_edit.rigid_names(out, rb)[0] for rb in out.rigid_bodies]
+        js = pmx_edit.joints(out)
+        self.assertEqual(len(js), 273 + 112)
+        self.assertEqual(js[:273], pmx_edit.joints(pmx_edit.loads(data)))          # the model's own joints untouched
+        self.assertEqual(out.rigid_bodies, pmx_edit.loads(data).rigid_bodies)      # and its rigid bodies
+        for j in js[273:]:
+            self.assertEqual(names[j.a], "上半身")
+            self.assertTrue(names[j.b].startswith("スカート_"))
+            self.assertGreater(j.move_upper[1], 0.0)
+        rise = {a["name"]: a["rise"] for a in report["added"]}
+        bones = {b.name: b.position for b in out.bones}
+        chain = [bones["スカート_%d_0" % r] for r in range(8)]
+        expect = chain[0][1] - math.cos(math.radians(70.0)) * sum(math.dist(a, b) for a, b in zip(chain, chain[1:])) - chain[7][1]
+        self.assertAlmostEqual(rise["スカート天井_6_0"], expect, 5)          # the front hem may rise 2.88 units, no more
+        self.assertAlmostEqual(expect, 2.877, 2)
+        self.assertEqual(pmx.loads(pmx_edit.dumps(doc)).counts["joints"], 385)
+
 
 if __name__ == "__main__":
     unittest.main()
