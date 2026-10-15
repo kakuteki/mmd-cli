@@ -453,6 +453,94 @@ class PresetTest(unittest.TestCase):
             motor_layer.default_params("weird")
 
 
+def flowing_dance(last=330):
+    """the left arm keeps moving (upper arm, elbow, wrist and fingers on the same frames, a key on every frame, as the
+    baked dance has it): two sines each, 0.8 Hz and 1.7 Hz, the same phase in every joint, so that a09's lag of the
+    input is 0"""
+    keys = untouched_keys(last)
+    t = np.arange(last + 1) / 30.0
+    wave = np.sin(2 * np.pi * 0.8 * t) + 0.6 * np.sin(2 * np.pi * 1.7 * t + 1.0)
+    for name, axis, amp in (("左腕", (0, 0, 1), 35.0), ("左ひじ", (0, 1, 0), -30.0), ("左手首", (0, 0, 1), 25.0),
+                            ("左中指１", (0, 0, 1), 20.0), ("左中指２", (0, 0, 1), 20.0)):
+        keys += [key(name, f, axis_angle(axis, amp * (1.0 + 0.5 * wave[f]))) for f in range(last + 1)]
+    keys += [key("上半身", 0), key("上半身", last)]
+    return vmd.Motion(model_name="dancer", bones=keys)
+
+
+def lag_out(result, pair):
+    return result.report["a09"]["output"]["xcorr"]["左 " + pair]
+
+
+class HumanPresetTest(unittest.TestCase):
+    """--preset human: the timing of people.  Measured with a09's own measure on dancers' optical motion capture
+    (FineDance, 198 sequences; the joints matched to a09's, the upper arm's twist in the elbow): shoulder -> elbow
+    -0.05 / +0.10 frames, elbow -> wrist -0.14 / -0.09, wrist -> finger +0.02 / +0.03 (median, left / right).  So the
+    arm's joints are not delayed one after another; the tracking (the run-on past a stop, the stiffening) stays"""
+
+    @classmethod
+    def setUpClass(cls):
+        dance = flowing_dance()
+        cls.default = motor_layer.layer(MODEL, dance, motor_layer.default_params())
+        cls.human = motor_layer.layer(MODEL, dance, motor_layer.default_params("human"))
+
+    def test_the_input_has_no_lag(self):
+        for pair in ("shoulder->elbow", "elbow->wrist"):
+            s = self.default.report["a09"]["input"]["xcorr"]["左 " + pair]
+            self.assertGreater(s["n"], 8, pair)
+            self.assertLess(abs(s["median"]), 0.05, pair)
+
+    def test_the_default_delays_the_joints_one_after_another(self):
+        for pair in ("shoulder->elbow", "elbow->wrist"):
+            self.assertGreater(lag_out(self.default, pair)["median"], 0.3, pair)
+
+    def test_human_keeps_the_joints_together_as_people_do(self):
+        for pair in ("shoulder->elbow", "elbow->wrist", "wrist->finger"):
+            s = lag_out(self.human, pair)
+            self.assertGreater(s["n"], 8, pair)
+            self.assertLess(abs(s["median"]), 0.15, (pair, s))
+
+    def test_the_human_preset(self):
+        p = motor_layer.default_params("human")
+        for c in ("girdle", "upper", "elbow", "wrist"):
+            self.assertEqual(tuple(p["classes"][c]["delay"]), (0.0, 0.0), c)
+        self.assertEqual(p["finger_delay"], 0.0)
+        self.assertEqual(p["preset"], "human")
+        # the tracking itself is the default's
+        d = motor_layer.default_params()
+        for c in ("girdle", "upper", "elbow", "wrist", "trunk", "neck", "head"):
+            for k in ("fn", "zeta", "ff"):
+                self.assertEqual(p["classes"][c][k], d["classes"][c][k], (c, k))
+        # and the default is unchanged
+        self.assertEqual(tuple(d["classes"]["upper"]["delay"]), (-0.5, -1.0))
+        self.assertEqual(tuple(d["classes"]["wrist"]["delay"]), (0.5, 1.0))
+        self.assertEqual(d["finger_delay"], motor_layer.FINGER_DELAY)
+
+    def test_human_still_runs_on_past_a_stop_and_settles(self):
+        result = motor_layer.layer(MODEL, swing_dance(), motor_layer.default_params("human"))
+        q_in = relative(result.world_in, "左ひじ", "左手首")
+        q_out = relative(result.world_out, "左ひじ", "左手首")
+        hold = q_in[30]
+        u = motor_layer.qlog(motor_layer.qnorm(motor_layer.qmul(motor_layer.qconj(hold), q_in[23])))
+        u = -u / np.linalg.norm(u)
+        dev = motor_layer.qlog(motor_layer.qnorm(motor_layer.qmul(motor_layer.qconj(np.broadcast_to(hold, q_out.shape)),
+                                                                   q_out)))
+        self.assertGreater(float(np.degrees(dev[26:45] @ u).max()), 0.2)
+        self.assertLess(float(np.degrees(np.linalg.norm(dev[36:58], axis=1)).max()), 1.0)
+
+
+class HumanPresetGuardTest(unittest.TestCase):
+    def test_human_changes_nothing_but_the_delays(self):
+        # the preset is the default with the arm's delays and the fingers' delay at 0: the tracking, the holds, the beat
+        # holds, the contacts, the floor and the checks are the default's (the review of motor-human: the holds, the beat
+        # holds, the contacts, the floor or the checks switched off, or the trunk or the head delayed, passed every test)
+        p, d = motor_layer.default_params("human"), motor_layer.default_params()
+        for c in ("girdle", "upper", "elbow", "wrist"):
+            d["classes"][c]["delay"] = (0.0, 0.0)
+        d["finger_delay"] = 0.0
+        d["preset"] = "human"
+        self.assertEqual(p, d)
+
+
 class MechanismTest(unittest.TestCase):
     """the parts the review's mutations broke without a test noticing"""
 
@@ -589,23 +677,70 @@ class CliTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_the_finger_delay_is_the_presets_unless_given(self):
+        folder = tempfile.mkdtemp()
+        try:
+            model_path = os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as f:
+                f.write(model_bytes())
+            dance_path = os.path.join(folder, "d.vmd")
+            vmd.dump(swing_dance(), dance_path)
+            got = {}
+            for name, extra in (("default", []), ("human", ["--preset", "human"]),
+                                ("human_given", ["--preset", "human", "--finger-delay", "0.25"]),
+                                ("default_zero", ["--finger-delay", "0"])):
+                out, rep = os.path.join(folder, name + ".vmd"), os.path.join(folder, name + ".json")
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(motor_layer.main([dance_path, model_path, out, "--report", rep] + extra), 0, buf.getvalue())
+                with open(rep, encoding="ascii") as f:
+                    got[name] = json.load(f)["params"]
+                with open(out, "rb") as f:
+                    got[name + "_bytes"] = f.read()
+            self.assertEqual(got["default"]["finger_delay"], motor_layer.FINGER_DELAY)
+            self.assertEqual(got["human"]["finger_delay"], 0.0)
+            self.assertEqual(got["human_given"]["finger_delay"], 0.25)
+            self.assertEqual(got["default_zero"]["finger_delay"], 0.0)       # 0 given is 0, not the preset's
+            # the default file is the one the layer makes with the default parameters from the same file (the CLI adds
+            # nothing; the file holds the keys in float32, so the layer is run on what was read back)
+            self.assertEqual(got["default_bytes"], vmd.dumps(motor_layer.layer(MODEL, vmd.load(dance_path)).motion))
+            self.assertNotEqual(got["human_bytes"], got["default_bytes"])
+        finally:
+            shutil.rmtree(folder)
+
 
 # ---- the real dance (skipped where it is not) ------------------------------------------------------
 
 def real_file(*parts):
-    folder = ROOT
+    """a file of the real song under _spike/ of this tree, of a tree up to 3 folders above it (a worktree), of the main
+    working tree, or of MMD_CLI_DATA (a folder holding _spike/; as tests/test_eye_gaze.py)"""
+    folders, folder = [], ROOT
     for _ in range(4):
+        folders.append(folder)
+        folder = os.path.dirname(folder)
+    folders.append(MAIN_TREE)
+    if os.environ.get("MMD_CLI_DATA"):
+        folders.append(os.environ["MMD_CLI_DATA"])
+    for folder in folders:
         path = os.path.join(folder, *parts)
         if os.path.isfile(path):
             return path
-        folder = os.path.dirname(folder)
-    path = os.path.join(MAIN_TREE, *parts)
-    return path if os.path.isfile(path) else None
+    return None
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop (the review of
+    motor-human: this PC's fixed path skipped these tests on hinata, where the suite is run, every time)"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 
 REAL_DANCE = real_file("_spike", "out", "stage1", "breath", "dance_v3_breath.vmd")
-RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
-REAL = REAL_DANCE is not None and os.path.isfile(RIN)
+RIN = rin_path()
+REAL = REAL_DANCE is not None and RIN is not None
 
 
 def crop(motion, first, last):
@@ -620,8 +755,11 @@ def crop(motion, first, last):
     return vmd.Motion(model_name=motion.model_name, bones=out)
 
 
-@unittest.skipUnless(REAL, "the stage-1 dance (breath) or Rin is not here")
+@unittest.skipUnless(REAL, "the stage-1 dance (breath) or Rin is not here "
+                     "(MMD_CLI_DATA: a folder holding _spike/; MMD_CLI_RIN: White.pmx)")
 class RealDanceTest(unittest.TestCase):
+    PRESET = "default"
+
     @classmethod
     def setUpClass(cls):
         cls.model = pmx.load(RIN)
@@ -632,7 +770,7 @@ class RealDanceTest(unittest.TestCase):
         # the right hand's fingers 3,888 -> 3,889
         for first, last, bone, frame in ((1880, 1915, "右腕", 1899), (5950, 5980, "左手首", 5963),
                                          (3875, 3900, None, 3888)):
-            result = motor_layer.layer(self.model, crop(self.dance, first, last), motor_layer.default_params())
+            result = motor_layer.layer(self.model, crop(self.dance, first, last), motor_layer.default_params(self.PRESET))
             found = [(j["bone"], j["frame"] + first) for j in result.report["jumps"]]
             if bone is not None:
                 self.assertIn((bone, frame), found)
@@ -640,7 +778,7 @@ class RealDanceTest(unittest.TestCase):
                 self.assertTrue(any(b.startswith("右") and "指" in b and f == frame for b, f in found), found)
 
     def test_the_left_hand_does_not_go_into_the_face_at_5914(self):
-        result = motor_layer.layer(self.model, crop(self.dance, 5880, 5935), motor_layer.default_params())
+        result = motor_layer.layer(self.model, crop(self.dance, 5880, 5935), motor_layer.default_params(self.PRESET))
         eyes_in = 0.5 * (result.world_in["左目"][0] + result.world_in["右目"][0])
         eyes_out = 0.5 * (result.world_out["左目"][0] + result.world_out["右目"][0])
         d_in = np.linalg.norm(result.world_in["左中指３"][0] - eyes_in, axis=1) * 80.0
@@ -649,6 +787,11 @@ class RealDanceTest(unittest.TestCase):
         self.assertTrue(near.any())
         self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(result.report["untouched"]["identical"])
+
+
+class HumanRealDanceTest(RealDanceTest):
+    """--preset human on the same real crops: the jumps are found and passed through, the hand keeps off the face"""
+    PRESET = "human"
 
 
 if __name__ == "__main__":
