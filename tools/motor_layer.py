@@ -3,7 +3,7 @@ stop on the same frame, and a hand runs on a little past a stop and settles.
 
     python tools/motor_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--beats beats.json]
                                 [--key-frames TRACE.vmd] [--lead L] [--delay-scale 1] [--finger-delay 0.25]
-                                [--substeps 16] [--world w.npz] [--preset default|strong] [--verbose]
+                                [--substeps 16] [--world w.npz] [--preset default|strong|human] [--verbose]
 
 Why (the analysis of 2026-10-07, a09): in the trace 91 to 100 % of the keys of the arm's joints sit on the same frame, the
 joints' timing differs by 0 frames (95 % interval +-0.1), and the wrist stops after the upper arm before 0 to 8 % of the
@@ -85,6 +85,15 @@ The layer (numbers: the constants and default_params below):
   1.8 times.  On the screen the hand's run-on is set by the upper arm and the elbow (the arm is 40 cm, the hand 12).
   --preset strong (PRESETS) softens the upper arm and the elbow to 3.5 Hz and feeds forward less (0.85, 0.75; the
   wrist 5 Hz, 0.5).
+* --preset human (2026-10-15, stage6/motor_human): the people's timing.  The delays above were set from the analysts'
+  aim (+0.5 a link) and the animators' principle, not from people.  Measured with a09's own measure on dancers' optical
+  motion capture (FineDance: 27 professional dancers, 198 sequences, 30 fps; the joints matched to a09's, the upper
+  arm's twist moved into the elbow and the forearm's into the wrist), people's arm is not delayed one joint after the
+  other: shoulder -> elbow -0.05 / +0.10 frames, elbow -> wrist -0.14 / -0.09, wrist -> finger +0.02 / +0.03 (median,
+  left / right; the 95 % intervals by sequence within -0.21 .. +0.15), and a zero-phase low-pass or the noise of the
+  capture do not pull it there.  The default puts +0.93 / +0.58 and +0.56 / +0.60 on Hibikase (its input +0.20 / +0.05
+  and -0.05 / -0.03).  So human sets every arm delay and the fingers' delay to 0; the tracking (fn, zeta, ff: the
+  run-on past a stop and the settling), the holds, the beat holds, the contacts and the checks are the default's.
 * Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  As Kp and Kd scale with the
   inertia, the motion does not depend on it until the torque limit binds: mass and inertia act only through the limit
   on the angular acceleration (limit / inertia), and that binds on 0.1 to 0.3 % of the substeps of the shoulder and the
@@ -214,22 +223,30 @@ ACTIVE = (167, 7661)            # a04's dancing part and the trace's keys (the s
 # forward (the research's table 4.2, the review of 2026-10-10: the run-on is set by ff and wn, hardly by the damping).
 # The review's run of about this set on the MV (its "research"): the hands' run-on past the stops 1.6 to 1.9 times the
 # default's (median), no more 3-6 Hz and no more deep dips (a02); 14.4 % of the bone-frames given back.
+# The people's timing (--preset human; see the module docstring): the arm's joints are not delayed one after another and
+# the fingers ride the wrist's time; the tracking (fn, zeta, ff), the holds, the beat holds and the contacts are the
+# default's.
 PRESETS = {"default": {},
            "strong": {"girdle": {"fn": 4.0, "zeta": 0.85, "ff": 0.9},
                       "upper": {"fn": 3.5, "zeta": 0.85, "ff": 0.85},
                       "elbow": {"fn": 3.5, "zeta": 0.8, "ff": 0.75},
-                      "wrist": {"fn": 5.0, "zeta": 0.75, "ff": 0.5}}}
+                      "wrist": {"fn": 5.0, "zeta": 0.75, "ff": 0.5}},
+           "human": {"girdle": {"delay": (0.0, 0.0)}, "upper": {"delay": (0.0, 0.0)},
+                     "elbow": {"delay": (0.0, 0.0)}, "wrist": {"delay": (0.0, 0.0)}}}
+PRESET_PARAMS = {"human": {"finger_delay": 0.0}}      # a preset's parameters outside the classes
 
 
 def default_params(preset="default"):
     """the classes' natural frequency (Hz), damping ratio, share of the target acceleration fed forward and delays
     (frames: fast, slow).  The default is mostly the spike's soft_wh with the research's centred delays; a preset
-    (PRESETS) changes some classes' fn, zeta and ff."""
+    (PRESETS) changes some classes' fn, zeta, ff or delays, and PRESET_PARAMS the parameters outside the classes
+    (human: the fingers' delay)."""
     if preset not in PRESETS:
         raise ValueError("no preset %r (there are %s)" % (preset, ", ".join(sorted(PRESETS))))
     p = _base_params()
     for c, v in PRESETS[preset].items():
         p["classes"][c].update(v)
+    p.update(PRESET_PARAMS.get(preset, {}))
     p["preset"] = preset
     return p
 
@@ -1938,17 +1955,21 @@ def main(argv=None):
     p.add_argument("--beats", help="JSON with first_beat_seconds and period_seconds: beat holds and a04's timing")
     p.add_argument("--key-frames", help="a motion whose 左腕 / 右腕 keys are the trace's keys (the error there)")
     p.add_argument("--preset", default="default", choices=sorted(PRESETS),
-                   help="the strength: default, or strong (softer upper arm and elbow, less fed forward)")
+                   help="default; strong (softer upper arm and elbow, less fed forward); or human (no delays between "
+                        "the arm's joints and the fingers on the wrist's time, as people's motion capture measures)")
     p.add_argument("--lead", type=float, help="frames the targets are read early (default: measured in a first pass)")
     p.add_argument("--delay-scale", type=float, default=1.0, help="scales every delay (default 1)")
-    p.add_argument("--finger-delay", type=float, default=FINGER_DELAY,
-                   help="frames the fingers read after the wrist (default %g; 0: on the hand's timing)" % FINGER_DELAY)
+    p.add_argument("--finger-delay", type=float, default=None,
+                   help="frames the fingers read after the wrist (default: the preset's, %g; human 0; 0: on the "
+                        "hand's timing)" % FINGER_DELAY)
     p.add_argument("--substeps", type=int, default=SUBSTEPS, help="simulation steps per frame (default %d)" % SUBSTEPS)
     p.add_argument("--world", help="save the world positions and rotations, input and output, to this .npz")
     p.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = p.parse_args(argv)
     params = default_params(a.preset)
-    params.update(lead=a.lead, delay_scale=a.delay_scale, finger_delay=a.finger_delay, substeps=a.substeps)
+    params.update(lead=a.lead, delay_scale=a.delay_scale, substeps=a.substeps)
+    if a.finger_delay is not None:
+        params["finger_delay"] = a.finger_delay
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if a.substeps < 1:
