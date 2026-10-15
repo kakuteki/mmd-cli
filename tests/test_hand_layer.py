@@ -1398,6 +1398,19 @@ class AsV8Test(unittest.TestCase):
             self.assertEqual(got["v8"][1]["order_mode"], "delay")
             self.assertTrue(got["default"][1]["pace"])
             self.assertEqual(got["default"][1]["order_mode"], "centre")
+            # the open hand's stiffness (N m/rad at a grown finger's MP): twice the default halves the passive lag of the
+            # open hand (the dancers' coherent passive gain in FineDance is about half of the default's)
+            out2, rep2 = os.path.join(folder, "k2.vmd"), os.path.join(folder, "k2.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = hand_layer.main([dance_path, model_path, out2, "--report", rep2, "--open-stiffness", "0.42"])
+            self.assertEqual(code, 0)
+            r2 = read_json(rep2)
+            self.assertAlmostEqual(r2["params"]["stiffness"]["open"], 0.42)
+            lag1 = read_json(os.path.join(folder, "default.json"))["steps"]["passive"]["左"]["中指"]["lag_deg"]["max"]
+            lag2 = r2["steps"]["passive"]["左"]["中指"]["lag_deg"]["max"]
+            self.assertLess(lag2, 0.7 * lag1)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(hand_layer.main([dance_path, model_path, out2, "--open-stiffness", "0"]), 2)
             model = pmx.loads(model_bytes())
             dance = vmd.load(dance_path)
             ref = hand_layer.layer(model, dance, hand_layer.as_v8(hand_layer.default_params()), pulp={}).motion

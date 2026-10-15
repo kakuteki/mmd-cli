@@ -1167,7 +1167,7 @@ python tools/hand_layer.py dance.vmd model.pmx dance_hands.vmd --report r.json
                            [--no-passive] [--no-speed] [--no-rom] [--relax-gain 0.25] [--speed-max 1900]
                            [--order-scale 1] [--order-max 1.5] [--follow [--follow-scale 0.5]] [--beats beats.json]
                            [--no-contact] [--gravity] [--no-pace] [--order-mode centre|delay] [--zeta-open Z]
-                           [--as-v8] [--verbose]
+                           [--open-stiffness 0.21] [--as-v8] [--verbose]
 ```
 
 - 関節の読み: 長い指の MP・PIP・DIP は手のひらの法線の側へ曲がるのを屈曲、親指の側を横の正、骨の軸まわりを捩りとして読む。
@@ -1230,7 +1230,9 @@ python tools/hand_layer.py dance.vmd model.pmx dance_hands.vmd --report r.json
      硬さは形を保つ手 1.0・開いた手 0.21 N m/rad（なでる指 Kry & Pai 2006 / 力を抜いた MCP の上の端 Kuo & Deshpande 2012）を
      指の大きさで縮め（リンは大人の男の約 0.58 倍）、減衰比は形を保つ手 0.85（同時収縮で揺れ返さない）、開いた手は力を抜いた指の値
      （Tsakonas ら 2024 の MP: 人差し指 0.562・中指 0.614・薬指 0.591・小指 0.689。曲げから放すと一度だけ 5〜12 % 揺れ返して収まる。
-     親指は測られていないので 0.85。`--zeta-open` で長い指の値をまとめて替える。0.85 が v8）。遅れは MP に、PIP に 0.35、DIP に 0.2 の割合で
+     親指は測られていないので 0.85。`--zeta-open` で長い指の値をまとめて替える。0.85 が v8）。開いた手の硬さは `--open-stiffness`
+     （既定 0.21。人の踊りの手の振れに揃う指の動き（相互スペクトルの虚部で読む受け身の大きさ）は既定の約半分で、0.42 でそろう。そのときは
+     a09 の遅れが減り、指の動きの量も v8 の程度まで減る）。遅れは MP に、PIP に 0.35、DIP に 0.2 の割合で
      配り、4 度から 10 度へ柔らかく抑える。指が手に遅れる量を測った研究は見つからなかったので、抑えは推測: 目的のある腕の動きで
      手首の受け身の動きは多くが 1〜5 度（Koshland 2000。測ったのは手首で、指ではない）、指の 5 度は目に見える（Jörg 2011）。
      触れている手では遅らせない（relax と同じ）。重力は既定で入れない（踊り手が見せている形は重力に逆らって保っている形。

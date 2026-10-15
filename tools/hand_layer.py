@@ -1795,6 +1795,10 @@ def main(argv=None):
     ap.add_argument("--zeta-open", type=float, default=None,
                     help="the open hand's damping ratio for every long finger (default: the relaxed fingers' own, "
                          "Tsakonas 2024; 0.85 is v8's)")
+    ap.add_argument("--open-stiffness", type=float, default=STIFFNESS["open"],
+                    help="the open hand's stiffness at a grown finger's MP, N m/rad (default %g, the upper end of a relaxed "
+                         "MCP; 0.42 gives the dancers' passive gain of FineDance and less a09 lag, and less motion)"
+                         % STIFFNESS["open"])
     ap.add_argument("--as-v8", action="store_true",
                     help="the hands of v8 byte for byte: --no-pace --order-mode delay --zeta-open 0.85")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
@@ -1806,6 +1810,8 @@ def main(argv=None):
                   order_mode=a.order_mode)
     if a.zeta_open is not None:
         params["zeta_open"] = {f: a.zeta_open for f in LONG}
+    if a.open_stiffness != STIFFNESS["open"]:
+        params["stiffness"] = dict(params["stiffness"], open=a.open_stiffness)
     if a.as_v8:
         params = as_v8(params)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
@@ -1818,6 +1824,8 @@ def main(argv=None):
             raise ValueError("--order-scale, --order-max and --relax-gain must not be negative")
         if a.zeta_open is not None and not a.zeta_open > 0.0:
             raise ValueError("--zeta-open must be above 0")
+        if not a.open_stiffness > 0.0:
+            raise ValueError("--open-stiffness must be above 0")
         result = run(a.dance, a.model, a.out, a.report, params, log, a.beats)
     except (ValueError, OSError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
