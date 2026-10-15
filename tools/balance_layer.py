@@ -197,8 +197,14 @@ DOWN_ACC_MAX = 78.0             # units/s^2 (0.8 of G_MMD): the pelvis's downwar
                                 # does not show (the keys' interpolation inside a frame) and for MMD's own gravity being
                                 # known only from its reimplementations
 # ---- the landings ------------------------------------------------------------------------------------------------
-DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight (walking: 1-3 -> 17 degrees,
-DIP_PEAK_S = 0.13               # at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm, research C1)
+DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight, from the heel (walking: 1-3 ->
+DIP_PEAK_S = 0.13               # 17 degrees at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm)
+DIP_DEG_FLAT = 12.0             # the foot flat (level walking 6 -> 18 degrees at 14 % of the cycle; De Pieri et al. 2022)
+DIP_DEG_FORE = 9.0              # from the forefoot: the knee is already bent and the ankle takes more (toe walking 22 -> 30
+                                # degrees, the ankle 11 degrees up, De Pieri et al. 2022; the weight acceptance of stair
+                                # descent, about 0.13 s, 6 -> 15 degrees, the ankle 32, Markstrom et al. 2022; figures read)
+PITCH_KIND_DEG = 4.0            # the toe-IK-to-ankle-IK line pitched this much from its rest: forefoot / heel first (the feet
+                                # layer's HEEL_UP_DEG)
 DIP_END_S = 0.4
 DIP_MAX_CM = 2.0                # (2 cm in 0.13 s: the hips accelerate at most about 6 m/s^2)
 DIP_WINDOW_S = 0.3              # the other foot lifts within this after the landing: the landing takes the weight
@@ -228,7 +234,7 @@ OPTIONAL = ["頭先", "左中指先", "右中指先", "左中指３", "右中指
 def params_default():
     return {"r_bal_cm": R_BAL_CM, "acc_max": ACC_MAX, "lead_s": LEAD_S, "lag_s": LAG_S, "drop_max_cm": DROP_MAX_CM,
             "dip_deg": DIP_DEG, "dip": True, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
-            "catch": True, "vertical": True}
+            "catch": True, "vertical": True, "dip_deg_flat": DIP_DEG_FLAT, "dip_deg_fore": DIP_DEG_FORE}
 
 
 # ---- the body ---------------------------------------------------------------------------------------------------
@@ -837,11 +843,12 @@ class Result:
     arrays: dict = None         # per-frame curves (units unless named): shift [F, 3], com_before, com_after, pull, ...
 
 
-def support_plan(body, p, com):
+def support_plan(body, p, com, low=None):
     """support (per foot), the single-support runs [(first, last, foot)], the pull's weight, its foot and the run's
-    need_share per frame"""
+    need_share per frame; `low` (per foot, units) the feet's lowest points to read the support off (the body's own when
+    None: another motion's with --support-from)"""
     F = body.F
-    low = {s: body.height(s) for s in SIDES}
+    low = {s: body.height(s) for s in SIDES} if low is None else low
     sup = {s: low[s] < SUPPORT_H for s in SIDES}
     other = {"左": "右", "右": "左"}
     single = {s: sup[s] & ~sup[other[s]] for s in SIDES}
@@ -1136,7 +1143,7 @@ def range_slabs(body, carry=None):
     return slabs
 
 
-def knee_slabs(body, carry=None):
+def knee_slabs(body, carry=None, low=None):
     """per leg, the half-plane of センター floor shifts (metres) that keep the hip at least as far from the IK target
     as the two-bone leg is at its knee limit, or no nearer than it was: (D - (1 - carry) y) . D / |D| >= that distance
     (linearized: |D'| >= D' . D / |D|).  The limit: KNEE_FLEXION_DEG[1] (159 degrees, the reference range's upper
@@ -1146,7 +1153,7 @@ def knee_slabs(body, carry=None):
     for s in SIDES:
         L1, L2 = body.legs_rest[s]
         flex0 = body.knee_flexion(s)
-        lifted = body.height(s) >= SUPPORT_H
+        lifted = (body.height(s) if low is None else low[s]) >= SUPPORT_H
         lim = np.where(lifted, np.minimum(KNEE_FLEXION_DEG[1], flex0 + LIFT_FOLD_DEG), KNEE_FLEXION_DEG[1])
         lim = np.maximum(lim, flex0)
         d_lim = np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(lim)))
@@ -1224,11 +1231,12 @@ def vertical_fix(heights, cap=None):
     return np.minimum(z, 0.0)
 
 
-def touchdowns(body):
-    """[(frame, foot)] of a05's touchdowns: on the floor again after GAP frames off it in which it rose SWING_MIN_H"""
+def touchdowns(body, lows=None):
+    """[(frame, foot)] of a05's touchdowns: on the floor again after GAP frames off it in which it rose SWING_MIN_H
+    (the feet's heights `lows` per foot, the body's own when None)"""
     out = []
     for s in SIDES:
-        low = body.height(s)
+        low = body.height(s) if lows is None else lows[s]
         cont = low < CONTACT_EPS
         rr = runs(cont)
         for (a0, b0), (a1, b1) in zip(rr[:-1], rr[1:]):
@@ -1245,6 +1253,15 @@ def dip_bump(F, at, peak_f, end_f):
     return np.where(t < 0, 0.0, np.where(t <= peak_f, up, np.where(t <= end_f, down, 0.0)))
 
 
+def landing_kind(body, s, f):
+    """how foot s comes down at frame f: 'fore' (toes down: the toe-IK-to-ankle-IK line pitched over PITCH_KIND_DEG from
+    its rest, the heel up), 'heel' (toes up) or 'flat'"""
+    d0 = body.rest[s + "つま先ＩＫ"] - body.rest[s + "足ＩＫ"]
+    d = body.toe(s)[f] - body.ankle(s)[f]
+    pitch = math.degrees(math.atan2(d[1], math.hypot(d[0], d[2]))) - math.degrees(math.atan2(d0[1], math.hypot(d0[0], d0[2])))
+    return "fore" if pitch < -PITCH_KIND_DEG else ("heel" if pitch > PITCH_KIND_DEG else "flat")
+
+
 def landing_dips(body, plan, p, cap=None):
     """the hips' drop (units, per frame) of the landings that take the weight, and the landings' list; cap [F] (0..1)
     scales each landing's depth by its least value over the landing's dip"""
@@ -1254,7 +1271,7 @@ def landing_dips(body, plan, p, cap=None):
     peak_f, end_f = DIP_PEAK_S * FPS, DIP_END_S * FPS
     dip = np.zeros(F)
     rows = []
-    for f, s in touchdowns(body):
+    for f, s in touchdowns(body, plan["low"]):
         o = other[s]
         lo = plan["low"]
         # takes the weight: the other foot is up at the landing or lifts within the window, before this foot lifts again
@@ -1262,13 +1279,16 @@ def landing_dips(body, plan, p, cap=None):
         own_up = np.flatnonzero(lo[s][f:b] >= SUPPORT_H)
         own_end = f + int(own_up[0]) if len(own_up) else b
         takes = bool(np.any(lo[o][f:own_end] >= SUPPORT_H))
-        row = {"frame": f, "s": round(f / FPS, 2), "foot": s, "takes_weight": takes, "depth_cm": 0.0}
+        kind = landing_kind(body, s, f)
+        gain = {"fore": p.get("dip_deg_fore", DIP_DEG_FORE), "flat": p.get("dip_deg_flat", DIP_DEG_FLAT)}.get(kind, p["dip_deg"])
+        row = {"frame": f, "s": round(f / FPS, 2), "foot": s, "takes_weight": takes, "depth_cm": 0.0, "kind": kind,
+               "target_gain_deg": gain}
         if takes and p["dip"]:
             flex = body.knee_flexion(s)
             pk = min(F - 1, f + int(round(peak_f)))
             have = float(flex[f:pk + 1].max() - flex[f])
-            target = min(float(flex[f]) + p["dip_deg"], KNEE_FLEXION_DEG[0])
-            if target > float(flex[pk]) + 0.5 and have < p["dip_deg"] - 0.5:
+            target = min(float(flex[f]) + gain, KNEE_FLEXION_DEG[0])
+            if target > float(flex[pk]) + 0.5 and have < gain - 0.5:
                 L1, L2 = body.legs_rest[s]
                 dist = math.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * math.cos(math.radians(target)))
                 H, A = body.hip(s)[pk], body.ankle(s)[pk]
@@ -1337,7 +1357,7 @@ def band_distance(body, com, foot):
 
 # ---- the layer --------------------------------------------------------------------------------------------------
 
-def layer(model, motion, params=None, log=None, ik_check=None):
+def layer(model, motion, params=None, log=None, ik_check=None, support_motion=None):
     """the dance with the weight on the standing foot (Result: motion, report, arrays).  ik_check: MMD's IK at hand, a
     function of a motion giving per side the distance (units, per frame) of the solved ankle from its foot IK's target
     (main() builds it from the feet layer's tools/leg_ik.py with --mmd-ik): the layer then solves its result again with
@@ -1350,7 +1370,15 @@ def layer(model, motion, params=None, log=None, ik_check=None):
     body = Body(model, motion)
     F = body.F
     com0 = body.com()
-    plan = support_plan(body, p, com0)
+    low = None
+    if support_motion is not None:
+        # which foot supports, read off another motion of the same dance (the feet layer's output: the feet layer puts
+        # the feet on the floor, so its heights are the ones the picture shows)
+        sb = Body(model, support_motion, frames=F)
+        if fk.last_frame(support_motion) + 1 != F:
+            raise ValueError("the support motion has %d frames, the dance %d" % (fk.last_frame(support_motion) + 1, F))
+        low = {s: sb.height(s) for s in SIDES}
+    plan = support_plan(body, p, com0, low=low)
     report = {"params": dict(p), "frames": F}
     plan.update({"r_bal_cm": p["r_bal_cm"], "acc_max": p["acc_max"]})
     w = plan["w"]
@@ -1364,7 +1392,7 @@ def layer(model, motion, params=None, log=None, ik_check=None):
         k = com_response(body, com0, carry)
         discs = reach_discs(body, allowance, carry)
         slabs = range_slabs(body, carry)
-        kslabs = knee_slabs(body, carry)
+        kslabs = knee_slabs(body, carry, plan["low"])
         if catches:
             cterms = catch_terms(F, catches, k, [a for a, _, _ in plan["runs"]])
     else:
@@ -1839,11 +1867,13 @@ def main(argv=None):
     ap.add_argument("--no-catch", action="store_true", help="no bound or pull on the XcoM at the landings")
     ap.add_argument("--no-vertical", action="store_true", help="no bound on the pelvis's downward acceleration")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
+    ap.add_argument("--support-from", help="read which foot is on the floor off this motion of the same dance (the feet "
+                                           "layer's output on it); the dance given is the one moved")
     ap.add_argument("--mmd-ik", help="MMD's IK solver (the feet layer's tools/leg_ik.py): hold the layer back where a foot "
                                      "on the floor would newly fall short of its IK target as MMD solves it (.pmx only)")
     args = ap.parse_args(argv)
     try:
-        check_distinct(args.dance, args.model, args.out, args.report, args.arrays)
+        check_distinct(args.dance, args.model, args.out, args.report, args.arrays, args.support_from)
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
@@ -1852,7 +1882,8 @@ def main(argv=None):
         ik_check, ik_note = None, None
         if args.mmd_ik:
             ik_check, ik_note = mmd_ik_check(args.mmd_ik, args.model, fk.last_frame(motion) + 1)
-        result = layer(model, motion, params, ik_check=ik_check)
+        support = vmd.load(args.support_from) if args.support_from else None
+        result = layer(model, motion, params, ik_check=ik_check, support_motion=support)
         if ik_note:
             result.report["mmd_ik"].update(ik_note)
         write_bytes(os.path.abspath(args.out), vmd.dumps(result.motion))

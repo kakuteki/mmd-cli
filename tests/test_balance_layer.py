@@ -730,6 +730,38 @@ class LandingTest(unittest.TestCase):
         acc = np.abs(down[2:] - 2 * down[1:-1] + down[:-2])
         self.assertLess(acc.max(), 0.65)                         # cm per frame^2: a 2 cm bump alone reaches 0.65
 
+    def test_landing_target_follows_how_the_foot_comes_down(self):
+        """the knee's target on a landing follows how the foot comes down: from the forefoot +9 degrees in 0.13 s (toe
+        walking +8, De Pieri et al. 2022; the weight acceptance of stair descent +9, Markstrom et al. 2022: the ankle
+        takes more), flat +12 (level walking, De Pieri et al. 2022), from the heel +15 (Winter 2009).  A flat landing
+        with straight enough knees reaches its +12 under the 2 cm"""
+        last = 149
+        legs = dict(last=last, centre=(0.0, -0.3, 0.0), left_lifts=[(30, 36, 44, 50, 1.5)], right_lifts=[(52, 60, 100, 108, 2.0)])
+        motions = {}
+        for name, deg in (("flat", 0.0), ("fore", -25.0), ("heel", 25.0)):
+            m = dance(**legs)
+            for k in m.bones:
+                if k.name == "左足ＩＫ":
+                    bump = min(smooth((k.frame - 38) / 8.0), 1.0 - smooth((k.frame - 51) / 8.0))
+                    a = math.radians(deg) * bump               # pitched at the landing, flat again after it
+                    k.rotation = fk.stored((math.sin(a / 2.0), 0.0, 0.0, math.cos(a / 2.0)))
+            motions[name] = m
+        want = {"flat": balance_layer.DIP_DEG_FLAT, "fore": balance_layer.DIP_DEG_FORE, "heel": balance_layer.DIP_DEG}
+        for name, m in motions.items():
+            result = balance_layer.layer(MODEL, m)
+            row = [r for r in result.report["landings"]["dips"] if r["foot"] == "左"][0]
+            self.assertEqual(row["kind"], name)
+            self.assertEqual(row["target_gain_deg"], want[name])
+            if name == "flat":
+                f = row["frame"]
+                kb = balance_layer.Body(MODEL, m).knee_flexion("左")
+                ka = balance_layer.Body(MODEL, result.motion).knee_flexion("左")
+                gain = (ka[f:f + 5].max() - ka[f]) - (kb[f:f + 5].max() - kb[f])
+                self.assertLess(row["depth_cm"], 1.9)                       # under the 2 cm
+                self.assertTrue(abs(gain - want[name]) < 2.0, gain)
+        self.assertLess(balance_layer.DIP_DEG_FORE, balance_layer.DIP_DEG_FLAT)
+        self.assertLess(balance_layer.DIP_DEG_FLAT, balance_layer.DIP_DEG)
+
     def test_toe_tap_gets_no_dip(self):
         """the left foot taps the floor and lifts again while the right foot stays down: no weight to take"""
         last = 119
@@ -822,6 +854,26 @@ class VerticalTest(unittest.TestCase):
         self.assertLessEqual(rep["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertGreater(rep["lowered_cm"]["max"], 0.5)
         self.assertGreater(rep["frames_lowered"], 0)
+
+
+class SupportFromTest(unittest.TestCase):
+    """the feet layer is the one that puts the feet on the floor (it changes the heights the support is read from): the
+    layer can read which foot supports from another motion (--support-from: the feet layer's output on the same dance)
+    and still move the dance it is given"""
+
+    def test_support_read_from_another_motion(self):
+        last = 119
+        lifted = dance(last=last, left_lifts=LIFT_RIGHT_STANDS)       # the left foot 20 cm up from 1.33 s to 3 s
+        grounded = dance(last=last)                                    # the same dance with both feet on the floor
+        result = balance_layer.layer(MODEL, lifted, support_motion=grounded)
+        self.assertLess(np.abs(centre_offsets(lifted, result.motion, last)).max() * CM, 0.5)   # nothing to carry
+        self.assertEqual(result.report["runs_summary"]["count"], 0)
+        again = balance_layer.layer(MODEL, grounded, support_motion=lifted)
+        self.assertLess(centre_offsets(grounded, again.motion, last)[60, 0] * CM, -5.0)     # read off the lifted foot
+
+    def test_support_motion_of_another_length_refused(self):
+        with self.assertRaises(ValueError):
+            balance_layer.layer(MODEL, dance(last=119), support_motion=dance(last=89))
 
 
 class NothingToDoTest(unittest.TestCase):
