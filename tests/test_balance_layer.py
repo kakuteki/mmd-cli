@@ -883,6 +883,80 @@ class VerticalTest(unittest.TestCase):
         self.assertLessEqual(rep["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertGreater(rep["lowered_cm"]["max"], 0.5)
         self.assertGreater(rep["frames_lowered"], 0)
+        self.assertIn("a18", rep)
+
+    def test_bound_is_a_parameter(self):
+        """--down-acc-max: 110 units/s^2 (the real g, 9.8 m/s^2, is 122.5 at 8 cm a unit; human dancers' pelvis goes down
+        at 142 at most) lowers less than the skirt's 78"""
+        result = balance_layer.layer(MODEL, self.motion, {"down_acc_max": 110.0, "despike": False})
+        a = pelvis_down_acc(result.motion, self.last)
+        self.assertLessEqual(a.max(), 110.5)
+        self.assertGreater(a.max(), balance_layer.DOWN_ACC_MAX + 1.0)
+        self.assertEqual(result.report["vertical"]["bound_units_s2"], 110.0)
+
+
+def a08_spikes(s, t):
+    """a08's s2_spectrum.spikes, verbatim (the human baseline's measure): up and down 1-frame spikes of a speed series"""
+    up = (s[1:-1] - s[:-2] > t) & (s[1:-1] - s[2:] > t)
+    dn = (s[:-2] - s[1:-1] > t) & (s[2:] - s[1:-1] > t)
+    return int(up.sum()), int(dn.sum())
+
+
+def hitching(last=119):
+    """both feet down, センター bobbing 2 cm up and down twice a second (0.25 m/s at most) and holding a frame every third
+    of a second on the way (a traced frame repeated: the step stops, then makes up for it): two 1-frame spikes of a08's
+    each (the traced dance has 49 a minute on v7, human dancers 7.2)"""
+    motion = dance(last=last)
+    y = [-1.1 + 0.25 * math.sin(2.0 * math.pi * f / 15.0) for f in range(last + 1)]
+    for f in range(5, last, 10):
+        y[f] = y[f - 1]
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + [key("センター", f, (0.0, y[f], 0.0))
+                                                                     for f in range(last + 1)]
+    return motion
+
+
+class SpikeTest(unittest.TestCase):
+    """a08's 1-frame spikes of センター (a step whose speed is above or below both neighbours' by more than 0.15 m/s): the
+    traced dance has 49 a minute, human dancers 7.2 [2.9, 10.9].  The layer spreads the largest over the frames round
+    them until no more than the human count is left: lowered only (the lowest points stay), under the vertical bound"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.last = 119
+        cls.motion = hitching(cls.last)
+        cls.result = balance_layer.layer(MODEL, cls.motion)
+        cls.c0 = world(cls.motion, ["センター"], cls.last)["センター"][0]
+        cls.c1 = world(cls.result.motion, ["センター"], cls.last)["センター"][0]
+
+    def test_counted_as_a08_counts_them(self):
+        s = np.linalg.norm(np.diff(self.c0, axis=0), axis=1) * FPS * 0.08
+        up, dn = a08_spikes(s, 0.15)
+        self.assertGreaterEqual(up + dn, 15)                                              # the fixture has them
+        self.assertEqual(len(balance_layer.speed_spikes(self.c0)[0]), up + dn)
+
+    def test_down_to_the_human_count(self):
+        keep = int(math.floor(balance_layer.SPIKE_PER_MIN * (self.last + 1) / FPS / 60.0))
+        self.assertLessEqual(len(balance_layer.speed_spikes(self.c1)[0]), keep)
+        rep = self.result.report["spikes"]
+        self.assertEqual(rep["count"][0], len(balance_layer.speed_spikes(self.c0)[0]))
+        self.assertLessEqual(rep["count"][1], keep)
+        self.assertGreater(rep["despike"]["frames_bound"], 0)
+
+    def test_lowered_only_lows_kept_and_small(self):
+        dy = (self.c1 - self.c0)[:, 1]
+        self.assertLessEqual(float(dy.max()), 1e-6)
+        y = self.c0[:, 1]
+        lows = [f for f in range(1, self.last) if y[f] < y[f - 1] and y[f] <= y[f + 1]]
+        self.assertTrue(lows)
+        for f in lows:
+            self.assertLess(abs(dy[f]) * CM, 0.05, f)
+        self.assertLess(float(np.abs(self.c1 - self.c0).max()) * CM, 1.5)
+        self.assertLessEqual(pelvis_down_acc(self.result.motion, self.last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+
+    def test_feet_stay_and_it_can_be_left_out(self):
+        self.assertEqual(others(self.motion, skip=("センター",)), others(self.result.motion, skip=("センター",)))
+        kept = balance_layer.layer(MODEL, self.motion, {"despike": False})
+        self.assertEqual(kept.report["spikes"]["count"][1], kept.report["spikes"]["count"][0])
 
 
 class SupportFromTest(unittest.TestCase):
