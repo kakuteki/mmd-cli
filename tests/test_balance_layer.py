@@ -1026,6 +1026,25 @@ class MovingStanceTest(unittest.TestCase):
         self.assertGreater(rep["moving_mos_ml_cm"]["after"], balance_layer.MOS_ML_MIN_CM - 0.5)
         self.assertGreater(rep["moving_lateral_cm"]["after"], 8.0)                     # the COM not pulled onto the foot
 
+    def test_body_coming_to_rest_on_one_foot_is_brought_over_it_in_time(self):
+        """the body travels sideways (8 cm/s) for the first half of a long single support and then stands still on the
+        foot, 15 cm off it (the traced dance's way, 89.4 s of the MV: physically it would fall): the pull starts early
+        enough (0.6 s before the stillness, the time to carry the body 9 cm at the bound on the added acceleration) for
+        the body to be over the foot while it stands"""
+        last = 149
+        motion = moving_stance(last, spread=0.8, x=(0.5, 0.0))
+        keys = []
+        for f in range(last + 1):
+            t = min(1.0, max(0.0, (f - 38) / 24.0))                  # moving until 2.07 s, still from then on
+            keys.append(key("センター", f, (0.5 - 0.5 * t, -0.6, 0.0)))
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + keys
+        motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ",)] + foot_track(
+            "左足ＩＫ", last, (0.8, 0.0, 0.0), [(40, 50, 120, 130, 2.5)])
+        result = balance_layer.layer(MODEL, motion)
+        rep = result.report["stance"]
+        self.assertGreater(rep["still_frames"], 30)
+        self.assertLess(rep["still_lateral_cm"]["after"], 4.0)
+
     def test_still_stance_still_pulled(self):
         """the body still on the midline (the trace's way): pulled over the standing foot as before"""
         last = 119

@@ -153,6 +153,8 @@ STILL_MIN_S = 0.3               # still, and pulled over the foot; elsewhere it 
                                 # 1 / w0, the fall's time constant).  Human dancers standing still keep the COM 1.7 cm from
                                 # the support's centre (FineDance; v8 3.4); moving, 8.0 cm [7.0, 9.4] (v8, which pulled every
                                 # single support onto the foot, 5.9)
+STILL_LEAD_S = 0.6              # a still stretch that starts inside its run is pulled from this long before it: carrying the
+                                # body 9 cm at ACC_MAX (up, then down) takes 2 sqrt(0.09 / 1) = 0.6 s
 SUPPORT_R_CM = 4.0              # a05's support of a foot: the capsule of this radius about the line from the heel point
                                 # (ankle - 0.3 (toe - ankle)) to the toe; its centre half way
 MOS_ML_MIN_CM = -4.2            # moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways
@@ -905,14 +907,18 @@ def support_plan(body, p, com, low=None):
     shares = []
     kinds = []
     lead, lag = int(round(p["lead_s"] * FPS)), int(round(p["lag_s"] * FPS))
-    # still or moving by the pelvis's floor speed (the COM's own moves with the leg that lifts, which a dancer standing
-    # still does too, and would put the start of every single support among the moving frames)
+    # still where the pelvis or the COM stays slow (the COM moves with the leg that lifts, which a dancer standing still
+    # does too, and alone would put the start of every single support among the moving frames; the pelvis alone misses
+    # a still COM over hips that sway, 89.4 s of the MV)
     pel = 0.5 * (body.hip("左") + body.hip("右"))
-    vcom = np.zeros(F)
+    v_pel, vcom = np.zeros(F), np.zeros(F)
     if F >= 3:
-        vcom[1:-1] = np.linalg.norm(pel[2:, [0, 2]] - pel[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM     # cm/s
-        vcom[0], vcom[-1] = vcom[1], vcom[-2]
+        v_pel[1:-1] = np.linalg.norm(pel[2:, [0, 2]] - pel[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM     # cm/s
+        vcom[1:-1] = np.linalg.norm(com[2:, [0, 2]] - com[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
+        for v in (v_pel, vcom):
+            v[0], v[-1] = v[1], v[-2]
     min_still = max(1, int(round(p.get("still_min_s", STILL_MIN_S) * FPS)))
+    still_lead = max(lead, int(round(STILL_LEAD_S * FPS)))
     still = np.zeros(F, bool)
     moving = np.zeros(F, bool)
     stance_foot = np.full(F, "", dtype=object)
@@ -934,9 +940,10 @@ def support_plan(body, p, com, low=None):
         st = np.ones(b - a + 1, bool)
         if not p.get("pull_moving", False):
             st[:] = False
-            for r0, r1 in runs(vcom[a:b + 1] < p.get("still_v_cm_s", STILL_V_CM_S)):
-                if r1 - r0 + 1 >= min_still:
-                    st[r0:r1 + 1] = True
+            for v in (v_pel, vcom):
+                for r0, r1 in runs(v[a:b + 1] < p.get("still_v_cm_s", STILL_V_CM_S)):
+                    if r1 - r0 + 1 >= min_still:
+                        st[r0:r1 + 1] = True
         still[a:b + 1] |= st
         moving[a:b + 1] |= ~st
         stance_foot[a:b + 1] = s
@@ -948,11 +955,14 @@ def support_plan(body, p, com, low=None):
             pa, pb = a + r0, a + r1
             for t in range(pa, pb + 1):
                 put(t, max(float(lift[s][t]), 0.5 * peak))
-            for j in range(1, lead + 1):
+            # inside the run from STILL_LEAD_S before (the body must be over the foot when it stands still), before the
+            # run's start --lead at most (the weight shift before the foot lifts)
+            n_lead = lead if pa == a else min(still_lead, pa - a + lead)
+            for j in range(1, n_lead + 1):
                 t = pa - j
                 if t <= prev_end or t < 0 or not sup[s][t]:
                     break
-                put(t, peak * (1.0 - j / (lead + 1.0)))
+                put(t, peak * (1.0 - j / (n_lead + 1.0)))
             for j in range(1, lag + 1):
                 t = pb + j
                 if t >= next_start or t >= F or not sup[s][t]:
