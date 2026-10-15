@@ -155,9 +155,12 @@ STILL_MIN_S = 0.3               # still, and pulled over the foot; elsewhere it 
                                 # single support onto the foot, 5.9)
 SUPPORT_R_CM = 4.0              # a05's support of a foot: the capsule of this radius about the line from the heel point
                                 # (ankle - 0.3 (toe - ankle)) to the toe; its centre half way
-MOS_ML_MIN_CM = -6.1            # moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways
+MOS_ML_MIN_CM = -4.2            # moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways
                                 # offset from the support's centre, towards the lifted foot along 下半身's side axis) kept at
-                                # least this, human dancers' lower quartile (-4.2 [-6.1, -3.6]; v7 -8.9, v8 -5.4)
+                                # least this, human dancers' median (-4.2 [-6.1, -3.6]; v7 -8.9, v8 -5.4).  The median, not
+                                # the lower quartile: the steps that fall onto the next foot (transfer) stay free and are a
+                                # sixth of the moving frames at -19 cm, so with -6.1 the song's moving frames came to -6.9
+                                # (COM 10.5 cm), outside the human quartiles
 STANCE_WEIGHT = 30.0            # the pull on the XcoM to that bound where the dance is past it (as CATCH_WEIGHT)
 # ---- the shift ---------------------------------------------------------------------------------------------------
 ACC_MAX = 1.0                   # m/s^2 of added COM acceleration (about 9 cm of centre-of-pressure move)
@@ -1381,18 +1384,28 @@ def vertical_fix(heights, cap=None):
     return np.minimum(z, 0.0)
 
 
-def rise_room(body, plan):
-    """per frame, how far (units, >= 0) the hips may go up before a leg on the floor has less than REACH_TOL_CM of slack
-    to its foot IK's target, with the despike's floor move on top (inf where no foot is on the floor)"""
-    room = np.full(body.F, np.inf)
+def despike_room(body, plan, before):
+    """per frame (units): how far up and how far on the floor the despike may move the hips (body: as the layer has them
+    now) before a leg on the floor reaches farther than REACH_TOL_CM short of its full length or, where the dance itself
+    reaches farther, than the dance does (the reach report's bound).  The hip's distance to the target grows by u . e
+    (u the unit from the target to the hip); split conservatively: half the room for the floor move, the rest upwards"""
+    F = body.F
+    up = np.full(F, DESPIKE_UP_CM / CM)
+    xz = np.full(F, DESPIKE_XZ_CM / CM)
     for s in SIDES:
-        D = body.ankle(s) - body.hip(s)
-        R = body.leg_length(s) - (REACH_TOL_CM + DESPIKE_XZ_CM) / CM
-        rh = np.linalg.norm(D[:, [0, 2]], axis=1)
-        v = -D[:, 1]
-        r = np.where(rh < R, np.sqrt(np.maximum(R * R - rh * rh, 0.0)) - v, 0.0)
-        room = np.minimum(room, np.where(plan["sup"][s], np.maximum(r, 0.0), np.inf))
-    return room
+        D = body.hip(s) - body.ankle(s)
+        dist = np.maximum(np.linalg.norm(D, axis=1), 1e-9)
+        allow = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M) - 1e-4
+        room = np.maximum(allow - dist, 0.0)
+        u = D / dist[:, None]
+        uh = np.linalg.norm(u[:, [0, 2]], axis=1)
+        uy = np.maximum(u[:, 1], 1e-6)
+        x_s = np.minimum(DESPIKE_XZ_CM / CM, 0.5 * room / np.maximum(uh, 1e-6))
+        y_s = np.maximum(room - uh * x_s, 0.0) / uy
+        sup = plan["sup"][s]
+        xz = np.where(sup, np.minimum(xz, x_s), xz)
+        up = np.where(sup, np.minimum(up, y_s), up)
+    return up, xz
 
 
 def speed_spikes(P):
@@ -1463,13 +1476,13 @@ def _despike_window(D2P, acc_lo, bound, a, b, r, y_lo, y_hi, xz, iters):
     return z2, it
 
 
-def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, iters=DESPIKE_ITERS):
+def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, room_xz=None, iters=DESPIKE_ITERS):
     """the least change e [F, 3] (units) of センター's world path P [F, 3] that leaves at most per_min of its 1-frame
     spikes a minute (speed_spikes), the largest taken first, as far as small changes do it.  Around each spike taken the
     path's kinks on the step's two frames are pulled under SPIKE_KINK_SHARE SPIKE_T (the speed then changes less than
     SPIKE_T: the jolt, the hitch or the one-frame turn is spread over the frames round it); a frame goes down at most
-    DESPIKE_DOWN_CM and up at most DESPIKE_UP_CM and room_up [F] (units: the legs' reach), on the floor at most
-    DESPIKE_XZ_CM; every curve of `heights` ([k, F], units: 下半身's and センター's, which move with it) still goes down no
+    DESPIKE_DOWN_CM and up at most DESPIKE_UP_CM and room_up [F] (units: the legs' reach, despike_room), on the floor at
+    most DESPIKE_XZ_CM and room_xz [F]; every curve of `heights` ([k, F], units: 下半身's and センター's, which move with it) still goes down no
     faster than `cap` (units/s^2).  Where that is not enough the spike is made smaller and left (the traced dance turns
     its deepest bounces round in one frame, up to 3 g: spreading those would reshape the bounce by centimetres).  Per
     window of DESPIKE_HALF frames round the kinks taken, ADMM (Boyd et al. 2011); in rounds"""
@@ -1489,7 +1502,7 @@ def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, iters=DESPIKE_
     D2P[1:-1] = d2(P)
     up = np.full(F, DESPIKE_UP_CM / CM) if room_up is None else np.clip(room_up, 0.0, DESPIKE_UP_CM / CM)
     y_lo = -DESPIKE_DOWN_CM / CM
-    xz = DESPIKE_XZ_CM / CM
+    xz = np.full(F, DESPIKE_XZ_CM / CM) if room_xz is None else np.clip(room_xz, 0.0, DESPIKE_XZ_CM / CM)
     bound = np.zeros(F, bool)
     e = np.zeros((F, 3))
     for rnd in range(1, DESPIKE_ROUNDS + 1):
@@ -1506,7 +1519,7 @@ def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, iters=DESPIKE_
         info["rounds"] = rnd
         e = np.zeros((F, 3))
         for a, b in _windows(bound, DESPIKE_HALF, 1, F - 2):
-            e[a:b + 1], its = _despike_window(D2P, acc_lo, bound, a, b, r, y_lo, up[a:b + 1], xz, iters)
+            e[a:b + 1], its = _despike_window(D2P, acc_lo, bound, a, b, r, y_lo, up[a:b + 1], xz[a:b + 1], iters)
             info["iterations"] = max(info["iterations"], its)
     info["after"] = int(len(speed_spikes(P + e)[0]))
     info["frames_bound"] = int(bound.sum())
@@ -1755,8 +1768,9 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         # センター's 1-frame jolts and hitches (a08's spikes) spread over the frames round them, down to the human count
         spikes, e_sp = None, np.zeros((F, 3))
         if p.get("despike", True):
+            room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
             e_sp, spikes = despike(body.p(CENTRE) + shift, [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)],
-                                   p["down_acc_max"], p["spike_per_min"], room_up=rise_room(body.moved(shift, carry), plan))
+                                   p["down_acc_max"], p["spike_per_min"], room_up=room_up, room_xz=room_xz)
             shift += e_sp
             if p.get("vertical", True):
                 # what the despike's solve left over the cap (it stops where the box cannot meet the kinks): lowered
@@ -2235,8 +2249,8 @@ def main(argv=None):
     ap.add_argument("--pull-moving", action="store_true", help="pull every single support over the foot, moving or still "
                                                               "(the layer before 2026-10-15)")
     ap.add_argument("--mos-ml-min", type=float, default=MOS_ML_MIN_CM,
-                    help="cm: moving single support keeps the XcoM's sideways margin at least this (human dancers' lower "
-                         "quartile -6.1; their median -4.2)")
+                    help="cm: moving single support keeps the XcoM's sideways margin at least this (human dancers' median "
+                         "-4.2, quartiles -6.1 and -3.6)")
     ap.add_argument("--spike-per-min", type=float, default=SPIKE_PER_MIN,
                     help="センター's 1-frame spikes left at most, a minute (human dancers 7.2)")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")

@@ -902,12 +902,12 @@ def a08_spikes(s, t):
     return int(up.sum()), int(dn.sum())
 
 
-def hitching(last=119):
-    """both feet down, センター bobbing 2 cm up and down twice a second (0.25 m/s at most) and holding a frame every third
-    of a second on the way (a traced frame repeated: the step stops, then makes up for it): two 1-frame spikes of a08's
-    each (the traced dance has 49 a minute on v7, human dancers 7.2)"""
+def hitching(last=119, base=-1.1):
+    """both feet down, センター bobbing 2 cm up and down twice a second (0.25 m/s at most) about `base` (units) and holding
+    a frame every third of a second on the way (a traced frame repeated: the step stops, then makes up for it): two
+    1-frame spikes of a08's each (the traced dance has 49 a minute on v7, human dancers 7.2)"""
     motion = dance(last=last)
-    y = [-1.1 + 0.25 * math.sin(2.0 * math.pi * f / 15.0) for f in range(last + 1)]
+    y = [base + 0.25 * math.sin(2.0 * math.pi * f / 15.0) for f in range(last + 1)]
     for f in range(5, last, 10):
         y[f] = y[f - 1]
     motion.bones = [k for k in motion.bones if k.name != "センター"] + [key("センター", f, (0.0, y[f], 0.0))
@@ -963,6 +963,16 @@ class SpikeTest(unittest.TestCase):
         kept = balance_layer.layer(MODEL, self.motion, {"despike": False})
         self.assertEqual(kept.report["spikes"]["count"][1], kept.report["spikes"]["count"][0])
 
+    def test_legs_keep_their_slack(self):
+        """bobbing high, the legs a centimetre from full stretch at the top: the despike takes none of their slack (no
+        leg reaches farther than 1.5 cm short of full length, or than the dance where it reaches farther)"""
+        motion = hitching(self.last, base=-0.25)
+        result = balance_layer.layer(MODEL, motion)
+        self.assertGreater(result.report["spikes"]["count"][0], 10)                       # the fixture has spikes
+        for s in ("L", "R"):
+            self.assertEqual(result.report["reach"]["worse_frames_" + s], 0)
+            self.assertEqual(result.report["reach"]["slack_taken_frames_" + s], 0)
+
 
 def moving_stance(last=129, spread=0.0, x=(0.25, -1.25), sway_cm=0.0):
     """the left foot up 20 cm from 1.33 s to 3 s (the right foot stands); センター moving all the while: sideways from x[0]
@@ -1000,8 +1010,8 @@ class MovingStanceTest(unittest.TestCase):
 
     def test_moving_stance_keeps_the_xcom_margin(self):
         """feet wide (the right one 17 cm out), the body swaying forwards and back on the midline: the XcoM 17 cm medial of
-        the standing foot, past the bound; the layer brings it to the bound (the margin -6.1 cm, the human lower quartile)
-        and no further"""
+        the standing foot, past the bound; the layer brings it to the bound (the margin -4.2 cm, the human median) and no
+        further"""
         last = 129
         motion = moving_stance(last, spread=1.0, x=(0.0, 0.0), sway_cm=3.0)
         result = balance_layer.layer(MODEL, motion)
