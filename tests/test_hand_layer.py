@@ -952,6 +952,24 @@ class PaceTest(unittest.TestCase):
             hand_layer.contact_weights = kept
         np.testing.assert_allclose(s, self.run_(shapes, ())[0], atol=1e-6)
 
+    def test_a_touch_fading_within_a_change_leaves_no_step_back(self):
+        # the fist opens in 2 frames while the hand leaves what it touched (the touch 1 to frame 31, 0 from 35), then
+        # the fingers curl a little: the paced fingers move one way through the opening and the other through the curl,
+        # never back and forth (a blend of the paced and the input's values did: the input's quick step, then a jump)
+        shapes = [(0, "fist"), (30, "fist"), (32, "open"), (38, "curl"), (LAST, "curl")]
+        ramp = np.clip((35.0 - np.arange(LAST + 1)) / 4.0, 0.0, 1.0)
+        kept = hand_layer.contact_weights
+        hand_layer.contact_weights = lambda model, motion, F, sides: {x: ramp[:F].copy() for x in sides}
+        try:
+            s, _ = self.run_(shapes)
+        finally:
+            hand_layer.contact_weights = kept
+        d = np.diff(s)
+        k = int(np.argmin(s))                          # the bottom of the opening
+        self.assertLess(float(d[20:k].max()), 1e-6)       # down to it
+        self.assertGreater(float(d[k:45].min()), -1e-6)   # and up after it
+        self.assertLess(float(s[k]), 0.25 * 245.0)        # the fist opens (blending into the curl that follows at once)
+
     def test_the_report_counts_the_changes_it_paced(self):
         _, out = self.run_([(0, "open"), (30, "open"), (32, "fist"), (LAST, "fist")])
         row = out.report["steps"]["pace"]["左"]["中指"]
@@ -1543,23 +1561,47 @@ class RealDanceTest(unittest.TestCase):
         after = self.face_gap_mm(hand_layer.layer(self.model, part, params, pulp=self.pulp).motion, 12, 30)
         self.assertGreater(float((after - before).min()), -2.0)
 
-    def test_a_dancing_hand_s_fingers_move_more_of_the_time_and_keep_the_wrist_s_time(self):
+    def test_a_dancing_hand_s_fingers_move_more_of_the_time_and_each_change_keeps_its_time(self):
         # 3,300 - 4,200 (30 s): the trace holds its fingers dead still between changes made in 2 - 3 frames; dancers'
         # fingers take 6 - 7 frames for a big change (FineDance's K-pop and street dances) and are still (under 5 deg/s)
-        # 7 - 9 % of the time.  The paced changes are spread round their middles, so the a09 lag from the wrist to the
-        # finger does not grow (people: about 0)
+        # 7 - 9 % of the time.  Paced, the fingers are still less of the time, and every change of 20 degrees or more
+        # keeps its middle (the time its sum is halfway): no lag is added.  (The a09 measure's windows are not used here:
+        # a widened change can merge two events of one window and move its peak between them, either way)
         part = crop(self.dance, 3300, 4200)
         new = hand_layer.layer(self.model, part, pulp=self.pulp)
         old = hand_layer.layer(self.model, part, hand_layer.as_v8(hand_layer.default_params()), pulp=self.pulp)
+        bare = dict(hand_layer.default_params(), pace=False, passive=False, order=False, speed=False)
+        unpaced = hand_layer.layer(self.model, part, bare, pulp=self.pulp).motion
+        paced = hand_layer.layer(self.model, part, dict(bare, pace=True), pulp=self.pulp).motion
         for side in ("左", "右"):
             still = []
             for res in (new, old):
                 s = middle_sum_real(res.motion, self.model, side)
                 still.append(float(np.mean(np.abs(np.diff(s)) * 30.0 < 5.0)))
             self.assertLess(still[0], still[1], side)
-            a_new = new.report["output"][side]["a09_wrist_finger"]["median"]
-            a_old = old.report["output"][side]["a09_wrist_finger"]["median"]
-            self.assertLess(a_new, a_old + 0.05, side)
+            s0, s1 = middle_sum_real(unpaced, self.model, side), middle_sum_real(paced, self.model, side)
+            shifts = []
+            for a, b in hand_layer.monotone_changes(s0):
+                if abs(s0[b] - s0[a]) < 20.0 or a < 15 or b > len(s0) - 16:
+                    continue
+                half = 0.5 * (s0[a] + s0[b])
+                sign = 1.0 if s0[b] > s0[a] else -1.0
+                y0 = np.maximum.accumulate(sign * (s0[a:b + 1] - half))
+                t0 = a + float(np.interp(0.0, y0, np.arange(b + 1 - a)))
+                lo, hi = a - 12, b + 12
+                y1 = sign * (s1[lo:hi + 1] - half)
+                # the paced sum's crossings of the same halfway value the same way; the one nearest the input's
+                ks = np.where((y1[:-1] < 0.0) & (y1[1:] >= 0.0))[0]
+                if not len(ks):
+                    continue                              # merged with a neighbour, no crossing of its own
+                times = lo + ks + (0.0 - y1[ks]) / (y1[ks + 1] - y1[ks])
+                shifts.append(float(times[np.argmin(np.abs(times - t0))] - t0))
+            shifts = np.array(shifts)
+            self.assertGreater(len(shifts), 10, side)
+            self.assertLess(float(np.median(np.abs(shifts))), 0.15, side)
+            self.assertLess(abs(float(shifts.mean())), 0.15, side)         # no lag (nor lead) on the whole
+            # a change right next to one the other way blends with it and its middle moves a little, either way
+            self.assertLess(float(np.percentile(np.abs(shifts), 90)), 0.75, side)
 
     def test_the_follow_keeps_the_pointing_hands_at_52_s(self):
         # the follow lags a change of shape, not a shape held: the two pointing index fingers stay straight

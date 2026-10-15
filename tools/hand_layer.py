@@ -1064,9 +1064,14 @@ def pace(hands, ang, touch=None, c=PACE["c"], p=PACE["p"]):
                 hd = np.array([h[max(0, t - reach):t + reach + 1].max() for t in range(F)])
                 k = np.hanning(2 * reach + 3)[1:-1]
                 hs = np.maximum(np.convolve(np.pad(hd, reach, mode="edge"), k / k.sum(), "valid"), h)
+                # where the hand touches, the window narrows (a blend of the paced and the input's values would keep
+                # the input's quick step and jump after it, where the touch fades within a change)
+                hs = hs * keep
+                if not hs.any():
+                    break
                 for bn in bones:
                     for i in range(3):
-                        ang[bn][i] = ang[bn][i] + keep * (box_average(ang[bn][i], hs) - ang[bn][i])
+                        ang[bn][i] = box_average(ang[bn][i], hs)
             s1 = sum(ang[b][0] for b in bones)
             after = [ten_ninety(s1, a, b) for a, b in monotone_changes(s1) if abs(s1[b] - s1[a]) >= PACE["min"]]
             rep[f] = {"changes": len(big0), "paced": len(short0),
