@@ -528,6 +528,19 @@ class HumanPresetTest(unittest.TestCase):
         self.assertLess(float(np.degrees(np.linalg.norm(dev[36:58], axis=1)).max()), 1.0)
 
 
+class HumanPresetGuardTest(unittest.TestCase):
+    def test_human_changes_nothing_but_the_delays(self):
+        # the preset is the default with the arm's delays and the fingers' delay at 0: the tracking, the holds, the beat
+        # holds, the contacts, the floor and the checks are the default's (the review of motor-human: the holds, the beat
+        # holds, the contacts, the floor or the checks switched off, or the trunk or the head delayed, passed every test)
+        p, d = motor_layer.default_params("human"), motor_layer.default_params()
+        for c in ("girdle", "upper", "elbow", "wrist"):
+            d["classes"][c]["delay"] = (0.0, 0.0)
+        d["finger_delay"] = 0.0
+        d["preset"] = "human"
+        self.assertEqual(p, d)
+
+
 class MechanismTest(unittest.TestCase):
     """the parts the review's mutations broke without a test noticing"""
 
@@ -674,7 +687,8 @@ class CliTest(unittest.TestCase):
             vmd.dump(swing_dance(), dance_path)
             got = {}
             for name, extra in (("default", []), ("human", ["--preset", "human"]),
-                                ("human_given", ["--preset", "human", "--finger-delay", "0.25"])):
+                                ("human_given", ["--preset", "human", "--finger-delay", "0.25"]),
+                                ("default_zero", ["--finger-delay", "0"])):
                 out, rep = os.path.join(folder, name + ".vmd"), os.path.join(folder, name + ".json")
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
@@ -686,6 +700,7 @@ class CliTest(unittest.TestCase):
             self.assertEqual(got["default"]["finger_delay"], motor_layer.FINGER_DELAY)
             self.assertEqual(got["human"]["finger_delay"], 0.0)
             self.assertEqual(got["human_given"]["finger_delay"], 0.25)
+            self.assertEqual(got["default_zero"]["finger_delay"], 0.0)       # 0 given is 0, not the preset's
             # the default file is the one the layer makes with the default parameters from the same file (the CLI adds
             # nothing; the file holds the keys in float32, so the layer is run on what was read back)
             self.assertEqual(got["default_bytes"], vmd.dumps(motor_layer.layer(MODEL, vmd.load(dance_path)).motion))
@@ -697,19 +712,35 @@ class CliTest(unittest.TestCase):
 # ---- the real dance (skipped where it is not) ------------------------------------------------------
 
 def real_file(*parts):
-    folder = ROOT
+    """a file of the real song under _spike/ of this tree, of a tree up to 3 folders above it (a worktree), of the main
+    working tree, or of MMD_CLI_DATA (a folder holding _spike/; as tests/test_eye_gaze.py)"""
+    folders, folder = [], ROOT
     for _ in range(4):
+        folders.append(folder)
+        folder = os.path.dirname(folder)
+    folders.append(MAIN_TREE)
+    if os.environ.get("MMD_CLI_DATA"):
+        folders.append(os.environ["MMD_CLI_DATA"])
+    for folder in folders:
         path = os.path.join(folder, *parts)
         if os.path.isfile(path):
             return path
-        folder = os.path.dirname(folder)
-    path = os.path.join(MAIN_TREE, *parts)
-    return path if os.path.isfile(path) else None
+    return None
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop (the review of
+    motor-human: this PC's fixed path skipped these tests on hinata, where the suite is run, every time)"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
 
 
 REAL_DANCE = real_file("_spike", "out", "stage1", "breath", "dance_v3_breath.vmd")
-RIN = "C:/Users/kaga/Desktop/MikuMikuDance_v932x64/UserFile/Model/Sour式鏡音リンVer.2.01/White.pmx"
-REAL = REAL_DANCE is not None and os.path.isfile(RIN)
+RIN = rin_path()
+REAL = REAL_DANCE is not None and RIN is not None
 
 
 def crop(motion, first, last):
@@ -724,8 +755,11 @@ def crop(motion, first, last):
     return vmd.Motion(model_name=motion.model_name, bones=out)
 
 
-@unittest.skipUnless(REAL, "the stage-1 dance (breath) or Rin is not here")
+@unittest.skipUnless(REAL, "the stage-1 dance (breath) or Rin is not here "
+                     "(MMD_CLI_DATA: a folder holding _spike/; MMD_CLI_RIN: White.pmx)")
 class RealDanceTest(unittest.TestCase):
+    PRESET = "default"
+
     @classmethod
     def setUpClass(cls):
         cls.model = pmx.load(RIN)
@@ -736,7 +770,7 @@ class RealDanceTest(unittest.TestCase):
         # the right hand's fingers 3,888 -> 3,889
         for first, last, bone, frame in ((1880, 1915, "右腕", 1899), (5950, 5980, "左手首", 5963),
                                          (3875, 3900, None, 3888)):
-            result = motor_layer.layer(self.model, crop(self.dance, first, last), motor_layer.default_params())
+            result = motor_layer.layer(self.model, crop(self.dance, first, last), motor_layer.default_params(self.PRESET))
             found = [(j["bone"], j["frame"] + first) for j in result.report["jumps"]]
             if bone is not None:
                 self.assertIn((bone, frame), found)
@@ -744,7 +778,7 @@ class RealDanceTest(unittest.TestCase):
                 self.assertTrue(any(b.startswith("右") and "指" in b and f == frame for b, f in found), found)
 
     def test_the_left_hand_does_not_go_into_the_face_at_5914(self):
-        result = motor_layer.layer(self.model, crop(self.dance, 5880, 5935), motor_layer.default_params())
+        result = motor_layer.layer(self.model, crop(self.dance, 5880, 5935), motor_layer.default_params(self.PRESET))
         eyes_in = 0.5 * (result.world_in["左目"][0] + result.world_in["右目"][0])
         eyes_out = 0.5 * (result.world_out["左目"][0] + result.world_out["右目"][0])
         d_in = np.linalg.norm(result.world_in["左中指３"][0] - eyes_in, axis=1) * 80.0
@@ -753,6 +787,11 @@ class RealDanceTest(unittest.TestCase):
         self.assertTrue(near.any())
         self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(result.report["untouched"]["identical"])
+
+
+class HumanRealDanceTest(RealDanceTest):
+    """--preset human on the same real crops: the jumps are found and passed through, the hand keeps off the face"""
+    PRESET = "human"
 
 
 if __name__ == "__main__":

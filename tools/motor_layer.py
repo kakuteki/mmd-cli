@@ -89,17 +89,31 @@ The layer (numbers: the constants and default_params below):
   aim (+0.5 a link) and the animators' principle, not from people.  Measured with a09's own measure on dancers' optical
   motion capture (FineDance: 27 professional dancers, 198 sequences, 30 fps; the joints matched to a09's, the upper
   arm's twist moved into the elbow and the forearm's into the wrist), people's arm is not delayed one joint after the
-  other: shoulder -> elbow -0.05 / +0.10 frames, elbow -> wrist -0.14 / -0.09, wrist -> finger +0.02 / +0.03 (median,
-  left / right; the 95 % intervals by sequence within -0.21 .. +0.15), and a zero-phase low-pass or the noise of the
-  capture do not pull it there.  The default puts +0.93 / +0.58 and +0.56 / +0.60 on Hibikase (its input +0.20 / +0.05
-  and -0.05 / -0.03).  Matched the other way (the bones cut as FineDance's joints: 肩 -> 腕捩 -> 手捩 -> 手首, people
-  -0.26 / -0.09, -0.10 / -0.19, +0.04 / +0.06; K-pop's 35 sequences -0.21 / -0.19, +0.06 / +0.09, -0.03 / -0.04) the
-  default moves elbow -> wrist from -0.07 / 0.00 to +0.95 / +1.06.  People differ by person and style (CMU's modern and
-  Indian dancers +1 to +2 shoulder -> elbow, LaFAN1's 8 dances +0.2 to +0.45 elbow -> wrist, salsa negative); human takes
-  the styles nearest Hibikase's idol dance (FineDance's K-pop, street and jazz, AIST++).  So human sets every arm delay
-  and the fingers' delay to 0 (Hibikase: -0.04 / +0.01, -0.09 / 0.00, -0.05 / +0.01 matched so); the tracking (fn, zeta,
-  ff: the run-on past a stop and the settling, which people show too: their held hands come back 0.3 to 0.5 cm), the
-  holds, the beat holds, the contacts and the checks are the default's.
+  other: shoulder -> elbow -0.05 / +0.10 frames, elbow -> wrist -0.14 / -0.09, wrist -> finger +0.02 / +0.03 (the pooled
+  median, left / right; its 95 % interval, the sequences resampled, within -0.21 .. +0.15: the uncertainty of the
+  median, not the spread of the dancers, whose own medians run from about -1 to +1 frame between the 5th and the 95th
+  percentile of the sequences), and a zero-phase low-pass or the noise of the capture do not pull it there.  The default
+  puts +0.93 / +0.58 and +0.56 / +0.60 on Hibikase (its input +0.20 / +0.05 and -0.05 / -0.03).  Matched the other way
+  (the bones cut as FineDance's joints: 肩 -> 腕捩 -> 手捩 -> 手首, people -0.26 / -0.09, -0.10 / -0.19, +0.04 / +0.06; K-pop's
+  35 sequences -0.21 / -0.19, +0.06 / +0.09, -0.03 / -0.04) the default moves elbow -> wrist from -0.07 / 0.00 to +0.95
+  / +1.06: at the 95th / 98th percentile of the 62 sequences of the styles near Hibikase, and on the right past every
+  K-pop sequence (human -0.12 / -0.01, near their middle; frames 265 - 7646, the windows started at 15 offsets: the
+  median of the medians).  Much of that pair comes from the twist bones: 腕捩 and 手捩 are copied on the input's time while
+  ひじ and 手首 are delayed (the twist split again from the arm's shape, the default reads +0.11 / +0.12); on the segments'
+  long axes, which no twist split changes, the default and human differ by 0.02 - 0.07 frames, both some 0.1 - 0.15
+  behind their input and inside the dancers' spread (the 57th to the 89th percentile of the near styles).  People differ
+  by person and style (CMU's modern and Indian dancers +1 to +2 shoulder -> elbow, LaFAN1's 8 dances +0.2 to +0.45 elbow
+  -> wrist, salsa negative); human takes the styles nearest Hibikase's idol dance (FineDance's K-pop, street and jazz,
+  AIST++).  So human sets every arm delay and the fingers' delay to 0 (Hibikase: -0.04 / +0.01, -0.09 / 0.00, -0.05 /
+  +0.01 matched so); the tracking (fn, zeta, ff: the run-on past a stop and the settling, which people show too: their
+  held hands come back 0.3 to 0.5 cm), the holds, the beat holds, the contacts and the checks are the default's.
+* 腕捩 and 手捩 are not simulated (copied, the input's): ひじ's target is the input's turn of ひじ against 腕, its twist
+  and its bend together, so where the tracking is off, the part of the error about the upper arm's axis lands on ひじ,
+  which is then not quite a hinge (on Hibikase 0.5 - 0.6 degrees at the median, 5 - 7 at the 99th percentile, at most
+  11 - 17; the default and human alike).  Read from the elbow's plane (tools/anatomy_layer.py's reading of the arm),
+  a straight arm (bent under 1 degree) then seems to turn its humerus up to 54 degrees past the cap; read from 腕捩's
+  own turn the humerus passes the cap by 2 - 4 degrees at most, as before this layer (2.3 / 1.8; the review of
+  motor-human).
 * Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  As Kp and Kd scale with the
   inertia, the motion does not depend on it until the torque limit binds: mass and inertia act only through the limit
   on the angular acceleration (limit / inertia), and that binds on 0.1 to 0.3 % of the substeps of the shoulder and the
