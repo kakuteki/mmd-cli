@@ -942,21 +942,87 @@ class SpikeTest(unittest.TestCase):
         self.assertLessEqual(rep["count"][1], keep)
         self.assertGreater(rep["despike"]["frames_bound"], 0)
 
-    def test_lowered_only_lows_kept_and_small(self):
+    def test_small_the_lows_on_time_and_under_the_bound(self):
+        """a frame goes down 1 cm at most and up 0.5 cm at most (within the legs' reach); the lowest point of each bob
+        stays within a frame of its own (two frames a millimetre apart may swap); the pelvis still goes down no faster than
+        the bound"""
         dy = (self.c1 - self.c0)[:, 1]
-        self.assertLessEqual(float(dy.max()), 1e-6)
-        y = self.c0[:, 1]
-        lows = [f for f in range(1, self.last) if y[f] < y[f - 1] and y[f] <= y[f + 1]]
-        self.assertTrue(lows)
-        for f in lows:
-            self.assertLess(abs(dy[f]) * CM, 0.05, f)
-        self.assertLess(float(np.abs(self.c1 - self.c0).max()) * CM, 1.5)
+        self.assertLessEqual(float(dy.max()) * CM, balance_layer.DESPIKE_UP_CM + 1e-3)
+        self.assertGreaterEqual(float(dy.min()) * CM, -balance_layer.DESPIKE_DOWN_CM - 1e-3)
+        self.assertLessEqual(float(np.linalg.norm((self.c1 - self.c0)[:, [0, 2]], axis=1).max()) * CM,
+                             balance_layer.DESPIKE_XZ_CM + 1e-3)
+        y0, y1 = self.c0[:, 1], self.c1[:, 1]
+        for a in range(0, self.last + 1 - 15, 15):                                       # one bob each half second
+            f0, f1 = a + int(np.argmin(y0[a:a + 15])), a + int(np.argmin(y1[a:a + 15]))
+            self.assertLessEqual(abs(f1 - f0), 1, a)
+            self.assertLess(abs(y1[f1] - y0[f0]) * CM, balance_layer.DESPIKE_UP_CM + 0.01, a)
         self.assertLessEqual(pelvis_down_acc(self.result.motion, self.last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
 
     def test_feet_stay_and_it_can_be_left_out(self):
         self.assertEqual(others(self.motion, skip=("センター",)), others(self.result.motion, skip=("センター",)))
         kept = balance_layer.layer(MODEL, self.motion, {"despike": False})
         self.assertEqual(kept.report["spikes"]["count"][1], kept.report["spikes"]["count"][0])
+
+
+def moving_stance(last=129, spread=0.0, x=(0.25, -1.25), sway_cm=0.0):
+    """the left foot up 20 cm from 1.33 s to 3 s (the right foot stands); センター moving all the while: sideways from x[0]
+    to x[1] (units) at a steady speed from 1.27 s to 3.07 s, and swaying sway_cm forwards and back once a second"""
+    motion = dance(last=last, spread=spread, left_lifts=LIFT_RIGHT_STANDS)
+    keys = []
+    for f in range(last + 1):
+        t = min(1.0, max(0.0, (f - 38) / 54.0))
+        z = sway_cm / CM * math.sin(2.0 * math.pi * f / FPS)
+        keys.append(key("センター", f, (x[0] + (x[1] - x[0]) * t, -0.6, z)))
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + keys
+    return motion
+
+
+class MovingStanceTest(unittest.TestCase):
+    """human dancers on one foot (the human baseline, FineDance K-pop / choreography / jazz, 62 sequences): standing still
+    (the COM under 5 cm/s for 0.3 s and more) the COM is 1.7 cm from the support's centre; moving, 8.0 cm [7.0, 9.4] and
+    the XcoM's sideways margin (the support's half width 4 cm less the XcoM's sideways offset) -4.2 cm [-6.1, -3.6].  So
+    the layer pulls the body over the foot only where the stance is still; where it moves it keeps the XcoM's margin
+    from going past the human range (v8, which pulled every single support: 5.9 cm, the margin -5.4)"""
+
+    def test_moving_stance_not_pulled_onto_the_foot(self):
+        """the dance itself carries the body towards the standing foot (6.7 cm/s): its XcoM stays inside the bound, so
+        the layer adds nothing; pulled as before (pull_moving) it would have moved the body over the foot early"""
+        last = 129
+        motion = moving_stance(last)
+        result = balance_layer.layer(MODEL, motion)
+        shift = centre_offsets(motion, result.motion, last)
+        self.assertLess(float(np.abs(shift[:, [0, 2]]).max()) * CM, 0.5)
+        rep = result.report["stance"]
+        self.assertGreater(rep["moving_frames"], 30)
+        self.assertEqual(rep["still_frames"], 0)
+        old = balance_layer.layer(MODEL, motion, {"pull_moving": True})
+        self.assertGreater(float(np.abs(centre_offsets(motion, old.motion, last)[:, 0]).max()) * CM, 2.0)
+
+    def test_moving_stance_keeps_the_xcom_margin(self):
+        """feet wide (the right one 17 cm out), the body swaying forwards and back on the midline: the XcoM 17 cm medial of
+        the standing foot, past the bound; the layer brings it to the bound (the margin -6.1 cm, the human lower quartile)
+        and no further"""
+        last = 129
+        motion = moving_stance(last, spread=1.0, x=(0.0, 0.0), sway_cm=3.0)
+        result = balance_layer.layer(MODEL, motion)
+        rep = result.report["stance"]
+        bound = balance_layer.SUPPORT_R_CM - balance_layer.MOS_ML_MIN_CM
+        self.assertEqual(rep["bound_cm"], round(bound, 2))
+        self.assertGreater(rep["moving_frames"], 30)
+        self.assertGreater(rep["moving_xcom_cm"]["before"], bound + 4.0)               # the fixture: past the bound
+        self.assertLess(abs(rep["moving_xcom_cm"]["after"] - bound), 0.5)              # to the bound, not onto the foot
+        self.assertLessEqual(rep["moving_xcom_cm"]["after_max"], bound + 0.75)         # (the knees solved again, the carry)
+        self.assertGreater(rep["moving_mos_ml_cm"]["after"], balance_layer.MOS_ML_MIN_CM - 0.5)
+        self.assertGreater(rep["moving_lateral_cm"]["after"], 8.0)                     # the COM not pulled onto the foot
+
+    def test_still_stance_still_pulled(self):
+        """the body still on the midline (the trace's way): pulled over the standing foot as before"""
+        last = 119
+        motion = dance(last=last, spread=0.3, left_lifts=LIFT_RIGHT_STANDS)
+        result = balance_layer.layer(MODEL, motion)
+        rep = result.report["stance"]
+        self.assertGreater(rep["still_frames"], 30)
+        self.assertLess(rep["still_lateral_cm"]["after"], 3.0)
 
 
 class SupportFromTest(unittest.TestCase):
