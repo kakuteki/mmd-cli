@@ -1885,8 +1885,14 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         spikes, e_sp = None, np.zeros((F, 3))
         if p.get("despike", True):
             room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
-            e_sp, spikes = despike(body.p(CENTRE) + shift, [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)],
-                                   cap_v, p["spike_per_min"], room_up=room_up, room_xz=room_xz)
+            hts = [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)]
+            cap_d = cap_v
+            if np.ndim(cap_v):
+                # in the air the despike keeps the fall no faster than it is now (the song's 213.3 s: with no bound there
+                # it moved a frame of the jump 1.4 cm and the fall went 254 -> 558 units/s^2)
+                now = np.max([down_acc(h) for h in hts], axis=0)
+                cap_d = np.where(np.isfinite(cap_v), cap_v, np.maximum(now, p["down_acc_max"]))
+            e_sp, spikes = despike(body.p(CENTRE) + shift, hts, cap_d, p["spike_per_min"], room_up=room_up, room_xz=room_xz)
             # the linear room is a guess: where a leg on the floor still reaches past its bound, the despike is taken
             # back there (scaled by a smooth cover of what is past, until none is)
             for _ in range(8):

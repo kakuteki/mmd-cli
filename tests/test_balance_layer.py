@@ -954,6 +954,23 @@ class AirTest(unittest.TestCase):
         self.assertGreater(float(self.y0[50] - y[50]) * CM, 0.3)
         self.assertEqual(old.report["vertical"]["air_bound_units_s2"], balance_layer.DOWN_ACC_MAX)
 
+    def test_despike_does_not_sharpen_the_fall_in_the_air(self):
+        """the 1-frame despike (on by default) may not make the air's fall faster than the dance's own there (the song's
+        213.3 s: the despike moved a frame of the jump 1.4 cm and its downward acceleration went 254 -> 558)"""
+        last = 119
+        motion = jump_and_bounce(last)
+        centre = []
+        for f in range(last + 1):                       # a hitch on the way up, in the air: a spike to take away
+            h = 0.5 * max(0.0, 1.0 - abs(f - 50) / 4.0) + 0.5 * max(0.0, 1.0 - abs(f - 100) / 4.0)
+            h += 0.12 if f == 47 else 0.0
+            centre.append(key("センター", f, (0.0, -1.1 + h, 0.0)))
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+        a0 = pelvis_down_acc(motion, last)
+        res = balance_layer.layer(MODEL, motion)
+        self.assertGreater(res.report["spikes"]["count"][0], 0)
+        a1 = pelvis_down_acc(res.motion, last)
+        self.assertLessEqual(a1[44:57].max(), max(a0[44:57].max(), balance_layer.DOWN_ACC_MAX) + 0.5)
+
     def test_report_names_the_air(self):
         rep = self.result.report["vertical"]
         self.assertGreater(rep["air_frames"], 8)
