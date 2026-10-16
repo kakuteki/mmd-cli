@@ -169,12 +169,13 @@ STILL_LEAD_S = 0.6              # a still stretch that starts inside its run is 
                                 # body 9 cm at ACC_MAX (up, then down) takes 2 sqrt(0.09 / 1) = 0.6 s
 SUPPORT_R_CM = 4.0              # a05's support of a foot: the capsule of this radius about the line from the heel point
                                 # (ankle - 0.3 (toe - ankle)) to the toe; its centre half way
-MOS_ML_MIN_CM = -4.2            # moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways
+MOS_ML_MIN_CM = -3.0            # moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways
                                 # offset from the support's centre, towards the lifted foot along 下半身's side axis) kept at
-                                # least this, human dancers' median (-4.2 [-6.1, -3.6]; v7 -8.9, v8 -5.4).  The median, not
-                                # the lower quartile: the steps that fall onto the next foot (transfer) stay free and are a
-                                # sixth of the moving frames at -19 cm, so with -6.1 the song's moving frames came to -6.9
-                                # (COM 10.5 cm), outside the human quartiles
+                                # least this on every frame it bounds (human dancers' median -4.2 [-6.1, -3.6]; v7 -8.9, v8
+                                # -5.4).  The steps that fall onto the next foot (transfer) stay free and are a sixth of the
+                                # moving frames at -19 cm, so the bound sits above the human median for the median to come
+                                # inside: with -6.1 the song's moving frames came to -6.9 (COM 10.5 cm), with -4.2 to -5.80
+                                # (COM 9.75, over the human 8.0 [7.0, 9.4]), with -3.0 to -5.09 (COM 9.31; balance_v3)
 STANCE_WEIGHT = 30.0            # the pull on the XcoM to that bound where the dance is past it (as CATCH_WEIGHT)
 # ---- the shift ---------------------------------------------------------------------------------------------------
 ACC_MAX = 1.0                   # m/s^2 of added COM acceleration (about 9 cm of centre-of-pressure move)
@@ -2392,7 +2393,7 @@ def main(argv=None):
                          "before 2026-10-16), not one target held through the stillness")
     ap.add_argument("--mos-ml-min", type=float, default=MOS_ML_MIN_CM,
                     help="cm: moving single support keeps the XcoM's sideways margin at least this (human dancers' median "
-                         "-4.2, quartiles -6.1 and -3.6)")
+                         "-4.2, quartiles -6.1 and -3.6; -3.0 brings the song's moving frames to -5.1)")
     ap.add_argument("--spike-per-min", type=float, default=SPIKE_PER_MIN,
                     help="センター's 1-frame spikes left at most, a minute (human dancers 7.2)")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
