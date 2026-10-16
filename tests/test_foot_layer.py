@@ -1088,6 +1088,20 @@ class LandingTest(unittest.TestCase):
         self.assertLess(float(np.abs(b["low"] - 0.111).max()), 0.003)                     # on the floor
         self.assertLess(float(np.linalg.norm(ball_xz(b) - ball_xz(a), axis=1).max()), 0.03)
 
+    def test_a_foot_stood_far_out_of_reach_is_judged_where_the_dance_stands_it(self):
+        # the pelvis 0.4 (3.2 cm) over the rest pose's, the left foot's goal flat on the floor: MMD leaves the shoe some
+        # 3 cm over it, and the layer before took the foot for one in the air (as at 197 s of the song).  Judged at its
+        # goal, it is on the floor: it rises onto its ball as far as it goes (some 25 degrees), which brings the shoe
+        # some 0.9 cm nearer the floor
+        keys = [key("センター", 0, position=(0, 0.4, 0)), key("センター", 7, position=(0, 0.4, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        _, f_out, _, plan = run_layer(*keys, frames=8)
+        _, f_old, _, _ = run_layer(*keys, frames=8, landing=False)
+        old, new = f_old["左"]["low"] - 0.111, f_out["左"]["low"] - 0.111
+        self.assertGreater(float(old.min()), 0.25)
+        self.assertLess(float(new.max()), float(old.min()) - 0.1)
+        self.assertGreater(float(plan["左"]["heel"].min()), 15.0)
+
     def test_a_standing_leg_in_reach_keeps_its_heel_down(self):
         keys = [key("センター", 0, position=(0, -0.3, 0)), key("センター", 7, position=(0, -0.3, 0)),
                 key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]

@@ -1221,7 +1221,17 @@ def layer(rig, shoe, motion, params=None, log=None):
     frames = list(range(F))
     keys = IK.sample(rig, motion, frames)
     sol = IK.solve(rig, motion, frames, keys)
-    feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
+    if p.get("landing", True):
+        # (with the landing: the feet judged where the dance puts them, at their goals: where the leg does not reach, MMD
+        # leaves the foot over the floor, and a foot the dance stands on the floor would be taken for one in the air)
+        at_goal = {}
+        for s, leg in sol.items():
+            short = (leg["reach"] > 1e-3)[:, None]
+            d = np.where(short, leg["goal_ankle"] - leg["ankle"], 0.0)
+            at_goal[s] = dict(leg, ankle=leg["ankle"] + d, ex=leg["ex"] + d, toe=leg["toe"] + d)
+        feet = feet_of(rig, shoe, at_goal, frames, floor_y, p["heel_pitch_deg"])
+    else:
+        feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
     shares, near = load_shares(shoe, feet, sol, p)
     new_keys = dict(keys)
     plan = {}
