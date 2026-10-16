@@ -335,23 +335,34 @@ def dynamics(lm, rots=None, floor_y=0.0, cutoff_hz=CUTOFF_HZ, spin=True, unit_m=
     rots: name -> world rotation [F, 4] of the bone carrying a segment (ROTATED); a segment without one turns with its
     long axis (no twist).  spin False: point masses only"""
     segs = segments(lm)
-    F = len(next(iter(segs.values()))["com"])
+    names = list(segs)
+    F = len(segs[names[0]]["com"])
     total = sum(s["mass"] for s in segs.values())
     up = np.array([0.0, G, 0.0])
+    # one low-pass over every signal at once (the filter is a loop over the frames)
+    cols = [segs[n]["com"] * unit_m for n in names]
+    if spin:
+        cols += [segs[n]["axis"] for n in names] + [segs[n]["length"][:, None] * unit_m for n in names]
+    filt = lowpass(np.concatenate(cols, 1), cutoff_hz, fs)
+    k = len(names)
+    R = [filt[:, 3 * i:3 * i + 3] for i in range(k)]
+    turned = [n for n in names if spin and rots is not None and segs[n]["rot"] in rots]
+    W = {}
+    if turned:
+        wf = lowpass(np.concatenate([angular_velocity(rots[segs[n]["rot"]], fs) for n in turned], 1), cutoff_hz, fs)
+        W = {n: wf[:, 3 * i:3 * i + 3] for i, n in enumerate(turned)}
     r_all, v_all, a_all, m_all, H_all = [], [], [], [], []
-    for name, s in segs.items():
+    for i, name in enumerate(names):
+        s = segs[name]
         m = s["mass"] / total
-        r = lowpass(s["com"] * unit_m, cutoff_hz, fs)
+        r = R[i]
         v, a = diff1(r, fs), diff2(r, fs)
         H = np.zeros((F, 3))
         if spin:
-            e = lowpass(s["axis"], cutoff_hz, fs)
+            e = filt[:, 3 * k + 3 * i:3 * k + 3 * i + 3].copy()
             e /= np.maximum(np.linalg.norm(e, axis=1), 1e-12)[:, None]
-            L = lowpass(s["length"][:, None] * unit_m, cutoff_hz, fs)[:, 0]
-            if rots is not None and s["rot"] in rots:
-                w = lowpass(angular_velocity(rots[s["rot"]], fs), cutoff_hz, fs)
-            else:
-                w = np.cross(e, diff1(e, fs))
+            L = filt[:, 6 * k + i]
+            w = W[name] if name in W else np.cross(e, diff1(e, fs))
             rt = 0.5 * (s["r"][0] + s["r"][1]) / 100.0
             rl = s["r"][2] / 100.0
             we = np.sum(w * e, axis=1)[:, None]
