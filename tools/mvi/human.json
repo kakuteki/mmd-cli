@@ -1,0 +1,936 @@
+{
+ "_about": {
+  "what": "people's values for tools/mv_inspect.py: one value per sequence, the 10/25/50/75/90 % points over the sequences (n), and the rules the project set where people's data cannot say",
+  "people": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "collected": "C:/work/hibikase/stage6/inspect/scripts/collect_human.py (hinata, 2026-10-17): the outputs of the human baseline, floaty, review_floaty, wbbalance, review_wbbalance and review_fingers_lag; the data stay on hinata",
+  "kinds": "people: median/q1/q3/p10/p90/n; limit: max or min with a scale; window: lo..hi; info: not judged"
+ },
+ "gravity.centre_down_max": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a18 センターの下向き加速度の最大 単位/秒^2」",
+  "n": 62,
+  "p10": -163.146,
+  "q1": -155.83,
+  "median": -142.225,
+  "q3": -128.47,
+  "p90": -115.328
+ },
+ "gravity.centre_down_gt98_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a18 センターの下向き加速度 98 単位/秒^2 超 %」",
+  "n": 62,
+  "p10": 0.0935,
+  "q1": 0.2623,
+  "median": 0.8489,
+  "q3": 1.8484,
+  "p90": 2.5014,
+  "event": {
+   "edge": -139.720169,
+   "scale": 26.05451,
+   "side": -1,
+   "n": 961,
+   "p01": -165.77468,
+   "p10": -139.720169,
+   "p50": -116.02565,
+   "p90": -101.403168,
+   "p99": -98.489967,
+   "source": "人の 62 列のすべての98 越えの続きの最も強い下向きの加速度（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "gravity.landing_sink_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 着地後 0.2 秒の骨盤の沈み cm（左右平均）」",
+  "n": 62,
+  "p10": -1.837,
+  "q1": -1.495,
+  "median": -1.145,
+  "q3": -0.86,
+  "p90": -0.554,
+  "event": {
+   "edge": -5.946191,
+   "scale": 8.303905,
+   "side": -1,
+   "n": 7129,
+   "p01": -14.250096,
+   "p10": -5.946191,
+   "p50": -1.182343,
+   "p90": 0.0,
+   "p99": 0.0,
+   "source": "人の 62 列のすべての着地の 0.2 秒の沈み（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "feet.slide3_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 足の滑り 3 cm 超の接地 回/分（左右計）」",
+  "n": 62,
+  "p10": 24.376,
+  "q1": 30.3702,
+  "median": 37.3715,
+  "q3": 42.735,
+  "p90": 48.7927
+ },
+ "feet.knee_gain_deg": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 着地後 0.2 秒のひざの曲がり 度（左右平均）」",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0175,
+  "median": 0.685,
+  "q3": 2.26,
+  "p90": 5.703,
+  "event": {
+   "edge": 20.39543,
+   "scale": 34.937951,
+   "side": 1,
+   "n": 7129,
+   "p01": 0.0,
+   "p10": 0.0,
+   "p50": 1.222009,
+   "p90": 20.39543,
+   "p99": 55.333382,
+   "source": "人の 62 列のすべての着地の 0.2 秒のひざの曲がりの増え（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "balance.com_lateral_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 片足立ちの重心の左右のずれ 中央値 cm」",
+  "n": 62,
+  "p10": 6.741,
+  "q1": 8.0425,
+  "median": 9.025,
+  "q3": 10.3225,
+  "p90": 11.859
+ },
+ "balance.touchdown_xcom_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 着地の XCoM の左右のずれ 中央値 cm」",
+  "n": 62,
+  "p10": 9.838,
+  "q1": 12.1225,
+  "median": 16.07,
+  "q3": 19.42,
+  "p90": 23.135
+ },
+ "balance.com_outside_2cm_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 重心が立ち足の外 2 cm 超 %」",
+  "n": 62,
+  "p10": 65.07,
+  "q1": 72.5,
+  "median": 77.6,
+  "q3": 83.075,
+  "p90": 90.19
+ },
+ "balance.held_outside_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a05 足の外に留まる片足立ち 回/分」",
+  "n": 62,
+  "p10": 4.5514,
+  "q1": 7.5408,
+  "median": 12.1795,
+  "q3": 16.1158,
+  "p90": 20.2565
+ },
+ "upper.head_stop_ms": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 止まり 80→20 % ms 頭」",
+  "n": 62,
+  "p10": 56.73,
+  "q1": 63.825,
+  "median": 71.4,
+  "q3": 80.2,
+  "p90": 88.22,
+  "event": {
+   "edge": 37.264987,
+   "scale": 17.264987,
+   "side": -1,
+   "n": 5254,
+   "p01": 20.0,
+   "p10": 37.264987,
+   "p50": 71.134932,
+   "p90": 151.989667,
+   "p99": 208.630557,
+   "source": "人の 62 列のすべての頭の止まりの 80→20 % の時間（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "upper.head_sudden_stops_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a18 頭の急停止 回/分」",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.858,
+  "q3": 1.7012,
+  "p90": 3.4266
+ },
+ "upper.upper_sudden_stops_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a18 上半身の急停止 回/分」",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.6085,
+  "q3": 0.9045,
+  "p90": 2.008
+ },
+ "upper.head_acc_p99": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a18 頭の加速度 99 % 点 単位/秒^2」",
+  "n": 62,
+  "p10": 125.4497,
+  "q1": 144.245,
+  "median": 162.453,
+  "q3": 185.3695,
+  "p90": 222.5633
+ },
+ "arms.a09_shoulder_elbow_L": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 上腕→ひじ 左」",
+  "n": 62,
+  "p10": -1.0429,
+  "q1": -0.7865,
+  "median": -0.2435,
+  "q3": 0.157,
+  "p90": 0.5407
+ },
+ "arms.a09_shoulder_elbow_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 上腕→ひじ 右」",
+  "n": 62,
+  "p10": -0.6203,
+  "q1": -0.3305,
+  "median": -0.0945,
+  "q3": 0.1047,
+  "p90": 0.6517
+ },
+ "arms.a09_elbow_wrist_L": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 ひじ→手首 左」",
+  "n": 62,
+  "p10": -0.6147,
+  "q1": -0.1825,
+  "median": 0.042,
+  "q3": 0.349,
+  "p90": 0.7396
+ },
+ "arms.a09_elbow_wrist_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 ひじ→手首 右」",
+  "n": 62,
+  "p10": -0.6971,
+  "q1": -0.4305,
+  "median": -0.043,
+  "q3": 0.195,
+  "p90": 0.59
+ },
+ "arms.a09_wrist_finger_L": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 手首→指 左」",
+  "n": 61,
+  "p10": -0.506,
+  "q1": -0.231,
+  "median": -0.013,
+  "q3": 0.081,
+  "p90": 0.449
+ },
+ "arms.a09_wrist_finger_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 手首→指 右」",
+  "n": 61,
+  "p10": -0.307,
+  "q1": -0.177,
+  "median": -0.041,
+  "q3": 0.055,
+  "p90": 0.266
+ },
+ "arms.rests_per_min_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a09 腕の休み 回/分 右」",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.0,
+  "q3": 0.9425,
+  "p90": 3.0373
+ },
+ "arms.wrist_3_6hz_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a02 速度の 3〜6 Hz % 右手首」",
+  "n": 62,
+  "p10": 3.7611,
+  "q1": 4.8715,
+  "median": 6.967,
+  "q3": 9.2665,
+  "p90": 11.4449
+ },
+ "arms.wrist_8hz_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 速度の 8 Hz 以上 % 右手首」（雑音の床を引いた値）",
+  "n": 62,
+  "p10": 0.0465,
+  "q1": 0.0858,
+  "median": 0.146,
+  "q3": 0.2405,
+  "p90": 0.4492
+ },
+ "spikes.centre_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 1 コマの突起 回/分 センター」",
+  "n": 62,
+  "p10": 1.24,
+  "q1": 2.9345,
+  "median": 7.2085,
+  "q3": 10.8575,
+  "p90": 17.0021,
+  "event": {
+   "edge": 0.377276,
+   "scale": 0.218116,
+   "side": 1,
+   "n": 844,
+   "p01": 0.158367,
+   "p10": 0.175639,
+   "p50": 0.236617,
+   "p90": 0.377276,
+   "p99": 0.595393,
+   "source": "人の 62 列のすべてのセンターの 1 コマの突起の大きさ（m/s）（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "spikes.wrist_R_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 1 コマの突起 回/分 右手首」",
+  "n": 62,
+  "p10": 1.8449,
+  "q1": 4.04,
+  "median": 9.397,
+  "q3": 17.0087,
+  "p90": 28.6643,
+  "event": {
+   "edge": 1.427341,
+   "scale": 0.896369,
+   "side": 1,
+   "n": 1172,
+   "p01": 0.529296,
+   "p10": 0.608723,
+   "p50": 0.869301,
+   "p90": 1.427341,
+   "p99": 2.32371,
+   "source": "人の 62 列のすべての右手首の 1 コマの突起の大きさ（m/s）（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "spikes.wrist_L_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 1 コマの突起 回/分 左手首」",
+  "n": 62,
+  "p10": 1.3859,
+  "q1": 3.0935,
+  "median": 7.3645,
+  "q3": 14.6258,
+  "p90": 25.1588,
+  "event": {
+   "edge": 1.54542,
+   "scale": 0.855189,
+   "side": 1,
+   "n": 1069,
+   "p01": 0.526465,
+   "p10": 0.60627,
+   "p50": 0.897168,
+   "p90": 1.54542,
+   "p99": 2.400609,
+   "source": "人の 62 列のすべての左手首の 1 コマの突起の大きさ（m/s）（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "spikes.head_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline（2026-10-15）の表 table_main.json の fd_near（v9 の表 table_v8_v9.json と同じ数）「a08 1 コマの突起 回/分 頭」",
+  "n": 62,
+  "p10": 6.6759,
+  "q1": 14.6178,
+  "median": 29.389,
+  "q3": 46.389,
+  "p90": 68.0028,
+  "event": {
+   "edge": 0.429564,
+   "scale": 0.396911,
+   "side": 1,
+   "n": 3515,
+   "p01": 0.159516,
+   "p10": 0.182152,
+   "p50": 0.255352,
+   "p90": 0.429564,
+   "p99": 0.826475,
+   "source": "人の 62 列のすべての頭の 1 コマの突起の大きさ（m/s）（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "gravity.air_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「air_per_min」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 1.264806,
+  "q3": 2.91578,
+  "p90": 4.275318
+ },
+ "gravity.air_slow_share": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「air_frac_slower_half_g」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 43,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.0,
+  "q3": 0.291667,
+  "p90": 0.647619
+ },
+ "gravity.air_acc_median": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「air_acc_median」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 43,
+  "p10": -130.550559,
+  "q1": -118.906134,
+  "median": -107.600731,
+  "q3": -94.559884,
+  "p90": -46.148378
+ },
+ "gravity.desc_ratio_median": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「desc_ratio_median」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 2.158229,
+  "q1": 2.512664,
+  "median": 3.04449,
+  "q3": 3.749917,
+  "p90": 4.297332
+ },
+ "gravity.desc_peak_down_median": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「desc_peak_down_median」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": -79.848976,
+  "q1": -70.413029,
+  "median": -59.011173,
+  "q3": -47.872281,
+  "p90": -41.229651
+ },
+ "gravity.desc_brake_median": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「desc_brake_median」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 42.544212,
+  "q1": 53.933966,
+  "median": 65.920544,
+  "q3": 85.778385,
+  "p90": 90.665746
+ },
+ "gravity.apex_dwell_ms": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「apex_dwell_median_ms」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 133.333333,
+  "q1": 133.333333,
+  "median": 166.666667,
+  "q3": 200.0,
+  "p90": 233.333333
+ },
+ "gravity.beat_range_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「beat_range_median_cm」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 2.064509,
+  "q1": 2.460981,
+  "median": 2.98876,
+  "q3": 3.627113,
+  "p90": 4.147876
+ },
+ "gravity.vy_p95": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「vy_abs_p95」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 38.053776,
+  "q1": 43.198383,
+  "median": 51.285516,
+  "q3": 58.762383,
+  "p90": 63.055333
+ },
+ "gravity.vy_above_3hz_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "floaty（2026-10-17）の fq.py を人に当てた値（floaty/out/human_near.json の summary）「vy_power_above_3hz_pct」（宙のある列だけのものは n が 62 より少ない）",
+  "n": 62,
+  "p10": 2.864415,
+  "q1": 4.880479,
+  "median": 8.050629,
+  "q3": 12.403105,
+  "p90": 30.906206
+ },
+ "gravity.hover_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の人の a05 の出力から: floaty の s11_collect の数え方（a05 s11 の hover_support）",
+  "n": 62,
+  "p10": 0.25077,
+  "q1": 0.54514,
+  "median": 1.39248,
+  "q3": 2.19236,
+  "p90": 4.57096
+ },
+ "gravity.hover_runs6_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の人の a05 の出力から: floaty の s11_collect の数え方",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.0,
+  "q3": 1.24611,
+  "p90": 3.41959,
+  "event": {
+   "edge": 5.0,
+   "scale": 15.86,
+   "side": 1,
+   "n": 1215,
+   "p01": 1.0,
+   "p10": 1.0,
+   "p50": 2.0,
+   "p90": 5.0,
+   "p99": 20.86,
+   "source": "人の 62 列のすべての支えの無い浮きの続く長さ（コマ）（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "feet.slide10_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の人の a05 の出力から: review_floaty の rv_slip の数え方（a05 s04）",
+  "n": 62,
+  "p10": 5.31943,
+  "q1": 7.67258,
+  "median": 11.32353,
+  "q3": 16.78114,
+  "p90": 21.00769,
+  "event": {
+   "edge": 16.54766,
+   "scale": 34.642818,
+   "side": 1,
+   "n": 8462,
+   "p01": 0.137989,
+   "p10": 0.666925,
+   "p50": 3.145952,
+   "p90": 16.54766,
+   "p99": 51.190478,
+   "source": "人の 62 列のすべての接地の滑りの道のり（collect_events.py: この道具の hb・a05 を人に当てた値、human_baseline と同じ数を確かめた）"
+  }
+ },
+ "feet.slide_path_cm_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の人の a05 の出力から: review_floaty の rv_slip の数え方",
+  "n": 62,
+  "p10": 269.83951,
+  "q1": 352.09431,
+  "median": 455.39645,
+  "q3": 528.23373,
+  "p90": 660.46966
+ },
+ "feet.slide_fast_share": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の人の a05 の出力から: review_floaty の rv_slip の数え方（左右の平均）",
+  "n": 62,
+  "p10": 0.0258,
+  "q1": 0.03708,
+  "median": 0.04981,
+  "q3": 0.06583,
+  "p90": 0.08975
+ },
+ "feet.knee_straight_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の p22_knee.json（接地中のひざ 5 度未満）",
+  "n": 62,
+  "p10": 0.0,
+  "q1": 0.0,
+  "median": 0.0,
+  "q3": 0.0,
+  "p90": 0.0
+ },
+ "balance.moving_com_lateral_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の stance_summary.json の MOVING（p26: 指の先と床の膝・手を除いた後）",
+  "n": 62,
+  "p10": 5.653696,
+  "q1": 7.016939,
+  "median": 8.014697,
+  "q3": 9.377964,
+  "p90": 10.87019
+ },
+ "balance.moving_mos_ml_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "human_baseline の stance_summary.json の MOVING_MOS_ML（p26 の後）",
+  "n": 62,
+  "p10": -7.852036,
+  "q1": -6.143311,
+  "median": -4.233213,
+  "q3": -3.567459,
+  "p90": -2.042245
+ },
+ "balance.still_com_lateral_cm": {
+  "kind": "people",
+  "group": "FineDance 全部のうち止まった片足立ちのある 70 列（近い種類は 5 列しかない）",
+  "source": "human_baseline の stance_summary.json の STILL（p26 の後）",
+  "n": 70,
+  "p10": -4.502673,
+  "q1": -1.842405,
+  "median": 1.709898,
+  "q3": 3.378846,
+  "p90": 7.33234
+ },
+ "balance.zmp_inside_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": 49.366,
+  "q1": 54.1,
+  "median": 60.705,
+  "q3": 68.685,
+  "p90": 74.447,
+  "event": {
+   "edge": 28.1493,
+   "scale": 28.1493,
+   "side": 1,
+   "n": 10624,
+   "p90": 3.17,
+   "p99": 28.1493,
+   "source": "人の全列のすべての ZMP の外れの区間の傾きの 99 % 点（wbbalance の wb_table と同じ境）"
+  }
+ },
+ "balance.single_share_pct": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": 13.366,
+  "q1": 17.381,
+  "median": 23.48,
+  "q3": 30.757,
+  "p90": 36.558
+ },
+ "balance.zmp_margin_single_cm": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": -7.028,
+  "q1": -6.045,
+  "median": -4.435,
+  "q3": -2.2175,
+  "p90": -1.036
+ },
+ "balance.zmp_tilt_deg_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": 57.038,
+  "q1": 116.4,
+  "median": 184.505,
+  "q3": 513.6775,
+  "p90": 1779.108
+ },
+ "upper.head_follow": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": 0.00103,
+  "q1": 0.13345,
+  "median": 0.28865,
+  "q3": 0.42235,
+  "p90": 0.55278,
+  "event": {
+   "edge": 1.323234,
+   "scale": 0.630946,
+   "side": -1,
+   "n": 11764,
+   "p01": 0.692288,
+   "p10": 1.323234,
+   "p50": 3.434827,
+   "source": "人の 62 列の、骨盤が動く 2 秒窓（窓の重さが中央値の 1/4 以上）ごとの頭の水平の加速度の、骨盤の分を引いた残り（Σ|頭 − 骨盤|² / Σ|骨盤|²、6 Hz。0 = 骨盤と同じに動く。11,764 窓の最小 0.334）（review_inspect の rv_collect2.py: この道具の upper.local_windows を人に当てた値。窓から数えた運ばれる割合は review_wbbalance の人の値と 62 列すべてで差 0）"
+  }
+ },
+ "upper.chest_follow": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": 0.43649,
+  "q1": 0.56353,
+  "median": 0.6999,
+  "q3": 0.80015,
+  "p90": 0.91256
+ },
+ "upper.arms_follow": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": -0.49919,
+  "q1": -0.29867,
+  "median": -0.11105,
+  "q3": 0.07845,
+  "p90": 0.25208
+ },
+ "upper.head_follow_2_4hz": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）",
+  "n": 62,
+  "p10": -0.14976,
+  "q1": 0.0624,
+  "median": 0.226,
+  "q3": 0.3619,
+  "p90": 0.46546
+ },
+ "upper.head_stops_per_min": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_wbbalance（2026-10-17）の upper_body_check を人に当てた値（a08 の頭の止まりと同じ決め方）",
+  "n": 62,
+  "p10": 25.7746,
+  "q1": 34.899,
+  "median": 47.4345,
+  "q3": 59.91725,
+  "p90": 78.9433
+ },
+ "upper.head_pelvis_xcorr_peak": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_wbbalance（2026-10-17）の upper_body_check を人に当てた値",
+  "n": 62,
+  "p10": 0.06238,
+  "q1": 0.09098,
+  "median": 0.1467,
+  "q3": 0.19278,
+  "p90": 0.24319
+ },
+ "upper.local_follow_p50": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_wbbalance（2026-10-17）の upper_body_check を人に当てた値",
+  "n": 62,
+  "p10": -0.13027,
+  "q1": 0.00915,
+  "median": 0.15765,
+  "q3": 0.34655,
+  "p90": 0.53431
+ },
+ "upper.local_follow_carried": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_wbbalance（2026-10-17）の upper_body_check を人に当てた値",
+  "n": 62,
+  "p10": 0.00227,
+  "q1": 0.02767,
+  "median": 0.06595,
+  "q3": 0.17315,
+  "p90": 0.26585,
+  "event": {
+   "edge": 4.5,
+   "scale": 3.7,
+   "side": 1,
+   "n": 561,
+   "p01": 2.0,
+   "p10": 2.0,
+   "p50": 3.0,
+   "p90": 4.5,
+   "p99": 8.2,
+   "source": "人の 62 列のすべての、頭が骨盤に運ばれる 2 秒窓（傾き 0.75 超）が続く区間の長さ（秒）（review_inspect の rv_collect.py: この道具の upper.local_windows・carried_runs を人に当てた値。窓から数えた運ばれる割合は review_wbbalance の人の値と 62 列すべてで差 0）"
+  }
+ },
+ "arms.finger_speed_L": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_fingers_lag の rv_lib で FineDance の列ごと（中指 1・2・3 の手の中の回り、手首の関節、全コマ、生）。collect_human.py",
+  "n": 61,
+  "p10": 55.85219,
+  "q1": 64.45484,
+  "median": 80.75706,
+  "q3": 90.77096,
+  "p90": 109.06347
+ },
+ "arms.finger_wrist_ratio_L": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_fingers_lag の rv_lib で FineDance の列ごと（中指 1・2・3 の手の中の回り、手首の関節、全コマ、生）。collect_human.py",
+  "n": 61,
+  "p10": 0.98704,
+  "q1": 1.11089,
+  "median": 1.18335,
+  "q3": 1.32225,
+  "p90": 1.44075
+ },
+ "arms.finger_speed_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_fingers_lag の rv_lib で FineDance の列ごと（中指 1・2・3 の手の中の回り、手首の関節、全コマ、生）。collect_human.py",
+  "n": 61,
+  "p10": 54.71983,
+  "q1": 71.71074,
+  "median": 82.22568,
+  "q3": 104.13114,
+  "p90": 111.83061
+ },
+ "arms.finger_wrist_ratio_R": {
+  "kind": "people",
+  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
+  "source": "review_fingers_lag の rv_lib で FineDance の列ごと（中指 1・2・3 の手の中の回り、手首の関節、全コマ、生）。collect_human.py",
+  "n": 61,
+  "p10": 0.83835,
+  "q1": 0.99141,
+  "median": 1.07517,
+  "q3": 1.17281,
+  "p90": 1.29038
+ },
+ "feet.under_floor_frames": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（靴は床の下へ入らない、足の層 2026-10-14）"
+ },
+ "feet.ik_miss_floor_frames": {
+  "kind": "info",
+  "source": "元のトレースにも多い（判じない。基準の踊りと比べた新しい届かないコマで判じる）"
+ },
+ "feet.ik_new_miss_frames": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（体重の層の --mmd-ik: 新しい届かないコマ 0）"
+ },
+ "gravity.jump_apex_lowered": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（踊りの跳びの頂きを保つ。balance-v3、v8 は 0）"
+ },
+ "gravity.beat_dips_weak": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 10.0,
+  "source": "この案件の決まり（拍の上の窪みを踊りのまま保つ。v8 7・v9 18・balance-v3 16。0 が理想、距離は 10 回を 1 と数える）"
+ },
+ "skirt.floor_over122_frames": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（床のコマで腰の下向きの加速度 122 以下、HANDOVER 10-16）"
+ },
+ "skirt.floor_max": {
+  "kind": "limit",
+  "max": 122.5,
+  "scale": 12.2,
+  "source": "この案件の決まり（上限 122 ＋ 数え方の余裕 0.5）"
+ },
+ "skirt.air_over122_frames": {
+  "kind": "info",
+  "source": "宙は踊りの落ち方を保つ（balance-v3）。判じない"
+ },
+ "eyes.eccentric15_pct": {
+  "kind": "limit",
+  "max": 1.0,
+  "scale": 1.0,
+  "source": "違和感の分析 a07・a13 が引いた文献（目の動きの 99 % は正面から 15 度以内: Lancaster 1941 を Bahill, Adler & Stark 1975 が引用、Stahl 1999）"
+ },
+ "eyes.edge_pct": {
+  "kind": "limit",
+  "max": 1.0,
+  "scale": 1.0,
+  "source": "違和感の分析 a07・a13 が引いた文献（人が目の範囲の半分を超えるのは 1 % 未満、a07。端（90 %）はそれより外なので 1 % を上限の目安にする）"
+ },
+ "eyes.edge_longest_s": {
+  "kind": "limit",
+  "max": 1.0,
+  "scale": 0.5,
+  "source": "a07 の確かめの目安（端に居続ける最長 1 秒未満）。人の測りではない"
+ },
+ "mouth.lag_median_ms": {
+  "kind": "window",
+  "lo": -45.0,
+  "hi": 125.0,
+  "scale": 50.0,
+  "source": "ITU-R BT.1359-1（音が絵より 45 ms 先から 125 ms 後までは気付かれない。+ は口が先）"
+ },
+ "mouth.lag_open_ms": {
+  "kind": "window",
+  "lo": -45.0,
+  "hi": 125.0,
+  "scale": 50.0,
+  "source": "ITU-R BT.1359-1（音が絵より 45 ms 先から 125 ms 後までは気付かれない。+ は口が先）"
+ },
+ "mouth.late_pct": {
+  "kind": "info",
+  "source": "人の値が無い。lipsync の確かめの数（表に出すだけ）"
+ },
+ "mouth.late_open_pct": {
+  "kind": "info",
+  "source": "人の値が無い。lipsync の確かめの数（表に出すだけ）"
+ },
+ "mouth.early_open_pct": {
+  "kind": "info",
+  "source": "人の値が無い。lipsync の確かめの数（表に出すだけ）"
+ },
+ "mouth.shut_singing_pct": {
+  "kind": "info",
+  "source": "人の値が無い。lipsync の確かめの数（表に出すだけ）"
+ },
+ "pixels.pants_frames": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（下着の画素 0。COMMON.md のカメラの角度）"
+ },
+ "pixels.shadow_rough": {
+  "kind": "info",
+  "source": "softshadow の確かめ（白色雑音で約 1.73、なめらかな動きで 0 に近い）"
+ },
+ "pixels.shadow_total_rough": {
+  "kind": "info",
+  "source": "review_softshadow の pixel_checks.rough（影の量の粗さ。白色雑音で約 1.73、なめらかな動きで 0 に近い）"
+ }
+}
