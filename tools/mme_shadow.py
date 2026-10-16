@@ -26,9 +26,9 @@ weighted by a Gaussian, and their weighted mean is the shadow.  The Gaussian's s
 * never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
   the default shadow distance) are blurred away even where the gap is 0.
 
-How dark the shade is: MMD shades with the toon's colour (this model's keep 72 to 90 % of the light), while
+How dark the shade is: MMD shades with the toon's colour (this model's keep 72 to 89 % of the light), while
 tools/mv_world.py's floor takes KEY_SHARE (0.6) of its light from the key light and keeps the rest in a shadow.  Under
-one light the two would not agree (MMD's shade takes 10 to 28 % of the light away, the floor's shadow 60 %), so by
+one light the two would not agree (MMD's shade takes 11 to 28 % of the light away, the floor's shadow 60 %), so by
 default (--key-share 0.6, mv_world's KEY_SHARE) the shade keeps 1 - key_share of the light: the toon's colour keeps
 its hue and its luma (BT.709, as tools/shadow_check.py reads the floor) is set to 1 - key_share, on the shadowed side
 and in the shadow alike, as on the floor.  A material whose toon is white (here the face and the eyes: MMD draws no
