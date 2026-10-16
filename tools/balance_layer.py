@@ -1434,19 +1434,31 @@ def air_cap(air, floor_cap, air_cap_value):
 
 
 AIR_RAMP = 3                    # frames: the drop goes from all to none over this many frames in from each end of the air
-AIR_RAMP_MIN = 4                # frames: and only in an air stretch this long or longer (a jump, as the song's tests read
-                                # it).  A shorter one is a shuffle with the feet 2-3 cm up: the hips coming up there for 1-3
-                                # frames, next to floor frames the floor's bound lowers, left MMD's IK short on the standing
-                                # leg (order C of the MV, 74.43 s, frame 2233; the IK rounds only halve the drop, and the
-                                # floor's bound lowers the same frames again)
+AIR_MIN = 4                     # frames: the air is neither foot supporting for this many frames running or more (a jump,
+                                # as the song's tests read it).  A shorter stretch is a shuffle with a foot 1.6-3 cm up: it
+                                # keeps the floor's bound and the drop for the legs.  With no bound there the layer itself
+                                # sharpened the fall next to the floor (order C of the MV: 80 -> 318 units/s^2 at 132.13 s,
+                                # one frame with the right foot 1.9 cm up between floor frames; 118 -> 199 at 37.60 s,
+                                # 254 -> 311 at 213.30 s), and the hips coming up there for 1-3 frames, next to floor frames
+                                # the floor's bound lowers, left MMD's IK short on the standing leg (74.43 s, frame 2233; the
+                                # IK rounds only halve the drop, and the floor's bound lowers the same frames again)
+
+
+def long_air(air):
+    """air [F] (bool) with only its stretches of AIR_MIN frames or more"""
+    out = np.zeros(len(air), bool)
+    for a, b in runs(air):
+        if b - a + 1 >= AIR_MIN:
+            out[a:b + 1] = True
+    return out
 
 
 def air_ramp(air):
-    """[F] in [0, 1]: 0 off the air, rising over AIR_RAMP frames in from each end of each air stretch of AIR_RAMP_MIN
-    frames or more (0 in a shorter one)"""
+    """[F] in [0, 1]: 0 off the air, rising over AIR_RAMP frames in from each end of each air stretch of AIR_MIN frames
+    or more (0 in a shorter one)"""
     w = np.zeros(len(air))
     for a, b in runs(air):
-        if b - a + 1 < AIR_RAMP_MIN:
+        if b - a + 1 < AIR_MIN:
             continue
         t = np.arange(a, b + 1)
         w[a:b + 1] = np.minimum(1.0, np.minimum(t - a + 1, b - t + 1) / float(AIR_RAMP))
@@ -1838,8 +1850,8 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
     else:
         d, k = np.zeros((F, 2)), np.ones(F)
     # the bound on the pelvis's downward acceleration: DOWN_ACC_MAX where a foot holds the body up, the air's where
-    # neither foot supports (read off the feet's IK, as the support)
-    air = ~plan["sup"]["左"] & ~plan["sup"]["右"]
+    # neither foot supports (read off the feet's IK, as the support) for AIR_MIN frames running or more
+    air = long_air(~plan["sup"]["左"] & ~plan["sup"]["右"])
     cap_v = air_cap(air, p["down_acc_max"], p["air_down_acc_max"])
     radius = np.full(F, FREE_M)                         # the hold-back: |shift| under this (metres) per frame
     dip_cap = np.ones(F)                                # and the landings' dips scaled by this
