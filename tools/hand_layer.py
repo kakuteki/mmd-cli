@@ -1398,6 +1398,12 @@ def passive(hands, ang, loc, world, P, params, held, touch=None, kime=None):
         if kime is not None and side in kime:
             omega = omega * kime_gain(params, kime, side, F)[:, None]
         delta = np.degrees(passive_response(forcing, omega, zeta, FPS))
+        lead = float(params.get("passive_lead", 0.0))
+        if lead > 0.0:
+            # the deflection met with the hand's motion, not after it: each finger's equilibrium lag 2 zeta / omega
+            # (frames) taken off its timing
+            for c in range(delta.shape[1]):
+                delta[:, c] = time_shift(delta[:, c], -lead * 2.0 * zeta[:, c] / omega[:, c] * FPS)
         cap = params["passive_cap"]
         delta = soft_band(delta, cap, cap)
         if touch is not None and side in touch:
@@ -2017,6 +2023,8 @@ def main(argv=None):
                     help="the open hand's stiffness at a grown finger's MP, N m/rad (default %g, the upper end of a relaxed "
                          "MCP; 0.42 gives the dancers' passive gain of FineDance and less a09 lag, and less motion)"
                          % STIFFNESS["open"])
+    ap.add_argument("--passive-lead", type=float, default=0.0,
+                    help="the passive lag's timing moved earlier by this share of each finger's 2 zeta / omega (default 0)")
     ap.add_argument("--transit-scale", type=float, default=1.0,
                     help="the transit's excursions (the fingers moving out and back with each movement of the arm) times "
                          "this (default 1, FineDance's dancers; 0 leaves them out as --no-transit does)")
@@ -2029,7 +2037,7 @@ def main(argv=None):
     params.update({s: not getattr(a, "no_" + s) for s in STEPS if s != "follow"})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
                   gravity=a.gravity, contact=not a.no_contact, follow=a.follow, follow_scale=a.follow_scale,
-                  order_mode=a.order_mode, transit_scale=a.transit_scale)
+                  order_mode=a.order_mode, transit_scale=a.transit_scale, passive_lead=a.passive_lead)
     if a.zeta_open is not None:
         params["zeta_open"] = {f: a.zeta_open for f in LONG}
     if a.open_stiffness != STIFFNESS["open"]:
