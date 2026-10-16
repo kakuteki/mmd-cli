@@ -912,7 +912,9 @@ class PaceTest(unittest.TestCase):
         self.assertLess(d0, 2.0)
         self.assertGreater(d, 6.0)
         self.assertLess(d, 10.0)
-        self.assertAlmostEqual(m, m0, delta=0.3)                              # the change keeps its time
+        # the change starts earlier and ends with the input's (it is not late): its middle comes a little early
+        self.assertLess(m, m0)
+        self.assertGreater(m, m0 - 4.0)
         self.assertAlmostEqual(float(s[10]), 0.0, places=4)                   # the holds are kept
         self.assertAlmostEqual(float(s[LAST]), 245.0, places=3)
         # under the dancers' 90th percentile of the peak speed of such changes (about 1,400 - 1,700 deg/s)
@@ -969,6 +971,28 @@ class PaceTest(unittest.TestCase):
         self.assertLess(float(d[20:k].max()), 1e-6)       # down to it
         self.assertGreater(float(d[k:45].min()), -1e-6)   # and up after it
         self.assertLess(float(s[k]), 0.25 * 245.0)        # the fist opens (blending into the curl that follows at once)
+
+    def test_a_paced_change_takes_the_dancers_time_not_just_more(self):
+        # the 10 - 90 % time of each size is the main sequence's own (within 0.6 frame), not merely longer than the input's
+        for shape, amp in (("half", 40.0), ("bend", 100.0), ("fist", 245.0)):
+            s, _ = self.run_([(0, "open"), (30, "open"), (32, shape), (LAST, shape)])
+            d = ten_ninety(s, 15, 50)[0]
+            self.assertAlmostEqual(d, float(hand_layer.pace_time(amp)), delta=0.6, msg=shape)
+
+    def test_a_shape_hit_on_a_beat_is_met_on_time(self):
+        # a dancer hitting a shape on the beat is there on the beat: the paced change starts earlier, it is not late
+        # (the 90 % point no later than the input's by more than half a frame)
+        shapes = [(0, "open"), (30, "open"), (32, "fist"), (LAST, "fist")]
+        s, _ = self.run_(shapes)
+        s0, _ = self.run_(shapes, ())
+        y, y0 = s / 245.0, s0 / 245.0
+        t90 = float(np.interp(0.9, np.maximum.accumulate(y[15:50]), np.arange(15, 50)))
+        t90_0 = float(np.interp(0.9, np.maximum.accumulate(y0[15:50]), np.arange(15, 50)))
+        self.assertLess(t90 - t90_0, 0.5)
+
+    def test_a_fist_held_briefly_between_two_fast_changes_is_still_made(self):
+        s, _ = self.run_([(0, "open"), (20, "open"), (22, "fist"), (26, "fist"), (28, "open"), (LAST, "open")])
+        self.assertGreater(float(s.max()), 0.95 * 245.0)
 
     def test_the_report_counts_the_changes_it_paced(self):
         _, out = self.run_([(0, "open"), (30, "open"), (32, "fist"), (LAST, "fist")])
@@ -1584,7 +1608,7 @@ class RealDanceTest(unittest.TestCase):
             for a, b in hand_layer.monotone_changes(s0):
                 if abs(s0[b] - s0[a]) < 20.0 or a < 15 or b > len(s0) - 16:
                     continue
-                half = 0.5 * (s0[a] + s0[b])
+                half = s0[a] + 0.9 * (s0[b] - s0[a])          # the shape met: its 90 % point
                 sign = 1.0 if s0[b] > s0[a] else -1.0
                 y0 = np.maximum.accumulate(sign * (s0[a:b + 1] - half))
                 t0 = a + float(np.interp(0.0, y0, np.arange(b + 1 - a)))
@@ -1598,10 +1622,10 @@ class RealDanceTest(unittest.TestCase):
                 shifts.append(float(times[np.argmin(np.abs(times - t0))] - t0))
             shifts = np.array(shifts)
             self.assertGreater(len(shifts), 10, side)
-            self.assertLess(float(np.median(np.abs(shifts))), 0.15, side)
-            self.assertLess(abs(float(shifts.mean())), 0.15, side)         # no lag (nor lead) on the whole
+            self.assertLess(float(np.median(np.abs(shifts))), 0.5, side)
+            self.assertLess(float(shifts.mean()), 0.5, side)               # the shape is not met late on the whole
             # a change right next to one the other way blends with it and its middle moves a little, either way
-            self.assertLess(float(np.percentile(np.abs(shifts), 90)), 0.75, side)
+            self.assertLess(float(np.percentile(shifts, 90)), 1.5, side)
 
     def test_the_follow_keeps_the_pointing_hands_at_52_s(self):
         # the follow lags a change of shape, not a shape held: the two pointing index fingers stay straight

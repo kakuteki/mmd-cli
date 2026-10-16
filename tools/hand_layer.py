@@ -1048,6 +1048,23 @@ def pace(hands, ang, touch=None, c=PACE["c"], p=PACE["p"]):
             s0 = sum(ang[b][0] for b in bones)
             big0 = [(a, b) for a, b in monotone_changes(s0) if abs(s0[b] - s0[a]) >= PACE["min"]]
             short0 = [(a, b) for a, b in big0 if ten_ninety(s0, a, b) < pace_time(abs(s0[b] - s0[a]), c, p) - 0.05]
+            # a shape held between two changes is still reached: each change widens by at most half the hold on
+            # either side of it (the input's changes of 5 degrees or more bound the holds)
+            bounds = [(a, b) for a, b in monotone_changes(s0) if abs(s0[b] - s0[a]) >= 5.0]
+            capf = np.full(F, np.inf)
+            for i, (a, b) in enumerate(bounds):
+                before = a - bounds[i - 1][1] if i else F
+                after_ = bounds[i + 1][0] - b if i + 1 < len(bounds) else F
+                amp0 = abs(s0[b] - s0[a])
+                need = 0.0
+                if amp0 >= PACE["min"]:
+                    d0, t0_ = ten_ninety(s0, a, b), float(pace_time(amp0, c, p))
+                    need = PACE_H * math.sqrt(max(0.0, t0_ * t0_ - d0 * d0))
+                # a change that cannot take the dancer's time without eating the shape held next to it keeps the
+                # input's time (the choreography's shape first)
+                capf[a:b + 1] = np.inf if 0.5 * min(before, after_) >= need else 0.0
+                if i + 1 < len(bounds):
+                    capf[b + 1:bounds[i + 1][0]] = max(0.5, 0.5 * after_)        # the hold between them
             for _ in range(PACE["iterations"]):
                 s = sum(ang[b][0] for b in bones)
                 h = np.zeros(F)
@@ -1057,7 +1074,8 @@ def pace(hands, ang, touch=None, c=PACE["c"], p=PACE["p"]):
                         continue
                     d, target = ten_ninety(s, a, b), float(pace_time(amp, c, p))
                     if d < target - 0.05:
-                        h[a:b + 1] = np.maximum(h[a:b + 1], PACE_H * math.sqrt(target * target - d * d))
+                        h[a:b + 1] = np.maximum(h[a:b + 1], min(PACE_H * math.sqrt(target * target - d * d),
+                                                                float(capf[a:b + 1].min()) if np.isfinite(capf[a:b + 1].min()) else np.inf))
                 if not h.any():
                     break
                 reach = int(np.ceil(h.max())) + 1
@@ -1066,12 +1084,46 @@ def pace(hands, ang, touch=None, c=PACE["c"], p=PACE["p"]):
                 hs = np.maximum(np.convolve(np.pad(hd, reach, mode="edge"), k / k.sum(), "valid"), h)
                 # where the hand touches, the window narrows (a blend of the paced and the input's values would keep
                 # the input's quick step and jump after it, where the touch fades within a change)
-                hs = hs * keep
+                hs = np.minimum(hs, capf) * keep
                 if not hs.any():
                     break
                 for bn in bones:
                     for i in range(3):
                         ang[bn][i] = box_average(ang[bn][i], hs)
+            # the dancer meets the shape when the input does (a shape hit on the beat is there on the beat): the
+            # widened change is moved earlier by how much later its 90 % point came, the hold after it untouched
+            s1 = sum(ang[b][0] for b in bones)
+            lag = np.zeros(F)
+            for a, b in short0:
+                amp = s0[b] - s0[a]
+                sg = 1.0 if amp > 0 else -1.0
+                lv = s0[a] + 0.9 * amp
+                y0 = np.maximum.accumulate(sg * (s0[a:b + 1] - lv))
+                t0 = a + float(np.interp(0.0, y0, np.arange(b + 1 - a)))
+                lo, hi = max(0, a - 12), min(F - 1, b + 12)
+                y1 = sg * (s1[lo:hi + 1] - lv)
+                ks = np.where((y1[:-1] < 0.0) & (y1[1:] >= 0.0))[0]
+                if not len(ks):
+                    continue
+                times = lo + ks + (0.0 - y1[ks]) / (y1[ks + 1] - y1[ks])
+                late = float(times[np.argmin(np.abs(times - t0))] - t0)
+                if late <= 0.0:
+                    continue
+                r = int(np.ceil(late)) + 1
+                # full from before the widened change starts to its end; eased out within the hold after it (never
+                # reading the next change into the hold)
+                nxt = min([x for x, _ in bounds if x > b] + [F])
+                start = a - int(np.ceil(pace_time(abs(amp), c, p))) - r
+                out = max(1, min(2 * r, nxt - b - 1))
+                t = np.arange(max(0, start - r), min(F, b + out + 1))
+                w = np.clip(np.minimum((t - (start - r)) / r, (b + out - t) / out), 0.0, 1.0)
+                cand = -late * w
+                lag[t] = np.where(np.abs(cand) > np.abs(lag[t]), cand, lag[t])
+            lag = lag * keep
+            if lag.any():
+                for bn in bones:
+                    for i in range(3):
+                        ang[bn][i] = time_shift(ang[bn][i], lag)
             s1 = sum(ang[b][0] for b in bones)
             after = [ten_ninety(s1, a, b) for a, b in monotone_changes(s1) if abs(s1[b] - s1[a]) >= PACE["min"]]
             rep[f] = {"changes": len(big0), "paced": len(short0),
