@@ -264,8 +264,16 @@ class SongTest(unittest.TestCase):
         missing = [k for k in ("model", "dance") if not paths.get(k) or not os.path.isfile(paths[k])]
         if missing:
             raise AssertionError("BALANCE_SONG (%s) names files that are not there: %s" % (SONG, missing))
-        cls.result = wl.layer(pmx.load(paths["model"]), vmd.load(paths["dance"]))
+        model, dance = pmx.load(paths["model"]), vmd.load(paths["dance"])
+        cls.result = wl.layer(model, dance)
         cls.report = cls.result.report
+        # the review's measures of what the layer does not aim at (tools/upper_body_check.py), before and after
+        spec = importlib.util.spec_from_file_location("upper_body_check", os.path.join(ROOT, "tools", "upper_body_check.py"))
+        ub = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ub)
+        F = fk.last_frame(dance) + 1
+        before, after = ub.from_motion(model, dance, F), ub.from_motion(model, cls.result.motion, F)
+        cls.check = ub.compare(before, after, ub.dance_range(before))
 
     def test_head_and_chest_as_people_follow_the_pelvis(self):
         r = self.report["response"]
@@ -280,6 +288,21 @@ class SongTest(unittest.TestCase):
         self.assertLess(t["bend_deg"]["p50"], 2.0)
         self.assertLess(self.report["head_turn_change_deg_max"], 0.01)
         self.assertEqual(len(self.report["written"]), 4)
+
+    def test_what_the_layer_does_not_aim_at(self):
+        """measured apart from the layer's own follow (tools/upper_body_check.py, the review of 2026-10-17; people:
+        FineDance K-pop / choreography / jazz, 62 sequences, median [quartiles]): the trunk's and the neck's turns stay
+        under people's upper quartiles (the chest on the hips p99 218 [181, 267] deg/s, the head on the neck 294 [238,
+        333]; the layer gives about 224 and 305, gain 2 with a 30 degree bound 273 and 375), the head's follow in 2 s
+        windows within people's quartiles (0.16 [0.01, 0.35]; 0.27, gain 2 -0.62, a 0.5 Hz cutoff 0.50), a hand at the
+        face stays within 1.5 cm of where it was against the face (1.0; gain 2 2.1), and the head's stops do not get
+        sharper (people 71 ms, the trace about 46)"""
+        b, a = self.check["before"], self.check["after"]
+        self.assertLessEqual(a["bend"]["chest_on_hips"]["speed_deg_s"]["p99"], 267.0)
+        self.assertLessEqual(a["bend"]["head_on_neck"]["speed_deg_s"]["p99"], 333.0)
+        self.assertTrue(0.009 <= a["local"]["weighted"]["p50"] <= 0.347, a["local"]["weighted"])
+        self.assertLessEqual(self.check["face"]["change_cm"]["max"], 1.5)
+        self.assertGreaterEqual(a["stops"]["t80_20_ms"]["p50"], b["stops"]["t80_20_ms"]["p50"])
 
 
 class CommandTest(unittest.TestCase):
