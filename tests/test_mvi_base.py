@@ -12,6 +12,11 @@ from mvi import base, report
 PEOPLE = {"kind": "people", "q1": 1.0, "q3": 3.0, "median": 2.0, "p10": 0.5, "p90": 4.0}
 
 
+def text(path, encoding="utf-8"):
+    with open(path, encoding=encoding) as f:
+        return f.read()
+
+
 class JudgeTest(unittest.TestCase):
     def test_inside_the_quartiles_is_the_middle(self):
         for v in (1.0, 2.0, 3.0):
@@ -177,18 +182,18 @@ class ReportTest(unittest.TestCase):
         paths = report.write(r, self.folder)
         for name in ("report.json", "report.md", "outliers.md", "outliers.csv", "events.csv"):
             self.assertTrue(os.path.isfile(paths[name]), name)
-        md = open(paths["report.md"], encoding="utf-8").read()
+        md = text(paths["report.md"])
         self.assertIn("スカートの危なさ", md)
         self.assertIn("上へ外", md)
-        csv_lines = open(paths["outliers.csv"], encoding="utf-8-sig").read().strip().splitlines()
+        csv_lines = text(paths["outliers.csv"], "utf-8-sig").strip().splitlines()
         self.assertEqual(len(csv_lines), 2)
         self.assertIn("床で 130", csv_lines[1])
         back = report.load(self.folder)
         self.assertEqual(back["measures"][0]["value"], 1)
         c = report.compare(back, back)
         out = report.write_compare(c, self.folder)
-        self.assertIn("中のまま", open(out["compare.md"], encoding="utf-8").read())
-        self.assertEqual(json.load(open(out["compare.json"], encoding="utf-8"))["new"], [])
+        self.assertIn("中のまま", text(out["compare.md"]))
+        self.assertEqual(json.loads(text(out["compare.json"]))["new"], [])
 
 
 if __name__ == "__main__":

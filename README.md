@@ -2173,9 +2173,12 @@ python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 
   review_wbbalance・指・視線の報告。差は報告の丸めの桁だけ）。写した測りを人の 62 列に当て、human_baseline の数と 15 項目で差 0。試験
   `tests/test_mvi_*.py`（部品ごと、合成の体）と `tests/test_mv_inspect.py`（合成の全身で端から端まで、BALANCE_SONG があれば v9 の数）。
 - 時間の図は 1 行 1 曲線（腰の下向きの加速度・センター・腰の上下・浮き・両足の靴の高さ・ZMP の余裕・片足立ちの重心・目・口）、緑の帯 = 人の四分位、
-  橙の破線 = 決まり、赤 = 時刻表に入る外れた所。`timeline --from --to` で拡大。
-- 印（`mark`）: 黄の丸 = 重心、黄の点 = その真下の床、緑 = 支持基底面、赤の × = ZMP、左上にそのコマの外れた所。投影は wbbalance が正面固定の
-  カメラで確かめた式（カメラの VMD の注視点・距離・角度・縦の視野角）。ロールのあるカメラは断る（確かめていない）。
+  橙の破線 = 決まり、赤 = 時刻表に入る外れた所（足の所はその足の行だけ）、薄紫 = 宙のコマ。`timeline --from --to` で拡大。
+- 印（`mark`）: 黄の丸 = 重心、黄の点 = その真下の床、緑 = 支持基底面（つま先 1 点なら緑の点）、赤の × = ZMP、左上にそのコマの外れた所。
+  投影は wbbalance が正面固定のカメラで確かめた式（カメラの VMD の注視点・距離・角度・縦の視野角）。ロールのあるカメラは断る（確かめていない）。
+- 使い方の例（v9 と v10、hinata `stage6/inspect/scripts/example.bat`）: `compare runs/v9 runs/v10 --out cmp` で物差しごとの判定と新しく外れた所・
+  消えた所、`timeline runs/v9 --from 18 --to 31` で時間の図、`mark runs/v9 --camera cam_front.vmd --video fv9_00.mp4 --start 0 --at 19.9 26.4`
+  で、時刻表が指したコマ（着地のひざ・浮きの続き）の正面の絵に印を描いて確かめる。
 
 ## 出力
 

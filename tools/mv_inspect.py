@@ -138,10 +138,11 @@ def cmd_outliers(args):
     if args.concept:
         rep = dict(rep, events=[e for e in rep["events"] if e["concept"] == args.concept])
     text = RP.timeline_md(rep, args.top)
-    if hasattr(sys.stdout, "buffer"):
+    tty = getattr(sys.stdout, "isatty", lambda: False)()
+    if hasattr(sys.stdout, "buffer") and not tty:          # a file or a pipe: UTF-8 like the files (u/s² is not in cp932)
         sys.stdout.buffer.write(text.encode("utf-8"))
         sys.stdout.flush()
-    else:
+    else:                                                   # a console (Windows writes it as Unicode) or a test's buffer
         sys.stdout.write(text)
     return 0
 

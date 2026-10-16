@@ -50,14 +50,21 @@ def _fmt_t(t):
     return "%d:%05.2f" % (m, t - 60 * m)
 
 
+UNITS = ("%", "/min", "frames", "回", "cm", "度", "ms", "s", "u/s²", "cm/s", "度/秒", "cm/min", "度/min", "コマ")
+
+
+def _unit(u):
+    """the unit as the tables write it ("" for the unnamed ones: shares, ratios)"""
+    u = u or ""
+    return {"/min": "回/分", "frames": "コマ", "s": "秒", "度/min": "度/分", "cm/min": "cm/分"}.get(u, u) if u in UNITS else ""
+
+
 def _value(r):
     v = r.get("value")
     if v is None:
         return "-"
-    u = r.get("unit") or ""
-    if u in ("%", "/min", "frames", "回", "cm", "度", "ms", "s", "u/s²", "cm/s", "度/秒", "cm/min", "度/min", "コマ"):
-        return "%s %s" % (base.num(v), {"/min": "回/分", "frames": "コマ", "s": "秒", "度/min": "度/分", "cm/min": "cm/分"}.get(u, u))
-    return base.num(v)
+    u = _unit(r.get("unit"))
+    return "%s %s" % (base.num(v), u) if u else base.num(v)
 
 
 def measures_md(report):
@@ -200,11 +207,11 @@ def compare_md(c, top=30):
         rs = by_c.get(cc)
         if not rs:
             continue
-        lines += ["## %s" % cname, "", "| 物差し | 人 / 決まり | %s | %s | 判定 |" % (c["a"], c["b"]), "| --- | --- | --- | --- | --- |"]
+        lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 |" % (c["a"], c["b"]), "| --- | --- | --- | --- | --- | --- |"]
         for r in rs:
             w = r.get("word")
-            lines.append("| %s | %s | %s | %s | %s |" % (r["name"], base.ref_text(r.get("ref")), base.num(r["a"]), base.num(r["b"]),
-                                                    "-" if w is None else w["word"]))
+            lines.append("| %s | %s | %s | %s | %s | %s |" % (r["name"], _unit(r.get("unit")) or "-", base.ref_text(r.get("ref")), base.num(r["a"]),
+                                                         base.num(r["b"]), "-" if w is None else w["word"]))
         lines.append("")
     for key, title in (("new", "%s で新しく外れた所" % c["b"]), ("gone", "%s で消えた所" % c["b"])):
         evs = c[key]

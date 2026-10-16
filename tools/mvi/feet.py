@@ -22,6 +22,7 @@ UNDER_CM = 0.1
 SUPPORT_CM = 1.6
 IK_MISS = 0.05                  # units (4 mm): tools/balance_layer.IK_MISS
 IK_WORSE = 0.0125               # units (1 mm): tools/balance_layer.IK_WORSE
+FOOT = {"左": "L", "右": "R"}    # the places' "foot" (the time figure puts them on that foot's row)
 
 
 def measure(m):
@@ -39,7 +40,7 @@ def measure(m):
         for r in rows04:
             if r["slip_path_cm"] > max(10.0, edge):
                 events.append(base.event("feet.slide10_per_min", r["start"], r["end"], r["slip_path_cm"], "cm", edge, scale,
-                                         "%s 足が接地のまま %.1f cm 滑る（%d コマ）" % (side, r["slip_path_cm"], r["frames"])))
+                                         "%s 足が接地のまま %.1f cm 滑る（%d コマ）" % (side, r["slip_path_cm"], r["frames"]), foot=FOOT[side]))
 
     sh = m.shoes()
     floor_y = float(sh["floor_y"])
@@ -53,8 +54,8 @@ def measure(m):
         for a, b in base.runs(under):
             k = a + int(np.argmin(h[a:b + 1]))
             events.append(base.event("feet.under_floor_frames", a, b, float(-h[k]), "cm", UNDER_CM, 0.5,
-                                     "%s の靴が床の下 %.2f cm" % (side, -h[k])))
-        series["shoe_" + tag] = {"label": "%s の靴の最も低い点 cm（床から）" % side, "unit": "cm", "y": h, "lo": 0.0, "hi": None,
+                                     "%s の靴が床の下 %.2f cm" % (side, -h[k]), foot=FOOT[side]))
+        series["shoe_" + tag] = {"label": "%s の靴の最も低い点 cm（床から）" % side, "unit": "cm", "y": h, "lo": 0.0, "hi": None, "foot": FOOT[side],
                                  "ids": ["feet.under_floor_frames", "feet.slide10_per_min", "feet.ik_new_miss_frames", "feet.knee_straight_pct",
                                          "feet.knee_gain_deg"]}
     rows.append(base.row("feet.under_floor_frames", "靴が床の下へ入るコマ（1 mm 超、左右計）", under_total, "frames",
@@ -70,7 +71,7 @@ def measure(m):
             for td, g in zip(e6["final_%s_td" % lab], e6["final_%s_kgain" % lab]):
                 if g > edge:
                     events.append(base.event("feet.knee_gain_deg", td, min(td + 6, F - 1), g, "度", edge, scale,
-                                             "%s 足の着地の後にひざが %.1f 度曲がる" % ("左" if lab == "L" else "右", g)))
+                                             "%s 足の着地の後にひざが %.1f 度曲がる" % ("左" if lab == "L" else "右", g), foot=lab))
     p22 = a5["p22"]
     rows.append(base.row("feet.knee_straight_pct", "接地中にひざがほぼまっすぐ（5 度未満）", p22["contact_straight_lt5_pct"], "%",
                          "human_baseline の p22（a05 s04 のひざ）"))
@@ -80,7 +81,7 @@ def measure(m):
         for a, b in base.runs(straight, 2):
             k = a + int(np.argmin(z[side + "_knee"][a:b + 1]))
             events.append(base.event("feet.knee_straight_pct", a, b, float(z[side + "_knee"][k]), "度", 5.0, 5.0,
-                                     "%s 足が床でひざ %.1f 度（%d コマ）" % (side, z[side + "_knee"][k], b - a + 1), side=-1))
+                                     "%s 足が床でひざ %.1f 度（%d コマ）" % (side, z[side + "_knee"][k], b - a + 1), side=-1, foot=FOOT[side]))
 
     src = "tools/leg_ik.py（MMD の IK のとおりに脚を解く）。床の靴（最も低い点が 1.6 cm 未満）で足首が目標から 4 mm 超"
     miss_total, new_total = 0, 0
@@ -99,7 +100,8 @@ def measure(m):
                 k = a + int(np.argmax(reach[a:b + 1]))
                 events.append(base.event("feet.ik_new_miss_frames", a, b, float(reach[k] * base.UNIT_CM), "cm",
                                          IK_MISS * base.UNIT_CM, 1.0,
-                                         "%s 足ＩＫに %.2f cm 届かない（踊り %.2f cm）" % (side, reach[k] * base.UNIT_CM, ref_sh["reach_" + tag][k] * base.UNIT_CM)))
+                                         "%s 足ＩＫに %.2f cm 届かない（踊り %.2f cm）" % (side, reach[k] * base.UNIT_CM, ref_sh["reach_" + tag][k] * base.UNIT_CM),
+                                         foot=FOOT[side]))
     rows.append(base.row("feet.ik_miss_floor_frames", "床の足で MMD の IK が足ＩＫに届かないコマ（左右計）", miss_total, "frames", src))
     if ref_sh is not None:
         rows.append(base.row("feet.ik_new_miss_frames", "同 踊りより 1 mm 以上遠い（新しい届かないコマ）", new_total, "frames", src + "、基準の踊りと比べる"))

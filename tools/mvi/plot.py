@@ -35,15 +35,16 @@ def font(size):
 
 
 def _envelope(y, x0, x1, cols):
-    """per pixel column the (min, max) of the finite values of y[x0:x1] that fall in it"""
+    """per pixel column the (min, max) of the finite values of y[x0:x1] that fall in it and of the last frame of the
+    column before (so that the columns join into one line); for more frames than columns"""
     n = x1 - x0
-    edges = np.linspace(0, n, cols + 1).astype(int)
+    edges = np.floor(np.linspace(0, n, cols + 1)).astype(int)
     lo = np.full(cols, np.nan)
     hi = np.full(cols, np.nan)
     seg = y[x0:x1]
     for c in range(cols):
         a, b = edges[c], max(edges[c + 1], edges[c] + 1)
-        v = seg[a:b]
+        v = seg[max(a - 1, 0):b]
         v = v[np.isfinite(v)]
         if len(v):
             lo[c], hi[c] = v.min(), v.max()
@@ -87,7 +88,7 @@ def figure(report, series, path, names=None, t0=None, t1=None, title=None):
             lo, hi = lo - 1.0, hi + 1.0
         pad = 0.05 * (hi - lo)
         lo, hi = lo - pad, hi + pad
-        ys = lambda v: y1p - (v - lo) / (hi - lo) * (y1p - y0p)      # noqa: E731
+        ys = lambda v: y1p - (min(max(v, lo), hi) - lo) / (hi - lo) * (y1p - y0p)      # noqa: E731  (clipped to the row)
         d.rectangle([LEFT, y0p, LEFT + cols, y1p], outline=GRID)
         ref = base.reference(m["ref"]) if m.get("ref") else None
         if ref and ref.get("kind") == "people":
@@ -103,13 +104,27 @@ def figure(report, series, path, names=None, t0=None, t1=None, title=None):
             air = np.asarray(series["air"], bool)[f0:f1]
             for a, b in base.runs(air):
                 d.rectangle([xs(f0 + a), y0p, xs(f0 + b + 1), y1p], fill=(235, 235, 250))
-        lo_c, hi_c = _envelope(y, f0, f1, cols)
-        for c in range(cols):
-            if np.isfinite(lo_c[c]):
-                d.line([LEFT + c, ys(hi_c[c]), LEFT + c, ys(lo_c[c])], fill=CURVE, width=1)
+        if f1 - f0 > cols:                                   # many frames a column: each column's range
+            lo_c, hi_c = _envelope(y, f0, f1, cols)
+            for c in range(cols):
+                if np.isfinite(lo_c[c]):
+                    d.line([LEFT + c, ys(hi_c[c]), LEFT + c, ys(lo_c[c])], fill=CURVE, width=1)
+        else:                                                # a frame spans columns: a line through the frames
+            run = []
+            for f in range(f0, f1 + 1):
+                if f < f1 and np.isfinite(y[f]):
+                    run.append((xs(f + 0.5), ys(y[f])))
+                    continue
+                if len(run) > 1:
+                    d.line(run, fill=CURVE, width=1)
+                elif run:
+                    d.line([run[0][0] - 1, run[0][1], run[0][0] + 1, run[0][1]], fill=CURVE, width=1)
+                run = []
         concept, ids = m.get("concept"), m.get("ids")
         for e in evs:
             if (e["id"] not in ids if ids else e["concept"] != concept) or e["last"] < f0 or e["first"] >= f1:
+                continue
+            if m.get("foot") and e.get("foot") and e["foot"] != m["foot"]:    # the other foot's place
                 continue
             d.rectangle([xs(max(e["first"], f0)), top + 23, max(xs(max(e["first"], f0)) + 2, xs(min(e["last"] + 1, f1))), top + 28],
                         fill=EVENT)
@@ -123,8 +138,8 @@ def figure(report, series, path, names=None, t0=None, t1=None, title=None):
         d.line([x, TOP + 18, x, TOP + ROW * len(names)], fill=GRID)
         d.text((x - 12, H - 32), "%d 秒" % int(round(t)), fill=INK, font=f_small)
         t += step
-    d.text((LEFT + cols - 520, H - 18), "緑の帯 = 人の四分位（列ごとの値）、橙の破線 = 決まり、赤 = 外れた所（重い順の時刻表に入るもの）",
-           fill=INK, font=f_small)
+    key = "緑の帯 = 人の四分位（列ごとの値）、橙の破線 = 決まり、赤 = 外れた所（重い順の時刻表に入るもの）、薄紫 = 宙のコマ"
+    d.text((LEFT + cols - d.textlength(key, font=f_small), H - 18), key, fill=INK, font=f_small)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     img.save(path)
     return path

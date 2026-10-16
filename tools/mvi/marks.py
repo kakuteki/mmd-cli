@@ -8,7 +8,9 @@ pixels of the picture's height H, the picture's middle as the centre.  A camera 
 the projection has not been checked for one.
 
 The points (the report's marks.npz, written by `measure`): the COM [F, 3] and the ZMP [F, 2] (x, z) of tools/wb_dynamics
-(in model units here), the convex hull of the base of support per frame (units, x and z) and the floor's height.
+(in model units here), the convex hull of the base of support per frame (units, x and z) and the floor's height.  The
+base is wb_dynamics' (the soles within 1.2 cm of the floor); the hover of the gravity part is a05's (no foot within
+4 mm), so a frame of hover with a sole 4 mm to 1.2 cm up has a base here (a dot for one point).
 """
 import json
 import math
@@ -93,8 +95,14 @@ def draw(img, frame, pts, cam, events, label):
     if len(hull) >= 1:
         P = np.stack([hull[:, 0], np.full(len(hull), fy), hull[:, 1]], 1)
         q = project(P, cam)
-        if len(hull) >= 3 and np.all(np.isfinite(q)):
-            d.polygon([tuple(x) for x in q], fill=(60, 200, 90, 70), outline=(30, 150, 60, 255))
+        if np.all(np.isfinite(q)):
+            # a base of one point (a toe just on the floor) or two is drawn as a dot or a line, not left out
+            if len(hull) >= 3:
+                d.polygon([tuple(x) for x in q], fill=(60, 200, 90, 70), outline=(30, 150, 60, 255))
+            elif len(hull) == 2:
+                d.line([tuple(q[0]), tuple(q[1])], fill=(30, 150, 60, 255), width=4)
+            else:
+                d.ellipse([q[0][0] - 5, q[0][1] - 5, q[0][0] + 5, q[0][1] + 5], fill=(30, 150, 60, 255))
         info["support_px"] = q.round(1).tolist()
     com = pts["com"][frame]
     if np.all(np.isfinite(com)):
@@ -120,8 +128,14 @@ def draw(img, frame, pts, cam, events, label):
     f_big, f_small = font(20), font(15)
     t = frame / base.FPS
     mg = pts["margin_cm"][frame]
+    if not len(hull):
+        where = "（床に足が無い）"
+    elif np.isfinite(mg):
+        where = "（支えの%s %.1f cm%s）" % ("中" if mg >= 0 else "外", abs(mg), "、支えは 1 点" if len(hull) == 1 else "")
+    else:
+        where = ""
     lines = ["%s  %d コマ（%.2f 秒）" % (label, frame, t),
-             "黄 = 重心（丸）とその真下の床（点）、緑 = 支持基底面、赤 × = ZMP" + ("（支えの%s %.1f cm）" % ("中" if mg >= 0 else "外", abs(mg)) if np.isfinite(mg) else "")]
+             "黄 = 重心（丸）とその真下の床（点）、緑 = 支持基底面（床から 1.2 cm 以内の靴底）、赤 × = ZMP" + where]
     here = sorted([e for e in events if e["first"] <= frame <= e["last"]], key=lambda e: -e["severity"])[:5]
     for e in here:
         lines.append("● %s %s: %s %s（%s）" % (base.CONCEPT_NAMES.get(e["concept"], e["concept"]), e["id"].split(".", 1)[1],

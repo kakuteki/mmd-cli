@@ -25,6 +25,11 @@ from mmd_cli.formats import vmd  # noqa: E402
 F = 240
 
 
+def text(path, encoding="utf-8"):
+    with open(path, encoding=encoding) as f:
+        return f.read()
+
+
 def run(*argv):
     out = io.StringIO()
     err = io.StringIO()
@@ -101,15 +106,16 @@ class SyntheticTest(unittest.TestCase):
         out = os.path.join(self.folder, "cmp")
         code, res = run("compare", self.out_a, self.out_b, "--out", out)
         self.assertEqual(code, 0)
-        c = json.load(open(os.path.join(out, "compare.json"), encoding="utf-8"))
+        c = json.loads(text(os.path.join(out, "compare.json")))
         row = [r for r in c["rows"] if r["id"] == "skirt.floor_over122_frames"][0]
         self.assertEqual(row["word"]["word"], "入った")
         self.assertTrue(any(e["id"] == "skirt.floor_over122_frames" for e in c["gone"]))
-        self.assertIn("入った", open(os.path.join(out, "compare.md"), encoding="utf-8").read())
+        self.assertIn("入った", text(os.path.join(out, "compare.md")))
 
     def test_outliers_and_timeline(self):
-        code, text = run("outliers", self.out_a, "--concept", "skirt")
+        code, listing = run("outliers", self.out_a, "--concept", "skirt")
         self.assertEqual(code, 0)
+        self.assertIn("外れた所（重い順", listing)
         path = os.path.join(self.folder, "tl.png")
         code, res = run("timeline", self.out_a, "--out", path, "--from", "2", "--to", "6", "--series", "pelvis_down")
         self.assertEqual(code, 0)
@@ -121,7 +127,7 @@ class SyntheticTest(unittest.TestCase):
         out = os.path.join(self.folder, "marked")
         code, res = run("mark", self.out_a, "--camera", self.camera, "--out", out, "--picture", "121=" + pic)
         self.assertEqual(code, 0, res)
-        info = json.load(open(os.path.join(out, "marks.json"), encoding="utf-8"))[0]
+        info = json.loads(text(os.path.join(out, "marks.json")))[0]
         self.assertIn("skirt.floor_over122_frames", info["events"])
         self.assertTrue(0 < info["com_px"][0] < 1280 and 0 < info["com_px"][1] < 720)
 
