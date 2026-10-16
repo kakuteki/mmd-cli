@@ -474,6 +474,33 @@ class MeasureTest(unittest.TestCase):
         self.assertLess(rep["air"]["stretches"][0]["angmom_change_per_s2"], 0.01)
 
 
+class FollowTest(unittest.TestCase):
+    """how much a body part follows the pelvis's horizontal motion: per frequency band (the power-weighted real part of
+    the cross-spectrum over the pelvis's spectrum, Welch) and as one slope (its 6 Hz low-passed horizontal acceleration
+    regressed on the pelvis's)"""
+
+    def setUp(self):
+        rng = np.random.default_rng(0)
+        F = 900
+        x = np.cumsum(rng.normal(size=(F, 2)), 0)
+        x = wb.lowpass(x - wb.lowpass(x, 0.2), 8.0)                 # a pelvis wandering over 0.2-8 Hz
+        self.pel = np.stack([x[:, 0], np.zeros(F), x[:, 1]], 1)
+        self.F = F
+
+    def test_rigid_still_and_opposite(self):
+        for part, want in ((self.pel, 1.0), (np.zeros((self.F, 3)), 0.0), (-self.pel, -1.0)):
+            r = wb.follow_response(part, self.pel)
+            for band, v in r.items():
+                self.assertAlmostEqual(v, want, places=6, msg=band)
+            self.assertAlmostEqual(wb.follow_slope(part, self.pel), want, places=6)
+
+    def test_a_low_pass_follows_slow_and_not_fast(self):
+        r = wb.follow_response(wb.lowpass(self.pel, 1.0), self.pel)
+        self.assertGreater(r["0.5-1Hz"], 0.6)
+        self.assertLess(r["2-4Hz"], 0.1)
+        self.assertLess(wb.follow_slope(wb.lowpass(self.pel, 1.0), self.pel), 0.2)
+
+
 class LandmarksTest(unittest.TestCase):
     def test_from_body_and_from_a_pack_agree(self):
         """the landmarks from the layer's body (FK of a VMD) and from an analysis pack's 26 bones are the same points"""
