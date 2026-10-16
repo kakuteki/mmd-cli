@@ -208,14 +208,13 @@ CARRY_HALF = 6                  # frames: the half-width of the carry's smoothin
 # ---- the vertical: the pelvis never goes down faster than DOWN_ACC_MAX -------------------------------------------
 G_MMD = 98.0                    # units/s^2: MMD's gravity as saba, three.js, MMDAgent-EX and babylon-mmd all have it (9.8 x
                                 # 10; MMD's own default is not documented; the skirt research, question 4)
-DOWN_ACC_MAX = 78.0             # units/s^2 (0.8 of G_MMD): the pelvis's downward acceleration, the dance's and the layer's
-                                # together, at most this.  A body the floor holds up cannot fall faster than gravity, and a
-                                # waist going down faster than MMD's gravity throws the skirt up (the effective gravity on
-                                # it, g - a_down, turns upwards); 0.8 keeps a margin for what the 30 fps second difference
-                                # does not show (the keys' interpolation inside a frame) and for MMD's own gravity being
-                                # known only from its reimplementations.  Stricter than human dancers (their pelvis goes
-                                # down at 142 units/s^2 at most, a sequence's median; the real g is 122.5 at 8 cm a unit):
-                                # --down-acc-max sets it (110 keeps the skirt only if MMD's gravity is the real one)
+DOWN_ACC_MAX = 122.0            # units/s^2: the pelvis's downward acceleration, the dance's and the layer's together, at
+                                # most this: the real g at 8 cm a unit (122.5).  A body the floor holds up cannot fall
+                                # faster than gravity; human dancers' largest is 142 (a sequence's median, the human
+                                # baseline), so this keeps the dance's bounces and jumps (78, for a skirt without its
+                                # ceiling, made 38 dips on the beat shallower than 0.8 of the dance's and 15 jump tops 2 cm
+                                # lower: the review of 2026-10-16).  The skirt keeps the underwear hidden by its ceiling
+                                # (tools/pmx_skirt.py --ceiling 70, on main); --down-acc-max sets another bound
 # ---- the centre's 1-frame spikes (a08) ---------------------------------------------------------------------------
 SPIKE_T = 0.15                  # m/s: a step of センター's path whose speed is above (or below) both neighbours' by more than
                                 # this is a 1-frame spike, a jolt or a hitch (a08: s2_spectrum.spikes, T_SPIKE of センター)
@@ -2274,8 +2273,8 @@ def main(argv=None):
     ap.add_argument("--no-catch", action="store_true", help="no bound or pull on the XcoM at the landings")
     ap.add_argument("--no-vertical", action="store_true", help="no bound on the pelvis's downward acceleration")
     ap.add_argument("--down-acc-max", type=float, default=DOWN_ACC_MAX,
-                    help="units/s^2: the pelvis's downward acceleration at most (0.8 of MMD's gravity 98; the real g is "
-                         "122.5 at 8 cm a unit)")
+                    help="units/s^2: the pelvis's downward acceleration at most (the real g, 122.5 at 8 cm a unit; 78 for a skirt "
+                         "without its ceiling)")
     ap.add_argument("--no-despike", action="store_true", help="leave センター's 1-frame spikes (a08) as they are")
     ap.add_argument("--pull-moving", action="store_true", help="pull every single support over the foot, moving or still "
                                                               "(the layer before 2026-10-15)")

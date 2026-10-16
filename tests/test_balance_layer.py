@@ -846,7 +846,10 @@ class VerticalTest(unittest.TestCase):
         cls.y1 = world(cls.result.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
 
     def test_bound_under_mmd_gravity(self):
-        self.assertLess(balance_layer.DOWN_ACC_MAX, 98.0 * 0.85)
+        # the real g at 8 cm a unit (122.5), under human dancers' largest (142, a sequence's median); the skirt's ceiling
+        # (pmx_skirt --ceiling 70) keeps the underwear hidden there
+        self.assertLessEqual(balance_layer.DOWN_ACC_MAX, 122.5)
+        self.assertLess(balance_layer.DOWN_ACC_MAX, 142.0)
         self.assertGreater(pelvis_down_acc(self.motion, self.last).max(), 98.0)          # the fixture is past g
         self.assertLessEqual(pelvis_down_acc(self.result.motion, self.last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
 
@@ -856,7 +859,7 @@ class VerticalTest(unittest.TestCase):
         self.assertTrue(lows)
         for f in lows:
             self.assertLess(abs(self.y1[f] - self.y0[f]) * CM, 0.05, f)                    # where and when
-        self.assertGreater(float(np.max(self.y0 - self.y1)) * CM, 0.5)                     # the tops rounded
+        self.assertGreater(float(np.max(self.y0 - self.y1)) * CM, 0.3)  # the tops rounded (0.46 cm at 122)
 
     def test_fall_starts_earlier(self):
         """between two beats the top comes no later than the dance's, and lower"""
@@ -881,18 +884,18 @@ class VerticalTest(unittest.TestCase):
         self.assertEqual(rep["bound_units_s2"], balance_layer.DOWN_ACC_MAX)
         self.assertGreater(rep["pelvis"]["dance_max"], 98.0)
         self.assertLessEqual(rep["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertGreater(rep["lowered_cm"]["max"], 0.5)
+        self.assertGreater(rep["lowered_cm"]["max"], 0.3)
         self.assertGreater(rep["frames_lowered"], 0)
         self.assertIn("a18", rep)
 
     def test_bound_is_a_parameter(self):
-        """--down-acc-max: 110 units/s^2 (the real g, 9.8 m/s^2, is 122.5 at 8 cm a unit; human dancers' pelvis goes down
-        at 142 at most) lowers less than the skirt's 78"""
-        result = balance_layer.layer(MODEL, self.motion, {"down_acc_max": 110.0, "despike": False})
+        """--down-acc-max: 78 units/s^2 (0.8 of MMD's gravity, for a skirt without the ceiling) lowers more than the
+        default"""
+        result = balance_layer.layer(MODEL, self.motion, {"down_acc_max": 78.0, "despike": False})
         a = pelvis_down_acc(result.motion, self.last)
-        self.assertLessEqual(a.max(), 110.5)
-        self.assertGreater(a.max(), balance_layer.DOWN_ACC_MAX + 1.0)
-        self.assertEqual(result.report["vertical"]["bound_units_s2"], 110.0)
+        self.assertLessEqual(a.max(), 78.5)
+        self.assertLess(78.0 + 1.0, balance_layer.DOWN_ACC_MAX)
+        self.assertEqual(result.report["vertical"]["bound_units_s2"], 78.0)
 
 
 def a08_spikes(s, t):
@@ -1016,7 +1019,7 @@ class MovingStanceTest(unittest.TestCase):
         motion = moving_stance(last, spread=1.0, x=(0.0, 0.0), sway_cm=3.0)
         result = balance_layer.layer(MODEL, motion)
         rep = result.report["stance"]
-        bound = balance_layer.SUPPORT_R_CM - balance_layer.MOS_ML_MIN_CM
+        bound = 4.0 - (-4.2)                     # the human median margin (the baseline's number, not the layer's constant)
         self.assertEqual(rep["bound_cm"], round(bound, 2))
         self.assertGreater(rep["moving_frames"], 30)
         self.assertGreater(rep["moving_xcom_cm"]["before"], bound + 4.0)               # the fixture: past the bound
@@ -1268,12 +1271,17 @@ def song_paths():
 
 class SongTest(unittest.TestCase):
     """the MV (BALANCE_SONG), solved with MMD's IK at hand when the JSON names the feet layer's leg_ik"""
+    DANCE = "dance"
 
     @classmethod
     def setUpClass(cls):
         paths = song_paths()
+        if not paths.get(cls.DANCE):
+            raise unittest.SkipTest("BALANCE_SONG names no %s" % cls.DANCE)
+        if not os.path.isfile(paths[cls.DANCE]):
+            raise AssertionError("BALANCE_SONG's %s is not there: %s" % (cls.DANCE, paths[cls.DANCE]))
         cls.model = pmx.load(paths["model"])
-        cls.motion = vmd.load(paths["dance"])
+        cls.motion = vmd.load(paths[cls.DANCE])
         cls.ik = paths.get("leg_ik")
         check = None
         if cls.ik:
@@ -1311,7 +1319,7 @@ class SongTest(unittest.TestCase):
         self.assertGreater(v["pelvis"]["dance_over_g"], 100)
         self.assertLessEqual(v["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertLessEqual(v["centre"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertEqual(v["pelvis"]["after_over_g"], 0)
+        self.assertEqual(v["pelvis"]["after_over_bound"], 0)
         y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
         z = self.result.arrays["vertical_fix"]
         lows = [f for f in range(1, len(y0) - 1) if y0[f] < y0[f - 1] and y0[f] <= y0[f + 1]]
@@ -1353,6 +1361,12 @@ class SongTest(unittest.TestCase):
             self.assertEqual(self.report["knee"]["over_159_newly_" + {"左": "L", "右": "R"}[s]], 0)
         self.assertGreater(self.report["feet_carry"]["右"]["max_cm"], 5.0)
 
+    def test_centre_spikes_in_the_human_range(self):
+        """a08's centre spikes on the song: human dancers 7.2 [2.9, 10.9] a minute (the upper quartile bounds it)"""
+        k0 = self.report["spikes"]["count"]
+        minutes = len(self.result.arrays["vertical_fix"]) / FPS / 60.0
+        self.assertLessEqual(k0[1] / minutes, 10.9)
+
     def test_hovering_and_travelling_runs_not_pulled(self):
         """the runs whose other foot never gets 5 cm up (the review: 128 of 265) and the steps onto the next foot keep
         the dance's body but for the neighbouring runs' lean coming and going"""
@@ -1363,6 +1377,12 @@ class SongTest(unittest.TestCase):
         self.assertGreater(len(travel), 10)
         self.assertLess(float(np.median(hover)), 0.5)
         self.assertLess(float(np.median(travel)), 3.0)
+
+
+class SongOrderCTest(SongTest):
+    """the same on what the build gives the layer in order C (feet -> balance -> feet): the feet layer's output on the
+    dance (BALANCE_SONG's "dance_c")"""
+    DANCE = "dance_c"
 
 
 if __name__ == "__main__":
