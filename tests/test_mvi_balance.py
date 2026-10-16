@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from tests import mvi_fixtures as MF
-from mvi import balance, base
+from mvi import balance, base, report
 
 F = 600
 
@@ -45,6 +45,11 @@ class ZmpTest(unittest.TestCase):
         ev = [e for e in res["events"] if e["id"] == "balance.zmp_inside_pct"]
         self.assertEqual([(e["first"], e["last"]) for e in ev], [(100, 110)])
         self.assertAlmostEqual(ev[0]["severity"], 2.0, places=3)
+        # the stretch tilts above its edge while the share inside goes down: listed when that share is 下へ外 (the review
+        # of 10-17: v10's 78 stretches were never listed, the share being 下へ外 and the places' side +1)
+        rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
+        self.assertEqual(rows_of(res)["balance.zmp_inside_pct"]["judge"]["word"], "下へ外")
+        self.assertEqual([e["why"] for e in rep["events"] if e["id"] == "balance.zmp_inside_pct"], ["measure"])
 
 
 class SingleSupportTest(unittest.TestCase):

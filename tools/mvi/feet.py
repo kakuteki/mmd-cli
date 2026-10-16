@@ -3,7 +3,9 @@
 * 滑り (a05 s04, review_floaty's rv_slip): a foot is on the floor where its ankle or toe IK target is within 4 mm of its
   rest height; while it stays on, the slowest point of its heel-to-toe line (of the part that touches) moves along the
   floor.  The contacts that slip more than 10 cm (and 3 cm) a minute, the slip's path a minute, the share of the contact
-  steps faster than 20 cm/s.  Places: each contact that slips more than 10 cm.
+  steps faster than 20 cm/s.  Places: each contact whose slip's path passes people's (their pooled contacts' 90 % point,
+  at least 10 cm).  (People slide too: per contact the most a foot slips within 1 s is 13.3 cm at their 90 % point, 20.4
+  at 95 % and 39.4 at 99 %, review_inspect 2026-10-17; a slide of 20 cm in 1 s ranks low here for that reason.)
 * 床の下 (tools/sink_check.py): the shoe's lowest point (the shoe's vertices skinned on the legs as MMD's IK solves them)
   more than 1 mm under the floor (the shoes' lowest point at rest).  Places: the runs.
 * ひざ (a05 s06, the human baseline's p22): the knee's bend gained within 0.2 s of a touchdown, and the share of the
@@ -80,8 +82,10 @@ def measure(m):
         straight = z[side + "_contact"] & (z[side + "_knee"] < 5.0)
         for a, b in base.runs(straight, 2):
             k = a + int(np.argmin(z[side + "_knee"][a:b + 1]))
+            # the knee lies under 5 degrees (side -1); such runs make the share of straight knees go up (toward +1)
             events.append(base.event("feet.knee_straight_pct", a, b, float(z[side + "_knee"][k]), "度", 5.0, 5.0,
-                                     "%s 足が床でひざ %.1f 度（%d コマ）" % (side, z[side + "_knee"][k], b - a + 1), side=-1, foot=FOOT[side]))
+                                     "%s 足が床でひざ %.1f 度（%d コマ）" % (side, z[side + "_knee"][k], b - a + 1), side=-1, toward=1,
+                                     foot=FOOT[side]))
 
     src = "tools/leg_ik.py（MMD の IK のとおりに脚を解く）。床の靴（最も低い点が 1.6 cm 未満）で足首が目標から 4 mm 超"
     miss_total, new_total = 0, 0

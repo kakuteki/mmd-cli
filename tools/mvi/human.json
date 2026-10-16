@@ -759,7 +759,19 @@
   "q1": 0.02767,
   "median": 0.06595,
   "q3": 0.17315,
-  "p90": 0.26585
+  "p90": 0.26585,
+  "event": {
+   "edge": 4.5,
+   "scale": 3.7,
+   "side": 1,
+   "n": 561,
+   "p01": 2.0,
+   "p10": 2.0,
+   "p50": 3.0,
+   "p90": 4.5,
+   "p99": 8.2,
+   "source": "人の 62 列のすべての、頭が骨盤に運ばれる 2 秒窓（傾き 0.75 超）が続く区間の長さ（秒）（review_inspect の rv_collect.py: この道具の upper.local_windows・carried_runs を人に当てた値。窓から数えた運ばれる割合は review_wbbalance の人の値と 62 列すべてで差 0）"
+  }
  },
  "arms.finger_speed_L": {
   "kind": "people",

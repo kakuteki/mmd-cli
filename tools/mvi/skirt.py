@@ -32,7 +32,7 @@ def measure(m):
     rows.append(base.row("skirt.floor_over122_frames", "床のコマで腰の下向きの加速度が 122 を越える", int(floor.sum()), "frames", src,
                          max_floor=round(float(acc[~air].max()) if (~air).any() else 0.0, 1),
                          by_bone={"下半身": int(((a_low > BOUND + TOL) & ~air).sum()), "センター": int(((a_cen > BOUND + TOL) & ~air).sum())}))
-    rows.append(base.row("skirt.floor_max", "床のコマの腰の下向きの加速度の最大", float(acc[~air].max()) if (~air).any() else 0.0, "u/s²", src))
+    rows.append(base.row("skirt.floor_max", "床のコマの腰の下向きの加速度の最大（+ 下）", float(acc[~air].max()) if (~air).any() else 0.0, "u/s²", src))
     rows.append(base.row("skirt.air_over122_frames", "宙のコマで 122 を越える（踊りの落ち方、判じない）", int((past & air).sum()), "frames", src,
                          max_air=round(float(acc[air].max()), 1) if air.any() else None))
     for a, b in base.runs(floor):

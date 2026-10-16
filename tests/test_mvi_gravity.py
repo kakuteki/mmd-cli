@@ -85,11 +85,29 @@ class CentreTest(unittest.TestCase):
         res = gravity.measure(measured(move))
         r = rows_of(res)
         self.assertLess(r["gravity.centre_down_max"]["value"], -240.0)
+        self.assertIn("負が下向き", r["gravity.centre_down_max"]["name"])                     # the sign is in the name
         self.assertEqual(r["gravity.centre_down_max"]["judge"]["word"], "下へ外")
         ev = [e for e in res["events"] if e["id"] == "gravity.centre_down_gt98_pct"]
         self.assertEqual(len(ev), 1)
         self.assertTrue(300 <= ev[0]["first"] <= ev[0]["last"] <= 320)
         self.assertEqual(ev[0]["side"], -1)
+        # the drop lies below its edge, but such drops push the share past 98 up: listed when that share is 上へ外 (the
+        # review of 10-17: v10's 15 drops were never listed, the share being 上へ外 and the places' side -1)
+        self.assertEqual(r["gravity.centre_down_gt98_pct"]["judge"]["word"], "上へ外")
+        rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
+        self.assertEqual([e["why"] for e in rep["events"] if e["id"] == "gravity.centre_down_gt98_pct" and e["listed"]], ["measure"])
+
+    def test_a_drop_listed_by_the_strongest_drop_alone(self):
+        # the share past 98 inside people (made so here), the song's strongest drop past people: still listed (also)
+        rows = [base.row("gravity.centre_down_gt98_pct", "share", 1.0, "%", "test"),
+                base.row("gravity.centre_down_max", "max", -300.0, "u/s²", "test")]
+        edge, scale = base.event_rule("gravity.centre_down_gt98_pct")
+        ev = base.event("gravity.centre_down_gt98_pct", 10, 12, -150.0, "u/s²", edge, scale, side=-1, toward=1,
+                        also=[("gravity.centre_down_max", -1)])
+        rep = report.mark_listed({"measures": rows, "events": [ev]})
+        self.assertEqual(rows[0]["judge"]["word"], "中")
+        self.assertEqual(rows[1]["judge"]["word"], "下へ外")
+        self.assertTrue(rep["events"][0]["listed"])
 
 
 class DanceTest(unittest.TestCase):

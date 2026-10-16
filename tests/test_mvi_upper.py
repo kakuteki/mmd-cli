@@ -7,7 +7,7 @@ import numpy as np
 
 from tests import mvi_fixtures as MF
 from tests.test_mvi_balance import wb
-from mvi import base, upper
+from mvi import base, report, upper
 
 F = 600
 HEAD = ("首", "頭", "両目", "左目", "右目")
@@ -39,6 +39,45 @@ class FollowTest(unittest.TestCase):
         self.assertEqual(r["upper.head_follow"]["judge"]["word"], "上へ外")
         self.assertEqual(r["upper.chest_follow"]["value"], 0.9)
         self.assertEqual(r["upper.head_follow_2_4hz"]["value"], 0.7)
+
+
+class CarriedTest(unittest.TestCase):
+    def test_the_head_riding_on_the_hips_for_seconds_is_a_place(self):
+        # the hips sway 2.4 cm at 2 Hz all along; from 300 to 599 the whole upper body sways with them (carried), else it
+        # stays (the review of 10-17: the upper body held still on the hips for 10 s in v10 gave no place at all)
+        F_ = 900
+
+        def move(n, t, p):
+            if n == "下半身" or (n in MF.UPPER and 300 <= t < 600):
+                return p + np.array([0.3 * np.sin(2.0 * np.pi * 2.0 * t / 30.0), 0.0, 0.0])
+            return None
+        names, pos, rot = MF.pack(F_, move, sway=0.0)
+        res = upper.measure(MF.FakeMeasured(MF.FakeVersion(names, pos, rot), wb=wb()))
+        ev = [e for e in res["events"] if e["id"] == "upper.local_follow_carried"]
+        self.assertEqual(len(ev), 1, ev)
+        self.assertTrue(280 <= ev[0]["first"] <= 315 and 585 <= ev[0]["last"] <= 620, ev[0])
+        edge, scale = base.event_rule("upper.local_follow_carried")
+        self.assertGreater(ev[0]["value"], edge)
+        self.assertEqual(rows_of(res)["upper.local_follow_carried"]["judge"]["word"], "上へ外")
+        rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
+        self.assertEqual([e["why"] for e in rep["events"] if e["id"] == "upper.local_follow_carried"], ["measure"])
+
+    def test_the_windows_are_upper_body_checks(self):
+        # the windows give upper_body_check.local_follow's share carried (the people's check of the review: 62 of 62 equal)
+        F_ = 900
+
+        def move(n, t, p):
+            if n == "下半身" or (n in MF.UPPER and 300 <= t < 600):
+                return p + np.array([0.3 * np.sin(2.0 * np.pi * 2.0 * t / 30.0), 0.0, 0.0])
+            return None
+        names, pos, rot = MF.pack(F_, move, sway=0.0)
+        ub = base.tool("upper_body_check")
+        parts = ub.from_pack(names, pos, rot)
+        rng = (20, 880)
+        st, sl, wt = upper.local_windows(ub.eyes(parts), parts["下半身"][0], rng)
+        theirs = ub.local_follow(ub.eyes(parts), parts["下半身"][0], rng)
+        self.assertEqual(len(st), theirs["windows"])
+        self.assertAlmostEqual(round(float(wt[sl > upper.CARRIED].sum() / wt.sum()), 4), theirs["share_carried"], places=6)
 
 
 class StopTest(unittest.TestCase):

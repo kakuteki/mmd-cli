@@ -51,12 +51,15 @@ def measure(m):
     rows.append(base.row("eyes.edge_longest_s", "端に居続けた最長", me["edge_longest_s"], "s", src))
     rows.append(base.row("eyes.eccentric15_pct", "目が顔の中で正面から 15 度以上", 100.0 * me["eccentric_15_share"], "%", src))
     edge = np.array([max(abs(y) / limits.yaw, p / limits.up if p > 0 else -p / limits.down) for y, p in angles])
+    longest = (base.reference("eyes.edge_longest_s") or {}).get("max", 1.0)
     for a, b in base.runs(edge >= eg.EDGE):
         sec = (b - a + 1) / base.FPS
         if sec >= EDGE_RUN_S:
             y, p = angles[a + (b - a) // 2]
+            # a stay longer than the longest-stay rule stands for that rule too (listed when it breaks, whatever the share)
             events.append(base.event("eyes.edge_pct", a, b, sec, "s", EDGE_RUN_S, EDGE_RUN_S,
-                                     "目が端に %.2f 秒（%s）" % (sec, eg.describe(y, p))))
+                                     "目が端に %.2f 秒（%s）" % (sec, eg.describe(y, p)),
+                                     also=[("eyes.edge_longest_s", 1)] if sec > longest else None))
     series["eye_edge"] = {"label": "目の向き / 範囲（1 が端、%g 以上を端と数える）" % eg.EDGE, "unit": "", "y": edge,
                           "lo": None, "hi": eg.EDGE, "ids": ["eyes.edge_pct", "eyes.edge_longest_s"]}
     return {"rows": rows, "events": events, "series": series}

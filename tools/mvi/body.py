@@ -35,6 +35,23 @@ PACK_BONES = ["全ての親", "センター", "グルーブ", "腰", "下半身"
               "左つま先ＩＫ", "右つま先ＩＫ"]
 EXTRA_BONES = ["左腕捩", "右腕捩", "左手捩", "右手捩", "左肩", "右肩", "腰椎上部", "胸椎上部", "頭先", "両目先"]
 CACHE_VERSION = 1
+# the code the cached arrays come from: a change of any of these makes new keys (a cache folder kept across a change of
+# the FK or of the legs' IK must not give the old arrays)
+CACHE_CODE = (os.path.join("mmd_cli", "fk.py"), os.path.join("mmd_cli", "formats", "vmd.py"),
+              os.path.join("mmd_cli", "formats", "pmx.py"), os.path.join("mmd_cli", "formats", "pmx_edit.py"),
+              os.path.join("tools", "sink_check.py"), os.path.join("tools", "leg_ik.py"), os.path.join("tools", "mvi", "body.py"))
+_CODE_MD5 = []
+
+
+def code_md5():
+    """one md5 over the files of CACHE_CODE (computed once)"""
+    if not _CODE_MD5:
+        h = base.hashlib.md5()
+        for rel in CACHE_CODE:
+            with open(os.path.join(base.ROOT, rel), "rb") as f:
+                h.update(f.read())
+        _CODE_MD5.append(h.hexdigest())
+    return _CODE_MD5[0]
 
 
 def log(*a):
@@ -122,7 +139,7 @@ class Version:
         return out
 
     def _key(self, what, *parts):
-        h = base.hashlib.md5(("%s|%d|" % (what, CACHE_VERSION)).encode())
+        h = base.hashlib.md5(("%s|%d|%s|" % (what, CACHE_VERSION, code_md5())).encode())
         for p in parts:
             h.update(str(p).encode("utf-8"))
             h.update(b"|")

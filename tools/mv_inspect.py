@@ -17,17 +17,21 @@ measured by every part (tools/mvi/: gravity 重力感, feet 足, balance 重心�
 mouth 口, skirt スカートの危なさ, spikes 突起), each measure against people's values (tools/mvi/human.json: FineDance
 K-pop, choreography and jazz, 62 sequences, the median and quartiles, from the earlier work's outputs) or a rule of the
 project, judged 中 / 上へ外 / 下へ外 (the human baseline's p31_table rule).  DIR gets report.json (everything),
-report.md (the table), outliers.md and outliers.csv (the places outside, the heaviest first, with times),
+report.md (the table), outliers.md and outliers.csv (the places outside, the heaviest first, with times, and the
+heaviest of each idea; which places are listed: tools/mvi/report.py),
 events.csv (every place, listed or not), series.npz (the per-frame curves), marks.npz (the COM, the ZMP and the base of
 support per frame, for `mark`) and timeline.png (the curves along the song).  The heavy arrays (the forward kinematics,
-MMD's IK, the shoes) are kept in --cache (default DIR/cache) by the inputs' md5.
+MMD's IK, the shoes) are kept in --cache (default DIR/cache) by the inputs' md5 and the md5 of the code they come from
+(tools/mvi/body.py CACHE_CODE).
 
-compare: two measured versions in one table, judged 入った / 中のまま / 近づいた / 遠ざかった / 直しすぎ / 変わらず,
-and the places outside that are new in B and gone from A.
+compare: two measured versions in one table, judged 入った / 中のまま / 近づいた / 遠ざかった / 直しすぎ / 変わらず with
+the distances outside people (A -> B), and the places outside that are new in B and gone from A (a place B still has,
+unlisted because B's measure went inside people, is counted apart, not as gone).
 
 mark: the measured version's marks (the COM and its floor point, the base of support, the ZMP, the listed places of the
-frame) drawn on pictures rendered through the camera of the VMD given (a still front camera: the projection was checked
-on its renders by wbbalance).
+frame) drawn on pictures rendered through the camera of the VMD given (the projection was checked on the still front
+camera's renders by wbbalance and on a moving close-up camera's by the review of 10-17; a camera with a roll is
+refused).
 
 pixels: measures of rendered pictures only (the underwear pixels of the green copy, the floor shadow's flicker).
 Exit status: 0, 1 when a part failed (the others are written), 2 for wrong input.
@@ -74,7 +78,7 @@ def measure(spec, out_dir, cache=None, parts=None, figure=True):
     """measure one version; returns (report, failed)"""
     ver = body.Version(spec, cache=cache or os.path.join(out_dir, "cache"))
     m = shared.Measured(ver)
-    rep = {"tool": "mv_inspect", "format": 1, "label": ver.label, "made": RP.made(), "inputs": ver.inputs(),
+    rep = {"tool": "mv_inspect", "format": RP.FORMAT, "label": ver.label, "made": RP.made(), "inputs": ver.inputs(),
            "spec": ver.spec, "first": ver.first, "last": ver.last, "frames": ver.frames, "measures": [], "events": [],
            "series": {}, "failed": {}}
     arrays = {}
@@ -157,6 +161,7 @@ def cmd_compare(args):
         if w:
             words[w] = words.get(w, 0) + 1
     print(json.dumps({"ok": True, "a": c["a"], "b": c["b"], "words": words, "new": len(c["new"]), "gone": len(c["gone"]),
+                      "unlisted_now": len(c["unlisted_now"]), "listed_now": len(c["listed_now"]),
                       "out": {k: os.path.abspath(v) for k, v in paths.items()}}, ensure_ascii=True))
     return 0
 

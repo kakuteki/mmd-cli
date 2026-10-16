@@ -14,9 +14,11 @@ the reference it is judged against, read from human.json by id:
 
 The judgement is the human baseline's (stage6/human_baseline/scripts/p31_table.py): a value inside [q1 - res, q3 + res]
 is inside ("中"), else above or below ("上へ外" / "下へ外"); the distance outside is counted in the scale
-max(IQR, (p90 - p10) / 2, res), res the resolution of one event or frame in the MV's dance (246 s).  Two versions A
-(before) and B (after): B inside and A outside "入った", both inside "中のまま", B on the other side of people from A
-"直しすぎ", B nearer to the median than A "近づいた", farther "遠ざかった", the same distance (to 0.05) "変わらず".
+max(IQR, (p90 - p10) / 2, res), res the resolution of one event or frame in the MV's dance (246 s).  (Where every person
+has the same value, IQR and p90 - p10 are 0 and the distance counts frames or events of the MV: flat_band.)  Two
+versions A (before) and B (after): B inside and A outside "入った", both inside "中のまま", B on the other side of people
+from A "直しすぎ", B nearer to the median than A "近づいた", farther "遠ざかった" (and A inside, B outside), both outside on
+the same side at the same distance (to 0.05) "変わらず".
 """
 import hashlib
 import importlib.util
@@ -111,6 +113,15 @@ def band(ref):
     return None
 
 
+def flat_band(ref):
+    """people all alike (the quartiles and the 10 / 90 % points one value, as the straight knees on the floor: 0): the
+    judgement's distance then counts the MV's frames or events past that value, not people's spread"""
+    if not ref or ref.get("kind", "people") != "people":
+        return False
+    p10, p90 = ref.get("p10"), ref.get("p90")
+    return ref["q3"] - ref["q1"] == 0 and (p10 is None or p90 is None or p90 - p10 == 0)
+
+
 def _side_dist(x, lo, hi, scale, res):
     lo2, hi2 = lo - res, hi + res
     scale = max(scale, res, 1e-12)
@@ -151,10 +162,10 @@ def compare(ref, before, after, unit=""):
         word = "直しすぎ"
     elif sb == 0:
         word = "中のまま" if sa == 0 else "入った"
+    elif sa == 0:
+        word = "遠ざかった"                      # out of people's band, however little (the judgement says 外 too)
     elif abs(db - da) < 0.05:
         word = "変わらず"
-    elif sa == 0:
-        word = "遠ざかった"
     else:
         word = "近づいた" if db < da else "遠ざかった"
     return {"before_side": sa, "before_dist": round(da, 2), "after_side": sb, "after_dist": round(db, 2), "word": word}
@@ -211,9 +222,15 @@ def row(mid, name, value, unit, source, concept=None, ref_path=HUMAN_PATH, **ext
     return out
 
 
-def event(mid, first, last, value, unit, edge, scale, note="", side=1, **extra):
+def event(mid, first, last, value, unit, edge, scale, note="", side=1, toward=None, also=None, **extra):
     """one place in the song where a measure lies outside: frames first..last (inclusive), the value there, the edge it is
-    past and the scale the severity counts in (severity = how many scales past the edge)"""
+    past and the scale the severity counts in (severity = how many scales past the edge).
+
+    side: where the place's own value is bad (+1 above the edge, -1 below).  toward: the side of the measure `mid` that
+    such places push it to, when that is not `side` (the strongest drop of a run lies below its edge, -1, while the
+    share of frames past 98 that these runs make goes up, +1); the timeline lists a place when its measure lies outside
+    on that side (report.listed).  also: [[measure id, side], ...], other measures the place stands for (the ZMP's
+    stretches outside for the tilt they add up to)."""
     if side >= 0:
         excess = float(value) - float(edge)
     else:
@@ -223,6 +240,10 @@ def event(mid, first, last, value, unit, edge, scale, note="", side=1, **extra):
            "t0": round(int(first) / FPS, 2), "t1": round((int(last) + 1) / FPS, 2), "value": round(float(value), 4),
            "unit": unit, "edge": round(float(edge), 4), "severity": round(sev, 3), "note": note,
            "side": 1 if side >= 0 else -1}
+    if toward is not None and (1 if toward >= 0 else -1) != out["side"]:
+        out["toward"] = 1 if toward >= 0 else -1
+    if also:
+        out["also"] = [[str(m), 1 if s >= 0 else -1] for m, s in also]
     out.update(extra)
     return out
 

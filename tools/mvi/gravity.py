@@ -51,9 +51,9 @@ def measure(m):
         for mid, name, key, unit in (
                 ("gravity.air_per_min", "宙（両足が 2.5 cm 超、4 コマ以上）", "air_per_min", "/min"),
                 ("gravity.air_slow_share", "宙のうち腰の落ち方が重力の半分より遅い割合", "air_frac_slower_half_g", ""),
-                ("gravity.air_acc_median", "宙の腰の加速度 中央値", "air_acc_median", "u/s²"),
+                ("gravity.air_acc_median", "宙の腰の加速度 中央値（+ 上、重力 -122.5）", "air_acc_median", "u/s²"),
                 ("gravity.desc_ratio_median", "腰の下がり（3 cm 以上）の時間 / 自由落下の時間", "desc_ratio_median", ""),
-                ("gravity.desc_peak_down_median", "下がりの中の下向き加速度の最大（中央値）", "desc_peak_down_median", "u/s²"),
+                ("gravity.desc_peak_down_median", "下がりの中の下向き加速度の最大（中央値、+ 上: 負が下向き）", "desc_peak_down_median", "u/s²"),
                 ("gravity.desc_brake_median", "下がりの底の受け止め（上向き加速度、中央値）", "desc_brake_median", "u/s²"),
                 ("gravity.apex_dwell_ms", "頂きの滞空（頂きから 1 cm 以内）", "apex_dwell_median_ms", "ms"),
                 ("gravity.beat_range_cm", "拍（0.43 秒）の中の腰の上下の幅", "beat_range_median_cm", "cm"),
@@ -74,7 +74,8 @@ def measure(m):
     if "a18" in res:
         ay = res["a18"]["center_ay"]
         src = "a18 body_motion（グルーブの高さの 2 階の勾配、human_baseline の hb_measures の範囲）"
-        rows.append(base.row("gravity.centre_down_max", "センターの下向き加速度の最大", ay["min"], "u/s²", src, range=res["range"]))
+        rows.append(base.row("gravity.centre_down_max", "センターの下向き加速度の最大（上下の加速度の最小、+ 上: 負が下向き）", ay["min"], "u/s²", src,
+                             range=res["range"]))
         rows.append(base.row("gravity.centre_down_gt98_pct", "センターの下向き加速度が 98 を越えるコマ", ay["down_gt_98u_pct"], "%", src))
         a = ev["a18"]["first"]
         acc = ev["a18"]["center_ay"]
@@ -82,8 +83,11 @@ def measure(m):
         for r0, r1 in base.runs(acc < -98.0):
             k = r0 + int(np.argmin(acc[r0:r1 + 1]))
             if acc[k] < edge:
+                # the run's strongest drop lies below its edge (side -1); such runs make the share past 98 go up (toward
+                # +1) and the strongest drop of the song go down (also)
                 events.append(base.event("gravity.centre_down_gt98_pct", a + r0, a + r1, float(acc[k]), "u/s²", edge, scale,
-                                         "%.2f 秒にセンターが %.0f u/s² で落ちる（重力 -122.5）" % ((a + k) / base.FPS, acc[k]), side=-1))
+                                         "%.2f 秒にセンターが %.0f u/s² で落ちる（重力 -122.5）" % ((a + k) / base.FPS, acc[k]), side=-1,
+                                         toward=1, also=[("gravity.centre_down_max", -1)]))
         full = np.full(m.v.frames, np.nan)
         full[a:a + len(acc)] = acc
         series["centre_ay"] = {"label": "センター（グルーブ）の上下の加速度 u/s²（a18、+ 上）", "unit": "u/s²", "y": full,

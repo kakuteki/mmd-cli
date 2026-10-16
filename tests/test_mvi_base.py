@@ -75,6 +75,18 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(self.word(5.0, -1.0), "直しすぎ")
         self.assertEqual(self.word(5.0, 5.05), "変わらず")
 
+    def test_leaving_people_however_little_is_not_unchanged(self):
+        # 3.06 lies 0.03 of a scale past q3: the judgement says 上へ外, so the comparison must not say 変わらず
+        self.assertEqual(base.judge(PEOPLE, 3.06)["word"], "上へ外")
+        self.assertEqual(self.word(3.0, 3.06), "遠ざかった")
+
+    def test_the_words_carry_the_distances(self):
+        # 直しすぎ from far above to just below reads very differently from just above to far below
+        self.assertEqual(report.word_text(base.compare(PEOPLE, 11.0, 0.8)), "直しすぎ（上へ 4.0 → 下へ 0.1）")
+        self.assertEqual(report.word_text(base.compare(PEOPLE, 3.4, -11.0)), "直しすぎ（上へ 0.2 → 下へ 6.0）")
+        self.assertEqual(report.word_text(base.compare(PEOPLE, 2.0, 2.5)), "中のまま（中 → 中）")
+        self.assertEqual(report.word_text(None), "-")
+
     def test_a_rule_compares_the_distance_past_it(self):
         ref = {"kind": "limit", "max": 0, "scale": 1.0}
         self.assertEqual(self.word(9, 0, ref), "入った")
@@ -156,6 +168,89 @@ class ReportTest(unittest.TestCase):
                  base.event("mouth.info", 70, 70, 9.0, "", 1.0, 1.0)])
         listed = [(e["id"], e["first"]) for e in report.timeline(r)]
         self.assertEqual(sorted(listed), sorted([("gravity.out_up", 10), ("skirt.rule", 40), ("mouth.win", 50)]))
+
+    def test_a_place_counts_toward_the_side_its_places_push_the_measure(self):
+        # the strongest drop of a run lies below its edge (side -1) while such runs push the share past 98 up (+1)
+        share = mrow("gravity.share", 5.0, PEOPLE)                                           # 上へ外
+        r = rep([share], [base.event("gravity.share", 10, 12, -300.0, "u/s²", -140.0, 26.0, side=-1, toward=1)])
+        self.assertEqual([(e["first"], e["why"]) for e in report.timeline(r)], [(10, "measure")])
+        r = rep([share], [base.event("gravity.share", 10, 12, -300.0, "u/s²", -140.0, 26.0, side=-1)])
+        self.assertEqual(report.timeline(r), [])                                 # without toward: the other side
+        # the ZMP's stretches tilt above their edge (+1) while the share inside goes down (-1)
+        r = rep([mrow("balance.inside", 0.0, PEOPLE)], [base.event("balance.inside", 20, 30, 60.0, "度", 28.0, 28.0, toward=-1)])
+        self.assertEqual([e["first"] for e in report.timeline(r)], [20])
+
+    def test_a_place_also_stands_for_another_measure(self):
+        r = rep([mrow("balance.inside", 2.0, PEOPLE), mrow("balance.tilt", 5.0, PEOPLE)],
+                [base.event("balance.inside", 20, 30, 60.0, "度", 28.0, 28.0, toward=-1, also=[("balance.tilt", 1)])])
+        self.assertEqual([e["why"] for e in report.timeline(r)], ["measure"])
+        limit = {"kind": "limit", "max": 1.0, "scale": 0.5}
+        r = rep([mrow("eyes.share", 0.5, limit), mrow("eyes.longest", 1.5, limit)],
+                [base.event("eyes.share", 40, 84, 1.5, "s", 0.5, 0.5, also=[("eyes.longest", 1)]),
+                 base.event("eyes.share", 90, 104, 0.5, "s", 0.5, 0.5)])
+        self.assertEqual([e["first"] for e in report.timeline(r)], [40])
+
+    def test_a_place_past_peoples_99_is_listed_whatever_its_measure(self):
+        ref = dict(PEOPLE, event={"edge": 4.0, "scale": 2.0, "p01": 0.1, "p99": 6.0})
+        r = rep([mrow("spikes.point", 2.0, ref)],                                              # the measure: 中
+                [base.event("spikes.point", 10, 10, 7.0, "m/s", 4.0, 2.0),                     # past people's 99 %
+                 base.event("spikes.point", 20, 20, 5.0, "m/s", 4.0, 2.0)])                    # past 90 %, not 99 %
+        self.assertEqual([(e["first"], e["why"]) for e in report.timeline(r)], [(10, "extreme")])
+        low = rep([mrow("upper.stop", 2.0, ref)], [base.event("upper.stop", 30, 31, 0.05, "ms", 0.5, 0.4, side=-1)])
+        self.assertEqual([e["why"] for e in report.timeline(low)], ["extreme"])
+        md = report.timeline_md(r)
+        self.assertIn("人の 99 % 点の外", md)
+        self.assertIn("人の 99 % 点の外", report.timeline_csv(r))
+
+    def test_one_measure_does_not_fill_the_timeline_and_each_idea_shows_its_heaviest(self):
+        # 70 heavy places of one measure and a light one of another idea: the table keeps PER_MEASURE of the first (the
+        # rest named below it), so the light one is in it; and each idea's heaviest are listed apart (the review of 10-17:
+        # v10's 78 ZMP stretches, of 80 scales at most, took 39 of the first 60 rows)
+        limit = {"kind": "limit", "max": 0, "scale": 1.0}
+        evs = [base.event("skirt.rule", 10 * k, 10 * k, 100.0 + k, "", 0.0, 1.0) for k in range(70)]
+        evs.append(base.event("eyes.rule", 900, 905, 0.6, "s", 0.5, 0.5))
+        r = rep([mrow("skirt.rule", 70, limit), mrow("eyes.rule", 3, limit)], evs)
+        head, per = report.timeline_md(r, top=60).split("## 考え方ごとの重い順")
+        self.assertEqual(head.count("| スカートの危なさ |"), report.PER_MEASURE)
+        self.assertIn("| 目 |", head)
+        self.assertIn("表から外した所: skirt.rule 62", head)
+        self.assertIn("| 目 |", per)
+        self.assertEqual(per.count("| スカートの危なさ |"), report.PER_CONCEPT)
+        self.assertEqual(len(report.timeline(r)), 71)                          # the full order stays in the JSON and csv
+        self.assertEqual(len(report.timeline_csv(r).strip().splitlines()), 72)
+
+    def test_a_flat_people_band_is_not_ranked_with_the_spreads(self):
+        flat = {"kind": "people", "q1": 0.0, "q3": 0.0, "median": 0.0, "p10": 0.0, "p90": 0.0, "n": 62}
+        row = {"id": "feet.flat", "concept": "feet", "name": "ひざがまっすぐ", "value": 1.0, "unit": "%", "from": "test",
+               "ref": flat, "judge": base.judge(flat, 1.0, "%")}
+        self.assertTrue(base.flat_band(flat))
+        self.assertFalse(base.flat_band(PEOPLE))
+        md = report.measures_md(rep([row, mrow("feet.wide", 7.0, PEOPLE)], []))
+        far = [line for line in md.splitlines() if line.startswith("人から遠い物差し")][0]
+        self.assertNotIn("ひざがまっすぐ", far)
+        self.assertIn("人が全員同じ値の物差しで外", md)
+        self.assertIn("人は全員 0", md)
+
+    def test_a_place_still_there_but_unlisted_is_not_gone(self):
+        a = rep([mrow("spikes.p", 20.0, PEOPLE)], [base.event("spikes.p", 100, 101, 5.0, "", 4.0, 1.0),
+                                                   base.event("spikes.p", 200, 201, 5.0, "", 4.0, 1.0)], "A")
+        b = rep([mrow("spikes.p", 2.0, PEOPLE)], [base.event("spikes.p", 100, 101, 5.0, "", 4.0, 1.0)], "B")
+        c = report.compare(a, b)
+        self.assertEqual([e["first"] for e in c["gone"]], [200])
+        self.assertEqual([e["first"] for e in c["unlisted_now"]], [100])
+        back = report.compare(b, a)
+        self.assertEqual([e["first"] for e in back["new"]], [200])
+        self.assertEqual([e["first"] for e in back["listed_now"]], [100])
+        self.assertIn("まだある 1", report.compare_md(c))
+
+    def test_a_report_of_an_older_listing_is_flagged_in_the_comparison(self):
+        # a report.json written before the listing changed (format 1) against one of now: the counts of places differ by
+        # the rule, not by the versions
+        a = dict(rep([mrow("spikes.p", 2.0, PEOPLE)], [], "A"), format=1)
+        b = dict(rep([mrow("spikes.p", 2.0, PEOPLE)], [], "B"), format=report.FORMAT)
+        self.assertIn("注意", report.compare_md(report.compare(a, b)))
+        b2 = dict(b, label="C")
+        self.assertNotIn("注意", report.compare_md(report.compare(b, b2)))
 
     def test_the_timeline_is_heaviest_first_then_earliest(self):
         limit = {"kind": "limit", "max": 0, "scale": 1.0}

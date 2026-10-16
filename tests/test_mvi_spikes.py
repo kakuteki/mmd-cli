@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from tests import mvi_fixtures as MF
-from mvi import base, spikes
+from mvi import base, report, spikes
 
 F = 600
 
@@ -33,6 +33,15 @@ class SpikeTest(unittest.TestCase):
         self.assertAlmostEqual(ev[0]["value"], 0.72, places=5)
         edge, scale = base.event_rule("spikes.centre_per_min")
         self.assertAlmostEqual(ev[0]["severity"], (0.72 - edge) / scale, places=3)
+
+    def test_a_spike_past_peoples_99_is_listed_though_the_rate_is_like_peoples(self):
+        # one jolt in 20 s: 3 a minute, inside people's rate; 0.72 m/s is past people's 99 % point of spikes (0.60):
+        # listed as such (the review of 10-17: a one-frame jolt of the head put into v10 was a place, not listed)
+        res = self.measure(jump(300, 0.3))
+        r = rows_of(res)
+        self.assertEqual(r["spikes.centre_per_min"]["judge"]["word"], "中")
+        rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
+        self.assertEqual([(e["first"], e["why"]) for e in rep["events"] if e["id"] == "spikes.centre_per_min"], [(300, "extreme")])
 
     def test_a_spike_smaller_than_peoples_counts_but_is_no_place(self):
         res = self.measure(jump(300, 0.1))                                   # 0.24 m/s: past T 0.15, under people's p90

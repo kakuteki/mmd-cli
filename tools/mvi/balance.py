@@ -37,9 +37,12 @@ def measure(m):
     p99, scale = base.event_rule("balance.zmp_inside_pct", 32.7, 32.7)
     for r in z["outside_runs"]:
         if r["tilt_deg"] > p99:
+            # the stretch's tilt lies above its edge (side +1); such stretches make the share of the ZMP inside go down
+            # (toward -1) and the tilt a minute go up (also)
             events.append(base.event("balance.zmp_inside_pct", r["first"], r["last"], r["tilt_deg"], "度", p99, scale,
                                      "ZMP が支えの外 %.1f cm、倒れたはずの傾き %.1f 度（人の区間の 99 %% 点 %.1f 度）、支え %s"
-                                     % (r["depth_cm"], r["tilt_deg"], p99, r["support"])))
+                                     % (r["depth_cm"], r["tilt_deg"], p99, r["support"]), toward=-1,
+                                     also=[("balance.zmp_tilt_deg_per_min", 1)]))
     margin = arr["margin"] * 100.0
     series["zmp_margin"] = {"label": "ZMP の支持基底面からの余裕 cm（+ 中）", "unit": "cm", "y": margin, "lo": 0.0, "hi": None,
                             "ids": ["balance.zmp_inside_pct", "balance.held_outside_per_min"]}

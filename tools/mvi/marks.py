@@ -5,7 +5,9 @@ The projection (the one wbbalance checked on the front camera's renders, fig_fra
 from its VMD (mmd_cli.fk.camera_at: the window's look-at, distance, angles and vertical view angle), its position and
 direction (fk.camera_position, fk.camera_direction), right = up x forward, the focal length (H / 2) / tan(fov / 2) in
 pixels of the picture's height H, the picture's middle as the centre.  A camera with a roll (its Z angle) is refused:
-the projection has not been checked for one.
+the projection has not been checked for one.  A moving camera without a roll was checked by the review of 2026-10-17
+(v9's feet close-up through v9/front/closeup/cam_feet.vmd: the base of support on the standing sole); the hand-held
+camera D (variants/camera_D_handheld.vmd) has no roll either, so it is not refused.
 
 The points (the report's marks.npz, written by `measure`): the COM [F, 3] and the ZMP [F, 2] (x, z) of tools/wb_dynamics
 (in model units here), the convex hull of the base of support per frame (units, x and z) and the floor's height.  The

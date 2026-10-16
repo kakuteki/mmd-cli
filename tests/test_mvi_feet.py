@@ -113,6 +113,22 @@ class KneeTest(unittest.TestCase):
         edge, _ = base.event_rule("feet.knee_gain_deg")
         self.assertTrue(all(e["value"] > edge for e in ev))
 
+    def test_straight_knees_on_the_floor_are_listed_when_their_share_is_above_peoples(self):
+        # the pelvis 0.1 unit up from 200 to 260: both legs past their length, the knees 0 degrees on the floor
+        def move(n, t, p):
+            if n == "下半身" and 200 <= t <= 260:
+                return p + np.array([0.0, 0.1, 0.0])
+            return None
+        res = feet.measure(measured(move))
+        r = rows_of(res)["feet.knee_straight_pct"]
+        self.assertEqual(r["judge"]["word"], "上へ外")
+        ev = [e for e in res["events"] if e["id"] == "feet.knee_straight_pct"]
+        self.assertTrue(ev and all(e["side"] == -1 and e.get("toward") == 1 for e in ev))
+        self.assertTrue(any(e["first"] <= 200 and 260 <= e["last"] for e in ev))
+        rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
+        listed = [e for e in rep["events"] if e["id"] == "feet.knee_straight_pct" and e["listed"]]
+        self.assertTrue(any(e["first"] <= 200 and 260 <= e["last"] for e in listed))
+
     def test_rows_are_judged(self):
         rep = report.mark_listed({"measures": feet.measure(measured())["rows"], "events": []})
         ids = {r["id"] for r in rep["measures"]}

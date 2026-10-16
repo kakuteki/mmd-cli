@@ -3,12 +3,13 @@ the human baseline ran them), a05 (the weight: contacts, slides, touchdowns, hov
 (floaty's pelvis: the air and its parabola), vertical (balance-v3's jumps and dips against the dance).  Checked on a
 synthetic body (tests.mvi_fixtures.pack) with moves of known size."""
 import math
+import os
 import unittest
 
 import numpy as np
 
 from tests import mvi_fixtures as MF
-from mvi import a05 as A05, fq as FQ, hb as HB, vertical as VT
+from mvi import a05 as A05, base, body, fq as FQ, hb as HB, vertical as VT
 
 F = 300
 
@@ -174,6 +175,23 @@ class VerticalTest(unittest.TestCase):
         self.assertAlmostEqual(r["jumps"][0]["top_cm"], -3.0, places=5)
         self.assertEqual(r["summary"]["beat"]["drop_ratio_under_0.8"], 1)
         self.assertTrue(VT.on_beat(beat))
+
+
+class CacheKeyTest(unittest.TestCase):
+    def test_a_change_of_the_code_the_arrays_come_from_makes_new_keys(self):
+        # (the review of 10-17: the keys held the inputs' md5 only, so a cache folder kept across a change of the FK or of
+        # the legs' IK gave the old arrays without a word)
+        v = body.Version.__new__(body.Version)
+        k1 = v._key("fk", "model", "motion", 0, 99)
+        self.assertEqual(k1, v._key("fk", "model", "motion", 0, 99))
+        saved = list(body._CODE_MD5)
+        try:
+            body._CODE_MD5[:] = ["0" * 32]
+            self.assertNotEqual(k1, v._key("fk", "model", "motion", 0, 99))
+        finally:
+            body._CODE_MD5[:] = saved
+        for rel in body.CACHE_CODE:
+            self.assertTrue(os.path.isfile(os.path.join(base.ROOT, rel)), rel)
 
 
 if __name__ == "__main__":
