@@ -692,13 +692,16 @@ def trace_floor(shoe):
 # brings the lower shoe down.  A run whose pelvis falls at least HOVER_FLIGHT_ACC (a hop: in flight the body falls at
 # gravity, 122.5 units/s^2 at 8 cm a unit) keeps its height, and so does a run shorter than HOVER_MIN_RUN (a hover of a
 # frame or two between steps: people have 1.4 % of such frames, runs of 6 frames or more not at all).
-HOVER_MAX = 0.375               # units over the trace's floor (3 cm): the lower shoe this low counts as hovering
+HOVER_MAX = 0.5                 # units over the trace's floor (4 cm, a05 s11's band): the lower shoe this low counts as hovering
 HOVER_FLIGHT_ACC = 61.25        # units/s^2 down (half of gravity): a run whose pelvis falls faster is a flight
 HOVER_MIN_RUN = 4               # frames: a shorter hover is left as it is
 HOVER_EASE = 6                  # frames: the sink comes and goes over this many frames each way (a raised cosine)
 HOVER_SMOOTH = 3                # frames: the half width of the Hann window that smooths the sink inside a run
-HOVER_ACC_BOUND = 122.0         # units/s^2: the pelvis's downward acceleration the sink may not take a frame past
-                                # (the balance layer's DOWN_ACC_MAX; a frame already past it in the input keeps its own)
+HOVER_ACC_BOUND = 130.0         # units/s^2: the pelvis's downward acceleration the sink may not take a frame past (a frame
+                                # already past it in the input keeps its own).  The balance layer holds the floor's frames
+                                # to 122 (gravity); people's largest downward is 142 [128, 156] (FineDance's near kinds,
+                                # median [quartiles]): a bound of 122 left 5 runs of the song unsunk for additions of 2 or
+                                # 3 units/s^2 next to frames at 122
 
 
 def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC, min_run=HOVER_MIN_RUN):
