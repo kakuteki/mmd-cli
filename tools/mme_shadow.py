@@ -15,16 +15,34 @@ self shadow display off (menu 279) nothing changes, and a model without the effe
 
 The body's shading follows MMD's standard shading as MME exposes it (ambient + emissive, the toon colour, texture,
 sphere map, specular, MMD's own shadow test: 1 - saturate(max(z - map, 0) * 1500 - 0.3) in mode 1, the slope 8000 x v in
-mode 2).  Only the shadow test differs: it is done at --taps points of the shadow map round the pixel's own point, each
-weighted by a Gaussian, and their weighted mean is the shadow.  The Gaussian's spread on the shadow map:
+mode 2).  Only the shadow test differs: it is done at --taps points of the shadow map round the pixel's own point,
+laid as a Gaussian lies (the same weight each, their radii its quantiles), and their mean is the shadow.  The
+Gaussian's spread on the shadow map:
 
 * with contact hardening (the default) it is the spread of a light --blur degrees wide (a standard deviation) at the
-  distance from the shadowed point back to what casts the shadow (a search of --search-taps points finds the casters'
-  gaps and takes their harmonic mean, so the nearest caster rules; MMD's light projection is orthographic, so a depth
-  gap is a distance along the light: gap / _33, and a distance across the light is a share of the map: x _11 / 2).  An arm on the dress casts a shadow whose edge blurs
-  with the gap, as tools/mv_world.py's floor shadow does with the same --blur;
+  distance from the shadowed point back to what casts the shadow (a search of --search-taps points, from 3 % of its
+  radius out to all of it on a logarithm of the radius, finds the casters' gaps and takes their harmonic mean, so the
+  nearest caster rules; with none found the least blur stays; MMD's light projection is orthographic, so a depth
+  gap over the depth's rate along the light is a distance along the light, and a distance across the light times
+  |x| / 2 of the light's matrix is a share of the map).  An arm on the dress casts a shadow whose edge blurs with the
+  gap, as tools/mv_world.py's floor shadow does with the same --blur;
 * never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
   the default shadow distance) are blurred away even where the gap is 0.
+
+Every point of the map round the pixel (the search and the Gaussian) is compared with the depth the receiver's own plane
+has there, not with the pixel's own depth.  MMD's light depth does not run along the light (review of softshadow-mme;
+read from the matrix MME gives, softshadow-mme2: the matrix divides by a w that changes across the light (its fourth
+column 0.005 or more a unit), so the map is a warped picture whose depth slants across the light), so on the pixel's
+own plane a point beside it on the map lies nearer or further in depth: compared with the pixel's depth, the search took
+the receiver itself for what casts the shadow (gaps of 0.65 to 1.7 units where they were 2.6 to 9.6, and an edge of
+about the same spread at every distance) and the points of the Gaussian shadowed a lit face (acne: a wall nothing
+shadows at 0.83).  The plane is the receiver's (interpolated) normal under the light's own matrix (plane_slope; the normal
+held at least FACING_MIN towards the light, a face along the light having no depth of its own), and a depth gap is
+turned into a distance along the light with that matrix too (along_light).  And what the search finds above the
+receiver's plane counts as a caster only within the light's spread from the pixel (in_cone: KERNEL_SIGMAS standard
+deviations of the light at its distance along the light): a thing beside the pixel and not above it (the next plate of
+the review's fan) casts no shadow on it, and a point of the receiver's own surface that the plane does not quite match
+(a small gap beside the pixel) is not taken for a caster.
 
 How dark the shade is: MMD shades with the toon's colour (this model's keep 72 to 89 % of the light), while
 tools/mv_world.py's floor takes KEY_SHARE (0.6) of its light from the key light and keeps the rest in a shadow.  Under
@@ -60,30 +78,47 @@ MME_FILES = {"d3d9.dll": "3c1c663c4b2fda0c92a97fc2d3d01fd1fb4110ae552e68f284657b
              "MMHack.dll": "e450b25e5cd2bcf125ca4b8eb9e57f858ec3ca379633c7d25f9dd40e864b390d",
              "MMEffect.dll": "74b3f5882a3bad28131cbc57994e2f960938e6ca850fc7139018ce4822bd87dc"}
 KERNEL_SIGMAS = 2.5               # the points lie within this many standard deviations of the Gaussian
+# the standard deviation of a Gaussian of 1 cut at KERNEL_SIGMAS (along an axis): the points are widened by its inverse,
+# so that their spread is the light's (cut, an edge came out 0.925 of it)
+CUT_STD = math.sqrt((1.0 - (1.0 + 0.5 * KERNEL_SIGMAS ** 2) * math.exp(-0.5 * KERNEL_SIGMAS ** 2))
+                    / (1.0 - math.exp(-0.5 * KERNEL_SIGMAS ** 2)))
 GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
 DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 32, "search_taps": 16, "contact": True, "key_share": 0.6}
+FACING_MIN = 0.25         # the receiver's normal is held at least this far towards the light (75.5 degrees from it) when
+                          # the plane round the pixel is worked out: a face along the light has no depth of its own
 DEBUGS = {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2}
+SEARCH_INNER = 0.03       # the innermost point of the search, a share of its radius (0.054 units: a caster's cone near
+                          # the pixel is small, 0.38 units at 1.5 for 5 degrees)
 SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
                           # light at 8 units: the hips above the knees)
 
 
-def spiral(n):
-    """n points of the unit disc on a golden-angle spiral (even cover, no grid to band along): (x, y, r)"""
+def taps(n):
+    """the points of the Gaussian: (x, y, 1 / n) in standard deviations, n points of the same weight whose radii are the
+    quantiles of the Gaussian's radius (its integral 1 - exp(-r^2 / 2)) cut at KERNEL_SIGMAS and widened by 1 / CUT_STD
+    (a standard deviation of 1 along any axis), round the golden angle.  An
+    edge passing across them steps by 1 / n (with even radii and Gaussian weights, before softshadow-mme2, the inner
+    points weighed 3 to 5 times the mean and a wide shadow showed its copies)"""
+    top = 1.0 - math.exp(-0.5 * KERNEL_SIGMAS ** 2)
     out = []
     for i in range(n):
-        r = math.sqrt((i + 0.5) / n)
+        r = math.sqrt(-2.0 * math.log(1.0 - (i + 0.5) / n * top)) / CUT_STD
         a = i * GOLDEN
-        out.append((r * math.cos(a), r * math.sin(a), r))
+        out.append((r * math.cos(a), r * math.sin(a), 1.0 / n))
     return out
 
 
-def taps(n):
-    """the points of the Gaussian: (x, y, weight) on the disc of radius KERNEL_SIGMAS (in standard deviations), the
-    weights a Gaussian of the radius, summing to 1"""
-    pts = spiral(n)
-    w = [math.exp(-0.5 * (r * KERNEL_SIGMAS) ** 2) for _, _, r in pts]
-    s = sum(w)
-    return [(x * KERNEL_SIGMAS, y * KERNEL_SIGMAS, wi / s) for (x, y, _), wi in zip(pts, w)]
+def search_points(n):
+    """the points of the search for casters: (x, y, 1) from SEARCH_INNER of its radius out to all of it, evenly on a
+    logarithm of the radius (a caster near the pixel counts only within a small cone, in_cone), round the golden angle"""
+    if n == 1:
+        return [(0.0, 0.0, 1.0)]
+    out = []
+    for i in range(n):
+        r = SEARCH_INNER ** (1.0 - i / float(n - 1))
+        a = i * GOLDEN
+        out.append((r * math.cos(a), r * math.sin(a), 1.0))
+    return out
 
 
 def _array(name, rows, fmt):
@@ -108,8 +143,7 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
     if not 1 <= n_taps <= 64 or not 1 <= search_taps <= 64:
         raise ValueError("--taps and --search-taps are 1 to 64")
     kernel = [(0.0, 0.0, 1.0)] if n_taps == 1 else taps(n_taps)
-    search = [(0.0, 0.0, 1.0)] if search_taps == 1 else [(x / KERNEL_SIGMAS, y / KERNEL_SIGMAS, 1.0)
-                                                          for x, y, _ in taps(search_taps)]
+    search = search_points(search_taps)
     debug = {0: False, 1: "shadow", 2: "lit"}[DEBUGS[debug]]
     settings = {"blur": blur, "min_blur": min_blur, "taps": n_taps, "search_taps": search_taps, "contact": bool(contact),
                 "debug": debug, "sharp": bool(sharp), "key_share": key_share}
@@ -118,9 +152,9 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
             "// passes are MMD's own.  Settings: %s\n" % json.dumps(settings, sort_keys=True))
     defines = ("#define SS_BLUR_RAD %.9f\n#define SS_MIN_WORLD %.6f\n#define SS_TAPS %d\n#define SS_SEARCH %d\n"
                "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_WORLD %.6f\n#define SS_ALIGN %d\n"
-               "#define SS_KEEP %.6f\n"
+               "#define SS_KEEP %.6f\n#define SS_FACING_MIN %.6f\n#define SS_CONE %.6f\n"
                % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, DEBUGS[debug], SEARCH,
-                  0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share))
+                  0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share, FACING_MIN, KERNEL_SIGMAS))
     return (head + defines + _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f") + BODY)
 
 
@@ -130,7 +164,6 @@ float4x4 WorldViewProjMatrix      : WORLDVIEWPROJECTION;
 float4x4 WorldMatrix              : WORLD;
 float4x4 ViewMatrix               : VIEW;
 float4x4 LightWorldViewProjMatrix : WORLDVIEWPROJECTION < string Object = "Light"; >;
-float4x4 LightProjMatrix          : PROJECTION < string Object = "Light"; >;
 float3   LightDirection : DIRECTION < string Object = "Light"; >;
 float3   CameraPosition : POSITION  < string Object = "Camera"; >;
 
@@ -211,6 +244,7 @@ struct SS_OUT {
     float3 Normal   : TEXCOORD2;
     float3 Eye      : TEXCOORD3;
     float2 SpTex    : TEXCOORD4;
+    float3 ObjNormal : TEXCOORD5;
     float4 Color    : COLOR0;
 };
 
@@ -221,6 +255,7 @@ SS_OUT SS_VS(float4 Pos : POSITION, float3 Normal : NORMAL, float2 Tex : TEXCOOR
     Out.Pos = mul(Pos, WorldViewProjMatrix);
     Out.Eye = CameraPosition - mul(Pos, WorldMatrix).xyz;
     Out.Normal = normalize(mul(Normal, (float3x3)WorldMatrix));
+    Out.ObjNormal = Normal;
     Out.ZCalcTex = mul(Pos, LightWorldViewProjMatrix);
     Out.Color.rgb = AmbientColor;
     if (!useToon) {
@@ -250,46 +285,91 @@ float ShadowTest(float z, float2 uv, float slope)
     return 1.0f - saturate(max(z - tex2Dlod(MMDShadowMap, float4(uv, 0, 0)).r, 0.0f) * slope - 0.3f);
 }
 
-float SoftShadow(float3 zc, float2 uv)
+// the light's matrix from the model to the map by columns: x and y place a point on the map, z is its depth.  MMD's depth
+// does not run along the light (review of softshadow-mme: its gradient some 53 degrees off it), so on the receiver's own
+// plane a point beside the pixel on the map has a depth of its own: every comparison round the pixel is made with that
+static float3 LightX = float3(LightWorldViewProjMatrix._11, LightWorldViewProjMatrix._21, LightWorldViewProjMatrix._31);
+static float3 LightY = float3(LightWorldViewProjMatrix._12, LightWorldViewProjMatrix._22, LightWorldViewProjMatrix._32);
+static float3 LightZ = float3(LightWorldViewProjMatrix._13, LightWorldViewProjMatrix._23, LightWorldViewProjMatrix._33);
+// MMD's light matrix divides by w (its fourth column is not 0: softshadow-mme2): round a point the map's x, y and depth
+// change by these columns less the perspective's share there, (c - ndc c3) / w; w stays the same along the light
+static float3 LightW = float3(LightWorldViewProjMatrix._14, LightWorldViewProjMatrix._24, LightWorldViewProjMatrix._34);
+// where the light shines to, in the model's own space (the matrix above takes the model's points)
+static float3 LightObj = normalize(mul((float3x3)WorldMatrix, LightDirection));
+
+// the depth of the receiver's plane per u and per v of the map (tools/mme_shadow.py plane_slope): the plane's points
+// beside the pixel solve x, y on the map and lie on the plane; the normal is held at least SS_FACING_MIN towards the light
+// (a face along the light has no depth of its own, one turned from it lies in its own shade)
+float2 PlaneSlope(float3 n, float3 ndc)
+{
+    float3 toward = -LightObj;
+    float facing = dot(n, toward);
+    if (facing < SS_FACING_MIN) {
+        float3 side = n - facing * toward;
+        float s = length(side);
+        side = s > 1e-5f ? side / s : float3(0.0f, 0.0f, 0.0f);
+        n = side * sqrt(1.0f - SS_FACING_MIN * SS_FACING_MIN) + toward * SS_FACING_MIN;
+    }
+    // the columns round the pixel (their common 1 / w drops out of the slope)
+    float3 x = LightX - ndc.x * LightW;
+    float3 y = LightY - ndc.y * LightW;
+    float3 z = LightZ - ndc.z * LightW;
+    float3 a = cross(y, n);
+    float3 b = cross(n, x);
+    float det = dot(x, a);
+    return float2(2.0f * dot(z, a), -2.0f * dot(z, b)) / det;
+}
+
+float SoftShadow(float3 zc, float2 uv, float2 plane, float w)
 {
     float slope = parthf ? SKII2 * uv.y : SKII1;
-    // MMD's light projection is orthographic (_34 = 0, _44 = 1; NOTES): a world length x _11 / 2 is a share of the map
-    float perUnit = abs(LightProjMatrix._11) * 0.5f;
+    // round the pixel a world length across the light times |x| / 2 is a share of the map (the light's perspective there)
+    float perUnit = 0.25f * (length(LightX - zc.x * LightW) + length(LightY - zc.y * LightW)) / max(w, 1e-6f);
     float spread = SS_MIN_WORLD * perUnit;
+    // a depth gap over the depth's rate along the light there (tools/mme_shadow.py along_light) is the distance along it
+    float rate = max(dot(LightZ - zc.z * LightW, LightObj) / max(w, 1e-6f), 1e-9f);
 #if SS_CONTACT
     // the casters' mean depth round the point: the gap to them is a distance along the light
     float gap = 0.0f;
     float found = 0.0f;
     for (int j = 0; j < SS_SEARCH; j++) {
-        float2 p = uv + SEARCH[j].xy * (SS_SEARCH_WORLD * perUnit);
+        float2 off = SEARCH[j].xy * (SS_SEARCH_WORLD * perUnit);
+        float2 p = uv + off;
         if (all(saturate(p) == p)) {
             float d = tex2Dlod(MMDShadowMap, float4(p, 0, 0)).r;
-            if ((zc.z - d) * slope > 0.3f) {
+            float zr = zc.z + dot(plane, off);
+            if ((zr - d) * slope > 0.3f) {
+                // above the receiver's plane, but a caster only within the light's spread from the pixel (in_cone): a
+                // thing beside the pixel and not above it casts no shadow on it
+                float along = (zr - d) / rate;
+                if (length(off) / perUnit <= SS_CONE * SS_BLUR_RAD * along + SS_MIN_WORLD) {
 #if SS_HARMONIC
-                gap += 1.0f / max(zc.z - d, 1e-7f);
+                    gap += 1.0f / max(zr - d, 1e-7f);
 #else
-                gap += zc.z - d;
+                    gap += zr - d;
 #endif
-                found += 1.0f;
+                    found += 1.0f;
+                }
             }
         }
     }
-    if (found < 0.5f) {
-        return ShadowTest(zc.z, uv, slope);
-    }
+    // with no caster in the cone the least blur stays (not MMD's hard test: a shadow's edge near what casts it was hard
+    // or soft from one pixel to the next, review of softshadow-mme2)
+    if (found > 0.5f) {
 #if SS_HARMONIC
-    // the casters' harmonic mean: the nearest caster rules (an arm over the dress), as a light's penumbra does
-    gap = found / gap;
+        // the casters' harmonic mean: the nearest caster rules (an arm over the dress), as a light's penumbra does
+        gap = found / gap;
 #else
-    gap /= found;
+        gap /= found;
 #endif
-    // a depth gap / _33 is the distance along the light in the world
-    float across = SS_BLUR_RAD * gap / max(abs(LightProjMatrix._33), 1e-9f) * perUnit;
-    spread = max(spread, across);
+        float across = SS_BLUR_RAD * gap / rate * perUnit;
+        spread = max(spread, across);
+    }
 #endif
     float lit = 0.0f;
     for (int i = 0; i < SS_TAPS; i++) {
-        lit += KERNEL[i].z * ShadowTest(zc.z, uv + KERNEL[i].xy * spread, slope);
+        float2 off = KERNEL[i].xy * spread;
+        lit += KERNEL[i].z * ShadowTest(zc.z + dot(plane, off), uv + off, slope);
     }
     return lit;
 }
@@ -342,6 +422,7 @@ float4 SS_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, unif
 #endif
     float3 zc = IN.ZCalcTex.xyz / IN.ZCalcTex.w;
     float2 uv = float2((1.0f + zc.x) * 0.5f, (1.0f - zc.y) * 0.5f);
+    float2 plane = PlaneSlope(normalize(IN.ObjNormal), zc);
     if (any(saturate(uv) != uv)) {
         // outside the shadow map MMD draws the body lit, without the toon's shade
 #if SS_DEBUG == 1
@@ -349,7 +430,7 @@ float4 SS_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, unif
 #endif
         return Color;
     }
-    float comp = SoftShadow(zc, uv);
+    float comp = SoftShadow(zc, uv, plane, IN.ZCalcTex.w);
 #if SS_DEBUG == 1
     return float4(comp, comp, comp, 1.0f);
 #endif
@@ -390,6 +471,68 @@ SS_TECH(SS_101, true, false, true)
 SS_TECH(SS_011, false, true, true)
 SS_TECH(SS_111, true, true, true)
 """
+
+
+def _unit(v):
+    n = math.sqrt(sum(x * x for x in v))
+    return tuple(x / n for x in v)
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _columns(matrix, point=None):
+    """the light's matrix (D3D rows: a point P goes to (P, 1) M, the map's place and depth (x, y, z) / w) by how x, y and
+    the depth change per unit of the model round `point`: its first three columns less the perspective's share there,
+    (c - ndc c3) / w (MMD's light matrix divides by w, its fourth column c3 is not 0: softshadow-mme2; w stays the same
+    along the light).  Without a point, the columns as they are; and w"""
+    cols = [tuple(float(matrix[i][j]) for i in range(3)) for j in range(4)]
+    if point is None:
+        return cols[:3], 1.0
+    clip = [sum(float(point[i]) * float(matrix[i][j]) for i in range(3)) + float(matrix[3][j]) for j in range(4)]
+    w = clip[3]
+    return [tuple((c - clip[k] / w * d) / w for c, d in zip(cols[k], cols[3])) for k in range(3)], w
+
+
+def plane_slope(matrix, normal, light, facing_min=FACING_MIN, point=None):
+    """(per u, per v): how the depth of the receiver's own plane changes over the map round the pixel, as the effect
+    works it out (PlaneSlope): `matrix` the light's (the model to the map's clip space; the map at uv = ((1 + x) / 2,
+    (1 - y) / 2)), `normal` the receiver's, `light` where the light shines to.  The plane's point at an offset on the map
+    solves x and y there and lies on the plane; its depth is the slope times the offset (to first order round `point`,
+    the receiver, with the light's perspective).  The normal is held at least facing_min towards the light first (a
+    face along the light has no depth of its own on the map)"""
+    (c0, c1, c2), _ = _columns(matrix, point)
+    toward = tuple(-x for x in _unit(light))
+    n = _unit(normal)
+    facing = _dot(n, toward)
+    if facing < facing_min:
+        side = tuple(a - facing * b for a, b in zip(n, toward))
+        s = math.sqrt(_dot(side, side))
+        side = tuple(x / s for x in side) if s > 1e-5 else (0.0, 0.0, 0.0)
+        n = tuple(a * math.sqrt(1.0 - facing_min * facing_min) + b * facing_min for a, b in zip(side, toward))
+    a = _cross(c1, n)
+    b = _cross(n, c0)
+    det = _dot(c0, a)
+    return 2.0 * _dot(c2, a) / det, -2.0 * _dot(c2, b) / det
+
+
+def along_light(matrix, light, gap, point=None):
+    """the distance along the light that a depth gap of the map is: the gap over the depth's rate along the light at the
+    receiver `point` (from the matrix, with its perspective)"""
+    (_, _, c2), _ = _columns(matrix, point)
+    return gap / _dot(c2, _unit(light))
+
+
+def in_cone(side, along, blur, least):
+    """does a thing `side` units across the light from the pixel and `along` units up the light from its plane cast a
+    shadow on it, under a light `blur` degrees wide (a standard deviation; the effect's search): within KERNEL_SIGMAS of
+    the light's spread at that distance, or the least blur `least`"""
+    return side <= KERNEL_SIGMAS * math.radians(blur) * along + least
 
 
 def write(path, **settings):
