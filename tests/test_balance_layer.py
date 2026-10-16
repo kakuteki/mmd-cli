@@ -992,6 +992,24 @@ class AirTest(unittest.TestCase):
         self.assertEqual(float(w[14]), 1.0)
         self.assertEqual(float(w[20:].max()), 0.0)
 
+    def test_shuffle_keeps_the_floor_bound(self):
+        """both feet off the floor for fewer frames than a jump (a shuffle, the feet 2-3 cm up) keep the floor's bound:
+        with no bound there the layer itself sharpened the MV's fall next to the floor (the review of 2026-10-17, order
+        C: 80 -> 318 units/s^2 at 132.13 s, one frame with the right foot 1.9 cm up between floor frames; 118 -> 199 at
+        37.60 s and 254 -> 311 at 213.30 s, three frames with a foot 1.6-2.2 cm up)"""
+        last = 99
+        hop = (47, 49, 51, 53, 0.3)                     # both feet 2.4 cm up on frames 49-51 only
+        motion = dance(last=last, left_lifts=[hop], right_lifts=[hop])
+        centre = [key("センター", f, (0.0, -1.1 + 0.3 * max(0.0, 1.0 - abs(f - 50) / 2.0), 0.0)) for f in range(last + 1)]
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+        body = balance_layer.Body(MODEL, motion)
+        air = (body.height("左") >= balance_layer.SUPPORT_H) & (body.height("右") >= balance_layer.SUPPORT_H)
+        self.assertEqual([(int(a), int(b)) for a, b in balance_layer.runs(air)], [(49, 51)])     # the fixture: 3 frames
+        self.assertGreater(pelvis_down_acc(motion, last)[50], 200.0)                             # and past the bound
+        res = balance_layer.layer(MODEL, motion, {"despike": False})
+        self.assertLessEqual(pelvis_down_acc(res.motion, last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(res.report["vertical"]["air_frames"], 0)
+
 
 def a08_spikes(s, t):
     """a08's s2_spectrum.spikes, verbatim (the human baseline's measure): up and down 1-frame spikes of a speed series"""
