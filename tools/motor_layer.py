@@ -118,17 +118,22 @@ The layer (numbers: the constants and default_params below):
 * --elbow-hinge on (off by default in every preset, so the outputs made before stay byte for byte; stage6/elbow_hinge):
   once the stretches given back are chosen, the arm's twist is split again (hinge_split): ひじ becomes the hinge angle
   about the model's hinge axis (tools/anatomy_layer.py's h) that brings the forearm nearest to where the layer had it,
-  the roll it held about the upper arm's axis goes onto 腕捩, about the forearm's onto 手捩, and 手首 keeps the hand's
-  world rotation.  The elbow stays where it was; done exactly the wrist would stay too, but where the arm is nearly
+  and the twist goes where the anatomy layer puts it (its defaults, with which Hibikase's input was made): 腕 a swing,
+  the upper arm's whole roll on 腕捩, the forearm's twist (手捩 and 手首 together) shared by forearm_share (手捩 half of
+  it up to a quarter turn), and 手首 keeps the hand's world rotation.  The elbow stays where it was; done exactly the wrist would stay too, but where the arm is nearly
   straight the hinge plane is nearly undefined and the exact roll ran to 35 degrees at the 99th percentile and half a
   turn at most on Hibikase (bent 1 degree with 1 degree to the side it is some 45 degrees for 2.5 mm of wrist), which
   turns the elbow's skin round.  So the roll added, delta, is chosen per frame to minimise (ELBOW_SKIN_CM delta)^2 +
   (the forearm x the forearm's direction error)^2: how far the skin at the elbow turns against how far the wrist moves
   (Rin's skin is 2.4 - 2.7 cm from the arm's axis there).  A bent arm is solved all but exactly; a straight arm's wrist
   moves at most as far as dropping ひじ onto its hinge without any roll would move it.  On Hibikase (human): off the
-  hinge 0 (before 0.55 / 0.63 degrees at the median, at most 11.8 / 10.8), the roll added 5.5 / 6.5 degrees at the 99th
-  percentile and 19 at most, the wrist 0.30 cm at the 99th percentile and 0.89 / 0.99 cm at most, the elbow, the hand's
-  rotation and the stretches given back unchanged.  Tracking 腕捩 and 手捩 inside the layer instead, with 1-DoF twist
+  hinge 0 (before 0.55 / 0.63 degrees at the median, at most 11.8 / 10.8), 腕捩's roll changed 6.0 / 7.4 degrees at the
+  99th percentile and 20 at most, the wrist 0.30 cm at the 99th percentile and 0.89 / 0.99 cm at most, the elbow, the
+  hand's rotation and the stretches given back unchanged.  a09 with the joints cut as FineDance's (肩 -> 腕捩 -> 手捩 ->
+  手首, the review of motor-human) then reads the twist where it is: elbow -> wrist -0.04 / +0.04 frames with human
+  (before -0.12 / -0.01) and +0.09 / +0.12 with the default (before +0.96 / +1.07, much of which was the twist bones
+  copied on the input's time); read from the elbow's plane the humerus no longer seems to pass its cap by 26 - 40
+  degrees on straight arms (now 4.1 / 3.0, the input 2.3 / 1.8).  Tracking 腕捩 and 手捩 inside the layer instead, with 1-DoF twist
   bones and a 1-DoF elbow, also leaves a hinge, but changes the whole arm's tracking (the hand's rotation up to 23
   degrees, the wrist up to 7 cm against the layer without it) and takes twice as long; and running tools/anatomy_layer.py
   again after the layer moves the elbow up to 6.1 cm for its range of motion (the review of motor-human).
