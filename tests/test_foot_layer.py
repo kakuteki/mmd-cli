@@ -1579,6 +1579,45 @@ class HoverSupportTest(unittest.TestCase):
         for t in range(13, 17):
             self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)      # the tip on the floor
 
+    def test_the_touching_part_that_holds_still_sets_the_speed(self):
+        # a flat shoe turning 6 degrees a frame about the vertical through a forefoot point of its sole (a turn on the ball,
+        # the bones' turns given directly): its heel, the lowest at rest, sweeps round at some 35 cm/s, but the part on the
+        # ball holds still, so the shoe does not travel along the floor
+        F = 8
+        sol = leg_ik.solve(RIG, motion(key("センター", 0, position=(0, -1.2, 0)), key("センター", F - 1, position=(0, -1.2, 0))),
+                           range(F))
+        o = SHOE.sides["左"]
+        ankle0, ex0 = rest("足首"), rest("足先EX")
+        ball = np.array(SOLE[6][:3])
+        q = np.array([axis_angle((0, 1, 0), 6.0 * t) for t in range(F)])
+        ankle = ball[None] - leg_ik.qrot(q, (ball - ankle0)[None])
+        leg = dict(sol["左"], ankle=ankle, q_foot=q, ex=ankle + leg_ik.qrot(q, (ex0 - ankle0)[None]), q_ex=q)
+        v = foot_layer.touch_speed(o, leg)
+        heel = np.array(SOLE[0][:3])
+        sweep = np.linalg.norm((heel - ball)[[0, 2]]) * np.radians(6.0) * 30.0 * 8.0
+        self.assertGreater(sweep, 30.0)
+        self.assertLess(float(v.max()), 1.0)
+
+    def test_a_held_piece_is_judged_with_its_whole_hover(self):
+        # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 8 and then travelling 45 cm/s; the pelvis
+        # bobs 2.2 cm over frames 3-8 (80 units/s^2 at the top: a body held up can do that) and then stays.  Whether the
+        # hover is a flight is judged on the whole hover (not a flight), not on the held frames alone (whose own curve, the
+        # bob, is steeper than half of gravity): the held frames are lowered
+        n = np.arange(self.F)
+        bob = np.where((n >= 3) & (n <= 8), 0.5 * 80.0 * ((2.5 / 30.0) ** 2 - ((n - 5.5) / 30.0) ** 2), 0.0)
+        keys = []
+        for t in range(self.F):
+            h = 0.1875 if 4 <= t <= 27 else 0.0
+            x = 0.1875 * max(0, t - 8)
+            keys += [key("左足ＩＫ", t, position=(x, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2 + bob[t], 0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        rr = plan["左"]["sink_info"]["runs"]
+        self.assertEqual(len(rr), 1)
+        self.assertEqual(rr[0][0], 4)
+        for t in range(4, 7):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.03)
+
     def test_only_the_held_part_of_a_hover_is_lowered(self):
         # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 14 and then travelling 45 cm/s (the song's
         # 26.0 s: the toe held for 12 frames, then sliding off at 80-200 cm/s): the held part is lowered onto the floor, the
