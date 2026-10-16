@@ -264,8 +264,9 @@ def report_one(rig, doc, m, floor_y):
                        "list": rows[:200]})
     floor = (lo["左"] < SUPPORT_FALL_CM) | (lo["右"] < SUPPORT_FALL_CM)
     fa = np.max([SC.down_acc(m["lower_y"]), SC.down_acc(m["centre_y"])], axis=0)
-    out["pelvis_floor"] = {"max": _r(fa[floor].max() if floor.any() else 0.0, 1),
-                           "past_bound": int(np.sum(floor & (fa > BOUND + BOUND_TOL)))}
+    past = floor & (fa > BOUND + BOUND_TOL)
+    out["pelvis_floor"] = {"max": _r(fa[floor].max() if floor.any() else 0.0, 1), "past_bound": int(np.sum(past)),
+                           "past_bound_s": [[_r(m["frames"][t] / FPS, 2), _r(fa[t], 1)] for t in np.flatnonzero(past)[:200]]}
     return out
 
 

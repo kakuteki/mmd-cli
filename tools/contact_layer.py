@@ -45,7 +45,9 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    height (センター) changes over the flight and WINDOW frames each side (the push and the catch) by the least change, with
    its third differences weighed SMOOTH, that makes the centre of mass's second differences -G on the frames with air on
    both sides, keeps every frame on the floor no faster falling than FALL_BOUND (or the input) and every standing leg in
-   reach.  A foot in the air goes up with the body as far as its leg would otherwise straighten past AIR_KNEE_DEG.
+   reach.  A foot in the air goes with the body (the leg keeps the dance's shape: people's feet clear the floor more in
+   longer flights, 3.3 cm the median of the highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP
+   frames from the floor.
 6. Between the frames: MMD draws 240 fps and interpolates the keys; where a shoe would dip into the floor between two
    frames both are raised by the dip (the foot layer's sub-frame check).
 
@@ -123,7 +125,8 @@ PLANT_SPEED = 30.0              # cm/s: a standing foot's touching part moving s
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
-AIR_KNEE_DEG = 20.0             # degrees: a flying leg straightens to this before its foot goes up with the body
+CARRY_RAMP = 2                  # frames: a foot leaving the floor goes with the body's change by half on its first frame off
+                                # it and fully from the second (the same before a landing)
 SUB_NEAR = 0.25                 # units: the intervals checked between the frames (either end this near the floor)
 SUB_ROUNDS = 3
 IK_MISS = 0.0125                 # units (1 mm): MMD's ankle this far from its goal has not reached it
@@ -347,7 +350,7 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None):
             e[k] = 1.0
             A_in.append(e)
             b_in.append(max(float(need[t]), 0.0))
-            if floor_frames[t] and 0 < t < F - 1:
+            if 0 < t < F - 1:                    # (every frame: in the air too, no faster than the dance's own fall)
                 A_in.append(-D2[k])
                 b_in.append(-max((float(allowed[t]) - float(fall_down[t])) / (FPS * FPS), 0.0))
         x, act, rounds, ok = solve_qp(H, np.zeros((0, n)), np.zeros(0), np.array(A_in), np.array(b_in),
@@ -379,12 +382,14 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
                 c2 = com_y[t + 1] - 2.0 * com_y[t] + com_y[t - 1]
                 eq_rows.append(D2[k])
                 eq_b.append(-g - c2)
-            elif floor_frames[t]:
+            else:
+                # every other frame of the window (the floor's, a flight's first and last, a short air): the pelvis falls
+                # no faster than the bound or the dance's own fall there
                 allowed = (max(FALL_BOUND, fall_in[t]) + FALL_TOL * 0.5) / (FPS * FPS)
                 lo = max(-allowed - (y[t + 1] - 2.0 * y[t] + y[t - 1]) for y in pelvis_ys)
                 in_rows.append(D2[k])
                 in_b.append(lo)
-                if np.isfinite(room[t]):
+                if floor_frames[t] and np.isfinite(room[t]):
                     e = np.zeros(n)
                     e[k] = -1.0
                     in_rows.append(e)
@@ -702,15 +707,25 @@ def layer(model, rig, shoe, motion, params=None):
     lift = {s: np.stack([corr[s][:, 0], dy_e[s], corr[s][:, 1]], 1) for s in SIDES}
     hips_low = {s: sol[s]["hip"] - np.stack([np.zeros(F), drop, np.zeros(F)], 1) for s in SIDES}
     goals = {s: sol[s]["goal_ankle"] + lift[s] for s in SIDES}
-    air_room = {s: raise_room(hips_low[s], goals[s], knee_reach(*lengths[s], AIR_KNEE_DEG)) for s in SIDES}
+    away = {}
+    for s in SIDES:                     # 0 on the floor, CARRY_RAMP frames off it and further: 1
+        k = np.full(F, 10 ** 6, dtype=float)
+        idx = np.flatnonzero(stance[s])
+        if len(idx):
+            pos = np.searchsorted(idx, np.arange(F))
+            left = np.where(pos > 0, np.arange(F) - idx[np.maximum(pos - 1, 0)], 10 ** 6)
+            right = np.where(pos < len(idx), idx[np.minimum(pos, len(idx) - 1)] - np.arange(F), 10 ** 6)
+            k = np.minimum(left, right).astype(float)
+        away[s] = np.minimum(k / CARRY_RAMP, 1.0)
 
     def offsets_of(ch):
-        """the feet's offsets with the change ch of the pelvis: a foot in the air goes up with the body as far as its leg
-        would straighten past AIR_KNEE_DEG"""
+        """the feet's offsets with the change ch of the pelvis: a foot in the air goes with the body (the leg keeps the
+        dance's shape), from half on its first frame off the floor (and its last before landing) to all, never into the
+        floor"""
         cr, offs = {}, {}
         for s in SIDES:
-            r = np.where(np.isfinite(air_room[s]), np.maximum(air_room[s], 0.0), 0.0)
-            cr[s] = np.where(~stance[s], np.maximum(ch - r, 0.0), 0.0)
+            cr[s] = np.where(~stance[s], away[s] * ch, 0.0)
+            cr[s] = np.maximum(cr[s], -np.maximum(low[s] + dy_e[s] - FL.PEN_TOL, 0.0))
             offs[s] = lift[s] + np.stack([np.zeros(F), cr[s], np.zeros(F)], 1)
         return offs, cr
     wrows, resid = [], []
@@ -737,7 +752,7 @@ def layer(model, rig, shoe, motion, params=None):
         base = com[:, 1] - drop
         com_out = None
         for it in range(FLIGHT_ROUNDS):
-            change, wrows = flight_change(wins, air, floor_frames, base, pelvis_ys, fall_in, room, F)
+            change, wrows = flight_change(wins, in_flight, floor_frames, base, pelvis_ys, fall_in, room, F)
             offs, _ = offsets_of(change)
             new, _ = comp.compose(offs, change - drop)
             com_out = body_com(model, comp.build(new), F)
