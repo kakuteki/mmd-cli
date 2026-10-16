@@ -60,8 +60,9 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    limb's quick move (the trace's one-frame jumps) stays the dance's instead of the pelvis taking it up as a jolt.  A foot in the air goes with the body
    (the leg keeps the dance's shape: people's feet clear the floor more in longer flights, 3.3 cm the median of the
    highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP frames from the floor.
-6. Between the frames: MMD draws 240 fps and interpolates the keys; where a shoe would dip into the floor between two
-   frames both are raised by the dip (the foot layer's sub-frame check).
+6. The frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input (a push that
+   overshoots) is raised by the excess; MMD draws 240 fps and interpolates the keys, so where a shoe would dip into the
+   floor between two frames further than the input's did, both are raised by the dip (the foot layer's sub-frame check).
 
 Written: 足ＩＫ (both feet, its place) and センター (its height), a key on every frame (a linear curve, the physics bytes of
 the input's key in force); nothing else (the report's `untouched` reads it back).  With nothing to do the input comes
@@ -332,6 +333,15 @@ def held_within(c, e, r_lo, r_hi):
             lam = min(lam, mu)
     lam = max(lam, 0.0)
     return lam * c, lam < 1.0 - 1e-9
+
+
+def frame_raise(low_out, low_in, tol=None):
+    """[F] (units, >= 0): how far to raise a foot whose shoe (its lowest point over the floor, low_out [F]) the layer
+    leaves deeper in the floor than the input had it (low_in [F]) by more than a quarter of tol (FL.PEN_TOL): by that
+    much and a quarter of tol more"""
+    tol = FL.PEN_TOL if tol is None else tol
+    excess = np.maximum(-np.asarray(low_out, dtype=float), 0.0) - np.maximum(-np.asarray(low_in, dtype=float), 0.0)
+    return np.where(excess > 0.25 * tol, excess + 0.25 * tol, 0.0)
 
 
 def limb_smoothed(com_y, pelvis_y, weights=LIMB_SMOOTH):
@@ -929,17 +939,30 @@ def layer(model, rig, shoe, motion, params=None):
         plan["written"] = []
         return motion, plan
     new, out_sol = comp.compose(offsets, centre_dy)
-    # 6. between the frames: raise both frames of an interval whose shoe dips into the floor further than the input's did
+    # 6. the frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input's (a push that
+    # overshoots) is raised by the excess, and both frames of an interval whose shoe dips into the floor further than the
+    # input's did between them
     sub = {s: np.zeros(F) for s in SIDES}
     dip_in = {}
     written_idx = comp.written()
     for _ in range(SUB_ROUNDS if F > 1 else 0):
+        framed = False
+        for s in SIDES:
+            up = frame_raise(FL.shell_world(shoe.sides[s], out_sol[s])[:, :, 1].min(axis=1) - floor_y, low[s])
+            if up.any():
+                framed = True
+                sub[s] += up
+                offsets[s][:, 1] += up
+        if framed:
+            new, out_sol = comp.compose(offsets, centre_dy)
         near = np.zeros(F - 1, dtype=bool)
         for s in SIDES:
             lo_ = FL.shell_world(shoe.sides[s], out_sol[s])[:, :, 1].min(axis=1)
             near |= np.minimum(lo_[:-1], lo_[1:]) < floor_y + SUB_NEAR
         idx = np.flatnonzero(near)
         if not len(idx):
+            if framed:
+                continue
             break
         todo = np.array([i for i in idx if int(i) not in dip_in], dtype=int)
         if len(todo):
@@ -960,6 +983,8 @@ def layer(model, rig, shoe, motion, params=None):
                 sub[s] += up
                 offsets[s][:, 1] += up
         if not raised:
+            if framed:
+                continue
             break
         new, out_sol = comp.compose(offsets, centre_dy)
     plan["sub_raise"] = sub

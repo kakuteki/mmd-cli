@@ -224,6 +224,7 @@ class GroundTest(unittest.TestCase):
         a, b = shoes(m, F), shoes(out, F)
         self.assertGreater(float(a["左"]["low"][35:].min()), 1.0)                     # the dance's shoe is off the floor
         self.assertLess(float(b["左"]["low"][35:].max()), 0.15)                       # standing now
+        self.assertGreater(float(b["左"]["low"].min()), -0.1)                         # never 1 mm into the floor
         self.assertLess(float(np.abs(b["右"]["low"]).max()), 0.1)                     # the other foot stays on the floor ...
         self.assertGreater(float(b["右"]["low"].min()), float(a["右"]["low"].min()) - 0.01)   # ... no deeper than it was
         drop = world_y(m, F, "センター") - world_y(out, F, "センター")
@@ -593,6 +594,20 @@ class DropProfileTest(unittest.TestCase):
         self.assertGreater(float(z[15:26].min()), 0.5 - 1e-6)
         after = fall + np.r_[0.0, (z[2:] - 2.0 * z[1:-1] + z[:-2]) * FPS * FPS, 0.0]
         self.assertLess(float(after.max()), 122.0 + 0.5)
+
+
+class FrameRaiseTest(unittest.TestCase):
+    def test_a_frame_the_layer_leaves_deeper_in_the_floor_than_the_input_is_raised(self):
+        # the shoes' lowest points over the floor (units) as the layer leaves them and as the input had them: a frame
+        # deeper than the input by more than a quarter of PEN_TOL (0.4 mm) is raised by that and a quarter more (a push
+        # that overshoots: the song's 252.4 s, 1.04 mm under the floor); the input's own depth stays
+        tol = contact_layer.FL.PEN_TOL
+        out = np.array([0.0, -0.2 * tol, -2.0 * tol, -3.0 * tol, 0.01])
+        inp = np.array([0.0, 0.0, 0.0, -2.5 * tol, 0.01])
+        up = contact_layer.frame_raise(out, inp)
+        self.assertEqual([float(v) for v in up[[0, 1, 4]]], [0.0, 0.0, 0.0])
+        self.assertAlmostEqual(float(up[2]), 2.25 * tol, places=12)
+        self.assertAlmostEqual(float(up[3]), 0.75 * tol, places=12)
 
 
 class FlightChangeTest(unittest.TestCase):
