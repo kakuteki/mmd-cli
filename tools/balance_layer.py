@@ -227,6 +227,7 @@ DOWN_ACC_MAX = 122.0            # units/s^2: the pelvis's downward acceleration,
                                 # ceiling, made 38 dips on the beat shallower than 0.8 of the dance's and 15 jump tops 2 cm
                                 # lower: the review of 2026-10-16).  The skirt keeps the underwear hidden by its ceiling
                                 # (tools/pmx_skirt.py --ceiling 70, on main); --down-acc-max sets another bound
+AIR_NO_DROP = True               # no drop for the legs' reach in the air (False: before 2026-10-16)
 AIR_DOWN_ACC_MAX = math.inf       # units/s^2: and in the air (neither foot supports): nothing holds the body up there, it
                                 # falls with gravity and the pelvis moves about the COM with the limbs' swing, so the
                                 # dance's own fall is kept (122 in the air too, before 2026-10-16, lowered 9 of the
@@ -247,6 +248,9 @@ DESPIKE_SOFT = 100.0            # the kink bound's weight (against 1 for the cha
 DESPIKE_HALF = 10               # frames each side of a bounded kink that may move with it
 DESPIKE_ROUNDS = 8
 DESPIKE_ITERS = 1500
+DESPIKE_PASSES = 3
+DESPIKE_AIR = 1.0               # the box in the air (no leg reaches a floor there): order C of the MV kept 11.2 spikes a
+                                # minute with the floor's box once the air kept the dance's fall (10.7 with 122 there)
 # ---- the landings ------------------------------------------------------------------------------------------------
 DIP_DEG = 15.0                  # the knee's extra bend on a landing that takes the weight, from the heel (walking: 1-3 ->
 DIP_PEAK_S = 0.13               # 17 degrees at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm)
@@ -291,7 +295,7 @@ def params_default():
     return {"r_bal_cm": R_BAL_CM, "acc_max": ACC_MAX, "lead_s": LEAD_S, "lag_s": LAG_S, "drop_max_cm": DROP_MAX_CM,
             "dip_deg": DIP_DEG, "dip": False, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
             "catch": True, "vertical": True, "dip_deg_flat": DIP_DEG_FLAT, "dip_deg_fore": DIP_DEG_FORE,
-            "down_acc_max": DOWN_ACC_MAX, "air_down_acc_max": AIR_DOWN_ACC_MAX, "despike": True, "spike_per_min": SPIKE_PER_MIN, "pull_moving": False,
+            "down_acc_max": DOWN_ACC_MAX, "air_down_acc_max": AIR_DOWN_ACC_MAX, "air_no_drop": AIR_NO_DROP, "despike": True, "spike_per_min": SPIKE_PER_MIN, "pull_moving": False,
             "mos_ml_min_cm": MOS_ML_MIN_CM, "still_v_cm_s": STILL_V_CM_S, "still_min_s": STILL_MIN_S,
             "still_hold": STILL_HOLD}
 
@@ -1429,6 +1433,18 @@ def air_cap(air, floor_cap, air_cap_value):
     return np.where(air, float(air_cap_value), float(floor_cap))
 
 
+AIR_RAMP = 3                    # frames: the drop goes from all to none over this many frames in from each end of the air
+
+
+def air_ramp(air):
+    """[F] in [0, 1]: 0 off the air, rising over AIR_RAMP frames in from each end of each air stretch"""
+    w = np.zeros(len(air))
+    for a, b in runs(air):
+        t = np.arange(a, b + 1)
+        w[a:b + 1] = np.minimum(1.0, np.minimum(t - a + 1, b - t + 1) / float(AIR_RAMP))
+    return w
+
+
 def lower_hull(g):
     """the lower convex hull of the points (t, g[t]) (t = 0 .. F-1), evaluated at every t"""
     g = np.asarray(g, dtype=np.float64)
@@ -1583,7 +1599,7 @@ def _despike_window(D2P, acc_lo, bound, a, b, r, y_lo, y_hi, xz, iters):
     return z2, it
 
 
-def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, room_xz=None, iters=DESPIKE_ITERS):
+def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, room_xz=None, iters=DESPIKE_ITERS, air=None):
     """the least change e [F, 3] (units) of センター's world path P [F, 3] that leaves at most per_min of its 1-frame
     spikes a minute (speed_spikes), the largest taken first, as far as small changes do it.  Around each spike taken the
     path's kinks on the step's two frames are pulled under SPIKE_KINK_SHARE SPIKE_T (the speed then changes less than
@@ -1609,7 +1625,12 @@ def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, room_xz=None, 
     D2P = np.zeros((F, 3))
     D2P[1:-1] = d2(P)
     up = np.full(F, DESPIKE_UP_CM / CM) if room_up is None else np.clip(room_up, 0.0, DESPIKE_UP_CM / CM)
-    y_lo = -DESPIKE_DOWN_CM / CM
+    y_lo = np.full(F, -DESPIKE_DOWN_CM / CM)
+    if air is not None:
+        # in the air no leg reaches a floor: the box goes DESPIKE_AIR times as far up there (not down: a box twice as deep
+        # took 3 cm off the jumps' tops)
+        up = np.where(air, DESPIKE_AIR * DESPIKE_UP_CM / CM, up)
+        y_lo = np.where(air, 0.0, y_lo)                 # and never down: the passes took 2.6 cm off the 63.5 s jump
     xz = np.full(F, DESPIKE_XZ_CM / CM) if room_xz is None else np.clip(room_xz, 0.0, DESPIKE_XZ_CM / CM)
     bound = np.zeros(F, bool)
     e = np.zeros((F, 3))
@@ -1627,7 +1648,7 @@ def despike(P, heights, cap, per_min=SPIKE_PER_MIN, room_up=None, room_xz=None, 
         info["rounds"] = rnd
         e = np.zeros((F, 3))
         for a, b in _windows(bound, DESPIKE_HALF, 1, F - 2):
-            e[a:b + 1], its = _despike_window(D2P, acc_lo, bound, a, b, r, y_lo, up[a:b + 1], xz[a:b + 1], iters)
+            e[a:b + 1], its = _despike_window(D2P, acc_lo, bound, a, b, r, y_lo[a:b + 1], up[a:b + 1], xz[a:b + 1], iters)
             info["iterations"] = max(info["iterations"], its)
     info["after"] = int(len(speed_spikes(P + e)[0]))
     info["frames_bound"] = int(bound.sum())
@@ -1815,6 +1836,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
     radius = np.full(F, FREE_M)                         # the hold-back: |shift| under this (metres) per frame
     dip_cap = np.ones(F)                                # and the landings' dips scaled by this
     drop_hold = np.full(F, np.inf)                      # and the standing knees' drop under this (units)
+    air_nodrop = air.copy()                             # the air frames where the hips do not go down for the legs
     miss0 = ik_check(motion) if ik_check is not None else None
     ik_rows = []
     warm = None
@@ -1874,6 +1896,12 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         drop_over = int(np.sum(need[finite] > allow_any[finite] + 1e-4))
         moved = body.moved(shift - np.stack([np.zeros(F), drop, np.zeros(F)], 1), carry)
         dip, landings = landing_dips(moved, plan, p, dip_cap)   # on the body already moved and dropped: they add up
+        if p.get("air_no_drop", AIR_NO_DROP):
+            # in the air no leg holds the body up and none has a floor to reach: the hips come back up from the drop for
+            # the legs there, over AIR_RAMP frames in from each end of the air (213.5 s of the MV: a hop with the feet 2-9
+            # cm up came 1-2 cm lower for the legs' reach).  The drop itself is solved as before: holding it at 0 in the
+            # air made it leave the floor frame next to the air early, and MMD's IK fell short there (74.43 s)
+            drop = drop * (1.0 - air_ramp(air_nodrop))
         shift[:, 1] = -(drop + dip)
         # the pelvis and センター never go down faster than DOWN_ACC_MAX, the dance's motion and the layer's together:
         # lowered only, the lowest points kept (the layer moves both by the same height)
@@ -1883,30 +1911,39 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         # センター's 1-frame jolts and hitches (a08's spikes) spread over the frames round them, down to the human count
         spikes, e_sp = None, np.zeros((F, 3))
         if p.get("despike", True):
-            room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
-            hts = [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)]
-            cap_d = cap_v
-            if np.ndim(cap_v):
-                # in the air the despike keeps the fall no faster than it is now (the song's 213.3 s: with no bound there
-                # it moved a frame of the jump 1.4 cm and the fall went 254 -> 558 units/s^2)
-                now = np.max([down_acc(h) for h in hts], axis=0)
-                cap_d = np.where(np.isfinite(cap_v), cap_v, np.maximum(now, p["down_acc_max"]))
-            e_sp, spikes = despike(body.p(CENTRE) + shift, hts, cap_d, p["spike_per_min"], room_up=room_up, room_xz=room_xz)
-            # the linear room is a guess: where a leg on the floor still reaches past its bound, the despike is taken
-            # back there (scaled by a smooth cover of what is past, until none is)
-            for _ in range(8):
-                over = despike_overreach(body.moved(shift + e_sp, carry), plan, body) & \
-                    np.any(np.abs(e_sp) > 0.0, axis=1)
-                if not over.any():
+            e_all = np.zeros((F, 3))
+            # in passes: the take-back over the legs' reach and the lowering after it make new spikes (order C of the
+            # MV: 43 left after the despike, 48 after)
+            for _pass in range(DESPIKE_PASSES):
+                room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
+                hts = [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)]
+                cap_d = cap_v
+                if np.ndim(cap_v):
+                    # in the air the despike keeps the fall no faster than it is now (the song's 213.3 s: with no bound there
+                    # it moved a frame of the jump 1.4 cm and the fall went 254 -> 558 units/s^2)
+                    now = np.max([down_acc(h) for h in hts], axis=0)
+                    cap_d = np.where(np.isfinite(cap_v), cap_v, np.maximum(now, p["down_acc_max"]))
+                e_sp, spikes = despike(body.p(CENTRE) + shift, hts, cap_d, p["spike_per_min"], room_up=room_up, room_xz=room_xz,
+                                       air=air if np.ndim(cap_v) else None)
+                # the linear room is a guess: where a leg on the floor still reaches past its bound, the despike is taken
+                # back there (scaled by a smooth cover of what is past, until none is)
+                for _ in range(8):
+                    over = despike_overreach(body.moved(shift + e_sp, carry), plan, body) & \
+                        np.any(np.abs(e_sp) > 0.0, axis=1)
+                    if not over.any():
+                        break
+                    e_sp = e_sp * (1.0 - np.clip(smooth_cover(over.astype(float), 3), 0.0, 1.0))[:, None]
+                    e_sp[over] = 0.0
+                shift += e_sp
+                e_all += e_sp
+                if p.get("vertical", True):
+                    # what the despike's solve left over the cap (it stops where the box cannot meet the kinks): lowered
+                    more = vertical_fix([body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)], cap=cap_v)
+                    shift[:, 1] += more
+                    vfix = vfix + more
+                if len(speed_spikes(body.p(CENTRE) + shift)[0]) <= spikes["keep"]:
                     break
-                e_sp = e_sp * (1.0 - np.clip(smooth_cover(over.astype(float), 3), 0.0, 1.0))[:, None]
-                e_sp[over] = 0.0
-            shift += e_sp
-            if p.get("vertical", True):
-                # what the despike's solve left over the cap (it stops where the box cannot meet the kinks): lowered
-                more = vertical_fix([body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)], cap=cap_v)
-                shift[:, 1] += more
-                vfix = vfix + more
+            e_sp = e_all
         floor = shift.copy()
         floor[:, 1] = 0.0
         feet = {s: carry[s][:, None] * floor for s in SIDES}     # the carried feet's world move (units)
@@ -1932,6 +1969,8 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         radius[near] = np.minimum(radius[near], 0.5 * np.linalg.norm(y[near], axis=1))
         dip_cap[near] *= 0.5
         drop_hold[near] = np.minimum(drop_hold[near], 0.5 * drop[near])
+        # (a new miss next to the air: the hips go down for the legs in the air round it again)
+        air_nodrop &= smooth_cover(near.astype(float), 3) <= 1e-6
     report["mmd_ik"] = {"checked": ik_check is not None, "rounds": len(ik_rows) - 1 if ik_rows else 0,
                         "per_round": ik_rows, "remaining": ik_rows[-1]["new_misses"] if ik_rows else None,
                         "held_back_frames": int(np.sum(radius < FREE_M)), "dip_capped_frames": int(np.sum(dip_cap < 1.0)),
@@ -2390,6 +2429,8 @@ def main(argv=None):
     ap.add_argument("--air-down-acc-max", type=float, default=AIR_DOWN_ACC_MAX,
                     help="units/s^2: the same in the air, where neither foot supports (default: no bound, the dance's own "
                          "fall; the value of --down-acc-max gives the layer before 2026-10-16)")
+    ap.add_argument("--air-drop", action="store_true", help="let the hips go down for the legs' reach in the air too (the "
+                                                          "layer before 2026-10-16)")
     ap.add_argument("--no-despike", action="store_true", help="leave センター's 1-frame spikes (a08) as they are")
     ap.add_argument("--pull-moving", action="store_true", help="pull every single support over the foot, moving or still "
                                                               "(the layer before 2026-10-15)")
@@ -2414,7 +2455,7 @@ def main(argv=None):
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
                   "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": bool(args.dip and not args.no_dip), "catch": not args.no_catch,
                   "vertical": not args.no_vertical, "down_acc_max": args.down_acc_max,
-                  "air_down_acc_max": args.air_down_acc_max, "still_hold": not args.no_still_hold, "despike": not args.no_despike,
+                  "air_down_acc_max": args.air_down_acc_max, "still_hold": not args.no_still_hold, "air_no_drop": not args.air_drop, "despike": not args.no_despike,
                   "spike_per_min": args.spike_per_min, "pull_moving": args.pull_moving, "mos_ml_min_cm": args.mos_ml_min}
         ik_check, ik_note = None, None
         if args.mmd_ik:
