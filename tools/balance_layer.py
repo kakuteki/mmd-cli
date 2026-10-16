@@ -1219,6 +1219,26 @@ def band_target(body, com, plan, r_bal_cm):
     return d * UNIT_M * plan["share"][:, None]
 
 
+def hold_still_targets(d, plan, com0):
+    """d [F, 2] (metres) with one place for the COM per still stretch (p["still_hold"]): on the stretch, its tail and the
+    lead before it, where the pull is on that foot, the way from the dance's COM to the stretch's mean of (COM + d).
+    The COM then stands still while the dance's does (a COM drifting a little, or the standing foot pivoting under it,
+    moved the band's nearest point 9 cm in 0.3 s at 89.4 s of the MV, and the body with it)"""
+    d = d.copy()
+    q = com0[:, [0, 2]] * UNIT_M
+    for first, pa, pb, last, s in plan.get("still_groups", []):
+        mine = np.zeros(len(d), bool)
+        mine[first:last + 1] = True
+        mine &= plan["foot"] == s
+        inside = mine.copy()
+        inside[:pa] = False
+        inside[pb + 1:] = False
+        if inside.any():
+            place = np.mean(q[inside] + d[inside], axis=0)
+            d[mine] = place - q[mine]
+    return d
+
+
 def com_response(body, com0, carry=None):
     """how far the COM's floor point follows センター's floor move, per frame (the knees re-solved; the feet on the floor
     stay, a lifted foot goes with the body by its carry)"""
@@ -1778,6 +1798,8 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
     cterms = None
     if pulled:
         d = band_target(body, com0, plan, p["r_bal_cm"])
+        if p.get("still_hold", STILL_HOLD):
+            d = hold_still_targets(d, plan, com0)
         k = com_response(body, com0, carry)
         discs = reach_discs(body, allowance, carry)
         slabs = range_slabs(body, carry)
