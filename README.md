@@ -548,7 +548,8 @@ python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 32]
                                 [--debug [shadow|lit]] [--sharp]
 python tools/mme_shadow.py check MMD.exe                               # MME（3 つの DLL を SHA-256 で）が隣にあるか
 python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd           # この MMD がこのモデルの体の影をどちらで描くか
-python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json]   # 影だけの絵（--debug）の縁の幅・覆う割合・ちらつき
+python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [--shade SHADED.avi LIT.avi]
+                                    # 影だけの絵（--debug）の縁の幅・覆う割合・ちらつき、--shade で陰が残す光（--debug lit の絵との輝度の比）
 ```
 
 - 陰の付け方は MMD の標準のまま（環境色と発光色の和を飽和、トゥーン、テクスチャとスフィアは MMD 自身の標本器）。`--sharp`（1 点・トゥーンの色）で描くと
