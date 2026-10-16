@@ -612,6 +612,27 @@ class SoftShadowTest(unittest.TestCase):
         self.assertGreater(across(soft), 0.9 * across(lit))                   # in the shadow it keeps its light
         numpy.testing.assert_allclose(at(soft, 2), at(lit, 2), atol=0.5)      # 9.5 behind it: untouched
 
+    def test_stage_shadow_key_is_the_key_lights_share_of_the_floors_light(self):
+        # the floor's share of the key light as a setting of the look (review of softshadow-mme: the body's shade and the
+        # floor's shadow set apart, the options C and D).  Left out it is KEY_SHARE: the floor of before, to the bit
+        view = self.view()
+        figure = FakeFigure(centre=(5.0, 2.5))
+        figure.capsules = [((5.5, 6.0, 2.5), (5.5, 6.0, 2.5), 2.0)]
+        look = dict(shadow_light=[0.0, -1.0, 0.0], shadow_contact=0.0, pool=1.0)
+        default = mv_world.floor([view], world_look(shadow=1.0, **look), view.size, [figure])[0]
+        same = mv_world.floor([view], world_look(shadow=1.0, shadow_key=mv_world.KEY_SHARE, **look), view.size, [figure])[0]
+        numpy.testing.assert_array_equal(default, same)
+        lit = mv_world.floor([view], world_look(shadow=0.0, shadow_key=0.35, **look), view.size, [figure])[0]
+        soft = mv_world.floor([view], world_look(shadow=1.0, shadow_key=0.35, **look), view.size, [figure])[0]
+        u, v, _ = view.project([(5.8, 0.0, 2.5)])
+        at = lambda img: img[int(round(v[0])), int(round(u[0]))]
+        numpy.testing.assert_allclose(at(soft) / at(lit), 0.65, atol=0.01)       # the core keeps 1 - 0.35
+        # the floor of before (stage.shadow_share 0) takes it too
+        old = mv_world.floor([view], world_look(shadow=1.0, shadow_share=0, **look), view.size, [figure])[0]
+        old_same = mv_world.floor([view], world_look(shadow=1.0, shadow_share=0, shadow_key=mv_world.KEY_SHARE, **look),
+                                  view.size, [figure])[0]
+        numpy.testing.assert_array_equal(old, old_same)
+
     def test_shadow_share_0_is_the_floor_shadow_of_before(self):
         # stage.shadow_share 0 (review of softshadow-mme): the floor of before 2026-10-17, as main drew it.  A sole lying on
         # the floor across the line x = 5 at z = 2.5: under it the line goes dark too
