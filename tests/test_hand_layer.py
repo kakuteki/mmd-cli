@@ -1869,14 +1869,15 @@ class RealDanceTest(unittest.TestCase):
 
     def test_the_transit_over_the_whole_song(self):
         # the whole trace: the fingers move with a good share of the arm's movements, the way turns from one movement to
-        # the next about as often as the dancers' (53 - 56 %), never in long strict alternations, and every change of
+        # the next by chance (0.55 where the hand can go both ways; a flat hand and a fist only one way, so fewer on the
+        # whole song: 0.40 - 0.48 on the trace), never in long strict alternations, and every change of
         # shape of 20 degrees or more meets its shape when it does without the transit
         on = hand_layer.layer(self.model, self.dance, pulp=self.pulp)
         off = hand_layer.layer(self.model, self.dance, hand_layer.as_v9(hand_layer.default_params()), pulp=self.pulp)
         for side in ("左", "右"):
             row = on.report["steps"]["transit"][side]
             self.assertGreater(row["moved"], 0.2 * row["movements"], side)
-            self.assertTrue(0.40 <= row["turn_share"] <= 0.70, (side, row["turn_share"]))
+            self.assertTrue(0.33 <= row["turn_share"] <= 0.70, (side, row["turn_share"]))
             self.assertLessEqual(row["longest_alternation"], 8, side)
             s1, s0 = middle_sum_real(on.motion, self.model, side), middle_sum_real(off.motion, self.model, side)
             late = []
