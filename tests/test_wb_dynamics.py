@@ -170,6 +170,33 @@ class ZmpTest(unittest.TestCase):
         np.testing.assert_allclose(d["zmp"][inner, 0], want[inner], atol=0.002)     # 2 mm
         self.assertGreater(np.abs(want - c[:, 0])[inner].max(), 0.03)               # (and the shift is a real one)
 
+    def test_a_forearm_swung_round_the_elbow(self):
+        """(the review, 2026-10-17: a body whose one part moves, worked by hand) the body stands still but the left forearm
+        and hand go round the still elbow in a level circle, u(t) = (cos wt, 0, sin wt): their COMs (de Leva: the forearm's
+        at 45.59 % of elbow -> wrist, the hand's at 34.27 / 0.88 % of wrist -> 中指３) are pulled to the elbow by w^2 d, so the
+        floor's push must lean that way: ZMP = COM + w^2 (y_elbow - h) sum(m d) u / g (their own spin about the vertical
+        stays the same, so it adds nothing).  The ZMP circles 2 cm round a COM that circles 0.5 cm"""
+        F, hz, h = 150, 1.5, 0.111
+        w = 2 * math.pi * hz
+        t = np.arange(F) / FPS
+        lm = still(F)
+        E = np.array(REST["elbow_L"])
+        Lf = float(np.linalg.norm(np.array(REST["wrist_L"]) - E))
+        Lh = float(np.linalg.norm(np.array(REST["mid3_L"]) - np.array(REST["wrist_L"])))
+        u = np.stack([np.cos(w * t), np.zeros(F), np.sin(w * t)], 1)
+        lm["wrist_L"] = E + Lf * u
+        lm["mid3_L"] = E + (Lf + Lh) * u
+        d = wb.dynamics(lm, floor_y=h, cutoff_hz=6.0)
+        c = wb.com(wb.segments(lm)) * U
+        md = (1.38 * 0.4559 * Lf + 0.56 * (Lf + (0.3427 / wb.HAND_TIP_SHARE) * Lh)) / 99.99 * U     # sum m d per kg (m)
+        want = c[:, [0, 2]] + (w * w * (E[1] - h) * U * md / G) * u[:, [0, 2]]
+        inner = slice(30, F - 30)
+        np.testing.assert_allclose(d["zmp"][inner], want[inner], atol=0.001)                      # 1 mm
+        self.assertGreater(np.linalg.norm(want - c[:, [0, 2]], axis=1)[inner].min(), 0.015)
+        # the same body and floor 4 m higher (the floor's height term, h F / F_y, then 9 cm): the same ZMP
+        up = {k: v + np.array([0.0, 50.0, 0.0]) for k, v in lm.items()}
+        np.testing.assert_allclose(wb.dynamics(up, floor_y=h + 50.0, cutoff_hz=6.0)["zmp"][inner], d["zmp"][inner], atol=1e-6)
+
     def test_free_fall_presses_on_nothing(self):
         F = 40
         t = np.arange(F) / FPS
