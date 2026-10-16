@@ -756,7 +756,7 @@ def merge_motions(motions):
     return vmd.Motion(model_name=motions[0].model_name, bones=[k for keys in by.values() for k in keys])
 
 
-REFERENCE_HEAD = 16.24               # the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on
+REFERENCE_HEAD = 16.24313735961914   # the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on
 # her body as capsules for the soft shadow: (bone, offset, bone, offset, radius), each end at the bone's rest position plus
 # the offset (model units, the model's rest frame, turned with the bone).  Measured on Sour's Rin (White.pmx) at rest
 # (softshadow NOTES, measure_body.py / measure_head.py): a radius is the 90th percentile of the distance of the vertices whose
