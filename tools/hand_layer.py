@@ -512,7 +512,7 @@ PACE_H = math.sqrt(3.0) / 2.563
 # h, 0.06 - 1.2 m: 6.6 at 0.06 m, 13 at 0.25, 24 at 0.64, 37 at 1.2), going out from the line between the two shapes
 # and back (the transit part: 6.5 - 8 degrees at the speed's peak, the 90th percentile 31 - 40; the trace's 0.1 - 0.8)
 TRANSIT = {"c": 30.79, "p": 0.564, "peak": 0.3, "span": (6, 60), "smooth": 2, "cap": 25.0, "open": 40.0, "shut": 150.0,
-           "spread": (30.0, 60.0), "closed": (150.0, 200.0)}
+           "spread": (30.0, 60.0), "closed": (150.0, 200.0), "half": 3, "change": 10.0}
 # the transit parts of the twelve joints lie on one synergy (the first principal component, 78 - 85 % of their
 # variance; the mean of the K-pop and street dances' left and right hands): MP, PIP, DIP of each long finger
 TRANSIT_SYNERGY = {"人指": (0.327, 0.317, 0.150), "中指": (0.410, 0.316, 0.179), "薬指": (0.400, 0.355, 0.134),
@@ -1183,7 +1183,11 @@ def arm_movements(knuckle, peak=None, span=None, reach=None):
 
 
 def transit_bump(F, a, p, b):
-    """0 .. 1 over the movement (a, p, b): a half cosine up from a to its peak at p and down to b, 0 elsewhere"""
+    """0 .. 1 over the movement (a, p, b): a half cosine up from a to its peak at p and down to b, 0 elsewhere; the peak
+    kept TRANSIT["half"] frames from either end (a speed peaking on the movement's first or last frames would make
+    a jump of it)"""
+    h = min(TRANSIT["half"], (b - a) // 2)
+    p = min(max(p, a + h), b - h)
     e = np.zeros(F)
     t = np.arange(a, p + 1)
     e[a:p + 1] = 0.5 * (1.0 - np.cos(math.pi * (t - a) / float(p - a)))
@@ -1230,12 +1234,21 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         moves = arm_movements(kn)
         add = np.zeros(F)
         amps, last = [], 1.0
+        left = {"change": 0, "shape": 0, "travel": 0}
         for a, p, b in moves:
             h = float(np.sum(np.linalg.norm(np.diff(kn[a:b + 1], axis=0), axis=1)))
             T = float(np.mean([np.abs(np.diff(sums[f][a:b + 1])).sum() for f in fingers]))
-            amp = scale * max(0.0, TRANSIT["c"] * h ** TRANSIT["p"] - T) / (2.0 * mean_share)
+            C = float(np.mean([abs(sums[f][b] - sums[f][a]) for f in fingers]))
+            if C >= TRANSIT["change"]:
+                left["change"] += 1          # the trace changes the shape here: the choreography's change, kept
+                continue
+            if not float(w[a:b + 1].max()) > 1e-9:
+                left["shape"] += 1
+                continue
+            amp = scale * max(0.0, TRANSIT["c"] * h ** TRANSIT["p"] - (T - C)) / (2.0 * mean_share)
             amp = min(amp, TRANSIT["cap"])
-            if amp <= 1e-9 or not float(w[a:b + 1].max()) > 1e-9:
+            if amp <= 1e-9:
+                left["travel"] += 1
                 continue
             level = float(np.mean([sums[f][a] for f in fingers]))
             way = 1.0 if level < TRANSIT["open"] else (-1.0 if level > TRANSIT["shut"] else -last)
@@ -1246,7 +1259,7 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         for f in fingers:
             for k, j in zip(("mp", "pip", "dip"), TRANSIT_SYNERGY[f]):
                 ang[cs[f][k].bone][0] = ang[cs[f][k].bone][0] + add * (j / mid)
-        report[side] = {"movements": len(moves), "moved": len(amps), "amplitude_deg": stats(amps),
+        report[side] = {"movements": len(moves), "moved": len(amps), "left": left, "amplitude_deg": stats(amps),
                         "added_deg_s": stats(np.abs(np.diff(add)) * FPS)}
     return report
 

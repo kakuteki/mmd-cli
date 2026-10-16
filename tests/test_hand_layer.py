@@ -1108,6 +1108,15 @@ class TransitTest(unittest.TestCase):
                         eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
         self.assertLess(max(float(np.abs(v[8:26]).max()) for v in d.values()), 0.05)
 
+    def test_a_movement_whose_speed_peaks_at_its_start_makes_no_jump(self):
+        # the excursion's peak is kept 3 frames from either end: never more than half of it in one frame (a peak on the
+        # movement's second frame would put all of it there)
+        e = hand_layer.transit_bump(40, 10, 11, 22)
+        self.assertAlmostEqual(float(e.max()), 1.0)
+        self.assertLessEqual(float(np.abs(np.diff(e)).max()), 0.5 + 1e-9)
+        self.assertEqual(float(e[:10].max()), 0.0)
+        self.assertEqual(float(e[22:].max()), 0.0)
+
     def test_the_report_counts_the_movements(self):
         _, rep = self.dev([(0, "half"), (LAST, "half")], SWINGS)
         row = rep["steps"]["transit"]["左"]
