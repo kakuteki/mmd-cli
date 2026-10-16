@@ -1404,21 +1404,51 @@ class HoverSupportTest(unittest.TestCase):
         self.assertEqual(plan["左"]["sink_info"]["runs"], [])
         self.assertLess(float(np.abs(plan["左"]["sink"]).max()), 1e-9)
 
+    def pelvis_fall(self, m):
+        """the downward acceleration [F] (units/s^2, + down) of 下半身 and of センター (the larger), as forward kinematics
+        puts them (mmd_cli.fk: both above the legs' IK)"""
+        pose = fk.Pose(pmx.loads(DATA), m, ["下半身", "センター"])
+        worlds = [pose.at(t) for t in range(self.F)]
+        out = np.zeros(self.F)
+        for name in ("下半身", "センター"):
+            y = np.array([w[name][0][1] for w in worlds])
+            a = np.zeros(self.F)
+            a[1:-1] = -(y[2:] - 2.0 * y[1:-1] + y[:-2]) * 30.0 ** 2
+            out = np.maximum(out, a)
+        return out
+
     def test_the_sink_does_not_take_the_pelvis_fall_past_the_bound(self):
-        # the dance's pelvis already falls at the bound (122 units/s^2) for the 6 frames before the hover, then stays: the
-        # sink may not add to that fall
-        n = np.arange(self.F)
+        # the dance's pelvis already falls at the balance layer's bound (122 units/s^2) for the 6 frames before the hover,
+        # then stays, the feet on the floor: the sink may not add to that fall.  The bound is gravity at Rin's size (9.8
+        # m/s^2 at 8 cm a unit, 122.5): faster than it the skirt flies up (HANDOVER 2026-10-16, the skirt and the balance
+        # layer), and no floor holds a body falling faster
+        g = 9.8 / 0.08
         fall = np.array([-0.5 * 122.0 * ((min(max(t, 4), 10) - 4) / 30.0) ** 2 for t in range(self.F)])
+        m_in = motion(*self.keys(0.1875, pelvis=fall))
         f_in, f_out, out, plan = run_layer(*self.keys(0.1875, pelvis=fall), frames=self.F)
-        sol_in = leg_ik.solve(RIG, motion(*self.keys(0.1875, pelvis=fall)), n)
-        sol_out = leg_ik.solve(RIG, out, n)
-        y_in = 0.5 * (sol_in["左"]["hip"][:, 1] + sol_in["右"]["hip"][:, 1])
-        y_out = 0.5 * (sol_out["左"]["hip"][:, 1] + sol_out["右"]["hip"][:, 1])
-        a_in = np.diff(y_in, 2) * 30.0 ** 2
-        a_out = np.diff(y_out, 2) * 30.0 ** 2
-        self.assertLess(float(a_in.min()), -100.0)                                 # the input does fall at about the bound
-        self.assertTrue(np.all(a_out >= -np.maximum(foot_layer.HOVER_ACC_BOUND, -a_in) - 2.0), (a_in.round(0), a_out.round(0)))
+        a_in, a_out = self.pelvis_fall(m_in), self.pelvis_fall(out)
+        self.assertGreater(float(a_in.max()), 120.0)                               # the input does fall at about the bound
+        self.assertTrue(np.all(a_out <= np.maximum(g, a_in) + 0.5), (a_in.round(1), a_out.round(1)))
+        self.assertGreater(float(plan["左"]["sink"].max()), 0.1)                   # (the run is still lowered)
         self.assertEqual(plan["左"]["sink_info"]["acc_past_bound_frames"], 0)
+
+    def test_a_hop_whose_fall_lies_inside_the_run_keeps_its_height(self):
+        # both feet 2.4 cm up for 10 frames and the pelvis hops in them (the song's 213.5 s, base2: a dip, 6 cm up and
+        # down, falling at 190 units/s^2 on three frames): over the whole run its curve is flatter than half of gravity
+        # (the take-off and the landing are in it), yet it falls faster than gravity: a flight, not a figure held up
+        hop = np.array([-0.95, -1.73, -1.14, 1.22, 3.73, 4.53, 3.65, 1.57, -1.27]) / 8.0
+        pel = np.zeros(self.F)
+        pel[10:19] = hop
+        keys = []
+        for t in range(self.F):
+            h = 0.3 if 10 <= t <= 19 else 0.0
+            keys += [key("左足ＩＫ", t, position=(0, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.05 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2 + pel[t], 0))]
+        self.assertGreater(float(self.pelvis_fall(motion(*keys)).max()), 150.0)
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+        for t in range(11, 19):
+            self.assertGreater(float(f_out["左"]["low"][t]) - 0.111, 0.25)        # the hop keeps the feet up
 
     def test_a_pointed_hovering_foot_keeps_its_shape(self):
         # both feet pointed 40 degrees toes-down (on the toes, as the trace's longer feet stood), their tips 1.5 cm over the
@@ -1487,6 +1517,47 @@ class HoverSupportTest(unittest.TestCase):
                 key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
         f_in, f_out, out, plan = run_layer(*keys, frames=10)
         self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+
+    def test_a_foot_gliding_over_the_floor_is_not_sunk_onto_it(self):
+        # both feet 1.5 cm over the floor for 10 frames, the pelvis held, but the lower one travels 30 cm/s sideways (a
+        # step's swing skimming the floor, as the landing's own test has it): lowering the figure would drag it along the
+        # floor (the song's sunk runs slid their toe at 50-200 cm/s, a05's slides 10 cm and longer 21.9 -> 29.5 a minute,
+        # people 11.3 [7.7, 16.8]); the same hover standing still is lowered (test_a_figure_hovering_...)
+        keys = []
+        for t in range(self.F):
+            h = 0.1875 if t in self.HOVER else 0.0
+            x = 0.125 * (min(max(t, 8), 21) - 8)
+            keys += [key("左足ＩＫ", t, position=(x, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2, 0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+        for t in range(12, 18):
+            self.assertGreater(float(f_out["左"]["low"][t]) - 0.111, 0.15)        # left over the floor as the dance has it
+        # hover_glide (--hover-glide) sets the speed: set over the foot's 30 cm/s, it lowers the gliding foot onto the floor
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F, hover_glide=1000.0)
+        self.assertEqual(len(plan["左"]["sink_info"]["runs"]), 1)
+        for t in range(13, 17):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
+
+    def test_only_the_held_part_of_a_hover_is_lowered(self):
+        # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 14 and then travelling 30 cm/s (the song's
+        # 26.0 s: the toe held for 12 frames, then sliding off at 80-200 cm/s): the held part is lowered onto the floor, the
+        # travelling part comes back up to the dance's height once the sink has eased out
+        keys = []
+        for t in range(self.F):
+            h = 0.1875 if 4 <= t <= 27 else 0.0
+            x = 0.125 * max(0, t - 14)
+            keys += [key("左足ＩＫ", t, position=(x, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2, 0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        rr = plan["左"]["sink_info"]["runs"]
+        self.assertEqual(len(rr), 1)
+        self.assertLessEqual(rr[0][0], 5)
+        self.assertIn(rr[0][1], (13, 14))
+        for t in range(6, 12):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)      # held: on the floor
+        for t in range(23, 27):
+            self.assertGreater(float(f_out["左"]["low"][t]) - 0.111, 0.15)        # travelling: as the dance has it
 
 
 if __name__ == "__main__":
