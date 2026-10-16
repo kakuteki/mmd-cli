@@ -511,6 +511,7 @@ FINGER_JOINTS = {"人指３先": ("人指１", "人指２", "人指３"), "中�
                  "薬指３先": ("薬指１", "薬指２", "薬指３"), "小指３先": ("小指１", "小指２", "小指３"),
                  "親指２先": ("親指０", "親指１", "親指２")}
 AIM_MODES = ("finger", "tip")
+STILL_MODES = ("wrist", "look")       # where a hand's motion and rest are judged (look: the look point, before fingers-v3)
 REACH_STEPS = 24                      # bisection steps for the point of a finger where the eyes' reach ends
 REACH_SAMPLES = 16                    # points a segment of the finger is walked in, from the tip back
 
@@ -813,7 +814,7 @@ def contact_runs(reach, cuts, anchors):
     return sorted(long_ + [(a, b) for _, a, b in mid[:keep]])
 
 
-def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None):
+def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None, wrists=None):
     """[(first, last, side, metres, settle)] frame indices where the eyes look at a hand (`hands`: hand_points),
     sorted: runs of frames on which the hand's look point is HAND_NEAR to HAND_FAR metres from the eyes, before her face
     (in the HAND_ZONE of the limits seen in the head, or within HAND_REACH degrees of it: the face is turned to the
@@ -824,7 +825,9 @@ def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None):
     or nearly, before her face: `settle` is the first such frame).  Where both hands qualify at once the longer run is
     kept (the nearer on a tie).  The contacts and the leads (as plan makes them: the first frame its saccade may start,
     its landing, the turn's onset, ...) win: no run on the frames from the saccade into a contact to its end, nor from
-    a lead's saccade to GUARD frames after its turn's onset.  `metres` is the hand's median distance on the run."""
+    a lead's saccade to GUARD frames after its turn's onset.  `metres` is the hand's median distance on the run.
+    `wrists` (side -> the wrist per frame): where given, whether the hand moves or comes to rest (HAND_FAST, HAND_SLOW)
+    is judged at the wrist, not at the look point (the fingers' own motion moves the look point, review fingers-v3)"""
     rest = angles_of(forward)
     n = len(seen)
     longest = saccade_frames(float("inf"))
@@ -845,8 +848,9 @@ def hand_runs(seen, hands, forward, limits, contacts=(), leads=(), palms=None):
             v = tuple(p - e for p, e in zip(points[i], s.eye))
             metres = math.sqrt(sum(c * c for c in v)) * UNIT_M
             angles, behind = _seen(s, points[i], forward, rest)
-            moving = degrees_between(before, v) * FPS if before is not None else 0.0
-            before = v
+            wv = v if not wrists or side not in wrists else tuple(p - e for p, e in zip(wrists[side][i], s.eye))
+            moving = degrees_between(before, wv) * FPS if before is not None else 0.0
+            before = wv
             dist.append(metres)
             speed.append(moving)
             shown = palm is not None and palm[i] is not None and \
@@ -951,7 +955,7 @@ def flips(raw, kept_before, raw_before, camera, limits):
 
 
 def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixation=MIN_FIXATION, hands=None,
-         aims=None, palms=None):
+         aims=None, palms=None, wrists=None):
     """(a Look per sight, the saccades, the contacts as (first, last) frame indices, the leads planned, the looks at a
     hand as (first, last, side, metres, settle)): see the module docstring.  `anchors` are frame indices;
     `min_fixation` frames is the shortest fixation (--min-fixation); `hands` the hands' look points per frame
@@ -1055,7 +1059,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             continue        # it would start before the lead before has seen its turn start: one lead (a turn with a dip)
         if first >= 1 and not any(contact_end[k] is not None for k in range(max(0, first - QUIET), min(n, onset + 1))):
             leads.append([first, land, onset, far, sign])
-    runs = hand_runs(seen, hands or {}, forward, limits, contacts, leads, palms)
+    runs = hand_runs(seen, hands or {}, forward, limits, contacts, leads, palms, wrists)
     run_of = [None] * n                 # the look at a hand (an index of runs) each frame lies in
     for k, run in enumerate(runs):
         for i in range(run[0], run[1] + 1):
@@ -1604,12 +1608,14 @@ class Gaze:
 
 
 def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN, seed=0, life=True, anchors=(),
-         min_fixation=MIN_FIXATION, aim="finger"):
+         min_fixation=MIN_FIXATION, aim="finger", still="wrist"):
     """the 両目 motion for `dance` seen by `camera` on `model`, with the per-frame plan and the report; `anchors` are
     frames of the song (song_anchors); `aim` "finger": on a hand, the point of the aimed finger nearest its tip that the
     eyes reach (reachable_aims), "tip": the tip itself (until 2026-10-16)"""
     if aim not in AIM_MODES:
         raise ValueError("the aim is one of %s" % ", ".join(AIM_MODES))
+    if still not in STILL_MODES:
+        raise ValueError("the hand's rest is judged at one of %s" % ", ".join(STILL_MODES))
     limits = Limits(float(max_yaw), float(max_up), float(max_down))
     check_limits(limits)
     if not dance.bones:
@@ -1625,8 +1631,15 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
     if aim == "finger":
         aims = dict(tips, **reachable_aims(seen, forward, limits, hand_fingers(model, dance, first, seen[-1].frame)))
     palms = hand_palms(model, dance, first, seen[-1].frame)
+    wrists = None
+    if still == "wrist":
+        by = _by_name(model)
+        names = [sd + HAND_POINTS[0] for sd in HANDS if sd + HAND_POINTS[0] in by]
+        if names:
+            tr = fk.world_track(model, dance, names, first, seen[-1].frame)
+            wrists = {n[:1]: [tuple(tr[n][i][0]) for i in range(len(seen))] for n in names}
     looks, saccades, contacts, leads, runs = plan(seen, forward, limits, seed, life, marks, min_fixation, hands, aims,
-                                                  palms)
+                                                  palms, wrists)
     cuts = [s.frame for s in seen if s.cut]
     counts = {state: 0 for state in STATES}
     for look in looks:
@@ -1650,7 +1663,7 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
                    "max_step": MAX_STEP, "gap": GAP,
                    "wall_gap": WALL_GAP, "sustain": SUSTAIN, "fixation_spread": FIXATION_SPREAD,
                    "saccade_frames": {"short": SHORT_SACCADE, "long": LONG_SACCADE}},
-        "hand_rules": {"points": list(HAND_POINTS), "aim": list(FINGER_TIPS), "aim_mode": aim, "palm": HAND_PALM,
+        "hand_rules": {"points": list(HAND_POINTS), "aim": list(FINGER_TIPS), "aim_mode": aim, "still_mode": still, "palm": HAND_PALM,
                        "metres": [HAND_NEAR, HAND_FAR],
                        "reach": HAND_REACH,
                        "camera": HAND_CAMERA, "fast": HAND_FAST, "slow": HAND_SLOW, "min_frames": HAND_MIN,
@@ -1764,7 +1777,8 @@ def resolve_limits(max_yaw=None, max_up=None, max_down=None, max_pitch=None):
 
 
 def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_path=None, debug_frames=None,
-        probe_path=None, limits=Limits(), seed=0, cues_path=None, chorus=(), min_fixation=MIN_FIXATION, aim="finger"):
+        probe_path=None, limits=Limits(), seed=0, cues_path=None, chorus=(), min_fixation=MIN_FIXATION, aim="finger",
+        still="wrist"):
     """read, plan, write; the summary is what main prints"""
     started = time.time()
     check_limits(limits)
@@ -1777,7 +1791,7 @@ def run(dance_path, camera_path, model_path, out_path, report_path=None, debug_p
     camera = vmd.load(camera_full)
     model = load_model(model_full)
     result = gaze(model, dance, camera, limits.yaw, limits.up, limits.down, seed, anchors=song_anchors(cues, chorus),
-                  min_fixation=min_fixation, aim=aim)
+                  min_fixation=min_fixation, aim=aim, still=still)
     report = result.report
     rows = None
     if debug_path:
@@ -1841,11 +1855,14 @@ def main(argv=None):
                    help="where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach "
                         "(finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-10-16 before this "
                         "switch, byte for byte)")
+    p.add_argument("--hand-still", choices=STILL_MODES, default="wrist",
+                   help="where whether a hand moves or rests is judged: the wrist (default) or the hand's look point "
+                        "(look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for byte)")
     args = p.parse_args(argv)
     try:
         limits = resolve_limits(args.max_yaw, args.max_up, args.max_down, args.max_pitch)
         result = run(args.dance, args.camera, args.model, args.out, args.report, args.debug, args.debug_frames,
-                     args.probe, limits, args.seed, args.cues, args.chorus, args.min_fixation, args.aim)
+                     args.probe, limits, args.seed, args.cues, args.chorus, args.min_fixation, args.aim, args.hand_still)
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

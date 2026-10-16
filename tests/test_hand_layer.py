@@ -1867,6 +1867,35 @@ class RealDanceTest(unittest.TestCase):
             # a change right next to one the other way blends with it and its middle moves a little, either way
             self.assertLess(float(np.percentile(shifts, 90)), 1.5, side)
 
+    def test_the_transit_over_the_whole_song(self):
+        # the whole trace: the fingers move with a good share of the arm's movements, the way turns from one movement to
+        # the next about as often as the dancers' (53 - 56 %), never in long strict alternations, and every change of
+        # shape of 20 degrees or more meets its shape when it does without the transit
+        on = hand_layer.layer(self.model, self.dance, pulp=self.pulp)
+        off = hand_layer.layer(self.model, self.dance, hand_layer.as_v9(hand_layer.default_params()), pulp=self.pulp)
+        for side in ("左", "右"):
+            row = on.report["steps"]["transit"][side]
+            self.assertGreater(row["moved"], 0.2 * row["movements"], side)
+            self.assertTrue(0.40 <= row["turn_share"] <= 0.70, (side, row["turn_share"]))
+            self.assertLessEqual(row["longest_alternation"], 8, side)
+            s1, s0 = middle_sum_real(on.motion, self.model, side), middle_sum_real(off.motion, self.model, side)
+            late = []
+            for a, b in hand_layer.monotone_changes(s0):
+                amp = s0[b] - s0[a]
+                if abs(amp) < 20.0 or a < 15 or b > len(s0) - 16:
+                    continue
+                sg = 1.0 if amp > 0 else -1.0
+                lv = s0[a] + 0.9 * amp
+                t0 = a + float(np.interp(0.0, np.maximum.accumulate(sg * (s0[a:b + 1] - lv)), np.arange(b + 1 - a)))
+                y1 = sg * (s1[a - 12:b + 13] - lv)
+                ks = np.where((y1[:-1] < 0.0) & (y1[1:] >= 0.0))[0]
+                if len(ks):
+                    times = a - 12 + ks + (0.0 - y1[ks]) / (y1[ks + 1] - y1[ks])
+                    late.append(float(times[np.argmin(np.abs(times - t0))] - t0))
+            self.assertGreater(len(late), 100, side)
+            self.assertLess(abs(float(np.median(late))), 0.1, side)
+            self.assertLess(float(np.percentile(late, 90)), 0.5, side)
+
     def test_the_follow_keeps_the_pointing_hands_at_52_s(self):
         # the follow lags a change of shape, not a shape held: the two pointing index fingers stay straight
         part = crop(self.dance, 1535, 1585)

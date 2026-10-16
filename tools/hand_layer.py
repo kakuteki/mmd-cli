@@ -1267,7 +1267,7 @@ def transit(hands, ang, world, P, touch=None, scale=1.0, seed=0):
         changes = [(r0, r1) for f in fingers for r0, r1 in monotone_changes(sums[f])
                    if abs(sums[f][r1] - sums[f][r0]) >= PACE["min"]]
         add = np.zeros(F)
-        amps, last = [], 1.0
+        amps, ways, last = [], [], 1.0
         rng = np.random.default_rng([int(seed), sorted(hands).index(side)])
         left = {"change": 0, "shape": 0, "travel": 0}
         for a, p, b in moves:
@@ -1298,11 +1298,18 @@ def transit(hands, ang, world, P, touch=None, scale=1.0, seed=0):
             last = way
             add += way * amp * w * transit_bump(F, a, p, b)
             amps.append(amp * w)
+            ways.append(way)
         add *= keep
         for f in fingers:
             for k, j in zip(("mp", "pip", "dip"), TRANSIT_SYNERGY[f]):
                 ang[cs[f][k].bone][0] = ang[cs[f][k].bone][0] + add * (j / mid)
+        turns = [ways[k] != ways[k - 1] for k in range(1, len(ways))]
+        run, longest = 0, 0
+        for t in turns:
+            run = run + 1 if t else 0
+            longest = max(longest, run)
         report[side] = {"movements": len(moves), "moved": len(amps), "left": left, "amplitude_deg": stats(amps),
+                        "turn_share": _r(float(np.mean(turns)), 3) if turns else None, "longest_alternation": longest,
                         "added_deg_s": stats(np.abs(np.diff(add)) * FPS)}
     return report
 
