@@ -984,6 +984,125 @@ class ToeModelTest(unittest.TestCase):
         self.assertEqual(before, after)
 
 
+LEG_L1 = float(np.linalg.norm(rest("ひざ") - rest("足")))
+LEG_L2 = float(np.linalg.norm(rest("足首") - rest("ひざ")))
+
+
+def knee_from_reach(f):
+    """the knee's bend [F] (degrees, 0 straight) as the human baseline's a05 reads it: the hip joint's distance to the
+    ankle and the law of cosines (a leg that does not reach is straight)"""
+    d = np.minimum(np.linalg.norm(f["ankle"] - f["hip"], axis=1), LEG_L1 + LEG_L2)
+    c = np.clip((LEG_L1 ** 2 + LEG_L2 ** 2 - d ** 2) / (2.0 * LEG_L1 * LEG_L2), -1.0, 1.0)
+    return 180.0 - np.degrees(np.arccos(c))
+
+
+def ball_xz(f, side="左"):
+    """the ball's (足先EX's) place on the floor [F, 2] of measured feet"""
+    e = f["ankle"] + leg_ik.qrot(f["q_foot"], rest("足先EX", side) - rest("足首", side))
+    return e[:, [0, 2]]
+
+
+def goal_of(out, frames, side="左"):
+    """the foot IK's goal [F, 3] in the layer's output (where a05 reads the ankle)"""
+    return leg_ik.solve(RIG, out, range(frames))[side]["goal_ankle"]
+
+
+# the layer before the landing (c012c32) on LandingTest's sinking landing: the left foot IK's height and 足首's local
+# X turn (degrees), frames 0, 3, .. 18 (recorded with _spike/out/stage6/feet_landing/scripts/record_off.py)
+LANDING_OFF_HEIGHTS = [0.6, 0.3, 0.000563, 0.000251, 0.000152, 0.000152, 0.000152]
+LANDING_OFF_PITCH = [34.5014, 31.1104, 27.4185, 28.3719, 29.3078, 29.3078, 29.3078]
+
+
+class LandingTest(unittest.TestCase):
+    """the landing (feet-landing, 2026-10-16): a foot that lands while the pelvis sinks comes down on its forefoot and
+    lowers its heel as the pelvis sinks, so the knee does not take the sink (the humans' knee bends 0.7 degrees in the
+    0.2 s after a touchdown, the MV's 7); a standing leg that cannot reach its goal rises onto its ball; a foot skimming
+    the floor in the dance is not pressed onto it.  landing=False is the layer before them."""
+
+    TD = 6
+
+    def landing_keys(self, sink):
+        """the left foot comes down flat onto the floor at frame TD and stays while the pelvis sinks `sink` units over
+        the next 6 frames (the knees bent, センター down 1.2 before); the right foot is lifted out of the way"""
+        return [key("センター", 0, position=(0, -1.2, 0)), key("センター", self.TD, position=(0, -1.2, 0)),
+                key("センター", self.TD + 6, position=(0, -1.2 - sink, 0)), key("センター", 18, position=(0, -1.2 - sink, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8)),
+                key("左足ＩＫ", 0, position=(0, 0.6, 0.0)), key("左足ＩＫ", self.TD), key("左足ＩＫ", 18)]
+
+    def test_the_heel_comes_down_as_the_pelvis_sinks(self):
+        f_in, f_out, out, plan = run_layer(*self.landing_keys(0.15), frames=19)
+        a, b = f_in["左"], f_out["左"]
+        td = self.TD
+        k_in, k_out = knee_from_reach(a), knee_from_reach(b)
+        self.assertGreater(float(k_in[td:td + 7].max() - k_in[td]), 3.0)       # the dance's knee takes the sink
+        self.assertLess(float(k_out[td:td + 7].max() - k_out[td]), 1.0)
+        self.assertLess(float(b["pitch"][td]), -3.0)                          # on the forefoot at the touch
+        self.assertGreater(float(b["pitch"][-1]), -1.0)                        # flat once the pelvis is down
+        self.assertTrue(np.all(np.diff(b["pitch"][td:]) >= -0.05))             # the heel only comes down
+        self.assertLess(float(np.abs(np.diff(b["pitch"])).max()), 8.0)         # no snap
+        on = b["low"][td:]
+        self.assertLess(float(np.abs(on - 0.111).max()), 0.003)                # on the floor, never in it
+        self.assertGreater(float(b["low"].min()), 0.111 - foot_layer.PEN_TOL)
+        ball = ball_xz(b)[td:]
+        self.assertLess(float(np.linalg.norm(ball - ball[0], axis=1).max()), 0.03)   # it pivots on the ball, no slide
+
+    def test_a_landing_without_a_sink_is_left_as_it_was(self):
+        f_in, f_out, out, plan = run_layer(*self.landing_keys(0.0), frames=19)
+        _, f_old, _, _ = run_layer(*self.landing_keys(0.0), frames=19, landing=False)
+        self.assertLess(float(np.abs(f_out["左"]["pitch"] - f_old["左"]["pitch"]).max()), 0.05)
+        self.assertLess(float(np.abs(f_out["左"]["ankle"] - f_old["左"]["ankle"]).max()), 1e-4)
+
+    def test_landing_off_writes_the_layer_before(self):
+        # the keys the layer wrote before the landing (c012c32) on the sinking landing, recorded: the left foot IK's
+        # height and 足首's pitch, every third frame
+        out, plan = foot_layer.layer(RIG, SHOE, motion(*self.landing_keys(0.15)), {"landing": False})
+        ik = sorted((k.frame, k.position) for k in out.bones if k.name == "左足ＩＫ")
+        ankle = sorted((k.frame, k.rotation) for k in out.bones if k.name == "左足首")
+        heights = [y for f, (x, y, z) in ik if f % 3 == 0]
+        pitch = [math.degrees(2.0 * math.atan2(q[0], q[3])) for f, q in ankle if f % 3 == 0]
+        self.assertEqual(len(ik), 19)
+        for got, want in zip(heights, LANDING_OFF_HEIGHTS):
+            self.assertAlmostEqual(got, want, delta=2e-5)
+        for got, want in zip(pitch, LANDING_OFF_PITCH):
+            self.assertAlmostEqual(got, want, delta=2e-3)
+        self.assertTrue(all(abs(x) < 1e-9 and abs(z) < 1e-9 for f, (x, y, z) in ik))
+
+    def test_a_standing_leg_out_of_reach_rises_onto_its_ball(self):
+        # the pelvis 0.08 over the rest pose's, the left foot flat on the floor under it: the leg cannot reach its goal
+        # (a05 reads a straight knee, MMD leaves the foot over the floor).  It rises onto its ball until the knee
+        # bends 5 degrees, the ball where it stood, the shoe on the floor
+        keys = [key("センター", 0, position=(0, 0.08, 0)), key("センター", 7, position=(0, 0.08, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=8)
+        a, b = f_in["左"], f_out["左"]
+        goal = goal_of(out, 8)
+        self.assertLess(float(knee_from_reach(dict(a, ankle=goal_of(motion(*keys), 8))).max()), 1.0)
+        self.assertGreater(float(knee_from_reach(dict(b, ankle=goal)).min()), 5.0)
+        self.assertLess(float(np.linalg.norm(b["ankle"] - goal, axis=1).max()), 0.01)   # MMD reaches it
+        self.assertLess(float(b["pitch"].max()), -3.0)                                    # the heel up
+        self.assertLess(float(np.abs(b["low"] - 0.111).max()), 0.003)                     # on the floor
+        self.assertLess(float(np.linalg.norm(ball_xz(b) - ball_xz(a), axis=1).max()), 0.03)
+
+    def test_a_standing_leg_in_reach_keeps_its_heel_down(self):
+        keys = [key("センター", 0, position=(0, -0.3, 0)), key("センター", 7, position=(0, -0.3, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=8)
+        self.assertGreater(float(f_out["左"]["pitch"].min()), -0.5)
+
+    def test_a_foot_skimming_the_floor_is_not_pressed_onto_it(self):
+        # the left foot glides 30 cm/s sideways with its flat sole 3.6 mm over the floor (the dance's own swing, not a
+        # touch): it keeps that height; the same foot standing still there is put on the floor
+        lift = 0.045
+        moving = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
+            [key("左足ＩＫ", t, position=(0.125 * t, lift, 0.0)) for t in range(13)]
+        still = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
+            [key("左足ＩＫ", t, position=(0.0, lift, 0.0)) for t in range(13)]
+        _, f_move, _, _ = run_layer(*moving, frames=13)
+        _, f_still, _, _ = run_layer(*still, frames=13)
+        self.assertGreater(float(f_move["左"]["low"][3:10].min()), 0.111 + 0.8 * lift)
+        self.assertLess(float(np.abs(f_still["左"]["low"][3:10] - 0.111).max()), 0.003)
+
+
 class CommandTest(unittest.TestCase):
     def write_inputs(self, folder):
         src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
