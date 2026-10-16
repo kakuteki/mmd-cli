@@ -347,6 +347,20 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(d[b + 13:]).max()), 1e-6)
         self.assertGreater(float(d[a:b + 1].max()), 0.2)                              # the body rises in the hop
 
+    def test_the_frames_round_a_flight_keep_the_bound(self):
+        # the dance's pelvis bobs 4 mm at 8 Hz, falling at the bound (122 units/s^2) every few frames, and a hover with
+        # both feet moving over frames 20-27 becomes a hop: no frame off the flight falls faster than the bound, the frames
+        # just outside the window of the change included
+        F, a, b = 70, 25, 32
+        w = math.sqrt(122.0 / 0.05)
+        m = self.hop(F, a, b, pelvis=lambda t: 0.05 * math.cos(w * t / FPS))
+        out, plan = run(m)
+        for name in ("センター", "下半身"):
+            acc = down_acc(world_y(out, F, name))
+            off = np.ones(F, bool)
+            off[a:b + 1] = False
+            self.assertLess(float(acc[off][1:-1].max()), 122.0 + 0.5)
+
     def test_a_hop_that_already_falls_by_gravity_is_left_alone(self):
         # the pelvis pushed up (+80 units/s^2 for 6 frames), flying at -g over frames 20-27 and caught: in the air the
         # feet go up and down with the body (the legs keep their shape), so the centre of mass follows gravity there
@@ -416,6 +430,44 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(b_["左"]["low"][a:b + 1]).max()), 0.1)
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
         self.assertLess(float(np.abs(goal(out, F, "右") - goal(m, F, "右")).max()), 1e-5)
+
+
+class DropProfileTest(unittest.TestCase):
+    def test_the_lowering_keeps_the_bound_on_the_frames_just_outside_its_window(self):
+        # a lowering of 0.5 units over frames 15-25 within 3 frames each side: the frames just outside (11 and 29) fall at
+        # the bound already, so the lowering may not bend up there (its second difference reaches into the window)
+        F = 40
+        need = np.zeros(F)
+        need[15:26] = 0.5
+        fall = np.zeros(F)
+        fall[[11, 29]] = 122.0
+        allowed = np.maximum(122.0, fall) + 0.25
+        z, rows = contact_layer.drop_profile(need, np.ones(F, bool), fall, allowed, F, window=3)
+        self.assertTrue(all(r["solved"] for r in rows))
+        self.assertGreater(float(z[15:26].min()), 0.5 - 1e-6)
+        after = fall + np.r_[0.0, (z[2:] - 2.0 * z[1:-1] + z[:-2]) * FPS * FPS, 0.0]
+        self.assertLess(float(after.max()), 122.0 + 0.5)
+
+
+class FlightChangeTest(unittest.TestCase):
+    def test_the_change_keeps_the_bound_on_the_frames_just_outside_its_window(self):
+        # a flight over frames 18-22 of a still body, its window 15-25; the frames just outside (14 and 26) fall at the
+        # bound already
+        F = 40
+        air = np.zeros(F, bool)
+        air[18:23] = True
+        pel = np.zeros(F)
+        pel[[14, 26]] = 61.0 / (FPS * FPS)              # a bump each: those two frames fall at 122 units/s^2
+        fall = down_acc(pel)
+        self.assertAlmostEqual(float(fall[14]), 122.0, places=6)
+        com = np.zeros(F)
+        ch, rows = contact_layer.flight_change([(15, 25)], air, ~air, com, [pel], np.maximum(122.0, fall), np.full(F, np.nan), F)
+        self.assertTrue(all(r["solved"] for r in rows))
+        d2 = np.r_[0.0, (ch[2:] - 2.0 * ch[1:-1] + ch[:-2]) * FPS * FPS, 0.0]
+        self.assertLess(float(np.abs(d2[19:22] + G).max()), 1e-6)                    # the air falls by gravity
+        after = down_acc(pel + ch)
+        off = ~air
+        self.assertLess(float(after[off][1:-1].max()), 122.0 + 0.5)                   # off it, nowhere faster than the bound
 
 
 class WholeTest(unittest.TestCase):

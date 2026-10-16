@@ -129,6 +129,7 @@ AIR_CLEAR = 0.2 + 0.0125        # units (1.6 cm and 1 mm): a shoe lower than 1.6
                                 # balance layer's support, tools/sink_check.py's SUPPORT_CM)
 CARRY_RAMP = 2                  # frames: a foot leaving the floor goes with the body's change by half on its first frame off
                                 # it and fully from the second (the same before a landing)
+PAD = 2                         # frames pinned to no change each side of a window of the pelvis's solves
 SUB_NEAR = 0.25                 # units: the intervals checked between the frames (either end this near the floor)
 SUB_ROUNDS = 3
 IK_MISS = 0.0125                 # units (1 mm): MMD's ankle this far from its goal has not reached it
@@ -342,22 +343,29 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None):
         else:
             wins.append((w0, w1))
     for w0, w1 in wins:
-        n = w1 - w0 + 1
-        D2, D3 = _diff_matrix(n, 2, w0, F), _diff_matrix(n, 3, w0, F)
+        # (the window and PAD frames each side pinned to 0: the frames just outside it are bound too, their second
+        # differences reach into it)
+        p0, p1 = max(0, w0 - PAD), min(F - 1, w1 + PAD)
+        n = p1 - p0 + 1
+        D2, D3 = _diff_matrix(n, 2, p0, F), _diff_matrix(n, 3, p0, F)
         H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
-        A_in, b_in = [], []
+        A_eq, b_eq, A_in, b_in = [], [], [], []
         for k in range(n):
-            t = w0 + k
+            t = p0 + k
             e = np.zeros(n)
             e[k] = 1.0
-            A_in.append(e)
-            b_in.append(max(float(need[t]), 0.0))
+            if t < w0 or t > w1:
+                A_eq.append(e)
+                b_eq.append(0.0)
+            else:
+                A_in.append(e)
+                b_in.append(max(float(need[t]), 0.0))
             if 0 < t < F - 1:                    # (every frame: in the air too, no faster than the dance's own fall)
                 A_in.append(-D2[k])
                 b_in.append(-max((float(allowed[t]) - float(fall_down[t])) / (FPS * FPS), 0.0))
-        x, act, rounds, ok = solve_qp(H, np.zeros((0, n)), np.zeros(0), np.array(A_in), np.array(b_in),
-                                      rounds=DROP_QP_ROUNDS, batch=16)
-        z[w0:w1 + 1] = np.maximum(x, 0.0)
+        x, act, rounds, ok = solve_qp(H, np.array(A_eq) if A_eq else np.zeros((0, n)), np.array(b_eq), np.array(A_in),
+                                      np.array(b_in), rounds=DROP_QP_ROUNDS, batch=16)
+        z[p0:p1 + 1] = np.maximum(x, 0.0)
         rows.append({"window": [int(w0), int(w1)], "active": len(act), "rounds": rounds, "solved": bool(ok)})
     return z, rows
 
@@ -371,16 +379,22 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
     change = np.zeros(F)
     rows = []
     for w0, w1 in windows:
-        n = w1 - w0 + 1
-        idx = np.arange(w0, w1 + 1)
-        D2, D3 = _diff_matrix(n, 2, w0, F), _diff_matrix(n, 3, w0, F)
+        p0, p1 = max(0, w0 - PAD), min(F - 1, w1 + PAD)
+        n = p1 - p0 + 1
+        idx = np.arange(p0, p1 + 1)
+        D2, D3 = _diff_matrix(n, 2, p0, F), _diff_matrix(n, 3, p0, F)
         H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
         eq_rows, eq_b, in_rows, in_b = [], [], [], []
         g = G / (FPS * FPS)
         for k, t in enumerate(idx):
+            if t < w0 or t > w1:                # (pinned: the frames just outside the window, bound below)
+                e = np.zeros(n)
+                e[k] = 1.0
+                eq_rows.append(e)
+                eq_b.append(0.0)
             if t <= 0 or t >= F - 1:
                 continue
-            if air[t] and air[t - 1] and air[t + 1]:
+            if air[t] and air[t - 1] and air[t + 1] and w0 <= t <= w1:
                 c2 = com_y[t + 1] - 2.0 * com_y[t] + com_y[t - 1]
                 eq_rows.append(D2[k])
                 eq_b.append(-g - c2)
@@ -399,7 +413,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
         A_eq = np.array(eq_rows) if eq_rows else np.zeros((0, n))
         A_in = np.array(in_rows) if in_rows else np.zeros((0, n))
         x, act, rounds, ok = solve_qp(H, A_eq, np.array(eq_b), A_in, np.array(in_b))
-        change[w0:w1 + 1] = x
+        change[p0:p1 + 1] = x
         rows.append({"window": [int(w0), int(w1)], "equalities": len(eq_rows), "active": len(act), "rounds": rounds,
                      "solved": bool(ok)})
     return change, rows
