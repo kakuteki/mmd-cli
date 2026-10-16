@@ -245,6 +245,43 @@ class NothingToDoTest(unittest.TestCase):
         self.assertEqual(vmd.dumps(wl.layer(SPINE, motion).motion), vmd.dumps(motion))
 
 
+SONG = os.environ.get("BALANCE_SONG")
+
+
+class SongTest(unittest.TestCase):
+    """the MV (BALANCE_SONG, the JSON of tests/test_balance_layer.py: its model and dance): the head and the chest follow
+    the pelvis's quick moves within people's quartiles (FineDance K-pop / choreography / jazz, 62 sequences: the head's
+    slope 0.29 [0.13, 0.42], the chest's 0.70 [0.56, 0.80], the belly's 0.96 [0.86, 1.05]; the traced dance 0.89, 0.93,
+    0.98), the bend within its bound, the head's world turn kept"""
+
+    @classmethod
+    def setUpClass(cls):
+        if not SONG:
+            raise unittest.SkipTest("BALANCE_SONG is not set: it names a JSON of the MV's inputs (model, dance), on hinata "
+                                    "C:/work/hibikase/stage6/balance/scripts/song_inputs.json")
+        with open(SONG, encoding="utf-8") as f:
+            paths = json.load(f)
+        missing = [k for k in ("model", "dance") if not paths.get(k) or not os.path.isfile(paths[k])]
+        if missing:
+            raise AssertionError("BALANCE_SONG (%s) names files that are not there: %s" % (SONG, missing))
+        cls.result = wl.layer(pmx.load(paths["model"]), vmd.load(paths["dance"]))
+        cls.report = cls.result.report
+
+    def test_head_and_chest_as_people_follow_the_pelvis(self):
+        r = self.report["response"]
+        self.assertGreater(r["head"]["before"]["slope"], 0.8)
+        self.assertTrue(0.13 <= r["head"]["after"]["slope"] <= 0.42, r["head"]["after"])
+        self.assertTrue(0.56 <= r["chest"]["after"]["slope"] <= 0.80, r["chest"]["after"])
+        self.assertGreater(r["belly"]["after"]["slope"], 0.86)
+
+    def test_bend_bounded_and_head_kept(self):
+        t = self.report["tilt_deg"]
+        self.assertLessEqual(t["bend_deg_max"], wl.MAX_BEND_DEG + 1e-6)
+        self.assertLess(t["bend_deg"]["p50"], 2.0)
+        self.assertLess(self.report["head_turn_change_deg_max"], 0.01)
+        self.assertEqual(len(self.report["written"]), 4)
+
+
 class CommandTest(unittest.TestCase):
     def test_command(self):
         tmp = tempfile.mkdtemp()
