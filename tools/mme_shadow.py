@@ -19,8 +19,8 @@ weighted by a Gaussian, and their weighted mean is the shadow.  The Gaussian's s
 
 * with contact hardening (the default) it is the spread of a light --blur degrees wide (a standard deviation) at the
   distance from the shadowed point back to what casts the shadow (a search of --search-taps points finds the casters'
-  mean depth; MMD's light projection is orthographic, so a depth gap is a distance along the light: gap / _33, and a
-  distance across the light is a share of the map: x _11 / 2).  An arm on the dress casts a shadow whose edge blurs
+  gaps and takes their harmonic mean, so the nearest caster rules; MMD's light projection is orthographic, so a depth
+  gap is a distance along the light: gap / _33, and a distance across the light is a share of the map: x _11 / 2).  An arm on the dress casts a shadow whose edge blurs
   with the gap, as tools/mv_world.py's floor shadow does with the same --blur;
 * never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
   the default shadow distance) are blurred away even where the gap is 0.
@@ -171,6 +171,11 @@ sampler ObjSphereSampler = sampler_state {
 // the texture and the sphere map are read through MMD's own samplers (s1, s2: MMD binds them there, with its own
 // filtering): through samplers of the effect's own the picture differed at the textures' fine lines (4 to 30 levels at
 // 3,200 px of a frame), through MMD's it differs by 1 level at most but at 84 px (NOTES)
+// the casters' gaps are averaged harmonically (the nearest caster rules): with the plain mean an arm and the chest above
+// it made the shadow on the dress as blurred as the chest's alone, and at 5 degrees it all but went (NOTES)
+#ifndef SS_HARMONIC
+#define SS_HARMONIC 1
+#endif
 #ifndef SS_MMD_SAMPLER
 #define SS_MMD_SAMPLER 2
 #endif
@@ -239,7 +244,11 @@ float SoftShadow(float3 zc, float2 uv)
         if (all(saturate(p) == p)) {
             float d = tex2Dlod(MMDShadowMap, float4(p, 0, 0)).r;
             if ((zc.z - d) * slope > 0.3f) {
+#if SS_HARMONIC
+                gap += 1.0f / max(zc.z - d, 1e-7f);
+#else
                 gap += zc.z - d;
+#endif
                 found += 1.0f;
             }
         }
@@ -247,7 +256,12 @@ float SoftShadow(float3 zc, float2 uv)
     if (found < 0.5f) {
         return ShadowTest(zc.z, uv, slope);
     }
+#if SS_HARMONIC
+    // the casters' harmonic mean: the nearest caster rules (an arm over the dress), as a light's penumbra does
+    gap = found / gap;
+#else
     gap /= found;
+#endif
     // a depth gap / _33 is the distance along the light in the world
     float across = SS_BLUR_RAD * gap / max(abs(LightProjMatrix._33), 1e-9f) * perUnit;
     spread = max(spread, across);
