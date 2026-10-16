@@ -54,9 +54,10 @@ class EffectTest(unittest.TestCase):
         self.assertEqual(len({(round(x, 4), round(y, 4)) for x, y, _ in rows}), 32)
 
     def test_the_settings_reach_the_shader(self):
-        text = mme_shadow.effect(blur=5.0, min_blur=0.6, n_taps=24, search_taps=12)
+        text = mme_shadow.effect(blur=5.0, min_blur=0.07, n_taps=24, search_taps=12)
         self.assertAlmostEqual(define(text, "SS_BLUR_RAD"), math.radians(5.0), places=8)
-        self.assertAlmostEqual(define(text, "SS_MIN_UV"), 0.6 / mme_shadow.SHADOW_MAP, places=8)
+        self.assertAlmostEqual(define(text, "SS_MIN_WORLD"), 0.07, places=6)
+        self.assertAlmostEqual(define(text, "SS_SEARCH_WORLD"), mme_shadow.SEARCH, places=6)
         self.assertEqual(define(text, "SS_TAPS"), 24)
         self.assertEqual(define(text, "SS_SEARCH"), 12)
         self.assertEqual(define(text, "SS_CONTACT"), 1)
@@ -68,7 +69,7 @@ class EffectTest(unittest.TestCase):
         text = mme_shadow.effect(sharp=True)
         self.assertEqual(define(text, "SS_TAPS"), 1)
         self.assertEqual(define(text, "SS_CONTACT"), 0)
-        self.assertEqual(define(text, "SS_MIN_UV"), 0.0)
+        self.assertEqual(define(text, "SS_MIN_WORLD"), 0.0)
         n, rows = array(text, "KERNEL")
         self.assertEqual(rows, [(0.0, 0.0, 1.0)])
         # MMD's test: 1 - saturate(max(z - map, 0) * 1500 - 0.3) in mode 1, the slope 8000 x v in mode 2
@@ -77,7 +78,8 @@ class EffectTest(unittest.TestCase):
         self.assertIn("slope - 0.3f", text)
 
     def test_wrong_settings_are_refused(self):
-        for bad in ({"blur": -1}, {"blur": 45}, {"min_blur": -0.1}, {"n_taps": 0}, {"n_taps": 65}, {"search_taps": 0}):
+        for bad in ({"blur": -1}, {"blur": 45}, {"min_blur": -0.1}, {"min_blur": 3}, {"n_taps": 0}, {"n_taps": 65},
+                    {"search_taps": 0}):
             with self.assertRaises(ValueError, msg=bad):
                 mme_shadow.effect(**bad)
 
@@ -127,6 +129,63 @@ class FilesTest(unittest.TestCase):
         self.assertEqual(set(mme_shadow.check(exe)["files"].values()), {"different"})
         # the digest is SHA-256 of the file
         self.assertEqual(mme_shadow.sha256(exe), hashlib.sha256(b"").hexdigest())
+
+
+class VerifyTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.mmd = os.path.join(self.folder, "mmd")
+        os.makedirs(self.mmd)
+        self.exe = os.path.join(self.mmd, "MikuMikuDance.exe")
+        open(self.exe, "wb").close()
+        self.models = os.path.join(self.folder, "models")
+        os.makedirs(self.models)
+        self.model = os.path.join(self.models, "White.pmx")
+        open(self.model, "wb").close()
+
+    def install(self):
+        # MME's files as check knows them: their digests made to match
+        for name in mme_shadow.MME_FILES:
+            with open(os.path.join(self.mmd, name), "wb") as f:
+                f.write(name.encode())
+        self.addCleanup(setattr, mme_shadow, "MME_FILES", dict(mme_shadow.MME_FILES))
+        mme_shadow.MME_FILES = {n: hashlib.sha256(n.encode()).hexdigest() for n in mme_shadow.MME_FILES}
+
+    def test_the_effect_mme_applies_is_the_one_in_brackets_or_the_one_of_the_same_name(self):
+        self.assertIsNone(mme_shadow.effect_of(self.model))
+        mme_shadow.write(os.path.join(self.models, "White.fx"))
+        self.assertTrue(mme_shadow.effect_of(self.model).endswith("White.fx"))
+        named = os.path.join(self.models, "White[soft.fx].pmx")
+        open(named, "wb").close()
+        self.assertIsNone(mme_shadow.effect_of(named))                   # soft.fx is not there yet
+        mme_shadow.write(os.path.join(self.models, "soft.fx"))
+        self.assertTrue(mme_shadow.effect_of(named).endswith("soft.fx"))
+
+    def test_soft_needs_mme_and_an_effect_of_this_tool(self):
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft")             # no MME
+        self.install()
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft")             # no effect
+        with open(os.path.join(self.models, "White.fx"), "w") as f:
+            f.write("// someone else's effect\n")
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft")             # not ours
+        mme_shadow.write(os.path.join(self.models, "White.fx"))
+        got = mme_shadow.verify(self.exe, self.model, "soft")
+        self.assertEqual(got["self_shadow"], "soft")
+        self.assertIn('"blur": 5.0', got["settings"])
+
+    def test_mmd_refuses_a_model_mme_would_draw_with_an_effect(self):
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "mmd")["self_shadow"], "mmd")      # no MME at all
+        mme_shadow.write(os.path.join(self.models, "White.fx"))
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "mmd")["self_shadow"], "mmd")      # MME is not there
+        self.install()
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "mmd")
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "hard")
 
 
 if __name__ == "__main__":

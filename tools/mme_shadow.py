@@ -4,6 +4,7 @@ shading but reads the self shadow map at many points weighted by a Gaussian, and
     python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.6] [--taps 32] [--search-taps 16] [--debug] [--sharp]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py check MMD.exe
+    python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd
 
 What it changes, and what not.  MMD draws a model in passes; MME lets an effect file replace any of them, and draws the
 others with MMD's own shaders (REFERENCE.txt of MME 0.37, 1.2 and the Tips).  This effect has techniques for one pass
@@ -21,14 +22,18 @@ weighted by a Gaussian, and their weighted mean is the shadow.  The Gaussian's s
   mean depth; MMD's light projection is orthographic, so a depth gap is a distance along the light: gap / _33, and a
   distance across the light is a share of the map: x _11 / 2).  An arm on the dress casts a shadow whose edge blurs
   with the gap, as tools/mv_world.py's floor shadow does with the same --blur;
-* never under --min-blur texels of MMD's map (the stair steps of the map are blurred away even where the gap is 0).
+* never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
+  the default shadow distance) are blurred away even where the gap is 0.
 
 --sharp writes the same file with one point and no blur: MMD's own test (to check that the shading is MMD's).  --debug
 draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py.  The file is ASCII.
 
 prepare copies the folder of MODEL (its textures) into OUTDIR once, and writes the effect there under the model's name
 (MME applies <model name>.fx found beside the model when MMD loads it; MMEffect.txt).  The original folder is not written.
-check tells whether MME is installed beside an MMD (d3d9.dll, MMHack.dll, MMEffect.dll) and gives their SHA-256.
+check tells whether MME is installed beside an MMD (d3d9.dll, MMHack.dll, MMEffect.dll, by their SHA-256).  verify
+tells whether an MMD will draw a model with this effect (soft) or with MMD's own self shadow (mmd): tools/mv_chunks.py's
+driver runs it before rendering, so a plan that says soft cannot quietly render MMD's shadow, nor one that says mmd the
+effect.
 """
 import argparse
 import hashlib
@@ -42,10 +47,11 @@ import sys
 MME_FILES = {"d3d9.dll": "3c1c663c4b2fda0c92a97fc2d3d01fd1fb4110ae552e68f284657b72c74cfac8",
              "MMHack.dll": "e450b25e5cd2bcf125ca4b8eb9e57f858ec3ca379633c7d25f9dd40e864b390d",
              "MMEffect.dll": "74b3f5882a3bad28131cbc57994e2f960938e6ca850fc7139018ce4822bd87dc"}
-SHADOW_MAP = 2048                 # texels to a side of MMD's self shadow map (only --min-blur's unit; measured, NOTES)
 KERNEL_SIGMAS = 2.5               # the points lie within this many standard deviations of the Gaussian
 GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
-DEFAULTS = {"blur": 5.0, "min_blur": 0.6, "taps": 32, "search_taps": 16, "contact": True}
+DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 32, "search_taps": 16, "contact": True}
+SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
+                          # light at 8 units: the hips above the knees)
 
 
 def spiral(n):
@@ -77,8 +83,8 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
     """the text of the effect file (see the module docstring)"""
     if not 0 <= blur <= 30:
         raise ValueError("--blur is the light's spread in degrees, 0 to 30, not %r" % (blur,))
-    if not 0 <= min_blur <= 16:
-        raise ValueError("--min-blur is in texels of the shadow map, 0 to 16, not %r" % (min_blur,))
+    if not 0 <= min_blur <= 2:
+        raise ValueError("--min-blur is a standard deviation in MMD units, 0 to 2, not %r" % (min_blur,))
     if sharp:
         n_taps, search_taps, contact, min_blur, blur = 1, 1, False, 0.0, 0.0
     if not 1 <= n_taps <= 64 or not 1 <= search_taps <= 64:
@@ -87,18 +93,16 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
     search = [(0.0, 0.0, 1.0)] if search_taps == 1 else [(x / KERNEL_SIGMAS, y / KERNEL_SIGMAS, 1.0)
                                                           for x, y, _ in taps(search_taps)]
     settings = {"blur": blur, "min_blur": min_blur, "taps": n_taps, "search_taps": search_taps, "contact": bool(contact),
-                "debug": bool(debug), "sharp": bool(sharp), "shadow_map": SHADOW_MAP}
+                "debug": bool(debug), "sharp": bool(sharp)}
     head = ("// soft_self_shadow.fx: MMD's body pass with the self shadow (object_ss) read at many points of the shadow map\n"
             "// weighted by a Gaussian.  Written by tools/mme_shadow.py (mmd-cli) from MME 0.37's REFERENCE.txt; the other\n"
             "// passes are MMD's own.  Settings: %s\n" % json.dumps(settings, sort_keys=True))
-    defines = ("#define SS_BLUR_RAD %.9f\n#define SS_MIN_UV %.9f\n#define SS_TAPS %d\n#define SS_SEARCH %d\n"
-               "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_UV %.9f\n"
-               % (math.radians(blur), min_blur / float(SHADOW_MAP), len(kernel), len(search), 1 if contact else 0,
-                  1 if debug else 0, SEARCH_UV))
+    defines = ("#define SS_BLUR_RAD %.9f\n#define SS_MIN_WORLD %.6f\n#define SS_TAPS %d\n#define SS_SEARCH %d\n"
+               "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_WORLD %.6f\n"
+               % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, 1 if debug else 0, SEARCH))
     return (head + defines + _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f") + BODY)
 
 
-SEARCH_UV = 0.02          # how far round the point the casters are looked for (a share of the shadow map)
 
 BODY = r"""
 float4x4 WorldViewProjMatrix      : WORLDVIEWPROJECTION;
@@ -223,13 +227,15 @@ float ShadowTest(float z, float2 uv, float slope)
 float SoftShadow(float3 zc, float2 uv)
 {
     float slope = parthf ? SKII2 * uv.y : SKII1;
-    float spread = SS_MIN_UV;
+    // MMD's light projection is orthographic (_34 = 0, _44 = 1; NOTES): a world length x _11 / 2 is a share of the map
+    float perUnit = abs(LightProjMatrix._11) * 0.5f;
+    float spread = SS_MIN_WORLD * perUnit;
 #if SS_CONTACT
     // the casters' mean depth round the point: the gap to them is a distance along the light
     float gap = 0.0f;
     float found = 0.0f;
     for (int j = 0; j < SS_SEARCH; j++) {
-        float2 p = uv + SEARCH[j].xy * SS_SEARCH_UV;
+        float2 p = uv + SEARCH[j].xy * (SS_SEARCH_WORLD * perUnit);
         if (all(saturate(p) == p)) {
             float d = tex2Dlod(MMDShadowMap, float4(p, 0, 0)).r;
             if ((zc.z - d) * slope > 0.3f) {
@@ -242,8 +248,8 @@ float SoftShadow(float3 zc, float2 uv)
         return ShadowTest(zc.z, uv, slope);
     }
     gap /= found;
-    // orthographic light: depth gap / _33 is the distance in the world, a world distance x _11 / 2 a share of the map
-    float across = SS_BLUR_RAD * gap / max(abs(LightProjMatrix._33), 1e-9f) * abs(LightProjMatrix._11) * 0.5f;
+    // a depth gap / _33 is the distance along the light in the world
+    float across = SS_BLUR_RAD * gap / max(abs(LightProjMatrix._33), 1e-9f) * perUnit;
     spread = max(spread, across);
 #endif
     float lit = 0.0f;
@@ -389,9 +395,49 @@ def check(exe):
     return {"installed": all(v == "same" for v in files.values()), "files": files}
 
 
+MARK = "// soft_self_shadow.fx:"         # the first line of an effect this tool wrote
+
+
+def effect_of(model):
+    """the effect MME applies to MODEL when MMD loads it (MMEffect.txt): the one named in brackets in its file name
+    (name[effect.fx].pmx) or <name>.fx beside it; None without one"""
+    folder, base = os.path.split(os.path.abspath(model))
+    stem = os.path.splitext(base)[0]
+    if stem.endswith("]") and "[" in stem:
+        named = os.path.join(folder, stem[stem.rindex("[") + 1:-1])
+        return named if os.path.isfile(named) else None
+    plain = os.path.join(folder, stem + ".fx")
+    return plain if os.path.isfile(plain) else None
+
+
+def verify(exe, model, want):
+    """does MMD at EXE render MODEL the way `want` says?  "soft": MME is installed beside EXE and MODEL has an effect this
+    tool wrote; "mmd": MMD's own self shadow (no MME beside EXE, or no effect on MODEL).  ValueError when not"""
+    mme = check(exe)
+    fx = effect_of(model)
+    if want == "soft":
+        if not mme["installed"]:
+            raise ValueError("self_shadow soft needs MME 0.37 beside %s: %s" % (exe, json.dumps(mme["files"])))
+        if fx is None:
+            raise ValueError("self_shadow soft needs an effect for %s: write it with tools/mme_shadow.py prepare" % model)
+        with open(fx, encoding="ascii", errors="replace") as f:
+            head = [f.readline() for _ in range(4)]
+        if not head[0].startswith(MARK):
+            raise ValueError("the effect %s was not written by tools/mme_shadow.py" % fx)
+        settings = [line.split("Settings:")[-1].strip() for line in head if "Settings:" in line]
+        return {"self_shadow": "soft", "effect": fx.replace("\\", "/"), "settings": settings[0] if settings else None}
+    if want == "mmd":
+        if mme["installed"] and fx is not None:
+            raise ValueError("self_shadow mmd, but MME beside %s would apply %s to the model: the picture would not be "
+                             "MMD's own (use the model without the effect, or self_shadow soft)" % (exe, fx))
+        return {"self_shadow": "mmd", "effect": None}
+    raise ValueError("self_shadow is mmd (MMD's own) or soft (tools/mme_shadow.py through MME), not %r" % (want,))
+
+
 def _options(s):
     s.add_argument("--blur", type=float, default=DEFAULTS["blur"], help="the light's spread, degrees (default 5)")
-    s.add_argument("--min-blur", type=float, default=DEFAULTS["min_blur"], help="the least blur, texels (default 0.6)")
+    s.add_argument("--min-blur", type=float, default=DEFAULTS["min_blur"],
+                   help="the least blur, a standard deviation in MMD units (default 0.05 = 4 mm: the map's stair steps)")
     s.add_argument("--taps", type=int, default=DEFAULTS["taps"])
     s.add_argument("--search-taps", type=int, default=DEFAULTS["search_taps"])
     s.add_argument("--no-contact", action="store_true", help="the same blur everywhere (--min-blur)")
@@ -417,12 +463,18 @@ def main(argv=None):
     _options(s)
     s = sub.add_parser("check", help="is MME installed beside this MMD?")
     s.add_argument("exe")
+    s = sub.add_parser("verify", help="will this MMD draw this model's self shadow as WANT says (soft / mmd)?")
+    s.add_argument("exe")
+    s.add_argument("model")
+    s.add_argument("want", choices=("soft", "mmd"))
     a = p.parse_args(argv)
     try:
         if a.command == "write":
             out = {"ok": True, "effect": write(a.out, **_settings(a))}
         elif a.command == "prepare":
             out = dict({"ok": True}, **prepare(a.model, a.outdir, a.variant, **_settings(a)))
+        elif a.command == "verify":
+            out = dict({"ok": True}, **verify(a.exe, a.model, a.want))
         else:
             out = dict({"ok": True}, **check(a.exe))
     except (ValueError, OSError) as exc:
