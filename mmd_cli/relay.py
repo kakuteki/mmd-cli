@@ -131,6 +131,12 @@ def windowless_interpreter(python_exe):
     return os.path.join(os.path.dirname(python_exe), "pythonw.exe")
 
 
+def code_root():
+    """the folder that holds this mmd_cli package: the child starts there, so that `-m mmd_cli` finds this code and not an
+    installed copy (a branch's copy run from its own folder ran main's code in the session, hinata 2026-10-16)"""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def task_arguments(job_path):
     return '-m mmd_cli --job "%s"' % job_path
 
@@ -171,26 +177,28 @@ TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   <Actions Context="Author">
     <Exec>
       <Command>%(exe)s</Command>
-      <Arguments>%(arguments)s</Arguments>
+      <Arguments>%(arguments)s</Arguments>%(workdir)s
     </Exec>
   </Actions>
 </Task>
 """
 
 
-def task_xml(exe, arguments):
+def task_xml(exe, arguments, workdir=None):
     from . import win32
     # the principal by SID: schtasks could not map a DOMAIN\name written from the environment on one machine
-    return TASK_XML % {"user": escape(win32.current_user_sid()), "exe": escape(exe), "arguments": escape(arguments)}
+    where = "\n      <WorkingDirectory>%s</WorkingDirectory>" % escape(workdir) if workdir else ""
+    return TASK_XML % {"user": escape(win32.current_user_sid()), "exe": escape(exe), "arguments": escape(arguments),
+                       "workdir": where}
 
 
-def create_task(name, exe, arguments):
+def create_task(name, exe, arguments, workdir=None):
     """register the task from its XML definition (schtasks wants that file in UTF-16); the file is not kept"""
     folder = relay_dir()
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, name.rsplit("\\", 1)[-1] + ".xml")
     with open(path, "w", encoding="utf-16") as f:
-        f.write(task_xml(exe, arguments))
+        f.write(task_xml(exe, arguments, workdir))
     try:
         return _schtasks("/Create", "/TN", name, "/XML", path, "/F")
     finally:
@@ -279,7 +287,7 @@ def run_in_user_session(argv, start_timeout=15.0, grace=2.0):
     interpreter = windowless_interpreter(sys.executable)
     if not os.path.isfile(interpreter):
         interpreter = sys.executable
-    created = create_task(name, interpreter, task_arguments(job_path))
+    created = create_task(name, interpreter, task_arguments(job_path), code_root())
     if created.returncode != 0:
         raise RelayError("schtasks /Create failed: %s" % _text(created.stderr or created.stdout).strip())
     finished = False
