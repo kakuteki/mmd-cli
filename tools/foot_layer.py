@@ -685,26 +685,33 @@ def trace_floor(shoe):
 # balance-v3; 10 % in the trace) and 1.4 % [0.5, 2.2] in people (FineDance's near kinds, 62 sequences), runs of 6 frames
 # or more 9.3 a minute against 0 [0, 1.2] (_spike/out/stage6/floaty/NOTES.md).  There the whole figure is lowered (the
 # centre and both leg IKs by the same height: every joint's angle kept) until the lower shoe stands on the floor, the
-# sink eased in and out over HOVER_EASE frames (lengthened where it would take the pelvis's fall past HOVER_ACC_BOUND).
-# Putting the lower foot down alone straightened the knees (by up to 30 degrees in the song: a bent stance on the toes
-# made straight), as the trace's longer feet would.  A run whose pelvis falls at least HOVER_FLIGHT_ACC (a hop: in flight
-# the body falls at gravity, 122.5 units/s^2 at 8 cm a unit) keeps its height.
+# sink eased in and out over HOVER_EASE frames (lengthened, then lessened, where it would take the pelvis's fall past
+# HOVER_ACC_BOUND).  Putting the lower foot down alone straightened the knees (by up to 30 degrees in the song: a bent
+# stance on the toes made straight), as the trace's longer feet would; so in the run the feet keep the dance's shape (no
+# laying flat, no toes bent onto the floor, no heel turned: the layer takes them as in the air there), the sink alone
+# brings the lower shoe down.  A run whose pelvis falls at least HOVER_FLIGHT_ACC (a hop: in flight the body falls at
+# gravity, 122.5 units/s^2 at 8 cm a unit) keeps its height, and so does a run shorter than HOVER_MIN_RUN (a hover of a
+# frame or two between steps: people have 1.4 % of such frames, runs of 6 frames or more not at all).
 HOVER_MAX = 0.375               # units over the trace's floor (3 cm): the lower shoe this low counts as hovering
 HOVER_FLIGHT_ACC = 61.25        # units/s^2 down (half of gravity): a run whose pelvis falls faster is a flight
+HOVER_MIN_RUN = 4               # frames: a shorter hover is left as it is
 HOVER_EASE = 6                  # frames: the sink comes and goes over this many frames each way (a raised cosine)
 HOVER_SMOOTH = 3                # frames: the half width of the Hann window that smooths the sink inside a run
 HOVER_ACC_BOUND = 122.0         # units/s^2: the pelvis's downward acceleration the sink may not take a frame past
                                 # (the balance layer's DOWN_ACC_MAX; a frame already past it in the input keeps its own)
 
 
-def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC):
-    """[(a, b)] (inclusive) runs of frames where neither shoe is on the floor (e: side -> the shoe's lowest point over the
-    trace's floor [F] units, both over on_floor[1]) but the lower one is under low_max, and the pelvis's height
-    (pelvis_y [F]) does not fall at flight_acc over the run (a quadratic through the run and a frame on each side)"""
+def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC, min_run=HOVER_MIN_RUN):
+    """[(a, b)] (inclusive) runs of min_run frames or more where neither shoe is on the floor (e: side -> the shoe's
+    lowest point over the trace's floor [F] units, both over on_floor[1]) but the lower one is under low_max, and the
+    pelvis's height (pelvis_y [F]) does not fall at flight_acc over the run (a quadratic through the run and a frame on
+    each side)"""
     sides = list(e)
     lo = np.minimum(e[sides[0]], e[sides[1]])
     out = []
     for a, b in runs((lo > on_floor[1]) & (lo < low_max)):
+        if b - a + 1 < min_run:
+            continue
         i0, i1 = max(a - 1, 0), min(b + 1, len(lo) - 1)
         if i1 - i0 >= 2:
             t = np.arange(i0, i1 + 1) / FPS
@@ -726,31 +733,39 @@ def hann_smooth(x, half):
 
 
 def hover_sink_profile(gap, runs_, acc0, ease=HOVER_EASE, smooth=HOVER_SMOOTH, bound=HOVER_ACC_BOUND):
-    """(the sink [F] (units, >= 0), the frames still past the bound, the radius used per run): in each run the lower
-    shoe's gap [F] over the floor, spread over `ease` frames each way (a raised cosine) and smoothed (a Hann window of
-    `smooth` frames each way); a run whose sink takes the pelvis's downward acceleration (acc0 [F]: the input's,
-    units/s^2) past `bound` where the input's is within it is spread further (3 frames more, up to 4 times)"""
+    """(the sink [F] (units, >= 0), the frames still past the bound, the radius and the scale used per run): in each run
+    the lower shoe's gap [F] over the floor, spread over `ease` frames each way (a raised cosine) and smoothed (a Hann
+    window of `smooth` frames each way); where the sink takes the pelvis's downward acceleration (acc0 [F]: the input's,
+    units/s^2) past `bound` (or past the input's own where that is already past it), the runs about that frame are
+    spread further (3 frames more, up to 4 times), then their sink lessened (by a fifth at a time, down to nothing)"""
     F = len(gap)
     radius = [ease] * len(runs_)
+    scale = [1.0] * len(runs_)
+    allowed = np.maximum(bound, -acc0) + 1.0
     bad = np.zeros(F, dtype=bool)
     s = np.zeros(F)
-    for _ in range(5):
+    for it in range(40):
         s = np.zeros(F)
         for i, (a, b) in enumerate(runs_):
+            if scale[i] <= 0.0:
+                continue
             g = np.zeros(F)
-            g[a:b + 1] = gap[a:b + 1]
-            s = np.maximum(s, smooth_max_envelope(g, radius[i]))
-        s = np.maximum(hann_smooth(s, smooth), 0.0)
+            g[a:b + 1] = scale[i] * gap[a:b + 1]
+            # (smoothed, but never under the gap inside the run: the shoe is put on the floor there)
+            s = np.maximum(s, np.maximum(hann_smooth(smooth_max_envelope(g, radius[i]), smooth), g))
+        s = np.maximum(s, 0.0)
         acc_s = np.zeros(F)
         acc_s[1:-1] = (s[2:] - 2.0 * s[1:-1] + s[:-2]) * FPS ** 2
-        acc1 = acc0 - acc_s
-        bad = acc1 < -np.maximum(bound, -acc0) - 1.0
+        bad = acc0 - acc_s < -allowed
         if not bad.any():
             break
         for i, (a, b) in enumerate(runs_):
-            if bad[max(0, a - radius[i] - smooth - 1):min(F, b + radius[i] + smooth + 2)].any():
-                radius[i] += 3
-    return s, int(bad.sum()), radius
+            if scale[i] > 0.0 and bad[max(0, a - radius[i] - smooth - 2):min(F, b + radius[i] + smooth + 3)].any():
+                if radius[i] < ease + 12:
+                    radius[i] += 3
+                else:
+                    scale[i] = round(scale[i] - 0.2, 6) if scale[i] > 0.2 + 1e-9 else 0.0
+    return s, int(bad.sum()), radius, scale
 
 
 def _parent_world_turn(rig, keys, index):
@@ -967,7 +982,7 @@ def turn_about(axis, deg, q):
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
 
 
-def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None):
+def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None, hover_hold=None):
     """the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees) and the weights (roll laid flat w,
     on the floor v) for one side: the roll laid flat as the foot takes weight (by its share of the body's weight and
     only while its sole faces the floor), the ankle complex inside its range, the heel raised by `heel` [F] degrees
@@ -980,12 +995,18 @@ def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None):
     v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE, lift < BRIDGE_LIFT)
     if p.get("landing", True) and p.get("skim", True):
         v = v * (1.0 - smoothstep(foot_speed(f), *SKIM_SPEED) * smoothstep(e, *SKIM_LIFT))
+    if hover_hold is not None:
+        # (a hover run's lower foot: the sink brought its shoe down; it keeps the dance's shape - no roll laid flat, no
+        # toes bent, no heel turned - and only its height is held on the floor: v_height)
+        v = v * (1.0 - hover_hold)
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
     loaded = smoothstep(share, *p["load_share"])
     # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
     # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
     w = smooth_max_envelope(near * loaded * (1.0 - smoothstep(np.abs(pitch), *p["flat_pitch"])), EASE)
+    if hover_hold is not None:
+        w = w * (1.0 - hover_hold)
     if p["flatten"]:
         _, ang = unrolled(o, q)
         turn = w * ang
@@ -1040,7 +1061,8 @@ def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None):
             toes = smooth_max_envelope(v * loaded * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
         else:
             toes = toe_bend(o, f, leg, qnormalize_rows(q), rest, v, loaded, p, o.floor if floor_y is None else floor_y)
-    return qnormalize_rows(q), toes, w, v
+    v_height = v if hover_hold is None else np.maximum(v, hover_hold)
+    return qnormalize_rows(q), toes, w, v_height, v
 
 
 def run_cummax(x, down):
@@ -1334,7 +1356,8 @@ def layer(rig, shoe, motion, params=None, log=None):
     keys = IK.sample(rig, motion, frames)
     sol = IK.solve(rig, motion, frames, keys)
     lowered = np.zeros(F)
-    sink_info = {"runs": [], "acc_past_bound_frames": 0, "radius": []}
+    held = None
+    sink_info = {"runs": [], "acc_past_bound_frames": 0, "radius": [], "scale": []}
     on = p.get("hover")
     if (p.get("landing", True) if on is None else on) and len(shoe.sides) == 2 and "センター" in rig.by_name:
         # (None: with the landing) the figure held by nothing lowered onto the floor (hover_runs, hover_sink_profile)
@@ -1346,8 +1369,15 @@ def layer(rig, shoe, motion, params=None, log=None):
             acc0 = np.zeros(F)
             acc0[1:-1] = (pelvis_y[2:] - 2.0 * pelvis_y[1:-1] + pelvis_y[:-2]) * FPS ** 2
             gap = np.minimum(*[e[s] for s in shoe.sides])
-            lowered, past, radius = hover_sink_profile(gap, rr, acc0)
-            sink_info = {"runs": rr, "acc_past_bound_frames": past, "radius": radius}
+            lowered, past, radius, scale = hover_sink_profile(gap, rr, acc0)
+            sink_info = {"runs": rr, "acc_past_bound_frames": past, "radius": radius, "scale": scale}
+            sides = list(shoe.sides)
+            lower = e[sides[0]] <= e[sides[1]]
+            held = {s: np.zeros(F) for s in sides}
+            for (a, b), k in zip(rr, scale):
+                if k > 0.0:
+                    held[sides[0]][a:b + 1] = lower[a:b + 1]
+                    held[sides[1]][a:b + 1] = ~lower[a:b + 1]
             motion = sink_motion(rig, motion, keys, sol, lowered, F)
             keys = IK.sample(rig, motion, frames)
             sol = IK.solve(rig, motion, frames, keys)
@@ -1397,7 +1427,8 @@ def layer(rig, shoe, motion, params=None, log=None):
             for k in ("ankle", "knee", "q_shin"):
                 leg[k] = shank[s][k]
             rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
-            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y, heel[s])
+            q_t, toes, w, v, v_shape = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y, heel[s],
+                                                    None if held is None else held[s])
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
             # the air keeps its path), the shoe of a foot on the floor exactly on it (v), that correction eased into
             # the frames around (eased_correction), nothing below the floor
@@ -1416,7 +1447,8 @@ def layer(rig, shoe, motion, params=None, log=None):
                 sink = np.where(v >= 0.5, np.maximum(floor_y - (low0 + dy), 0.0), sink)
             dy = dy + sink
             target = low0 + dy
-            plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "dy": target - low0, "d1": d1, "target_low": target,
+            plan[s] = {"q_t": q_t, "toes": toes, "w": w, "v": v, "v_shape": v_shape, "dy": target - low0, "d1": d1,
+                       "target_low": target,
                        "share": shares[s], "floor_y": floor_y}
             set_dy(s, plan[s]["dy"])
         out_sol = IK.solve(rig, motion, frames, new_keys)
@@ -1457,7 +1489,8 @@ def layer(rig, shoe, motion, params=None, log=None):
                 leg = dict(out_sol[s])
                 leg["ankle"] = out_sol[s]["goal_ankle"]
                 leg["ex"] = out_sol[s]["ex"] + (out_sol[s]["goal_ankle"] - out_sol[s]["ankle"])
-                turn, ball, axis = heel_turn(rig, o, leg, pl["q_t"], pl["v"], smoothstep(pl["share"], *p["load_share"]), p)
+                turn, ball, axis = heel_turn(rig, o, leg, pl["q_t"], pl["v_shape"], smoothstep(pl["share"], *p["load_share"]),
+                                             p)
                 if not np.any(turn > 0.0):
                     continue
                 heel[s] = turn
@@ -1702,6 +1735,8 @@ def main(argv=None):
         report["hover_sink"] = {"runs": len(info["runs"]), "run_frames": int(sum(b - a + 1 for a, b in info["runs"])),
                                 "sunk_frames": int((sk > 1e-4).sum()), "max_cm": _r(float(sk.max()) * UNIT_CM, 2),
                                 "acc_past_bound_frames": info["acc_past_bound_frames"],
+                                "runs_lessened": int(sum(1 for k in info["scale"] if k < 1.0)),
+                                "runs_dropped": int(sum(1 for k in info["scale"] if k <= 0.0)),
                                 "runs_s": [[_r(a / FPS, 2), _r((b + 1) / FPS, 2)] for a, b in info["runs"]][:200]}
         report["unreached"] = {TAGS[s]: {"frames": int((np.abs(pl["miss"]) > 0.025).sum()),
                                          "worst_cm": _r(float(np.abs(pl["miss"]).max()) * UNIT_CM, 2)}

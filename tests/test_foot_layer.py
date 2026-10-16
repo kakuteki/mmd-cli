@@ -1319,10 +1319,6 @@ class SourRinShoeTest(unittest.TestCase):
             self.assertGreater(o.l0[0] * sx, 0.95)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class HoverSupportTest(unittest.TestCase):
     """floaty (2026-10-17): no foot on the floor, yet the lower one just over it and the pelvis not falling: the body is held
     by nothing (a05 s11's 'hover support': the MV 8 % of the song, people 1.4 % [0.5, 2.2] of FineDance's near kinds).
@@ -1397,3 +1393,61 @@ class HoverSupportTest(unittest.TestCase):
         b = foot_layer.measure_feet(RIG, SHOE, a, range(self.F))
         for t in self.HOVER:
             self.assertGreater(float(b["左"]["low"][t]) - 0.111, 0.15)
+
+    def test_a_hover_of_two_frames_is_left(self):
+        keys = []
+        for t in range(self.F):
+            h = 0.1875 if t in (14, 15) else 0.0
+            keys += [key("左足ＩＫ", t, position=(0, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2, 0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+        self.assertLess(float(np.abs(plan["左"]["sink"]).max()), 1e-9)
+
+    def test_the_sink_does_not_take_the_pelvis_fall_past_the_bound(self):
+        # the dance's pelvis already falls at the bound (122 units/s^2) for the 6 frames before the hover, then stays: the
+        # sink may not add to that fall
+        n = np.arange(self.F)
+        fall = np.array([-0.5 * 122.0 * ((min(max(t, 4), 10) - 4) / 30.0) ** 2 for t in range(self.F)])
+        f_in, f_out, out, plan = run_layer(*self.keys(0.1875, pelvis=fall), frames=self.F)
+        sol_in = leg_ik.solve(RIG, motion(*self.keys(0.1875, pelvis=fall)), n)
+        sol_out = leg_ik.solve(RIG, out, n)
+        y_in = 0.5 * (sol_in["左"]["hip"][:, 1] + sol_in["右"]["hip"][:, 1])
+        y_out = 0.5 * (sol_out["左"]["hip"][:, 1] + sol_out["右"]["hip"][:, 1])
+        a_in = np.diff(y_in, 2) * 30.0 ** 2
+        a_out = np.diff(y_out, 2) * 30.0 ** 2
+        self.assertLess(float(a_in.min()), -100.0)                                 # the input does fall at about the bound
+        self.assertTrue(np.all(a_out >= -np.maximum(foot_layer.HOVER_ACC_BOUND, -a_in) - 2.0), (a_in.round(0), a_out.round(0)))
+        self.assertEqual(plan["左"]["sink_info"]["acc_past_bound_frames"], 0)
+
+    def test_a_pointed_hovering_foot_keeps_its_shape(self):
+        # both feet pointed 40 degrees toes-down (on the toes, as the trace's longer feet stood), their tips 1.5 cm over the
+        # floor: the figure comes down, the feet keep their pitch and the toes are not bent onto the floor, the knees keep
+        # their bend (standing it on the ball would lower the ankle and straighten the knee)
+        q = axis_angle((1, 0, 0), -40.0)
+        center = key("センター", 0, position=(0, -1.2, 0))
+        probe = measure(key("左足ＩＫ", 0, q, position=(0, 1.0, 0)), key("左足首", 0, q), center)["左"]
+        lift0 = 1.0 + 0.111 - float(probe["low"][0])                  # the IK height that puts the tip on the floor
+        keys = [center]
+        for t in range(self.F):
+            h = 0.1875 if t in self.HOVER else 0.0
+            keys += [key("左足ＩＫ", t, q, position=(0, lift0 + h, 0)), key("左足首", t, q),
+                     key("右足ＩＫ", t, q, position=(0, lift0 + h + 0.2, 0)), key("右足首", t, q)]
+        m_in = motion(*keys)
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        off, _ = foot_layer.layer(RIG, SHOE, m_in, {"hover": False})          # the layer as it was: the run in the air
+        f_off = foot_layer.measure_feet(RIG, SHOE, off, range(self.F))
+        s_in, b_in = self.legs(m_in)
+        s_out, b_out = self.legs(out)
+        self.assertEqual(len(plan["左"]["sink_info"]["runs"]), 1)
+        for t in range(13, 17):
+            self.assertGreater(float(f_off["左"]["low"][t]) - 0.111, 0.15)        # (without the sink: over the floor)
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)      # the tip on the floor
+            self.assertAlmostEqual(float(f_out["左"]["pitch"][t]), float(f_off["左"]["pitch"][t]), delta=1.0)
+            self.assertLess(abs(float(f_out["左"]["mtp"][t] - f_off["左"]["mtp"][t])), 1.0)   # the toes as in the air
+            for s_ in ("左", "右"):
+                self.assertLess(abs(float(b_out[s_][t] - b_in[s_][t])), 1.5)
+
+
+if __name__ == "__main__":
+    unittest.main()
