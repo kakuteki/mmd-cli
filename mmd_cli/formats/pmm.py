@@ -144,8 +144,10 @@ def _accessory_current(r):
     return d
 
 
-def _gravity_frame(r, with_index):
+def _gravity_frame(r, with_index, at=None):
     d = _links(r, with_index)
+    if at is not None:
+        at.append(r.pos)            # the key's fields from here: flag, noise i32, acceleration f32, direction 3 f32, selected
     d["noise_enabled"] = r.flag()
     d["noise"] = r.i32()
     d["acceleration"] = r.f32()
@@ -237,7 +239,10 @@ def _background(r, visible_is_int):
     return d
 
 
-def loads(data):
+def loads(data, positions=None):
+    """the project as a dict.  `positions` (a dict, optional) receives byte offsets of fields that a tool may rewrite in
+    place: "gravity_current" (the current gravity: acceleration f32, noise i32, direction 3 f32, noise flag) and
+    "gravity_frames" (per gravity key, the frame-0 key first: noise flag, noise i32, acceleration f32, direction 3 f32)"""
     if data[:len(MAGIC_V2)] != MAGIC_V2:
         if data[:len(MAGIC_PREFIX)] == MAGIC_PREFIX:
             version = data[len(MAGIC_PREFIX):len(MAGIC_PREFIX) + 4].decode("ascii", "replace")
@@ -290,10 +295,14 @@ def loads(data):
     p["transparent_ground_shadow"] = r.flag()
     p["physics_mode"] = r.u8()
 
+    frames = None
+    if positions is not None:
+        positions["gravity_current"] = r.pos
+        frames = positions["gravity_frames"] = []
     gravity = {"current": {"acceleration": r.f32(), "noise": r.i32(), "direction": r.floats(3),
                            "noise_enabled": r.flag()}}
-    gravity["init"] = _gravity_frame(r, False)
-    gravity["keys"] = [_gravity_frame(r, True) for _ in range(r.count())]
+    gravity["init"] = _gravity_frame(r, False, frames)
+    gravity["keys"] = [_gravity_frame(r, True, frames) for _ in range(r.count())]
     p["gravity"] = gravity
 
     shadow = {"visible": r.flag(), "current_distance": r.f32()}
