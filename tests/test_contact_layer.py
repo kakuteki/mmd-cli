@@ -236,6 +236,21 @@ class GroundTest(unittest.TestCase):
             g0, g1 = goal(m, F, s), goal(out, F, s)
             self.assertLess(float(np.abs(g1[:, [0, 2]] - g0[:, [0, 2]]).max()), 0.01)  # the feet stay where they stand (1 mm)
 
+    def test_a_leg_out_of_reach_for_a_moment_keeps_the_pelvis(self):
+        # the same wide stance, but the centre bobs up for a few frames only (the left leg out of reach on 3 of them, as
+        # a landing's leg reaching for the floor): not lowered for that
+        F = 50
+
+        def centre(t):
+            u = max(0.0, 1.0 - abs(t - 25) / 4.0)
+            return (1.0, BENT + 0.4 + 0.5 * u, 0.0)
+        m = dance(F, centre=centre, left=lambda t: ((4.0, 0.0, 0.0), None))
+        short = int((shoes(m, F)["左"]["low"] > 0.4).sum())
+        self.assertGreater(short, 1)                                                  # (as built: the shoe up a moment)
+        self.assertLess(short, contact_layer.REACH_MIN)
+        out, plan = run(m)
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
+
     def test_a_free_foot_out_of_reach_keeps_the_pelvis(self):
         # the body over the right foot, the left leg stretched out to the side with its shoe 2-3 cm up and its goal out of
         # reach: a pointed foot resting, not a support.  The pelvis stays; the left foot comes no lower than it reaches

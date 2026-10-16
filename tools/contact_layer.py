@@ -114,6 +114,7 @@ LOAD_SHARE = 0.3                # a standing foot with this share of the weight 
 REACH_KNEE_DEG = FL.REACH_KNEE_DEG   # degrees: the knee of a standing leg bent at least this much (people: none straighter
                                      # than 5 degrees on the floor; the foot layer's)
 DROP_MAX = 1.0                  # units (8 cm): the most the pelvis goes down to let a standing leg reach the floor
+REACH_MIN = 9                   # frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered
 DROP_WINDOW = 24                # frames each side of a lowering over which it comes and goes (smoothly, within the bound)
 DROP_QP_ROUNDS = 400
 JUDGE_MISS = 0.75               # units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a
@@ -625,7 +626,7 @@ def layer(model, rig, shoe, motion, params=None):
         room = raise_room(sol[s]["hip"], g, reach_keep[s])
         # a lowered foot whose leg will not reach (with the knee bent REACH_KNEE_DEG), and a foot whose goal is on the
         # floor but MMD leaves it over it (the leg lagging, or just out of reach)
-        short = (stance[s] & (dy[s] < 0.0) & ~(room >= -1e-9)) |                 (stance[s] & (dy[s] >= 0.0) & (low[s] > LAND_TOL) & (low_j[s] < ON_FLOOR))
+        short = (stance[s] & (dy[s] < 0.0) & ~(room >= -1e-9)) |                 (stance[s] & (dy[s] >= 0.0) & (low[s] > ON_FLOOR) & (low_j[s] < ON_FLOOR))
         if not short.any():
             continue
         nd = needed(s, np.flatnonzero(short))
@@ -633,6 +634,14 @@ def layer(model, rig, shoe, motion, params=None):
         if free.any():
             as_far_as_it_reaches(s, free & (dy[s] < 0.0))
         bear = short & nd
+        # only a foot that stands out of reach for REACH_MIN frames and more: a landing's or a take-off's leg reaching
+        # for the floor a frame or two late is the dance's (lowering the body for it lands the foot early)
+        held_long = np.zeros(F, dtype=bool)
+        for a, b in runs(bear, REACH_MIN):
+            held_long[a:b + 1] = True
+        if (bear & ~held_long).any():
+            as_far_as_it_reaches(s, bear & ~held_long & (dy[s] < 0.0))
+        bear = held_long
         if bear.any() and p["drop"]:
             r = np.where(bear, np.where(np.isfinite(room), np.maximum(-room, np.maximum(low[s] - low_j[s], 0.0)), DROP_MAX), 0.0)
             need_drop = np.maximum(need_drop, np.minimum(r, DROP_MAX))
