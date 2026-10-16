@@ -459,6 +459,33 @@ class MeasureTest(unittest.TestCase):
         self.assertLess(rep["zmp"]["inside_share"], 0.9)
         json.dumps(rep)                                  # plain JSON
 
+    def test_tilt_counts_the_floors_push(self):
+        """a stretch outside the base of support tilts the body by the moment the floor cannot give: its push F_y (per kg)
+        times the depth d, over the COM's height h squared, twice summed over the stretch (radians, then degrees).  The same
+        COM 4 cm off the standing foot, once still and once pushed up at g / 2 (the body rising), against that sum computed
+        here from the motion itself"""
+        F = 20
+        lm = self.one_leg(F)
+        for k in lm:
+            if k not in ("ankle_R", "toe_R"):
+                lm[k][:, 0] += -1.0                                 # 8 cm sideways: the COM 4 cm off the standing foot
+        t = np.arange(F) / FPS
+        for a_up in (0.0, G / 2.0):
+            body = {k: v.copy() for k, v in lm.items()}
+            for k in body:
+                if k not in ("ankle_R", "toe_R"):
+                    body[k][:, 1] += 0.5 * a_up * t ** 2 / U
+            rep, arr = wb.measure(body, wb.RIN_FEET, floor_y=0.111, cutoff_hz=None, arrays=True)
+            run = max(rep["zmp"]["outside_runs"], key=lambda r: r["frames"])
+            k0, k1 = run["first"], run["last"]
+            d = -arr["margin"][k0:k1 + 1]
+            h = arr["com"][k0:k1 + 1, 1] - 0.111 * U
+            fy = arr["force"][k0:k1 + 1, 1]
+            want = math.degrees(np.sum(np.cumsum(fy * d / h ** 2) / FPS) / FPS)
+            self.assertAlmostEqual(run["tilt_deg"], want, delta=0.01 + 0.01 * want, msg=str(a_up))
+            if a_up:
+                np.testing.assert_allclose(fy, G + a_up, atol=1e-6)        # (the push is the weight and the lift)
+
     def test_air_horizontal_acceleration(self):
         """in the air nothing pushes the body sideways: a hop with the body drifting at a steady speed has no horizontal
         COM acceleration; one that speeds up in the air is counted"""

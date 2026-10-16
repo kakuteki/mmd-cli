@@ -614,12 +614,12 @@ def measure(lm, feet, rots=None, floor_y=None, cutoff_hz=CUTOFF_HZ, rng=None, un
     Lf = feet["foot_length_m"]
     H = feet["stature_m"]
     # the stretches outside: deeper than RUN_DEPTH_M; the tilt the body would take from the moment the floor cannot give
-    # (the depth times the weight, over the moment of inertia about the support's edge ~ the COM's height squared)
+    # (its push times the depth, over the moment of inertia about the support's edge ~ the COM's height squared)
     out_runs = []
     for r0, r1 in runs(ok & (margin < -RUN_DEPTH_M)):
         d = -margin[r0:r1 + 1]
         hcom = dyn["com"][r0:r1 + 1, 1] - floor_y * unit_m
-        alpha = G * d / np.maximum(hcom, 0.2) ** 2              # rad/s^2
+        alpha = dyn["force"][r0:r1 + 1, 1] * d / np.maximum(hcom, 0.2) ** 2      # rad/s^2
         omega = np.cumsum(alpha) / fs
         tilt = float(np.sum(omega) / fs)
         foot = "both" if np.all(nfeet[r0:r1 + 1] == 2) else ("L" if np.all(sup["contact"]["L"][r0:r1 + 1] & ~sup["contact"]["R"][r0:r1 + 1])
