@@ -1110,6 +1110,38 @@ class MovingStanceTest(unittest.TestCase):
         self.assertGreater(rep["still_frames"], 30)
         self.assertLess(rep["still_lateral_cm"]["after"], 4.0)
 
+    def test_still_stance_stays_still(self):
+        """the stance the dance holds still stays still: the body is brought over the foot before the stillness and is
+        not moved while it stands (the review of 2026-10-16: the pull itself moved the body 5-14 cm/s inside the still
+        stretches of the MV, 89.4 s 14 cm/s, so the human measure found no still stance left)"""
+        last = 149
+        motion = moving_stance(last, spread=0.8, x=(0.5, 0.0))
+        keys = []
+        for f in range(last + 1):
+            t = min(1.0, max(0.0, (f - 38) / 24.0))
+            keys.append(key("センター", f, (0.5 - 0.5 * t, -0.6, 0.0)))
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + keys
+        motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ",)] + foot_track(
+            "左足ＩＫ", last, (0.8, 0.0, 0.0), [(40, 50, 120, 130, 2.5)])
+        body = balance_layer.Body(MODEL, motion)
+        com0 = body.com()
+        plan = balance_layer.support_plan(body, balance_layer.params_default(), com0)
+        still = plan["still"]
+        self.assertGreater(int(still.sum()), 30)
+        result = balance_layer.layer(MODEL, motion)
+        com1 = balance_layer.Body(MODEL, result.motion).com()
+
+        def speed(c):
+            v = np.zeros(len(c))
+            v[1:-1] = np.linalg.norm(c[2:, [0, 2]] - c[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
+            return v
+        v0, v1 = speed(com0), speed(com1)
+        self.assertGreater(float(np.mean(v0[still] < 5.0)), 0.95)                      # the fixture: still
+        self.assertGreater(float(np.mean(v1[still] < 5.0)), 0.95)                      # and still after the layer
+        shift = centre_offsets(motion, result.motion, last)
+        self.assertLess(float(np.median(speed(shift)[still])), 1.0)                     # the shift itself holds
+        self.assertLess(result.report["stance"]["still_lateral_cm"]["after"], 4.0)     # over the foot all the same
+
     def test_still_stance_still_pulled(self):
         """the body still on the midline (the trace's way): pulled over the standing foot as before"""
         last = 119
