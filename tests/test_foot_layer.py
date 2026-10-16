@@ -1448,6 +1448,20 @@ class HoverSupportTest(unittest.TestCase):
             for s_ in ("左", "右"):
                 self.assertLess(abs(float(b_out[s_][t] - b_in[s_][t])), 1.5)
 
+    def test_a_gap_that_steps_from_frame_to_frame_makes_no_spike_of_the_centre(self):
+        # the lower shoe 1.2 and 2.0 cm over the floor on alternate frames (the trace's 0.3 unit grid): the pelvis is lowered
+        # smoothly (no one-frame spike), the lower shoe still held on the floor
+        keys = []
+        for t in range(self.F):
+            h = (0.15 if t % 2 else 0.25) if t in self.HOVER else 0.0
+            keys += [key("左足ＩＫ", t, position=(0, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
+                     key("センター", t, position=(0, -1.2, 0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        acc = np.diff(plan["左"]["sink"], 2) * 30.0 ** 2
+        self.assertLess(float(np.abs(acc).max()), 60.0)
+        for t in range(12, 18):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
+
 
 if __name__ == "__main__":
     unittest.main()

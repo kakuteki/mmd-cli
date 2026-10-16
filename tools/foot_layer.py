@@ -754,9 +754,11 @@ def hover_sink_profile(gap, runs_, acc0, ease=HOVER_EASE, smooth=HOVER_SMOOTH, b
                 continue
             g = np.zeros(F)
             g[a:b + 1] = scale[i] * gap[a:b + 1]
-            # (smoothed, but never under the gap inside the run: the shoe is put on the floor there)
-            s = np.maximum(s, np.maximum(hann_smooth(smooth_max_envelope(g, radius[i]), smooth), g))
-        s = np.maximum(s, 0.0)
+            s = np.maximum(s, smooth_max_envelope(g, radius[i]))
+        # (smoothed as a whole: no corner where two runs' sinks meet or where the gap steps from a frame to the next, which
+        # would show as a one-frame spike of the centre; the few millimetres the smoothing leaves under the gap in a run
+        # are the lower foot's to take, its height held on the floor)
+        s = np.maximum(hann_smooth(s, smooth), 0.0)
         acc_s = np.zeros(F)
         acc_s[1:-1] = (s[2:] - 2.0 * s[1:-1] + s[:-2]) * FPS ** 2
         bad = acc0 - acc_s < -allowed
