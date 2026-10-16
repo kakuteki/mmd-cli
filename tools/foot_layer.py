@@ -695,6 +695,12 @@ def trace_floor(shoe):
 HOVER_MAX = 0.5                 # units over the trace's floor (4 cm, a05 s11's band): the lower shoe this low counts as hovering
 HOVER_FLIGHT_ACC = 61.25        # units/s^2 down (half of gravity): a run whose pelvis falls faster is a flight
 HOVER_MIN_RUN = 4               # frames: a shorter hover is left as it is
+HOVER_FOOT_SPEED = 2.5          # units/s (20 cm/s): a run whose lower shoe moves up or down faster than this (the median
+                                # over the run) is a foot on its way to or from the floor - a step's touch or lift, which the
+                                # landing takes - not one held over it (the song's hovers: 8 cm/s, 91 % under 20)
+HOVER_TRANSIT = 0.15            # units (1.2 cm): a run whose lower shoe only rises (or only falls, within 1 mm a frame) by
+                                # more than this is a foot passing through the band at a lift-off or a touch, not held
+                                # (the song's hovers come back: their net change is under 0.9 cm but for one landing)
 HOVER_EASE = 6                  # frames: the sink comes and goes over this many frames each way (a raised cosine)
 HOVER_SMOOTH = 3                # frames: the half width of the Hann window that smooths the sink inside a run
 HOVER_ACC_BOUND = 130.0         # units/s^2: the pelvis's downward acceleration the sink may not take a frame past (a frame
@@ -704,16 +710,23 @@ HOVER_ACC_BOUND = 130.0         # units/s^2: the pelvis's downward acceleration 
                                 # 3 units/s^2 next to frames at 122
 
 
-def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC, min_run=HOVER_MIN_RUN):
+def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC, min_run=HOVER_MIN_RUN,
+               foot_speed=HOVER_FOOT_SPEED):
     """[(a, b)] (inclusive) runs of min_run frames or more where neither shoe is on the floor (e: side -> the shoe's
-    lowest point over the trace's floor [F] units, both over on_floor[1]) but the lower one is under low_max, and the
-    pelvis's height (pelvis_y [F]) does not fall at flight_acc over the run (a quadratic through the run and a frame on
-    each side)"""
+    lowest point over the trace's floor [F] units, both over on_floor[1]) but the lower one is under low_max and held
+    there (its height moves slower than foot_speed, the run's median, and does not only rise or only fall by more than
+    HOVER_TRANSIT), and the pelvis's height (pelvis_y [F]) does not fall at flight_acc over the run (a quadratic through
+    the run and a frame on each side)"""
     sides = list(e)
     lo = np.minimum(e[sides[0]], e[sides[1]])
+    speed = np.abs(np.gradient(lo)) * FPS if len(lo) > 1 else np.zeros(len(lo))
     out = []
     for a, b in runs((lo > on_floor[1]) & (lo < low_max)):
-        if b - a + 1 < min_run:
+        if b - a + 1 < min_run or np.median(speed[a:b + 1]) > foot_speed:
+            continue
+        step = np.diff(lo[a:b + 1])
+        tol = 0.1 / UNIT_CM
+        if abs(lo[b] - lo[a]) > HOVER_TRANSIT and (np.all(step > -tol) or np.all(step < tol)):
             continue
         i0, i1 = max(a - 1, 0), min(b + 1, len(lo) - 1)
         if i1 - i0 >= 2:
@@ -1323,6 +1336,32 @@ def smooth_max_envelope(x, radius):
     return out
 
 
+def leg_lengths(rig, shoe):
+    """side -> the leg's length (hip to knee to ankle at rest, units)"""
+    out = {}
+    for s in shoe.sides:
+        side = rig.sides[s]
+        h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
+        out[s] = float(np.linalg.norm(k0 - h0) + np.linalg.norm(a0 - k0))
+    return out
+
+
+def judged_feet(rig, shoe, sol, frames, floor_y, p, leg_length):
+    """the feet (feet_of) as the layer judges them: with the landing (p["landing"], p["reach_knee"]) where the dance puts
+    them, at their goals where the leg does not reach (MMD leaves such a foot over the floor, and a foot the dance stands
+    on the floor would be taken for one in the air); else as MMD's IK puts them"""
+    if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
+        at_goal = {}
+        for s, leg in sol.items():
+            # only where the goal lies out of the leg's reach (MMD's lag behind a reachable goal is the pushes' to mend:
+            # judging such a frame at its goal took feet standing on the floor for lifted ones, 48.3 s)
+            short = (np.linalg.norm(leg["goal_ankle"] - leg["hip"], axis=1) > leg_length[s] - 1e-4)[:, None]
+            d = np.where(short, leg["goal_ankle"] - leg["ankle"], 0.0)
+            at_goal[s] = dict(leg, ankle=leg["ankle"] + d, ex=leg["ex"] + d, toe=leg["toe"] + d)
+        return feet_of(rig, shoe, at_goal, frames, floor_y, p["heel_pitch_deg"])
+    return feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
+
+
 def layer(rig, shoe, motion, params=None, log=None):
     """(the output motion, the plan per side) of the foot layer on `motion`.
 
@@ -1374,7 +1413,7 @@ def layer(rig, shoe, motion, params=None, log=None):
     on = p.get("hover")
     if (p.get("landing", True) if on is None else on) and len(shoe.sides) == 2 and "センター" in rig.by_name:
         # (None: with the landing) the figure held by nothing lowered onto the floor (hover_runs, hover_sink_profile)
-        f0 = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
+        f0 = judged_feet(rig, shoe, sol, frames, floor_y, p, leg_lengths(rig, shoe))
         e = {s: trace_height(f0[s], o, p["trace_toe_extra"], key="low") for s, o in shoe.sides.items()}
         pelvis_y = np.mean([sol[s]["hip"][:, 1] for s in shoe.sides], axis=0)
         rr = hover_runs(e, pelvis_y, p["on_floor"])
@@ -1402,19 +1441,7 @@ def layer(rig, shoe, motion, params=None, log=None):
         side = rig.sides[s]
         h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
         leg_length[s] = float(np.linalg.norm(k0 - h0) + np.linalg.norm(a0 - k0))
-    if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
-        # (with the landing: the feet judged where the dance puts them, at their goals: where the leg does not reach, MMD
-        # leaves the foot over the floor, and a foot the dance stands on the floor would be taken for one in the air)
-        at_goal = {}
-        for s, leg in sol.items():
-            # only where the goal lies out of the leg's reach (MMD's lag behind a reachable goal is the pushes' to mend:
-            # judging such a frame at its goal took feet standing on the floor for lifted ones, 48.3 s)
-            short = (np.linalg.norm(leg["goal_ankle"] - leg["hip"], axis=1) > leg_length[s] - 1e-4)[:, None]
-            d = np.where(short, leg["goal_ankle"] - leg["ankle"], 0.0)
-            at_goal[s] = dict(leg, ankle=leg["ankle"] + d, ex=leg["ex"] + d, toe=leg["toe"] + d)
-        feet = feet_of(rig, shoe, at_goal, frames, floor_y, p["heel_pitch_deg"])
-    else:
-        feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
+    feet = judged_feet(rig, shoe, sol, frames, floor_y, p, leg_length)
     shares, near = load_shares(shoe, feet, sol, p)
     if held is not None:
         shares, near = pre_shares, pre_near

@@ -1462,6 +1462,32 @@ class HoverSupportTest(unittest.TestCase):
         for t in range(12, 18):
             self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
 
+    def run_of(self, lifts, other=2.5):
+        """runs of a left foot whose sole is lifts[t] units over the trace's floor, the right one `other` up, the pelvis held"""
+        keys = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, other, 0.8))]
+        keys += [key("左足ＩＫ", t, position=(0, h, 0)) for t, h in enumerate(lifts)]
+        return run_layer(*keys, frames=len(lifts))
+
+    def test_a_foot_rising_through_the_band_at_a_lift_off_is_not_a_hover(self):
+        # 0.6 cm a frame (18 cm/s, slower than HOVER_FOOT_SPEED) from the floor up through 4 cm: a step's lift, not held
+        lifts = [0.0] * 5 + [0.075 * k for k in range(1, 9)] + [0.6] * 5
+        f_in, f_out, out, plan = self.run_of(lifts)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+
+    def test_a_foot_coming_down_fast_is_not_a_hover(self):
+        # 0.8 cm a frame (24 cm/s) from 5.6 cm onto the floor: a touch
+        lifts = [0.7 - 0.1 * k for k in range(8)] + [0.0] * 8
+        f_in, f_out, out, plan = self.run_of(lifts)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+
+    def test_a_goal_out_of_reach_is_not_a_hover(self):
+        # the pelvis 3.2 cm over the rest pose's, the left foot's goal flat on the floor: MMD leaves the shoe some 3 cm
+        # over it, but the dance stands it on the floor (LandingTest: it rises onto its ball): not lowered
+        keys = [key("センター", 0, position=(0, 0.4, 0)), key("センター", 9, position=(0, 0.4, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=10)
+        self.assertEqual(plan["左"]["sink_info"]["runs"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
