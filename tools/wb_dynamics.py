@@ -487,18 +487,27 @@ def foot_polygon(lm, feet, s, frame, part, unit_m=UNIT_M):
     return _hull(np.array(pts)) if pts else np.zeros((0, 2))
 
 
-def support(lm, feet, unit_m=UNIT_M):
+def support(lm, feet, unit_m=UNIT_M, soles=None):
     """per foot: `contact` [F] (its lowest point under feet['contact'] units over its rest heights), `part` [F] ('flat',
     'fore', 'heel', 'tip' or ''), and per frame the base of support `hull` (the convex hull [k, 2] of the parts on the
     floor, metres, x and z; an empty array in the air).  The rest heights may be per foot ({'L': .., 'R': ..}).  With a
     tip template (feet['tip'], feet['tip_floor_y']) and tip landmarks (a person's toes' tip: the toe landmark is the
-    ball), a foot whose ball and heel are up touches with the tip alone ('tip')"""
+    ball), a foot whose ball and heel are up touches with the tip alone ('tip').  soles (side -> [F, N, 3] units: the
+    shoe's points in the world as MMD bends it, tools/foot_layer.py's skinned lower shell): a foot is on the floor where
+    any of its points is within feet['contact'] of feet['floor_y'] ('sole'), and those points make its part of the base"""
     F = len(lm["ankle_L"])
     eps = feet["contact"]
     contact, part = {}, {}
     pts = {}
     use_tip = "tip" in feet and all(("tip_" + s) in lm for s in SIDES)
     for s in SIDES:
+        if soles is not None:
+            S = np.asarray(soles[s], dtype=np.float64)
+            low = S[:, :, 1] - float(feet["floor_y"]) < eps
+            contact[s] = low.any(axis=1)
+            part[s] = np.where(contact[s], "sole", "")
+            pts[s] = (S[:, :, [0, 2]] * unit_m, low)
+            continue
         A, T = np.asarray(lm["ankle_" + s], dtype=np.float64), np.asarray(lm["toe_" + s], dtype=np.float64)
         heel_dn = A[:, 1] - _rest(feet, "ankle_rest_y", s) < eps
         fore_dn = T[:, 1] - _rest(feet, "toe_rest_y", s) < eps
@@ -535,6 +544,11 @@ def support(lm, feet, unit_m=UNIT_M):
     for t in range(F):
         P = []
         for s in SIDES:
+            if soles is not None:
+                xz, low = pts[s]
+                if low[t].any():
+                    P.append(xz[t][low[t]])
+                continue
             heel, fore, tip, hd, fd, td = pts[s]
             if hd[t]:
                 P.append(heel[t])
@@ -568,12 +582,14 @@ def runs(mask):
     return [(int(a), int(b)) for a, b in zip(np.flatnonzero(dm == 1), np.flatnonzero(dm == -1) - 1)]
 
 
-def measure(lm, feet, rots=None, floor_y=None, cutoff_hz=CUTOFF_HZ, rng=None, unit_m=UNIT_M, fs=FPS, arrays=False):
+def measure(lm, feet, rots=None, floor_y=None, cutoff_hz=CUTOFF_HZ, rng=None, unit_m=UNIT_M, fs=FPS, arrays=False,
+            soles=None):
     """the report (plain JSON) of a body's balance: see the module's doc.  rng (first, last): the frames counted (the
-    dance's own range); feet: RIN_FEET or human_feet(); arrays: also return the per-frame curves"""
+    dance's own range); feet: RIN_FEET or human_feet(); arrays: also return the per-frame curves; soles: the shoes'
+    points as MMD bends them (support())"""
     floor_y = feet["floor_y"] if floor_y is None else floor_y
     dyn = dynamics(lm, rots, floor_y, cutoff_hz, unit_m=unit_m, fs=fs)
-    sup = support(lm, feet, unit_m)
+    sup = support(lm, feet, unit_m, soles=soles)
     F = len(dyn["com"])
     a, b = (0, F - 1) if rng is None else (max(0, int(rng[0])), min(F - 1, int(rng[1])))
     inrng = np.zeros(F, bool)
@@ -677,8 +693,8 @@ def measure(lm, feet, rots=None, floor_y=None, cutoff_hz=CUTOFF_HZ, rng=None, un
     if arrays:
         arr = {"com": dyn["com"], "zmp": dyn["zmp"], "zmp_lin": dyn["zmp_lin"], "margin": margin, "com_margin": com_margin,
                "angmom": dyn["angmom"], "force": dyn["force"], "contact_L": sup["contact"]["L"], "contact_R": sup["contact"]["R"],
-               "part_L": np.array([{"flat": 3, "fore": 2, "heel": 1}.get(v, 0) for v in sup["part"]["L"]], np.int8),
-               "part_R": np.array([{"flat": 3, "fore": 2, "heel": 1}.get(v, 0) for v in sup["part"]["R"]], np.int8)}
+               "part_L": np.array([{"flat": 3, "fore": 2, "heel": 1, "tip": 4, "sole": 5}.get(v, 0) for v in sup["part"]["L"]], np.int8),
+               "part_R": np.array([{"flat": 3, "fore": 2, "heel": 1, "tip": 4, "sole": 5}.get(v, 0) for v in sup["part"]["R"]], np.int8)}
         return rep, arr
     return rep
 

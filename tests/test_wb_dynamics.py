@@ -390,6 +390,31 @@ class SupportTest(unittest.TestCase):
         self.assertLess(wb.polygon_margin(lm["knee_L"][1, [0, 2]] * U, sup["hull"][1]), 0.0)
         self.assertFalse(sup["other"][1])
 
+    def test_the_shoes_own_sole(self):
+        """Rin's soles as MMD bends them (the feet layer's skinned shoe: its lower shell's points in the world, per frame):
+        a foot is on the floor where any of its points is within `contact` of the floor, and the base of support is the
+        hull of those points (a foot on its ball with the toes bent up, whose toe IK is off the floor, still stands)"""
+        F = 3
+        lm = still(F)
+        lm["toe_L"][:, 1] += 0.6                      # the toe IK 5 cm up (the toes bent up in MMD)
+        u = np.linspace(-0.55, 1.55, 8)
+        w = np.linspace(-0.4, 0.4, 3)
+        grid = np.array([(1.12 + ww, 0.111, 0.37 - uu) for uu in u for ww in w])      # a flat sole, units
+        heel_up = grid.copy()
+        heel_up[:, 1] += np.clip((grid[:, 2] - (-0.6)) * 0.5, 0.0, None)               # the heel lifts, the ball and toes stay
+        soles = {"L": np.tile(heel_up, (F, 1, 1)), "R": np.tile(grid * np.array([-1.0, 1.0, 1.0]), (F, 1, 1))}
+        sup = wb.support(lm, self.feet, soles=soles)
+        self.assertTrue(np.all(sup["contact"]["L"]))
+        hull = sup["hull"][1]
+        ball = np.array([1.12 * U, -0.9 * U])
+        self.assertGreater(wb.polygon_margin(ball, hull), 0.0)
+        heel = np.array([1.12 * U, 0.8 * U])
+        right_heel = np.array([-1.12 * U, 0.8 * U])
+        # the left heel is up: the hull's corner there comes from the right heel and the left ball, not the left heel
+        self.assertLess(wb.polygon_margin(heel, hull), wb.polygon_margin(right_heel, hull))
+        lifted = {"L": soles["L"] + np.array([0.0, 1.0, 0.0]), "R": soles["R"]}
+        self.assertFalse(np.any(wb.support(lm, self.feet, soles=lifted)["contact"]["L"]))
+
     def test_outward_is_away_from_the_body(self):
         """a sole that lies outwards of the foot's line on both feet: the left one's to +x (the model's left), the right
         one's to -x"""
