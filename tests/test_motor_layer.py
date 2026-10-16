@@ -371,6 +371,18 @@ class FloorTest(unittest.TestCase):
         self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(any(s["reason"] == "floor" for s in result.report["fallback"]), result.report["fallback"])
 
+    def test_the_elbow_hinge_gives_back_the_same_stretches(self):
+        # the hinge split comes after the stretches given back are chosen: it must not change them (on the song it did,
+        # the wrist moved by the split tipping a check, and the right elbow moved 2.7 cm where nothing was given back)
+        p_off, p_on = self.weak(True), self.weak(True)
+        p_on["hinge"] = True
+        off = motor_layer.layer(self.model, self.dance, p_off)
+        on = motor_layer.layer(self.model, self.dance, p_on)
+        self.assertTrue(off.report["fallback"])
+        self.assertEqual(on.report["fallback"], off.report["fallback"])
+        self.assertLess(float(np.abs(on.world_out["左ひじ"][0] - off.world_out["左ひじ"][0]).max()), 1e-6)
+        self.assertLess(float(motor_layer.qangle_deg(on.world_out["左手首"][1], off.world_out["左手首"][1]).max()), 0.01)
+
     def test_the_contact_zone_keeps_the_input_there_by_itself(self):
         p = motor_layer.default_params()
         p["floor"] = False
@@ -652,6 +664,233 @@ class MechanismTest(unittest.TestCase):
         self.assertEqual(result.report["floor_residual"], [])
 
 
+def hinge_axis(side="左"):
+    """the elbow's hinge axis of MODEL: perpendicular to the forearm (ひじ -> 手捩) and to the front-back axis (+Z: the model
+    has no ひじ補助), as tools/anatomy_layer.py reads it"""
+    rest = {b.name: np.array(b.position, float) for b in MODEL.bones}
+    o = rest[side + "手捩"] - rest[side + "ひじ"]
+    o /= np.linalg.norm(o)
+    z = np.array([0.0, 0.0, 1.0])
+    m = -(z - (z @ o) * o)
+    m /= np.linalg.norm(m)
+    h = np.cross(o, m)
+    return h / np.linalg.norm(h), o, m
+
+
+def bone_axis(a, b):
+    rest = {x.name: np.array(x.position, float) for x in MODEL.bones}
+    v = rest[b] - rest[a]
+    return v / np.linalg.norm(v)
+
+
+def hinge_dance(last=LAST):
+    """the left arm as the anatomy layer leaves it: the elbow a pure hinge, the upper arm's roll on 腕捩 and the forearm's
+    on 手捩.  The arm swings up fast (5 frames) at 20, holds and swings back at 60, while the elbow bends 75 degrees and
+    the twist bones roll; the body bends a little"""
+    h, o, _ = hinge_axis()
+    a, b = bone_axis("左腕捩", "左ひじ"), bone_axis("左手捩", "左手首")
+    keys = untouched_keys(last)[:7]                      # not 左手捩's: it is keyed here
+    for name, axis, deg in (("左腕", (0.3, 0.2, 1.0), 75.0), ("左腕捩", tuple(a), 35.0), ("左ひじ", tuple(h), 75.0),
+                            ("左手捩", tuple(b), -30.0), ("左手首", (0, 0, 1), 35.0), ("左中指１", (0, 0, 1), 30.0)):
+        q = axis_angle(axis, deg)
+        keys += [key(name, 0), key(name, 20), key(name, 25, q), key(name, 60, q), key(name, 65), key(name, last)]
+    keys += [key("上半身", 0), key("上半身", 30, axis_angle((1, 0, 0), 8.0)), key("上半身", last)]
+    return vmd.Motion(model_name="dancer", bones=keys, morphs=[vmd.MorphKey("あ", 0, 0.5)])
+
+
+def off_hinge_deg(world, side="左"):
+    """per frame the angle between the hinge axis and itself turned by ひじ's turn against 腕捩 (0: a pure hinge)"""
+    h, _, _ = hinge_axis(side)
+    q = relative(world, side + "腕捩", side + "ひじ")
+    return np.degrees(np.arccos(np.clip(motor_layer.qrot(q, np.broadcast_to(h, (len(q), 3))) @ h, -1.0, 1.0)))
+
+
+def off_axis_deg(world, parent, child, axis):
+    """per frame how far `child`'s turn against `parent` tips `axis` (0: a turn about the axis only)"""
+    q = relative(world, parent, child)
+    return np.degrees(np.arccos(np.clip(motor_layer.qrot(q, np.broadcast_to(axis, (len(q), 3))) @ axis, -1.0, 1.0)))
+
+
+def hinge_params(on):
+    p = motor_layer.default_params()
+    p["hinge"] = on
+    return p
+
+
+class ElbowHingeTest(unittest.TestCase):
+    """motor copies 腕捩 and 手捩 on the input's time and makes ひじ and 手首 follow: the part of the tracking error about the
+    upper arm's axis lands on ひじ, which is then not quite a hinge (the review of motor-human, problem 4).  With hinge on
+    the twist is split again after the layer: ひじ a hinge, the rest on 腕捩 and 手捩, the elbow, the wrist and the hand
+    where they were"""
+
+    @classmethod
+    def setUpClass(cls):
+        dance = hinge_dance()
+        cls.off = motor_layer.layer(MODEL, dance, hinge_params(False))
+        cls.on = motor_layer.layer(MODEL, dance, hinge_params(True))
+
+    def test_the_input_is_a_hinge(self):
+        self.assertLess(float(off_hinge_deg(self.off.world_in).max()), 1e-3)
+
+    def test_without_it_the_motor_leaves_the_elbow_off_its_hinge(self):
+        self.assertGreater(float(off_hinge_deg(self.off.world_out).max()), 0.3)
+
+    def test_the_elbow_is_a_hinge_again(self):
+        self.assertLess(float(off_hinge_deg(self.on.world_out).max()), 0.01)
+
+    def test_the_twist_bones_turn_about_their_own_axes_only(self):
+        a, b = bone_axis("左腕捩", "左ひじ"), bone_axis("左手捩", "左手首")
+        self.assertLess(float(off_axis_deg(self.on.world_out, "左腕", "左腕捩", a).max()), 0.01)
+        self.assertLess(float(off_axis_deg(self.on.world_out, "左ひじ", "左手捩", b).max()), 0.01)
+        # and they did move: the twist taken off the elbow went somewhere
+        tw = turned(relative(self.on.world_out, "左腕", "左腕捩"), (0, 0, 0, 1)) - \
+            turned(relative(self.off.world_out, "左腕", "左腕捩"), (0, 0, 0, 1))
+        self.assertGreater(float(np.abs(tw).max()), 0.1)
+
+    def test_the_twist_is_split_as_the_anatomy_layer_splits_it(self):
+        # 腕 a swing only (the upper arm's roll on 腕捩), the forearm's twist shared between 手捩 and 手首 (its default)
+        u = bone_axis("左腕", "左ひじ")
+        self.assertLess(float(np.abs(roll_deg(relative(self.on.world_out, "左肩C", "左腕"), u)).max()), 0.01)
+        b = bone_axis("左手捩", "左手首")
+        tf = roll_deg(relative(self.on.world_out, "左ひじ", "左手首"), b)
+        kept = roll_deg(relative(self.on.world_out, "左ひじ", "左手捩"), b)
+        want = np.array([share_of(x) for x in tf])
+        self.assertLess(float(np.abs(kept - want).max()), 0.01)
+
+    def test_the_elbow_and_the_hand_stay(self):
+        on, off = self.on.world_out, self.off.world_out
+        # this model's 腕捩 is 0.03 mm off the line 腕 - ひじ (Rin's 0.0001 mm): moving 腕's roll onto it moves the elbow by
+        # that times the roll, 0.01 mm here
+        self.assertLess(float(np.abs(on["左ひじ"][0] - off["左ひじ"][0]).max()), 2e-4)
+        hand = [angle_deg(p, q) for p, q in zip(on["左手首"][1], off["左手首"][1])]
+        self.assertLess(max(hand), 0.01)
+        finger = [angle_deg(p, q) for p, q in zip(on["左中指３"][1], off["左中指３"][1])]
+        self.assertLess(max(finger), 0.01)
+        shift = np.linalg.norm(on["左手首"][0] - off["左手首"][0], axis=1) * 8.0        # cm
+        # where the arm is bent the wrist stays; where it is nearly straight it may move, but never further than
+        # dropping the elbow onto its hinge without any roll would move it (the forearm turned by the off-hinge angle)
+        rest = {b.name: np.array(b.position, float) for b in MODEL.bones}
+        forearm_cm = float(np.linalg.norm(rest["左手首"] - rest["左ひじ"])) * 8.0
+        drop = forearm_cm * 2.0 * np.sin(np.radians(off_hinge_deg(off)) / 2.0)
+        self.assertTrue(np.all(shift <= drop + 1e-3), float(np.max(shift - drop)))
+        self.assertLess(float(shift.max()), 1.0)
+        self.assertLess(float(np.median(shift)), 0.01)
+        rep = self.on.report["elbow_hinge"]["左"]
+        self.assertAlmostEqual(rep["wrist_shift_cm"]["max"], float(shift.max()), places=2)
+        self.assertLess(rep["off_hinge_deg_after"]["max"], 0.01)
+        self.assertGreater(rep["off_hinge_deg_before"]["max"], 0.3)
+
+    def test_nothing_else_changes(self):
+        moved = {"左腕", "左腕捩", "左ひじ", "左手捩", "左手首"}
+        k_on = key_bytes([k for k in self.on.motion.bones if k.name not in moved])
+        k_off = key_bytes([k for k in self.off.motion.bones if k.name not in moved])
+        self.assertEqual(k_on, k_off)
+        # the right arm has no twist bones in this model: left as it was, and said so
+        self.assertIn("skipped", self.on.report["elbow_hinge"]["右"])
+        self.assertFalse(self.off.report["elbow_hinge"]["on"])
+        self.assertTrue(self.on.report["elbow_hinge"]["on"])
+        # the twist bones now have a key on every frame; untouched counts what is left untouched
+        self.assertEqual(sorted(key_track(self.on.motion, "左腕捩")), list(range(LAST + 1)))
+        self.assertTrue(self.on.report["untouched"]["identical"])
+
+    def test_the_written_file_is_what_the_report_measured(self):
+        back = vmd.loads(vmd.dumps(self.on.motion))
+        names = ["左ひじ", "左手首", "左中指３", "左腕捩", "左手捩"]
+        pose = fk.Pose(MODEL, back, names)
+        worst = 0.0
+        for f in range(0, LAST + 1, 3):
+            w = pose.at(f)
+            for n in names:
+                worst = max(worst, float(np.max(np.abs(np.array(w[n][0]) - self.on.world_out[n][0][f]))))
+        self.assertLess(worst, 1e-4)
+
+    def test_off_is_the_layer_as_it_was(self):
+        self.assertEqual(vmd.dumps(self.off.motion), vmd.dumps(motor_layer.layer(MODEL, hinge_dance()).motion))
+        self.assertFalse(motor_layer.default_params()["hinge"])
+
+
+def roll_deg(q, axis):
+    """the twist (degrees, -180 .. 180) of rotations q [F, 4] about a unit axis"""
+    q = np.asarray(q, float)
+    q = np.where(q[..., 3:4] < 0, -q, q)
+    return np.degrees(2.0 * np.arctan2(q[..., :3] @ np.asarray(axis, float), q[..., 3]))
+
+
+def share_of(tf_deg):
+    """what 手捩 keeps of the forearm's twist in tools/anatomy_layer.py's default (--forearm-twist share, as
+    tools/fix_twist.py): half of it up to a quarter turn, then less, nothing at a half turn"""
+    d = abs(tf_deg)
+    return math.copysign(0.5 * (d if d <= 90.0 else 180.0 - d), tf_deg)
+
+
+class HingeSplitTest(unittest.TestCase):
+    """the split itself, on keys made by hand.  The input as the anatomy layer leaves an arm (its defaults): 腕 a swing
+    only, the upper arm's roll on 腕捩, ひじ a hinge, the forearm's twist shared between 手捩 and 手首"""
+
+    def setUp(self):
+        self.geo = motor_layer.elbow_geometry(motor_layer.Skeleton(MODEL), "左")
+        self.h, self.o, self.m = hinge_axis()
+        a = self.geo["a"]
+        self.p = np.cross(a, [0.0, 0.0, 1.0])
+        self.p /= np.linalg.norm(self.p)
+        b = self.geo["b"]
+        self.pb = np.cross(b, [0.0, 0.0, 1.0])
+        self.pb /= np.linalg.norm(self.pb)
+
+    def keys(self, ke, upper_roll=0.0, handtw=-15.0, wrist_tw=-15.0, frames=3):
+        a, b = self.geo["a"], self.geo["b"]
+        tile = lambda q: np.tile(np.asarray(q, float), (frames, 1))      # noqa: E731
+        U = tile(motor_layer.qmul(np.asarray(axis_angle(tuple(self.p), 25.0)), np.asarray(axis_angle(tuple(a), upper_roll))))
+        T = tile(axis_angle(tuple(a), 20.0))
+        Ke = tile(ke)
+        Hk = tile(axis_angle(tuple(b), handtw))
+        Kw = tile(motor_layer.qmul(np.asarray(axis_angle(tuple(b), wrist_tw)), np.asarray(axis_angle(tuple(self.pb), 10.0))))
+        return U, T, Ke, Hk, Kw
+
+    def split(self, *keys):
+        return motor_layer.hinge_split(self.geo, *keys)
+
+    def test_a_hinge_is_kept(self):
+        k = self.keys(axis_angle(tuple(self.h), 60.0))
+        got = self.split(*k)
+        for g, want in zip(got[:5], k):
+            self.assertLess(max(angle_deg(p, q) for p, q in zip(g, want)), 1e-5)
+        self.assertLess(float(np.abs(got[5]["delta_deg"]).max()), 1e-6)
+
+    def test_the_upper_arm_keeps_its_swing_and_腕捩_takes_the_roll(self):
+        k = self.keys(axis_angle(tuple(self.h), 60.0), upper_roll=12.0)
+        U2, T2, E2, H2, W2, info = self.split(*k)
+        self.assertLess(float(np.abs(roll_deg(U2, self.geo["a"])).max()), 1e-6)
+        whole, whole2 = motor_layer.qmul(k[0], k[1]), motor_layer.qmul(U2, T2)
+        self.assertLess(max(angle_deg(p, q) for p, q in zip(whole, whole2)), 1e-6)
+        self.assertAlmostEqual(float(roll_deg(T2, self.geo["a"])[0]), 32.0, places=4)
+
+    def test_the_forearm_twist_is_shared_as_the_anatomy_layer_does(self):
+        for handtw, wrist_tw in ((0.0, -40.0), (-60.0, 0.0), (70.0, 80.0)):
+            k = self.keys(axis_angle(tuple(self.h), 60.0), handtw=handtw, wrist_tw=wrist_tw)
+            U2, T2, E2, H2, W2, info = self.split(*k)
+            tf = handtw + wrist_tw
+            tf = (tf + 180.0) % 360.0 - 180.0
+            self.assertAlmostEqual(float(roll_deg(H2, self.geo["b"])[0]), share_of(tf), places=4)
+            self.assertLess(float(np.max(np.abs(roll_deg(H2, self.geo["b"])))), 45.0 + 1e-9)
+            hand, hand2 = motor_layer.qmul(k[3], k[4]), motor_layer.qmul(H2, W2)
+            self.assertLess(max(angle_deg(p, q) for p, q in zip(hand, hand2)), 1e-6)
+
+    def test_a_bent_arm_is_solved_exactly(self):
+        side = motor_layer.qmul(np.asarray(axis_angle(tuple(self.m), 2.0)), np.asarray(axis_angle(tuple(self.h), 60.0)))
+        info = self.split(*self.keys(side))[5]
+        self.assertLess(float(info["wrist_shift_cm"].max()), 0.05)
+        self.assertGreater(float(np.abs(info["delta_deg"]).min()), 1.0)        # the 2 degrees moved onto the roll
+
+    def test_a_straight_arm_does_not_spin_the_upper_arm(self):
+        # bent 1 degree with 1 degree to the side: exactly, the upper arm would roll about 45 degrees for 2.5 mm of wrist
+        side = motor_layer.qmul(np.asarray(axis_angle(tuple(self.m), 1.0)), np.asarray(axis_angle(tuple(self.h), 1.0)))
+        info = self.split(*self.keys(side))[5]
+        self.assertLess(float(np.abs(info["delta_deg"]).max()), 10.0)
+        forearm_cm = self.geo["forearm_cm"]
+        self.assertLessEqual(float(info["wrist_shift_cm"].max()), forearm_cm * 2.0 * math.sin(math.radians(0.5)) + 1e-6)
+
+
 class CliTest(unittest.TestCase):
     def test_main_writes_the_motion_and_the_report(self):
         folder = tempfile.mkdtemp()
@@ -697,6 +936,8 @@ class CliTest(unittest.TestCase):
                     got[name] = json.load(f)["params"]
                 with open(out, "rb") as f:
                     got[name + "_bytes"] = f.read()
+            for name in ("default", "human", "human_given", "default_zero"):
+                self.assertFalse(got[name]["hinge"], name)        # off unless asked, in every preset
             self.assertEqual(got["default"]["finger_delay"], motor_layer.FINGER_DELAY)
             self.assertEqual(got["human"]["finger_delay"], 0.0)
             self.assertEqual(got["human_given"]["finger_delay"], 0.25)
@@ -705,6 +946,37 @@ class CliTest(unittest.TestCase):
             # nothing; the file holds the keys in float32, so the layer is run on what was read back)
             self.assertEqual(got["default_bytes"], vmd.dumps(motor_layer.layer(MODEL, vmd.load(dance_path)).motion))
             self.assertNotEqual(got["human_bytes"], got["default_bytes"])
+        finally:
+            shutil.rmtree(folder)
+
+    def test_the_elbow_hinge_switch(self):
+        folder = tempfile.mkdtemp()
+        try:
+            model_path = os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as f:
+                f.write(model_bytes())
+            dance_path = os.path.join(folder, "d.vmd")
+            vmd.dump(hinge_dance(), dance_path)
+            got = {}
+            for name, extra in (("plain", []), ("off", ["--elbow-hinge", "off"]), ("on", ["--elbow-hinge", "on"]),
+                                ("human_on", ["--preset", "human", "--elbow-hinge", "on"])):
+                out, rep = os.path.join(folder, name + ".vmd"), os.path.join(folder, name + ".json")
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(motor_layer.main([dance_path, model_path, out, "--report", rep] + extra), 0, buf.getvalue())
+                with open(rep, encoding="ascii") as f:
+                    got[name] = json.load(f)
+                got[name + "_motion"] = vmd.load(out)
+                with open(out, "rb") as f:
+                    got[name + "_bytes"] = f.read()
+            self.assertEqual(got["off_bytes"], got["plain_bytes"])
+            self.assertNotEqual(got["on_bytes"], got["plain_bytes"])
+            for name in ("on", "human_on"):
+                self.assertTrue(got[name]["params"]["hinge"], name)
+                self.assertLess(got[name]["elbow_hinge"]["左"]["off_hinge_deg_after"]["max"], 0.01, name)
+                self.assertEqual(sorted(key_track(got[name + "_motion"], "左腕捩")), list(range(LAST + 1)))
+            self.assertEqual(got["human_on"]["params"]["preset"], "human")
+            self.assertEqual(got["human_on"]["params"]["finger_delay"], 0.0)
         finally:
             shutil.rmtree(folder)
 

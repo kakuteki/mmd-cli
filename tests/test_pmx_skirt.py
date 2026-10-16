@@ -198,6 +198,30 @@ class ApplyTest(unittest.TestCase):
         with self.assertRaises(ValueError):                    # a second time: the ceilings are there already
             skirt.apply(again, {"ceiling": 80.0})
 
+    def test_the_ceiling_anchor_collides_with_nothing_and_follows_the_trunk_bone(self):
+        before = pmx_edit.loads(self.data)
+        skirt.apply(self.doc, {"ceiling": 80.0, "ceiling_anchor": True})
+        out = pmx_edit.loads(pmx_edit.dumps(self.doc))
+        self.assertEqual(out.rigid_bodies[:len(before.rigid_bodies)], before.rigid_bodies)    # no body changed or moved
+        self.assertEqual(len(out.rigid_bodies), len(before.rigid_bodies) + 1)
+        anchor = out.rigid_bodies[-1]
+        self.assertEqual(pmx_edit.rigid_names(out, anchor)[0], "スカート天井台")
+        a, trunk = pmx_edit.rigid_body(anchor), pmx_edit.rigid_body(out.rigid_bodies[0])
+        self.assertEqual((anchor.bone, a.mode), (out.rigid_bodies[0].bone, 0))                 # follows the trunk's bone
+        self.assertEqual((a.position, a.rotation), (trunk.position, trunk.rotation))
+        for rb in out.rigid_bodies[:-1]:                     # a pair collides only when each one's mask holds the other's group
+            o = pmx_edit.rigid_body(rb)
+            self.assertFalse((a.mask >> o.group) & 1 and (o.mask >> a.group) & 1)
+        ceilings = [j for j in pmx_edit.joints(out) if j.name.startswith("スカート天井_")]
+        self.assertEqual(len(ceilings), 12)
+        self.assertEqual({j.a for j in ceilings}, {len(out.rigid_bodies) - 1})
+        plain = pmx_edit.loads(self.data)
+        skirt.apply(plain, {"ceiling": 80.0})
+        lim = {j.name: (j.position, j.move_lower, j.move_upper) for j in pmx_edit.joints(plain) if j.name in {c.name for c in ceilings}}
+        self.assertEqual({j.name: (j.position, j.move_lower, j.move_upper) for j in ceilings}, lim)   # the same ceilings
+        with self.assertRaises(ValueError):
+            skirt.apply(pmx_edit.loads(self.data), {"ceiling_anchor": True})
+
     def test_bad_recipes_are_refused(self):
         for bad in ({"mass": [0.1, 0.1]}, {"damping": [0.5]}, {"limit_scale": -1.0}, {"reach": 0.0}, {"nonsense": 1},
                     {"ceiling": 95.0}, {"mass_area": 0.0}):
@@ -275,6 +299,14 @@ class SourRinSkirtTest(unittest.TestCase):
         self.assertAlmostEqual(rise["スカート天井_6_0"], expect, 5)          # the front hem may rise 2.88 units, no more
         self.assertAlmostEqual(expect, 2.877, 2)
         self.assertEqual(pmx.loads(pmx_edit.dumps(doc)).counts["joints"], 385)
+
+    def test_the_anchored_ceiling_on_sour_rin(self):
+        with open(RIN, "rb") as f:
+            data = f.read()
+        doc = pmx_edit.loads(data)
+        skirt.apply(doc, {"ceiling": 70.0, "ceiling_anchor": True})
+        out = pmx.loads(pmx_edit.dumps(doc))
+        self.assertEqual((out.counts["rigid_bodies"], out.counts["joints"]), (187, 385))
 
 
 if __name__ == "__main__":

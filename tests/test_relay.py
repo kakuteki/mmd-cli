@@ -196,6 +196,26 @@ class TaskCommandTest(unittest.TestCase):
         self.assertIn("<Command>C:\\Py\\pythonw.exe</Command>", seen["bytes"].decode("utf-16"))
         self.assertEqual(os.listdir(os.path.join(folder, "relay")), [])        # the definition file is gone
 
+    def test_the_child_runs_the_code_of_the_parent(self):
+        # hinata 2026-10-16: a branch's copy ran `python -m mmd_cli` from its own folder, but the task started pythonw
+        # with no working directory, so `-m mmd_cli` found the installed C:/work/mmd-cli and the render ran main's code
+        root = os.path.dirname(os.path.dirname(os.path.abspath(relay.__file__)))
+        self.assertEqual(relay.code_root(), root)
+        xml = relay.task_xml(r"C:\Py\pythonw.exe", "-m mmd_cli", r"C:\work\branch <copy>")
+        self.assertIn("<WorkingDirectory>C:\\work\\branch &lt;copy&gt;</WorkingDirectory>", xml)
+        self.assertNotIn("<WorkingDirectory>", relay.task_xml(r"C:\Py\pythonw.exe", "-m mmd_cli"))
+        seen = {}
+
+        def create(name, exe, arguments, workdir=None):
+            seen["workdir"] = workdir
+            return subprocess.CompletedProcess([], 1, b"", b"stop here")
+
+        folder = tempfile.mkdtemp()
+        with mock.patch.dict(os.environ, {"MMD_CLI_HOME": folder}), mock.patch.object(relay, "create_task", create):
+            with self.assertRaises(relay.RelayError):
+                relay.run_in_user_session(["state"])
+        self.assertEqual(seen["workdir"], root)
+
     def test_task_name_is_unique_and_namespaced(self):
         a, b = relay.task_name(), relay.task_name()
         self.assertTrue(a.startswith("mmd-cli\\relay-"))

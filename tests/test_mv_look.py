@@ -56,6 +56,12 @@ class LookSettingsTest(unittest.TestCase):
         self.assertEqual(mv_look.parse_rate("10000000/333333"), 30)
         self.assertIsInstance(mv_look.parse_rate("10000000/333333"), int)
         self.assertEqual(mv_look.parse_rate("60/1"), 60)
+        # MMD writes the time of a frame in whole 100 ns units: 960 fps is 10000000/10416 (ffprobe 625000/651 = 960.06), and
+        # --physics-align refused it as not a whole multiple of 120 (hinata, 2026-10-16)
+        for text, fps in (("625000/651", 960), ("10000000/10416", 960), ("10000000/20833", 480), ("10000000/41666", 240)):
+            self.assertEqual(mv_look.parse_rate(text), fps, text)
+            self.assertIsInstance(mv_look.parse_rate(text), int)
+        self.assertAlmostEqual(mv_look.parse_rate("24000/1001"), 23.976, places=3)
         self.assertAlmostEqual(mv_look.parse_rate("30000/1001"), 29.97, places=2)   # a real 29.97 stays
         with self.assertRaises(ValueError):
             mv_look.parse_rate("0/0")

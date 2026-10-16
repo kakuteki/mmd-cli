@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from mmd_cli.formats import pmm
 
@@ -16,6 +17,8 @@ import pmm_gravity  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "scene_v932.pmm")
 TOOL = os.path.join(ROOT, "tools", "pmm_gravity.py")
+KEYS_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "gravity_keys_v932.pmm")
+RESAVED_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "gravity_keys_g1225_n20_resaved_v932.pmm")
 
 
 def read(path):
@@ -62,6 +65,50 @@ class PositionsTest(unittest.TestCase):
         self.assertEqual(pmm.loads(data), pmm.loads(data, positions={}))
 
 
+class SavedByMmdTest(unittest.TestCase):
+    """a project MMD 9.32 saved itself (hinata, 2026-10-16): `new`, then 登録 in the 重力設定 window (menu 266) at frames
+    300 and 600, then `save`.  The later keys' layout is MMD's, not the test's"""
+
+    def test_mmd_wrote_two_later_keys(self):
+        g = pmm.loads(read(KEYS_FIXTURE))["gravity"]
+        self.assertEqual([k["frame"] for k in g["keys"]], [300, 600])
+        self.assertEqual([(k["pre"], k["next"]) for k in g["keys"]], [(0, 2), (1, 0)])
+        self.assertEqual((g["init"]["pre"], g["init"]["next"]), (0, 1))
+        for part in [g["current"], g["init"]] + g["keys"]:
+            self.assertAlmostEqual(part["acceleration"], 9.8, 5)
+            self.assertEqual((part["direction"], part["noise"], part["noise_enabled"]), ((0.0, -1.0, 0.0), 10, False))
+
+    def test_every_key_mmd_wrote_is_changed_and_nothing_else(self):
+        data = read(KEYS_FIXTURE)
+        out = pmm_gravity.with_gravity(data, acceleration=12.25, direction=(0.0, -1.0, 0.25), noise=20)
+        g = pmm.loads(out)["gravity"]
+        for part in [g["current"], g["init"]] + g["keys"]:
+            self.assertAlmostEqual(part["acceleration"], 12.25, 6)
+            self.assertEqual((part["direction"], part["noise"], part["noise_enabled"]), ((0.0, -1.0, 0.25), 20, True))
+        self.assertEqual([k["frame"] for k in g["keys"]], [300, 600])
+        changed = [i for i in range(len(data)) if data[i] != out[i]]
+        pos = {}
+        pmm.loads(data, positions=pos)
+        starts = [pos["gravity_current"]] + pos["gravity_frames"]
+        self.assertEqual(len(starts), 4)
+        self.assertTrue(all(any(s <= i < s + 21 for s in starts) for i in changed))
+        for s in starts:                                    # each of the four places got its new acceleration
+            self.assertTrue(any(s <= i < s + 21 for i in changed))
+        a, b = pmm.loads(data), pmm.loads(out)
+        a.pop("gravity")
+        b.pop("gravity")
+        self.assertEqual(a, b)
+
+    def test_mmd_reads_what_was_written_noise_too(self):
+        # the copy with --acceleration 12.25 --noise 20, opened by MMD 9.32 (`open`) and saved again (`save`): MMD kept
+        # every field of every key, the noise on with its amount included (its `dump` shows 12.25 as well)
+        written = pmm.loads(pmm_gravity.with_gravity(read(KEYS_FIXTURE), acceleration=12.25, noise=20))["gravity"]
+        resaved = pmm.loads(read(RESAVED_FIXTURE))["gravity"]
+        self.assertEqual(resaved, written)
+        self.assertEqual([(k["noise_enabled"], k["noise"]) for k in [resaved["current"], resaved["init"]] + resaved["keys"]],
+                         [(True, 20)] * 4)
+
+
 class GravityTest(unittest.TestCase):
     def test_the_acceleration_of_the_current_setting_and_the_frame_0_key(self):
         data = read(FIXTURE)
@@ -105,6 +152,35 @@ class GravityTest(unittest.TestCase):
         off = pmm.loads(pmm_gravity.with_gravity(pmm_gravity.with_gravity(data, noise=20), noise=False))["gravity"]
         self.assertEqual((off["current"]["noise_enabled"], off["init"]["noise_enabled"]), (False, False))
         self.assertEqual(off["current"]["noise"], 20)          # the amount stays, as MMD keeps it when the box is cleared
+
+    def test_a_noise_that_does_not_read_back_is_refused(self):
+        data = read(FIXTURE)
+        real = pmm.loads
+
+        def lying(raw, **kw):                  # the copy reads back with the noise MMD would not see
+            out = real(raw, **kw)
+            if raw != data:
+                for part in [out["gravity"]["current"], out["gravity"]["init"]] + out["gravity"]["keys"]:
+                    part["noise"] += 1
+            return out
+        with unittest.mock.patch.object(pmm_gravity.pmm, "loads", lying):
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, noise=20)
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, acceleration=12.25)      # a field not asked for must not move either
+
+    def test_a_noise_switched_off_that_reads_back_on_is_refused(self):
+        data = pmm_gravity.with_gravity(read(FIXTURE), noise=20)
+        real = pmm.loads
+
+        def lying(raw, **kw):
+            out = real(raw, **kw)
+            if raw != data:
+                out["gravity"]["init"]["noise_enabled"] = True
+            return out
+        with unittest.mock.patch.object(pmm_gravity.pmm, "loads", lying):
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, noise=False)
 
     def test_bad_values_are_refused(self):
         data = read(FIXTURE)
