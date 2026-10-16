@@ -10,7 +10,7 @@ and debug with them instead of looking each time").  Nothing here starts MMD.
     python tools/mv_inspect.py timeline DIR --out fig.png [--from SECONDS] [--to SECONDS] [--series a,b]
     python tools/mv_inspect.py mark DIR --camera CAM.vmd --out DIR (--picture FRAME=PNG ... | --video V --start S --at T ...)
     python tools/mv_inspect.py pixels pants PICTURE ... --out OUT.json [--box X0 Y0 X1 Y1] [--first-frame F]
-    python tools/mv_inspect.py pixels shadow PLAIN_%05d.png SHADED_%05d.png --first A --last B --out OUT.json
+    python tools/mv_inspect.py pixels shadow PLAIN_%05d.png SHADED_%05d.png --first A --last B --out OUT.json [--reach 0.95]
 
 measure: a version (its render inputs in their loading order and the model; see tools/mvi/body.py for the spec) is
 measured by every part (tools/mvi/: gravity 重力感, feet 足, balance 重心とバランス, upper 上体, arms 腕と指, eyes 目,
@@ -205,11 +205,10 @@ def cmd_pixels(args):
     else:
         if len(args.inputs) != 2 or args.first is None or args.last is None:
             raise ValueError("pixels shadow needs PLAIN_PATTERN SHADED_PATTERN --first A --last B")
-        res = PX.shadow(args.inputs[0], args.inputs[1], args.first, args.last)
+        res = PX.shadow(args.inputs[0], args.inputs[1], args.first, args.last, reach=args.reach)
     PX.write(res, args.out)
-    r = res["rows"][0]
-    print(json.dumps({"ok": True, "id": r["id"], "value": r["value"], "judge": r["judge"], "places": len(res["events"]),
-                      "out": os.path.abspath(args.out)}, ensure_ascii=True))
+    print(json.dumps({"ok": True, "values": {r["id"]: r["value"] for r in res["rows"]}, "judge": res["rows"][0]["judge"],
+                      "places": len(res["events"]), "out": os.path.abspath(args.out)}, ensure_ascii=True))
     return 0
 
 
@@ -260,6 +259,7 @@ def main(argv=None):
     p.add_argument("--first-frame", type=int)
     p.add_argument("--first", type=int)
     p.add_argument("--last", type=int)
+    p.add_argument("--reach", type=float, default=0.95, help="shadow: the pixels whose ratio falls under this at some frame")
     args = ap.parse_args(argv)
     try:
         return {"measure": cmd_measure, "outliers": cmd_outliers, "compare": cmd_compare, "timeline": cmd_timeline,

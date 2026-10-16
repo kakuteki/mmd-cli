@@ -74,10 +74,22 @@ class ShadowTest(unittest.TestCase):
         smooth = self.series([0.3 + 0.2 * k / 20.0 for k in range(21)])
         res = pixels.shadow(smooth[0], smooth[1], 0, 20)
         self.assertLess(res["rows"][0]["value"], 0.2)
+        self.assertLess(res["rows"][1]["value"], 0.2)                 # the whole darkening too
+        self.assertEqual(res["rows"][0]["pixels"], 100)
         rng = np.random.default_rng(1)
         rough = self.series(list(0.4 + 0.1 * rng.standard_normal(21)))
         res = pixels.shadow(rough[0], rough[1], 0, 20)
         self.assertGreater(res["rows"][0]["value"], 1.2)
+        self.assertGreater(res["rows"][1]["value"], 1.2)
+        self.assertGreater(res["rows"][1]["largest_total_change_pct"], 10.0)
+
+    def test_a_shade_fainter_than_the_reach_is_not_the_shadow(self):
+        # tools/shadow_check.py rough's and the reviews' reach: a pixel is the shadow's where its ratio falls under 0.95
+        faint = self.series([0.03 + 0.01 * (k % 2) for k in range(9)])
+        res = pixels.shadow(faint[0], faint[1], 0, 8)
+        self.assertEqual(res["rows"][0]["pixels"], 0)
+        res = pixels.shadow(faint[0], faint[1], 0, 8, reach=0.98)
+        self.assertEqual(res["rows"][0]["pixels"], 100)
 
 
 if __name__ == "__main__":

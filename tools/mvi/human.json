@@ -906,5 +906,9 @@
  "pixels.shadow_rough": {
   "kind": "info",
   "source": "softshadow の確かめ（白色雑音で約 1.73、なめらかな動きで 0 に近い）"
+ },
+ "pixels.shadow_total_rough": {
+  "kind": "info",
+  "source": "review_softshadow の pixel_checks.rough（影の量の粗さ。白色雑音で約 1.73、なめらかな動きで 0 に近い）"
  }
 }

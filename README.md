@@ -2135,7 +2135,7 @@ python tools/mv_inspect.py compare DIR_A DIR_B --out DIR
 python tools/mv_inspect.py timeline DIR --out fig.png [--from 60 --to 70] [--series pelvis_down,hover]
 python tools/mv_inspect.py mark DIR --camera cam_front.vmd --out DIR (--picture 1770=frame.png ... | --video front.mp4 --start 0 --at 58.9 59.0)
 python tools/mv_inspect.py pixels pants "pants/*.png" --out pants.json [--box X0 Y0 X1 Y1] [--first-frame 6390]
-python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 0 --last 89 --out shadow.json
+python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 0 --last 89 --out shadow.json [--reach 0.95]
 ```
 
 - 版（SPEC.json）: `{"label", "model", "motions": [描く入力を読む順に], "dance"（体の踊り、既定は motions の 1 本目）, "reference"
@@ -2167,10 +2167,12 @@ python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 
 | 口 `mouth` | 開く母音と全部の立ち上がりで口が半分開く時刻、遅い・早い割合、声が鳴るのに閉じて見える時間 | tools/lip_check.py |
 | スカートの危なさ `skirt` | 床のコマで腰の下向きの加速度が 122 を越えるコマ（宙は踊りの落ち方として別に数える）と最大 | tools/sink_check.py の測り方 |
 | 突起 `spikes` | センター・両手首・頭の 1 コマの突起 | a08 s2 |
-| 描いた絵 `pixels` | 緑の下着の写しの絵の下着の画素、床の影のちらつき（描いた絵を渡したときだけ。MMD は起こさない） | pants_mine の色の決め、tools/shadow_check.py の rough |
+| 描いた絵 `pixels` | 緑の下着の写しの絵の下着の画素、床の影のちらつき（画素ごとと影の量の時間の粗さ、1 コマの変わりの最大。描いた絵を渡したときだけ。MMD は起こさない） | pants_mine の色の決め、tools/shadow_check.py の rough と review_softshadow の pixel_checks.rough（比 0.95 を下回る画素） |
 
 - 確かめ: v9（描く入力の D の組）を測り、今までの報告の数と 51 組を突き合わせて全部一致（human_baseline の v9 の表・balance-v3・floaty・wbbalance・
-  review_wbbalance・指・視線の報告。差は報告の丸めの桁だけ）。写した測りを人の 62 列に当て、human_baseline の数と 15 項目で差 0。試験
+  review_wbbalance・指・視線の報告。差は報告の丸めの桁だけ）。今までの報告のある版 6 つ（balance-v3 の最後・floaty の base2 と fin2・
+  review_floaty の fin7・wbbalance の b3r と wb2）でも 88 組が一致。写した測りを人の 62 列に当て、human_baseline の数と 15 項目で差 0。
+  影のちらつきは v10 の shadow_rough と同じ舞台の絵（2190〜2220 コマ）で 6 項目が一致（画素数 83,613 は同じ、ほかは 3 桁の丸め）。試験
   `tests/test_mvi_*.py`（部品ごと、合成の体）と `tests/test_mv_inspect.py`（合成の全身で端から端まで、BALANCE_SONG があれば v9 の数）。
 - 時間の図は 1 行 1 曲線（腰の下向きの加速度・センター・腰の上下・浮き・両足の靴の高さ・ZMP の余裕・片足立ちの重心・目・口）、緑の帯 = 人の四分位、
   橙の破線 = 決まり、赤 = 時刻表に入る外れた所（足の所はその足の行だけ）、薄紫 = 宙のコマ。`timeline --from --to` で拡大。
