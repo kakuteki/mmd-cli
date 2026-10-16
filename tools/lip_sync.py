@@ -44,7 +44,9 @@ What is done:
    shape starts during the consonant before it) and then the lip closures are put back on top of the smoothing
    (CLOSURE_MOVE), so m b p still shut.
    Outside the aligned singing (an ad lib, a vocal chop, the title word sung outside the lines): the author's vowels of
-   FACE where the voice sings (FACE's shape at the voice's gain), closed (at most REST_OPEN) where it does not.
+   FACE where the voice sings (FACE's shape at the voice's gain), closed (at most REST_OPEN) where it does not.  FACE is
+   read GUIDE_LAG later (its own lead taken out), so that there too the mouth leads the voice by --lead-ms and not by
+   both (before 2026-10-17 it closed some 0.1 s before the end of a long note outside the lines).
 5. The motion: OUT frame f is the mouth at (f + SHOWN) / FPS + LEAD (the MV shows frame f at f + 0.1875, tools/mv_look.py;
    the mouth leads the voice by --lead-ms: in speech the face moves from 20 ms after to 70 ms before the sound of a
    consonant-vowel syllable, Schwartz & Savariaux 2014, PLoS Comput Biol 10(7) e1003743; animators open the jaw two
@@ -55,6 +57,10 @@ What is done:
 The report (--report, in short on stdout) gives the alignment (per line: its time, how many morae, the mean emission
 score a frame), how the vowel onsets of FACE (tools/lip_timing.py onsets) sit against the aligned vowel onsets of the
 voice (FACE's lead: positive when the mouth comes first), and the keys.  --align-out writes every mora's times.
+The guide pulls the alignment to FACE's vowels GUIDE_LAG later, so FACE's lead sits near GUIDE_LAG by construction: it
+shows the guide holds, not that the alignment agrees with the hand-made mouth on its own.  Nor does a lag measured
+against this alignment say whether OUT goes with the voice (OUT is placed from it); tools/lip_check.py measures that
+with times taken from the voice alone.
 """
 import argparse
 import dataclasses
@@ -806,8 +812,10 @@ def run(face_path, vocal_path, lines_path, out_path, lead_ms=LEAD_MS, dance_path
         raise ValueError("no lyric line in %s" % lines_path)
     x = read_sound(vocal_path) if sound is None else np.asarray(sound, np.float32)
     voice = features(x)
-    face_rows = face_rows_of(face, voice.frames)
-    guide = face_rows_of(face, voice.frames, GUIDE_LAG) if use_guide and face_rows.sum() > 0 else None
+    # FACE's mouth on the voice's rows with its own lead taken out (it leads the voice by GUIDE_LAG): the guide of the
+    # alignment, and the mouth outside the lines, which then leads by lead_ms as the mouth in the lines does
+    face_rows = face_rows_of(face, voice.frames, GUIDE_LAG)
+    guide = face_rows if use_guide and face_rows.sum() > 0 else None
     result = align(voice, lines, guide=guide)
     X, sung = mouth_track(voice, result["morae"], face_rows)
     frames = frames_of(face, dance)

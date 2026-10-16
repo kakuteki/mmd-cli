@@ -423,6 +423,82 @@ class GuideTest(unittest.TestCase):
         self.assertEqual(len(morae), 5)
 
 
+class OutsideTheLinesTimingTest(unittest.TestCase):
+    """outside the lines the mouth is FACE's own, a hand-made mouth that leads the voice by GUIDE_LAG: the output must
+    lead the voice there by --lead-ms as it does in the lines, not by both (review 2026-10-17: the mouth closed 0.12 s
+    before the end of a long note outside the lines)"""
+
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(5)
+        cls.folder = tempfile.mkdtemp()
+        x = np.zeros(int(6.0 * SR))
+        t = 1.0
+        for c, v, dur in [("k", "a", 0.24), ("s", "a", 0.22), ("m", "a", 0.26), ("", "o", 0.34)]:
+            if c == "k":
+                t += 0.065
+            elif c == "s":
+                hiss = np.diff(rng.normal(0, 0.25, int(0.09 * SR) + 1))
+                x[int(t * SR):int(t * SR) + len(hiss)] += _fade(hiss, 10) * 0.5
+                t += 0.09
+            elif c == "m":
+                hum = _sung(FORMANTS["N"], int(0.07 * SR), 260.0, rng) * 0.08
+                x[int(t * SR):int(t * SR) + len(hum)] += _fade(hum, 10)
+                t += 0.07
+            seg = _sung(FORMANTS[v], int(dur * SR), 260.0, rng) * 0.3
+            x[int(t * SR):int(t * SR) + len(seg)] += _fade(seg, 15)
+            t += dur
+        cls.on, cls.off = 4.0, 4.9                            # a long ad lib after the line
+        seg = _sung(FORMANTS["a"], int((cls.off - cls.on) * SR), 300.0, rng) * 0.3
+        x[int(cls.on * SR):int(cls.on * SR) + len(seg)] += _fade(seg, 20)
+        x += rng.normal(0, 1e-4, len(x))
+        cls.voice = os.path.join(cls.folder, "v.wav")
+        write_wav(cls.voice, x.astype(np.float32))
+        cls.lines = os.path.join(cls.folder, "l.tsv")
+        write_lines(cls.lines, [(0.8, t + 0.2, "かさまお")])
+        lag = lip_sync.GUIDE_LAG
+        fa = int(round((cls.on - lag) * FPS - lip_sync.SHOWN)) - 1
+        fb = int(round((cls.off - lag) * FPS - lip_sync.SHOWN)) - 1
+        cls.face_half = ((fa + 1 + lip_sync.SHOWN) / FPS, (fb + 1 + lip_sync.SHOWN) / FPS)
+        morphs = [vmd.MorphKey(n, 0, 0.0) for n in VOWEL_MORPHS]
+        morphs += [vmd.MorphKey("あ", fa, 0.0), vmd.MorphKey("あ", fa + 2, 1.0), vmd.MorphKey("あ", fb, 1.0),
+                   vmd.MorphKey("あ", fb + 2, 0.0), vmd.MorphKey("まばたき", 179, 0.0)]
+        cls.face = os.path.join(cls.folder, "f.vmd")
+        vmd.dump(vmd.Motion(model_name="Rin", morphs=morphs), cls.face)
+        cls.out = os.path.join(cls.folder, "o.vmd")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.code = lip_sync.main([cls.face, cls.voice, cls.out, "--lines", cls.lines])
+        cls.frames = 180
+        cls.open = opening(tracks(vmd.load(cls.out), cls.frames), cls.frames)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def crossing(self, t0, t1, rising):
+        """the shown time where the opening crosses half its height between t0 and t1"""
+        f0, f1 = int(t0 * FPS), int(t1 * FPS)
+        o = self.open[f0:f1 + 1]
+        half = 0.5 * (o.max() + o.min())
+        for k in range(1, len(o)):
+            a, b = o[k - 1], o[k]
+            if (a < half <= b) if rising else (a > half >= b):
+                return (f0 + k - 1 + (half - a) / (b - a) + lip_sync.SHOWN) / FPS
+        self.fail("no crossing")
+
+    def test_it_runs(self):
+        self.assertEqual(self.code, 0)
+        self.assertGreater(self.open[int(4.45 * FPS)], 0.6)
+
+    def test_the_mouth_opens_the_lead_before_the_ad_lib(self):
+        lead = self.on - self.crossing(3.6, 4.3, True)
+        self.assertAlmostEqual(lead, lip_sync.LEAD_MS / 1000.0, delta=0.025)
+
+    def test_the_mouth_closes_the_lead_before_the_ad_lib_ends(self):
+        lead = self.off - self.crossing(4.5, 5.3, False)
+        self.assertAlmostEqual(lead, lip_sync.LEAD_MS / 1000.0, delta=0.025)
+
+
 class CliTest(unittest.TestCase):
     def test_a_missing_file_is_an_argument_error(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -499,6 +575,13 @@ class RealSongTest(unittest.TestCase):
         cls.frames = lip_sync.frames_of(vmd.load(REAL_FACE))
         cls.new = tracks(vmd.load(cls.out), cls.frames)
         cls.old = tracks(vmd.load(REAL_FACE), cls.frames)
+        # the independent measure: times from the voice alone (tools/lip_check.py), not from the alignment the mouth
+        # was placed on
+        spec = importlib.util.spec_from_file_location("lip_check", os.path.join(ROOT, "tools", "lip_check.py"))
+        cls.lip_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.lip_check)
+        cls.check = cls.lip_check.run(REAL_VOCAL, [REAL_FACE, cls.out], lines_path=REAL_LINES, align_path=cls.align_path)
+        cls.tag_old, cls.tag_new = list(cls.check["faces"])
 
     @classmethod
     def tearDownClass(cls):
@@ -515,6 +598,8 @@ class RealSongTest(unittest.TestCase):
         self.assertGreaterEqual(self.report["lines"], 48)
 
     def test_the_aligned_vowels_agree_with_the_hand_made_keys(self):
+        # the guide pulls the alignment to the hand-made vowels GUIDE_LAG later, so this checks that the guide holds and
+        # the hand-made keys are not far from the voice: no agreement on its own (the lip_check tests below are that)
         lead = self.report["face_lead_ms"]
         self.assertGreaterEqual(lead["n"], 400)
         self.assertTrue(0.0 <= lead["median"] <= 120.0, lead)
@@ -538,6 +623,33 @@ class RealSongTest(unittest.TestCase):
 
     def test_the_keys_fit_mmd(self):
         self.assertLessEqual(self.report["keys"]["after_total"], 9000)
+
+    def test_the_mouth_opens_ahead_of_the_voice_by_a_measure_of_its_own(self):
+        """the open vowels after a voice onset (lip_check: the mouth must open visibly there): half open 20 to 90 ms
+        before the onset, hardly any noticed late or early (ITU-R BT.1359-1), and more of them answered than by the
+        hand-made mouth (2026-10-17 on the MV's face_v9f: 54 ms, 0.8 % late, 1.5 % early, 0.88 paired against 0.61)"""
+        new = self.check["faces"][self.tag_new]["open_vowel_onsets"]
+        old = self.check["faces"][self.tag_old]["open_vowel_onsets"]
+        self.assertTrue(20.0 <= new["lag_ms"]["median"] <= 90.0, new)
+        self.assertLessEqual(new["share_mouth_late_over_45ms"], 0.05, new)
+        self.assertLessEqual(new["share_mouth_early_over_125ms"], 0.05, new)
+        self.assertGreater(new["share_paired"], old["share_paired"] + 0.1, (new, old))
+
+    def test_no_line_sits_a_syllable_off(self):
+        """per line, the median lag of the voice onsets inside it stays within what goes unnoticed (a line aligned a
+        syllable off would sit some 200 ms off), and no line's vowels sound better shifted by one mora"""
+        for row in self.check["lines"]:
+            got = row[self.tag_new]
+            if got["paired"] >= 3:
+                self.assertTrue(-45.0 <= got["median_ms"] <= 125.0, row)
+        self.assertEqual(self.check["alignment"]["vowels"]["lines_fit_better_shifted"], [])
+
+    def test_the_aligned_syllables_start_where_the_voice_does(self):
+        """the aligned starts of the syllables after a consonant fall on a voice onset far more often than chance, and
+        the aligned vowels sound close (い う) or open (あ え お) as labelled (2026-10-17: 0.65 against 0.05, 0.89)"""
+        onsets = self.check["alignment"]["onsets"]
+        self.assertGreaterEqual(onsets["share_within_30ms"], onsets["chance_within_30ms"] + 0.4, onsets)
+        self.assertGreaterEqual(self.check["alignment"]["vowels"]["share_agree_close_open"], 0.8)
 
 
 if __name__ == "__main__":
