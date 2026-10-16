@@ -249,7 +249,28 @@ class GroundTest(unittest.TestCase):
         self.assertLess(float(sol["左"]["reach"].max()), 0.6)                          # the goal no further out of reach
 
 
+class KickTest(unittest.TestCase):
+    def test_a_leg_kicked_far_out_of_reach_is_not_brought_down(self):
+        # the right foot's goal 3 cm over the floor but 6 units (48 cm) out to the side: MMD leaves the leg straight with
+        # the shoe far up (a kick); the body is between the feet.  Not a foot over the floor: nothing changes
+        F = 40
+        m = dance(F, centre=lambda t: (0.0, BENT + 0.9, 0.0), right=lambda t: ((-6.0, 0.375, 0.0), None))
+        sol = leg_ik.solve(RIG, m, range(F))
+        self.assertGreater(float(sol["右"]["reach"].min()), contact_layer.JUDGE_MISS)    # (as built: far out of reach)
+        out, plan = run(m)
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
+        self.assertLess(float(np.abs(goal(out, F, "右") - goal(m, F, "右")).max()), 1e-5)
+
+
 class PlantTest(unittest.TestCase):
+    def test_a_foot_the_dance_slides_fast_along_the_floor_keeps_its_slide(self):
+        # the left foot on the floor slides 0.2 units a frame (48 cm/s) over frames 10-19 while the right stands: the
+        # dance slides it (not the trace's drift): kept
+        F = 40
+        m = dance(F, left=lambda t: ((0.0, 0.0, -0.2 * min(max(t - 10, 0), 10)), None))
+        out, plan = run(m)
+        self.assertLess(float(np.abs(goal(out, F, "左") - goal(m, F, "左")).max()), 1e-5)
+
     def test_a_standing_foot_does_not_slide_and_lands_where_the_dance_puts_it(self):
         # single support: the right foot high in the air until frame 25, on the floor after; the left foot on the floor
         # slides 0.08 units a frame (19 cm/s) from frame 5 to 25, lifts at 26, swings, and lands at frame 36 where the

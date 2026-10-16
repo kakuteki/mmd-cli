@@ -112,7 +112,14 @@ LOAD_SHARE = 0.3                # a standing foot with this share of the weight 
 REACH_KNEE_DEG = FL.REACH_KNEE_DEG   # degrees: the knee of a standing leg bent at least this much (people: none straighter
                                      # than 5 degrees on the floor; the foot layer's)
 DROP_MAX = 1.0                  # units (8 cm): the most the pelvis goes down to let a standing leg reach the floor
-DROP_EASE = 6                   # frames: the lowering comes and goes over this many frames each way (the foot layer's sink)
+DROP_WINDOW = 24                # frames each side of a lowering over which it comes and goes (smoothly, within the bound)
+DROP_QP_ROUNDS = 400
+JUDGE_MISS = 0.75               # units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a
+                                # leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); further (a
+                                # kick far out, 245.4 s: 27 cm) the foot is where MMD shows it
+PLANT_SPEED = 30.0              # cm/s: a standing foot's touching part moving slower than this is held in place (the trace's
+                                # drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of their frames,
+                                # people's 7.9); faster is the dance sliding the foot (kept)
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
@@ -259,21 +266,26 @@ def swing_blend(corr, stance, plant_from, F):
 
 # ---- the pelvis in the air: a small quadratic programme -------------------------------------------------------------
 
-def _diff_matrix(n, order):
+def _diff_matrix(n, order, first=None, F=None):
     """the matrix [n, n] of the centred differences of `order` (2: x[t+1] - 2 x[t] + x[t-1]; 3: x[t+2] - 3 x[t+1] +
-    3 x[t] - x[t-1]) of a vector x of n values with zeros beyond its ends"""
+    3 x[t] - x[t-1]) of a vector x of n values with zeros beyond its ends.  With the window's first frame and the
+    dance's length F: a row whose differences reach past the dance's first or last frame is left out (zeros: nothing is
+    pinned beyond the dance's ends)"""
     M = np.zeros((n, n))
     coef = {2: {-1: 1.0, 0: -2.0, 1: 1.0}, 3: {-1: -1.0, 0: 3.0, 1: -3.0, 2: 1.0}}[order]
     for t in range(n):
+        if first is not None and (first + t + min(coef) < 0 or first + t + max(coef) > F - 1):
+            continue
         for k, c in coef.items():
             if 0 <= t + k < n:
                 M[t, t + k] = c
     return M
 
 
-def solve_qp(H, A_eq, b_eq, A_in, b_in, rounds=60):
-    """the least 0.5 x' H x with A_eq x = b_eq and A_in x >= b_in, by active sets (H positive definite, a few dozen
-    variables).  (x, the active inequalities, the rounds taken, ok)"""
+def solve_qp(H, A_eq, b_eq, A_in, b_in, rounds=60, batch=1):
+    """the least 0.5 x' H x with A_eq x = b_eq and A_in x >= b_in, by active sets (H positive definite, a few hundred
+    variables at most), adding up to `batch` of the most violated inequalities a round.  (x, the active inequalities,
+    the rounds taken, ok)"""
     n = H.shape[0]
     active = []
     ok = False
@@ -303,8 +315,46 @@ def solve_qp(H, A_eq, b_eq, A_in, b_in, rounds=60):
         if not bad:
             ok = True
             return x, active, r + 1, ok
-        active.append(int(bad[0]))
+        active.extend(int(i) for i in bad[:batch])
     return x, active, rounds, ok
+
+
+def drop_profile(need, floor_frames, fall_down, allowed, F, window=None):
+    """the pelvis's lowering z [F] (units, >= 0) and per window its rows: over each run of need [F] > 0 and `window`
+    frames each side (merged where they meet), the least and smoothest z (z^2 plus SMOOTH times its third differences
+    squared) that is at least `need`, never negative, and on the floor's frames (floor_frames [F]) keeps the pelvis's
+    downward acceleration (fall_down [F], units/s^2, + down) within `allowed` [F]: z's second difference at most
+    (allowed - fall_down) / FPS^2 (a lowered pelvis falls faster where z bends up).  A window that has no such z keeps
+    the least violation the solve reached (solved False)"""
+    window = DROP_WINDOW if window is None else window
+    z = np.zeros(F)
+    rows = []
+    wins = []
+    for a, b in runs(need > 0.0):
+        w0, w1 = max(0, a - window), min(F - 1, b + window)
+        if wins and w0 <= wins[-1][1] + 1:
+            wins[-1] = (wins[-1][0], w1)
+        else:
+            wins.append((w0, w1))
+    for w0, w1 in wins:
+        n = w1 - w0 + 1
+        D2, D3 = _diff_matrix(n, 2, w0, F), _diff_matrix(n, 3, w0, F)
+        H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
+        A_in, b_in = [], []
+        for k in range(n):
+            t = w0 + k
+            e = np.zeros(n)
+            e[k] = 1.0
+            A_in.append(e)
+            b_in.append(max(float(need[t]), 0.0))
+            if floor_frames[t] and 0 < t < F - 1:
+                A_in.append(-D2[k])
+                b_in.append(-max((float(allowed[t]) - float(fall_down[t])) / (FPS * FPS), 0.0))
+        x, act, rounds, ok = solve_qp(H, np.zeros((0, n)), np.zeros(0), np.array(A_in), np.array(b_in),
+                                      rounds=DROP_QP_ROUNDS, batch=16)
+        z[w0:w1 + 1] = np.maximum(x, 0.0)
+        rows.append({"window": [int(w0), int(w1)], "active": len(act), "rounds": rounds, "solved": bool(ok)})
+    return z, rows
 
 
 def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F):
@@ -318,7 +368,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
     for w0, w1 in windows:
         n = w1 - w0 + 1
         idx = np.arange(w0, w1 + 1)
-        D2, D3 = _diff_matrix(n, 2), _diff_matrix(n, 3)
+        D2, D3 = _diff_matrix(n, 2, w0, F), _diff_matrix(n, 3, w0, F)
         H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
         eq_rows, eq_b, in_rows, in_b = [], [], [], []
         g = G / (FPS * FPS)
@@ -482,9 +532,10 @@ def layer(model, rig, shoe, motion, params=None):
         w = FL.shell_world(o, leg)
         L1, L2 = leg_lengths(rig, s)
         lengths[s] = (L1, L2)
-        # judged at its goal where MMD's IK leaves the ankle off it (a goal out of the leg's reach, or a nearly straight
-        # leg lagging behind its goal): what the dance puts there, and what a lowered pelvis or a push will make of it
-        short = leg["reach"] > IK_MISS
+        # judged at its goal where MMD's IK leaves the ankle off it by a little (a goal just out of the leg's reach, or a
+        # nearly straight leg lagging behind its goal): what the dance puts there, and what a lowered pelvis or a push
+        # will make of it; a foot left further off (a kick far out) is where MMD shows it
+        short = (leg["reach"] > IK_MISS) & (leg["reach"] <= JUDGE_MISS)
         wj = w + np.where(short[:, None, None], (leg["goal_ankle"] - leg["ankle"])[:, None, :], 0.0)
         judged[s] = wj
         low[s] = w[:, :, 1].min(axis=1) - floor_y
@@ -550,31 +601,32 @@ def layer(model, rig, shoe, motion, params=None):
     for s in SIDES:
         g = sol[s]["goal_ankle"] + np.stack([np.zeros(F), dy[s], np.zeros(F)], 1)
         room = raise_room(sol[s]["hip"], g, reach_keep[s])
-        short = stance[s] & ~(room >= -1e-9)                           # (NaN: unreachable at any height)
+        # a lowered foot whose leg will not reach (with the knee bent REACH_KNEE_DEG), and a foot whose goal is on the
+        # floor but MMD leaves it over it (the leg lagging, or just out of reach)
+        short = (stance[s] & (dy[s] < 0.0) & ~(room >= -1e-9)) |                 (stance[s] & (dy[s] >= 0.0) & (low[s] > LAND_TOL) & (low_j[s] < ON_FLOOR))
         if not short.any():
             continue
         nd = needed(s, np.flatnonzero(short))
         free = short & ~nd
         if free.any():
-            as_far_as_it_reaches(s, free)
+            as_far_as_it_reaches(s, free & (dy[s] < 0.0))
         bear = short & nd
         if bear.any() and p["drop"]:
-            r = np.where(bear, np.where(np.isfinite(room), np.maximum(-room, 0.0), DROP_MAX), 0.0)
+            r = np.where(bear, np.where(np.isfinite(room), np.maximum(-room, np.maximum(low[s] - low_j[s], 0.0)), DROP_MAX), 0.0)
             need_drop = np.maximum(need_drop, np.minimum(r, DROP_MAX))
         elif bear.any():
-            as_far_as_it_reaches(s, bear)
+            as_far_as_it_reaches(s, bear & (dy[s] < 0.0))
     comp = Composer(rig, motion, keys, sol, F)
-    zero2 = {s: np.zeros((F, 3)) for s in SIDES}
+    floor_frames = stance["左"] | stance["右"]
+    allowed = np.maximum(FALL_BOUND, fall) + FALL_TOL * 0.5          # (the input's own where it is past the bound already)
     drop = np.zeros(F)
-    drop_rows, drop_rounds = [], []
+    drop_rows, drop_rounds, drop_windows = [], [], []
     if np.any(need_drop > 0.0):
-        # the drop as the foot layer spreads its sink (a raised cosine, lessened where the floor's frames would fall faster
-        # than the bound), then checked on MMD's IK: a nearly straight leg stops short of a goal it reaches on paper (the
-        # balance layer's 1.5 cm slack), so a weight-bearing foot still over the floor gets that much more
+        # the least smooth lowering that lets the weight-bearing legs reach, within the bound on the floor's frames, then
+        # checked on MMD's IK: a nearly straight leg stops short of a goal it reaches on paper (the balance layer's 1.5 cm
+        # slack), so a weight-bearing foot still over the floor gets that much more
         for rnd in range(DROP_ROUNDS):
-            rr = runs(need_drop > 0.0)
-            drop, past, radius, scale = FL.hover_sink_profile(need_drop, rr, -fall, ease=DROP_EASE)
-            drop = np.minimum(drop, DROP_MAX)
+            drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F)
             offs = {s: np.stack([np.zeros(F), dy[s], np.zeros(F)], 1) for s in SIDES}
             _, trial = comp.compose(offs, -drop)
             more = np.zeros(F)
@@ -587,10 +639,11 @@ def layer(model, rig, shoe, motion, params=None):
             drop_rounds.append({"round": rnd, "frames_over": int((more > 0.0).sum()), "max_cm": _r(float(more.max()) * UNIT_CM, 2)})
             if not np.any(more > 0.0) or rnd == DROP_ROUNDS - 1:
                 break
-            need_drop = np.minimum(np.maximum(need_drop, drop + more), DROP_MAX)
+            need_drop = np.minimum(np.where(more > 0.0, np.maximum(need_drop, drop) + more, need_drop), DROP_MAX)
         drop_rows = [{"s": [round(a / FPS, 2), round((b + 1) / FPS, 2)], "need_cm": _r(float(need_drop[a:b + 1].max()) * UNIT_CM, 2),
-                      "drop_cm": _r(float(drop[a:b + 1].max()) * UNIT_CM, 2), "scale": sc}
-                     for (a, b), sc in zip(runs(need_drop > 0.0), scale)]
+                      "drop_cm": _r(float(drop[a:b + 1].max()) * UNIT_CM, 2),
+                      "short_cm": _r(float(np.max(need_drop[a:b + 1] - drop[a:b + 1])) * UNIT_CM, 2)}
+                     for a, b in runs(need_drop > 0.0)]
         # a weight-bearing foot whose drop was lessened: lowered only as far as the lowered hips let its leg reach
         for s in SIDES:
             hip = sol[s]["hip"] - np.stack([np.zeros(F), drop, np.zeros(F)], 1)
@@ -628,14 +681,11 @@ def layer(model, rig, shoe, motion, params=None):
         c = np.zeros((F, 2))
         rows = []
         if p["plant"]:
-            loaded = stance[s] & ((~stance[other[s]]) | (share[s] >= LOAD_SHARE))
+            slow = np.linalg.norm(slip[s], axis=1) * UNIT_CM * FPS < PLANT_SPEED
             for a, b in runs(stance[s]):
-                k = np.flatnonzero(loaded[a:b + 1])
-                if not len(k):
-                    continue
-                p0 = a + int(k[0])
+                p0 = a
                 for t in range(p0, b):
-                    c[t + 1] = c[t] - slip[s][t]
+                    c[t + 1] = c[t] - (slip[s][t] if slow[t] else 0.0)
                 if b > p0:
                     rows.append({"s": [round(p0 / FPS, 2), round((b + 1) / FPS, 2)],
                                  "drift_cm": _r(float(np.linalg.norm(c[b])) * UNIT_CM, 2),
@@ -678,10 +728,12 @@ def layer(model, rig, shoe, motion, params=None):
             r = np.where(np.isfinite(r), r, 0.0)
             room = np.where(stance[s], np.minimum(room, r), room)
         room = np.where(np.isfinite(room), room, np.nan)
-        floor_frames = stance["左"] | stance["右"]
-        fall_in = np.max([down_acc(y) for y in pelvis_ys], axis=0)
+        fall_in = allowed - FALL_TOL * 0.5                              # (flight_change adds its own margin)
+        in_flight = np.zeros(F, dtype=bool)
+        for a, b in flights:
+            in_flight[a:b + 1] = True
         interior = np.zeros(F, dtype=bool)
-        interior[1:-1] = air[1:-1] & air[:-2] & air[2:]
+        interior[1:-1] = in_flight[1:-1] & in_flight[:-2] & in_flight[2:]
         base = com[:, 1] - drop
         com_out = None
         for it in range(FLIGHT_ROUNDS):
@@ -712,7 +764,7 @@ def layer(model, rig, shoe, motion, params=None):
                          "plant": corr[s], "carry": carry[s], "low": low[s], "low_judged": low_j[s], "speed": speed[s],
                          "plant_rows": plant_rows[s]} for s in SIDES}
     plan.update({"air": air, "flying": flying, "drop": drop, "change": change, "drop_rows": drop_rows,
-                 "drop_rounds": drop_rounds,
+                 "drop_rounds": drop_rounds, "drop_windows": drop_windows,
                  "flight_rows": {"flights": flight_rows, "windows": wrows, "rounds_resid": resid}, "fall_in": fall,
                  "com": com})
     moved = any(float(np.abs(offsets[s]).max()) > 1e-9 for s in SIDES) or float(np.abs(centre_dy).max()) > 1e-9
@@ -828,7 +880,9 @@ def report_of(plan, rig, before, after, F):
                                                    _r(float(np.median(sd["low_judged"][a:b + 1])) * UNIT_CM, 2),
                                                    bool(np.any(sd["need"][a:b + 1]))] for a, b in rr][:200]}
     rep["ground"]["drop"] = {"frames": int((plan["drop"] > 1e-6).sum()), "max_cm": _r(float(plan["drop"].max()) * UNIT_CM, 2),
-                             "runs": plan["drop_rows"][:100]}
+                             "windows": len(plan["drop_windows"]),
+                             "windows_unsolved": sum(1 for w in plan["drop_windows"] if not w["solved"]),
+                             "rounds": plan["drop_rounds"], "runs": plan["drop_rows"][:100]}
     rep["plant"] = {}
     for s in SIDES:
         sd = sides[s]
