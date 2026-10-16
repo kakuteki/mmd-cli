@@ -803,7 +803,7 @@ class FigureState:
     capsules: list = None             # her body as capsules (a, b, radius), world positions, for the soft shadow (Body)
 
 
-FIGURE_WINDOW = 90                   # frames: the pool follows the centre averaged like make_camera's look-at point
+FIGURE_WINDOW = 90                    # frames: the pool follows the centre averaged like make_camera's look-at point
 FIGURE_REST_PERCENTILE = 2.0
 FIGURE_BONES = {"ankles": (("左足ＩＫ", "左足IK"), ("右足ＩＫ", "右足IK")),
                 "toes": (("左つま先ＩＫ", "左つま先IK"), ("右つま先ＩＫ", "右つま先IK")),
