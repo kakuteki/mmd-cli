@@ -75,6 +75,29 @@ class AviHeaderTest(unittest.TestCase):
         self.assertIsNone(app._avi_info(path)["fps"])
 
 
+@unittest.skipUnless(app is not None, "needs Windows")
+class FrameRateTest(unittest.TestCase):
+    """MMD writes the time of a frame in whole microseconds: at 960 fps 1e6 / 960 = 1041.7 becomes 1041, which reads back
+    as 960.6 (ffprobe shows 625000/651 = 960.06), so a header that only rounds 1e6 / time says 961 (hinata, 2026-10-16)"""
+
+    def test_mmd_960_header_is_960(self):
+        for micro in (1041, 1042):
+            path = write(riff(lst(b"hdrl", avih(2592, 1280, 720, micro_per_frame=micro))))
+            self.assertTrue(app.avi_rate_is(app._avi_info(path), 960), micro)
+
+    def test_the_rates_of_before_still_match(self):
+        for fps, micro in ((30, 33333), (60, 16666), (120, 8333), (240, 4166), (480, 2083)):
+            path = write(riff(lst(b"hdrl", avih(10, 64, 48, micro_per_frame=micro))))
+            self.assertTrue(app.avi_rate_is(app._avi_info(path), fps), fps)
+
+    def test_another_rate_does_not_match(self):
+        for fps, micro in ((960, 1000), (960, 1050), (480, 2100), (30, 32000)):
+            path = write(riff(lst(b"hdrl", avih(10, 64, 48, micro_per_frame=micro))))
+            self.assertFalse(app.avi_rate_is(app._avi_info(path), fps), (fps, micro))
+        self.assertFalse(app.avi_rate_is({"fps": None}, 960))
+        self.assertFalse(app.avi_rate_is({}, 960))
+
+
 class ExpectedFramesTest(unittest.TestCase):
     def test_a_60_fps_render_writes_two_frames_per_motion_frame(self):
         # the motion's frames are 30 fps units: from 2400 to 2820 at 60 fps MMD wrote 842 frames (measured 2026-10-05)
@@ -83,6 +106,7 @@ class ExpectedFramesTest(unittest.TestCase):
         self.assertEqual(app.expected_avi_frames(2400, 2820, 60), 842)
         self.assertEqual(app.expected_avi_frames(0, 7742, 30), 7743)
         self.assertEqual(app.expected_avi_frames(0, 7742, 60), 15486)
+        self.assertEqual(app.expected_avi_frames(520, 600, 960), 2592)        # measured on hinata, 2026-10-16
 
 
 if __name__ == "__main__":

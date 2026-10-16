@@ -47,7 +47,7 @@ def with_gravity(data, acceleration=None, direction=None, noise=None):
     `noise` an int turns the noise on with that amount, False turns it off (the amount stays)"""
     direction = _check(acceleration, direction, noise)
     pos = {}
-    pmm.loads(data, positions=pos)
+    before = pmm.loads(data, positions=pos)["gravity"]
     out = bytearray(data)
     places = [(pos["gravity_current"], CURRENT)] + [(at, KEY) for at in pos["gravity_frames"]]
     for at, field in places:
@@ -62,11 +62,21 @@ def with_gravity(data, acceleration=None, direction=None, noise=None):
             struct.pack_into("<i", out, at + field["noise"], noise)
     out = bytes(out)
     got = pmm.loads(out)["gravity"]
-    for part in [got["current"], got["init"]] + got["keys"]:
-        if acceleration is not None and part["acceleration"] != struct.unpack("<f", struct.pack("<f", acceleration))[0]:
-            raise AssertionError("the acceleration did not read back: %r" % (part,))
-        if direction is not None and part["direction"] != struct.unpack("<3f", struct.pack("<3f", *direction)):
-            raise AssertionError("the direction did not read back: %r" % (part,))
+    if len(got["keys"]) != len(before["keys"]):
+        raise AssertionError("the gravity keys did not read back: %d before, %d after" % (len(before["keys"]), len(got["keys"])))
+    for was, part in zip([before["current"], before["init"]] + before["keys"], [got["current"], got["init"]] + got["keys"]):
+        want = {k: was[k] for k in ("acceleration", "direction", "noise", "noise_enabled")}
+        if acceleration is not None:
+            want["acceleration"] = struct.unpack("<f", struct.pack("<f", acceleration))[0]
+        if direction is not None:
+            want["direction"] = struct.unpack("<3f", struct.pack("<3f", *direction))
+        if noise is False:
+            want["noise_enabled"] = False
+        elif noise is not None:
+            want["noise_enabled"], want["noise"] = True, noise
+        for k, v in want.items():
+            if part[k] != v:
+                raise AssertionError("the %s did not read back (%r, wanted %r): %r" % (k.replace("_", " "), part[k], v, part))
     return out
 
 
