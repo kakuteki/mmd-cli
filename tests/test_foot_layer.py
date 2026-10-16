@@ -1046,6 +1046,60 @@ class LandingTest(unittest.TestCase):
         ball = ball_xz(b)[td:]
         self.assertLess(float(np.linalg.norm(ball - ball[0], axis=1).max()), 0.03)   # it pivots on the ball, no slide
 
+    def test_a_deep_sink_lowers_the_heel_without_a_slam(self):
+        # (review_feet_landing) the pelvis sinks 2.4 cm, more than turning the foot about the ball can take (the ankle
+        # rises 1.2 cm at most): the heel is up as far as it goes, and still comes down over frames, not in one; the
+        # ball stays where it landed (the ankle's horizontal move goes with the turn)
+        # (in the song the pelvis often comes down late in the 0.2 s: here over the last 2 of its 6 frames)
+        keys = self.landing_keys(0.3)
+        keys.insert(2, key("センター", self.TD + 4, position=(0, -1.2, 0)))
+        f_in, f_out, out, plan = run_layer(*keys, frames=19)
+        b = f_out["左"]
+        td = self.TD
+        self.assertLess(float(b["pitch"][td]), -15.0)                                # well up at the touch
+        self.assertGreater(float(b["pitch"][-1]), -1.0)                              # down in the end
+        self.assertLess(float(np.abs(np.diff(b["pitch"])).max()), 8.0)               # no slam
+        ball = ball_xz(b)[td:]
+        self.assertLess(float(np.linalg.norm(ball - ball[0], axis=1).max()), 0.03)   # it pivots on the ball
+
+    def test_the_command_lands_like_a_human_unless_told_off(self):
+        # (review_feet_landing) the default is human: without --landing the command writes what --landing human writes,
+        # which raises the heel at the sinking landing; --landing off writes something else
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
+            vmd.dump(motion(*self.landing_keys(0.15)), src)
+            with open(model, "wb") as fh:
+                fh.write(DATA)
+            outs = {}
+            for tag, extra in (("default", []), ("human", ["--landing", "human"]), ("off", ["--landing", "off"])):
+                out, rep = os.path.join(folder, tag + ".vmd"), os.path.join(folder, tag + ".json")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(out, "rb") as fh, open(rep, encoding="utf-8") as fr:
+                    outs[tag] = (fh.read(), json.load(fr))
+            self.assertEqual(outs["default"][0], outs["human"][0])
+            self.assertNotEqual(outs["default"][0], outs["off"][0])
+            self.assertEqual(outs["default"][1]["landing_model"], "human")
+            self.assertGreater(outs["default"][1]["landing"]["L"]["heel_raised_frames"], 0)
+            self.assertEqual(outs["off"][1]["landing"]["L"]["heel_raised_frames"], 0)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_the_heel_does_not_rise_again_when_the_pelvis_bounces(self):
+        # (review_feet_landing) the pelvis sinks over 3 frames and comes half back up over the next 3: the heel comes
+        # down with the sink and stays down (it does not rise again with the bounce)
+        td = self.TD
+        keys = [key("センター", 0, position=(0, -1.2, 0)), key("センター", td, position=(0, -1.2, 0)),
+                key("センター", td + 3, position=(0, -1.35, 0)), key("センター", td + 6, position=(0, -1.27, 0)),
+                key("センター", 18, position=(0, -1.27, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8)),
+                key("左足ＩＫ", 0, position=(0, 0.6, 0.0)), key("左足ＩＫ", td), key("左足ＩＫ", 18)]
+        _, f_out, _, plan = run_layer(*keys, frames=19)
+        heel = plan["左"]["heel"]
+        self.assertGreater(float(heel[td]), 2.0)
+        self.assertTrue(np.all(np.diff(heel[td:]) <= 1e-6))
+
     def test_a_landing_without_a_sink_is_left_as_it_was(self):
         f_in, f_out, out, plan = run_layer(*self.landing_keys(0.0), frames=19)
         _, f_old, _, _ = run_layer(*self.landing_keys(0.0), frames=19, landing=False)

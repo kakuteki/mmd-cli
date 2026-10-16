@@ -709,6 +709,9 @@ REACH_KNEE_DEG = 5.5
 # not at all, put onto the floor where the dance has its sole off it (over CONTACT_ENTER): a swing that skims the floor
 # is not pressed into a slide along it (the foot layer made a third of the slides it added so).
 SKIM_SPEED = (5.0, 15.0)
+# The most the landing's heel comes down in a frame (degrees): the cap (some 25 degrees) over 5 frames, about the
+# humans' 0.1 s median from the touch to the heel down and inside the 0.2 s that 61 % of them take.
+HEEL_DROP_DEG = 5.0
 SKIM_LIFT = (CONTACT_ENTER, CONTACT_ENTER + 0.015)
 
 
@@ -789,6 +792,11 @@ def heel_turn(rig, o, leg, q_t, v, loaded, p):
                     break
                 g = 0.5 * (1.0 + math.cos(math.pi * j / (LANDING_LEAD + 1)))
                 land[a - j] = max(land[a - j], g * need[0])
+        # (review_feet_landing) the heel comes down at most HEEL_DROP_DEG a frame: where the sink is more than turning
+        # about the ball can take, the turn stays at its cap until the pelvis is lowest and would fall to 0 in one
+        # frame (in the song 68 frames of 10 to 30 degrees)
+        for t in range(1, F):
+            land[t] = max(land[t], land[t - 1] - HEEL_DROP_DEG)
     reach = np.zeros(F)
     knee = p.get("reach_knee", 0.0)
     if p.get("landing", True) and knee > 0.0:
