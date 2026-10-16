@@ -718,8 +718,8 @@ HOVER_ACC_BOUND = 122.0         # units/s^2: the pelvis's downward acceleration 
                                 # units/s^2 on three frames, yet flatter than half of gravity over the run, its take-off
                                 # and landing in it; it had been lowered onto the floor)
 HOVER_ACC_TOL = 0.5             # units/s^2: past a bound by more than this (as the balance layer's report counts)
-HOVER_GLIDE = TOE_SLIDE[0]      # cm/s (30): a frame whose lower shoe's forefoot moves along the floor faster than this is a
-                                # step's swing skimming the floor, not a foot held over it: the speed under which the layer
+HOVER_GLIDE = TOE_SLIDE[0]      # cm/s (30): a frame whose lower shoe's lowest point moves along the floor faster than this is
+                                # a step's swing skimming the floor, not a foot held over it: the speed under which the layer
                                 # takes a pointed foot as standing on the trace model's toe (TOE_SLIDE: a toe on the floor
                                 # stays or slides slowly).  Sunk, such frames dragged the toe along the floor (before the
                                 # review of 2026-10-17 the toe of 28 of the song's 46 sunk runs slid faster than this, the
@@ -735,8 +735,8 @@ def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOV
     there (its height moves slower than foot_speed, the run's median, and does not only rise or only fall by more than
     HOVER_TRANSIT), and the pelvis's height (pelvis_y [F]) does not fall at flight_acc over the run (a quadratic through
     the run and a frame on each side), nor (fall [F]: the pelvis's downward acceleration, pelvis_fall) faster than
-    fall_bound on any of those frames.  Frames where the lower shoe travels along the floor (glide [F]: its forefoot's
-    horizontal speed, cm/s, fore_speed) faster than glide_max are not held: they end a run"""
+    fall_bound on any of those frames.  Frames where the lower shoe travels along the floor (glide [F]: its lowest point's
+    horizontal speed, cm/s, low_point_speed) faster than glide_max are not held: they end a run"""
     sides = list(e)
     lo = np.minimum(e[sides[0]], e[sides[1]])
     speed = np.abs(np.gradient(lo)) * FPS if len(lo) > 1 else np.zeros(len(lo))
@@ -811,13 +811,18 @@ def hover_sink_profile(gap, runs_, acc0, ease=HOVER_EASE, smooth=HOVER_SMOOTH, b
     return s, int(bad.sum()), radius, scale
 
 
-def fore_speed(f):
-    """the forefoot's horizontal speed [F] (cm/s: the middle of the sole's forefoot, what a pointed foot stands on), the
-    larger of the steps into and out of each frame"""
-    xz = np.asarray(f["fore_xz"], dtype=float)
-    step = np.linalg.norm(np.diff(xz, axis=0), axis=1) * FPS * UNIT_CM
-    v = np.zeros(len(xz))
-    if len(step):
+def low_point_speed(o, leg):
+    """the horizontal speed [F] (cm/s) of the shoe's lowest point (the lowest vertex of its lower shell, followed to the next
+    frame): what stands on the floor once lowered onto it, so that a foot turning on its tip or its ball is not taken for
+    one travelling; the larger of the steps into and out of each frame.  `leg`: one side's solve (leg_ik.solve)"""
+    w = shell_world(o, leg)
+    F = len(w)
+    v = np.zeros(F)
+    if F > 1:
+        i = np.argmin(w[:-1, :, 1], axis=1)
+        k = np.arange(F - 1)
+        d = w[k + 1, i][:, [0, 2]] - w[k, i][:, [0, 2]]
+        step = np.hypot(d[:, 0], d[:, 1]) * FPS * UNIT_CM
         v[1:] = step
         v[:-1] = np.maximum(v[:-1], step)
     return v
@@ -1472,7 +1477,8 @@ def layer(rig, shoe, motion, params=None, log=None):
         pelvis_y = np.mean([sol[s]["hip"][:, 1] for s in shoe.sides], axis=0)
         fall = pelvis_fall(rig, keys)
         two = list(shoe.sides)
-        glide = np.where(e[two[0]] <= e[two[1]], fore_speed(f0[two[0]]), fore_speed(f0[two[1]]))    # (the lower shoe's)
+        sp = {s: low_point_speed(shoe.sides[s], sol[s]) for s in two}
+        glide = np.where(e[two[0]] <= e[two[1]], sp[two[0]], sp[two[1]])     # (the lower shoe's)
         rr = hover_runs(e, pelvis_y, p["on_floor"], fall=fall, glide=glide, glide_max=p.get("hover_glide", HOVER_GLIDE))
         if rr:
             acc0 = -fall                    # (up +, as hover_sink_profile takes it)

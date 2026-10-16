@@ -1555,6 +1555,30 @@ class HoverSupportTest(unittest.TestCase):
         for t in range(13, 17):
             self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
 
+    def test_a_pointed_foot_turning_on_its_tip_is_lowered(self):
+        # both feet pointed 40 degrees toes-down, their tips 1.5 cm over the floor, the left one turning 24 degrees a frame
+        # about the vertical through its tip (a turn on the toes: the tip stays, the rest of the foot swings round it, its
+        # forefoot at 40 cm/s): the tip does not travel, so the figure is lowered onto it as onto a still one
+        q0 = np.array(axis_angle((1, 0, 0), -40.0))
+        center = key("センター", 0, position=(0, -1.2, 0))
+        probe = measure(key("左足ＩＫ", 0, tuple(q0), position=(0, 1.0, 0)), key("左足首", 0, tuple(q0)), center)["左"]
+        lift0 = 1.0 + 0.111 - float(probe["low"][0])
+        ankle0, cap = rest("足首"), np.array(CAP[:3])
+        keys = [center]
+        for t in range(self.F):
+            h = 0.1875 if t in self.HOVER else 0.0
+            tip = ankle0 + np.array([0.0, lift0 + h, 0.0]) + leg_ik.qrot(q0, cap - ankle0)
+            q = leg_ik.qmul(np.array(axis_angle((0, 1, 0), 24.0 * (min(max(t, 8), 21) - 8))), q0)
+            ankle = tip - leg_ik.qrot(q, cap - ankle0)
+            keys += [key("左足ＩＫ", t, tuple(q), position=tuple(ankle - ankle0)), key("左足首", t, tuple(q)),
+                     key("右足ＩＫ", t, tuple(q0), position=(0, lift0 + h + 0.2, 0)), key("右足首", t, tuple(q0))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
+        fore = np.linalg.norm(np.diff(f_in["左"]["fore_xz"], axis=0), axis=1) * 30.0 * 8.0
+        self.assertGreater(float(np.median(fore[10:19])), 30.0)                   # (its forefoot does move fast, cm/s)
+        self.assertEqual(len(plan["左"]["sink_info"]["runs"]), 1)
+        for t in range(13, 17):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)      # the tip on the floor
+
     def test_only_the_held_part_of_a_hover_is_lowered(self):
         # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 14 and then travelling 45 cm/s (the song's
         # 26.0 s: the toe held for 12 frames, then sliding off at 80-200 cm/s): the held part is lowered onto the floor, the
