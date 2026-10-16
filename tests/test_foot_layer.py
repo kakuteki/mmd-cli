@@ -1321,3 +1321,49 @@ class SourRinShoeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HoverSupportTest(unittest.TestCase):
+    """floaty (2026-10-17): no foot on the floor, yet the lower one just over it and the pelvis not falling: the body is held
+    by nothing (a05 s11's 'hover support': the MV 8 % of the song, people 1.4 % [0.5, 2.2] of FineDance's near kinds).
+    The lower foot is put onto the floor; a real hop (the pelvis falling at gravity) keeps its feet in the air."""
+    F = 20
+    HOVER = range(5, 15)
+
+    def keys(self, lift, pelvis=None, base=-1.2):
+        """both feet flat, their soles `lift` units over the trace's floor (0.111) in HOVER and on it elsewhere, the right
+        foot 0.05 higher than the left; the pelvis (センター) at base + pelvis[t]"""
+        out = []
+        for t in range(self.F):
+            h = lift if t in self.HOVER else 0.0
+            out += [key("左足ＩＫ", t, position=(0, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.05 if h else 0.0), 0)),
+                    key("センター", t, position=(0, base + (pelvis[t] if pelvis is not None else 0.0), 0))]
+        return out
+
+    def test_a_foot_hovering_with_the_pelvis_held_is_put_on_the_floor(self):
+        f_in, f_out, out, plan = run_layer(*self.keys(0.1875), frames=self.F)     # 1.5 cm over the floor, 10 frames
+        for t in self.HOVER:
+            self.assertGreater(float(f_in["左"]["low"][t]) - 0.111, 0.15)
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.01)      # the lower foot on the floor
+            self.assertGreater(float(f_out["右"]["low"][t]) - 0.111, 0.15)        # the other keeps its height
+
+    def test_a_hop_keeps_its_feet_in_the_air(self):
+        # the pelvis rises and falls over the 10 frames as a body in flight does (122.5 units/s^2: gravity at 8 cm a unit;
+        # 2 units up at the top, from a deep bend so that the legs still reach)
+        t = (np.arange(self.F) - 4.5 - 5.0) / 30.0
+        arc = np.where((np.arange(self.F) >= 4) & (np.arange(self.F) <= 15), 0.5 * 122.5 * ((5.5 / 30.0) ** 2 - t ** 2), 0.0)
+        f_in, f_out, out, plan = run_layer(*self.keys(0.1875, pelvis=arc, base=-3.2), frames=self.F)
+        for t in range(7, 13):                  # (the frames next to the touches are eased with them, as any lift is)
+            self.assertAlmostEqual(float(f_out["左"]["low"][t]), float(f_in["左"]["low"][t]), delta=0.02)
+
+    def test_a_foot_clearly_up_is_not_pulled_down(self):
+        f_in, f_out, out, plan = run_layer(*self.keys(0.6), frames=self.F)        # 4.8 cm: a step, not a hover
+        for t in self.HOVER:
+            self.assertGreater(float(f_out["左"]["low"][t]) - 0.111, 0.5)
+
+    def test_off_is_the_layer_before(self):
+        keys = self.keys(0.1875)
+        a, _ = foot_layer.layer(RIG, SHOE, motion(*keys), {"hover": False})
+        b = foot_layer.measure_feet(RIG, SHOE, a, range(self.F))
+        for t in self.HOVER:
+            self.assertGreater(float(b["左"]["low"][t]) - 0.111, 0.15)
