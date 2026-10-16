@@ -1562,7 +1562,7 @@ class AsV8Test(unittest.TestCase):
                 fh.write(model_bytes())
             make, _ = V8_DANCES["swing_open_fist"]
             vmd.dump(make(), dance_path)
-            runs = {"v8": ["--as-v8"], "parts": ["--no-pace", "--order-mode", "delay", "--zeta-open", "0.85"],
+            runs = {"v8": ["--as-v8"], "parts": ["--no-transit", "--no-pace", "--order-mode", "delay", "--zeta-open", "0.85"],
                     "default": []}
             got = {}
             for name, extra in runs.items():
@@ -1571,7 +1571,7 @@ class AsV8Test(unittest.TestCase):
                     code = hand_layer.main([dance_path, model_path, out, "--report", rep] + extra)
                 self.assertEqual(code, 0, name)
                 got[name] = (read_bytes(out), read_json(rep)["params"])
-            self.assertEqual(got["v8"][0], got["parts"][0])                  # the preset is the three switches
+            self.assertEqual(got["v8"][0], got["parts"][0])                  # the preset is the four switches
             self.assertNotEqual(got["v8"][0], got["default"][0])
             self.assertFalse(got["v8"][1]["pace"])
             self.assertEqual(got["v8"][1]["order_mode"], "delay")

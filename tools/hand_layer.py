@@ -1229,7 +1229,7 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
             continue
         F = len(ang[cs[fingers[0]]["mp"].bone][0])
         free = transit_free(hand, ang)
-        w = free * ((1.0 - touch[side]) if touch is not None and side in touch else 1.0)
+        keep = (1.0 - touch[side]) if touch is not None and side in touch else np.ones(F)
         kn = knuckle_track(world, P, side)
         sums = finger_sums(hand, ang)
         moves = arm_movements(kn)
@@ -1237,11 +1237,14 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         amps, last = [], 1.0
         left = {"shape": 0, "travel": 0}
         for a, p, b in moves:
+            # the shape's freedom is the movement's mean (a hand closing into a fist within the movement would cut the
+            # excursion off in a frame or two); what the hand touches holds the fingers frame by frame
+            w = float(free[a:b + 1].mean())
             h = float(np.sum(np.linalg.norm(np.diff(kn[a:b + 1], axis=0), axis=1)))
             T = float(np.mean([np.abs(np.diff(sums[f][a:b + 1])).sum() for f in fingers]))
             net = float(np.mean([sums[f][b] - sums[f][a] for f in fingers]))
             C = float(np.mean([abs(sums[f][b] - sums[f][a]) for f in fingers]))
-            if not float(w[a:b + 1].max()) > 1e-9:
+            if not w > 1e-9 or not float(keep[a:b + 1].max()) > 1e-9:
                 left["shape"] += 1
                 continue
             changes = C >= TRANSIT["change"]
@@ -1258,9 +1261,9 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
                 level = float(np.mean([sums[f][a] for f in fingers]))
                 way = 1.0 if level < TRANSIT["open"] else (-1.0 if level > TRANSIT["shut"] else -last)
                 last = way
-            add += way * amp * transit_bump(F, a, p, b)
-            amps.append(amp)
-        add *= w
+            add += way * amp * w * transit_bump(F, a, p, b)
+            amps.append(amp * w)
+        add *= keep
         for f in fingers:
             for k, j in zip(("mp", "pip", "dip"), TRANSIT_SYNERGY[f]):
                 ang[cs[f][k].bone][0] = ang[cs[f][k].bone][0] + add * (j / mid)
