@@ -22,7 +22,9 @@ MMD steps its physics (hair, skirt, ribbons) 60 times a second whatever --fps, o
 render; where that step falls inside the frames a fold averages, the cloth shows twice.  --align-physics folds every chunk
 with mv_look --physics-align, which reads the steps from the chunk's AVI and puts the window of every frame within one
 step.  --fps 480 halves the gaps between the copies of a fast hand (the window takes 8 of 16 subframes) for twice the
-AVI and about twice MMD's time.
+AVI and about twice MMD's time.  --fast-spans S0-S1,... --fast-fps 960 renders the chunks that hold one of those stretches
+of the song (seconds) at 960 fps (16 of 32 subframes: the gaps halved again) and the others at --fps: a whole chunk takes
+the rate, so the rate changes only where a chunk ends (a cut, where every chunk starts its own MMD and physics anyway).
 
 PLAN.json names the files on the render machine, as absolute paths with forward slashes:
     {"mmd": ".../MikuMikuDance.exe", "model": ".../model.pmx", "motions": [".../dance.vmd", ".../lips.vmd"],
@@ -66,7 +68,7 @@ import sys
 
 FPS = 30                        # the frames of the song (MMD's): the cuts, the lead, the spans and the seconds count in them
 OUT_FPS = (30, 60)              # the joined video: 30 to publish (the motion's terms), 60 to watch
-MMD_FPS = (30, 60, 120, 240, 480)
+MMD_FPS = (30, 60, 120, 240, 480, 960)
 MIN_FRAMES = 3
 UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
@@ -161,9 +163,48 @@ def plan_chunks(spans, lead):
     return chunks
 
 
+def rate(chunk, fps):
+    """the rate MMD renders the chunk at: its own (a chunk of --fast-spans) or the run's"""
+    return chunk.get("fps", fps)
+
+
 def avi_bytes(chunk, fps, size, bytes_per_pixel=4):
     """the AVI of the chunk, lead-in included: every frame of the song is fps/30 frames in the AVI (whatever the output)"""
-    return int((chunk["end"] - chunk["first"] + 1) * (fps // FPS) * size[0] * size[1] * bytes_per_pixel)
+    return int((chunk["end"] - chunk["first"] + 1) * (rate(chunk, fps) // FPS) * size[0] * size[1] * bytes_per_pixel)
+
+
+def parse_spans(text):
+    """[(from, to)] seconds of the song from "18.3-20.3,60.2-63.3" (--fast-spans)"""
+    spans = []
+    for part in str(text).split(","):
+        bits = part.strip().split("-")
+        try:
+            if len(bits) != 2:
+                raise ValueError
+            a, b = float(bits[0]), float(bits[1])
+        except ValueError:
+            raise ValueError("--fast-spans is FROM-TO seconds of the song, joined by commas (18.3-20.3,60.2-63.3), not %r" % (text,))
+        if not (math.isfinite(a) and math.isfinite(b) and 0 <= a < b):
+            raise ValueError("a fast span must start at 0 s or later and end after it starts, not %r" % (part,))
+        spans.append((a, b))
+    return spans
+
+
+def mark_fast(chunks, spans, fast_fps):
+    """copies of the chunks, those that overlap a span (seconds of the song) with "fps": fast_fps; every span must fall in a chunk"""
+    if not spans:
+        raise ValueError("--fast-fps needs at least one fast span")
+    out = [dict(c) for c in chunks]
+    for a, b in spans:
+        if not (0 <= a < b):
+            raise ValueError("a fast span must start at 0 s or later and end after it starts, not %s-%s" % (a, b))
+        hit = [c for c in out if c["cut"] / float(FPS) < b and a < (c["end"] + 1) / float(FPS)]
+        if not hit:
+            raise ValueError("the fast span %s-%s s lies in no chunk (the chunks cover %s)" % (
+                a, b, ", ".join("%.3f-%.3f" % (c["cut"] / float(FPS), (c["end"] + 1) / float(FPS)) for c in out)))
+        for c in hit:
+            c["fps"] = fast_fps
+    return out
 
 
 def check_plan(plan):
@@ -249,6 +290,7 @@ def _line(argv):
 
 def batch_text(plan, chunk, fps, avi):
     w, h = plan["size"]
+    fps = rate(chunk, fps)
     lines = ["# chunk %02d: frames %d..%d at %d fps; the shot starts at %d (frames before it settle the physics)"
              % (chunk["index"], chunk["first"], chunk["end"], fps, chunk["cut"]),
              _line(["launch", "--headless", "--exe", plan["mmd"]]), _line(["new"])]
@@ -279,7 +321,7 @@ def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepa
     --workers prepared once (mv_look reads them and writes nothing there); `encoder` nvenc folds with h264_nvenc;
     `align_physics`: mv_look --physics-align (the window of every frame within one step of MMD's physics)"""
     fold = ["--cues", plan["cues"]] if plan["cues"] else []
-    fold += ["--prepared" if prepared else "--work", "%s/look_work_%s" % (plan["out"], tag), "--subframes", fps // out_fps,
+    fold += ["--prepared" if prepared else "--work", _work(plan, tag, chunk), "--subframes", rate(chunk, fps) // out_fps,
              "--shutter", shutter, "--offset", "%.6f" % (chunk["first"] / float(FPS)), "--from", "%.6f" % (chunk["cut"] / float(FPS)),
              "--to", "%.6f" % ((chunk["end"] + 1) / float(FPS))]
     if encoder != "x264":
@@ -287,6 +329,11 @@ def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepa
     if align_physics:
         fold += ["--physics-align"]
     return [str(a) for a in fold + _world_args(plan)]
+
+
+def _work(plan, tag, chunk):
+    """the folder of the look's layers: a chunk of --fast-spans has its own (its stage is drawn with its own subframes)"""
+    return "%s/look_work_%s" % (plan["out"], tag) + ("_%dfps" % chunk["fps"] if "fps" in chunk else "")
 
 
 def _world_args(plan):
@@ -629,9 +676,17 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
     lines += _stamp_lines()
     lines += ["[IO.File]::WriteAllText((Join-Path $run 'stamp.txt'), $stamp)"]
     # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
-    lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder, prepare=True, chunks=chunks, subframes=sub,
-                                            shutter=shutter), "prepare")
-    lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(work),
+    groups = [(work, [c for c in chunks if "fps" not in c], sub)]
+    groups += [(_work(plan, tag, {"fps": f}), [c for c in chunks if c.get("fps") == f], f // out_fps)
+               for f in sorted({c["fps"] for c in chunks if "fps" in c})]
+    last = work
+    for i, (folder, members, subframes) in enumerate(g for g in groups if g[1]):
+        if i:
+            lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last)]
+        lines += _check_lines(plan, _look_check(plan, folder, out_fps, encoder, prepare=True, chunks=members, subframes=subframes,
+                                                shutter=shutter), "prepare")
+        last = folder
+    lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last),
               "$self = (Get-Process -Id $PID).Path",
               "$count = %d" % count,
               "$started = @()",
@@ -691,7 +746,23 @@ def run_tag(tag, out_fps, encoder="x264"):
     return tag if encoder == "x264" else "%s_%s" % (tag, encoder)
 
 
-def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encoder="x264", align_physics=False):
+def _check_rate(fps, out_fps, shutter, align_physics, what="--fps"):
+    if fps not in MMD_FPS:
+        raise ValueError("%s is one of %s: the rates MMD renders" % (what, ", ".join(str(f) for f in MMD_FPS)))
+    if fps < out_fps:
+        raise ValueError("%s %d is below --out-fps %d: MMD renders at least one frame for every frame of the video" % (what, fps, out_fps))
+    sub = fps // out_fps
+    if not (isinstance(shutter, (int, float)) and 0 < shutter <= 1) or (sub > 1 and int(math.floor(shutter * sub + 0.5)) < 1):
+        raise ValueError("--shutter is the share of the frame time the shutter is open, above 0 up to 1; with %d subframes "
+                         "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
+    if align_physics and (fps % (2 * PHYSICS_HZ) or sub % (fps // PHYSICS_HZ)):
+        # what mv_look --physics-align refuses, found here before MMD renders chunk 0
+        raise ValueError("--align-physics needs --fps 120, 240, 480 or 960: MMD steps its physics %d times a second, and every "
+                         "frame of the video must hold whole steps of it (%d fps does not)" % (PHYSICS_HZ, fps))
+    return sub
+
+
+def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encoder="x264", align_physics=False, fast=None):
     if not _whole(workers) or not 1 <= workers <= MAX_WORKERS:
         raise ValueError("--workers is the number of chunks rendered and folded at the same time, 1 to %d, not %r" % (MAX_WORKERS, workers))
     if encoder not in ENCODERS:
@@ -699,20 +770,15 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
                          "on an NVIDIA GPU), not %r" % (encoder,))
     if not _whole(out_fps) or out_fps not in OUT_FPS:
         raise ValueError("--out-fps is 30 (the video to publish: the motion asks for 30 fps) or 60 (to watch), not %r" % (out_fps,))
-    if fps not in MMD_FPS:
-        raise ValueError("--fps is one of %s: the rates MMD renders" % ", ".join(str(f) for f in MMD_FPS))
-    if fps < out_fps:
-        raise ValueError("--fps %d is below --out-fps %d: MMD renders at least one frame for every frame of the video" % (fps, out_fps))
-    sub = fps // out_fps
-    if not (isinstance(shutter, (int, float)) and 0 < shutter <= 1) or (sub > 1 and int(math.floor(shutter * sub + 0.5)) < 1):
-        raise ValueError("--shutter is the share of the frame time the shutter is open, above 0 up to 1; with %d subframes "
-                         "at least %.4f, for mv_look averages round(shutter x subframes) of them" % (sub, 0.5 / sub))
+    sub = _check_rate(fps, out_fps, shutter, align_physics)
     if not NAME.fullmatch(tag):
         raise ValueError("--tag goes into file names: letters, digits, _ and - only")
-    if align_physics and (fps % (2 * PHYSICS_HZ) or sub % (fps // PHYSICS_HZ)):
-        # what mv_look --physics-align refuses, found here before MMD renders chunk 0
-        raise ValueError("--align-physics needs --fps 120, 240 or 480: MMD steps its physics %d times a second, and every frame of "
-                         "the video must hold whole steps of it (%d fps does not)" % (PHYSICS_HZ, fps))
+    if fast is not None:
+        fast_fps = fast["fps"]
+        if not _whole(fast_fps) or fast_fps <= fps:
+            raise ValueError("--fast-fps must be a rate above --fps %d, not %r" % (fps, fast_fps))
+        _check_rate(fast_fps, out_fps, shutter, align_physics, "--fast-fps")
+        chunks = mark_fast(chunks, [tuple(span) for span in fast["spans"]], fast_fps)
     tag = run_tag(tag, out_fps, encoder)
     os.makedirs(outdir, exist_ok=True)
     batches, hashes = [], {}
@@ -743,6 +809,9 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
         summary["encoder"] = encoder
     if align_physics:
         summary["align_physics"] = True           # the folds read MMD's physics and move their window (mv_look --physics-align)
+    if fast is not None:
+        summary["fast"] = {"fps": fast["fps"], "subframes": fast["fps"] // out_fps, "spans": [list(sp) for sp in fast["spans"]],
+                           "chunks": [c["index"] for c in chunks if "fps" in c]}
     summary.update({"fps": fps, "subframes": sub, "shutter": shutter, "codec": plan["codec"], "avi_bytes_per_pixel": bpp,
                     "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
                     "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
@@ -759,7 +828,10 @@ def build_parser():
     g.add_argument("--cuts", type=int, nargs="*", help="the first frame of every chunk after the first")
     p.add_argument("--last", type=int, help="with --cuts: the last frame of the song")
     p.add_argument("--lead", type=int, default=120, help="frames rendered before each cut for the physics (default 120)")
-    p.add_argument("--fps", type=int, default=240, help="the rate MMD renders at: 30, 60, 120, 240 or 480 (default 240)")
+    p.add_argument("--fps", type=int, default=240, help="the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240)")
+    p.add_argument("--fast-spans", help="stretches of the song in seconds, FROM-TO joined by commas: the chunks that hold one "
+                                        "render at --fast-fps")
+    p.add_argument("--fast-fps", type=int, help="the rate of the chunks of --fast-spans (960: 16 of 32 subframes)")
     p.add_argument("--shutter", type=float, default=0.5, help="share of each frame of the video blurred (default 0.5)")
     p.add_argument("--out-fps", type=int, default=FPS,
                    help="the rate of the joined video: 30 (default; to publish) or 60 (to watch; the files get _60fps)")
@@ -788,8 +860,11 @@ def main(argv=None):
             if args.last is None:
                 raise ValueError("--cuts needs --last (the last frame of the song)")
             spans = spans_from_cuts(args.cuts, args.last)
+        if (args.fast_spans is None) != (args.fast_fps is None):
+            raise ValueError("--fast-spans and --fast-fps go together")
+        fast = None if args.fast_spans is None else {"spans": parse_spans(args.fast_spans), "fps": args.fast_fps}
         result = write(plan, plan_chunks(spans, args.lead), args.outdir, args.tag, args.fps, args.shutter, args.out_fps,
-                       args.workers, args.encoder, args.align_physics)
+                       args.workers, args.encoder, args.align_physics, fast)
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True))
         return 2

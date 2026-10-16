@@ -200,6 +200,18 @@ class PhysicsAlignRenderTest(unittest.TestCase):
         # the body is still blurred: 8 copies 1 px apart
         self.assertTrue(all(half_covered(f, BODY_ROW, 0, 320) >= 4 for f in aligned))
 
+    def test_960_fps_holds_one_step_in_16_of_32_subframes(self):
+        # the rate of the fast spans (mv_chunks --fast-fps 960): the physics still steps 60 times a second, every 16 frames
+        fg = self.dancer("r11_960", 960, 256, every(16, 11, 256))
+        default, _ = self.fold(fg, "r11_960_default", 32)
+        aligned, result = self.fold(fg, "r11_960_aligned", 32, "--physics-align")
+        self.assertEqual(len(aligned), 8)
+        self.assertEqual([half_covered(f, CLOTH_ROW) for f in aligned], [0] * 8)
+        self.assertTrue(all(abs(solid(f) - 40) <= 1 for f in aligned), [solid(f) for f in aligned])
+        self.assertTrue(all(half_covered(f, CLOTH_ROW) >= 3 for f in default), [half_covered(f, CLOTH_ROW) for f in default])
+        self.assertEqual((result["physics"]["period"], result["physics"]["residue"]), (16, 11))
+        self.assertTrue(all(half_covered(f, BODY_ROW, 0, 320) >= 4 for f in aligned))
+
     def test_60_fps_takes_2_of_4_subframes_within_one_step(self):
         # the physics steps once in every 4 subframes: only residue 1 puts it inside the default window (subframes 0 and 1)
         for residue, shift in ((1, 1), (2, 0)):

@@ -3,6 +3,7 @@
 Nothing here activates or restores the MMD window.  Every operation waits for MMD to finish
 (see guard.Guard.run) and reads the result back from MMD.
 """
+import math
 import contextlib
 import json
 import os
@@ -1395,7 +1396,8 @@ class Mmd:
             asked = {"frames": expected_avi_frames(start, end, fps), "fps": int(fps)}
             if size is not None:
                 asked["size"] = [int(size[0]), int(size[1])]
-            wrong = {k: (asked[k], header.get(k)) for k in asked if header.get(k) != asked[k]}
+            wrong = {k: (asked[k], header.get(k)) for k in asked
+                     if (not avi_rate_is(header, fps) if k == "fps" else header.get(k) != asked[k])}
             if wrong:
                 raise MmdError("MMD wrote the video differently from what was asked: %s"
                                % ", ".join("%s asked %s, written %s" % (k, a, w) for k, (a, w) in wrong.items()))
@@ -1658,6 +1660,16 @@ def expected_avi_frames(start, end, fps):
     """how many frames MMD writes for motion frames start..end at `fps`: the motion's frames are 30 fps
     units, so 60 fps gives two per motion frame (measured: 2400..2820 at 60 fps gave 842)"""
     return int(round((end - start + 1) * int(fps) / 30.0))
+
+
+def avi_rate_is(info, fps):
+    """does the header `info` (_avi_info) say `fps`?  MMD writes the time of a frame in whole microseconds (at 960 fps
+    1e6 / 960 = 1041.7 goes in as 1041, which reads back as 961), so either whole number next to 1e6 / fps counts"""
+    got = info.get("fps")
+    if got is None:
+        return False
+    exact = 1e6 / int(fps)
+    return got in {round(1e6 / math.floor(exact)), round(1e6 / math.ceil(exact))}
 
 
 def _avi_info(path):

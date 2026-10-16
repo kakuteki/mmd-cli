@@ -573,6 +573,107 @@ class QuoteTest(unittest.TestCase):
         self.assertEqual(mv_chunks._ps("C:/a\uff07b"), "'C:/a\uff07b'")          # the full-width apostrophe is not one
 
 
+class FastSpansTest(unittest.TestCase):
+    """--fast-spans / --fast-fps: the chunks that hold a fast stretch of the song are rendered at a higher rate (960: the
+    copies of a fast hand half as far apart as at 480), the others at --fps.  A whole chunk changes its rate, so the rate
+    changes only where a chunk ends (a cut of the camera, where every chunk starts its own MMD and its own physics anyway)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, label, fast, fps=480, plan=PLAN, **kw):
+        folder = os.path.join(self.tmp, label)
+        summary = mv_chunks.write(mv_chunks.check_plan(dict(plan)), mv_chunks.plan_chunks(SPANS, 120), folder, "t", fps, 0.5,
+                                  fast=fast, **kw)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            return summary, f.read()
+
+    def render_fps(self, summary):
+        rates = []
+        for path in summary["batches"]:
+            with open(path, encoding="utf-8") as f:
+                line = [l for l in f if '"render"' in l][0]
+            argv = json.loads(line)
+            rates.append(int(argv[argv.index("--fps") + 1]))
+        return rates
+
+    def test_the_chunk_of_a_fast_span_renders_and_folds_at_the_fast_rate(self):
+        # chunk 1 is frames 100-249 (3.33 to 8.33 s)
+        summary, driver = self.written("one", {"spans": [(4.0, 5.0)], "fps": 960})
+        self.assertEqual(self.render_fps(summary), [480, 960, 480])
+        calls = [l for l in driver.splitlines() if l.startswith("Run-Chunk ")]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual([value(re.findall(r"'([^']*)'", c), "--subframes") for c in calls], ["16", "32", "16"])
+        self.assertEqual(summary["fast"], {"fps": 960, "subframes": 32, "spans": [[4.0, 5.0]], "chunks": [1]})
+        self.assertEqual(summary["largest_avi_gb"], round(250 * 32 * 1280 * 720 * 4 / 1e9, 1))     # chunk 1 with its lead (frames 0-249)
+        self.assertEqual(summary["frames"], 300)
+
+    def test_a_span_across_a_cut_takes_both_chunks_and_several_spans_add_up(self):
+        summary, _ = self.written("two", {"spans": [(3.0, 3.5), (9.0, 9.2)], "fps": 960})
+        self.assertEqual(self.render_fps(summary), [960, 960, 960])
+        summary, _ = self.written("edge", {"spans": [(3.0, 3.3333)], "fps": 960})      # ends before frame 100 begins
+        self.assertEqual(self.render_fps(summary), [960, 480, 480])
+
+    def test_without_fast_spans_the_scripts_are_those_of_before(self):
+        a, _ = self.written("none", None)
+        folder = os.path.join(self.tmp, "plain")
+        mv_chunks.write(mv_chunks.check_plan(dict(PLAN)), mv_chunks.plan_chunks(SPANS, 120), folder, "t", 480, 0.5)
+        self.assertEqual(hashes(os.path.join(self.tmp, "none")), hashes(folder))
+        self.assertNotIn("fast", a)
+
+    def test_the_recipe_of_a_fast_chunk_differs_so_resume_does_not_keep_the_slow_mp4(self):
+        plan = mv_chunks.check_plan(dict(PLAN))
+        chunk = mv_chunks.plan_chunks(SPANS, 120)[1]
+        fast = dict(chunk, fps=960)
+        self.assertNotEqual(mv_chunks.recipe(plan, "t", chunk, 480, 0.5), mv_chunks.recipe(plan, "t", fast, 480, 0.5))
+        self.assertEqual(mv_chunks.recipe(plan, "t", fast, 480, 0.5), mv_chunks.recipe(plan, "t", fast, 960, 0.5))
+
+    def test_bad_fast_spans_are_refused_before_mmd_renders(self):
+        for fast in ({"spans": [(4.0, 5.0)], "fps": 720},          # not a rate MMD renders
+                     {"spans": [(4.0, 5.0)], "fps": 480},          # not above --fps
+                     {"spans": [(4.0, 5.0)], "fps": 240},
+                     {"spans": [(5.0, 4.0)], "fps": 960},          # ends before it starts
+                     {"spans": [(20.0, 21.0)], "fps": 960},        # in no chunk: it would silently do nothing
+                     {"spans": [], "fps": 960}):
+            with self.assertRaises(ValueError, msg=fast):
+                self.written("bad", fast)
+
+    def test_aligning_the_physics_at_960(self):
+        summary, driver = self.written("align", {"spans": [(4.0, 5.0)], "fps": 960}, align_physics=True)
+        self.assertEqual(driver.count("'--physics-align'"), 3)
+
+    def test_the_workers_prepare_the_stage_once_per_rate(self):
+        # the prepared stage is drawn with the fold's shutter in subframes (mv_look's prepared key holds them): the fast
+        # chunks fold with a stage of their own, prepared with 32 subframes, in a folder of its own
+        world = dict(PLAN, world=True, accessories=[])
+        summary, driver = self.written("workers", {"spans": [(4.0, 5.0)], "fps": 960}, plan=world, workers=2)
+        prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]
+        self.assertEqual(len(prepare), 2)
+        self.assertIn("look_work_t' ", prepare[0])
+        self.assertTrue(prepare[0].endswith("--subframes 16 --shutter 0.5 --span 0.000000 3.333333 --span 8.333333 10.000000"),
+                        prepare[0])
+        self.assertIn("look_work_t_960fps' ", prepare[1])
+        self.assertTrue(prepare[1].endswith("--subframes 32 --shutter 0.5 --span 3.333333 8.333333"), prepare[1])
+        calls = [l for l in driver.splitlines() if "Run-Chunk " in l]
+        self.assertIn("'C:/work/song/out/look_work_t_960fps'", calls[1])
+        self.assertIn("'C:/work/song/out/look_work_t'", calls[0])
+
+    def test_workers_with_every_chunk_fast_prepare_once(self):
+        world = dict(PLAN, world=True, accessories=[])
+        summary, driver = self.written("allfast", {"spans": [(0.0, 10.0)], "fps": 960}, plan=world, workers=2)
+        prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]
+        self.assertEqual(len(prepare), 1)
+        self.assertIn("--subframes 32", prepare[0])
+
+    def test_parse_fast_spans(self):
+        self.assertEqual(mv_chunks.parse_spans("18.3-20.3,60.2-63.3,127.8-131.9,242.0-243.2"),
+                         [(18.3, 20.3), (60.2, 63.3), (127.8, 131.9), (242.0, 243.2)])
+        for bad in ("", "18.3", "18.3-", "a-b", "20-18", "1-2,,3-4"):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.parse_spans(bad)
+
+
 @unittest.skipUnless(mv_look, "needs numpy and Pillow for tools/mv_look.py")
 class ShutterTest(unittest.TestCase):
     def test_the_frame_rates_and_shutters_taken_are_the_ones_mmd_and_mv_look_take(self):
@@ -586,7 +687,7 @@ class ShutterTest(unittest.TestCase):
                 for shutter in (0.01, 0.05, 0.07, 0.1, 0.12, 0.13, 0.2, 0.24, 0.25, 0.3, 0.5, 1.0):
                     try:
                         mv_look.check_shutter(fps // out_fps, shutter)
-                        looks_ok = fps in (30, 60, 120, 240, 480)
+                        looks_ok = fps in (30, 60, 120, 240, 480, 960)
                     except ValueError:
                         looks_ok = False
                     try:
@@ -730,6 +831,18 @@ class DriverTest(unittest.TestCase):
 
     def batches(self, calls):
         return [c for c in calls if c.startswith("python -m mmd_cli")]
+
+    def test_a_fast_chunk_renders_at_its_rate_and_joins_with_the_others(self):
+        self.write()
+        self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240,
+                                       shutter=0.5, fast={"spans": [(4.0, 5.0)], "fps": 960})
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.batches(calls)), 3)
+        folds = [c for c in calls if " render " in c and "mv_look" in c]
+        self.assertEqual([("--subframes 32" in c, "--subframes 8" in c) for c in folds], [(False, True), (True, False), (False, True)])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+        self.assertEqual(self.frames("t_01.mp4"), 150)
 
     def test_every_chunk_is_rendered_folded_checked_and_joined(self):
         self.write()
@@ -1677,6 +1790,15 @@ class CliTest(unittest.TestCase):
         with open(os.path.join(outdir, "chunk_t_01.txt"), "rb") as f:
             self.assertIn(hashlib.sha256(f.read()).hexdigest().upper().encode(), raw)   # the driver knows its batches
 
+    def test_fast_spans_on_the_command_line(self):
+        code, res = self.main(self.plan, os.path.join(self.tmp, "f"), "--shots", self.report, "--tag", "t", "--fps", "480",
+                              "--fast-spans", "4.0-5.0", "--fast-fps", "960")
+        self.assertEqual(code, 0, res)
+        self.assertEqual(res["fast"], {"fps": 960, "subframes": 32, "spans": [[4.0, 5.0]], "chunks": [1]})
+        for argv in (("--fast-spans", "4.0-5.0"), ("--fast-fps", "960"), ("--fast-spans", "x", "--fast-fps", "960")):
+            code, res = self.main(self.plan, os.path.join(self.tmp, "g"), "--shots", self.report, "--fps", "480", *argv)
+            self.assertEqual(code, 2, (argv, res))
+
     def test_cuts_can_stand_in_for_a_camera_report(self):
         code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--cuts", "100", "250", "--last", "299", "--fps", "60")
         self.assertEqual(code, 0, res)
@@ -1733,7 +1855,7 @@ class CliTest(unittest.TestCase):
         self.assertIn("--fps", res["error"])
 
     def test_a_frame_rate_mmd_does_not_render_is_refused(self):
-        for fps in ("100", "90", "960"):
+        for fps in ("100", "90", "720", "1920"):
             code, res = self.main(self.plan, os.path.join(self.tmp, "s"), "--shots", self.report, "--fps", fps)
             self.assertEqual(code, 2, fps)
             self.assertFalse(res["ok"])
