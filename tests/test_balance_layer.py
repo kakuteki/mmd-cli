@@ -211,7 +211,9 @@ class WeightShiftTest(unittest.TestCase):
         """back by the end (1 s after the landing) and not begun a second before the lift (a 17 cm move at the bounded
         acceleration takes about 0.8 s)"""
         x = np.abs(self.shift[:, 0])
-        self.assertLess(x[self.last], 0.02)             # (1.6 mm: the still stance's pull is held 0.1 s past it, 0.9 mm left)
+        # 0.011 units (0.88 mm): the still stance's pull is held 0.1 s past it and 0.010696 units (0.856 mm) are left, the
+        # same to 1e-6 on two machines; 0.0003 units over that for the solver stopping a little elsewhere (it was 0.01)
+        self.assertLess(x[self.last], 0.011)
         self.assertLess(x[:10].max(), 0.01)
 
     def test_no_swing_the_wrong_way(self):
@@ -688,7 +690,7 @@ class RangeTest(unittest.TestCase):
         for s in ("左", "右"):
             on = before.height(s) < balance_layer.SUPPORT_H
             gain = (after.knee_flexion(s) - before.knee_flexion(s))[on]
-            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.5, s)   # (the still hold: 14.004 on the right)
+            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.0, s)   # (13.75 on the right since 39c682e)
         heel, toe = before.sole("右")
         line_x = 0.5 * (heel[:, 0] + toe[:, 0])
         self.assertLess(np.abs(after.com()[65:80, 0] - line_x[65:80]).max() * CM, 3.0)
