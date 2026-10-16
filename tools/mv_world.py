@@ -404,6 +404,9 @@ KEY_SHARE = 0.6          # of the light on the floor's plane and lines, the shar
 SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
 SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
 CUTOFF = 8.0             # standard deviations of the light's spread past which a capsule keeps none of it off
+COARSE_STEPS = 6         # a capsule's shade is worked out on a grid at least this many cells to the distance it changes
+COARSE_LEVELS = 4        # over (its least blur on the floor; for the light from all round its axis's height), up to 2^4
+                         # times SHADOW_CELL coarser
 
 
 def _erf(x):
@@ -430,16 +433,20 @@ def toward_light(light):
 
 def capsule_shade(P, a, b, r, ell, sigma):
     """(key, contact): how much of the key light one capsule (the segment a-b, radius r; heights above the floor) keeps
-    off the floor points P (N x 3, y 0), and how much of the light from all round it keeps off them, each 0 to 1.
+    off the floor points P (N x 3, y 0), and how much of the light from all round it keeps off them, each 0 to 1
+    (capsule_key and capsule_contact)"""
+    return capsule_key(P, a, b, r, ell, sigma), capsule_contact(P, a, b, r)
+
+
+def capsule_key(P, a, b, r, ell, sigma):
+    """how much of the key light the capsule keeps off the floor points P, 0 to 1.
 
     The key light comes from `ell` (unit, toward the light) and has the brightness of a normal (Gaussian) spread of
     `sigma` radians round it, so the edge of a shadow is the integral of a Gaussian whose width grows with the distance
     from the floor to what casts it: a sole on the floor casts a sharp shadow, the head one blurred over many times its
     width (contact hardening).  Seen from P the capsule is a band of half-width beta (its angular radius) round the
     point of its axis nearest the light's ray: a band keeps off the share of a Gaussian between its two edges (exact for a
-    long one); past an end of the capsule the share of a disc (the same area as a square) is blended in.  The light from
-    all round: the share of the sky the nearest sphere of the capsule hides, (r / d)^2 x its cosine (ambient occlusion
-    of a sphere over a plane)."""
+    long one); past an end of the capsule the share of a disc (the same area as a square) is blended in."""
     P = np.asarray(P, dtype=np.float64)
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
@@ -482,22 +489,28 @@ def capsule_shade(P, a, b, r, ell, sigma):
         g, hf = gamma[near], half[near]
         key[near] += k[near] * ((_normal_cdf((g + hf) / sig) - _normal_cdf((g - hf) / sig))
                                 * (2.0 * _normal_cdf(hf / sig) - 1.0))
-    key = np.where(inside, 1.0, key)
-    # all round: the nearest point of the axis to P, faded out to nothing at contact_reach(r) from the axis (a capsule
-    # higher above the floor than that darkens nothing)
+    return np.clip(np.where(inside, 1.0, key), 0.0, 1.0)
+
+
+def capsule_contact(P, a, b, r):
+    """how much of the light from all round the capsule keeps off the floor points P, 0 to 1: the share of the sky the
+    nearest sphere of the capsule hides, (r / d)^2 x its cosine (ambient occlusion of a sphere over a plane), faded out to
+    nothing at contact_reach(r) from the axis (a capsule higher above the floor than that darkens nothing)"""
+    P = np.asarray(P, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
     reach = contact_reach(r)
     if min(float(a[1]), float(b[1])) - r >= reach:
-        return np.clip(key, 0.0, 1.0), np.zeros(e.shape)
-    if uu > 1e-12:
-        s2 = np.clip(-(w0 @ u) / uu, 0.0, 1.0)
-    else:
-        s2 = np.zeros(e.shape)
+        return np.zeros(len(P))
+    u = b - a
+    uu = float(u @ u)
+    w0 = a[None, :] - P
+    s2 = np.clip(-(w0 @ u) / uu, 0.0, 1.0) if uu > 1e-12 else np.zeros(len(P))
     c = w0 + s2[:, None] * u[None, :]
     dist = np.sqrt(np.maximum((c * c).sum(axis=1), 1e-18))
     t = np.clip((reach - dist) / (0.4 * reach), 0.0, 1.0)
     fade = t * t * (3.0 - 2.0 * t)
-    contact = np.where(dist <= r, 1.0, np.clip((r / dist) ** 2 * np.maximum(c[:, 1] / dist, 0.0), 0.0, 1.0) * fade)
-    return np.clip(key, 0.0, 1.0), contact
+    return np.where(dist <= r, 1.0, np.clip((r / dist) ** 2 * np.maximum(c[:, 1] / dist, 0.0), 0.0, 1.0) * fade)
 
 
 def contact_reach(r):
@@ -506,9 +519,14 @@ def contact_reach(r):
     return 5.0 * r + 0.5
 
 
-def _capsule_box(a, b, r, ell, sigma):
-    """the floor's x and z ranges a capsule can darken: under it (the light from all round) and its shadow along the
-    light, with the Gaussian's tail (4 sigma) at the distance of each end, stretched on the floor by 1 / sin(elevation)"""
+def _low(a, b, r):
+    """how far the capsule's lowest point is above the floor"""
+    return max(min(float(a[1]), float(b[1])) - r, 0.0)
+
+
+def _key_box(a, b, r, ell, sigma):
+    """the floor's x and z ranges the capsule's shadow along the light can reach: where its ends' shadows fall, with the
+    Gaussian's tail (4 sigma) at each end's distance, stretched on the floor by 1 / sin(elevation)"""
     xs, zs = [], []
     reach = 0.0
     for p in (np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)):
@@ -517,8 +535,26 @@ def _capsule_box(a, b, r, ell, sigma):
         xs += [p[0], q[0]]
         zs += [p[2], q[2]]
         reach = max(reach, 4.0 * float(sigma) * run / ell[1])
-    margin = max(reach + r, contact_reach(r)) + 0.5
+    margin = reach + r + 0.5
     return min(xs) - margin, max(xs) + margin, min(zs) - margin, max(zs) + margin
+
+
+def _contact_box(a, b, r):
+    """the floor's x and z ranges the capsule darkens with the light from all round (None: it is too high to)"""
+    reach = contact_reach(r)
+    if _low(a, b, r) >= reach:
+        return None
+    margin = reach + 0.5
+    return (min(a[0], b[0]) - margin, max(a[0], b[0]) + margin, min(a[2], b[2]) - margin, max(a[2], b[2]) + margin)
+
+
+def _level(scale, cell):
+    """how many times coarser (a power of 2, up to 2^COARSE_LEVELS) than `cell` a grid may be for a shade that changes
+    over `scale` (COARSE_STEPS cells to it at least)"""
+    level = 0
+    while level < COARSE_LEVELS and cell * 2 ** (level + 1) * COARSE_STEPS <= scale:
+        level += 1
+    return level
 
 
 @dataclass
@@ -562,28 +598,59 @@ def soft_shadow_grid(capsules, light, blur_degrees, floor_y=0.0, cell=SHADOW_CEL
     sigma = math.radians(max(float(blur_degrees), 0.0))
     lifted = [(np.asarray(a, dtype=np.float64) - [0.0, floor_y, 0.0], np.asarray(b, dtype=np.float64) - [0.0, floor_y, 0.0],
                float(r)) for a, b, r in capsules]
-    boxes = [_capsule_box(a, b, r, ell, sigma) for a, b, r in lifted]
-    lo_x, hi_x = min(bx[0] for bx in boxes), max(bx[1] for bx in boxes)
-    lo_z, hi_z = min(bx[2] for bx in boxes), max(bx[3] for bx in boxes)
     cell = float(cell)
+    jobs = []
+    for a, b, r in lifted:
+        low = _low(a, b, r)
+        # the shadow along the light changes over its least blur (at the lowest point's distance), the light from all
+        # round over the distance to the capsule's axis
+        jobs.append((a, b, r, "key", _key_box(a, b, r, ell, sigma), _level(sigma * low / ell[1], cell)))
+        box = _contact_box(a, b, r)
+        if box is not None:
+            jobs.append((a, b, r, "contact", box, _level(low + r, cell)))
+    lo_x, hi_x = min(j[4][0] for j in jobs), max(j[4][1] for j in jobs)
+    lo_z, hi_z = min(j[4][2] for j in jobs), max(j[4][3] for j in jobs)
     while max(hi_x - lo_x, hi_z - lo_z) / cell > SHADOW_GRID_MAX:
         cell *= 2.0
     x0, z0 = math.floor(lo_x / cell) * cell, math.floor(lo_z / cell) * cell
     w = int(math.ceil((hi_x - x0) / cell)) + 1
     h = int(math.ceil((hi_z - z0) / cell)) + 1
-    key = np.ones((h, w))
-    contact = np.ones((h, w))
-    for (a, b, r), (bx0, bx1, bz0, bz1) in zip(lifted, boxes):
+    grids = {"key": np.ones((h, w)), "contact": np.ones((h, w))}
+    for a, b, r, which, (bx0, bx1, bz0, bz1), level in jobs:
         j0, j1 = max(0, int(math.floor((bx0 - x0) / cell))), min(w, int(math.ceil((bx1 - x0) / cell)) + 1)
         i0, i1 = max(0, int(math.floor((bz0 - z0) / cell))), min(h, int(math.ceil((bz1 - z0) / cell)) + 1)
         if j1 <= j0 or i1 <= i0:
             continue
-        gx, gz = np.meshgrid(x0 + cell * np.arange(j0, j1), z0 + cell * np.arange(i0, i1))
-        P = np.stack([gx.ravel(), np.zeros(gx.size), gz.ravel()], axis=1)
-        k, c = capsule_shade(P, a, b, r, ell, sigma)
-        key[i0:i1, j0:j1] *= (1.0 - k).reshape(gx.shape)
-        contact[i0:i1, j0:j1] *= (1.0 - c).reshape(gx.shape)
-    return ShadowGrid(x0, z0, cell, key, contact)
+        xs, zs = x0 + cell * np.arange(j0, j1), z0 + cell * np.arange(i0, i1)
+        coarse = cell * 2 ** level
+        if coarse > cell:
+            # far from the floor the shade changes slowly: worked out on a coarser grid (also fixed in the world) and
+            # laid onto this one bilinearly
+            cxs = math.floor(xs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((xs[-1] - xs[0]) / coarse)) + 2)
+            czs = math.floor(zs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((zs[-1] - zs[0]) / coarse)) + 2)
+            got = _resample(_shade_on(cxs, czs, a, b, r, ell, sigma, which), cxs, czs, xs, zs)
+        else:
+            got = _shade_on(xs, zs, a, b, r, ell, sigma, which)
+        grids[which][i0:i1, j0:j1] *= 1.0 - got
+    return ShadowGrid(x0, z0, cell, grids["key"], grids["contact"])
+
+
+def _shade_on(xs, zs, a, b, r, ell, sigma, which):
+    """capsule_key ("key") or capsule_contact ("contact") on the grid of the floor points xs x zs (zs x xs)"""
+    gx, gz = np.meshgrid(xs, zs)
+    P = np.stack([gx.ravel(), np.zeros(gx.size), gz.ravel()], axis=1)
+    got = capsule_key(P, a, b, r, ell, sigma) if which == "key" else capsule_contact(P, a, b, r)
+    return got.reshape(gx.shape)
+
+
+def _resample(g, gxs, gzs, xs, zs):
+    """the grid g (on gxs x gzs, evenly spaced) at xs x zs, bilinearly"""
+    fx = np.clip((xs - gxs[0]) / (gxs[1] - gxs[0]), 0.0, len(gxs) - 1.000001)
+    fz = np.clip((zs - gzs[0]) / (gzs[1] - gzs[0]), 0.0, len(gzs) - 1.000001)
+    j, i = np.floor(fx).astype(np.int64), np.floor(fz).astype(np.int64)
+    tx, tz = (fx - j)[None, :], (fz - i)[:, None]
+    return (g[i][:, j] * (1 - tx) * (1 - tz) + g[i][:, j + 1] * tx * (1 - tz) + g[i + 1][:, j] * (1 - tx) * tz
+            + g[i + 1][:, j + 1] * tx * tz)
 
 
 def needs_body(look):

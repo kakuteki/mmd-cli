@@ -541,7 +541,8 @@ class SoftShadowTest(unittest.TestCase):
         want_key, want_contact = self.through(capsules, [(x, z)])
         got_key, got_contact = grid.at([x], [z])
         self.assertAlmostEqual(float(got_key[0]), float(want_key[0]), places=9)
-        self.assertAlmostEqual(float(got_contact[0]), float(want_contact[0]), places=9)
+        # the light from all round changes over the axis's height (1 here): worked out on a grid twice as coarse
+        self.assertAlmostEqual(float(got_contact[0]), float(want_contact[0]), delta=0.005)
         self.assertLess(float(got_key[0]), 0.2)
         # off the grid all the light comes; along its border (nearly) all of it already, so it shows no edge
         k, c = grid.at([grid.x0 - 1.0], [grid.z0 - 1.0])
@@ -549,6 +550,31 @@ class SoftShadowTest(unittest.TestCase):
         for g in (grid.key, grid.contact):
             border = numpy.concatenate([g[0], g[-1], g[:, 0], g[:, -1]])
             self.assertGreater(float(border.min()), 0.999)
+
+    def test_a_capsule_high_above_is_worked_out_coarser_and_still_gives_each_points_value(self):
+        # a head 17 above the floor: its shadow is blurred over units, so it is worked out on a coarser grid and laid onto
+        # the floor's grid; every point of the floor's grid stays within 0.005 of its own value
+        head = [((0.0, 16.9, 0.0), (0.0, 17.7, 0.0), 1.55)]
+        light = (-0.5, -1.0, 0.5)
+        ell = mv_world.toward_light(light)
+        low = mv_world._low(head[0][0], head[0][1], 1.55)
+        self.assertGreater(mv_world._level(math.radians(5.0) * low / ell[1], mv_world.SHADOW_CELL), 0)
+        grid = mv_world.soft_shadow_grid(head, light, 5.0)
+        zs, xs = numpy.mgrid[0:grid.key.shape[0]:7, 0:grid.key.shape[1]:7]
+        points = [(grid.x0 + j * grid.cell, grid.z0 + i * grid.cell) for i, j in zip(zs.ravel(), xs.ravel())]
+        want, _ = self.through(head, points, light=light, blur=5.0)
+        got = grid.key[zs.ravel(), xs.ravel()]
+        self.assertLess(float(numpy.abs(got - want).max()), 0.005)
+        self.assertLess(float(want.min()), 0.6)                          # a shadow is there to get right
+        # a skirt-sized ball 9.7 up darkens the floor from all round over many units: also worked out coarser
+        skirt = [((0.0, 9.7, 0.0), (0.0, 9.7, 0.0), 2.9)]
+        grid = mv_world.soft_shadow_grid(skirt, light, 5.0)
+        zs, xs = numpy.mgrid[0:grid.contact.shape[0]:7, 0:grid.contact.shape[1]:7]
+        points = [(grid.x0 + j * grid.cell, grid.z0 + i * grid.cell) for i, j in zip(zs.ravel(), xs.ravel())]
+        want_key, want_contact = self.through(skirt, points, light=light, blur=5.0)
+        self.assertLess(float(numpy.abs(grid.contact[zs.ravel(), xs.ravel()] - want_contact).max()), 0.005)
+        self.assertLess(float(numpy.abs(grid.key[zs.ravel(), xs.ravel()] - want_key).max()), 0.005)
+        self.assertLess(float(want_contact.min()), 0.95)
 
     def test_a_floor_raised_takes_the_shadow_at_its_height(self):
         # a ball 3 above a floor raised by 1: its shadow is the one a ball 2 above the floor at 0 casts
