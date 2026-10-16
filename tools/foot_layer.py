@@ -1503,11 +1503,11 @@ def main(argv=None):
     ap.add_argument("--toe-reach-cm", type=float, default=0.0,
                     help="a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, "
                          "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
-    ap.add_argument("--landing", choices=("human", "heel", "off"), default="human",
-                    help="human (the default): a loaded touchdown with a sinking pelvis comes down on the forefoot and "
+    ap.add_argument("--landing", choices=("human", "heel", "off"), default="off",
+                    help="human: a loaded touchdown with a sinking pelvis comes down on the forefoot and "
                          "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball, a foot "
                          "skimming the floor in the dance is not pressed onto it; heel: the touchdown's heel alone; "
-                         "off: the layer before them (c012c32), "
+                         "off (the default until the slides are mended, feet_landing NOTES): the layer before them (c012c32), "
                          "byte for byte")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
