@@ -696,6 +696,16 @@ def soft_light(key, contact, stage):
     return (1.0 - KEY_SHARE) * m_all + KEY_SHARE * m_key
 
 
+def soft_light_before(key, contact, stage):
+    """(plane, pool): the shares of before 2026-10-17 (stage.shadow_share 0), as main drew them: the plane and the lines
+    keep KEY_SHARE of their light from the key light and the rest, and the pool the key light's alone, each times the
+    darkening from all round"""
+    s = float(stage["shadow"])
+    m_key = 1.0 - s * (1.0 - key)
+    m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
+    return ((1.0 - KEY_SHARE) + KEY_SHARE * m_key) * m_all, m_key * m_all
+
+
 def _inside(view, d, half):
     """the share of each pixel (rays d) the floor square takes"""
     inside = (d[..., 1] < 0).astype(np.float64)
@@ -771,6 +781,15 @@ def _floor_once(view, stage, figure):
         grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]),
                                 groups=getattr(figure, "capsule_groups", None))
         through = grid.at(X, Z) if grid is not None else (np.ones(X.shape), np.ones(X.shape))
+        if not int(stage.get("shadow_share", 1)):
+            # stage.shadow_share 0: the floor of before 2026-10-17, the same sums in the same order as main drew it
+            lit, pooled = soft_light_before(*through, stage)
+            base = base * lit[:, None]
+            if pool is not None:
+                base += pool * pooled[:, None]
+            mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * (lit * plain)[:, None]
+            rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * (lit * accent)[:, None]
+            return rgb, cover
         lit = soft_light(*through, stage)
         if pool is not None:
             base += pool

@@ -612,6 +612,42 @@ class SoftShadowTest(unittest.TestCase):
         self.assertGreater(across(soft), 0.9 * across(lit))                   # in the shadow it keeps its light
         numpy.testing.assert_allclose(at(soft, 2), at(lit, 2), atol=0.5)      # 9.5 behind it: untouched
 
+    def test_shadow_share_0_is_the_floor_shadow_of_before(self):
+        # stage.shadow_share 0 (review of softshadow-mme): the floor of before 2026-10-17, as main drew it.  A sole lying on
+        # the floor across the line x = 5 at z = 2.5: under it the line goes dark too
+        view = self.view()
+        figure = FakeFigure(centre=(5.0, 2.5))
+        figure.capsules = [((4.0, 0.42, 2.5), (6.0, 0.42, 2.5), 0.42)]
+        lit = mv_world.floor([view], world_look(shadow=0.0, pool=1.0, shadow_share=0), view.size, [figure])[0]
+        soft = mv_world.floor([view], world_look(shadow=1.0, pool=1.0, shadow_share=0), view.size, [figure])[0]
+        u, v, _ = view.project([(5.0, 0.0, 2.5), (5.0, 0.0, 6.0)])
+        on_line = lambda img: float(img[int(round(v[0])), int(round(u[0]))].sum())
+        self.assertGreater(on_line(lit), 60)                                  # a line (and the pool) there
+        self.assertLess(on_line(soft), 0.1 * on_line(lit))
+        away = lambda img: float(img[int(round(v[1])), int(round(u[1]))].sum())
+        self.assertAlmostEqual(away(soft), away(lit), delta=0.5)              # 3.5 behind it: untouched
+        # and the pool was the key light's alone: in the core of a high ball's shadow (the light straight down, nothing
+        # from all round cut) the pool adds nothing with 0, and 1 - KEY_SHARE of itself with 1 (the default)
+        figure.capsules = [((5.5, 6.0, 2.5), (5.5, 6.0, 2.5), 2.0)]
+        look = dict(shadow=1.0, shadow_light=[0.0, -1.0, 0.0], shadow_contact=0.0)
+        u, v, _ = view.project([(5.8, 0.0, 2.5)])
+        core = lambda img: img[int(round(v[0])), int(round(u[0]))]
+        added = {}
+        for share in (0, 1):
+            with_pool = mv_world.floor([view], world_look(pool=1.0, shadow_share=share, **look), view.size, [figure])[0]
+            without = mv_world.floor([view], world_look(pool=0.0, shadow_share=share, **look), view.size, [figure])[0]
+            unshaded = mv_world.floor([view], world_look(pool=1.0, shadow_share=share, **dict(look, shadow=0.0)),
+                                      view.size, [figure])[0]
+            unshaded_plain = mv_world.floor([view], world_look(pool=0.0, shadow_share=share, **dict(look, shadow=0.0)),
+                                            view.size, [figure])[0]
+            added[share] = (core(with_pool) - core(without)) / (core(unshaded) - core(unshaded_plain))
+        numpy.testing.assert_allclose(added[0], 0.0, atol=0.01)
+        numpy.testing.assert_allclose(added[1], 1.0 - mv_world.KEY_SHARE, atol=0.01)
+        # without stage.shadow_share the default is the floor of 2026-10-17
+        default = mv_world.floor([view], world_look(pool=1.0, **look), view.size, [figure])[0]
+        numpy.testing.assert_array_equal(default, mv_world.floor([view], world_look(pool=1.0, shadow_share=1, **look),
+                                                                 view.size, [figure])[0])
+
     def test_beside_a_foot_on_the_lit_side_only_the_light_from_all_round_is_cut(self):
         stage = world_look(shadow=1.0)["stage"]
         c = float(stage["shadow_contact"])
