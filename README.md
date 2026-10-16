@@ -1010,7 +1010,7 @@ python tools/spine_check.py dance.vmd model.pmx dance_spine.vmd model_spine.pmx 
 python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.json [--arrays a.npz] [--r-bal 0.6]
                               [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip] [--dip-deg 15]
                               [--no-catch] [--no-vertical] [--down-acc-max 122] [--air-down-acc-max 122] [--no-despike]
-                              [--spike-per-min 7.2] [--pull-moving] [--no-still-hold] [--mos-ml-min -3.0]
+                              [--spike-per-min 7.2] [--pull-moving] [--no-still-hold] [--mos-ml-min -4.2]
                               [--support-from feet.vmd] [--mmd-ik tools/leg_ik.py]
 ```
 
@@ -1036,10 +1036,11 @@ python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.j
   コマのうち重心が 5 cm/s 未満のもの 64 % → 81 %（踊り 89 %）。前の作りは `--no-still-hold`。
 - 動きながらの片足立ち（2026-10-15、人の基準値）: 引かない。代わりに XcoM の横の余裕（a05 の支えのカプセル（踵の点 足首 −
   0.3 (つま先 − 足首) からつま先、半径 4 cm）の中心から、下半身の横の軸に沿って上げた足の側へ測った XcoM のずれを 4 cm から引いた
-  もの）を `--mos-ml-min`（−3.0 cm）以上に保つ。境はコマごとに効き、次の足へ倒れていく一歩（下の transfer、引かない）が動きながらの
-  コマの 6 分の 1 あり −19 cm にあるので、全部のコマの中央値は境より下に来る: 人の物差しで −6.1 は余裕 −6.9・重心 10.5 cm、
-  −4.2 は −5.80・9.75 cm（人の重心 8.0 [7.0, 9.4] の外）、−3.0 は −5.09・9.31 cm（人の余裕 −4.2 [−6.1, −3.6] と重心の四分位の中。
-  2026-10-16）。前の既定は `--mos-ml-min -4.2`。踊りが内にあるコマは ADMM の XcoM の塊の半平面（0 で満たす）、
+  もの）を `--mos-ml-min`（−4.2 cm、人の中央値）以上に保つ。境はコマごとに効き、次の足へ倒れていく一歩（下の transfer、引かない）が
+  動きながらのコマの 6 分の 1 あり −19 cm にあるので、全部のコマの中央値は境より下に来る: 人の物差しで −6.1 は余裕 −6.9・重心
+  10.5 cm、−4.2 は −5.80・9.75 cm（人の重心 8.0 [7.0, 9.4] の外）。−3.0 は −5.09・9.31 cm で人の四分位に入るが、曲の試験で
+  着地の受け止め 1 つが 0 未満・足した水平の加速度 1.46 m/s²・股関節 22 度越え 2 コマ・ひざ 159 度越え 1 コマが出たので既定にしない
+  （2026-10-16、balance-v3）。踊りが内にあるコマは ADMM の XcoM の塊の半平面（0 で満たす）、
   外にあるコマは境まで引くだけ（硬い半平面にすると、足を 34 cm 開いた着地の 2 コマ後に他方の足が上がる所で解けなかった）。
   前の作り（すべての片足立ちを引く。v8 は動きながらの重心 5.9 cm で人の 8.0 [7.0, 9.4] の下へ外れた）は `--pull-moving`。
   次の 2 つの区間は引かず、XcoM も抑えない（2026-10-14 の査読）:
