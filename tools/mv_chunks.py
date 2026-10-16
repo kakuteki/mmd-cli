@@ -30,7 +30,10 @@ PLAN.json names the files on the render machine, as absolute paths with forward 
     {"mmd": ".../MikuMikuDance.exe", "model": ".../model.pmx", "motions": [".../dance.vmd", ".../lips.vmd"],
      "camera": ".../camera.vmd", "look": ".../look.json",
      "out": "C:/work/song/out", "scripts": "C:/work/song/mv", "mmd_cli": "C:/work/mmd-cli"}
-optional: "accessories" ([]), "cues" (none), "menu" (merged over 215 off, 221 off, 282 on; 282 = background black,
+optional: "self_shadow" (none: not checked; "mmd": MMD's own self shadow; "soft": the soft one of tools/mme_shadow.py
+through MME, which needs "mmd" with MME beside it and "model" with the effect beside it: tools/mme_shadow.py prepare; the
+driver checks either before MMD renders, and with "soft" -Resume watches MME's files too),
+"accessories" ([]), "cues" (none), "menu" (merged over 215 off, 221 off, 282 on; 282 = background black,
 which gives the AVI its alpha and must stay on), "size" ([1280, 720]), "codec" ("未圧縮"), "avi_bytes_per_pixel" (4
 for the uncompressed BGRA; another codec needs it, measured on one AVI), "mmd_cli_home", "python" ("python"),
 "name" ("mv": the joined video is OUT/<name>_<tag>.mp4).  An entry this tool does not know is refused.
@@ -74,7 +77,9 @@ UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
 OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
-            "stage_jobs")
+            "stage_jobs", "self_shadow")
+SELF_SHADOWS = ("mmd", "soft")
+MME_DLLS = ("d3d9.dll", "MMHack.dll", "MMEffect.dll")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
 DISK_MARGIN = 2 * 1024 ** 3
 PS_QUOTES = re.compile("['\u2018\u2019\u201a\u201b]")      # Windows PowerShell takes each of these for a single quote
@@ -276,6 +281,13 @@ def check_plan(plan):
                          % (full["stage_jobs"],))
     if full["stage_jobs"] > 1 and not full["world"]:
         raise ValueError("stage_jobs draws a stage in the world: it goes with \"world\": true")
+    # "self_shadow": how the model's own body shadow is drawn.  "soft": through MME (beside "mmd") with the effect of
+    # tools/mme_shadow.py beside "model"; "mmd": MMD's own.  Either way the driver checks it before MMD renders (mme_shadow
+    # verify); without the entry nothing is checked (the plans of before)
+    full.setdefault("self_shadow", None)
+    if full["self_shadow"] is not None and full["self_shadow"] not in SELF_SHADOWS:
+        raise ValueError("self_shadow is \"mmd\" (MMD's own) or \"soft\" (tools/mme_shadow.py through MME), not %r"
+                         % (full["self_shadow"],))
     for key in ("out", "scripts"):
         for folder in watched_folders(full):
             if _inside(full[key], folder):
@@ -359,6 +371,10 @@ def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared
 
 def _inputs(plan):
     inputs = [plan["mmd"], plan["model"]] + plan["motions"] + [plan["camera"]] + plan["accessories"] + [plan["look"]]
+    if plan.get("self_shadow") == "soft":
+        # MME's files beside MMD draw the soft shadow (the effect lies in the model's folder, which is watched)
+        mmd_folder = plan["mmd"].replace("\\", "/").rsplit("/", 1)[0]
+        inputs += ["%s/%s" % (mmd_folder, name) for name in MME_DLLS]
     return inputs + ([plan["cues"]] if plan["cues"] else [])
 
 
@@ -393,6 +409,19 @@ def _stamp_lines():
             "$files += @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force -ErrorAction SilentlyContinue } | "
             "Where-Object { $_.FullName -notmatch '[\\\\/]__pycache__[\\\\/]' } | Sort-Object FullName | ForEach-Object { '{0}|{1}|{2}' -f $_.FullName, $_.Length, $_.LastWriteTimeUtc.Ticks })",
             "$stamp = $files -join \"`n\""]
+
+
+def _shadow_check_lines(plan):
+    """the lines that check, before MMD renders, that it will draw the model's body shadow as the plan says
+    (tools/mme_shadow.py verify); none for a plan without a "self_shadow" entry"""
+    if plan.get("self_shadow") is None:
+        return []
+    return ["$shadow = Invoke-Native %s tools/mme_shadow.py verify %s %s %s"
+            % (_python(plan), _ps(plan["mmd"]), _ps(plan["model"]), plan["self_shadow"]),
+            "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the self shadow check (not found?)' -f %s; exit 1 }"
+            % _ps(plan["python"]),
+            "if ($LASTEXITCODE -ne 0) { 'STOP: MMD would not draw the self shadow as the plan says (%s, {0}):' -f "
+            "(Why $LASTEXITCODE); $shadow; exit 1 }" % plan["self_shadow"]]
 
 
 def _check_lines(plan, look_check, what):
@@ -534,7 +563,8 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, enco
               "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }",
               "$sw = [Diagnostics.Stopwatch]::StartNew()"]
     lines += _helper_lines() + _stamp_lines()
-    # the look is checked at the rate the fold will draw it at
+    # the self shadow (with "self_shadow" in the plan), and the look at the rate the fold will draw it at
+    lines += _shadow_check_lines(plan)
     lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
     lines += COUNT_FRAMES + _run_chunk_lines(plan, workers=False)
     lines += [_chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps, encoder, False, align_physics) for c in chunks]
@@ -680,6 +710,7 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
     groups += [(_work(plan, tag, {"fps": f}), [c for c in chunks if c.get("fps") == f], f // out_fps)
                for f in sorted({c["fps"] for c in chunks if "fps" in c})]
     last = work
+    lines += _shadow_check_lines(plan)
     for i, (folder, members, subframes) in enumerate(g for g in groups if g[1]):
         if i:
             lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last)]

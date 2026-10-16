@@ -438,6 +438,60 @@ class WorldPlanTest(unittest.TestCase):
         self.assertNotIn(" --from ", prepare[0])
 
 
+class SelfShadowPlanTest(unittest.TestCase):
+    """"self_shadow" in the plan (tools/mme_shadow.py): before MMD renders, the driver checks that it will draw the model's
+    body shadow as the plan says ("soft": through MME with the effect beside the model; "mmd": MMD's own), and with "soft"
+    -Resume watches MME's files beside MMD.  Without it the scripts are those of before (the golden tests above)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, plan, label, **kw):
+        folder = os.path.join(self.tmp, label)
+        summary = mv_chunks.write(mv_chunks.check_plan(plan), mv_chunks.plan_chunks(SPANS, 120), folder, "t", 240, 0.5, **kw)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            return f.read()
+
+    def test_self_shadow_is_mmd_or_soft_or_left_out(self):
+        self.assertIsNone(mv_chunks.check_plan(dict(PLAN))["self_shadow"])
+        for want in ("mmd", "soft"):
+            self.assertEqual(mv_chunks.check_plan(dict(PLAN, self_shadow=want))["self_shadow"], want)
+        for bad in ("hard", "Soft", 1, True):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.check_plan(dict(PLAN, self_shadow=bad))
+
+    def test_the_driver_checks_the_self_shadow_before_anything_renders(self):
+        for want in ("mmd", "soft"):
+            for workers in (1, 2):
+                driver = self.written(dict(PLAN, self_shadow=want), "%s%d" % (want, workers), workers=workers)
+                lines = driver.splitlines()
+                verify = [i for i, line in enumerate(lines) if "tools/mme_shadow.py verify" in line]
+                self.assertEqual(len(verify), 1, (want, workers))
+                self.assertTrue(lines[verify[0]].endswith(
+                    "verify 'C:/MMD/MikuMikuDance.exe' 'C:/MMD/UserFile/Model/Rin/White.pmx' %s" % want), lines[verify[0]])
+                self.assertIn("exit 1", lines[verify[0] + 1])
+                self.assertIn("exit 1", lines[verify[0] + 2])
+                # in the driver's own part, before the look is checked and before any chunk is rendered (one worker:
+                # the calls of Run-Chunk; --workers: the start of the worker processes, which render)
+                look = [i for i, line in enumerate(lines) if line.startswith("$check = ")]
+                self.assertTrue(look and verify[0] < look[0], (want, workers))
+                if workers == 1:
+                    calls = [i for i, line in enumerate(lines) if line.startswith("Run-Chunk ")]
+                else:
+                    calls = [i for i, line in enumerate(lines) if line.startswith("$self = (Get-Process")]
+                self.assertTrue(calls and verify[0] < min(calls), (want, workers))
+        self.assertNotIn("mme_shadow", self.written(dict(PLAN), "plain"))
+        self.assertNotIn("mme_shadow", self.written(dict(PLAN), "plain2", workers=2))
+
+    def test_soft_watches_mmes_files_beside_mmd(self):
+        soft = mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN, self_shadow="soft")))
+        for name in ("d3d9.dll", "MMHack.dll", "MMEffect.dll"):
+            self.assertIn("C:/MMD/" + name, soft)
+        plain = mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN)))
+        self.assertEqual(mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN, self_shadow="mmd"))), plain)
+
+
 class WorkersScriptTest(unittest.TestCase):
     """--workers N (N from 2) writes a driver that renders and folds N chunks at the same time.  The batches and the join list
     are those of one worker; the layers and the text are prepared once and every chunk folds with them (--prepared).
