@@ -1,6 +1,8 @@
 """tools/mme_shadow.py: the MME effect of the soft self shadow and the files round it."""
+import contextlib
 import hashlib
 import importlib.util
+import io
 import math
 import os
 import re
@@ -77,11 +79,57 @@ class EffectTest(unittest.TestCase):
         self.assertIn("#define SKII2 8000.0", text)
         self.assertIn("slope - 0.3f", text)
 
+    def test_the_shade_keeps_what_the_floor_keeps_in_a_shadow(self):
+        # by default the shade keeps 1 - key_share of the light, the key light's share of tools/mv_world.py's floor
+        text = mme_shadow.effect()
+        self.assertEqual(define(text, "SS_ALIGN"), 1)
+        self.assertAlmostEqual(define(text, "SS_KEEP"), 1.0 - mme_shadow.DEFAULTS["key_share"], places=6)
+        self.assertAlmostEqual(define(mme_shadow.effect(key_share=0.3), "SS_KEEP"), 0.7, places=6)
+        self.assertIn('"key_share": 0.6', text.splitlines()[2])
+        # the toon's hue kept, its luma set (BT.709, as tools/shadow_check.py reads the floor); a white toon left white
+        self.assertIn("float3(0.2126f, 0.7152f, 0.0722f)", text)
+        self.assertIn("if (luma < 0.999f)", text)
+        # MMD's toon colours as they are: with key_share None, and always in sharp (the check that the shading is MMD's)
+        for toon in (mme_shadow.effect(key_share=None), mme_shadow.effect(sharp=True)):
+            self.assertEqual(define(toon, "SS_ALIGN"), 0)
+            self.assertIn('"key_share": null', toon.splitlines()[2])
+        try:
+            spec = importlib.util.spec_from_file_location("mv_world", os.path.join(ROOT, "tools", "mv_world.py"))
+            mv_world = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mv_world)
+        except ImportError:                    # mv_world needs numpy and Pillow
+            return
+        self.assertEqual(mme_shadow.DEFAULTS["key_share"], mv_world.KEY_SHARE)
+
+    def test_debug_draws_the_shadow_alone_or_the_body_lit(self):
+        self.assertEqual(define(mme_shadow.effect(debug="shadow"), "SS_DEBUG"), 1)
+        lit = mme_shadow.effect(debug="lit")
+        self.assertEqual(define(lit, "SS_DEBUG"), 2)
+        self.assertIn('"debug": "lit"', lit.splitlines()[2])
+        self.assertIn("#if SS_DEBUG == 2", lit)
+        self.assertEqual(define(mme_shadow.effect(), "SS_DEBUG"), 0)
+
     def test_wrong_settings_are_refused(self):
         for bad in ({"blur": -1}, {"blur": 45}, {"min_blur": -0.1}, {"min_blur": 3}, {"n_taps": 0}, {"n_taps": 65},
-                    {"search_taps": 0}):
+                    {"search_taps": 0}, {"key_share": 1.0}, {"key_share": -0.1}, {"key_share": True},
+                    {"debug": "dark"}):
             with self.assertRaises(ValueError, msg=bad):
                 mme_shadow.effect(**bad)
+
+    def test_the_command_line_takes_the_shade(self):
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        for args, keep, align in (([], 0.4, 1), (["--key-share", "0.5"], 0.5, 1), (["--toon"], 1.0, 0),
+                                  (["--debug", "lit"], 0.4, 1), (["--debug"], 0.4, 1)):
+            path = os.path.join(out, "e.fx")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(mme_shadow.main(["write", path] + args), 0, args)
+            with open(path, encoding="ascii") as f:
+                text = f.read()
+            self.assertAlmostEqual(define(text, "SS_KEEP"), keep, places=6)
+            self.assertEqual(define(text, "SS_ALIGN"), align)
+        with open(path, encoding="ascii") as f:
+            self.assertEqual(define(f.read(), "SS_DEBUG"), 1)                 # --debug alone: the shadow
 
 
 class FilesTest(unittest.TestCase):

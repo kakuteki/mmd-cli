@@ -1,7 +1,8 @@
 """A soft self shadow for MMD through MikuMikuEffect (MME): the effect file that draws a model's body with MMD's own
 shading but reads the self shadow map at many points weighted by a Gaussian, and the files round it.
 
-    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.6] [--taps 32] [--search-taps 16] [--debug] [--sharp]
+    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 32] [--search-taps 16] [--key-share 0.6 | --toon]
+                                     [--debug [shadow|lit]] [--sharp]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py check MMD.exe
     python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd
@@ -25,8 +26,18 @@ weighted by a Gaussian, and their weighted mean is the shadow.  The Gaussian's s
 * never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
   the default shadow distance) are blurred away even where the gap is 0.
 
---sharp writes the same file with one point and no blur: MMD's own test (to check that the shading is MMD's).  --debug
-draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py.  The file is ASCII.
+How dark the shade is: MMD shades with the toon's colour (this model's keep 72 to 90 % of the light), while
+tools/mv_world.py's floor takes KEY_SHARE (0.6) of its light from the key light and keeps the rest in a shadow.  Under
+one light the two would not agree (MMD's shade takes 10 to 28 % of the light away, the floor's shadow 60 %), so by
+default (--key-share 0.6, mv_world's KEY_SHARE) the shade keeps 1 - key_share of the light: the toon's colour keeps
+its hue and its luma (BT.709, as tools/shadow_check.py reads the floor) is set to 1 - key_share, on the shadowed side
+and in the shadow alike, as on the floor.  A material whose toon is white (here the face and the eyes: MMD draws no
+shade on them) is left so.  --toon keeps MMD's toon colours as they are.
+
+--sharp writes the same file with one point and no blur and MMD's toon colours: MMD's own test (to check that the
+shading is MMD's).  --debug draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py;
+--debug lit draws the body lit everywhere (no shade, no shadow), to read what a shade keeps of the light.  The file is
+ASCII.
 
 prepare copies the folder of MODEL (its textures) into OUTDIR once, and writes the effect there under the model's name
 (MME applies <model name>.fx found beside the model when MMD loads it; MMEffect.txt).  The original folder is not written.
@@ -49,7 +60,8 @@ MME_FILES = {"d3d9.dll": "3c1c663c4b2fda0c92a97fc2d3d01fd1fb4110ae552e68f284657b
              "MMEffect.dll": "74b3f5882a3bad28131cbc57994e2f960938e6ca850fc7139018ce4822bd87dc"}
 KERNEL_SIGMAS = 2.5               # the points lie within this many standard deviations of the Gaussian
 GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
-DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 32, "search_taps": 16, "contact": True}
+DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 32, "search_taps": 16, "contact": True, "key_share": 0.6}
+DEBUGS = {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2}
 SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
                           # light at 8 units: the hips above the knees)
 
@@ -79,27 +91,35 @@ def _array(name, rows, fmt):
 
 
 def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS["taps"],
-           search_taps=DEFAULTS["search_taps"], contact=DEFAULTS["contact"], debug=False, sharp=False):
-    """the text of the effect file (see the module docstring)"""
+           search_taps=DEFAULTS["search_taps"], contact=DEFAULTS["contact"], debug=False, sharp=False,
+           key_share=DEFAULTS["key_share"]):
+    """the text of the effect file (see the module docstring).  key_share None: MMD's toon colours"""
+    if debug not in DEBUGS:
+        raise ValueError("--debug is shadow or lit, not %r" % (debug,))
+    if key_share is not None and (isinstance(key_share, bool) or not 0 <= key_share < 1):
+        raise ValueError("--key-share is the key light's share of the light, 0 to under 1, not %r" % (key_share,))
     if not 0 <= blur <= 30:
         raise ValueError("--blur is the light's spread in degrees, 0 to 30, not %r" % (blur,))
     if not 0 <= min_blur <= 2:
         raise ValueError("--min-blur is a standard deviation in MMD units, 0 to 2, not %r" % (min_blur,))
     if sharp:
-        n_taps, search_taps, contact, min_blur, blur = 1, 1, False, 0.0, 0.0
+        n_taps, search_taps, contact, min_blur, blur, key_share = 1, 1, False, 0.0, 0.0, None
     if not 1 <= n_taps <= 64 or not 1 <= search_taps <= 64:
         raise ValueError("--taps and --search-taps are 1 to 64")
     kernel = [(0.0, 0.0, 1.0)] if n_taps == 1 else taps(n_taps)
     search = [(0.0, 0.0, 1.0)] if search_taps == 1 else [(x / KERNEL_SIGMAS, y / KERNEL_SIGMAS, 1.0)
                                                           for x, y, _ in taps(search_taps)]
+    debug = {0: False, 1: "shadow", 2: "lit"}[DEBUGS[debug]]
     settings = {"blur": blur, "min_blur": min_blur, "taps": n_taps, "search_taps": search_taps, "contact": bool(contact),
-                "debug": bool(debug), "sharp": bool(sharp)}
+                "debug": debug, "sharp": bool(sharp), "key_share": key_share}
     head = ("// soft_self_shadow.fx: MMD's body pass with the self shadow (object_ss) read at many points of the shadow map\n"
             "// weighted by a Gaussian.  Written by tools/mme_shadow.py (mmd-cli) from MME 0.37's REFERENCE.txt; the other\n"
             "// passes are MMD's own.  Settings: %s\n" % json.dumps(settings, sort_keys=True))
     defines = ("#define SS_BLUR_RAD %.9f\n#define SS_MIN_WORLD %.6f\n#define SS_TAPS %d\n#define SS_SEARCH %d\n"
-               "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_WORLD %.6f\n"
-               % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, 1 if debug else 0, SEARCH))
+               "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_WORLD %.6f\n#define SS_ALIGN %d\n"
+               "#define SS_KEEP %.6f\n"
+               % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, DEBUGS[debug], SEARCH,
+                  0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share))
     return (head + defines + _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f") + BODY)
 
 
@@ -312,22 +332,38 @@ float4 SS_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, unif
         }
     }
     Color.rgb += Specular;
+#if SS_DEBUG == 2
+    // lit everywhere: no shade and no shadow (what a shade keeps of the light is its colour over this)
+    if (transp) {
+        Color.a = 0.5f;
+    }
+    return Color;
+#endif
     float3 zc = IN.ZCalcTex.xyz / IN.ZCalcTex.w;
     float2 uv = float2((1.0f + zc.x) * 0.5f, (1.0f - zc.y) * 0.5f);
     if (any(saturate(uv) != uv)) {
         // outside the shadow map MMD draws the body lit, without the toon's shade
-#if SS_DEBUG
+#if SS_DEBUG == 1
         return float4(1.0f, 1.0f, 1.0f, 1.0f);
 #endif
         return Color;
     }
     float comp = SoftShadow(zc, uv);
-#if SS_DEBUG
+#if SS_DEBUG == 1
     return float4(comp, comp, comp, 1.0f);
 #endif
     if (useToon) {
         comp = min(saturate(dot(IN.Normal, -LightDirection) * TOON_SLOPE), comp);
-        ShadowColor.rgb *= MaterialToon;
+        float3 toon = MaterialToon;
+#if SS_ALIGN
+        // the shade keeps SS_KEEP of the light, as the floor of tools/mv_world.py does in a shadow: the toon's colour
+        // keeps its hue, its luma (BT.709) is set to SS_KEEP; a white toon (no shade drawn: the face) stays white
+        float luma = dot(toon, float3(0.2126f, 0.7152f, 0.0722f));
+        if (luma < 0.999f) {
+            toon = min(toon * (SS_KEEP / max(luma, 1e-4f)), 1.0f);
+        }
+#endif
+        ShadowColor.rgb *= toon;
     }
     float4 ans = lerp(ShadowColor, Color, comp);
     if (transp) {
@@ -455,13 +491,20 @@ def _options(s):
     s.add_argument("--taps", type=int, default=DEFAULTS["taps"])
     s.add_argument("--search-taps", type=int, default=DEFAULTS["search_taps"])
     s.add_argument("--no-contact", action="store_true", help="the same blur everywhere (--min-blur)")
-    s.add_argument("--debug", action="store_true", help="draw the shadow alone, for tools/shadow_measure.py")
-    s.add_argument("--sharp", action="store_true", help="MMD's own shadow test (one point)")
+    shade = s.add_mutually_exclusive_group()
+    shade.add_argument("--key-share", type=float, default=DEFAULTS["key_share"],
+                       help="the key light's share: the shade keeps the rest of the light, as the floor of "
+                            "tools/mv_world.py does (default 0.6, its KEY_SHARE)")
+    shade.add_argument("--toon", action="store_true", help="shade with MMD's toon colours as they are")
+    s.add_argument("--debug", nargs="?", const="shadow", default=False, choices=("shadow", "lit"),
+                   help="draw the shadow alone (shadow, for tools/shadow_measure.py) or the body lit everywhere (lit)")
+    s.add_argument("--sharp", action="store_true", help="MMD's own shadow test (one point) and toon colours")
 
 
 def _settings(a):
     return {"blur": a.blur, "min_blur": a.min_blur, "n_taps": a.taps, "search_taps": a.search_taps,
-            "contact": not a.no_contact, "debug": a.debug, "sharp": a.sharp}
+            "contact": not a.no_contact, "debug": a.debug, "sharp": a.sharp,
+            "key_share": None if a.toon else a.key_share}
 
 
 def main(argv=None):
