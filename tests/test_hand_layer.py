@@ -1082,11 +1082,28 @@ class TransitTest(unittest.TestCase):
         d, _ = self.dev([(0, "half"), (LAST, "half")], SWINGS, contact=1.0)
         self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 1e-9)
 
-    def test_the_choreography_s_own_shapes_are_left(self):
-        # a pointing finger (the others closed) and a fist are the dance's shapes, kept through the movement
-        for shape in ("point", "fist"):
-            d, _ = self.dev([(0, shape), (LAST, shape)], SWINGS)
-            self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 0.05, shape)
+    def test_a_shape_made_with_single_fingers_is_left(self):
+        # a pointing finger (the others closed) is the dance's shape, kept through the movement
+        d, _ = self.dev([(0, "point"), (LAST, "point")], SWINGS)
+        self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 0.05)
+
+    def test_a_fist_opens_a_little_in_each_movement_and_is_closed_where_the_arm_stops(self):
+        # the dancers' fists move too (FineDance's closed hands: 54 - 96 deg/s); a fist can only open, and is the fist
+        # again by the movement's end
+        d, _ = self.dev([(0, "fist"), (LAST, "fist")], SWINGS)
+        mid = d["中指１"] + d["中指２"] + d["中指３"]
+        for a, b in ((10, 22), (22, 34), (34, 46)):
+            self.assertLess(float(mid[a:b + 1].min()), -2.0, (a, b))
+            self.assertLess(float(mid[a:b + 1].max()), 0.05, (a, b))
+        self.assertLess(float(np.abs(mid[50:]).max()), 0.05)
+
+    def test_a_movement_running_into_a_change_of_shape_is_left(self):
+        # the trace starts to close the hand on the movement's last frames (the change runs on past its end): the
+        # change is the choreography's and its timing is kept, no excursion laid over its start
+        # (the movement found here runs from frame 8 to 25: the smoothed speed's minima)
+        d, _ = self.dev([(0, "half"), (25, "half"), (31, "bend"), (LAST, "bend")],
+                        eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
+        self.assertLess(max(float(np.abs(v[6:34]).max()) for v in d.values()), 0.05)
 
     def test_an_open_hand_curls_and_a_half_closed_one_goes_both_ways(self):
         # a flat hand cannot extend much further: it curls; between, the hand flexes and extends in turn with the

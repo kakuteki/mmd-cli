@@ -12,7 +12,7 @@ shape: open_still).
     python tools/hand_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--no-STEP ...] [--relax-gain 0.25]
                                [--speed-max 1900] [--order-scale 1] [--order-max 1.5] [--follow [--follow-scale 0.5]]
                                [--beats beats.json] [--no-contact] [--gravity] [--order-mode centre|delay]
-                               [--zeta-open Z] [--as-v8] [--verbose]
+                               [--zeta-open Z] [--transit-scale 1] [--as-v9] [--as-v8] [--verbose]
 
 Why (the audit of 2026-10-13, _spike/out/stage6/hands/NOTES.md and audit/): in the v7 dance the fingers hold dead still
 while the hand swings (66 to 72 % of the frames where the wrist turns faster than 90 deg/s or the knuckles move faster
@@ -77,6 +77,20 @@ The steps (STEPS, each can be switched off), in this order:
    analysts' a09, -0.01 / -0.04 frames in FineDance's K-pop, choreography and jazz).  --order-mode delay only delays the
    later joints, as v8 did (the a09 from the wrist to the finger then grows: v8 +0.36 / +0.31 against the trace's
    +0.01 / +0.16, the human baseline's measure).
+7b. transit: with each movement of the arm (the knuckle's speed from one minimum to the next, its peak 0.3 m/s or
+   more, 6 - 60 frames) the four long fingers go out along one synergy and come back by the movement's end, the most
+   at the speed's peak: the dancers of FineDance's K-pop and street dances (_spike/out/stage6/fingers_v3/) move their
+   fingers in every movement of the arm, 30.8 h^0.564 degrees on average in one that ends in the shape it started from
+   (h the knuckle's travel, m: 6.6 at 0.06 m, 13 at 0.25, 24 at 0.64), the twelve joints along their first principal
+   component (78 - 85 % of the variance, every joint the same way, the MP the most: TRANSIT_SYNERGY; Santello 1998's
+   first postural synergy), where the trace holds them still (0 - 0.6 degrees under 0.4 m).  The way is not set by the
+   arm (nine features of the movement: R^2 0.02 - 0.05): an open hand curls, a nearly closed one opens, between they go
+   the other way than the last movement's (the dancers' do 53 - 56 % of the time).  The amount is what the dancers'
+   fingers travel less what the trace's already do there.  Not on a shape made with single fingers (a pointing finger,
+   a peace sign), nor where the hand touches something, nor on a movement in which (or within 2 frames of which) the
+   trace changes the shape (the choreography's changes keep their timing).  --transit-scale scales it, --no-transit
+   leaves it out (= --as-v9).  The fingers then move with the arm, on time with it: the a09 from the wrist to the
+   finger falls toward the dancers' (the passive lag below is late by its physics; the transit dilutes it).
 8. follow (only with --follow): each finger reaches the shape the steps before give it (the equilibrium its muscles
    take it to) through the spring and the damper of step 9's body at the MP, every angle of its joints alike
    (follow_response: x'' + 2 zeta omega x' + omega^2 (x - shape) = 0, omega step 9's, between the open and the held
@@ -149,7 +163,8 @@ it moved the MP, the passive lag per finger, its frequencies).
 
 Do not use it with tools/anatomy_layer.py's --tenodesis (off by default): this layer has its own.
 
---as-v8 gives back the hands of v8 (main 59b28e6) byte for byte: --no-pace --order-mode delay --zeta-open 0.85.
+--as-v9 gives back the hands of v9 (main c012c32) byte for byte: --no-transit.  --as-v8 gives back the hands of v8
+(main 59b28e6) byte for byte: --no-transit --no-pace --order-mode delay --zeta-open 0.85.
 """
 import argparse
 import importlib.util
@@ -512,7 +527,7 @@ PACE_H = math.sqrt(3.0) / 2.563
 # h, 0.06 - 1.2 m: 6.6 at 0.06 m, 13 at 0.25, 24 at 0.64, 37 at 1.2), going out from the line between the two shapes
 # and back (the transit part: 6.5 - 8 degrees at the speed's peak, the 90th percentile 31 - 40; the trace's 0.1 - 0.8)
 TRANSIT = {"c": 30.79, "p": 0.564, "peak": 0.3, "span": (6, 60), "smooth": 2, "cap": 25.0, "open": 40.0, "shut": 150.0,
-           "spread": (30.0, 60.0), "closed": (150.0, 200.0), "half": 3, "change": 10.0}
+           "spread": (30.0, 60.0), "half": 3, "change": 10.0, "pad": 2}
 # the transit parts of the twelve joints lie on one synergy (the first principal component, 78 - 85 % of their
 # variance; the mean of the K-pop and street dances' left and right hands): MP, PIP, DIP of each long finger
 TRANSIT_SYNERGY = {"人指": (0.327, 0.317, 0.150), "中指": (0.410, 0.316, 0.179), "薬指": (0.400, 0.355, 0.134),
@@ -1198,14 +1213,14 @@ def transit_bump(F, a, p, b):
 
 def transit_free(hand, ang):
     """0 .. 1 per frame: how free the hand's shape is to move along the synergy: not a shape made with single fingers
-    (the four long fingers' MP + PIP + DIP spread over TRANSIT["spread"]: a pointing finger, a peace sign) nor a fist
-    (their mean over TRANSIT["closed"])"""
+    (the four long fingers' MP + PIP + DIP spread over TRANSIT["spread"]: a pointing finger, a peace sign).  A fist is
+    free (the dancers' closed hands move as much as the others, 54 - 96 deg/s in FineDance: _spike/out/stage6/
+    finger_motion/, fm_state.py): it opens a little and is the fist again where the arm stops"""
     sums = finger_sums(hand, ang)
     if not sums:
         return None
     s = np.stack([sums[f] for f in LONG if f in sums])
-    spread = s.max(axis=0) - s.min(axis=0)
-    return (1.0 - smoothstep(spread, *TRANSIT["spread"])) * (1.0 - smoothstep(s.mean(axis=0), *TRANSIT["closed"]))
+    return 1.0 - smoothstep(s.max(axis=0) - s.min(axis=0), *TRANSIT["spread"])
 
 
 def transit(hands, ang, world, P, touch=None, scale=1.0):
@@ -1232,6 +1247,11 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         kn = knuckle_track(world, P, side)
         sums = finger_sums(hand, ang)
         moves = arm_movements(kn)
+        # the choreography's changes of shape (a long finger's MP + PIP + DIP moving PACE["min"] degrees or more one
+        # way): a movement that overlaps one (or comes within TRANSIT["pad"] frames of it) is left, so its timing is
+        # the trace's
+        changes = [(r0, r1) for f in fingers for r0, r1 in monotone_changes(sums[f])
+                   if abs(sums[f][r1] - sums[f][r0]) >= PACE["min"]]
         add = np.zeros(F)
         amps, last = [], 1.0
         left = {"change": 0, "shape": 0, "travel": 0}
@@ -1245,7 +1265,8 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
             if not w > 1e-9 or not float(keep[a:b + 1].max()) > 1e-9:
                 left["shape"] += 1
                 continue
-            if C >= TRANSIT["change"]:
+            lo, hi = max(0, a - TRANSIT["pad"]), min(F - 1, b + TRANSIT["pad"])
+            if C >= TRANSIT["change"] or any(r0 <= hi and r1 >= lo for r0, r1 in changes):
                 # the trace changes the shape here: the choreography's change is left as it is (the dancers' fingers
                 # travel only 2 - 8 degrees beyond such a change for 0.06 - 0.4 m of the hand, 25.5 h^1.02; laid on the
                 # change's way it brought the right fingers 0.15 frames ahead of the wrist by the a09, past the dancers')
