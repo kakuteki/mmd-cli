@@ -984,6 +984,199 @@ class ToeModelTest(unittest.TestCase):
         self.assertEqual(before, after)
 
 
+LEG_L1 = float(np.linalg.norm(rest("ひざ") - rest("足")))
+LEG_L2 = float(np.linalg.norm(rest("足首") - rest("ひざ")))
+
+
+def knee_from_reach(f):
+    """the knee's bend [F] (degrees, 0 straight) as the human baseline's a05 reads it: the hip joint's distance to the
+    ankle and the law of cosines (a leg that does not reach is straight)"""
+    d = np.minimum(np.linalg.norm(f["ankle"] - f["hip"], axis=1), LEG_L1 + LEG_L2)
+    c = np.clip((LEG_L1 ** 2 + LEG_L2 ** 2 - d ** 2) / (2.0 * LEG_L1 * LEG_L2), -1.0, 1.0)
+    return 180.0 - np.degrees(np.arccos(c))
+
+
+def ball_xz(f, side="左"):
+    """the ball's (足先EX's) place on the floor [F, 2] of measured feet"""
+    e = f["ankle"] + leg_ik.qrot(f["q_foot"], rest("足先EX", side) - rest("足首", side))
+    return e[:, [0, 2]]
+
+
+def goal_of(out, frames, side="左"):
+    """the foot IK's goal [F, 3] in the layer's output (where a05 reads the ankle)"""
+    return leg_ik.solve(RIG, out, range(frames))[side]["goal_ankle"]
+
+
+# the layer before the landing (c012c32) on LandingTest's sinking landing: the left foot IK's height and 足首's local
+# X turn (degrees), frames 0, 3, .. 18 (recorded with _spike/out/stage6/feet_landing/scripts/record_off.py)
+LANDING_OFF_HEIGHTS = [0.6, 0.3, 0.000563, 0.000251, 0.000152, 0.000152, 0.000152]
+LANDING_OFF_PITCH = [34.5014, 31.1104, 27.4185, 28.3719, 29.3078, 29.3078, 29.3078]
+
+
+class LandingTest(unittest.TestCase):
+    """the landing (feet-landing, 2026-10-16): a foot that lands while the pelvis sinks comes down on its forefoot and
+    lowers its heel as the pelvis sinks, so the knee does not take the sink (the humans' knee bends 0.7 degrees in the
+    0.2 s after a touchdown, the MV's 7); a standing leg that cannot reach its goal rises onto its ball; a foot skimming
+    the floor in the dance is not pressed onto it.  landing=False is the layer before them."""
+
+    TD = 6
+
+    def landing_keys(self, sink):
+        """the left foot comes down flat onto the floor at frame TD and stays while the pelvis sinks `sink` units over
+        the next 6 frames (the knees bent, センター down 1.2 before); the right foot is lifted out of the way"""
+        return [key("センター", 0, position=(0, -1.2, 0)), key("センター", self.TD, position=(0, -1.2, 0)),
+                key("センター", self.TD + 6, position=(0, -1.2 - sink, 0)), key("センター", 18, position=(0, -1.2 - sink, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8)),
+                key("左足ＩＫ", 0, position=(0, 0.6, 0.0)), key("左足ＩＫ", self.TD), key("左足ＩＫ", 18)]
+
+    def test_the_heel_comes_down_as_the_pelvis_sinks(self):
+        f_in, f_out, out, plan = run_layer(*self.landing_keys(0.15), frames=19)
+        a, b = f_in["左"], f_out["左"]
+        td = self.TD
+        k_in, k_out = knee_from_reach(a), knee_from_reach(b)
+        self.assertGreater(float(k_in[td:td + 7].max() - k_in[td]), 3.0)       # the dance's knee takes the sink
+        self.assertLess(float(k_out[td:td + 7].max() - k_out[td]), 1.0)
+        self.assertLess(float(b["pitch"][td]), -3.0)                          # on the forefoot at the touch
+        self.assertGreater(float(b["pitch"][-1]), -1.0)                        # flat once the pelvis is down
+        self.assertTrue(np.all(np.diff(b["pitch"][td:]) >= -0.05))             # the heel only comes down
+        self.assertLess(float(np.abs(np.diff(b["pitch"])).max()), 8.0)         # no snap
+        on = b["low"][td:]
+        self.assertLess(float(np.abs(on - 0.111).max()), 0.003)                # on the floor, never in it
+        self.assertGreater(float(b["low"].min()), 0.111 - foot_layer.PEN_TOL)
+        ball = ball_xz(b)[td:]
+        self.assertLess(float(np.linalg.norm(ball - ball[0], axis=1).max()), 0.03)   # it pivots on the ball, no slide
+
+    def test_a_deep_sink_lowers_the_heel_without_a_slam(self):
+        # (review_feet_landing) the pelvis sinks 2.4 cm, more than turning the foot about the ball can take (the ankle
+        # rises 1.2 cm at most): the heel is up as far as it goes, and still comes down over frames, not in one; the
+        # ball stays where it landed (the ankle's horizontal move goes with the turn)
+        # (in the song the pelvis often comes down late in the 0.2 s: here over the last 2 of its 6 frames)
+        keys = self.landing_keys(0.3)
+        keys.insert(2, key("センター", self.TD + 4, position=(0, -1.2, 0)))
+        f_in, f_out, out, plan = run_layer(*keys, frames=19)
+        b = f_out["左"]
+        td = self.TD
+        self.assertLess(float(b["pitch"][td]), -15.0)                                # well up at the touch
+        self.assertGreater(float(b["pitch"][-1]), -1.0)                              # down in the end
+        self.assertLess(float(np.abs(np.diff(b["pitch"])).max()), 8.0)               # no slam
+        ball = ball_xz(b)[td:]
+        self.assertLess(float(np.linalg.norm(ball - ball[0], axis=1).max()), 0.03)   # it pivots on the ball
+
+    def test_the_command_lands_like_a_human_unless_told_off(self):
+        # (review_feet_landing) the default is human: without --landing the command writes what --landing human writes,
+        # which raises the heel at the sinking landing; --landing off writes something else
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
+            vmd.dump(motion(*self.landing_keys(0.15)), src)
+            with open(model, "wb") as fh:
+                fh.write(DATA)
+            outs = {}
+            for tag, extra in (("default", []), ("human", ["--landing", "human"]), ("off", ["--landing", "off"])):
+                out, rep = os.path.join(folder, tag + ".vmd"), os.path.join(folder, tag + ".json")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(out, "rb") as fh, open(rep, encoding="utf-8") as fr:
+                    outs[tag] = (fh.read(), json.load(fr))
+            self.assertEqual(outs["default"][0], outs["human"][0])
+            self.assertNotEqual(outs["default"][0], outs["off"][0])
+            self.assertEqual(outs["default"][1]["landing_model"], "human")
+            self.assertGreater(outs["default"][1]["landing"]["L"]["heel_raised_frames"], 0)
+            self.assertEqual(outs["off"][1]["landing"]["L"]["heel_raised_frames"], 0)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_the_heel_does_not_rise_again_when_the_pelvis_bounces(self):
+        # (review_feet_landing) the pelvis sinks over 3 frames and comes half back up over the next 3: the heel comes
+        # down with the sink and stays down (it does not rise again with the bounce)
+        td = self.TD
+        keys = [key("センター", 0, position=(0, -1.2, 0)), key("センター", td, position=(0, -1.2, 0)),
+                key("センター", td + 3, position=(0, -1.35, 0)), key("センター", td + 6, position=(0, -1.27, 0)),
+                key("センター", 18, position=(0, -1.27, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8)),
+                key("左足ＩＫ", 0, position=(0, 0.6, 0.0)), key("左足ＩＫ", td), key("左足ＩＫ", 18)]
+        _, f_out, _, plan = run_layer(*keys, frames=19)
+        heel = plan["左"]["heel"]
+        self.assertGreater(float(heel[td]), 2.0)
+        self.assertTrue(np.all(np.diff(heel[td:]) <= 1e-6))
+
+    def test_a_landing_without_a_sink_is_left_as_it_was(self):
+        f_in, f_out, out, plan = run_layer(*self.landing_keys(0.0), frames=19)
+        _, f_old, _, _ = run_layer(*self.landing_keys(0.0), frames=19, landing=False)
+        self.assertLess(float(np.abs(f_out["左"]["pitch"] - f_old["左"]["pitch"]).max()), 0.05)
+        self.assertLess(float(np.abs(f_out["左"]["ankle"] - f_old["左"]["ankle"]).max()), 1e-4)
+
+    def test_landing_off_writes_the_layer_before(self):
+        # the keys the layer wrote before the landing (c012c32) on the sinking landing, recorded: the left foot IK's
+        # height and 足首's pitch, every third frame
+        out, plan = foot_layer.layer(RIG, SHOE, motion(*self.landing_keys(0.15)), {"landing": False})
+        ik = sorted((k.frame, k.position) for k in out.bones if k.name == "左足ＩＫ")
+        ankle = sorted((k.frame, k.rotation) for k in out.bones if k.name == "左足首")
+        heights = [y for f, (x, y, z) in ik if f % 3 == 0]
+        pitch = [math.degrees(2.0 * math.atan2(q[0], q[3])) for f, q in ankle if f % 3 == 0]
+        self.assertEqual(len(ik), 19)
+        for got, want in zip(heights, LANDING_OFF_HEIGHTS):
+            self.assertAlmostEqual(got, want, delta=2e-5)
+        for got, want in zip(pitch, LANDING_OFF_PITCH):
+            self.assertAlmostEqual(got, want, delta=2e-3)
+        self.assertTrue(all(abs(x) < 1e-9 and abs(z) < 1e-9 for f, (x, y, z) in ik))
+
+    def test_a_standing_leg_out_of_reach_rises_onto_its_ball(self):
+        # the pelvis 0.04 over the rest pose's, the left foot flat on the floor under it: the leg cannot reach its goal
+        # (a05 reads a straight knee; MMD leaves the foot 3 mm over the floor).  It rises onto its ball until the leg
+        # reaches with the knee bent 5 degrees or more (a05's reading), the ball where it stood, the shoe on the floor.
+        # (Sour's Rin's ankle stands 11.7 cm over the ball and 5.5 cm behind it: turning the foot about the ball raises
+        # the ankle 1.2 cm at most, at some 25 degrees, and moves it forward toward the hip: a goal far out of reach
+        # comes nearer by about that much and no more.)
+        keys = [key("センター", 0, position=(0, 0.04, 0)), key("センター", 7, position=(0, 0.04, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=8)
+        _, f_old, out_old, _ = run_layer(*keys, frames=8, landing=False)
+        a, b = f_in["左"], f_out["左"]
+        goal, goal_old = goal_of(out, 8), goal_of(out_old, 8)
+        self.assertLess(float(knee_from_reach(dict(f_old["左"], ankle=goal_old)).max()), 1.0)
+        self.assertGreater(float(f_old["左"]["low"].min()), 0.111 + 0.02)                 # it hovered before
+        self.assertGreater(float(knee_from_reach(dict(b, ankle=goal)).min()), 5.0)
+        self.assertLess(float(np.linalg.norm(b["ankle"] - goal, axis=1).max()), 0.025)    # MMD reaches it
+        self.assertLess(float(b["pitch"].max()), -1.0)                                    # the heel up
+        self.assertLess(float(np.abs(b["low"] - 0.111).max()), 0.003)                     # on the floor
+        self.assertLess(float(np.linalg.norm(ball_xz(b) - ball_xz(a), axis=1).max()), 0.03)
+
+    def test_a_foot_stood_far_out_of_reach_is_judged_where_the_dance_stands_it(self):
+        # the pelvis 0.4 (3.2 cm) over the rest pose's, the left foot's goal flat on the floor: MMD leaves the shoe some
+        # 3 cm over it, and the layer before took the foot for one in the air (as at 197 s of the song).  Judged at its
+        # goal, it is on the floor: it rises onto its ball as far as it goes (some 25 degrees), which brings the shoe
+        # some 0.9 cm nearer the floor
+        keys = [key("センター", 0, position=(0, 0.4, 0)), key("センター", 7, position=(0, 0.4, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        _, f_out, _, plan = run_layer(*keys, frames=8)
+        _, f_old, _, _ = run_layer(*keys, frames=8, landing=False)
+        old, new = f_old["左"]["low"] - 0.111, f_out["左"]["low"] - 0.111
+        self.assertGreater(float(old.min()), 0.25)
+        self.assertLess(float(new.max()), float(old.min()) - 0.1)
+        self.assertGreater(float(plan["左"]["heel"].min()), 15.0)
+
+    def test_a_standing_leg_in_reach_keeps_its_heel_down(self):
+        keys = [key("センター", 0, position=(0, -0.3, 0)), key("センター", 7, position=(0, -0.3, 0)),
+                key("右足ＩＫ", 0, position=(0, 2.5, 0.8))]
+        f_in, f_out, out, plan = run_layer(*keys, frames=8)
+        self.assertGreater(float(f_out["左"]["pitch"].min()), -0.5)
+
+    def test_a_foot_skimming_the_floor_is_not_pressed_onto_it(self):
+        # the left foot glides 30 cm/s sideways with its flat sole 5.4 mm over the floor (over the contact's hysteresis:
+        # the dance's own swing, not a touch): it keeps that height; the same foot standing still there is put (most of
+        # the way) onto the floor
+        lift = 0.068
+        moving = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
+            [key("左足ＩＫ", t, position=(0.125 * t, lift, 0.0)) for t in range(13)]
+        still = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
+            [key("左足ＩＫ", t, position=(0.0, lift, 0.0)) for t in range(13)]
+        _, f_move, _, _ = run_layer(*moving, frames=13)
+        _, f_still, _, _ = run_layer(*still, frames=13)
+        self.assertGreater(float(f_move["左"]["low"][3:10].min()), 0.111 + 0.8 * lift)
+        self.assertLess(float(f_still["左"]["low"][3:10].max()), 0.111 + 0.6 * lift)
+
+
 class CommandTest(unittest.TestCase):
     def write_inputs(self, folder):
         src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
@@ -1058,6 +1251,29 @@ class CommandTest(unittest.TestCase):
                               "still_pointed_hover", "bend_deg", "bend_step_deg"):
                         self.assertIn(k, t)
                 self.assertTrue(r["untouched"]["identical"])
+        finally:
+            shutil.rmtree(folder)
+
+    def test_warns_when_the_first_foot_layer_has_no_landing_given(self):
+        # the order C runs the foot layer twice and its first run (on a dance no foot layer has written) wants
+        # --landing off: without --landing there it warns (stderr and the report); with it, or on the layer's own
+        # output (the second run), it does not
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            out2 = os.path.join(folder, "out2.vmd")
+            for args, warned, mode in (([src, model, out], True, "human"),
+                                       ([src, model, out, "--landing", "off"], False, "off"),
+                                       ([out, model, out2], False, "human")):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(foot_layer.main(args + ["--report", rep]), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    r = json.load(fh)
+                self.assertEqual(r["landing_model"], mode)
+                self.assertEqual(r["landing_warning"] is not None, warned)
+                self.assertEqual("WARNING" in err.getvalue(), warned)
         finally:
             shutil.rmtree(folder)
 
