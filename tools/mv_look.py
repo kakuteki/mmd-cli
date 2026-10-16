@@ -123,7 +123,11 @@ DEFAULT_LOOK = {
                                     # of a shadow blurs by about 2.6 x this (in radians) x the distance along the light
                                     # from what casts it (an edge facing the light up to 1 / sin(its elevation) more)
               "shadow_light": [-0.5, -1.0, 0.5],    # where the light shines to (MMD's light direction; its default)
-              "shadow_contact": 0.9},               # how dark the light from all round leaves the floor under her, 0 to 1
+              "shadow_contact": 0.9,                # how dark the light from all round leaves the floor under her, 0 to 1
+              "shadow_share": 1},   # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
+                                    # pool's light and the darkening from all round the rest, the lines keep their own
+                                    # (mv_world.soft_light, 2026-10-17); 0 the floor of before (the pool the key light's
+                                    # alone, both shares darkened from all round, the lines darkened too)
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -201,6 +205,9 @@ def _check_stage(stage):
             raise ValueError("stage.%s is 0 (none) to 1, not %r" % (key, stage[key]))
     if stage["shadow_soft"] not in (0, 1):
         raise ValueError("stage.shadow_soft is 0 or 1, not %r" % (stage["shadow_soft"],))
+    if stage["shadow_share"] not in (0, 1):
+        raise ValueError("stage.shadow_share is 1 (each light's shadow cuts its share; the lines keep their own) or 0 (the "
+                         "floor shadow of before 2026-10-17), not %r" % (stage["shadow_share"],))
     if not 0 <= stage["shadow_blur"] <= 30:
         raise ValueError("stage.shadow_blur is the light's spread in degrees, 0 to 30: not %r" % (stage["shadow_blur"],))
     light = stage["shadow_light"]
