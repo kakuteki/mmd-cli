@@ -3,7 +3,8 @@ stop on the same frame, and a hand runs on a little past a stop and settles.
 
     python tools/motor_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--beats beats.json]
                                 [--key-frames TRACE.vmd] [--lead L] [--delay-scale 1] [--finger-delay 0.25]
-                                [--substeps 16] [--world w.npz] [--preset default|strong|human] [--verbose]
+                                [--substeps 16] [--world w.npz] [--preset default|strong|human] [--elbow-hinge on|off]
+                                [--verbose]
 
 Why (the analysis of 2026-10-07, a09): in the trace 91 to 100 % of the keys of the arm's joints sit on the same frame, the
 joints' timing differs by 0 frames (95 % interval +-0.1), and the wrist stops after the upper arm before 0 to 8 % of the
@@ -114,6 +115,23 @@ The layer (numbers: the constants and default_params below):
   a straight arm (bent under 1 degree) then seems to turn its humerus up to 54 degrees past the cap; read from 腕捩's
   own turn the humerus passes the cap by 2 - 4 degrees at most, as before this layer (2.3 / 1.8; the review of
   motor-human).
+* --elbow-hinge on (off by default in every preset, so the outputs made before stay byte for byte; stage6/elbow_hinge):
+  once the stretches given back are chosen, the arm's twist is split again (hinge_split): ひじ becomes the hinge angle
+  about the model's hinge axis (tools/anatomy_layer.py's h) that brings the forearm nearest to where the layer had it,
+  the roll it held about the upper arm's axis goes onto 腕捩, about the forearm's onto 手捩, and 手首 keeps the hand's
+  world rotation.  The elbow stays where it was; done exactly the wrist would stay too, but where the arm is nearly
+  straight the hinge plane is nearly undefined and the exact roll ran to 35 degrees at the 99th percentile and half a
+  turn at most on Hibikase (bent 1 degree with 1 degree to the side it is some 45 degrees for 2.5 mm of wrist), which
+  turns the elbow's skin round.  So the roll added, delta, is chosen per frame to minimise (ELBOW_SKIN_CM delta)^2 +
+  (the forearm x the forearm's direction error)^2: how far the skin at the elbow turns against how far the wrist moves
+  (Rin's skin is 2.4 - 2.7 cm from the arm's axis there).  A bent arm is solved all but exactly; a straight arm's wrist
+  moves at most as far as dropping ひじ onto its hinge without any roll would move it.  On Hibikase (human): off the
+  hinge 0 (before 0.55 / 0.63 degrees at the median, at most 11.8 / 10.8), the roll added 5.5 / 6.5 degrees at the 99th
+  percentile and 19 at most, the wrist 0.30 cm at the 99th percentile and 0.89 / 0.99 cm at most, the elbow, the hand's
+  rotation and the stretches given back unchanged.  Tracking 腕捩 and 手捩 inside the layer instead, with 1-DoF twist
+  bones and a 1-DoF elbow, also leaves a hinge, but changes the whole arm's tracking (the hand's rotation up to 23
+  degrees, the wrist up to 7 cm against the layer without it) and takes twice as long; and running tools/anatomy_layer.py
+  again after the layer moves the elbow up to 6.1 cm for its range of motion (the review of motor-human).
 * Mass, inertia and strength (de Leva 1996, Holzbaur 2007; the constants below).  As Kp and Kd scale with the
   inertia, the motion does not depend on it until the torque limit binds: mass and inertia act only through the limit
   on the angular acceleration (limit / inertia), and that binds on 0.1 to 0.3 % of the substeps of the shoulder and the
@@ -132,7 +150,9 @@ stops last before a rest, the run-on past a stop and the settling), a02 (deep sp
 6-15 Hz shares of the velocity), a04 (--beats: the stops' and the hard decelerations' timing against the beat, and the
 shift of each stop against the input's), the error at the trace's keys (--key-frames: the frames of the 腕 keys of the
 trace before smoothing; else every frame), the hand-to-face and hand-to-body distances, the jumps, the stretches given
-back, the leads, the torque-limit share and the untouched bones' bytes.
+back, the leads, the torque-limit share and the untouched bones' bytes; and elbow_hinge (--elbow-hinge on: per side off
+the hinge before and after, the roll added on 腕捩 and 手捩 and its step, the wrist's shift, the elbow's and the hand's
+change, which are 0).
 """
 import argparse
 import json

@@ -878,6 +878,8 @@ class CliTest(unittest.TestCase):
                     got[name] = json.load(f)["params"]
                 with open(out, "rb") as f:
                     got[name + "_bytes"] = f.read()
+            for name in ("default", "human", "human_given", "default_zero"):
+                self.assertFalse(got[name]["hinge"], name)        # off unless asked, in every preset
             self.assertEqual(got["default"]["finger_delay"], motor_layer.FINGER_DELAY)
             self.assertEqual(got["human"]["finger_delay"], 0.0)
             self.assertEqual(got["human_given"]["finger_delay"], 0.25)
@@ -886,6 +888,37 @@ class CliTest(unittest.TestCase):
             # nothing; the file holds the keys in float32, so the layer is run on what was read back)
             self.assertEqual(got["default_bytes"], vmd.dumps(motor_layer.layer(MODEL, vmd.load(dance_path)).motion))
             self.assertNotEqual(got["human_bytes"], got["default_bytes"])
+        finally:
+            shutil.rmtree(folder)
+
+    def test_the_elbow_hinge_switch(self):
+        folder = tempfile.mkdtemp()
+        try:
+            model_path = os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as f:
+                f.write(model_bytes())
+            dance_path = os.path.join(folder, "d.vmd")
+            vmd.dump(hinge_dance(), dance_path)
+            got = {}
+            for name, extra in (("plain", []), ("off", ["--elbow-hinge", "off"]), ("on", ["--elbow-hinge", "on"]),
+                                ("human_on", ["--preset", "human", "--elbow-hinge", "on"])):
+                out, rep = os.path.join(folder, name + ".vmd"), os.path.join(folder, name + ".json")
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(motor_layer.main([dance_path, model_path, out, "--report", rep] + extra), 0, buf.getvalue())
+                with open(rep, encoding="ascii") as f:
+                    got[name] = json.load(f)
+                got[name + "_motion"] = vmd.load(out)
+                with open(out, "rb") as f:
+                    got[name + "_bytes"] = f.read()
+            self.assertEqual(got["off_bytes"], got["plain_bytes"])
+            self.assertNotEqual(got["on_bytes"], got["plain_bytes"])
+            for name in ("on", "human_on"):
+                self.assertTrue(got[name]["params"]["hinge"], name)
+                self.assertLess(got[name]["elbow_hinge"]["左"]["off_hinge_deg_after"]["max"], 0.01, name)
+                self.assertEqual(sorted(key_track(got[name + "_motion"], "左腕捩")), list(range(LAST + 1)))
+            self.assertEqual(got["human_on"]["params"]["preset"], "human")
+            self.assertEqual(got["human_on"]["params"]["finger_delay"], 0.0)
         finally:
             shutil.rmtree(folder)
 
