@@ -4,7 +4,7 @@ limits).  Everything else is kept byte for byte (formats.pmx_edit).
 
     python tools/pmx_skirt.py MODEL.pmx OUT.pmx [--report r.json] [--limit-scale S] [--reach DEG] [--spring-scale K]
                               [--ring-rotate DEG] [--ring-move-scale S] [--mass M0 .. Mn | --mass-area M]
-                              [--damping LINEAR ANGULAR] [--ceiling DEG]
+                              [--damping LINEAR ANGULAR] [--ceiling DEG [--ceiling-anchor]]
 
 The skirt (Sour's Rin: 7 rows x 16 columns): rigid bodies named スカート_row_col, each hung from the body above it (row
 0: from the trunk) by the joint of the same name, and joined to the next column by スカート横_row_col.  Bones named
@@ -44,7 +44,9 @@ from mmd_cli.formats import pmx_edit  # noqa: E402
 NAME = re.compile(r"^スカート_(\d+)_(\d+)$")
 RING = re.compile(r"^スカート横_(\d+)_(\d+)$")
 CEILING = "スカート天井_%d_%d"
-KEYS = ("limit_scale", "reach", "spring_scale", "ring_rotate", "ring_move_scale", "mass", "mass_area", "damping", "ceiling")
+KEYS = ("limit_scale", "reach", "spring_scale", "ring_rotate", "ring_move_scale", "mass", "mass_area", "damping", "ceiling",
+        "ceiling_anchor")
+ANCHOR = "スカート天井台"
 FREE = 100.0                    # a translation range never reached (model units)
 
 
@@ -133,6 +135,8 @@ def _check(recipe, skirt):
             raise ValueError("give mass or mass_area, not both")
     if recipe.get("ceiling") is not None and not 0.0 < recipe["ceiling"] < 90.0:
         raise ValueError("ceiling must lie between 0 and 90 degrees")
+    if recipe.get("ceiling_anchor") and recipe.get("ceiling") is None:
+        raise ValueError("ceiling_anchor needs a ceiling")
     if recipe.get("damping") is not None and (len(recipe["damping"]) != 2 or not all(0.0 <= d <= 1.0 for d in recipe["damping"])):
         raise ValueError("damping needs two values (linear, angular) between 0 and 1")
     if (recipe.get("ring_rotate") is not None or recipe.get("ring_move_scale") is not None) and not skirt.ring:
@@ -192,7 +196,7 @@ def apply(doc, recipe):
             joint(j, "move_upper", [v * k for v in j.move_upper])
     added = []
     if recipe.get("ceiling") is not None:
-        added = _ceilings(doc, s, js, recipe["ceiling"])
+        added = _ceilings(doc, s, js, recipe["ceiling"], bool(recipe.get("ceiling_anchor")))
     if changes or added:
         pmx_edit.set_joints(doc, js)
     areas = {}
@@ -226,7 +230,22 @@ def apply(doc, recipe):
             "rest_tilt": {"%d_%d" % k: round(v, 3) for k, v in sorted(s.rest_tilt.items())}}
 
 
-def _ceilings(doc, s, js, degrees):
+def _anchor(doc, trunks):
+    """append the rigid body the ceilings hang from: on the trunk body's bone, where the trunk body is, following the bone
+    (mode 0), in group 15 colliding with no group; returns its index"""
+    if len(trunks) != 1:
+        raise ValueError("the skirt's columns hang from %d trunk bodies, the anchor needs one" % len(trunks))
+    t = doc.rigid_bodies[trunks.pop()]
+    if any(pmx_edit.rigid_names(doc, rb)[0] == ANCHOR for rb in doc.rigid_bodies):
+        raise ValueError("the model has a %s already" % ANCHOR)
+    tb = pmx_edit.rigid_body(t)
+    body = pmx_edit.RigidBody(15, 0x0000, 0, (0.05, 0.0, 0.0), tb.position, tb.rotation, tb.mass, tb.linear_damping,
+                              tb.angular_damping, 0.0, 0.0, 0)
+    doc.rigid_bodies.append(pmx_edit.new_rigid(doc, ANCHOR, "skirt_ceiling_anchor", t.bone, body))
+    return len(doc.rigid_bodies) - 1
+
+
+def _ceilings(doc, s, js, degrees, anchor=False):
     """append to js, per skirt body, a joint from the trunk body (the one the column's top joint hangs from) to the body,
     on the body's lower end, that lets that point move freely except upwards past a ceiling in the trunk's frame: the
     column's waist point (bone 0) less cos(degrees) times the rest length of the chain down to the point, so a straight
@@ -240,8 +259,9 @@ def _ceilings(doc, s, js, degrees):
             bones[(int(m.group(1)), int(m.group(2)))] = b.position
     k = math.cos(math.radians(degrees))
     added = []
+    base = _anchor(doc, {js[s.vertical[(0, c)]].a for c in range(s.cols)}) if anchor else None
     for c in range(s.cols):
-        trunk = js[s.vertical[(0, c)]].a
+        trunk = js[s.vertical[(0, c)]].a if base is None else base
         ring_y = bones[(0, c)][1]
         chain = 0.0
         for r in range(s.rows):
@@ -289,8 +309,9 @@ def main(argv=None):
     ap.add_argument("--mass-area", type=float)
     ap.add_argument("--damping", type=float, nargs=2)
     ap.add_argument("--ceiling", type=float)
+    ap.add_argument("--ceiling-anchor", action="store_true")
     a = ap.parse_args(argv)
-    recipe = {k: getattr(a, k) for k in KEYS if getattr(a, k) is not None}
+    recipe = {k: getattr(a, k) for k in KEYS if getattr(a, k) not in (None, False)}
     try:
         if _same(a.model, a.out) or (a.report and (_same(a.report, a.model) or _same(a.report, a.out))):
             raise ValueError("the outputs would overwrite the model or each other")

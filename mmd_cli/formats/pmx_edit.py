@@ -342,6 +342,16 @@ def set_rigid_body(rb, body):
                           body.linear_damping, body.angular_damping, body.restitution, body.friction, body.mode)
 
 
+def new_rigid(doc, name, name_en, bone, body):
+    """a Rigid for `doc` named `name` on bone index `bone` (-1: none) with the fields of `body` (a RigidBody); append it
+    to doc.rigid_bodies yourself (at the end, so no joint's index moves)"""
+    if not -1 <= bone < len(doc.bones):
+        raise ValueError("rigid body %s names bone %d, the model has %d" % (name, bone, len(doc.bones)))
+    rb = Rigid(_pack_text(name, doc.encoding) + _pack_text(name_en, doc.encoding), bone, b"")
+    set_rigid_body(rb, body)
+    return rb
+
+
 def rigid_names(doc, rb):
     """(name, English name) of `rb`"""
     r = _Reader(rb.names, doc.encoding)
