@@ -116,7 +116,13 @@ DEFAULT_LOOK = {
               "pool": 0.0,          # a pool of light on the floor round the dancer, 0 none to 1 (needs her motion)
               "pool_radius": 14.0,  # its size (a standard deviation, MMD units)
               "pool_colour": [34, 32, 30],      # what it adds to the floor at its middle at 1
-              "shadow": 0.0},       # the shadows of her feet and body on the floor, 0 none to 1 (needs her motion)
+              "shadow": 0.0,        # the shadows of her feet and body on the floor, 0 none to 1 (needs her motion)
+              "shadow_soft": 1,     # 1: the soft shadow of her whole body from a light (mv_world.soft_shadow_grid);
+                                    # 0: the shadows of v8 and v9 (round her soles and her pelvis, straight down)
+              "shadow_blur": 3.0,   # the soft shadow: the spread of the light, degrees (a standard deviation): the edge
+                                    # of a shadow blurs by about 2.6 x this x the height of what casts it
+              "shadow_light": [-0.5, -1.0, 0.5],    # where the light shines to (MMD's light direction; its default)
+              "shadow_contact": 0.9},               # how dark the light from all round leaves the floor under her, 0 to 1
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -189,9 +195,16 @@ def _check_stage(stage):
                          % (stage["specks"],))
     if int(stage["floor_accent_every"]) != stage["floor_accent_every"] or stage["floor_accent_every"] < 0:
         raise ValueError("stage.floor_accent_every is a whole number, 0 for no accent lines")
-    for key in ("pool", "shadow"):
+    for key in ("pool", "shadow", "shadow_contact"):
         if not 0 <= stage[key] <= 1:
             raise ValueError("stage.%s is 0 (none) to 1, not %r" % (key, stage[key]))
+    if stage["shadow_soft"] not in (0, 1):
+        raise ValueError("stage.shadow_soft is 0 or 1, not %r" % (stage["shadow_soft"],))
+    if not 0 <= stage["shadow_blur"] <= 30:
+        raise ValueError("stage.shadow_blur is the light's spread in degrees, 0 to 30: not %r" % (stage["shadow_blur"],))
+    light = stage["shadow_light"]
+    if not all(math.isfinite(v) for v in light) or not light[1] < 0:
+        raise ValueError("stage.shadow_light is where the light shines to and must point down (y below 0): not %r" % (light,))
     if any(c < 0 for c in stage["pool_colour"]):
         raise ValueError("stage.pool_colour is r, g, b from 0")
     if stage["world"] and not stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
@@ -997,7 +1010,8 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
             raise ValueError("stage.pool and stage.shadow follow the dancer: give --model MODEL.pmx and her --motion files, "
                              "in the order MMD loads them")
         world["model"], world["motions"] = os.path.abspath(model), [os.path.abspath(m) for m in motions]
-        world["figure"] = world_tool().Figure.from_files(world["model"], world["motions"])
+        world["figure"] = world_tool().Figure.from_files(world["model"], world["motions"],
+                                                         body=world_tool().needs_body(look))
     return world
 
 

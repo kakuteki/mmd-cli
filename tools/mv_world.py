@@ -396,6 +396,199 @@ def _shade(X, Z, figure, strength):
     return 1.0 - keep
 
 
+# ---- the soft shadow of her body (stage.shadow_soft 1) ------------------------------------------
+
+# where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with
+MMD_LIGHT = (-0.5, -1.0, 0.5)
+KEY_SHARE = 0.6          # of the light on the floor's plane and lines, the share of the key light (the rest is all round)
+SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
+SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
+
+
+def _erf(x):
+    """the error function (Abramowitz and Stegun 7.1.26, within 1.5e-7)"""
+    a = np.abs(x)
+    t = 1.0 / (1.0 + 0.3275911 * a)
+    y = 1.0 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * np.exp(-a * a)
+    return np.sign(x) * y
+
+
+def _normal_cdf(x):
+    return 0.5 * (1.0 + _erf(x / math.sqrt(2.0)))
+
+
+def toward_light(light):
+    """the unit vector from the floor to the light, from where the light shines to (MMD's light direction)"""
+    v = -np.asarray(light, dtype=np.float64)
+    n = float(np.linalg.norm(v))
+    if not n > 0 or v[1] <= 0:
+        raise ValueError("stage.shadow_light is where the light shines to and must point down (y below 0): not %r"
+                         % (list(light),))
+    return v / n
+
+
+def capsule_shade(P, a, b, r, ell, sigma):
+    """(key, contact): how much of the key light one capsule (the segment a-b, radius r; heights above the floor) keeps
+    off the floor points P (N x 3, y 0), and how much of the light from all round it keeps off them, each 0 to 1.
+
+    The key light comes from `ell` (unit, toward the light) and has the brightness of a normal (Gaussian) spread of
+    `sigma` radians round it, so the edge of a shadow is the integral of a Gaussian whose width grows with the distance
+    from the floor to what casts it: a sole on the floor casts a sharp shadow, the head one blurred over many times its
+    width (contact hardening).  Seen from P the capsule is a band of half-width beta (its angular radius) round the
+    point of its axis nearest the light's ray: a band keeps off the share of a Gaussian between its two edges (exact for a
+    long one); past an end of the capsule the share of a disc (the same area as a square) is blended in.  The light from
+    all round: the share of the sky the nearest sphere of the capsule hides, (r / d)^2 x its cosine (ambient occlusion
+    of a sphere over a plane)."""
+    P = np.asarray(P, dtype=np.float64)
+    a = np.asarray(a, dtype=np.float64)
+    b = np.asarray(b, dtype=np.float64)
+    u = b - a
+    uu = float(u @ u)
+    w0 = a[None, :] - P
+    e = w0 @ ell
+    if uu > 1e-12:
+        d = w0 @ u
+        ub = float(u @ ell)
+        denom = uu - ub * ub
+        free = (ub * e - d) / denom if denom > 1e-9 * uu else np.full(e.shape, 0.5)
+        s = np.clip(free, 0.0, 1.0)
+    else:
+        free = s = np.zeros(e.shape)
+    v = w0 + s[:, None] * u[None, :]
+    t = v @ ell
+    length = np.sqrt(np.maximum((v * v).sum(axis=1), 1e-18))
+    across = np.sqrt(np.maximum(length * length - t * t, 0.0))
+    gamma = np.arctan2(across, t)
+    inside = length <= r
+    beta = np.arcsin(np.clip(r / np.maximum(length, r), 0.0, 1.0))
+    sig = max(float(sigma), 1e-6)
+    band = _normal_cdf((gamma + beta) / sig) - _normal_cdf((gamma - beta) / sig)
+    half = beta * math.sqrt(math.pi) / 2.0
+    disc = (_normal_cdf((gamma + half) / sig) - _normal_cdf((gamma - half) / sig)) * (2.0 * _normal_cdf(half / sig) - 1.0)
+    if uu > 1e-12:
+        # past an end (or near it) the capsule is its end's disc: the signed overhang, as an angle seen from P
+        over = np.where(free > 0.5, free - 1.0, -free) * math.sqrt(uu) / length
+        k = np.clip(0.5 + over / (beta + 2.0 * sig), 0.0, 1.0)
+    else:
+        k = np.ones(e.shape)
+    key = np.where(inside, 1.0, (1.0 - k) * band + k * disc)
+    # all round: the nearest point of the axis to P, faded out to nothing at contact_reach(r) from the axis
+    if uu > 1e-12:
+        s2 = np.clip(-(w0 @ u) / uu, 0.0, 1.0)
+    else:
+        s2 = np.zeros(e.shape)
+    c = w0 + s2[:, None] * u[None, :]
+    dist = np.sqrt(np.maximum((c * c).sum(axis=1), 1e-18))
+    reach = contact_reach(r)
+    t = np.clip((reach - dist) / (0.4 * reach), 0.0, 1.0)
+    fade = t * t * (3.0 - 2.0 * t)
+    contact = np.where(dist <= r, 1.0, np.clip((r / dist) ** 2 * np.maximum(c[:, 1] / dist, 0.0), 0.0, 1.0) * fade)
+    return np.clip(key, 0.0, 1.0), contact
+
+
+def contact_reach(r):
+    """how far from its axis a capsule of radius r darkens the floor with the light from all round: the sphere's share,
+    1/25 of its cosine at 5 r, is faded out smoothly over the last 40 % of this, so the grid needs no hard border"""
+    return 5.0 * r + 0.5
+
+
+def _capsule_box(a, b, r, ell, sigma):
+    """the floor's x and z ranges a capsule can darken: under it (the light from all round) and its shadow along the
+    light, with the Gaussian's tail (4 sigma) at the distance of each end, stretched on the floor by 1 / sin(elevation)"""
+    xs, zs = [], []
+    reach = 0.0
+    for p in (np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)):
+        run = max(float(p[1]), 0.0) / ell[1]            # how far the point is along the ray to the light
+        q = p - run * ell
+        xs += [p[0], q[0]]
+        zs += [p[2], q[2]]
+        reach = max(reach, 4.0 * float(sigma) * run / ell[1])
+    margin = max(reach + r, contact_reach(r)) + 0.5
+    return min(xs) - margin, max(xs) + margin, min(zs) - margin, max(zs) + margin
+
+
+@dataclass
+class ShadowGrid:
+    """the soft shadow on a grid of the floor: key[i, j] and contact[i, j] at x = x0 + j cell, z = z0 + i cell (the
+    shares of the key light and of the light from all round that reach the floor there, 0 to 1)"""
+    x0: float
+    z0: float
+    cell: float
+    key: np.ndarray
+    contact: np.ndarray
+
+    def at(self, X, Z):
+        """(key, contact) at the floor points (X, Z), bilinearly; 1 (all the light) off the grid"""
+        fx = (np.asarray(X, dtype=np.float64) - self.x0) / self.cell
+        fz = (np.asarray(Z, dtype=np.float64) - self.z0) / self.cell
+        h, w = self.key.shape
+        on = (fx >= 0) & (fz >= 0) & (fx <= w - 1) & (fz <= h - 1)
+        j = np.clip(np.floor(fx).astype(np.int64), 0, max(w - 2, 0))
+        i = np.clip(np.floor(fz).astype(np.int64), 0, max(h - 2, 0))
+        tx = np.clip(fx - j, 0.0, 1.0)
+        tz = np.clip(fz - i, 0.0, 1.0)
+        out = []
+        for g in (self.key, self.contact):
+            if w < 2 or h < 2:
+                out.append(np.ones(fx.shape))
+                continue
+            v = (g[i, j] * (1 - tx) * (1 - tz) + g[i, j + 1] * tx * (1 - tz) + g[i + 1, j] * (1 - tx) * tz
+                 + g[i + 1, j + 1] * tx * tz)
+            out.append(np.where(on, v, 1.0))
+        return out[0], out[1]
+
+
+def soft_shadow_grid(capsules, light, blur_degrees, floor_y=0.0, cell=SHADOW_CELL):
+    """the ShadowGrid of `capsules` ((a, b, r) world positions and radius) on the floor at y = floor_y, lit from
+    `light` (where it shines to) with a Gaussian spread of `blur_degrees`; None without capsules.  The grid is fixed in
+    the world (its points at whole multiples of `cell`), so it does not crawl as the camera moves"""
+    if not capsules:
+        return None
+    ell = toward_light(light)
+    sigma = math.radians(max(float(blur_degrees), 0.0))
+    lifted = [(np.asarray(a, dtype=np.float64) - [0.0, floor_y, 0.0], np.asarray(b, dtype=np.float64) - [0.0, floor_y, 0.0],
+               float(r)) for a, b, r in capsules]
+    boxes = [_capsule_box(a, b, r, ell, sigma) for a, b, r in lifted]
+    lo_x, hi_x = min(bx[0] for bx in boxes), max(bx[1] for bx in boxes)
+    lo_z, hi_z = min(bx[2] for bx in boxes), max(bx[3] for bx in boxes)
+    cell = float(cell)
+    while max(hi_x - lo_x, hi_z - lo_z) / cell > SHADOW_GRID_MAX:
+        cell *= 2.0
+    x0, z0 = math.floor(lo_x / cell) * cell, math.floor(lo_z / cell) * cell
+    w = int(math.ceil((hi_x - x0) / cell)) + 1
+    h = int(math.ceil((hi_z - z0) / cell)) + 1
+    key = np.ones((h, w))
+    contact = np.ones((h, w))
+    for (a, b, r), (bx0, bx1, bz0, bz1) in zip(lifted, boxes):
+        j0, j1 = max(0, int(math.floor((bx0 - x0) / cell))), min(w, int(math.ceil((bx1 - x0) / cell)) + 1)
+        i0, i1 = max(0, int(math.floor((bz0 - z0) / cell))), min(h, int(math.ceil((bz1 - z0) / cell)) + 1)
+        if j1 <= j0 or i1 <= i0:
+            continue
+        gx, gz = np.meshgrid(x0 + cell * np.arange(j0, j1), z0 + cell * np.arange(i0, i1))
+        P = np.stack([gx.ravel(), np.zeros(gx.size), gz.ravel()], axis=1)
+        k, c = capsule_shade(P, a, b, r, ell, sigma)
+        key[i0:i1, j0:j1] *= (1.0 - k).reshape(gx.shape)
+        contact[i0:i1, j0:j1] *= (1.0 - c).reshape(gx.shape)
+    return ShadowGrid(x0, z0, cell, key, contact)
+
+
+def needs_body(look):
+    """True when the look's floor takes the soft shadow of her body (Figure.from_files(..., body=True))"""
+    stage = look["stage"]
+    return bool(stage["floor"]) and stage["shadow"] > 0 and bool(int(stage["shadow_soft"]))
+
+
+def soft_light(key, contact, stage):
+    """(plane, pool): what the floor's plane and lines, and the pool of light, keep of their light where the soft shadow
+    lets `key` of the key light and `contact` of the light from all round through.  stage.shadow scales the shadow,
+    stage.shadow_contact the darkening from all round; the pool is the key light's alone, the plane and the lines take
+    KEY_SHARE of theirs from it"""
+    s = float(stage["shadow"])
+    m_key = 1.0 - s * (1.0 - key)
+    m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
+    return ((1.0 - KEY_SHARE) + KEY_SHARE * m_key) * m_all, m_key * m_all
+
+
 def _inside(view, d, half):
     """the share of each pixel (rays d) the floor square takes"""
     inside = (d[..., 1] < 0).astype(np.float64)
@@ -456,10 +649,27 @@ def _floor_once(view, stage, figure):
         plain = np.maximum(plain, np.where(is_accent, 0.0, _overlap(dist, foot, line)))
         accent = np.maximum(accent, np.where(is_accent, _overlap(dist, foot, 2.0 * line), 0.0))
     base = np.tile(np.array(FLOOR_COLOURS["plane"], dtype=np.float64), (X.size, 1))
+    pool = None
     if figure is not None and stage["pool"] > 0:
         r2 = (X - figure.centre[0]) ** 2 + (Z - figure.centre[1]) ** 2
         glow = float(stage["pool"]) * np.exp(-r2 / (2.0 * float(stage["pool_radius"]) ** 2))
-        base += glow[:, None] * np.array(stage["pool_colour"], dtype=np.float64)[None, :]
+        pool = glow[:, None] * np.array(stage["pool_colour"], dtype=np.float64)[None, :]
+    soft = figure is not None and stage["shadow"] > 0 and int(stage["shadow_soft"])
+    if soft and getattr(figure, "capsules", None) is None:
+        raise ValueError("stage.shadow_soft 1 casts the shadow of her body: read the dancer with her body "
+                         "(Figure.from_files(..., body=True)), or set stage.shadow_soft 0")
+    if soft:
+        # the soft shadow of her body (soft_shadow_grid): the plane, the lines and the pool each keep their share of light
+        grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]))
+        lit, pooled = soft_light(*grid.at(X, Z), stage)
+        base = base * lit[:, None]
+        if pool is not None:
+            base += pool * pooled[:, None]
+        mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * (lit * plain)[:, None]
+        rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * (lit * accent)[:, None]
+        return rgb, cover
+    if pool is not None:
+        base += pool
     if figure is not None and stage["shadow"] > 0:
         # the shadows reach a few units round her: worked out there only
         px, _, pz = figure.pelvis
@@ -508,9 +718,10 @@ class FigureState:
     pelvis: tuple
     centre: Tuple[float, float]       # x and z of the centre, averaged over FIGURE_WINDOW frames (where the pool stands)
     rest: Tuple[float, float]         # the height of an ankle and of a toe on the floor (FIGURE_REST_PERCENTILE of the song)
+    capsules: list = None             # her body as capsules (a, b, radius), world positions, for the soft shadow (Body)
 
 
-FIGURE_WINDOW = 90                    # frames: the pool follows the centre averaged like make_camera's look-at point
+FIGURE_WINDOW = 90                   # frames: the pool follows the centre averaged like make_camera's look-at point
 FIGURE_REST_PERCENTILE = 2.0
 FIGURE_BONES = {"ankles": (("左足ＩＫ", "左足IK"), ("右足ＩＫ", "右足IK")),
                 "toes": (("左つま先ＩＫ", "左つま先IK"), ("右つま先ＩＫ", "右つま先IK")),
@@ -531,11 +742,140 @@ def merge_motions(motions):
     return vmd.Motion(model_name=motions[0].model_name, bones=[k for keys in by.values() for k in keys])
 
 
+REFERENCE_HEAD = 16.24               # the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on
+# her body as capsules for the soft shadow: (bone, offset, bone, offset, radius), each end at the bone's rest position plus
+# the offset (model units, the model's rest frame, turned with the bone).  Measured on Sour's Rin (White.pmx) at rest
+# (softshadow NOTES, measure_body.py / measure_head.py): a radius is the 90th percentile of the distance of the vertices whose
+# largest weight is on the bone from its segment; the head with its hair spans y 15.5-19.0, x +-1.55, z -1.6..1.4; the
+# ribbon y 19.0-20.6, x +-1.8, z -0.8..-0.2; the hips (下半身's vertices) y 10.2-12.2, x +-1.56, z -1.35..0.91; the skirt
+# flares from 1.2 at the waist (y 13) to 3.8 at the hem (y 9.5).  The skirt moves by physics, which is not followed: it is
+# two balls on 下半身.  A part whose bones the model lacks is left out; other models are scaled by the height of 頭.
+BODY_PARTS = (
+    ("上半身", (0.0, 0.0, 0.0), "上半身2", (0.0, 0.0, 0.0), 1.0),
+    ("上半身2", (0.0, 0.0, 0.0), "首", (0.0, 0.0, 0.0), 1.05),
+    ("首", (0.0, 0.0, 0.0), "頭", (0.0, 0.0, 0.0), 0.36),
+    ("頭", (0.0, 0.66, -0.1), "頭", (0.0, 1.46, -0.1), 1.55),            # the head and the hair
+    ("頭", (-1.3, 3.66, -0.5), "頭", (1.3, 3.66, -0.5), 0.6),           # the ribbon
+    ("左腕", (0.0, 0.0, 0.0), "左ひじ", (0.0, 0.0, 0.0), 0.38),
+    ("左ひじ", (0.0, 0.0, 0.0), "左手首", (0.0, 0.0, 0.0), 0.33),
+    ("左手首", (0.0, 0.0, 0.0), "左中指３", (0.0, 0.0, 0.0), 0.42),
+    ("右腕", (0.0, 0.0, 0.0), "右ひじ", (0.0, 0.0, 0.0), 0.38),
+    ("右ひじ", (0.0, 0.0, 0.0), "右手首", (0.0, 0.0, 0.0), 0.33),
+    ("右手首", (0.0, 0.0, 0.0), "右中指３", (0.0, 0.0, 0.0), 0.42),
+    ("下半身", (-0.75, -1.22, 0.45), "下半身", (0.75, -1.22, 0.45), 1.2),  # the hips
+    ("下半身", (0.0, -1.0, 0.6), "下半身", (0.0, -1.0, 0.6), 2.0),       # the skirt: its upper part
+    ("下半身", (0.0, -2.5, 0.6), "下半身", (0.0, -2.5, 0.6), 2.9),       # and its hem
+)
+# the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with
+# 足首: the instep from the ankle to above the ball of the foot (足先EX) and the sole from under the heel to the tip of the
+# toe, each with its lowest point at the toe's rest height (the sole of the shoe)
+LEG_PARTS = (("hip", "knee", 0.78), ("knee", "ankle", 0.68))
+INSTEP = 0.5
+SOLE = 0.42
+LEG_BLOCK = 256                       # frames the legs are solved for at a time (leg_ik is vectorised over frames)
+
+
+_LEG_IK = []
+
+
+def _leg_ik():
+    """tools/leg_ik.py, loaded once"""
+    if not _LEG_IK:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("leg_ik", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                             "leg_ik.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LEG_IK.append(module)
+    return _LEG_IK[0]
+
+
+class Body:
+    """her body as capsules at any frame of the song, for the soft shadow: the legs as MMD's IK puts them (tools/leg_ik.py,
+    within 0.06 cm of MMD's render), the rest by forward kinematics (mmd_cli/fk.py), with the radii of BODY_PARTS.
+    Between whole frames the capsules move in a straight line.  ValueError when the model has not the leg rig."""
+
+    def __init__(self, model, rig, motion):
+        self.leg_ik = _leg_ik()
+        bones = {bone.name: bone for bone in model.bones}
+        head = bones.get("頭")
+        self.scale = (head.position[1] / REFERENCE_HEAD) if head is not None and head.position and head.position[1] > 0 else 1.0
+        self.parts = [p for p in BODY_PARTS if p[0] in bones and p[2] in bones]
+        names = sorted({p[0] for p in self.parts} | {p[2] for p in self.parts})
+        self.pose = fk.Pose(model, motion, names) if names else None
+        self.rig = rig
+        self.motion = motion
+        self.last = fk.last_frame(motion)
+        r, ri = SOLE * self.scale, INSTEP * self.scale
+        self.foot = {}
+        for s, sd in rig.sides.items():
+            a = np.asarray(rig.bones[sd.ankle].position, dtype=np.float64)
+            t = np.asarray(rig.bones[sd.toe].position, dtype=np.float64)
+            ex = np.asarray(rig.bones[sd.ex].position, dtype=np.float64) if sd.ex is not None else 0.5 * (a + t)
+            heel = np.array([a[0], t[1] + r, a[2] + 0.1 * self.scale])
+            tip = np.array([t[0], t[1] + r, t[2] + r])
+            ball = np.array([ex[0], max(ex[1], t[1] + ri), ex[2]])
+            self.foot[s] = ((np.zeros(3), ball - a, ri), (heel - a, tip - a, r))
+        self._legs = {}
+        self._frames = {}
+
+    @classmethod
+    def from_file(cls, model_path, model, motion):
+        return cls(model, _leg_ik().LegRig.load(model_path), motion)
+
+    def _legs_at(self, frame):
+        block = frame // LEG_BLOCK
+        if block not in self._legs:
+            frames = list(range(block * LEG_BLOCK, min((block + 1) * LEG_BLOCK, self.last + 1)))
+            self._legs = {block: (frames[0], self.leg_ik.solve(self.rig, self.motion, frames))}
+        first, out = self._legs[block]
+        return {s: {k: v[frame - first] for k, v in legs.items()} for s, legs in out.items()}
+
+    def _at_frame(self, frame):
+        """the capsules at a whole frame (cached for the last few)"""
+        if frame in self._frames:
+            return self._frames[frame]
+        out = []
+        if self.pose is not None:
+            world = self.pose.at(frame)
+            for b0, o0, b1, o1, r in self.parts:
+                ends = []
+                for bone, offset in ((b0, o0), (b1, o1)):
+                    p, q = world[bone]
+                    ends.append(np.asarray(p, dtype=np.float64)
+                                + np.asarray(fk.rotate(q, tuple(self.scale * v for v in offset)), dtype=np.float64))
+                out.append((ends[0], ends[1], r * self.scale))
+        legs = self._legs_at(frame)
+        for s, leg in legs.items():
+            for a, b, r in LEG_PARTS:
+                out.append((np.asarray(leg[a], dtype=np.float64), np.asarray(leg[b], dtype=np.float64), r * self.scale))
+            q = leg["q_foot"]
+            for p0, p1, r in self.foot[s]:
+                out.append((leg["ankle"] + self.leg_ik.qrot(q, p0), leg["ankle"] + self.leg_ik.qrot(q, p1), r))
+        if len(self._frames) > 8:
+            self._frames.clear()
+        self._frames[frame] = out
+        return out
+
+    def capsules(self, frame):
+        """[(a, b, radius)] at `frame` (a fraction of a frame: the capsules of the whole frames round it, mixed)"""
+        f = min(max(float(frame), 0.0), float(self.last))
+        i = int(math.floor(f))
+        k = f - i
+        a = self._at_frame(i)
+        if k <= 1e-9 or i >= self.last:
+            return a
+        b = self._at_frame(i + 1)
+        return [(p0 * (1 - k) + p1 * k, q0 * (1 - k) + q1 * k, r0) for (p0, q0, r0), (p1, q1, _) in zip(a, b)]
+
+
 class Figure:
     """where her feet, pelvis and centre are at any frame of the song: forward kinematics of the model under her motions.
-    The feet are the IK bones (where MMD puts the ankles and the toes when the legs reach them)"""
+    The feet are the IK bones (where MMD puts the ankles and the toes when the legs reach them).  With a Body, her body as
+    capsules too (the soft shadow)"""
 
-    def __init__(self, model, motion):
+    def __init__(self, model, motion, body=None):
+        self.body = body
         names = {bone.name for bone in model.bones}
 
         def pick(options):
@@ -562,7 +902,9 @@ class Figure:
         self.rest = (float(np.percentile(ankle_y, FIGURE_REST_PERCENTILE)), float(np.percentile(toe_y, FIGURE_REST_PERCENTILE)))
 
     @classmethod
-    def from_files(cls, model_path, motion_paths):
+    def from_files(cls, model_path, motion_paths, body=False):
+        """the dancer of a model file and her motions (in the order MMD loads them); `body` also reads her body as
+        capsules (the soft shadow: needs the leg rig of tools/leg_ik.py)"""
         try:
             model = pmx.load(model_path)
             motions = [vmd.load(p) for p in motion_paths]
@@ -570,7 +912,8 @@ class Figure:
             raise ValueError("cannot read the dancer: %s" % exc)
         if not motions:
             raise ValueError("the dancer needs at least one motion")
-        return cls(model, merge_motions(motions))
+        motion = merge_motions(motions)
+        return cls(model, motion, Body.from_file(model_path, model, motion) if body else None)
 
     def state(self, frame):
         at = self.pose.at(frame)
@@ -580,7 +923,8 @@ class Figure:
         j = min(i + 1, self.last)
         k = f - i
         centre = (self.centre_x[i] * (1 - k) + self.centre_x[j] * k, self.centre_z[i] * (1 - k) + self.centre_z[j] * k)
-        return FigureState(feet, tuple(at[self.pelvis_name][0]), centre, self.rest)
+        capsules = self.body.capsules(frame) if self.body is not None else None
+        return FigureState(feet, tuple(at[self.pelvis_name][0]), centre, self.rest, capsules)
 
 
 def _centred_mean(values, window):
@@ -775,7 +1119,7 @@ def main(argv=None):
     if args.command == "draw":
         with open(args.job, encoding="utf-8") as f:
             job = json.load(f)
-        figure = Figure.from_files(job["model"], job["motions"]) if job["model"] else None
+        figure = Figure.from_files(job["model"], job["motions"], body=needs_body(job["look"])) if job["model"] else None
         _draw(job["look"], tuple(job["size"]), camera_track(job["camera"]), job["fps"], job["ranges"],
               job["light_frames"], job["subframes"], job["shutter"], figure, job["pattern"])
         print(json.dumps({"ok": True, "ranges": job["ranges"]}))
@@ -788,7 +1132,7 @@ def main(argv=None):
         spec.loader.exec_module(mv_look)
         look = mv_look.load_look(args.look)
         size = mv_look.parse_size(args.size)
-        figure = Figure.from_files(args.model, args.motion) if args.model else None
+        figure = Figure.from_files(args.model, args.motion, body=needs_body(look)) if args.model else None
         track = camera_track(args.camera)
         light_frames = mv_look.light_frame_count(look, SONG_FPS)
         index = int(round(args.frame))

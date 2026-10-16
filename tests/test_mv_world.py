@@ -356,7 +356,7 @@ class FloorTest(unittest.TestCase):
         self.assertLess(core[2], 80)
 
     def test_a_planted_foot_darkens_the_floor_under_its_sole_and_a_lifted_one_less(self):
-        look = world_look(shadow=1.0, pool=1.0)
+        look = world_look(shadow=1.0, pool=1.0, shadow_soft=0)               # the shadows of v8 and v9
         view = self.view(angles=(25.0, 0.0, 0.0), distance=30.0, look_at=(0, 0, 0))
         planted = FakeFigure()
         lifted = FakeFigure(right=((2.0, 4.7, 0.0), (2.2, 3.1, -1.6)))        # the right foot 3 units up
@@ -420,7 +420,8 @@ class FloorTest(unittest.TestCase):
                             pelvis=(40.0, 10.0, 40.0))                                        # her body's shade far off
         figure.rest = (1.7 + lift, 0.1 + lift)
         lit = mv_world.floor([view], world_look(floor_y=lift, shadow=0.0), view.size, [figure])[0].sum(axis=2)
-        shaded = mv_world.floor([view], world_look(floor_y=lift, shadow=1.0), view.size, [figure])[0].sum(axis=2)
+        shaded = mv_world.floor([view], world_look(floor_y=lift, shadow=1.0, shadow_soft=0), view.size,
+                                [figure])[0].sum(axis=2)
         dark = numpy.clip(lit - shaded, 0, None)
         u, v, _ = view.project([(2.5, lift, 2.5)])
         _, v0, _ = view.project([(2.5, 0.0, 2.5)])
@@ -442,6 +443,182 @@ class FloorTest(unittest.TestCase):
         self.assertLess(float(numpy.abs(cab - (ca + cb) / 2).max()), 1e-9)
         both = (ra * ca[..., None] + rb * cb[..., None]) / 2
         self.assertLess(float(numpy.abs(rab * cab[..., None] - both).max()), 1e-6)
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+RIN = rin_path()
+
+
+@unittest.skipUnless(mv_world, "needs Pillow and numpy")
+class SoftShadowTest(unittest.TestCase):
+    """the soft shadow of her body (stage.shadow_soft 1): capsules lit by a light whose brightness spreads as a Gaussian
+    round its direction, and the light from all round"""
+    DOWN = (0.0, -1.0, 0.0)
+
+    def through(self, capsules, points, light=(-0.5, -1.0, 0.5), blur=3.0):
+        """the shares of the key light and of the light from all round that reach the floor points (x, z)"""
+        ell = mv_world.toward_light(light)
+        P = numpy.array([(x, 0.0, z) for x, z in points], dtype=float)
+        key, contact = numpy.ones(len(P)), numpy.ones(len(P))
+        for a, b, r in capsules:
+            k, c = mv_world.capsule_shade(P, a, b, r, ell, math.radians(blur))
+            key *= 1.0 - k
+            contact *= 1.0 - c
+        return key, contact
+
+    def test_a_ball_casts_its_shadow_away_from_the_light(self):
+        # MMD's light shines to (-0.5, -1, 0.5): the shadow of a point 5 up lies 2.5 to -x and 2.5 to +z of it
+        ball = [((0.0, 5.0, 0.0), (0.0, 5.0, 0.0), 1.0)]
+        key, contact = self.through(ball, [(-2.5, 2.5), (0.0, 0.0), (2.5, -2.5)])
+        self.assertLess(key[0], 0.1)
+        self.assertGreater(key[1], 0.99)                 # right under it the slanting light gets through
+        self.assertGreater(key[2], 0.999)                # and on the side of the light
+        self.assertLess(contact[1], contact[2])          # but it hides a little of the sky from under it
+        self.assertGreater(contact[1], 0.9)
+
+    def test_the_edge_of_a_shadow_blurs_in_proportion_to_the_height_of_what_casts_it(self):
+        # a long bar across x, the light straight down with a spread of 3 degrees: across z the light comes back from
+        # 10 % to 90 % over 2.563 x 3 degrees x the bar's height (the integral of a Gaussian: contact hardening)
+        widths = []
+        for h in (2.0, 8.0):
+            bar = [((-40.0, h, 0.0), (40.0, h, 0.0), 0.5)]
+            zs = numpy.linspace(0.0, 4.0, 4001)
+            key, _ = self.through(bar, [(0.0, z) for z in zs], light=self.DOWN, blur=3.0)
+            width = zs[numpy.argmax(key >= 0.9)] - zs[numpy.argmax(key >= 0.1)]
+            want = 2.563 * math.radians(3.0) * h
+            self.assertAlmostEqual(width, want, delta=0.1 * want, msg=h)
+            widths.append(width)
+        self.assertAlmostEqual(widths[1] / widths[0], 4.0, delta=0.3)
+
+    def test_with_no_spread_the_edge_is_sharp(self):
+        bar = [((-40.0, 8.0, 0.0), (40.0, 8.0, 0.0), 0.5)]
+        zs = numpy.linspace(0.0, 1.0, 1001)
+        key, _ = self.through(bar, [(0.0, z) for z in zs], light=self.DOWN, blur=0.0)
+        self.assertLess(zs[numpy.argmax(key >= 0.9)] - zs[numpy.argmax(key >= 0.1)], 0.01)
+
+    def test_a_sole_on_the_floor_takes_all_the_light_under_it_and_less_the_higher_it_lifts(self):
+        def under(lift):
+            sole = [((-1.0, 0.42 + lift, 0.0), (1.0, 0.42 + lift, 0.0), 0.42)]
+            return self.through(sole, [(0.0, 0.0), (0.0, 1.5)])
+        key, contact = under(0.0)
+        self.assertLess(key[0], 0.01)
+        self.assertLess(contact[0], 0.01)
+        self.assertGreater(contact[1], 0.9)              # 1.5 to its side: a little
+        key, contact = under(1.0)
+        self.assertGreater(contact[0], 0.9)              # a unit up: under 1/10 of the sky hidden
+        self.assertGreater(key[0], 0.9)                  # and the slanting light gets under it
+
+    def test_a_long_bar_shades_as_much_as_its_width_whatever_its_length_past_the_light(self):
+        # the band model: lengthening a bar that already crosses the whole light changes nothing
+        short = [((-3.0, 4.0, 0.0), (3.0, 4.0, 0.0), 0.3)]
+        long = [((-30.0, 4.0, 0.0), (30.0, 4.0, 0.0), 0.3)]
+        points = [(0.0, z) for z in (0.0, 0.2, 0.4)]
+        for a, b in zip(self.through(short, points, light=self.DOWN), self.through(long, points, light=self.DOWN)):
+            numpy.testing.assert_allclose(a, b, atol=1e-6)
+        # past its end the light comes back: the end is a disc
+        key, _ = self.through(short, [(3.0, 0.0), (3.8, 0.0), (5.0, 0.0)], light=self.DOWN)
+        self.assertLess(key[0], key[1])
+        self.assertLess(key[1], key[2])
+        self.assertGreater(key[2], 0.999)
+
+    def test_the_grid_lies_on_whole_cells_of_the_world_and_has_each_points_value(self):
+        capsules = [((0.3, 4.0, 0.2), (1.1, 1.0, -0.4), 0.5)]
+        grid = mv_world.soft_shadow_grid(capsules, (-0.5, -1.0, 0.5), 3.0)
+        for origin in (grid.x0, grid.z0):
+            self.assertAlmostEqual(origin / grid.cell, round(origin / grid.cell), places=6)
+        moved = mv_world.soft_shadow_grid([((0.31, 4.0, 0.2), (1.11, 1.0, -0.4), 0.5)], (-0.5, -1.0, 0.5), 3.0)
+        self.assertAlmostEqual(moved.x0 / grid.cell, round(moved.x0 / grid.cell), places=6)
+        i, j = numpy.unravel_index(int(numpy.argmin(grid.key)), grid.key.shape)
+        x, z = grid.x0 + j * grid.cell, grid.z0 + i * grid.cell
+        want_key, want_contact = self.through(capsules, [(x, z)])
+        got_key, got_contact = grid.at([x], [z])
+        self.assertAlmostEqual(float(got_key[0]), float(want_key[0]), places=9)
+        self.assertAlmostEqual(float(got_contact[0]), float(want_contact[0]), places=9)
+        self.assertLess(float(got_key[0]), 0.2)
+        # off the grid all the light comes; along its border (nearly) all of it already, so it shows no edge
+        k, c = grid.at([grid.x0 - 1.0], [grid.z0 - 1.0])
+        self.assertEqual((float(k[0]), float(c[0])), (1.0, 1.0))
+        for g in (grid.key, grid.contact):
+            border = numpy.concatenate([g[0], g[-1], g[:, 0], g[:, -1]])
+            self.assertGreater(float(border.min()), 0.999)
+
+    def test_a_floor_raised_takes_the_shadow_at_its_height(self):
+        # a ball 3 above a floor raised by 1: its shadow is the one a ball 2 above the floor at 0 casts
+        here = mv_world.soft_shadow_grid([((0.0, 3.0, 0.0), (0.0, 3.0, 0.0), 0.8)], self.DOWN, 3.0, floor_y=1.0)
+        there = mv_world.soft_shadow_grid([((0.0, 2.0, 0.0), (0.0, 2.0, 0.0), 0.8)], self.DOWN, 3.0)
+        xs = numpy.linspace(-2.0, 2.0, 41)
+        for a, b in zip(here.at(xs, 0 * xs), there.at(xs, 0 * xs)):
+            numpy.testing.assert_allclose(a, b, atol=1e-9)
+        self.assertLess(float(here.at([0.0], [0.0])[0][0]), 0.1)
+
+    def test_a_light_from_below_is_refused(self):
+        with self.assertRaises(ValueError):
+            mv_world.toward_light((0.0, 1.0, 0.0))
+
+    def view(self):
+        return mv_world.View(state((0, 0, 0), 30.0, (25.0, 0.0, 0.0)), (640, 360))
+
+    def test_the_soft_shadow_darkens_the_lines_and_the_pool_as_well_as_the_plane(self):
+        # a sole lying on the floor across the line x = 5 at z = 2.5: under it the line goes dark too (the shadows of v8
+        # and v9 darkened the plane only)
+        view = self.view()
+        figure = FakeFigure(centre=(5.0, 2.5))
+        figure.capsules = [((4.0, 0.42, 2.5), (6.0, 0.42, 2.5), 0.42)]
+        lit = mv_world.floor([view], world_look(shadow=0.0, pool=1.0), view.size, [figure])[0]
+        soft = mv_world.floor([view], world_look(shadow=1.0, pool=1.0), view.size, [figure])[0]
+        u, v, _ = view.project([(5.0, 0.0, 2.5), (5.0, 0.0, 6.0)])
+        on_line = lambda img: float(img[int(round(v[0])), int(round(u[0]))].sum())
+        self.assertGreater(on_line(lit), 60)                                  # a line (and the pool) there
+        self.assertLess(on_line(soft), 0.1 * on_line(lit))
+        away = lambda img: float(img[int(round(v[1])), int(round(u[1]))].sum())
+        self.assertAlmostEqual(away(soft), away(lit), delta=0.5)              # 3.5 behind it: untouched
+
+    def test_the_soft_shadow_needs_her_body(self):
+        view = self.view()
+        with self.assertRaises(ValueError) as caught:
+            mv_world.floor([view], world_look(shadow=1.0), view.size, [FakeFigure()])
+        self.assertIn("shadow_soft", str(caught.exception))
+        self.assertTrue(mv_world.needs_body(world_look(shadow=1.0)))
+        self.assertFalse(mv_world.needs_body(world_look(shadow=1.0, shadow_soft=0)))
+        self.assertFalse(mv_world.needs_body(world_look(shadow=0.0)))
+
+
+@unittest.skipUnless(mv_world and RIN, "needs Pillow, numpy and Sour's Rin (MMD_CLI_RIN)")
+class BodyTest(unittest.TestCase):
+    """her body as capsules (mv_world.Body) on Sour's Rin"""
+
+    def body(self, *keys):
+        from mmd_cli.formats import pmx
+        return mv_world.Body.from_file(RIN, pmx.load(RIN), bone_motion(*keys))
+
+    def test_at_rest_the_capsules_fill_her_height_and_reach_and_the_soles_stand_on_the_floor(self):
+        caps = self.body(bone_key("センター", 0), bone_key("センター", 4)).capsules(0)
+        low = min(min(a[1], b[1]) - r for a, b, r in caps)
+        top = max(max(a[1], b[1]) + r for a, b, r in caps)
+        reach = max(max(abs(a[0]), abs(b[0])) + r for a, b, r in caps)
+        self.assertAlmostEqual(low, 0.1, delta=0.03)          # the toes' height: her soles on the floor
+        self.assertAlmostEqual(top, 20.55, delta=0.3)         # the top of the ribbon (the mesh's 20.55)
+        self.assertAlmostEqual(reach, 6.05, delta=0.4)        # the finger tips with the arms out (the mesh's 6.06)
+        self.assertEqual(len(caps), len(mv_world.BODY_PARTS) + 2 * (len(mv_world.LEG_PARTS) + 2))
+
+    def test_moving_her_whole_moves_every_capsule_and_between_frames_in_a_straight_line(self):
+        body = self.body(bone_key("全ての親", 0), bone_key("全ての親", 10, pos=(3.0, 0.0, -2.0)))
+        at0, at10 = body.capsules(0), body.capsules(10)
+        for (a0, b0, r0), (a1, b1, r1) in zip(at0, at10):
+            numpy.testing.assert_allclose(a1 - a0, (3.0, 0.0, -2.0), atol=1e-6)
+            numpy.testing.assert_allclose(b1 - b0, (3.0, 0.0, -2.0), atol=1e-6)
+            self.assertEqual(r0, r1)
+        at5, at6, part = body.capsules(5), body.capsules(6), body.capsules(5.25)
+        for (a5, _, _), (a6, _, _), (ap, _, _) in zip(at5, at6, part):
+            numpy.testing.assert_allclose(ap, 0.75 * a5 + 0.25 * a6, atol=1e-9)
 
 
 def camera_file(folder, shots, step=1, name="camera.vmd"):
