@@ -88,5 +88,43 @@ class FlickerTest(unittest.TestCase):
         self.assertLess(glide["flicker_ratio"], 0.3)
 
 
+@unittest.skipUnless(np is not None, "needs numpy")
+class ShadeTest(unittest.TestCase):
+    """what the shade keeps of the light, on pictures whose answer is known"""
+
+    def test_the_shade_keeps_what_the_shaded_picture_keeps_of_the_lit_one(self):
+        h, w = 40, 60
+        shadow = np.ones((h, w))
+        shadow[:, :30] = 0.0                                   # the left half in full shadow
+        alpha = np.full((h, w), 255.0)
+        lit = np.zeros((h, w, 3))
+        lit[...] = (220.0, 180.0, 170.0)
+        shaded = lit.copy()
+        shaded[:, :30] *= 0.4                                  # the shade keeps 0.4 of every channel
+        got = shadow_measure.shade([shadow], [alpha], [(shaded, alpha)], [(lit, alpha)])
+        self.assertAlmostEqual(got["shade_keeps"], 0.4, places=6)
+        self.assertAlmostEqual(got["lit_keeps"], 1.0, places=6)
+        self.assertGreater(got["shade_keeps_px"], 500)
+        # a tinted shade (MMD's toon colour): its luma over the lit luma
+        tint = np.array([0.99, 0.86, 0.89])
+        shaded[:, :30] = lit[:, :30] * tint
+        got = shadow_measure.shade([shadow], [alpha], [(shaded, alpha)], [(lit, alpha)])
+        want = float((lit[0, 0] * tint) @ shadow_measure.LUMA / (lit[0, 0] @ shadow_measure.LUMA))
+        self.assertAlmostEqual(got["shade_keeps"], want, places=6)
+
+    def test_only_the_body_and_bright_enough_pixels_count(self):
+        h, w = 30, 30
+        shadow = np.zeros((h, w))
+        alpha = np.full((h, w), 255.0)
+        alpha[:, 20:] = 0.0                                    # not body
+        lit = np.full((h, w, 3), 200.0)
+        lit[:5] = 10.0                                         # too dark to read
+        shaded = lit * 0.5
+        got = shadow_measure.shade([shadow], [alpha], [(shaded, alpha)], [(lit, alpha)])
+        self.assertAlmostEqual(got["shade_keeps"], 0.5, places=6)
+        self.assertEqual(got["shade_keeps_px"], int(shadow_measure.inner(alpha)[5:].sum()))
+        self.assertIsNone(got["lit_keeps"])
+
+
 if __name__ == "__main__":
     unittest.main()

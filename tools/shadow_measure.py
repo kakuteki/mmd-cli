@@ -1,7 +1,7 @@
 """Measure a self shadow drawn alone: how wide its edges are, how much of the body it covers, and how much it flickers
 from frame to frame.
 
-    python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json]
+    python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [--shade SHADED.avi LIT.avi]
 
 SHADOW.avi is MMD's uncompressed AVI (BGRA) of a model drawn with tools/mme_shadow.py --debug: each body pixel's grey is
 the share of the light the self shadow lets through (white lit, black in the shadow, opaque), the rest transparent.
@@ -18,6 +18,11 @@ the share of the light the self shadow lets through (white lit, black in the sha
   difference| over three frames to the summed |first difference|: about 2 for a shadow going one way and back
   (flicker), small for one that glides.  Inner pixels are those whose 8 neighbours are body too (the outline is the
   body's own edge, no shadow).
+* shade (with --shade): how much of the light the shade keeps, from two more AVIs of the same frames: SHADED (the body
+  as it is drawn) and LIT (the body lit everywhere: tools/mme_shadow.py --debug lit).  The luma (BT.709, as
+  tools/shadow_check.py reads the floor) of SHADED over that of LIT, per pixel, where SHADOW is in full shadow (under
+  0.05: "shade_keeps", its median and 10th and 90th percentiles) and where it is lit (over 0.95: "lit_keeps", about 1
+  unless the side away from the light is shaded too).  The colours are MMD's multiplied by the alpha: divided back.
 """
 import argparse
 import json
@@ -108,6 +113,49 @@ def read_avi(path, box=None):
     return [np.clip(s, 0.0, 1.0) for s in shadows], alphas
 
 
+LUMA = np.array([0.2126, 0.7152, 0.0722])
+
+
+def shade(shadows, alphas, shaded, lit):
+    """what the shade keeps of the light: shaded and lit are lists of (rgb, alpha) of the same frames as the shadows,
+    the rgb straight (not multiplied by the alpha)"""
+    full, open_ = [], []
+    for s, a, (rs, as_), (rl, al) in zip(shadows, alphas, shaded, lit):
+        body = inner(a) & (as_ > 254) & (al > 254)
+        ll = rl @ LUMA
+        ok = body & (ll > 20)
+        r = (rs @ LUMA) / np.maximum(ll, 1e-6)
+        full.append(r[ok & (s < FULL)])
+        open_.append(r[ok & (s > 1 - FULL)])
+    out = {}
+    for name, parts in (("shade_keeps", full), ("lit_keeps", open_)):
+        x = np.concatenate(parts) if parts else np.array([])
+        out[name] = float(np.median(x)) if x.size else None
+        out[name + "_p10"] = float(np.percentile(x, 10)) if x.size else None
+        out[name + "_p90"] = float(np.percentile(x, 90)) if x.size else None
+        out[name + "_px"] = int(x.size)
+    return out
+
+
+def read_rgb(path, box=None):
+    """[(rgb, alpha)] of the frames of an uncompressed AVI of MMD, the colour divided by the alpha (straight)"""
+    probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0", path], capture_output=True, text=True, check=True).stdout.strip().split(",")
+    w, h = int(probe[0]), int(probe[1])
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+                         capture_output=True, check=True).stdout
+    n = len(raw) // (w * h * 4)
+    frames = np.frombuffer(raw[:n * w * h * 4], dtype=np.uint8).reshape(n, h, w, 4)
+    if box:
+        x0, y0, x1, y1 = box
+        frames = frames[:, y0:y1, x0:x1]
+    out = []
+    for f in frames:
+        a = f[..., 3].astype(np.float64)
+        out.append((f[..., :3].astype(np.float64) / np.maximum(a, 1.0)[..., None] * 255.0, a))
+    return out
+
+
 def measure(shadows, alphas):
     per = [frame_measures(s, a) for s, a in zip(shadows, alphas)]
     widths = [m["edge_width_px"] for m in per if m.get("edge_width_px") is not None]
@@ -125,12 +173,17 @@ def main(argv=None):
     p.add_argument("avi")
     p.add_argument("--box", help="X0,Y0,X1,Y1: measure this part of the picture only")
     p.add_argument("--out", help="write the measures to this JSON file")
+    p.add_argument("--shade", nargs=2, metavar=("SHADED", "LIT"),
+                   help="AVIs of the same frames: the body as drawn and lit everywhere (mme_shadow --debug lit)")
     a = p.parse_args(argv)
     try:
         box = tuple(int(v) for v in a.box.split(",")) if a.box else None
         if box is not None and (len(box) != 4 or box[2] <= box[0] or box[3] <= box[1]):
             raise ValueError("--box is X0,Y0,X1,Y1 with X1 > X0 and Y1 > Y0")
-        result = measure(*read_avi(a.avi, box))
+        shadows, alphas = read_avi(a.avi, box)
+        result = measure(shadows, alphas)
+        if a.shade:
+            result["summary"].update(shade(shadows, alphas, read_rgb(a.shade[0], box), read_rgb(a.shade[1], box)))
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
