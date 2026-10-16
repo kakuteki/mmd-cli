@@ -438,6 +438,77 @@ class WorldPlanTest(unittest.TestCase):
         self.assertNotIn(" --from ", prepare[0])
 
 
+class SelfShadowPlanTest(unittest.TestCase):
+    """"self_shadow" in the plan (tools/mme_shadow.py): before MMD renders, the driver checks that it will draw the model's
+    body shadow as the plan says ("soft": through MME with the effect beside the model; "mmd": MMD's own), and with "soft"
+    -Resume watches MME's files beside MMD.  Without it the scripts are those of before (the golden tests above)"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, plan, label, **kw):
+        folder = os.path.join(self.tmp, label)
+        summary = mv_chunks.write(mv_chunks.check_plan(plan), mv_chunks.plan_chunks(SPANS, 120), folder, "t", 240, 0.5, **kw)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            return f.read()
+
+    def test_self_shadow_is_mmd_or_soft_or_left_out(self):
+        self.assertIsNone(mv_chunks.check_plan(dict(PLAN))["self_shadow"])
+        for want in ("mmd", "soft"):
+            self.assertEqual(mv_chunks.check_plan(dict(PLAN, self_shadow=want))["self_shadow"], want)
+        for bad in ("hard", "Soft", 1, True):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.check_plan(dict(PLAN, self_shadow=bad))
+
+    def test_the_driver_checks_the_self_shadow_before_anything_renders(self):
+        for want in ("mmd", "soft"):
+            for workers in (1, 2):
+                driver = self.written(dict(PLAN, self_shadow=want), "%s%d" % (want, workers), workers=workers)
+                lines = driver.splitlines()
+                verify = [i for i, line in enumerate(lines) if "tools/mme_shadow.py verify" in line]
+                self.assertEqual(len(verify), 1, (want, workers))
+                self.assertTrue(lines[verify[0]].endswith(
+                    "verify 'C:/MMD/MikuMikuDance.exe' 'C:/MMD/UserFile/Model/Rin/White.pmx' %s" % want), lines[verify[0]])
+                self.assertIn("exit 1", lines[verify[0] + 1])
+                self.assertIn("exit 1", lines[verify[0] + 2])
+                # in the driver's own part, before the look is checked and before any chunk is rendered (one worker:
+                # the calls of Run-Chunk; --workers: the start of the worker processes, which render)
+                look = [i for i, line in enumerate(lines) if line.startswith("$check = ")]
+                self.assertTrue(look and verify[0] < look[0], (want, workers))
+                if workers == 1:
+                    calls = [i for i, line in enumerate(lines) if line.startswith("Run-Chunk ")]
+                else:
+                    calls = [i for i, line in enumerate(lines) if line.startswith("$self = (Get-Process")]
+                self.assertTrue(calls and verify[0] < min(calls), (want, workers))
+        self.assertNotIn("mme_shadow", self.written(dict(PLAN), "plain"))
+        self.assertNotIn("mme_shadow", self.written(dict(PLAN), "plain2", workers=2))
+
+    def test_with_soft_a_failed_batch_stops_the_mmd_it_left_open(self):
+        # MME answers a broken effect with a window of its own, and the batch stops at it with MMD open behind it
+        # (softshadow-mme NOTES): the soft driver stops that MMD (DriverTest runs it); the others are as before
+        for workers in (1, 2):
+            lines = self.written(dict(PLAN, self_shadow="soft"), "stop%d" % workers, workers=workers).splitlines()
+            defined = [i for i, line in enumerate(lines) if line == "function Stop-Launched($json) {"]
+            run = [i for i, line in enumerate(lines) if line.startswith("function Run-Chunk(")]
+            self.assertEqual(len(defined), 1, workers)
+            self.assertLess(defined[0], run[0])
+            batch = [i for i, line in enumerate(lines) if "-m mmd_cli --out $json batch $batch" in line]
+            self.assertEqual(lines[batch[0] + 1], "    if ($LASTEXITCODE -ne 0) { Stop-Launched $json }")
+            self.assertIn("STOP: the MMD batch failed", lines[batch[0] + 2])
+            self.assertIn("-ieq 'C:/MMD/MikuMikuDance.exe'", "\n".join(lines[defined[0]:run[0]]))
+            for plan in (dict(PLAN), dict(PLAN, self_shadow="mmd")):
+                self.assertNotIn("Stop-Launched", self.written(plan, "plain%d%s" % (workers, plan.get("self_shadow")),
+                                                               workers=workers))
+
+    def test_soft_watches_mmes_files_beside_mmd(self):
+        soft = mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN, self_shadow="soft")))
+        for name in ("d3d9.dll", "MMHack.dll", "MMEffect.dll"):
+            self.assertIn("C:/MMD/" + name, soft)
+        plain = mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN)))
+        self.assertEqual(mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN, self_shadow="mmd"))), plain)
+
+
 class WorkersScriptTest(unittest.TestCase):
     """--workers N (N from 2) writes a driver that renders and folds N chunks at the same time.  The batches and the join list
     are those of one worker; the layers and the text are prepared once and every chunk folds with them (--prepared).
@@ -702,8 +773,16 @@ STUBS = r"""
 $log = $env:STUB_LOG
 function python {
     Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
+    if ($args[0] -eq 'tools/mme_shadow.py') { '{"ok": true}'; $global:LASTEXITCODE = 0; return }
     if ($args[0] -eq '-m') {
-        if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) { $global:LASTEXITCODE = 1; return }
+        if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) {
+            # the answer of a batch that stopped at a window: its launch with the process id (STUB_BATCH_PID)
+            if ($env:STUB_BATCH_PID) {
+                Set-Content -LiteralPath $args[3] -Encoding UTF8 -Value ('{"ok": false, "results": [{"argv": ["launch", "--headless"], ' +
+                    '"ok": true, "pid": ' + $env:STUB_BATCH_PID + '}, {"argv": ["model", "load"], "ok": false}]}')
+            }
+            $global:LASTEXITCODE = 1; return
+        }
         $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
         $r = $render | ConvertFrom-Json
         # the AVI holds its rate, as the header of MMD's AVI does
@@ -926,6 +1005,36 @@ class DriverTest(unittest.TestCase):
         self.assertEqual(code, 1, text)
         self.assertFalse(any("t_01.avi" in c for c in calls if "mv_look.py" in c), calls)
         self.assertFalse(any(c.startswith("ffmpeg") for c in calls), calls)
+
+    def test_with_the_soft_self_shadow_a_failed_batch_stops_the_mmd_it_left_open_and_nothing_else(self):
+        # MME answers a broken effect with a window of its own and the batch stops at it, MMD left open behind it
+        # (softshadow-mme NOTES): the driver stops that MMD by the process id of the batch's launch, when it is the
+        # plan's MMD.  A program that is not stands for MMD here (ping, copied to the plan's MikuMikuDance.exe)
+        ping = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE")
+        if not os.path.isfile(ping):
+            self.skipTest("needs PING.EXE")
+        exe = os.path.join(self.tmp, "MMD", "MikuMikuDance.exe")
+        shutil.copy2(ping, exe)
+        for name in ("d3d9.dll", "MMHack.dll", "MMEffect.dll"):
+            self.put("MMD/" + name, name)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=flags)
+        mmd = subprocess.Popen([exe, "-n", "120", "127.0.0.1"], **quiet)
+        other = subprocess.Popen([ping, "-n", "120", "127.0.0.1"], **quiet)
+        for proc in (mmd, other):
+            self.addCleanup(proc.wait, 10)
+            self.addCleanup(proc.kill)
+        self.write(self_shadow="soft")
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_01.json", STUB_BATCH_PID=str(other.pid))
+        self.assertEqual(code, 1, text)
+        self.assertIsNone(other.poll())                               # not the plan's MMD: left alone
+        self.assertNotIn("stopped MMD", text)
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_01.json", STUB_BATCH_PID=str(mmd.pid))
+        self.assertEqual(code, 1, text)
+        self.assertIn("stopped MMD %d" % mmd.pid, text)
+        self.assertIn("STOP: the MMD batch failed (exit 1)", text)    # the batch's own code, after the stop
+        self.assertIsNotNone(mmd.wait(10))
+        self.assertTrue(any("tools/mme_shadow.py verify" in c for c in calls), calls)
 
     def test_a_failed_fold_stops_the_run_and_says_why_even_beside_an_old_mp4_of_the_right_length(self):
         # review 10: with the exit code of mv_look unread, an old mp4 of the same name filled the failed chunk
