@@ -131,7 +131,9 @@ The steps (STEPS, each can be switched off), in this order:
    how far the fingers trail a moving hand (research B 3); the cap is ours: in purposeful arm movements the passive
    motion of the next joint out, the wrist, is often 1 - 5 degrees (Koshland 2000, which measured the wrist, not the
    fingers), and 5 degrees of a finger is seen (Jorg 2011).  Not where the hand touches something (as relax), stiffer
-   on a beat hold (as follow).  Gravity is left out by default: the shape a dancer shows is held against it.
+   on a beat hold (as follow).  The deflection is led by its equilibrium lag 2 zeta / omega (PASSIVE_LEAD, --passive-lead):
+   the dancer's nervous system meets the swing it makes, so the fingers trail and run on with the hand, not after it.
+   Gravity is left out by default: the shape a dancer shows is held against it.
 10. speed: a finger whose MP + PIP + DIP turns faster than --speed-max (1,900 deg/s: Date 2021's young adults, mean + 2
    SD of the fingertip's angular velocity in fast grip and release) is spread round the middle of its change (a
    centred box average, wide only there), so the change keeps its time; last of the timing steps, so that what the
@@ -163,7 +165,7 @@ it moved the MP, the passive lag per finger, its frequencies).
 
 Do not use it with tools/anatomy_layer.py's --tenodesis (off by default): this layer has its own.
 
---as-v9 gives back the hands of v9 (main c012c32) byte for byte: --no-transit.  --as-v8 gives back the hands of v8
+--as-v9 gives back the hands of v9 (main c012c32) byte for byte: --no-transit --passive-lead 0.  --as-v8 gives back the hands of v8
 (main 59b28e6) byte for byte: --no-transit --no-pace --order-mode delay --zeta-open 0.85.
 """
 import argparse
@@ -564,6 +566,11 @@ ZETA = {"held": 0.85, "open": 0.85}
 ZETA_OPEN = {"人指": 0.562, "中指": 0.614, "薬指": 0.591, "小指": 0.689}
 PASSIVE_SHARE = {"mp": 1.0, "pip": 0.35, "dip": 0.2, "tmp": 1.0, "ip": 0.5}
 PASSIVE_CAP = (4.0, 10.0)                           # degrees: the lag is eased from the start toward the cap
+# the passive lag's timing: each finger's deflection moved earlier by this share of its equilibrium lag 2 zeta / omega
+# (0.3 - 0.8 frames on Rin's fingers): the nervous system predicts the interaction torques of a moving limb and meets
+# them (Gribble & Ostry 1999, Koshland 2000), so the deflection comes with the hand's swing, its size and run-on kept.
+# Unled, it put the left fingers 0.21 frames behind the wrist by the a09 on v9 (the dancers' -0.01)
+PASSIVE_LEAD = 1.0
 ACC_SMOOTH = 1                                      # frames each way of the triangle that smooths the accelerations
 # the active circumduction of the wrist as an ellipse (Gracia-Ibanez 2020, dominant hand): x radial (+) / ulnar
 # deviation, y palmar flexion (+) / extension, degrees: the centre, the half axes (across, along) and the long axis's
@@ -611,14 +618,15 @@ def default_params():
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
              stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE,
              follow_scale=FOLLOW_SCALE, kime_stiffness=KIME_STIFFNESS, order_mode="centre", zeta_open=dict(ZETA_OPEN),
-             pace_c=PACE["c"], pace_p=PACE["p"], transit_scale=1.0)
+             pace_c=PACE["c"], pace_p=PACE["p"], transit_scale=1.0, passive_lead=PASSIVE_LEAD)
     return p
 
 
 def as_v9(params):
-    """the switches back to the hands of v9 (main c012c32): no transit; everything else as given"""
+    """the switches back to the hands of v9 (main c012c32): no transit, the passive lag not led; everything else as
+    given"""
     p = dict(params)
-    p.update(transit=False)
+    p.update(transit=False, passive_lead=0.0)
     return p
 
 
@@ -2023,12 +2031,12 @@ def main(argv=None):
                     help="the open hand's stiffness at a grown finger's MP, N m/rad (default %g, the upper end of a relaxed "
                          "MCP; 0.42 gives the dancers' passive gain of FineDance and less a09 lag, and less motion)"
                          % STIFFNESS["open"])
-    ap.add_argument("--passive-lead", type=float, default=0.0,
-                    help="the passive lag's timing moved earlier by this share of each finger's 2 zeta / omega (default 0)")
+    ap.add_argument("--passive-lead", type=float, default=PASSIVE_LEAD,
+                    help="the passive lag's timing moved earlier by this share of each finger's 2 zeta / omega (default 1; 0 is v9's)")
     ap.add_argument("--transit-scale", type=float, default=1.0,
                     help="the transit's excursions (the fingers moving out and back with each movement of the arm) times "
                          "this (default 1, FineDance's dancers; 0 leaves them out as --no-transit does)")
-    ap.add_argument("--as-v9", action="store_true", help="the hands of v9 (main c012c32) byte for byte: --no-transit")
+    ap.add_argument("--as-v9", action="store_true", help="the hands of v9 (main c012c32) byte for byte: --no-transit --passive-lead 0")
     ap.add_argument("--as-v8", action="store_true",
                     help="the hands of v8 byte for byte: --no-transit --no-pace --order-mode delay --zeta-open 0.85")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")

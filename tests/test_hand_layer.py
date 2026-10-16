@@ -1207,6 +1207,27 @@ class LayerPassiveTest(unittest.TestCase):
         self.assertGreater(runs_on[0], 0.3)
         self.assertLess(runs_on[1], 0.6 * runs_on[0])
 
+    def test_the_lag_keeps_its_shape_and_is_not_late(self):
+        # the nervous system meets the hand's swing (it predicts the interaction torques, Gribble & Ostry 1999): the
+        # fingers' deflection keeps its size and its run-on past the stop, but comes its equilibrium lag 2 zeta / omega
+        # (0.3 - 0.8 frames on Rin's fingers) earlier than the bare spring and damper give it
+        arm = [(0, 20.0), (20, 20.0), (28, 80.0), (LAST, 80.0)]
+        dance = hand_dance([(0, "open"), (LAST, "open")], arm=arm, centre=False)
+        ref = out_angles(hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion, "左", "中指１")[0]
+        p0 = only("passive")
+        p0["passive_lead"] = 0.0
+        late = out_angles(hand_layer.layer(MODEL, dance, p0, pulp=PULP).motion, "左", "中指１")[0] - ref
+        now = self.dev("open", arm)
+
+        def peak_time(d):
+            i = int(np.argmax(np.abs(d[24:40]))) + 24
+            y = np.abs(d)
+            return i + 0.5 * (y[i - 1] - y[i + 1]) / (y[i - 1] - 2 * y[i] + y[i + 1])
+        self.assertGreater(peak_time(late) - peak_time(now), 0.2)
+        self.assertLess(peak_time(late) - peak_time(now), 1.0)
+        self.assertAlmostEqual(float(np.abs(now).max()), float(np.abs(late).max()), delta=0.15 * float(np.abs(late).max()))
+        self.assertGreater(float(np.abs(now[28:36]).max()), 0.3)                    # it still runs on past the stop
+
     def swing_back(self, d):
         """the swing back past the input the other way after the stop at 28, as a share of the deviation at the stop"""
         after = d[29:]
@@ -1574,7 +1595,7 @@ class AsV8Test(unittest.TestCase):
                 fh.write(model_bytes())
             make, _ = V8_DANCES["swing_open_fist"]
             vmd.dump(make(), dance_path)
-            runs = {"v8": ["--as-v8"], "parts": ["--no-transit", "--no-pace", "--order-mode", "delay", "--zeta-open", "0.85"],
+            runs = {"v8": ["--as-v8"], "parts": ["--no-transit", "--passive-lead", "0", "--no-pace", "--order-mode", "delay", "--zeta-open", "0.85"],
                     "default": []}
             got = {}
             for name, extra in runs.items():
@@ -1583,7 +1604,7 @@ class AsV8Test(unittest.TestCase):
                     code = hand_layer.main([dance_path, model_path, out, "--report", rep] + extra)
                 self.assertEqual(code, 0, name)
                 got[name] = (read_bytes(out), read_json(rep)["params"])
-            self.assertEqual(got["v8"][0], got["parts"][0])                  # the preset is the four switches
+            self.assertEqual(got["v8"][0], got["parts"][0])                  # the preset is the five switches
             self.assertNotEqual(got["v8"][0], got["default"][0])
             self.assertFalse(got["v8"][1]["pace"])
             self.assertEqual(got["v8"][1]["order_mode"], "delay")
