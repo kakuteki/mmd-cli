@@ -400,7 +400,8 @@ def _shade(X, Z, figure, strength):
 
 # where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with
 MMD_LIGHT = (-0.5, -1.0, 0.5)
-KEY_SHARE = 0.6          # of the light on the floor's plane and lines, the share of the key light (the rest is all round)
+KEY_SHARE = 0.6          # of the light on the floor's plane and pool, the share of the key light (the rest is all round);
+                         # tools/mme_shadow.py gives her body's shadow the same (its key_share)
 SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
 SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
 CUTOFF = 8.0             # standard deviations of the light's spread past which a capsule keeps none of it off
@@ -679,14 +680,20 @@ def needs_body(look):
 
 
 def soft_light(key, contact, stage):
-    """(plane, pool): what the floor's plane and lines, and the pool of light, keep of their light where the soft shadow
-    lets `key` of the key light and `contact` of the light from all round through.  stage.shadow scales the shadow,
-    stage.shadow_contact the darkening from all round; the pool is the key light's alone, the plane and the lines take
-    KEY_SHARE of theirs from it"""
+    """what the floor's plane and the pool of light keep of their light where the soft shadow lets `key` of the key light
+    and `contact` of the light from all round through: KEY_SHARE of their light comes from the key light, which only the
+    shadow along it cuts, the rest from all round, which only the darkening from all round cuts.  stage.shadow scales
+    the shadow, stage.shadow_contact the darkening from all round.  So the core of a shadow away from her feet keeps
+    1 - KEY_SHARE (0.4) of the floor round it, and beside a foot on the lit side only the light from all round is cut.
+    The lines give light of their own (v7's floor: emissive materials), which no shadow cuts.
+
+    (Before 2026-10-17 the pool was the key light's alone and both shares took the darkening from all round: the core of
+    the shadow kept 13 to 16 % of the floor round it, and the lit floor beside a foot lost a tenth, review_softshadow;
+    the lines took the plane's share too)"""
     s = float(stage["shadow"])
     m_key = 1.0 - s * (1.0 - key)
     m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
-    return ((1.0 - KEY_SHARE) + KEY_SHARE * m_key) * m_all, m_key * m_all
+    return (1.0 - KEY_SHARE) * m_all + KEY_SHARE * m_key
 
 
 def _inside(view, d, half):
@@ -759,16 +766,17 @@ def _floor_once(view, stage, figure):
         raise ValueError("stage.shadow_soft 1 casts the shadow of her body: read the dancer with her body "
                          "(Figure.from_files(..., body=True)), or set stage.shadow_soft 0")
     if soft:
-        # the soft shadow of her body (soft_shadow_grid): the plane, the lines and the pool each keep their share of light
+        # the soft shadow of her body (soft_shadow_grid): the plane and the pool keep their share of light (soft_light);
+        # the lines give their own and are left as they are
         grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]),
                                 groups=getattr(figure, "capsule_groups", None))
         through = grid.at(X, Z) if grid is not None else (np.ones(X.shape), np.ones(X.shape))
-        lit, pooled = soft_light(*through, stage)
-        base = base * lit[:, None]
+        lit = soft_light(*through, stage)
         if pool is not None:
-            base += pool * pooled[:, None]
-        mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * (lit * plain)[:, None]
-        rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * (lit * accent)[:, None]
+            base += pool
+        base = base * lit[:, None]
+        mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * plain[:, None]
+        rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * accent[:, None]
         return rgb, cover
     if pool is not None:
         base += pool
