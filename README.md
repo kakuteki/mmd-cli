@@ -1598,7 +1598,9 @@ python tools/lip_sync.py face.vmd vocals.flac out.vmd --lines lines.tsv [--dance
   `checks`（50 ms 未満の母音・150 ms を超える子音の数）、キーの数（前と後）。`--align-out` は全音節の c0（子音の始まり）・
   v0（母音の始まり）・v1（母音の終わり）。
 - 作る順: … → 視線 eye_gaze → 表情 face_life → **口 lip_sync** → eye_optics。eye_optics が表情から読むのは瞼のモーフだけ
-  なので、口を差し替えても eye_optics の出力は変わらない。
+  なので、口を差し替えても eye_optics の出力は変わらない。描画では face_life の出力の代わりに lip_sync の出力を読む。
+- 実データの試験（`tests/test_lip_sync.py` の RealSongTest）は、KAZUSA の表情モーションと `_spike/out/hibikase/audio/vocals_htdemucs.flac`
+  （分けた歌声）・`_spike/out/hibikase/mv/lyrics/lines_timed.tsv`（時刻つきのかなの歌詞）を読む。hinata は `C:/work/hibikase/testdata` に置いた。
 
 ### 目の光・瞳孔・両目の寄りを人の目に合わせる（`tools/pmx_eyes.py`・`tools/eye_optics.py`、MMD なし）
 
