@@ -885,6 +885,41 @@ class HandTest(unittest.TestCase):
             if i >= 41:
                 self.assertLess(math.dist(p, tips[min(look["last"], i + 1)]), 1e-3, i)
 
+    def test_the_aim_at_the_tip_gives_back_the_gaze_before_the_switch(self):
+        # main c012c32 (the MV v9's gaze) wrote these bytes for the slanted finger; --aim tip writes them again
+        import hashlib
+        model, dance, _, _ = self.slanted()
+        for life, digest in ((False, "e85c7c242aac8d7ecf64ea935063c104"), (True, "78a3a3b0339b0388339e6ed33e89501c")):
+            tip = eye_gaze.gaze(model, dance, BEHIND, life=life, aim="tip")
+            self.assertEqual(hashlib.md5(vmd.dumps(tip.motion)).hexdigest(), digest, life)
+            self.assertNotEqual(hashlib.md5(vmd.dumps(eye_gaze.gaze(model, dance, BEHIND, life=life).motion)).hexdigest(),
+                                digest, life)
+            self.assertEqual(tip.report["hand_rules"]["aim_mode"], "tip")
+        with self.assertRaises(ValueError):
+            eye_gaze.gaze(model, dance, BEHIND, aim="palm")
+
+    def test_the_command_takes_the_aim(self):
+        model, dance, _, _ = self.slanted()
+        folder = tempfile.mkdtemp()
+        try:
+            paths = {k: os.path.join(folder, k) for k in ("d.vmd", "c.vmd", "m.pmx", "tip.vmd", "finger.vmd")}
+            vmd.dump(dance, paths["d.vmd"])
+            vmd.dump(BEHIND, paths["c.vmd"])
+            with open(paths["m.pmx"], "wb") as fh:
+                fh.write(rin_like_bytes(hands=True, fingers=(("人指３先", (0.8, 2.2, -0.25)),) + POINTING[1:]))
+            for name, extra in (("tip.vmd", ["--aim", "tip"]), ("finger.vmd", [])):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = eye_gaze.main([paths["d.vmd"], paths["c.vmd"], paths["m.pmx"], paths[name]] + extra)
+                self.assertEqual(code, 0, name)
+            want = vmd.dumps(eye_gaze.gaze(pmx.load(paths["m.pmx"]), vmd.load(paths["d.vmd"]), vmd.load(paths["c.vmd"]),
+                                           aim="tip").motion)
+            with open(paths["tip.vmd"], "rb") as fh:
+                self.assertEqual(fh.read(), want)
+            with open(paths["finger.vmd"], "rb") as fh:
+                self.assertNotEqual(fh.read(), want)
+        finally:
+            shutil.rmtree(folder)
+
     def test_the_eyes_follow_a_hand_that_moves_slowly_ahead_of_it(self):
         # the hand moves 16 degrees across before her face in 2 seconds: the eyes follow it with no saccade (a person
         # tracks the hand she moves herself smoothly, the eyes a little ahead of it)
