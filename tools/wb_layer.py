@@ -88,6 +88,7 @@ PELVIS = "下半身"
 class Result:
     motion: vmd.Motion
     report: dict
+    arrays: dict = None         # per frame: bend_deg [F] (the whole bend), pelvis_quick_cm [F, 2] (x, z), head_target_cm [F, 2]
 
 
 def qmul(a, b):
@@ -127,6 +128,7 @@ def bend(body, joints, gain=GAIN, cutoff_hz=CUTOFF_HZ, max_bend_deg=MAX_BEND_DEG
     rep = {"bend_deg": D._q(total, (0.5, 0.9, 0.99)), "bend_deg_max": round(float(total.max()), 3),
            "bounded_frames": int(over.sum()), "faded_frames": int(np.sum(w < 1.0)),
            "pelvis_quick_cm": D._q(np.linalg.norm(hp[:, [0, 2]], axis=1) * 8.0, (0.5, 0.9, 0.99))}
+    rep["_arrays"] = {"bend_deg": total, "pelvis_quick_cm": hp[:, [0, 2]] * 8.0, "head_target_cm": want[:, [0, 2]] * 8.0}
     return phi, rep
 
 
@@ -185,12 +187,13 @@ def layer(model, motion, params=None, log=None):
     body = B.Body(model, motion)
     joints = SPINE if all(body.sk.has(n) for n in SPINE) else SPINE_PLAIN
     phi, brep = bend(body, joints, p["gain"], p["cutoff_hz"], p["max_bend_deg"])
+    arrays = brep.pop("_arrays")
     report = {"params": p, "frames": body.F, "joints": list(joints), "tilt_deg": brep}
     before = response(body, joints)
     if np.abs(phi).max() < 1e-9:
         report.update({"written": [], "response": {k: {"before": v, "after": v} for k, v in before.items()},
                        "head_turn_change_deg_max": 0.0, "seconds": round(time.time() - t0, 2)})
-        return Result(motion, report)
+        return Result(motion, report, arrays)
     delta = qexp(phi)                                    # each joint's world tilt
     local = {}
     n = 0
@@ -214,7 +217,7 @@ def layer(model, motion, params=None, log=None):
                    "head_turn_change_deg_max": round(float(np.degrees(2.0 * np.arccos(np.clip(dq, -1.0, 1.0))).max()), 4),
                    "seconds": round(time.time() - t0, 2)})
     log("bend: median %.2f, max %.2f degrees" % (brep["bend_deg"]["p50"], brep["bend_deg_max"]))
-    return Result(out, report)
+    return Result(out, report, arrays)
 
 
 def main(argv=None):
@@ -226,9 +229,10 @@ def main(argv=None):
     ap.add_argument("--gain", type=float, default=GAIN, help="the head's pivot moves back by this share of the pelvis's quick part")
     ap.add_argument("--cutoff", type=float, default=CUTOFF_HZ, help="Hz: the pelvis's slower part, which the upper body follows")
     ap.add_argument("--max-bend", type=float, default=MAX_BEND_DEG, help="degrees: the whole bend of the spine at most")
+    ap.add_argument("--arrays", help="write the per-frame curves (.npz): the bend, the pelvis's quick part, the head's target")
     args = ap.parse_args(argv)
     try:
-        B.check_distinct(args.dance, args.model, args.out, args.report)
+        B.check_distinct(args.dance, args.model, args.out, args.report, args.arrays)
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
         result = layer(model, motion, {"gain": args.gain, "cutoff_hz": args.cutoff, "max_bend_deg": args.max_bend})
@@ -237,6 +241,10 @@ def main(argv=None):
                       out=os.path.abspath(args.out))
         if args.report:
             B.write_bytes(os.path.abspath(args.report), (json.dumps(report, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
+        if args.arrays:
+            buf = io.BytesIO()
+            np.savez_compressed(buf, **result.arrays)
+            B.write_bytes(os.path.abspath(args.arrays), buf.getvalue())
     except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2

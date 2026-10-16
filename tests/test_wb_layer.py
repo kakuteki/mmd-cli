@@ -296,6 +296,12 @@ class CommandTest(unittest.TestCase):
             with open(r, encoding="utf-8") as f:
                 rep = json.load(f)
             self.assertIn("response", rep)
+            a = os.path.join(tmp, "a.npz")
+            self.assertEqual(wl.main([d, m, o, "--arrays", a]), 0)
+            with np.load(a) as z:
+                self.assertEqual(z["bend_deg"].shape, (120,))
+                self.assertEqual(z["pelvis_quick_cm"].shape, (120, 2))
+                self.assertGreater(z["bend_deg"].max(), 0.5)
             self.assertEqual(wl.main([d, d, o]), 2)                  # the same file twice
         finally:
             shutil.rmtree(tmp)
