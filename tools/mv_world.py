@@ -403,6 +403,7 @@ MMD_LIGHT = (-0.5, -1.0, 0.5)
 KEY_SHARE = 0.6          # of the light on the floor's plane and lines, the share of the key light (the rest is all round)
 SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
 SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
+CUTOFF = 8.0             # standard deviations of the light's spread past which a capsule keeps none of it off
 
 
 def _erf(x):
@@ -462,24 +463,37 @@ def capsule_shade(P, a, b, r, ell, sigma):
     inside = length <= r
     beta = np.arcsin(np.clip(r / np.maximum(length, r), 0.0, 1.0))
     sig = max(float(sigma), 1e-6)
-    band = _normal_cdf((gamma + beta) / sig) - _normal_cdf((gamma - beta) / sig)
-    half = beta * math.sqrt(math.pi) / 2.0
-    disc = (_normal_cdf((gamma + half) / sig) - _normal_cdf((gamma - half) / sig)) * (2.0 * _normal_cdf(half / sig) - 1.0)
     if uu > 1e-12:
         # past an end (or near it) the capsule is its end's disc: the signed overhang, as an angle seen from P
         over = np.where(free > 0.5, free - 1.0, -free) * math.sqrt(uu) / length
         k = np.clip(0.5 + over / (beta + 2.0 * sig), 0.0, 1.0)
     else:
         k = np.ones(e.shape)
-    key = np.where(inside, 1.0, (1.0 - k) * band + k * disc)
-    # all round: the nearest point of the axis to P, faded out to nothing at contact_reach(r) from the axis
+    # the band where k < 1 and the disc where k > 0, each only where the Gaussian reaches it (beyond 8 sigma its share is
+    # under 1e-15)
+    key = np.zeros(e.shape)
+    near = (k < 1.0) & (gamma - beta < CUTOFF * sig)
+    if near.any():
+        g, bt = gamma[near], beta[near]
+        key[near] += (1.0 - k[near]) * (_normal_cdf((g + bt) / sig) - _normal_cdf((g - bt) / sig))
+    half = beta * math.sqrt(math.pi) / 2.0
+    near = (k > 0.0) & (gamma - half < CUTOFF * sig)
+    if near.any():
+        g, hf = gamma[near], half[near]
+        key[near] += k[near] * ((_normal_cdf((g + hf) / sig) - _normal_cdf((g - hf) / sig))
+                                * (2.0 * _normal_cdf(hf / sig) - 1.0))
+    key = np.where(inside, 1.0, key)
+    # all round: the nearest point of the axis to P, faded out to nothing at contact_reach(r) from the axis (a capsule
+    # higher above the floor than that darkens nothing)
+    reach = contact_reach(r)
+    if min(float(a[1]), float(b[1])) - r >= reach:
+        return np.clip(key, 0.0, 1.0), np.zeros(e.shape)
     if uu > 1e-12:
         s2 = np.clip(-(w0 @ u) / uu, 0.0, 1.0)
     else:
         s2 = np.zeros(e.shape)
     c = w0 + s2[:, None] * u[None, :]
     dist = np.sqrt(np.maximum((c * c).sum(axis=1), 1e-18))
-    reach = contact_reach(r)
     t = np.clip((reach - dist) / (0.4 * reach), 0.0, 1.0)
     fade = t * t * (3.0 - 2.0 * t)
     contact = np.where(dist <= r, 1.0, np.clip((r / dist) ** 2 * np.maximum(c[:, 1] / dist, 0.0), 0.0, 1.0) * fade)
