@@ -424,6 +424,26 @@ def _shadow_check_lines(plan):
             "(Why $LASTEXITCODE); $shadow; exit 1 }" % plan["self_shadow"]]
 
 
+def _stop_launched_lines(plan):
+    """with self_shadow "soft": the function that stops the MMD a failed batch left open.  MME answers an effect it cannot
+    read with a window of its own ("MikuMikuEffect": the effect file could not be read, with the compiler's error), and
+    mmd-cli's batch stops at it (DialogPending, in some 4 s) with MMD left open behind the window (softshadow-mme NOTES).
+    The batch's answer gives the process id of its launch; the driver stops that process when it is the plan's MMD"""
+    if plan.get("self_shadow") != "soft":
+        return []
+    return ["function Stop-Launched($json) {",
+            "    try { $answer = Get-Content -LiteralPath $json -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json } catch { return }",
+            "    foreach ($r in @($answer.results)) {",
+            "        if (-not $r.argv -or $r.argv[0] -ne 'launch' -or -not $r.pid) { continue }",
+            "        $p = Get-Process -Id ([int]$r.pid) -ErrorAction SilentlyContinue",
+            "        if ($p -and $p.Path -and (($p.Path -replace '\\\\', '/') -ieq %s)) {" % _ps(plan["mmd"].replace("\\", "/")),
+            "            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue",
+            "            'stopped MMD {0}: the failed batch left it open (MME answers a broken effect with a window of its own)' -f $p.Id",
+            "        }",
+            "    }",
+            "}"]
+
+
 def _check_lines(plan, look_check, what):
     return [look_check,
             # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
@@ -479,7 +499,9 @@ def _run_chunk_lines(plan, workers):
                 "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
                 "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }"]
         skipped, finished = [], ["    '{0} {1} frames (want {2}), {3} s' -f $name, $n, $want, [int]$sw.Elapsed.TotalSeconds"]
-    return (["function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
+    stop = ["    if ($LASTEXITCODE -ne 0) { Stop-Launched $json }"] if plan.get("self_shadow") == "soft" else []
+    return (_stop_launched_lines(plan) +
+            ["function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
              "    $made = \"$recipe`n$stamp\"",
              "    $kept = ''",
              "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
@@ -504,8 +526,8 @@ def _run_chunk_lines(plan, workers):
              "    }",
              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }"]
             + free +
-            ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py,
-             "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
+            ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py] + stop +
+            ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
              "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
              "    if ($LASTEXITCODE -ne 0) {",
              "        '{0} STOP: mv_look failed ({1}); the AVI is kept: {2}' -f $name, (Why $LASTEXITCODE), $avi",
