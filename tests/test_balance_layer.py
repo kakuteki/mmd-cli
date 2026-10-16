@@ -1418,15 +1418,30 @@ class SongTest(unittest.TestCase):
         units/s^2 at 132.2 s); after the layer no frame is over DOWN_ACC_MAX, and the dance's lowest points stay"""
         v = self.report["vertical"]
         self.assertGreater(v["pelvis"]["dance_over_g"], 100)
-        self.assertLessEqual(v["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertLessEqual(v["centre"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertEqual(v["pelvis"]["after_over_bound"], 0)
+        # on the floor (a foot holds the body up); the air is the dance's own fall (AirTest, test_jump_tops_kept)
+        self.assertLessEqual(v["pelvis"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertLessEqual(v["centre"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(v["pelvis"]["after_over_bound_on_the_floor"], 0)
+        self.assertGreater(v["air_frames"], 100)
         y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
         z = self.result.arrays["vertical_fix"]
         lows = [f for f in range(1, len(y0) - 1) if y0[f] < y0[f - 1] and y0[f] <= y0[f + 1]]
         kept = sum(1 for f in lows if abs(z[f]) * CM < 0.05)
         self.assertGreaterEqual(kept, 0.99 * len(lows))
         self.assertLessEqual(float(z.max()), 0.0)                                # lowered only
+
+    def test_jump_tops_kept(self):
+        """the song's jumps (both feet off the floor 4 frames and more, as the layer reads the support): the pelvis's top
+        in each comes no more than 2 cm under the dance's (the review of 2026-10-16: with 122 in the air too, 9 of 31
+        jumps came 2 cm and more lower)"""
+        y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
+        y1 = balance_layer.Body(self.model, self.result.motion).p("下半身")[:, 1]
+        sup = {s: self.result.arrays["low_" + t] < balance_layer.SUPPORT_H for s, t in (("左", "L"), ("右", "R"))}
+        air = ~sup["左"] & ~sup["右"]
+        jumps = [(a, b) for a, b in balance_layer.runs(air) if b - a + 1 >= 4]
+        self.assertGreater(len(jumps), 15)
+        lowered = [round(float(y0[a:b + 1].max() - y1[a:b + 1].max()) * CM, 2) for a, b in jumps]
+        self.assertLess(max(lowered), 2.0, lowered)
 
     def test_landings_catch_and_the_thigh_in_range(self):
         """no landing that the dance catches stops catching the body (its XcoM past the landing foot's edge), the ones
