@@ -5,7 +5,7 @@ the COM.  MMD's physics does not move the body: a dance can ask the floor for a 
 over, a swing that would need the floor to pull) and nothing in the picture falls.
 
     python tools/wb_dynamics.py measure DANCE.vmd MODEL.pmx --report r.json [--arrays a.npz] [--cutoff 6]
-                                [--contact 0.05] [--range FIRST LAST]
+                                [--contact 0.15] [--range FIRST LAST]
     python tools/wb_dynamics.py measure-pack PACK_DIR MODEL.pmx --report r.json [...]
 
 How:
@@ -25,14 +25,20 @@ How:
    L = sum m_i (r_i - c) x (v_i - v_c) + sum H_i.  zmp_lin, the ZMP of the COM alone (c - (c_y - h) c'' / (g + c_y'')),
    splits what the body's turning (the hip strategy, the arms) adds.
 3. Support: a foot is on the floor where its lowest point (the ankle IK over its rest height, or the toe IK over its) is
-   under `contact` units: flat (both), on the forefoot (the toe only) or on the heel (the ankle only).  The part of the sole
-   that touches comes from the body's own sole: Rin's shoe as the mesh has it (RIN_FEET: the convex hulls of the vertices
-   under 2.4 cm, the forefoot about the toe IK, the heel about the ankle IK, measured on White.pmx), a person's from the
-   foot's length (HUMAN_FEET).  The base of support is the convex hull of the parts on the floor.
+   under `contact` units (0.15 = 1.2 cm, the human baseline's tolerance for people's planted feet, the MV's too): flat
+   (both), on the forefoot (the toe only) or on the heel (the ankle only).  The part of the sole that touches comes from
+   the body's own sole: Rin's shoe as the mesh has it (RIN_FEET: the convex hulls of the vertices under 2.4 cm, the
+   forefoot about the toe IK, the heel about the ankle IK, measured on White.pmx), a person's from the foot's length
+   (human_feet; a pointed foot on the toes' tip alone with tip landmarks).  With `soles` (the shoes' points as MMD bends
+   them: tools/foot_layer.py's lower shell skinned on MMD's IK solve) a foot is on the floor where any of its points is
+   within `contact` of the floor, and those points are its part.  A knee or a hand on the floor adds a disc.  The base of
+   support is the convex hull of the parts on the floor.
 4. Measures (measure()): the ZMP's signed distance to the base of support (+ inside), its share inside, the stretches
    outside (when, how deep, the tilt the body would have taken from the unsupported moment), the COM's floor point against
-   the base of support, the angular momentum per kilogram over the stature squared (1/s), and in the air (no foot on the
-   floor) the COM's horizontal acceleration and the change of the angular momentum, both 0 for a body nothing pushes.
+   the base of support, the angular momentum per kilogram over the stature squared (1/s), in the air (no foot on the
+   floor) the COM's horizontal acceleration and the change of the angular momentum (both 0 for a body nothing pushes),
+   and with a pelvis landmark how the head, the chest, the belly, the arms and the COM follow the pelvis's horizontal
+   motion (follow_response per band, follow_slope).
 """
 import argparse
 import importlib.util
@@ -96,7 +102,7 @@ _RIN_HEEL = [(-0.0438, -0.0078), (-0.0415, -0.0158), (-0.0357, -0.0208), (-0.027
              (-0.0423, 0.0007)]
 RIN_TOE_U = 0.1217
 RIN_FEET = {"fore": np.array([(u - RIN_TOE_U, w) for u, w in _RIN_FORE]), "heel": np.array(_RIN_HEEL),
-            "ankle_rest_y": 1.7452, "toe_rest_y": 0.1, "floor_y": 0.111, "contact": 0.05, "foot_length_m": 0.1672,
+            "ankle_rest_y": 1.7452, "toe_rest_y": 0.1, "floor_y": 0.111, "contact": 0.15, "foot_length_m": 0.1672,
             "stature_m": (18.7663 - 0.111) * UNIT_M, "name": "Rin (White.pmx)"}
 
 
