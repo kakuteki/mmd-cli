@@ -31,9 +31,9 @@ upright (the levers' height under 0.3 of their length: no tilt of the spine move
 Written: the spine joints and 頭, a key on every frame (linear), their positions as the dance had them; every other bone
 and key, the morphs and the rest of the file are the dance's own bytes; when nothing is to be done the dance comes back
 unchanged.  Report (--report; in short on stdout): the written bones, the parameters, the bend (degrees: quantiles, the
-frames at the bound), the response of the head (頭's origin), the chest (胸椎上部's or 上半身2's origin) and the belly
-(上半身2's or 上半身's origin) to the pelvis per band and as one slope, before and after, and the head's world turn's
-largest change (degrees).
+frames at the bound), how the head, the chest, the belly, the arms and the whole COM follow the pelvis (the segments'
+COMs as tools/wb_dynamics.py's measure() reads them: per band and as one slope), before and after, and the head's
+world turn's largest change (degrees).
 """
 import argparse
 import importlib.util
@@ -145,15 +145,25 @@ def write_bones(motion, body, local):
                       lights=motion.lights, shadows=motion.shadows, show_iks=motion.show_iks)
 
 
-def parts(body, joints):
-    """the points measured: the head (頭's origin), the chest (the highest spine joint), the belly (the second highest)"""
-    return {"head": body.p(HEAD), "chest": body.p(joints[-1]), "belly": body.p(joints[-2])}
+def parts(body):
+    """the points measured, as tools/wb_dynamics.py's measure() reads them (people and the MV alike): the COMs of the
+    head (de Leva's head and neck, vertex to cervicale), of the chest (the upper trunk), of the belly (the middle trunk),
+    of the arms and of the whole body"""
+    lm, _ = D.landmarks_from_body(body)
+    segs = D.segments(lm)
+    groups = {"head": ["head"], "chest": ["upper_trunk"], "belly": ["middle_trunk"],
+              "arms": [n for n in segs if n.startswith(("upper_arm", "forearm", "hand"))], "com": list(segs)}
+    out = {}
+    for part, names in groups.items():
+        mass = sum(segs[n]["mass"] for n in names)
+        out[part] = sum(segs[n]["mass"] * segs[n]["com"] for n in names) / mass
+    return out
 
 
-def response(body, joints):
+def response(body, joints=None):
     pel = body.p(PELVIS)
     out = {}
-    for name, x in parts(body, joints).items():
+    for name, x in parts(body).items():
         out[name] = dict(D.follow_response(x, pel), slope=round(D.follow_slope(x, pel), 4))
     return out
 
