@@ -1,7 +1,7 @@
 """Feet that carry weight: the ankles, the feet and the toes of a dance made anatomical, and their contact with the floor.
 
     python tools/foot_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--toes anatomical|v1]
-        [--toe-reach-cm CM] [--measure-only]
+        [--toe-reach-cm CM] [--landing human|off] [--measure-only]
 
 The floor is at the height of the rest pose's soles unless --floor-y gives another (the trace's floor: the tracer stood
 the model there, so the dance is not moved down; 0.111 for Sour's Rin).  tools/make_stage.py's floor lies at y 0, under
@@ -682,7 +682,124 @@ def default_params():
     return {"floor_y": None, "load_full": LOAD_FULL, "load_none": LOAD_NONE, "on_floor": ON_FLOOR, "flatten": True,
             "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
             "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP,
-            "trace_toe_extra": 0.0, "toe_model": "anatomical", "toe_reach": 0.0}
+            "trace_toe_extra": 0.0, "toe_model": "anatomical", "toe_reach": 0.0,
+            "landing": True, "reach_knee": REACH_KNEE_DEG, "skim": True}
+
+
+# ---- the landing (feet-landing, 2026-10-16) ---------------------------------------------------------------------------
+# The sources and the measures are in _spike/out/stage6/feet_landing/NOTES.md and _spike/out/stage6/feet/RESEARCH.md (5).
+# The human baseline (FineDance, the K-pop / choreography / jazz sequences, 62, the per-sequence medians' median): at a
+# touchdown the ankle stands 3.1 cm [2.6, 3.5] over a flat foot's (96 % land toes first), comes down 2.0 cm [1.4, 2.5] in
+# the next 0.2 s while the pelvis sinks 1.17 cm, so the hip joint's distance to the ankle hardly changes (-0.05 cm
+# [-0.44, 0]) and the knee bends 0.3 degrees more; the heel is down a median 3 frames (0.1 s) after the touch, 61 % of
+# them within 6 frames.  The research: in an ordinary landing the heel comes down some 40 ms after the forefoot (Puddle &
+# Maulder 2013), the ankle dorsiflexing 9.8 degrees from the toe's touch to the heel's and 10 more by 150 ms (Fukano &
+# Fukubayashi 2014); 7 of 11 landers put the heel down after the metatarsal heads, 4 absorbed the landing on the forefoot
+# alone (Gross & Nelson 1988).  The MV's dance lands with the foot IK stopped on the floor, so the whole sink goes into
+# the knee (7 degrees in 0.2 s).
+LANDING_WINDOW = 6              # frames (0.2 s) after a touchdown over which the heel comes down with the pelvis
+LANDING_GAP = 4                 # frames off the floor before a touchdown (the human baseline's a05)
+LANDING_LEAD = EASE             # frames before the touch over which the forefoot is pointed down (eased, a raised cosine)
+# The human baseline found no frame of a planted human leg straighter than 5 degrees (a05's knee: the hip joint's
+# distance to the ankle, the law of cosines); the MV's are where the dance put the standing foot's goal out of the leg's
+# reach (MMD leaves that foot over the floor).  Such a foot rises onto its ball until the knee bends REACH_KNEE_DEG (5 and
+# a margin; the rest pose of Sour's Rin reads 5.7).
+REACH_KNEE_DEG = 5.5
+# A foot that the dance moves over the floor faster than the first speed (cm/s) is less and less, faster than the second
+# not at all, put onto the floor where the dance has its sole off it (over CONTACT_ENTER): a swing that skims the floor
+# is not pressed into a slide along it (the foot layer made a third of the slides it added so).
+SKIM_SPEED = (5.0, 15.0)
+SKIM_LIFT = (CONTACT_ENTER, CONTACT_ENTER + 0.015)
+
+
+def toes_down_axis(o, q_foot):
+    """the horizontal axis [F, 3] about which a positive turn points the foot's toes down (heel up)"""
+    a = qrot(q_foot, o.a0)
+    ax = np.cross(np.array([0.0, 1.0, 0.0]), a)
+    n = np.linalg.norm(ax, axis=1, keepdims=True)
+    return np.where(n > 1e-6, ax / np.maximum(n, 1e-6), np.array([1.0, 0.0, 0.0]))
+
+
+def about_ball(ankle, ball, axis, deg):
+    """the ankle [F, 3] when the foot turns `deg` degrees about `axis` through the ball"""
+    return ball + qrot(qaxis(axis, np.radians(deg)), ankle - ball)
+
+
+def least_turn(f, lo, hi, rounds=30):
+    """per frame the least turn in [lo, hi] (degrees, arrays) at which f(turn) <= 0, by bisection (f falling on it); hi
+    where even hi does not"""
+    a, c = np.array(lo, dtype=float), np.array(hi, dtype=float)
+    ok = f(c) <= 0.0
+    for _ in range(rounds):
+        mid = 0.5 * (a + c)
+        below = f(mid) <= 0.0
+        c = np.where(below, mid, c)
+        a = np.where(below, a, mid)
+    return np.where(ok, c, hi)
+
+
+def knee_reach(L1, L2, knee_deg):
+    """the hip joint's distance to the ankle of a two-bone leg bent knee_deg degrees"""
+    return math.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * math.cos(math.radians(knee_deg)))
+
+
+def heel_turn(rig, o, leg, q_t, v, loaded, p):
+    """(the turn [F] in degrees about the ball that points the foot down and raises its heel, the ball [F, 3], the axis
+    [F, 3]) for one side from a solve of the planned feet (leg: hip, ankle, ex, knee, q_shin) and the plan's on-floor
+    weight v and load:
+    * landing: at a loaded touchdown (a run of frames on the floor after LANDING_GAP off it) the heel is up by as much as
+      keeps the hip joint's distance to the ankle at the shortest it comes to in the next LANDING_WINDOW frames, and
+      comes down frame by frame as the pelvis sinks (never back up), down when the pelvis is lowest; eased in over
+      LANDING_LEAD frames before the touch;
+    * reach: a foot on the floor whose leg cannot bend its knee REACH_KNEE_DEG to reach it rises onto its ball until it
+      can, eased over EASE frames each way.
+    Both stop where the ankle stands highest over the ball and at the soft start of the plantarflexion's range."""
+    F = len(v)
+    hip, ankle, ball = leg["hip"], leg["ankle"], leg["ex"]
+    axis = toes_down_axis(o, q_t)
+    u = ankle - ball
+    back = -np.sum(u * qrot(q_t, o.a0) * np.array([1.0, 0.0, 1.0]), axis=1)    # the ankle behind the ball, horizontally
+    peak = np.degrees(np.arctan2(np.maximum(back, 0.0), np.maximum(u[:, 1], 1e-6)))
+    rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
+    d_b, _, _ = ankle_angles(o, ankle, leg["knee"], leg["q_shin"], q_t)
+    plantar = -(d_b - rest["dorsi_bones"] + rest["dorsi"])
+    hi = np.clip(np.minimum(peak, p["limits"]["plantarflexion"][0] - plantar), 0.0, None)
+    zero = np.zeros(F)
+
+    def dist(deg, idx):
+        return np.linalg.norm(hip[idx] - about_ball(ankle[idx], ball[idx], axis[idx], deg), axis=1)
+
+    d0 = np.linalg.norm(hip - ankle, axis=1)
+    land = np.zeros(F)
+    if p.get("landing", True):
+        down = np.asarray(v) >= 0.5
+        prev_end = -10 ** 9
+        for a, b in runs(down):
+            gap = a - prev_end - 1
+            prev_end = b
+            if a == 0 or gap < LANDING_GAP:
+                continue
+            w = np.arange(a, min(b, a + LANDING_WINDOW, F - 1) + 1)
+            target = d0[w].min()
+            need = least_turn(lambda deg: dist(deg, w) - target, zero[w], hi[w])
+            need = np.minimum.accumulate(need) * float(np.max(loaded[w]))
+            land[w] = np.maximum(land[w], need)
+            for j in range(1, LANDING_LEAD + 1):
+                if a - j < 0:
+                    break
+                g = 0.5 * (1.0 + math.cos(math.pi * j / (LANDING_LEAD + 1)))
+                land[a - j] = max(land[a - j], g * need[0])
+    reach = np.zeros(F)
+    knee = p.get("reach_knee", 0.0)
+    if p.get("landing", True) and knee > 0.0:
+        side = rig.sides[o.name]
+        hip0, knee0, ankle0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
+        target = knee_reach(float(np.linalg.norm(knee0 - hip0)), float(np.linalg.norm(ankle0 - knee0)), knee)
+        idx = np.flatnonzero((np.asarray(v) >= 0.5) & (d0 > target))
+        if len(idx):
+            reach[idx] = least_turn(lambda deg: dist(deg, idx) - target, zero[idx], hi[idx])
+        reach = smooth_max_envelope(reach, EASE)
+    return np.minimum(np.maximum(land, reach), hi), ball, axis
 
 
 def load_shares(shoe, feet, sol, p):
@@ -738,15 +855,19 @@ def turn_about(axis, deg, q):
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
 
 
-def foot_targets(o, f, leg, rest, share, near, p, floor_y=None):
+def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None):
     """the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees) and the weights (roll laid flat w,
     on the floor v) for one side: the roll laid flat as the foot takes weight (by its share of the body's weight and
-    only while its sole faces the floor), the ankle complex inside its range, the toes bent so that a loaded raised
-    heel stands on the ball with the toe box on the floor"""
+    only while its sole faces the floor), the ankle complex inside its range, the heel raised by `heel` [F] degrees
+    about the ball (heel_turn; none when not given), the toes bent so that a loaded raised heel stands on the ball with
+    the toe box on the floor.  With p["landing"] and p["skim"] a foot that the dance moves fast with its sole off the
+    floor (SKIM_SPEED, SKIM_LIFT) is not put onto it."""
     side_sign = 1.0 if o.name == "左" else -1.0
     e = trace_height(f, o, p["trace_toe_extra"])
     lift = trace_height(f, o, p["trace_toe_extra"], key="low")    # the shoe itself, not laid flat
     v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE, lift < BRIDGE_LIFT)
+    if p.get("landing", True) and p.get("skim", True):
+        v = v * (1.0 - smoothstep(foot_speed(f), *SKIM_SPEED) * smoothstep(e, *SKIM_LIFT))
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
     loaded = smoothstep(share, *p["load_share"])
@@ -797,6 +918,8 @@ def foot_targets(o, f, leg, rest, share, near, p, floor_y=None):
         di = soft_band(inv, lim["eversion"], lim["inversion"]) - inv
         ok = roll_reliable(inv, d_b, leg["q_foot"])                      # d_b: 90 - the angle of the foot to the shank
         q = turn_about(qrot(q, o.a0), side_sign * trusted(di, ok), q)   # about the foot's forward axis
+    if heel is not None and np.any(heel > 0.0):
+        q = qnormalize_rows(turn_about(toes_down_axis(o, q), heel, q))
     toes = np.zeros(len(q))
     if p["toes"]:
         if p.get("toe_model", "anatomical") == "v1":           # (the merged layer's, to the bit: q as it stands)
@@ -1081,10 +1204,15 @@ def layer(rig, shoe, motion, params=None, log=None):
       the floor.
       MMD's IK is solved again and the foot IK's goal pushed on where the ankle lags behind it (ROUNDS); the frames
       that do not follow are left at their best and listed (miss);
-    * twice: the range is checked again against the shank that MMD reaches with the new heights;
+    * twice: the range is checked again against the shank that MMD reaches with the new heights, and (params["landing"],
+      the default) the heel raised about the ball where that solve lands with a sinking pelvis or stands out of the
+      leg's reach (heel_turn; 足ＩＫ's horizontal place then moves with the ankle so that the ball stays put), a foot
+      skimming the floor in the dance left off it (SKIM_SPEED), the shoe placed at the input's goal where its leg does
+      not reach and such a goal not pushed further; params["landing"] False is the layer before these (c012c32);
     * between the frames: the keys solved at 1/SUB frames as MMD interpolates them, both frames of an interval whose
       shoe dips below the floor raised by the dip (SUB_ROUNDS).
-    The keys, on every frame (build): 足ＩＫ's height (its horizontal place and its turn as the input has them),
+    The keys, on every frame (build): 足ＩＫ's height (its horizontal place but for the heel's turn and its turn as the
+    input has them),
     つま先ＩＫ's goal on the turned toe, 足首's turn (the start of the toe IK), 足先EX's bend.  Nothing else changes."""
     p = default_params()
     p.update(params or {})
@@ -1102,26 +1230,41 @@ def layer(rig, shoe, motion, params=None, log=None):
         pl = plan[s]
         return shell_at(shoe.sides[s], sol_[s]["ankle"], pl["q_t"], pl["toes"])[:, :, 1].min(axis=1)
 
+    leg_length = {}
+    for s in shoe.sides:
+        side = rig.sides[s]
+        h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
+        leg_length[s] = float(np.linalg.norm(k0 - h0) + np.linalg.norm(a0 - k0))
+    heel = {s: None for s in shoe.sides}           # the heel raised about the ball (degrees, heel_turn), pass 2
+    shift = {s: np.zeros((F, 3)) for s in shoe.sides}   # ... and the ankle's horizontal move that keeps the ball put
+    key_shift = {s: np.zeros((F, 3)) for s in shoe.sides}
+
     def set_dy(s, dy):
         side = rig.sides[s]
         pos, rot = keys[side.leg_ik]
-        new_keys[side.leg_ik] = (pos + np.stack([np.zeros(F), dy, np.zeros(F)], axis=1), rot)
+        new_keys[side.leg_ik] = (pos + key_shift[s] + np.stack([np.zeros(F), dy, np.zeros(F)], axis=1), rot)
 
     # two passes: the targets against the input's shank, the heights, a solve; then the targets again against the
-    # shank that solve gives (a changed goal can swing MMD's knee elsewhere where the leg is nearly straight), the
+    # shank that solve gives (a changed goal can swing MMD's knee elsewhere where the leg is nearly straight), and the
+    # heel raised about the ball where that solve lands with a sinking pelvis or stands out of reach (heel_turn), the
     # heights again
     shank = sol
-    for _ in range(2):
+    for it in range(2):
         for s, o in shoe.sides.items():
             leg = dict(sol[s])
             for k in ("ankle", "knee", "q_shin"):
                 leg[k] = shank[s][k]
             rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
-            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y)
+            q_t, toes, w, v = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y, heel[s])
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
             # the air keeps its path), the shoe of a foot on the floor exactly on it (v), that correction eased into
             # the frames around (eased_correction), nothing below the floor
-            low0 = shell_at(o, sol[s]["ankle"], q_t, toes)[:, :, 1].min(axis=1)
+            # (with the landing: the shoe at the input's goal where its leg does not reach it, so that the goal is not
+            # lowered by MMD's shortfall and run further out of reach)
+            base = sol[s]["ankle"]
+            if p.get("landing", True):
+                base = np.where((sol[s]["reach"] > 1e-3)[:, None], sol[s]["goal_ankle"], base)
+            low0 = shell_at(o, base + shift[s], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
             gap = floor_y - low0 - d1                     # what putting the sole on the floor adds to the shift
             anatomical = p.get("toe_model", "anatomical") != "v1"
@@ -1141,6 +1284,10 @@ def layer(rig, shoe, motion, params=None, log=None):
         for s, pl in plan.items():
             pl["miss"] = pl["target_low"] - lowest(s, out_sol)
             pl["stuck"] = np.zeros(F, dtype=bool)
+        if p.get("landing", True):
+            # (with the landing: a goal out of the leg's reach is not pushed: lowering it only runs it further away)
+            for s, pl in plan.items():
+                pl["stuck"] |= np.linalg.norm(out_sol[s]["goal_ankle"] - out_sol[s]["hip"], axis=1) > leg_length[s] - 1e-4
         for _ in range(int(p["rounds"])):
             tried = {}
             for s, pl in plan.items():
@@ -1161,6 +1308,27 @@ def layer(rig, shoe, motion, params=None, log=None):
                 set_dy(s, pl["dy"])
         out_sol = IK.solve(rig, motion, frames, new_keys)
         shank = out_sol
+        if it == 0 and p.get("landing", True):
+            for s, o in shoe.sides.items():
+                pl = plan[s]
+                # the planned foot at its goal (where the leg does not reach, MMD's ankle stops short of it)
+                leg = dict(out_sol[s])
+                leg["ankle"] = out_sol[s]["goal_ankle"]
+                leg["ex"] = out_sol[s]["ex"] + (out_sol[s]["goal_ankle"] - out_sol[s]["ankle"])
+                turn, ball, axis = heel_turn(rig, o, leg, pl["q_t"], pl["v"], smoothstep(pl["share"], *p["load_share"]), p)
+                if not np.any(turn > 0.0):
+                    continue
+                heel[s] = turn
+                moved = about_ball(leg["ankle"], ball, axis, turn) - leg["ankle"]
+                moved[:, 1] = 0.0                       # the height is the heights' (the shoe put on the floor)
+                shift[s] = moved
+                side = rig.sides[s]
+                parent = qmul(sol[s]["q_ik"], qconj(qnormalize_rows(np.asarray(keys[side.leg_ik][1], dtype=float))))
+                key_shift[s] = qrot(qconj(parent), moved)
+    for s in plan:
+        plan[s]["heel"] = heel[s] if heel[s] is not None else np.zeros(F)
+        plan[s]["shift"] = shift[s]
+
     def make_keys(out_sol):
         # the keys that make MMD's IK put the foot there: 足首 starts the toe IK already on the goal, つま先ＩＫ's
         # goal lies on the turned toe from the ankle MMD reaches, 足先EX bends the toes
@@ -1325,6 +1493,11 @@ def main(argv=None):
     ap.add_argument("--toe-reach-cm", type=float, default=0.0,
                     help="a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, "
                          "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
+    ap.add_argument("--landing", choices=("human", "off"), default="human",
+                    help="human (the default): a loaded touchdown with a sinking pelvis comes down on the forefoot and "
+                         "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball, a foot "
+                         "skimming the floor in the dance is not pressed onto it; off: the layer before them (c012c32), "
+                         "byte for byte")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
@@ -1343,12 +1516,14 @@ def main(argv=None):
     extra = args.trace_toe_cm / UNIT_CM
     m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y, toe_extra=extra)
     report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
-              "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "toe_reach_cm": max(0.0, args.toe_reach_cm),
+              "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "landing_model": args.landing,
+              "toe_reach_cm": max(0.0, args.toe_reach_cm),
               "seconds": None}
     report["toes"] = {"input": {TAGS[s]: toe_summary(m_in[s], contacts[s], floor_y) for s in m_in}}
     if not args.measure_only:
         out, plan = layer(rig, shoe, motion, {"floor_y": floor_y, "trace_toe_extra": extra, "toe_model": args.toes,
-                                              "toe_reach": max(0.0, args.toe_reach_cm) / UNIT_CM})
+                                              "toe_reach": max(0.0, args.toe_reach_cm) / UNIT_CM,
+                                              "landing": args.landing != "off"})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
         m_out, rep_out, _ = measure_report(rig, shoe, back, floor_y, contact_from=contacts)
@@ -1359,6 +1534,10 @@ def main(argv=None):
                                          "worst_cm": _r(float(np.abs(pl["miss"]).max()) * UNIT_CM, 2)}
                                for s, pl in plan.items()}
         report["untouched"] = untouched(motion, back, plan)
+        report["landing"] = {TAGS[s]: {"heel_raised_frames": int((pl["heel"] > 0.0).sum()),
+                                       "heel_turn_max_deg": _r(float(pl["heel"].max()), 2),
+                                       "ankle_shift_max_cm": _r(float(np.linalg.norm(pl["shift"], axis=1).max()) * UNIT_CM, 2)}
+                             for s, pl in plan.items()}
         report["between_frames"] = {
             "input": between_report(rig, shoe, motion, floor_y), "output": between_report(rig, shoe, back, floor_y),
             "layer": {TAGS[s]: {"raised_frames": int((pl["sub_raise"] > 0.0).sum()),
