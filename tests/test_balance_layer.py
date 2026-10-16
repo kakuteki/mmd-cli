@@ -1430,6 +1430,19 @@ class SongTest(unittest.TestCase):
         self.assertGreaterEqual(kept, 0.99 * len(lows))
         self.assertLessEqual(float(z.max()), 0.0)                                # lowered only
 
+    def test_still_stances_stay_still(self):
+        """the still single support the layer pulls (its own `still`): the COM under 5 cm/s on 0.75 of those frames and
+        more after the layer (v9 0.645, the dance 0.89; the review of 2026-10-16: none left by the human measure)"""
+        body = balance_layer.Body(self.model, self.motion)
+        com0 = body.com()
+        plan = balance_layer.support_plan(body, balance_layer.params_default(), com0)
+        st = plan["still"]
+        self.assertGreater(int(st.sum()), 100)
+        com1 = self.result.arrays["com_after"]
+        v = np.zeros(len(com1))
+        v[1:-1] = np.linalg.norm(com1[2:, [0, 2]] - com1[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
+        self.assertGreater(float(np.mean(v[st] < 5.0)), 0.75)
+
     def test_jump_tops_kept(self):
         """the song's jumps (both feet off the floor 4 frames and more, as the layer reads the support): the pelvis's top
         in each comes no more than 2 cm under the dance's (the review of 2026-10-16: with 122 in the air too, 9 of 31
