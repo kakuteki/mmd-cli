@@ -15,13 +15,13 @@
   median, as local_follow's worst), longer than people's (their pooled stretches' 90 % point, 4.5 s; 99 % 8.2 s,
   human.json's "event"): the head riding on the hips for seconds, which the song's shares hardly show when the rest of
   the song is not carried.
-* 頭が骨盤と一体 (the same windows): per window the head's horizontal acceleration left over after the hips' (sum
-  |head - hips|^2 / sum |hips|^2; 0 = the head moves exactly as the hips, 1 = it stays still while they move).  People
-  never go near 0 (their windows' 1 % point 0.69, the least of 11,764 windows 0.33).  Places of upper.head_follow: two
-  or more consecutive windows where the hips move (the windows where they hardly move skipped), each carried (slope over
-  0.75: not a head that stays) and under people's 10 % point; their largest left-over is the value, past people's 1 %
-  point listed whatever the song's slope (a head held on the hips, as by a frozen upper body, is far past it: about 0;
-  people's 62 sequences have 70 such stretches, 7 of them past their 1 % point).
+* 頭が骨盤とほぼ同じに動く (the same windows): per window the head's horizontal acceleration left over after the
+  hips' (sum |head - hips|^2 / sum |hips|^2; 0 = the head moves exactly as the hips, 1 = it stays still while they
+  move).  People never go near 0 (their windows' 1 % point 0.69, the least of 11,764 windows 0.33).  Places of
+  upper.head_follow: two or more consecutive windows where the hips move (the windows where they hardly move skipped),
+  each carried (slope over 0.75: not a head that stays) and under people's 10 % point; their largest left-over is the
+  value, past people's 1 % point listed whatever the song's slope (a head held on the hips, as by a frozen upper body,
+  is far past it: about 0; people's 62 sequences have 70 such stretches, 7 of them past their 1 % point).
 """
 import numpy as np
 
@@ -156,9 +156,10 @@ def measure(m):
                 events.append(base.event("upper.local_follow_carried", a, b, sec, "s", edge, scale,
                                          "頭が骨盤に運ばれる 2 秒窓が %d 続く（傾きの中央値 %.2f、1 = 一緒）" % (n, med)))
         edge, scale = base.event_rule("upper.head_follow", 1.32, 0.63)
+        p01 = ((base.reference("upper.head_follow") or {}).get("event") or {}).get("p01", edge - scale)
         for a, b, n, worst in locked_runs(st, sl, lo, wt, edge):
             # the left-over lies under its edge (side -1); such stretches push the head's slope on the hips up (toward +1)
             events.append(base.event("upper.head_follow", a, b, worst, "", edge, scale,
-                                     "頭が骨盤と一体に動く 2 秒窓が %d 続く（頭の加速度の残り 最大 %.2f、0 = 骨盤と同じ）" % (n, worst),
-                                     side=-1, toward=1))
+                                     "頭が骨盤とほぼ同じに動く 2 秒窓が %d 続く（頭の加速度の残り 最大 %.2f: 0 = 骨盤と同じ、人の 10 %% 点 %.2f・"
+                                     "1 %% 点 %.2f）" % (n, worst, edge, p01), side=-1, toward=1))
     return {"rows": rows, "events": events, "series": series}
