@@ -235,7 +235,9 @@ FLOOR_BODY_RANGE_MM = 150.0
 FLOOR_PAD = 2
 FLOOR_ROUNDS = 5
 LEAD_LIMIT = 2.0
-SONG = (600, 7600)              # the analysts' frames for a02 (on the MV's 7,743 frames; a shorter motion: all)
+ELBOW_SKIN_CM = 3.0             # --elbow-hinge: the skin's distance from the arm's axis at the elbow (r in the cost)
+HINGE_GRID_DEG = (90.0, 0.5, 0.5, 0.01)   # the roll searched: +-90 by 0.5 degrees, then +-0.5 about the best by 0.01
+SONG =(600, 7600)              # the analysts' frames for a02 (on the MV's 7,743 frames; a shorter motion: all)
 ACTIVE = (167, 7661)            # a04's dancing part and the trace's keys (the same)
 
 
@@ -282,7 +284,7 @@ def _base_params():
                         "finger": {"kinematic": True, "delay": None}},     # None: the wrist's
             "finger_delay": FINGER_DELAY, "delay_scale": 1.0, "torque_scale": 1.0, "lead": None,
             "substeps": SUBSTEPS, "slow": True, "holds": True, "kime": True, "contact": True, "floor": True,
-            "unsolved": True, "jumps": True, "snap": True, "seams": True}
+            "unsolved": True, "jumps": True, "snap": True, "seams": True, "hinge": False}
 
 
 # ---- quaternions on numpy arrays (x, y, z, w), Hamilton, v' = q v q^-1 (mmd_cli.fk) -------------------
@@ -675,6 +677,7 @@ class Plan:
         self.key_in = np.stack([self.keys[k][1] if k in self.keys else ident for k in self.bi], axis=1)
         self.pos_in = np.stack([self.keys[k][0] if k in self.keys else np.zeros((F, 3)) for k in self.bi], axis=1)
         self.body = body_of(sk)
+        self.hinge_geo = {s: elbow_geometry(sk, s) for s in SIDES} if params.get("hinge") else {}
         self.inertia()
         self.find_jumps()
         self.rates()
@@ -1036,10 +1039,13 @@ def keys_of(plan, local):
     return continuous(qnorm(qmul(qconj(plan.M), local)))
 
 
-def world_with(plan, key_rot):
+def world_with(plan, key_rot, extra=None):
+    """the world of the bones `plan.order` with the simulated bones' key rotations key_rot and, for the bones of
+    extra (bone index -> (positions, rotations)), those keys"""
     keys = dict(plan.keys)
     for j, k in enumerate(plan.bi):
         keys[k] = (plan.pos_in[:, j], key_rot[:, j])
+    keys.update(extra or {})
     wpos, wrot = fk_all(plan.skel, keys, plan.order, plan.F)
     return {plan.skel.bones[k].name: (wpos[k], wrot[k]) for k in plan.order}
 
@@ -1094,6 +1100,157 @@ def subtree(plan, j):
     return sorted(out)
 
 
+# ---- the elbow back on its hinge (--elbow-hinge) ---------------------------------------------------------------
+
+HINGE_CHAIN = ("腕", "腕捩", "ひじ", "手捩", "手首")
+
+
+def elbow_geometry(skel, side):
+    """the side's arm for the hinge split: the axes (rest, unit) a (腕捩 -> ひじ: 腕捩's roll), o (ひじ -> 手捩: the forearm),
+    b (手捩 -> 手首: 手捩's roll), the hinge axis h and the forearm's front m (as tools/anatomy_layer.py reads them: h
+    perpendicular to the forearm and to ひじ補助's local Z, +Z without it), the forearm's length (cm) and the bones; or
+    {"skipped": why} where the arm is not 腕 -> 腕捩 -> ひじ -> 手捩 -> 手首 with plain (no append) twist bones"""
+    names = [side + n for n in HINGE_CHAIN]
+    missing = [n for n in names if not skel.has(n)]
+    if missing:
+        return {"skipped": "no " + ", ".join(missing)}
+    k = {n[len(side):]: skel.i(n) for n in names}
+    for child, parent in (("腕捩", "腕"), ("ひじ", "腕捩"), ("手捩", "ひじ"), ("手首", "手捩")):
+        if skel.parent(k[child]) != k[parent]:
+            return {"skipped": "%s%s is not the child of %s%s" % (side, child, side, parent)}
+    for n in ("腕捩", "ひじ", "手捩"):
+        if skel.append_of(k[n]) is not None:
+            return {"skipped": "%s%s takes a turn from another bone" % (side, n)}
+    P = {n: skel.rest[i] for n, i in k.items()}
+
+    def unit(v):
+        n = float(np.linalg.norm(v))
+        if n < 1e-9:
+            raise ValueError("the rest positions of %s's arm coincide" % side)
+        return v / n
+    a, o, b = unit(P["ひじ"] - P["腕捩"]), unit(P["手捩"] - P["ひじ"]), unit(P["手首"] - P["手捩"])
+    z = np.array([0.0, 0.0, 1.0])
+    helper = side + "ひじ補助"
+    if skel.has(helper) and skel.bones[skel.i(helper)].local_axes:
+        z = unit(np.array(skel.bones[skel.i(helper)].local_axes["z"], dtype=np.float64))
+    m = -unit(z - (z @ o) * o)
+    h = unit(np.cross(o, m))
+    return {"a": a, "o": o, "b": b, "h": h, "m": m, "index": k,
+            "forearm_cm": float(np.linalg.norm(P["手首"] - P["ひじ"])) * UNIT_MM / 10.0}
+
+
+def axis_turn(axis, angle):
+    """unit quaternions [F, 4] of turns by angle [F] (radians) about a fixed axis"""
+    h = 0.5 * np.asarray(angle, dtype=np.float64)
+    return np.concatenate([np.sin(h)[:, None] * axis[None, :], np.cos(h)[:, None]], axis=1)
+
+
+def hinge_split(geo, Ke, T, Hk, Kw, skin_cm=ELBOW_SKIN_CM):
+    """ひじ's key Ke [F, 4] made a hinge, the roll it held moved onto 腕捩 (T) and 手捩 (Hk), 手首's key Kw keeping the hand's
+    turn: (T', Ke', Hk', Kw', info).  Per frame the upper arm rolls by delta more (T' = T aa(a, delta)), ひじ is the hinge
+    angle theta that brings the forearm nearest to where Ke has it (Ke' = aa(h, theta)), and delta minimises
+        (skin_cm delta)^2 + (forearm_cm eps)^2
+    with eps the angle left between the forearms: how far the elbow's surface turns against how far the wrist moves.  A
+    bent arm is solved all but exactly (the wrist stays); a nearly straight arm, whose hinge plane is nearly undefined,
+    is not rolled round for a millimetre of wrist (bent 1 degree with 1 degree to the side, the exact roll is about 45
+    degrees).  The rest of Ke's turn, Dl = (aa(a, delta) Ke')^-1 Ke, goes on: its roll about b onto 手捩, the remainder
+    onto 手首, so the hand's world rotation is unchanged.  info: delta and theta (degrees), the wrist's shift (cm, by the
+    forearm's direction) and 手捩's added roll (degrees)."""
+    a, o, h, b = geo["a"], geo["o"], geo["h"], geo["b"]
+    L = geo["forearm_cm"]
+    F = len(Ke)
+    e = qrot(Ke, np.broadcast_to(o, (F, 3)))
+    p2 = np.cross(h, o)
+
+    def fit(dl):
+        """the hinge angle and the angle left (radians) for the rolls dl [F, K]"""
+        ee = qrot(qexp(-dl[..., None] * a), np.broadcast_to(e[:, None, :], dl.shape + (3,)))
+        x, y, zz = ee @ o, ee @ p2, ee @ h
+        return np.arctan2(y, x), np.arctan2(np.abs(zz), np.hypot(x, y))
+
+    def cost(dl):
+        return (skin_cm * dl) ** 2 + (L * fit(dl)[1]) ** 2
+    span, step, fine_span, fine_step = HINGE_GRID_DEG
+    n = int(round(span / step))
+    grid = np.radians(np.arange(-n, n + 1) * step)
+    best = grid[np.argmin(cost(np.broadcast_to(grid, (F, len(grid)))), axis=1)]
+    nf = int(round(fine_span / fine_step))
+    fine = best[:, None] + np.radians(np.arange(-nf, nf + 1) * fine_step)[None, :]
+    delta = fine[np.arange(F), np.argmin(cost(fine), axis=1)]
+    theta, eps = fit(delta[:, None])
+    theta, eps = theta[:, 0], eps[:, 0]
+    roll = axis_turn(a, delta)
+    T2 = qnorm(qmul(T, roll))
+    Ke2 = axis_turn(h, theta)
+    Dl = qnorm(qmul(qconj(qmul(roll, Ke2)), Ke))
+    X = qnorm(qmul(Dl, Hk))
+    X = np.where(X[:, 3:4] < 0, -X, X)
+    H2 = axis_turn(b, 2.0 * np.arctan2(X[:, :3] @ b, X[:, 3]))
+    Kw2 = qnorm(qmul(qmul(qconj(H2), X), Kw))
+    info = {"delta_deg": np.degrees(delta), "theta_deg": np.degrees(theta), "wrist_shift_cm": L * 2.0 * np.sin(0.5 * eps),
+            "forearm_roll_deg": qangle_deg(H2, Hk)}
+    return T2, Ke2, H2, Kw2, info
+
+
+def rehinge(plan, key_rot):
+    """key_rot with ひじ a hinge and 手首 keeping the hand, on both sides, and the new keys of 腕捩 and 手捩 (bone index ->
+    (positions, rotations)): the hinge split of each frame (hinge_split)"""
+    out = np.array(key_rot, copy=True)
+    twist, info = {}, {}
+    ident = np.tile(IDENT, (plan.F, 1))
+    for s in SIDES:
+        geo = plan.hinge_geo.get(s)
+        if geo is None or "skipped" in geo:
+            continue
+        k = geo["index"]
+        je, jw = plan.names.index(s + "ひじ"), plan.names.index(s + "手首")
+        Pt, T = plan.keys.get(k["腕捩"], (np.zeros((plan.F, 3)), ident))
+        Ph, Hk = plan.keys.get(k["手捩"], (np.zeros((plan.F, 3)), ident))
+        T2, Ke2, H2, Kw2, info[s] = hinge_split(geo, key_rot[:, je], T, Hk, key_rot[:, jw])
+        out[:, je], out[:, jw] = continuous(Ke2), continuous(Kw2)
+        twist[k["腕捩"]] = (Pt, continuous(T2))
+        twist[k["手捩"]] = (Ph, continuous(H2))
+    return out, twist, info
+
+
+def off_hinge_deg(plan, world, side):
+    """per frame the angle (degrees) between the hinge axis and itself turned by ひじ's turn against 腕捩"""
+    geo = plan.hinge_geo[side]
+    tw, el = plan.skel.bones[geo["index"]["腕捩"]].name, plan.skel.bones[geo["index"]["ひじ"]].name
+    q = rel(world, tw, el)
+    hh = qrot(q, np.broadcast_to(geo["h"], (plan.F, 3)))
+    return np.degrees(np.arccos(np.clip(hh @ geo["h"], -1.0, 1.0)))
+
+
+def spread(x, places=4):
+    x = np.asarray(x, dtype=np.float64)
+    return {"median": _r(np.median(x), places), "p99": _r(np.percentile(x, 99), places), "max": _r(x.max(), places)}
+
+
+def hinge_report(plan, world_before, world_out, info):
+    rep = {"on": bool(plan.p.get("hinge")), "skin_cm": ELBOW_SKIN_CM}
+    if not rep["on"]:
+        return rep
+    for s in SIDES:
+        geo = plan.hinge_geo.get(s)
+        if geo is None or "skipped" in geo:
+            rep[s] = {"skipped": geo["skipped"] if geo else "no arm"}
+            continue
+        w = plan.skel.bones[geo["index"]["手首"]].name
+        el = plan.skel.bones[geo["index"]["ひじ"]].name
+        d = info[s]["delta_deg"]
+        rep[s] = {"off_hinge_deg_before": spread(off_hinge_deg(plan, world_before, s)),
+                  "off_hinge_deg_after": spread(off_hinge_deg(plan, world_out, s)),
+                  "upper_roll_added_deg": spread(np.abs(d)),
+                  "upper_roll_step_deg": spread(np.abs(np.diff(d))) if len(d) > 1 else None,
+                  "forearm_roll_added_deg": spread(info[s]["forearm_roll_deg"]),
+                  "wrist_shift_cm": spread(np.linalg.norm(world_out[w][0] - world_before[w][0], axis=1) * UNIT_MM / 10.0),
+                  "elbow_shift_cm_max": _r(float(np.linalg.norm(world_out[el][0] - world_before[el][0], axis=1).max())
+                                           * UNIT_MM / 10.0, 6),
+                  "hand_turn_deg_max": _r(float(qangle_deg(world_out[w][1], world_before[w][1]).max()), 6)}
+    return rep
+
+
 class Fallback:
     """the stretches given back to the input.  Each is a span of frames wholly the input's for some bones, with a ramp in
     and a ramp out (smoothsteps).  With seams on, a span is first widened while the layer's wrist (of a side whose wrist
@@ -1121,6 +1278,8 @@ class Fallback:
                 self.dev[s] = np.linalg.norm(world[n][0] - plan.world_in[n][0], axis=1) * UNIT_MM / 10.0
                 self.layer_steps[s] = np.linalg.norm(np.diff(world[n][0], axis=0), axis=1) * UNIT_MM / 10.0
         self.key_rot = key_layer
+        self.key_blended = key_layer
+        self.twist, self.hinge_info = {}, {}
         self.weights = np.zeros((plan.F, plan.nb))
 
     def sides_of(self, bones):
@@ -1151,8 +1310,10 @@ class Fallback:
             w = ramp_weight(plan.F, [(a - sp["ramp_in"], a, b, b + sp["ramp_out"])])
             fb[:, sp["bones"]] = np.maximum(fb[:, sp["bones"]], w[:, None])
         self.weights = fb
-        self.key_rot = blend(plan, self.key_layer, fb)
-        return world_with(plan, self.key_rot)
+        self.key_rot = self.key_blended = blend(plan, self.key_layer, fb)
+        if plan.p.get("hinge"):
+            self.key_rot, self.twist, self.hinge_info = rehinge(plan, self.key_blended)
+        return world_with(plan, self.key_rot, self.twist)
 
     def seams(self, world_out):
         """per edge of every span (and side whose wrist it moves): the largest step of the output's wrist from one frame
@@ -1325,8 +1486,9 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
     key_rot = fix.key_rot
     fb = fix.weights
     spans = fix.report_spans()
-    out = build(plan, key_rot)
-    info = {"leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
+    out = build(plan, key_rot, fix.twist)
+    world_before = world_with(plan, fix.key_blended) if fix.twist else world_out
+    info = {"hinge": hinge_report(plan, world_before, world_out, fix.hinge_info), "leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
             "residual": residual, "seconds": time.time() - started, "check_rounds": rounds, "seam_rounds": seam_rounds,
             "seams": fix.seams(world_out)}
     report = report_of(plan, world_out, out, info)
@@ -1365,13 +1527,16 @@ def hand_deviation(plan, world_out, side):
     return out
 
 
-def build(plan, key_rot):
-    """the output motion: every key of a bone the layer does not move, as it was; a key on every frame for the others"""
+def build(plan, key_rot, twist=None):
+    """the output motion: every key of a bone the layer does not move, as it was; a key on every frame for the others
+    (the simulated bones, and the bones of twist: bone index -> (positions, rotations), --elbow-hinge's 腕捩 and 手捩)"""
     tracks = fk.tracks_of(plan.motion)
     labels = set()
     new = []
     curves = {}
-    for j, name in enumerate(plan.names):
+    rows = [(name, plan.pos_in[:, j], key_rot[:, j]) for j, name in enumerate(plan.names)]
+    rows += [(plan.skel.bones[k].name, P, R) for k, (P, R) in sorted((twist or {}).items())]
+    for name, pos, rot in rows:
         keys = tracks.get(name) or tracks.get(fk.vmd_name(name)) or []
         label = keys[0].name if keys else fk.vmd_name(name)
         raw = keys[0].raw_name if keys else None
@@ -1385,8 +1550,8 @@ def build(plan, key_rot):
                 ki += 1
             if held not in curves:
                 curves[held] = vmd.bone_interpolation(vmd.LINEAR_CURVE, keep=held)
-            q = fk.stored(tuple(float(v) for v in key_rot[f, j]))
-            new.append(vmd.BoneKey(label, f, tuple(float(v) for v in plan.pos_in[f, j]), q, curves[held], raw_name=raw))
+            q = fk.stored(tuple(float(v) for v in rot[f]))
+            new.append(vmd.BoneKey(label, f, tuple(float(v) for v in pos[f]), q, curves[held], raw_name=raw))
     plan.labels = labels
     bones = [k for k in plan.motion.bones if k.name not in labels] + new
     m = plan.motion
@@ -1872,6 +2037,7 @@ def report_of(plan, world_out, out, info):
     rep["a04"] = {"input": measure_a04(Win, Win, F, plan.beats), "output": measure_a04(W, Win, F, plan.beats)}
     rep["fidelity"] = measure_keys(W, Win, Q, Qin, F, plan.key_frames)
     rep["proximity"] = measure_proximity(W, Win)
+    rep["elbow_hinge"] = info["hinge"]
     labels = plan.labels
 
     def kept(m):
@@ -1982,6 +2148,9 @@ def main(argv=None):
     p.add_argument("--finger-delay", type=float, default=None,
                    help="frames the fingers read after the wrist (default: the preset's, %g; human 0; 0: on the "
                         "hand's timing)" % FINGER_DELAY)
+    p.add_argument("--elbow-hinge", choices=("on", "off"), default=None,
+                   help="after the layer, split the arm's twist again so that ひじ is a hinge, the roll on 腕捩 and 手捩 "
+                        "(default: the preset's, off)")
     p.add_argument("--substeps", type=int, default=SUBSTEPS, help="simulation steps per frame (default %d)" % SUBSTEPS)
     p.add_argument("--world", help="save the world positions and rotations, input and output, to this .npz")
     p.add_argument("--verbose", action="store_true", help="progress on stderr")
@@ -1990,6 +2159,8 @@ def main(argv=None):
     params.update(lead=a.lead, delay_scale=a.delay_scale, substeps=a.substeps)
     if a.finger_delay is not None:
         params["finger_delay"] = a.finger_delay
+    if a.elbow_hinge is not None:
+        params["hinge"] = a.elbow_hinge == "on"
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         if a.substeps < 1:

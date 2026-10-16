@@ -743,7 +743,14 @@ class ElbowHingeTest(unittest.TestCase):
         finger = [angle_deg(p, q) for p, q in zip(on["左中指３"][1], off["左中指３"][1])]
         self.assertLess(max(finger), 0.01)
         shift = np.linalg.norm(on["左手首"][0] - off["左手首"][0], axis=1) * 8.0        # cm
-        self.assertLess(float(shift.max()), 0.5)
+        # where the arm is bent the wrist stays; where it is nearly straight it may move, but never further than
+        # dropping the elbow onto its hinge without any roll would move it (the forearm turned by the off-hinge angle)
+        rest = {b.name: np.array(b.position, float) for b in MODEL.bones}
+        forearm_cm = float(np.linalg.norm(rest["左手首"] - rest["左ひじ"])) * 8.0
+        drop = forearm_cm * 2.0 * np.sin(np.radians(off_hinge_deg(off)) / 2.0)
+        self.assertTrue(np.all(shift <= drop + 1e-3), float(np.max(shift - drop)))
+        self.assertLess(float(shift.max()), 1.0)
+        self.assertLess(float(np.median(shift)), 0.01)
         rep = self.on.report["elbow_hinge"]["左"]
         self.assertAlmostEqual(rep["wrist_shift_cm"]["max"], float(shift.max()), places=2)
         self.assertLess(rep["off_hinge_deg_after"]["max"], 0.01)
@@ -782,7 +789,7 @@ class HingeSplitTest(unittest.TestCase):
     """the split itself, on keys made by hand"""
 
     def setUp(self):
-        self.geo = motor_layer.elbow_geometry(motor_layer.Skeleton(MODEL), MODEL, "左")
+        self.geo = motor_layer.elbow_geometry(motor_layer.Skeleton(MODEL), "左")
         self.h, self.o, self.m = hinge_axis()
 
     def split(self, ke, frames=3):
@@ -810,7 +817,8 @@ class HingeSplitTest(unittest.TestCase):
         side = motor_layer.qmul(np.asarray(axis_angle(tuple(self.m), 1.0)), np.asarray(axis_angle(tuple(self.h), 1.0)))
         _, _, _, _, (T2, E2, H2, W2, info) = self.split(side)
         self.assertLess(float(np.abs(info["delta_deg"]).max()), 10.0)
-        self.assertLess(float(info["wrist_shift_cm"].max()), 0.3)
+        forearm_cm = self.geo["forearm_cm"]
+        self.assertLessEqual(float(info["wrist_shift_cm"].max()), forearm_cm * 2.0 * math.sin(math.radians(0.5)) + 1e-6)
 
 
 class CliTest(unittest.TestCase):
