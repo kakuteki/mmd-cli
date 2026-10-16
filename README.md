@@ -2119,6 +2119,64 @@ python tools/pmm_gravity.py empty_98.pmm empty_1225.pmm --acceleration 12.25
   12.25 を足しても天井 70 だけと同じ幅（3〜5・7〜16・1〜2）。回転中の開き・遅れ・収まる時間はほぼ同じ、髪・リボン・襟の平均の位置のずれは
   0.08 単位以内で見た目も同じ。下着の画素は天井 70 の 15 度 6401 が 1,789〜1,965 → 439 画素に減る（消えはしない）。
 
+### 版を人の基準で測り、外れた所を時刻で並べる（`tools/mv_inspect.py`、MMD なし）
+
+取り入れた考え方（重力感・足・重心とバランス・上体・腕と指・目・口・スカートの危なさ・突起）を 1 つの道具で測る。版ごとに今までの担当が
+書き捨ての測りを書いて絵を目で見ていた代わりに、同じ物差しで人の基準と比べ、人の範囲から外れた所を時刻つきで並べ、2 つの版を 1 つの表で比べ、
+描いた絵に印を描く（2026-10-17 の加賀さんの指示「都度見るより道具でデバッグする」）。**査読と報告の数はこの道具で出す。** 絵を目で見るのは、
+道具が指した所を確かめるときだけにする。重い計算なので hinata で走らせる（v9 の全曲で約 40 秒）。
+
+```
+python tools/mv_inspect.py measure SPEC.json --out DIR [--cache DIR] [--parts gravity,feet,...] [--no-figure]
+python tools/mv_inspect.py measure --model M.pmx --motions DANCE.vmd FACE.vmd GAZE.vmd EYE.vmd [--reference SPINE.vmd]
+                                   [--camera CAM.vmd] [--vocal VOCALS.flac] [--lines LINES.tsv] [--label v9] --out DIR
+python tools/mv_inspect.py outliers DIR [--top 40] [--concept gravity]
+python tools/mv_inspect.py compare DIR_A DIR_B --out DIR
+python tools/mv_inspect.py timeline DIR --out fig.png [--from 60 --to 70] [--series pelvis_down,hover]
+python tools/mv_inspect.py mark DIR --camera cam_front.vmd --out DIR (--picture 1770=frame.png ... | --video front.mp4 --start 0 --at 58.9 59.0)
+python tools/mv_inspect.py pixels pants "pants/*.png" --out pants.json [--box X0 Y0 X1 Y1] [--first-frame 6390]
+python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 0 --last 89 --out shadow.json
+```
+
+- 版（SPEC.json）: `{"label", "model", "motions": [描く入力を読む順に], "dance"（体の踊り、既定は motions の 1 本目）, "reference"
+  （体の層の前の踊り。跳び・拍の窪み・新しく IK の届かないコマに使う）, "camera", "vocal"（分けた歌声）, "lines"（時刻つきの歌詞）, "eye_limits"}`。
+  motions は MMD と同じく、後の VMD が同じコマの同じ骨・表情のキーを置き換えて合わせる（分析の pack の作り方と同じ）。
+- 出力（DIR）: `report.md`（考え方ごとの表: 値・人 / 決まり・判定・外れた所の数、最後に出所）・`report.json`（全部）・`outliers.md` と
+  `outliers.csv`（外れた所の時刻表、重い順）・`events.csv`（時刻表に入らないものも含めた全部の所）・`series.npz`（コマごとの曲線）・
+  `marks.npz`（重心・ZMP・支持基底面、`mark` が読む）・`timeline.png`（時間の図）。重い配列（FK・MMD の IK・靴）は `--cache`（既定 DIR/cache）に
+  入力の md5 で残る。部品が 1 つ落ちても他は書き、終了の値は 1。
+- 判定: 人の中央値 [四分位] に対して 中 / 上へ外 / 下へ外。外の数は人の幅（四分位の幅と (90 % 点 − 10 % 点) / 2 の大きい方）を単位にした距離
+  （人の基準値の p31 の決め方。% と 回/分は MV の 1 コマ・1 回の分だけ四分位を広げる）。決まり（スカートの 122・床の下 0・跳びの頂き 0 など）は
+  その上限との距離、口は ITU-R BT.1359-1 の窓（−45〜+125 ms、+ は口が先）。2 つの版は 入った / 中のまま / 近づいた / 遠ざかった /
+  直しすぎ（人の反対側へ出た）/ 変わらず。
+- 外れた所: 物差しが人の範囲から外れた側の区間（人を基準にする物差し）、決まりを破った区間、窓の外の音節。区間の境は人の区間を集めた 90 % 点
+  （低い側は 10 % 点）で、重さはそこから 99 % 点までの幅を単位にした越え方（着地のひざの増えなら境 20.4 度・99 % 点 55 度: 人も着地で深く
+  曲げることがあり、列ごとの中央値の四分位では境にならない）。
+- 人の値は `tools/mvi/human.json`（集計の値だけ。人の生のデータは hinata にあり、リポジトリに入れない）。FineDance の K-pop・振付・jazz 62 列の
+  10/25/50/75/90 % 点を、今までの担当の出力から集めた（hinata `stage6/inspect/scripts/collect_human.py`・`collect_events.py`）。目は違和感の分析
+  a07・a13 が引いた文献の目安（人の目の動きの 99 % は正面から 15 度以内）。
+
+| 考え方 | 物差し（部品 `tools/mvi/`） | もとの測り |
+| --- | --- | --- |
+| 重力感 `gravity` | 支えの無い浮き・6 コマ以上の浮き、宙の回数と宙で腰が重力の半分より遅い割合、腰の下がりと底の受け止め・頂きの滞空・拍の中の上下の幅・上下の速さ、センターの下向き加速度の最大と 98 越え、跳びの頂きと拍の窪み（基準の踊りと比べる）、着地の沈み | a05 s11・s06、floaty の fq、a18、balance-v3 の q1_vertical |
+| 足 `feet` | 10 cm・3 cm を越えて滑る接地、滑りの道のり、靴が床の下へ入るコマ、着地のひざの増え、接地でまっすぐなひざ、MMD の IK が届かないコマと新しく届かないコマ | a05 s04・s06、p22、tools/sink_check.py、tools/leg_ik.py |
+| 重心とバランス `balance` | ZMP が支持基底面の中の割合・片足のコマ・片足の ZMP の余裕・倒れたはずの傾き、片足立ちの重心の左右・動きながらの重心と XcoM の余裕・止まった片足立ち・着地の XcoM・足の外の重心 | tools/wb_dynamics.py（wbbalance の測り方）、a05 s11・s14・s15、p24（p26 の後） |
+| 上体 `upper` | 頭・胸・腕が骨盤に付く傾き、頭の止まり（80→20 %）、頭・上半身の急停止、頭の加速度、頭と骨盤の速い動きの相互相関、2 秒窓の付き方 | wb_dynamics の follow、a08、a18、tools/upper_body_check.py |
+| 腕と指 `arms` | 腕の連なりの遅れ（上腕→ひじ・ひじ→手首・手首→指）、腕の休み、指の速さと指 / 手首の比、手首の 3〜6 Hz・8 Hz 以上 | a09、review_fingers_lag の s11_mmd_chain、a02、a08 |
+| 目 `eyes` | 端（範囲の 90 %）にいる割合と最長、正面から 15 度以上 | tools/eye_gaze.eye_measures（a07・a13） |
+| 口 `mouth` | 開く母音と全部の立ち上がりで口が半分開く時刻、遅い・早い割合、声が鳴るのに閉じて見える時間 | tools/lip_check.py |
+| スカートの危なさ `skirt` | 床のコマで腰の下向きの加速度が 122 を越えるコマ（宙は踊りの落ち方として別に数える）と最大 | tools/sink_check.py の測り方 |
+| 突起 `spikes` | センター・両手首・頭の 1 コマの突起 | a08 s2 |
+| 描いた絵 `pixels` | 緑の下着の写しの絵の下着の画素、床の影のちらつき（描いた絵を渡したときだけ。MMD は起こさない） | pants_mine の色の決め、tools/shadow_check.py の rough |
+
+- 確かめ: v9（描く入力の D の組）を測り、今までの報告の数と 51 組を突き合わせて全部一致（human_baseline の v9 の表・balance-v3・floaty・wbbalance・
+  review_wbbalance・指・視線の報告。差は報告の丸めの桁だけ）。写した測りを人の 62 列に当て、human_baseline の数と 15 項目で差 0。試験
+  `tests/test_mvi_*.py`（部品ごと、合成の体）と `tests/test_mv_inspect.py`（合成の全身で端から端まで、BALANCE_SONG があれば v9 の数）。
+- 時間の図は 1 行 1 曲線（腰の下向きの加速度・センター・腰の上下・浮き・両足の靴の高さ・ZMP の余裕・片足立ちの重心・目・口）、緑の帯 = 人の四分位、
+  橙の破線 = 決まり、赤 = 時刻表に入る外れた所。`timeline --from --to` で拡大。
+- 印（`mark`）: 黄の丸 = 重心、黄の点 = その真下の床、緑 = 支持基底面、赤の × = ZMP、左上にそのコマの外れた所。投影は wbbalance が正面固定の
+  カメラで確かめた式（カメラの VMD の注視点・距離・角度・縦の視野角）。ロールのあるカメラは断る（確かめていない）。
+
 ## 出力
 
 - 標準出力は常に ASCII。日本語などは `\uXXXX` に逃がすので、端末の文字コードが何であっても壊れない。

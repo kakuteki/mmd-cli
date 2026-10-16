@@ -3,7 +3,7 @@
 
 Which places go into the timeline (listed): a place of a measure judged against people is listed when that measure lies
 outside people's quartiles on the place's side (a place on the other side, or of a measure inside, stays in the JSON
-only); a place of a rule (limit) is listed when the measure breaks the rule; a place of a window (the lips) is listed
+only); every place of a rule (limit) is listed when the measure breaks the rule; a place of a window (the lips) is listed
 when the place itself lies outside the window; a place of an "info" measure is never listed.  Severity: how many of
 the measure's scales the place lies past its edge (base.event).
 """
@@ -28,6 +28,8 @@ def listed(ev, row):
     if ref.get("kind") == "window":
         return not (ref["lo"] <= ev["value"] <= ref["hi"])
     j = row.get("judge")
+    if ref.get("kind") == "limit":
+        return bool(j and j["side"] != 0)              # every place of a broken rule (a place's own side is its value's)
     return bool(j and j["side"] != 0 and j["side"] == ev.get("side", 1))
 
 

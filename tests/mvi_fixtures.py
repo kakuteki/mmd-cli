@@ -120,6 +120,94 @@ class FakeMeasured:
         return self._vertical
 
 
+def full_body_bytes():
+    """a model with Sour's Rin's rest skeleton for every part: the body chain and the upper body with the eyes, the arms
+    with their twist bones and the middle finger, and the leg rig of tests.test_leg_ik (the leg IK, the toe IK, the D
+    bones, 足先EX) with a shoe (the sole, the upper and the toe cap of tests.test_foot_layer) on each foot"""
+    import struct
+    from tests.test_foot_layer import CAP, SOLE, UPPER as SHOE_UPPER
+    from tests.test_leg_ik import KNEE_LIMITS, REST as LEG_REST
+    from tests.test_pmx import IK, NORMAL, TRANSLATE, APPEND_ROTATE, Writer
+    w = Writer(bone=2, vertex=2)
+    up = {"上半身": (0.0, 12.2248, -0.6493), "上半身2": (0.0, 13.7985, -0.6784), "首": (0.0, 15.6456, -0.1343),
+          "頭": (0.0, 16.2431, 0.0), "頭先": (0.0, 18.7663, -0.1601), "両目": (0.0, 17.2143, -0.562),
+          "左目": (0.4101, 17.2143, -0.562), "右目": (-0.4101, 17.2143, -0.562)}
+    rows = [("全ての親", None, LEG_REST["全ての親"], NORMAL | TRANSLATE, {}), ("センター", "全ての親", LEG_REST["センター"], NORMAL | TRANSLATE, {}),
+            ("グルーブ", "センター", LEG_REST["グルーブ"], NORMAL | TRANSLATE, {}), ("腰", "グルーブ", LEG_REST["腰"], NORMAL, {}),
+            ("下半身", "腰", LEG_REST["下半身"], NORMAL, {}), ("上半身", "腰", up["上半身"], NORMAL, {}),
+            ("上半身2", "上半身", up["上半身2"], NORMAL, {}), ("首", "上半身2", up["首"], NORMAL, {}), ("頭", "首", up["頭"], NORMAL, {}),
+            ("頭先", "頭", up["頭先"], NORMAL, {}), ("両目", "頭", up["両目"], NORMAL, {}), ("左目", "頭", up["左目"], NORMAL, {}),
+            ("右目", "頭", up["右目"], NORMAL, {})]
+    for s, sx in (("左", 1.0), ("右", -1.0)):
+        sh, arm, el, wr, mid = (REST[s + n] for n in ("肩", "腕", "ひじ", "手首", "中指３"))
+        tw1 = tuple(0.5 * (a + b) for a, b in zip(arm, el))
+        tw2 = tuple(0.5 * (a + b) for a, b in zip(el, wr))
+        rows += [(s + "肩", "上半身2", sh, NORMAL, {}), (s + "腕", s + "肩", arm, NORMAL, {}), (s + "腕捩", s + "腕", tw1, NORMAL, {}),
+                 (s + "ひじ", s + "腕捩", el, NORMAL, {}), (s + "手捩", s + "ひじ", tw2, NORMAL, {}), (s + "手首", s + "手捩", wr, NORMAL, {}),
+                 (s + "中指３", s + "手首", mid, NORMAL, {})]
+        leg = lambda n: (sx * LEG_REST[n][0], LEG_REST[n][1], LEG_REST[n][2])      # noqa: E731
+        rows += [("腰キャンセル" + s, "下半身", leg("腰キャンセル"), NORMAL | APPEND_ROTATE, {"append": ("腰", -1.0)}),
+                 (s + "足", "腰キャンセル" + s, leg("足"), NORMAL, {}), (s + "ひざ", s + "足", leg("ひざ"), NORMAL, {}),
+                 (s + "足首", s + "ひざ", leg("足首"), NORMAL, {}), (s + "つま先", s + "足首", leg("つま先"), NORMAL, {}),
+                 (s + "足IK親", "全ての親", leg("足IK親"), NORMAL | TRANSLATE, {}),
+                 (s + "足ＩＫ", s + "足IK親", leg("足ＩＫ"), NORMAL | TRANSLATE | IK,
+                  {"layer": 1, "ik": (s + "足首", 40, 2.0, [(s + "ひざ", KNEE_LIMITS), (s + "足", None)])}),
+                 (s + "つま先ＩＫ", s + "足ＩＫ", leg("つま先ＩＫ"), NORMAL | TRANSLATE | IK,
+                  {"layer": 2, "ik": (s + "つま先", 3, 4.0, [(s + "足首", None)])}),
+                 (s + "足D", "腰キャンセル" + s, leg("足"), NORMAL | APPEND_ROTATE, {"layer": 2, "append": (s + "足", 1.0)}),
+                 (s + "ひざD", s + "足D", leg("ひざ"), NORMAL | APPEND_ROTATE, {"layer": 2, "append": (s + "ひざ", 1.0)}),
+                 (s + "足首D", s + "ひざD", leg("足首"), NORMAL | APPEND_ROTATE, {"layer": 2, "append": (s + "足首", 1.0)}),
+                 (s + "足先EX", s + "足首D", leg("足先EX"), NORMAL, {"layer": 2})]
+    index = {r[0]: i for i, r in enumerate(rows)}
+    built = []
+    for name, parent, pos, flags, kw in rows:
+        args = {"parent": -1 if parent is None else index[parent], "position": pos, "flags": flags, "layer": kw.get("layer", 0)}
+        if "append" in kw:
+            args["append"] = (index[kw["append"][0]], kw["append"][1])
+        if "ik" in kw:
+            target, loops, angle, links = kw["ik"]
+            args["ik"] = {"target": index[target], "loops": loops, "angle": angle, "links": [(index[l], lim) for l, lim in links]}
+        built.append(w.bone(name, **args))
+    verts = []
+    for side, sx in (("左", 1.0), ("右", -1.0)):
+        ankle_d, ex = index[side + "足首D"], index[side + "足先EX"]
+        for x, y, z, wex in SOLE + SHOE_UPPER + [CAP]:
+            raw = w.vertex("BDEF2", (ex, ankle_d), (wex,)) if wex > 0 else w.vertex("BDEF1", (ankle_d,))
+            verts.append(struct.pack("<3f", sx * x, y, z) + raw[12:])
+    return w.build(name="rin-body", bones=built, vertices=verts)
+
+
+def key(name, frame, position=(0.0, 0.0, 0.0), q=(0.0, 0.0, 0.0, 1.0)):
+    from mmd_cli import fk
+    return vmd.BoneKey(name, frame, tuple(float(v) for v in position), fk.stored(tuple(q)), vmd.bone_interpolation(vmd.LINEAR_CURVE))
+
+
+def axis_angle(axis, degrees):
+    n = math.sqrt(sum(a * a for a in axis))
+    h = math.radians(degrees) / 2.0
+    s = math.sin(h) / n
+    return (axis[0] * s, axis[1] * s, axis[2] * s, math.cos(h))
+
+
+BENT = -1.2                     # センター this far down: the knees bent, every foot goal within reach
+
+
+def dance(F, centre=lambda t: (0.0, 0.0, 0.0), feet=None, sway=6.0, extra=()):
+    """a dance of F frames: センター at BENT + centre(t), the upper body turning sideways by `sway` degrees at 1 Hz (the
+    dance range), the arms swinging, the foot IKs at feet(side, t) (on the floor when not given), more keys after"""
+    keys = []
+    for t in range(F):
+        c = centre(t)
+        keys.append(key("センター", t, position=(c[0], BENT + c[1], c[2])))
+        a = sway * math.sin(2.0 * math.pi * t / 30.0)
+        keys.append(key("上半身", t, q=axis_angle((0.0, 0.0, 1.0), a)))
+        for s, sx in (("左", 1.0), ("右", -1.0)):
+            keys.append(key(s + "腕", t, q=axis_angle((0.0, 0.0, 1.0), sx * (20.0 * math.sin(2.0 * math.pi * t / 45.0)))))
+            if feet is not None:
+                keys.append(key(s + "足ＩＫ", t, position=feet(s, t)))
+    return vmd.Motion(model_name="rin-body", bones=keys + list(extra))
+
+
 def front_camera(path, y=10.0, distance=45.0, fov=30):
     """a still camera in front of the model (looking along +Z at (0, y, 0)), written to path"""
     k = dict(distance=-distance, position=(0.0, y, 0.0), rotation=(0.0, 0.0, 0.0), fov=fov)

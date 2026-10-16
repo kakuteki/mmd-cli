@@ -91,7 +91,9 @@ def figure(report, series, path, names=None, t0=None, t1=None, title=None):
         d.rectangle([LEFT, y0p, LEFT + cols, y1p], outline=GRID)
         ref = base.reference(m["ref"]) if m.get("ref") else None
         if ref and ref.get("kind") == "people":
-            d.rectangle([LEFT, max(y0p, ys(ref["q3"])), LEFT + cols, min(y1p, ys(ref["q1"]))], fill=BAND)
+            b0, b1 = max(y0p, ys(ref["q3"])), min(y1p, ys(ref["q1"]))
+            if b1 > b0:                                         # (the band may lie outside the curve's span)
+                d.rectangle([LEFT, b0, LEFT + cols, b1], fill=BAND)
         for v in lims:
             if lo <= v <= hi:
                 yy = ys(v)

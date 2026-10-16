@@ -34,10 +34,11 @@ def measure(m):
     rows.append(base.row("feet.slide3_per_min", "3 cm 超滑る接地（左右計）", f["slip3_per_min"], "/min", src))
     rows.append(base.row("feet.slide_path_cm_per_min", "滑りの道のり（左右計）", f["slip_path_cm_per_min"], "cm/min", src + "、rv_slip"))
     rows.append(base.row("feet.slide_fast_share", "接地のうち 20 cm/s より速く滑る歩みの割合", f["share_slip20"], "", src + "、rv_slip"))
+    edge, scale = base.event_rule("feet.slide10_per_min", 10.0, 10.0)
     for side, rows04 in a5["_s04_rows"].items():
         for r in rows04:
-            if r["slip_path_cm"] > 10.0:
-                events.append(base.event("feet.slide10_per_min", r["start"], r["end"], r["slip_path_cm"], "cm", 10.0, 10.0,
+            if r["slip_path_cm"] > max(10.0, edge):
+                events.append(base.event("feet.slide10_per_min", r["start"], r["end"], r["slip_path_cm"], "cm", edge, scale,
                                          "%s 足が接地のまま %.1f cm 滑る（%d コマ）" % (side, r["slip_path_cm"], r["frames"])))
 
     sh = m.shoes()
@@ -64,7 +65,7 @@ def measure(m):
     ref = base.reference("feet.knee_gain_deg")
     e6 = a5["_ev"]
     if ref:
-        edge, scale = base.people_edge(ref, 1)
+        edge, scale = base.event_rule("feet.knee_gain_deg", *base.people_edge(ref, 1))
         for lab in ("L", "R"):
             for td, g in zip(e6["final_%s_td" % lab], e6["final_%s_kgain" % lab]):
                 if g > edge:

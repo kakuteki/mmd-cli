@@ -34,12 +34,10 @@ def measure(m):
     rows.append(base.row("balance.zmp_margin_single_cm", "片足のコマの ZMP の余裕 中央値（+ 中）",
                          (z["margin_cm_single"] or {}).get("p50"), "cm", src))
     rows.append(base.row("balance.zmp_tilt_deg_per_min", "支えの外の区間で体が倒れたはずの傾き 合計", z["tilt_deg_per_min"], "度/min", src))
-    runs_ref = base.reference("balance.zmp_run_tilt_deg")
-    p99 = runs_ref["p99"] if runs_ref else 32.7
-    p90 = runs_ref["p90"] if runs_ref else None
+    p99, scale = base.event_rule("balance.zmp_inside_pct", 32.7, 32.7)
     for r in z["outside_runs"]:
         if r["tilt_deg"] > p99:
-            events.append(base.event("balance.zmp_inside_pct", r["first"], r["last"], r["tilt_deg"], "度", p99, p99,
+            events.append(base.event("balance.zmp_inside_pct", r["first"], r["last"], r["tilt_deg"], "度", p99, scale,
                                      "ZMP が支えの外 %.1f cm、倒れたはずの傾き %.1f 度（人の区間の 99 %% 点 %.1f 度）、支え %s"
                                      % (r["depth_cm"], r["tilt_deg"], p99, r["support"])))
     margin = arr["margin"] * 100.0

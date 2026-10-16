@@ -163,7 +163,8 @@ def measure(pos, a, b, events=False):
     vv = v[a:b] - v[a:b].mean()
     P = np.abs(np.fft.rfft(vv * np.hanning(len(vv)))) ** 2
     f = np.fft.rfftfreq(len(vv), DT)
-    r["vy_power_above_3hz_pct"] = float(100 * P[f >= 3].sum() / P[f > 0.2].sum())
+    den = P[f > 0.2].sum()
+    r["vy_power_above_3hz_pct"] = float(100 * P[f >= 3].sum() / den) if den > 0 else None     # (a pelvis that never moves)
     ph = pos[:, BI["下半身"], [0, 2]].astype(np.float64) * U
     hs = np.zeros(len(y))
     hs[1:-1] = np.linalg.norm(ph[2:] - ph[:-2], axis=1) / (2 * DT)

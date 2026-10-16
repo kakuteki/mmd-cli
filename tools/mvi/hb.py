@@ -124,7 +124,9 @@ def m_a08(names, pos, a, b):
                         "t80_20_med_ms": round(float(np.nanmedian(t)) / FPS * 1000.0, 1) if np.isfinite(t).any() else None}
             evs[kind] = [(a + m["imin"], a + m["ipk"], m["t_80_20"] / FPS * 1000.0, m["vpk"]) for m in ms]
         out[name] = {"spikes_per_min": round((up + dn) / minutes, 3), "spikes_up_dn": [int(up), int(dn)],
-                     "vel_share_ge8hz_pct": round(100.0 * sum(bands[6:]) / sum(bands), 3), "stop": st["stop"], "start": st["start"]}
+                     # (a point that never moves has no power at all: None; the analysts' data never had one)
+                     "vel_share_ge8hz_pct": round(100.0 * sum(bands[6:]) / sum(bands), 3) if sum(bands) > 0 else None,
+                     "stop": st["stop"], "start": st["start"]}
         su, sd = A.spike_steps(s, A.T_SPIKE[name])
         ev[name] = {"spikes": sorted([(a + int(k), float(s[k] - 0.5 * (s[k - 1] + s[k + 1])), "up") for k in su] +
                                      [(a + int(k), float(0.5 * (s[k - 1] + s[k + 1]) - s[k]), "dn") for k in sd]),

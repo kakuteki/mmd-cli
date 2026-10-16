@@ -35,11 +35,12 @@ def measure(m):
     rows.append(base.row("gravity.hover_runs6_per_min", "支えの無い浮きが 6 コマ以上続く", f["hover_support_runs6_per_min"], "/min",
                          src_s11, runs=hs["runs_>=6frames"]))
     low = hs["_lower_cm"]
+    edge, scale = base.event_rule("gravity.hover_runs6_per_min", 5.0, 6.0)
     for a, b in hs["_runs"]:
         n = b - a + 1
-        if n >= 6:
-            events.append(base.event("gravity.hover_runs6_per_min", a, b, n, "コマ", 5, 6.0,
-                                     "低い方の足 %.1f cm（中央値）" % float(np.median(low[a:b + 1]))))
+        if n > edge:
+            events.append(base.event("gravity.hover_runs6_per_min", a, b, n, "コマ", edge, scale,
+                                     "%d コマ続く（低い方の足 %.1f cm、中央値）" % (n, float(np.median(low[a:b + 1])))))
     series["hover"] = {"label": "支えの無い浮き（低い方の足の高さ cm、浮きのコマだけ）", "unit": "cm",
                        "y": np.where(hs["_mask"], low, np.nan), "lo": 0.4, "hi": 4.0,
                        "ids": ["gravity.hover_runs6_per_min", "gravity.hover_pct"]}
@@ -77,12 +78,12 @@ def measure(m):
         rows.append(base.row("gravity.centre_down_gt98_pct", "センターの下向き加速度が 98 を越えるコマ", ay["down_gt_98u_pct"], "%", src))
         a = ev["a18"]["first"]
         acc = ev["a18"]["center_ay"]
-        ref = base.reference("gravity.centre_down_max")
-        scale = base.band(ref)[3] if ref else 28.0
+        edge, scale = base.event_rule("gravity.centre_down_gt98_pct", -98.0, 28.0)
         for r0, r1 in base.runs(acc < -98.0):
             k = r0 + int(np.argmin(acc[r0:r1 + 1]))
-            events.append(base.event("gravity.centre_down_gt98_pct", a + r0, a + r1, float(acc[k]), "u/s²", -98.0, scale,
-                                     "%.2f 秒に %.0f" % ((a + k) / base.FPS, acc[k]), side=-1))
+            if acc[k] < edge:
+                events.append(base.event("gravity.centre_down_gt98_pct", a + r0, a + r1, float(acc[k]), "u/s²", edge, scale,
+                                         "%.2f 秒にセンターが %.0f u/s² で落ちる（重力 -122.5）" % ((a + k) / base.FPS, acc[k]), side=-1))
         full = np.full(m.v.frames, np.nan)
         full[a:a + len(acc)] = acc
         series["centre_ay"] = {"label": "センター（グルーブ）の上下の加速度 u/s²（a18、+ 上）", "unit": "u/s²", "y": full,
@@ -118,7 +119,7 @@ def measure(m):
     rows.append(base.row("gravity.landing_sink_cm", "着地後 0.2 秒の骨盤の沈み", f["sink_mean"], "cm", src))
     ref = base.reference("gravity.landing_sink_cm")
     if ref:
-        edge, scale = base.people_edge(ref, -1)
+        edge, scale = base.event_rule("gravity.landing_sink_cm", *base.people_edge(ref, -1))
         e6 = a5["_ev"]
         for lab in ("L", "R"):
             for td, sink in zip(e6["final_%s_td" % lab], e6["final_%s_sink_cm" % lab]):

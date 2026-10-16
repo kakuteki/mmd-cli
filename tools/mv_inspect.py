@@ -137,7 +137,12 @@ def cmd_outliers(args):
     rep = RP.load(args.report)
     if args.concept:
         rep = dict(rep, events=[e for e in rep["events"] if e["concept"] == args.concept])
-    sys.stdout.buffer.write(RP.timeline_md(rep, args.top).encode("utf-8"))
+    text = RP.timeline_md(rep, args.top)
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout.buffer.write(text.encode("utf-8"))
+        sys.stdout.flush()
+    else:
+        sys.stdout.write(text)
     return 0
 
 

@@ -236,6 +236,16 @@ def runs(mask, min_len=1):
     return [(int(a), int(b)) for a, b in zip(st, en) if b - a + 1 >= min_len]
 
 
+def event_rule(mid, edge=None, scale=None):
+    """(edge, scale) for the places of a measure: people's pooled places (human.json's "event": their 90 % point, or
+    10 % on the low side, and the distance from there to their 99 % / 1 % point), else the edge and scale given"""
+    ref = reference(mid)
+    ev = (ref or {}).get("event")
+    if ev:
+        return float(ev["edge"]), float(ev["scale"])
+    return edge, scale
+
+
 def people_edge(ref, side):
     """the quartile people lie beyond on `side` (+1: q3, -1: q1) and the scale (the judgement's) of a reference"""
     lo, hi, _, scale = band(ref)

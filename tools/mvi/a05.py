@@ -611,13 +611,17 @@ def fields(s04r, s06r, s10r, s11r, s14r, s15r, frames):
     """a05_fields.fields and p30_collect.a05_row on the steps' dicts (the same keys)"""
     ss = s15r["single_support_com_lateral_medial_cm"]
     td = s15r["touchdown_xcom_lateral_medial_cm"]
-    knee = [s06r[s]["knee_gain_deg_quantiles(5,25,50,75,95)"][2] for s in SIDES]
-    sink = [s06r[s]["sink_cm_quantiles(5,25,50,75,95)"][2] for s in SIDES]
-    f = {"single_frames": ss["frames"], "single_lat_median_cm": round(ss["quantiles(10,25,50,75,90)"][2], 2),
-         "single_0_3_pct": round(100 * ss["share_within_0_to_3cm"], 1), "single_gt5_pct": round(100 * ss["share_>5cm"], 1),
-         "td_xcom_median_cm": round(td["quantiles(10,25,50,75,90)"][2], 2),
-         "com_outside_2cm_pct(lifted>=5cm)": round(100 * s11r["com_lifted>=5cm"]["share_outside>2cm"], 1),
-         "t_median": s10r["single_clear"]["t_quantiles(10,25,50,75,90)"][2],
+    mid = lambda q, k=2: None if q is None else q[k]                    # noqa: E731  (a step without frames: None)
+    rnd = lambda x, n: None if x is None else round(x, n)               # noqa: E731
+    knee = [mid(s06r[s]["knee_gain_deg_quantiles(5,25,50,75,95)"]) for s in SIDES]
+    sink = [mid(s06r[s]["sink_cm_quantiles(5,25,50,75,95)"]) for s in SIDES]
+    f = {"single_frames": ss["frames"], "single_lat_median_cm": rnd(mid(ss["quantiles(10,25,50,75,90)"]), 2),
+         "single_0_3_pct": rnd(None if ss["share_within_0_to_3cm"] is None else 100 * ss["share_within_0_to_3cm"], 1),
+         "single_gt5_pct": rnd(None if ss["share_>5cm"] is None else 100 * ss["share_>5cm"], 1),
+         "td_xcom_median_cm": rnd(mid(td["quantiles(10,25,50,75,90)"]), 2),
+         "com_outside_2cm_pct(lifted>=5cm)": rnd(None if s11r["com_lifted>=5cm"]["share_outside>2cm"] is None
+                                                  else 100 * s11r["com_lifted>=5cm"]["share_outside>2cm"], 1),
+         "t_median": mid(s10r["single_clear"]["t_quantiles(10,25,50,75,90)"]),
          "held_outside_phases": s14r["held_phases"], "held_outside_s": s14r["held_time_s"],
          "knee_gain_median_deg_LR": knee, "pelvis_sink_median_cm_LR": sink,
          "slip_intervals_gt3cm_LR": [s04r["左"]["intervals_slip_path>3cm"], s04r["右"]["intervals_slip_path>3cm"]],
@@ -625,8 +629,10 @@ def fields(s04r, s06r, s10r, s11r, s14r, s15r, frames):
     minutes = frames / 30.0 / 60.0
     f["single_pct"] = round(100.0 * f["single_frames"] / frames, 2)
     f["held_per_min"] = round(f["held_outside_phases"] / minutes, 3)
-    f["knee_gain_mean"] = round(float(np.mean(f["knee_gain_median_deg_LR"])), 2)
-    f["sink_mean"] = round(float(np.mean(f["pelvis_sink_median_cm_LR"])), 2)
+    known = [x for x in knee if x is not None]
+    f["knee_gain_mean"] = round(float(np.mean(known)), 2) if known else None
+    known = [x for x in sink if x is not None]
+    f["sink_mean"] = round(float(np.mean(known)), 2) if known else None
     f["slip3_per_min"] = round(sum(f["slip_intervals_gt3cm_LR"]) / minutes, 3)
     # review_floaty's rv_slip.get: the slides a minute and the share of fast steps (both feet)
     f["slips10_per_min"] = float(sum(f["slip_intervals_gt10cm_LR"])) / minutes

@@ -35,10 +35,9 @@ def measure(m):
         src = "a08 s1（頭の止まり 80→20 %、human_baseline の範囲）"
         rows.append(base.row("upper.head_stop_ms", "頭の止まり 80→20 % の時間（中央値）", hd["stop"]["t80_20_med_ms"], "ms", src,
                              stops=hd["stop"]["n"]))
-        rows.append(base.row("upper.head_stops_per_min", "頭の止まり", hd["stop"]["per_min"], "/min", src))
         ref = base.reference("upper.head_stop_ms")
         if ref:
-            edge, scale = base.people_edge(ref, -1)
+            edge, scale = base.event_rule("upper.head_stop_ms", *base.people_edge(ref, -1))
             for imin, ipk, ms, vpk in ev["a08"]["頭"]["stops"]:
                 if np.isfinite(ms) and ms < edge:
                     events.append(base.event("upper.head_stop_ms", ipk, imin, ms, "ms", edge, scale,
@@ -60,6 +59,7 @@ def measure(m):
         parts = ub.from_pack(names, pos, rot)
         u = ub.measure(parts, (rng[0], rng[1] - 1))
         src = "tools/upper_body_check.py（review_wbbalance の測り、pack の骨）"
+        rows.append(base.row("upper.head_stops_per_min", "頭の止まり（a08 と同じ決め方）", (u.get("stops") or {}).get("per_min"), "/min", src))
         rows.append(base.row("upper.head_pelvis_xcorr_peak", "頭と骨盤の速い動きの相互相関の山（1.5〜6 Hz）", (u.get("lag") or {}).get("peak"), "", src))
         loc = u.get("local") or {}
         w = loc.get("weighted") or {}
