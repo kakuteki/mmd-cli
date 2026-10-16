@@ -673,16 +673,6 @@
   "q3": 513.6775,
   "p90": 1779.108
  },
- "balance.zmp_run_tilt_deg": {
-  "kind": "info",
-  "n": 10624,
-  "p90": 3.17,
-  "p99": 28.14930000000004,
-  "depth_p90_cm": 41.98700000000001,
-  "depth_p99_cm": 108.83860000000007,
-  "source": "wbbalance（2026-10-17）の wb_dynamics を人に当てた値（human_f16: 人の足の型・床の押しで数える傾き）。人の全列のすべての外れの区間の傾きの 90 / 99 % 点（区間を外れと呼ぶ境）",
-  "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）"
- },
  "upper.head_follow": {
   "kind": "people",
   "group": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
