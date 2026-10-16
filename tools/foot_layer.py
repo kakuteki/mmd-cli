@@ -982,31 +982,39 @@ def turn_about(axis, deg, q):
     return qmul(qaxis(unit(axis), np.radians(deg)), q)
 
 
-def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None, hover_hold=None):
-    """the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees) and the weights (roll laid flat w,
-    on the floor v) for one side: the roll laid flat as the foot takes weight (by its share of the body's weight and
-    only while its sole faces the floor), the ankle complex inside its range, the heel raised by `heel` [F] degrees
-    about the ball (heel_turn; none when not given), the toes bent so that a loaded raised heel stands on the ball with
-    the toe box on the floor.  With p["landing"] and p["skim"] a foot that the dance moves fast with its sole off the
-    floor (SKIM_SPEED, SKIM_LIFT) is not put onto it."""
-    side_sign = 1.0 if o.name == "左" else -1.0
+def floor_weight(f, o, p):
+    """the on-floor weight v [F] of one foot (0..1): the flat sole within the ON_FLOOR band over the trace's floor, the
+    trace's one- or two-frame lifts of a low shoe bridged, and with p["landing"] and p["skim"] a foot that the dance moves
+    fast with its sole off the floor (SKIM_SPEED, SKIM_LIFT) not put onto it"""
     e = trace_height(f, o, p["trace_toe_extra"])
     lift = trace_height(f, o, p["trace_toe_extra"], key="low")    # the shoe itself, not laid flat
     v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE, lift < BRIDGE_LIFT)
     if p.get("landing", True) and p.get("skim", True):
         v = v * (1.0 - smoothstep(foot_speed(f), *SKIM_SPEED) * smoothstep(e, *SKIM_LIFT))
-    if hover_hold is not None:
-        # (a hover run's lower foot: the sink brought its shoe down; it keeps the dance's shape - no roll laid flat, no
-        # toes bent, no heel turned - and only its height is held on the floor: v_height)
-        v = v * (1.0 - hover_hold)
+    return v
+
+
+def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None, hover_hold=None, shape_v=None):
+    """(the foot's world turn q_t [F, 4], the toes' extension added by 足先EX (degrees), the roll laid flat w, the
+    on-floor weight of the height v, that of the shape) for one side: the roll laid flat as the foot takes weight (by
+    its share of the body's weight and only while its sole faces the floor), the ankle complex inside its range, the
+    heel raised by `heel` [F] degrees about the ball (heel_turn; none when not given), the toes bent so that a loaded
+    raised heel stands on the ball with the toe box on the floor (floor_weight).
+    Where the figure was lowered over a hover (hover_runs): `shape_v` [F] is the on-floor weight the shape is judged by
+    (that of the feet before the sink, so that a foot the sink brings onto the floor keeps the dance's shape: no roll
+    laid flat, no toes bent, no heel turned, as the layer before), and `hover_hold` [F] holds the height of a hover
+    run's lower foot on the floor."""
+    side_sign = 1.0 if o.name == "左" else -1.0
+    v = floor_weight(f, o, p)
+    v_height = v if hover_hold is None else np.maximum(v, hover_hold)
+    if shape_v is not None:
+        v = np.asarray(shape_v, dtype=float)
     q = leg["q_foot"]
     pitch = np.degrees(np.arcsin(np.clip(qrot(q, o.a0)[:, 1], -1.0, 1.0)))
     loaded = smoothstep(share, *p["load_share"])
     # the weights spread over EASE frames each way (a raised cosine): a fast foot crosses the height band in a frame or
     # two, but the roll is laid flat and the toes bend and relax over about 0.13 s
     w = smooth_max_envelope(near * loaded * (1.0 - smoothstep(np.abs(pitch), *p["flat_pitch"])), EASE)
-    if hover_hold is not None:
-        w = w * (1.0 - hover_hold)
     if p["flatten"]:
         _, ang = unrolled(o, q)
         turn = w * ang
@@ -1061,7 +1069,6 @@ def foot_targets(o, f, leg, rest, share, near, p, floor_y=None, heel=None, hover
             toes = smooth_max_envelope(v * loaded * soft_limit(np.clip(-pitch, 0.0, None), 0.6 * room, room), EASE)
         else:
             toes = toe_bend(o, f, leg, qnormalize_rows(q), rest, v, loaded, p, o.floor if floor_y is None else floor_y)
-    v_height = v if hover_hold is None else np.maximum(v, hover_hold)
     return qnormalize_rows(q), toes, w, v_height, v
 
 
@@ -1357,6 +1364,7 @@ def layer(rig, shoe, motion, params=None, log=None):
     sol = IK.solve(rig, motion, frames, keys)
     lowered = np.zeros(F)
     held = None
+    pre_shares = pre_near = pre_v = None
     sink_info = {"runs": [], "acc_past_bound_frames": 0, "radius": [], "scale": []}
     on = p.get("hover")
     if (p.get("landing", True) if on is None else on) and len(shoe.sides) == 2 and "センター" in rig.by_name:
@@ -1371,6 +1379,9 @@ def layer(rig, shoe, motion, params=None, log=None):
             gap = np.minimum(*[e[s] for s in shoe.sides])
             lowered, past, radius, scale = hover_sink_profile(gap, rr, acc0)
             sink_info = {"runs": rr, "acc_past_bound_frames": past, "radius": radius, "scale": scale}
+            # the shape is judged on the feet before the sink (shape_v, and the shares and nearness of the weight)
+            pre_shares, pre_near = load_shares(shoe, f0, sol, p)
+            pre_v = {s: floor_weight(f0[s], o, p) for s, o in shoe.sides.items()}
             sides = list(shoe.sides)
             lower = e[sides[0]] <= e[sides[1]]
             held = {s: np.zeros(F) for s in sides}
@@ -1400,6 +1411,8 @@ def layer(rig, shoe, motion, params=None, log=None):
     else:
         feet = feet_of(rig, shoe, sol, frames, floor_y, p["heel_pitch_deg"])
     shares, near = load_shares(shoe, feet, sol, p)
+    if held is not None:
+        shares, near = pre_shares, pre_near
     new_keys = dict(keys)
     plan = {}
 
@@ -1428,7 +1441,8 @@ def layer(rig, shoe, motion, params=None, log=None):
                 leg[k] = shank[s][k]
             rest = rest_anatomy(rig, o, p["heel_pitch_deg"])
             q_t, toes, w, v, v_shape = foot_targets(o, feet[s], leg, rest, shares[s], near[s], p, floor_y, heel[s],
-                                                    None if held is None else held[s])
+                                                    None if held is None else held[s],
+                                                    None if held is None else pre_v[s] * (1.0 - held[s]))
             # heights: the trace's floor moved onto the visible floor (every frame by the same d1, so that a foot in
             # the air keeps its path), the shoe of a foot on the floor exactly on it (v), that correction eased into
             # the frames around (eased_correction), nothing below the floor
