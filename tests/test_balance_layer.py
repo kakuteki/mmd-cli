@@ -211,7 +211,9 @@ class WeightShiftTest(unittest.TestCase):
         """back by the end (1 s after the landing) and not begun a second before the lift (a 17 cm move at the bounded
         acceleration takes about 0.8 s)"""
         x = np.abs(self.shift[:, 0])
-        self.assertLess(x[self.last], 0.01)
+        # 0.011 units (0.88 mm): the still stance's pull is held 0.1 s past it and 0.010696 units (0.856 mm) are left, the
+        # same to 1e-6 on two machines; 0.0003 units over that for the solver stopping a little elsewhere (it was 0.01)
+        self.assertLess(x[self.last], 0.011)
         self.assertLess(x[:10].max(), 0.01)
 
     def test_no_swing_the_wrong_way(self):
@@ -688,7 +690,7 @@ class RangeTest(unittest.TestCase):
         for s in ("左", "右"):
             on = before.height(s) < balance_layer.SUPPORT_H
             gain = (after.knee_flexion(s) - before.knee_flexion(s))[on]
-            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.0, s)
+            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.0, s)   # (13.75 on the right since 39c682e)
         heel, toe = before.sole("右")
         line_x = 0.5 * (heel[:, 0] + toe[:, 0])
         self.assertLess(np.abs(after.com()[65:80, 0] - line_x[65:80]).max() * CM, 3.0)
@@ -898,6 +900,119 @@ class VerticalTest(unittest.TestCase):
         self.assertEqual(result.report["vertical"]["bound_units_s2"], 78.0)
 
 
+def jump_and_bounce(last=119):
+    """a jump: both feet 8 cm up from 1.4 to 1.9 s (frames 42-57), センター rising 4 cm to its top at 1.67 s (frame 50)
+    and turned down there in a frame (a tent of 4 frames each way: 225 units/s^2 down at the top, as the traced dance's
+    jump tops 132.2 and 201.6 s); and on the floor a bounce of the same shape at 3.33 s (frame 100)"""
+    air = (38, 44, 55, 61, 1.0)
+    motion = dance(last=last, left_lifts=[air], right_lifts=[air])
+    centre = []
+    for f in range(last + 1):
+        h = 0.5 * max(0.0, 1.0 - abs(f - 50) / 4.0) + 0.5 * max(0.0, 1.0 - abs(f - 100) / 4.0)
+        centre.append(key("センター", f, (0.0, -1.1 + h, 0.0)))
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+    return motion
+
+
+class AirTest(unittest.TestCase):
+    """in the air nothing holds the body up: it falls with gravity, the pelvis about the COM with the limbs' swing (human
+    dancers' largest downward acceleration of the pelvis, a sequence's median, 142 [128, 156] units/s^2, which jumps
+    reach).  The bound that keeps a body the floor holds from falling faster than gravity (DOWN_ACC_MAX) is not the
+    bound in the air: there the jump's top stays as high as the dance has it (the review of 2026-10-16: with 122 in the
+    air 9 of the song's 31 jumps came 2 cm and more lower)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.last = 119
+        cls.motion = jump_and_bounce(cls.last)
+        cls.result = balance_layer.layer(MODEL, cls.motion, {"despike": False})
+        cls.y0 = world(cls.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+        cls.y1 = world(cls.result.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+
+    def test_fixture_in_the_air_and_past_the_bound(self):
+        low = {s: balance_layer.Body(MODEL, self.motion).height(s) for s in ("左", "右")}
+        air = (low["左"] >= balance_layer.SUPPORT_H) & (low["右"] >= balance_layer.SUPPORT_H)
+        self.assertTrue(air[46:55].all())
+        self.assertFalse(air[90:110].any())
+        a = pelvis_down_acc(self.motion, self.last)
+        self.assertGreater(a[50], 200.0)
+        self.assertGreater(a[100], 200.0)
+
+    def test_jump_top_kept_in_the_air(self):
+        self.assertLess(abs(self.y1[50] - self.y0[50]) * CM, 0.05)
+        self.assertLess(float(np.max(np.abs(self.y1[44:57] - self.y0[44:57]))) * CM, 0.05)
+
+    def test_bounce_on_the_floor_still_bounded(self):
+        a = pelvis_down_acc(self.result.motion, self.last)
+        self.assertLessEqual(a[70:].max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertGreater(float(self.y0[100] - self.y1[100]) * CM, 0.3)
+
+    def test_air_bound_is_a_parameter(self):
+        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter (the layer before
+        2026-10-16 byte for byte needs air_no_drop, still_hold and despike_passes back too: on the MV, order C, the
+        md5 of v9's balance layer came back only with all four)"""
+        old = balance_layer.layer(MODEL, self.motion, {"despike": False, "air_down_acc_max": balance_layer.DOWN_ACC_MAX})
+        a = pelvis_down_acc(old.motion, self.last)
+        self.assertLessEqual(a.max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        y = world(old.motion, ["下半身"], self.last)["下半身"][0][:, 1]
+        self.assertGreater(float(self.y0[50] - y[50]) * CM, 0.3)
+        self.assertEqual(old.report["vertical"]["air_bound_units_s2"], balance_layer.DOWN_ACC_MAX)
+
+    def test_despike_does_not_sharpen_the_fall_in_the_air(self):
+        """the 1-frame despike (on by default) may not make the air's fall faster than the dance's own there (the song's
+        213.3 s: the despike moved a frame of the jump 1.4 cm and its downward acceleration went 254 -> 558)"""
+        last = 119
+        motion = jump_and_bounce(last)
+        centre = []
+        for f in range(last + 1):                       # a hitch on the way up, in the air: a spike to take away
+            h = 0.5 * max(0.0, 1.0 - abs(f - 50) / 4.0) + 0.5 * max(0.0, 1.0 - abs(f - 100) / 4.0)
+            h += 0.12 if f == 47 else 0.0
+            centre.append(key("センター", f, (0.0, -1.1 + h, 0.0)))
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+        a0 = pelvis_down_acc(motion, last)
+        res = balance_layer.layer(MODEL, motion)
+        self.assertGreater(res.report["spikes"]["count"][0], 0)
+        a1 = pelvis_down_acc(res.motion, last)
+        self.assertLessEqual(a1[44:57].max(), max(a0[44:57].max(), balance_layer.DOWN_ACC_MAX) + 0.5)
+
+    def test_report_names_the_air(self):
+        rep = self.result.report["vertical"]
+        self.assertGreater(rep["air_frames"], 8)
+        self.assertIn("air_bound_units_s2", rep)
+
+    def test_short_air_keeps_the_drop(self):
+        """the hips come back up from the legs' drop only in an air stretch of AIR_MIN frames or more (a jump, as
+        the song's tests read it): a shorter one is a shuffle with the feet 2-3 cm up, where the hips coming up for 1-3
+        frames left the floor frames before them less lowered by the floor's bound, the standing knee straighter and
+        MMD's IK short on it (order C of the MV, 74.43 s, frame 2233)"""
+        air = np.zeros(30, bool)
+        air[3:6] = True                                 # 3 frames: a shuffle
+        air[10:20] = True                               # 10 frames: a jump
+        w = balance_layer.air_ramp(air)
+        self.assertEqual(float(w[:10].max()), 0.0)
+        self.assertGreater(float(w[10]), 0.0)
+        self.assertEqual(float(w[14]), 1.0)
+        self.assertEqual(float(w[20:].max()), 0.0)
+
+    def test_shuffle_keeps_the_floor_bound(self):
+        """both feet off the floor for fewer frames than a jump (a shuffle, the feet 2-3 cm up) keep the floor's bound:
+        with no bound there the layer itself sharpened the MV's fall next to the floor (the review of 2026-10-17, order
+        C: 80 -> 318 units/s^2 at 132.13 s, one frame with the right foot 1.9 cm up between floor frames; 118 -> 199 at
+        37.60 s and 254 -> 311 at 213.30 s, three frames with a foot 1.6-2.2 cm up)"""
+        last = 99
+        hop = (47, 49, 51, 53, 0.3)                     # both feet 2.4 cm up on frames 49-51 only
+        motion = dance(last=last, left_lifts=[hop], right_lifts=[hop])
+        centre = [key("センター", f, (0.0, -1.1 + 0.3 * max(0.0, 1.0 - abs(f - 50) / 2.0), 0.0)) for f in range(last + 1)]
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+        body = balance_layer.Body(MODEL, motion)
+        air = (body.height("左") >= balance_layer.SUPPORT_H) & (body.height("右") >= balance_layer.SUPPORT_H)
+        self.assertEqual([(int(a), int(b)) for a, b in balance_layer.runs(air)], [(49, 51)])     # the fixture: 3 frames
+        self.assertGreater(pelvis_down_acc(motion, last)[50], 200.0)                             # and past the bound
+        res = balance_layer.layer(MODEL, motion, {"despike": False})
+        self.assertLessEqual(pelvis_down_acc(res.motion, last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(res.report["vertical"]["air_frames"], 0)
+
+
 def a08_spikes(s, t):
     """a08's s2_spectrum.spikes, verbatim (the human baseline's measure): up and down 1-frame spikes of a speed series"""
     up = (s[1:-1] - s[:-2] > t) & (s[1:-1] - s[2:] > t)
@@ -1048,6 +1163,38 @@ class MovingStanceTest(unittest.TestCase):
         self.assertGreater(rep["still_frames"], 30)
         self.assertLess(rep["still_lateral_cm"]["after"], 4.0)
 
+    def test_still_stance_stays_still(self):
+        """the stance the dance holds still stays still: the body is brought over the foot before the stillness and is
+        not moved while it stands (the review of 2026-10-16: the pull itself moved the body 5-14 cm/s inside the still
+        stretches of the MV, 89.4 s 14 cm/s, so the human measure found no still stance left)"""
+        last = 149
+        motion = moving_stance(last, spread=0.8, x=(0.5, 0.0))
+        keys = []
+        for f in range(last + 1):
+            t = min(1.0, max(0.0, (f - 38) / 24.0))
+            keys.append(key("センター", f, (0.5 - 0.5 * t, -0.6, 0.0)))
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + keys
+        motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ",)] + foot_track(
+            "左足ＩＫ", last, (0.8, 0.0, 0.0), [(40, 50, 120, 130, 2.5)])
+        body = balance_layer.Body(MODEL, motion)
+        com0 = body.com()
+        plan = balance_layer.support_plan(body, balance_layer.params_default(), com0)
+        still = plan["still"]
+        self.assertGreater(int(still.sum()), 30)
+        result = balance_layer.layer(MODEL, motion)
+        com1 = balance_layer.Body(MODEL, result.motion).com()
+
+        def speed(c):
+            v = np.zeros(len(c))
+            v[1:-1] = np.linalg.norm(c[2:, [0, 2]] - c[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
+            return v
+        v0, v1 = speed(com0), speed(com1)
+        self.assertGreater(float(np.mean(v0[still] < 5.0)), 0.95)                      # the fixture: still
+        self.assertGreater(float(np.mean(v1[still] < 5.0)), 0.9)                       # and still after the layer (0.83 before)
+        shift = centre_offsets(motion, result.motion, last)
+        self.assertLess(float(np.median(speed(shift)[still])), 1.0)                     # the shift itself holds
+        self.assertLess(result.report["stance"]["still_lateral_cm"]["after"], 4.0)     # over the foot all the same
+
     def test_still_stance_still_pulled(self):
         """the body still on the midline (the trace's way): pulled over the standing foot as before"""
         last = 119
@@ -1157,12 +1304,15 @@ class ReviewTest(unittest.TestCase):
         self.assertLess(far, 8.0)
 
     def test_pull_grows_with_the_other_foot_s_height(self):
-        """the plan: in a pulled run the pull's weight follows the other foot's height from 1.6 to 5 cm (half the full
-        weight while it is still low), full from 5 cm up; nothing where it never gets 5 cm up"""
+        """the plan before 2026-10-16 (still_hold off): in a pulled run the pull's weight follows the other foot's height
+        from 1.6 to 5 cm (half the full weight while it is still low), full from 5 cm up; nothing where it never gets 5
+        cm up.  Held (the default), a still stance gets the whole pull from the start of the stillness on: a pull that
+        grows moves the body inside the stillness"""
         last = 119
         motion = dance(last=last, left_lifts=[(40, 60, 70, 90, 2.5)])            # up slowly over 0.7 s
         body = balance_layer.Body(MODEL, motion)
-        plan = balance_layer.support_plan(body, balance_layer.params_default(), body.com())
+        p = dict(balance_layer.params_default(), still_hold=False)
+        plan = balance_layer.support_plan(body, p, body.com())
         low = body.height("左") * CM
         w = plan["w"]
         rising = np.flatnonzero((low > 2.0) & (low < 3.0) & (np.arange(last + 1) < 60))
@@ -1170,6 +1320,10 @@ class ReviewTest(unittest.TestCase):
         self.assertLess(w[rising].max(), 0.75)
         self.assertGreater(w[rising].min(), 0.45)
         self.assertEqual(float(w[(low > 6.0)].min()), 1.0)
+        held = balance_layer.support_plan(body, balance_layer.params_default(), body.com())
+        st = held["still"]
+        self.assertTrue(st[rising].all())
+        self.assertEqual(float(held["w"][st].min()), balance_layer.STILL_WEIGHT)
 
     def test_turned_root_still_goes_over_the_standing_foot(self):
         """the whole dance turned 90 degrees by a key on 全ての親: the shift is a world shift, written in センター's
@@ -1317,15 +1471,43 @@ class SongTest(unittest.TestCase):
         units/s^2 at 132.2 s); after the layer no frame is over DOWN_ACC_MAX, and the dance's lowest points stay"""
         v = self.report["vertical"]
         self.assertGreater(v["pelvis"]["dance_over_g"], 100)
-        self.assertLessEqual(v["pelvis"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertLessEqual(v["centre"]["after_max"], balance_layer.DOWN_ACC_MAX + 0.5)
-        self.assertEqual(v["pelvis"]["after_over_bound"], 0)
+        # on the floor (a foot holds the body up); the air is the dance's own fall (AirTest, test_jump_tops_kept)
+        self.assertLessEqual(v["pelvis"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertLessEqual(v["centre"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(v["pelvis"]["after_over_bound_on_the_floor"], 0)
+        self.assertGreater(v["air_frames"], 100)
         y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
         z = self.result.arrays["vertical_fix"]
         lows = [f for f in range(1, len(y0) - 1) if y0[f] < y0[f - 1] and y0[f] <= y0[f + 1]]
         kept = sum(1 for f in lows if abs(z[f]) * CM < 0.05)
         self.assertGreaterEqual(kept, 0.99 * len(lows))
         self.assertLessEqual(float(z.max()), 0.0)                                # lowered only
+
+    def test_still_stances_stay_still(self):
+        """the still single support the layer pulls (its own `still`): the COM under 5 cm/s on 0.75 of those frames and
+        more after the layer (v9 0.645, the dance 0.89; the review of 2026-10-16: none left by the human measure)"""
+        body = balance_layer.Body(self.model, self.motion)
+        com0 = body.com()
+        plan = balance_layer.support_plan(body, balance_layer.params_default(), com0)
+        st = plan["still"]
+        self.assertGreater(int(st.sum()), 100)
+        com1 = self.result.arrays["com_after"]
+        v = np.zeros(len(com1))
+        v[1:-1] = np.linalg.norm(com1[2:, [0, 2]] - com1[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
+        self.assertGreater(float(np.mean(v[st] < 5.0)), 0.75)
+
+    def test_jump_tops_kept(self):
+        """the song's jumps (both feet off the floor 4 frames and more, as the layer reads the support): the pelvis's top
+        in each comes no more than 2 cm under the dance's (the review of 2026-10-16: with 122 in the air too, 9 of 31
+        jumps came 2 cm and more lower)"""
+        y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
+        y1 = balance_layer.Body(self.model, self.result.motion).p("下半身")[:, 1]
+        sup = {s: self.result.arrays["low_" + t] < balance_layer.SUPPORT_H for s, t in (("左", "L"), ("右", "R"))}
+        air = ~sup["左"] & ~sup["右"]
+        jumps = [(a, b) for a, b in balance_layer.runs(air) if b - a + 1 >= 4]
+        self.assertGreater(len(jumps), 15)
+        lowered = [round(float(y0[a:b + 1].max() - y1[a:b + 1].max()) * CM, 2) for a, b in jumps]
+        self.assertLess(max(lowered), 2.0, lowered)
 
     def test_landings_catch_and_the_thigh_in_range(self):
         """no landing that the dance catches stops catching the body (its XcoM past the landing foot's edge), the ones
