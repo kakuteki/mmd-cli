@@ -723,8 +723,9 @@ HOVER_GLIDE = TOE_SLIDE[0]      # cm/s (30): a frame whose lower shoe's lowest p
                                 # a step's swing skimming the floor, not a foot held over it: the speed under which the layer
                                 # takes a pointed foot as standing on the trace model's toe (TOE_SLIDE: a toe on the floor
                                 # stays or slides slowly).  Sunk, such frames dragged the toe along the floor (before the
-                                # review of 2026-10-17 the toe of 28 of the song's 46 sunk runs slid faster than this, the
-                                # run's median, up to 50-200 cm/s: tools/sink_check.py): a05's slides of 10 cm and longer
+                                # review of 2026-10-17 the toe of 26 of the song's 46 sunk runs slid faster than this, the
+                                # run's median, 16 of them faster than 60 and up to 180 cm/s: tools/sink_check.py's slide
+                                # of the lower shoe): a05's slides of 10 cm and longer
                                 # 21.9 -> 29.5 a minute, the slide path 706 -> 899 cm a minute (people 11.3 [7.7, 16.8] and
                                 # 455 [352, 528], FineDance's near kinds)
 
