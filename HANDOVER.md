@@ -654,7 +654,8 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   - 査読 review_softshadow_mme（2026-10-17、記録 `_spike/out/stage6/review_softshadow_mme/NOTES.md`、hinata `stage6/review_softshadow_mme/`）:
     共有機の安全は確かめた（MME の DLL は C: 全体で写しと展開した所の 2 か所だけ、元の MMD・System32・PATH に無い。駆動台本が止めるのは失敗したバッチの
     launch の pid で実行ファイルが計画の mmd のものだけ。壊れたエフェクトを本物の台本で流し、その MMD だけが止まり MME の窓も残らない）。self_shadow を書かない
-    台本は main とバイト同じ、エフェクト無しの写しの絵は元と描くたびの揺れの内（透明も）。全体の試験 2131 本 OK（skipped 39。main a3d815b は 2089 本で skip は同じ）。
+    台本は main とバイト同じ、エフェクト無しの写しの絵は元と描くたびの揺れの内（透明も）。全体の試験は査読の最後の 0a9188e で 2133 本 OK（skipped 39。
+    main a3d815b は 2089 本で、skip の顔ぶれは同じ・結果の変わった試験 0）。
     直し: 床の濃さを前に戻す `stage.shadow_share` 0（舞台の絵 11 コマと畳んだ mp4 が main とバイト同じ）、mme_shadow の prepare の写し直しと verify の 2 つの穴、
     測りの道具 `tools/selfshadow_check.py`。
     **残り（体の影を使う前に）**: 影を落とすものまでの距離の探しはつもりどおりに効かない（MMD の光の深さが光の向きから約 53 度ずれていて、受ける面そのものを拾う。
