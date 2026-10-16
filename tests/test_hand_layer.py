@@ -1115,17 +1115,30 @@ class TransitTest(unittest.TestCase):
 
     def test_an_open_hand_curls_and_a_half_closed_one_goes_both_ways(self):
         # a flat hand cannot extend much further: it curls; between, the hand flexes and extends in turn with the
-        # movements (the dancers' transit parts change their way a little more often than not: 53 - 56 %)
+        # movements at random, a little more often turning than not (the dancers': 53 - 56 %)
         d, _ = self.dev([(0, "open"), (LAST, "open")], SWINGS)
         mid = d["中指１"] + d["中指２"] + d["中指３"]
         for a, b in ((10, 22), (22, 34), (34, 46)):
             self.assertGreater(float(mid[a:b + 1].max()), 2.0, (a, b))
             self.assertGreater(float(mid[a:b + 1].min()), -0.05, (a, b))
-        d, _ = self.dev([(0, "bend"), (LAST, "bend")], SWINGS)
-        mid = d["中指１"] + d["中指２"] + d["中指３"]
-        ways = [np.sign(mid[a + int(np.argmax(np.abs(mid[a:b + 1])))]) for a, b in ((10, 22), (22, 34), (34, 46))]
-        self.assertEqual(ways[0], -ways[1])
-        self.assertEqual(ways[1], -ways[2])
+        # between, the way is not a strict turn every movement (a beat-locked flutter): it turns about as often as
+        # the dancers' (53 - 56 %), and both ways occur
+        swings = eased([(0, 20.0)] + [(10 + 12 * k, 20.0 if k % 2 == 0 else 60.0) for k in range(40)] + [(10 + 12 * 40, 60.0)])
+        last = 10 + 12 * 40 + 10
+        dance = hand_dance([(0, "bend"), (last, "bend")], last=last, arm=swings, centre=False)
+        out = hand_layer.layer(MODEL, dance, only("transit"), pulp=PULP).motion
+        ref = hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion
+        mid = sum(out_angles(out, "左", "中指" + p, last)[0] - out_angles(ref, "左", "中指" + p, last)[0] for p in ("１", "２", "３"))
+        ways = []
+        for k in range(1, 39):
+            a, b = 10 + 12 * k, 22 + 12 * k
+            i = a + int(np.argmax(np.abs(mid[a:b + 1])))
+            if abs(mid[i]) > 1.0:
+                ways.append(np.sign(mid[i]))
+        self.assertGreater(len(ways), 25)
+        turns = float(np.mean([x != y for x, y in zip(ways[:-1], ways[1:])]))
+        self.assertGreater(turns, 0.3)
+        self.assertLess(turns, 0.85)
 
     def test_a_change_of_shape_is_left_as_the_choreography_makes_it(self):
         # the trace closes the hand within the movement: the change is the choreography's (and the dancers' fingers
@@ -1217,7 +1230,9 @@ class LayerPassiveTest(unittest.TestCase):
         p0 = only("passive")
         p0["passive_lead"] = 0.0
         late = out_angles(hand_layer.layer(MODEL, dance, p0, pulp=PULP).motion, "左", "中指１")[0] - ref
-        now = self.dev("open", arm)
+        p1 = only("passive")
+        p1["passive_lead"] = 1.0                       # the switch (off by default since review_fingers_v3)
+        now = out_angles(hand_layer.layer(MODEL, dance, p1, pulp=PULP).motion, "左", "中指１")[0] - ref
 
         def peak_time(d):
             i = int(np.argmax(np.abs(d[24:40]))) + 24
