@@ -161,9 +161,39 @@ class FilesTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             mme_shadow.prepare(self.model, out, variant="no spaces")
 
+    def test_prepare_takes_the_model_and_its_textures_again_when_they_changed(self):
+        # review of softshadow-mme: the copy was made once and kept, so a model rebuilt since (a new rig, a new skirt)
+        # would have been drawn as it was
+        out = os.path.join(self.folder, "out")
+        mme_shadow.prepare(self.model, out)
+        with open(self.model, "wb") as f:
+            f.write(b"PMX model bytes, rebuilt")
+        with open(os.path.join(self.models, "tex", "skin.png"), "wb") as f:
+            f.write(b"texture, painted again")
+        got = mme_shadow.prepare(self.model, out)
+        with open(got["model"], "rb") as f:
+            self.assertEqual(f.read(), b"PMX model bytes, rebuilt")
+        with open(os.path.join(out, "Rin", "tex", "skin.png"), "rb") as f:
+            self.assertEqual(f.read(), b"texture, painted again")
+        got = mme_shadow.prepare(self.model, out, variant="soft2")
+        with open(got["model"], "rb") as f:
+            self.assertEqual(f.read(), b"PMX model bytes, rebuilt")
+        # what the tool wrote beside the copy stays (the effects), and a copy that did not change is not written again
+        self.assertTrue(os.path.isfile(os.path.join(out, "Rin", "White.fx")))
+        copied = []
+        real = mme_shadow.shutil.copy2
+        self.addCleanup(setattr, mme_shadow.shutil, "copy2", real)
+        mme_shadow.shutil.copy2 = lambda a, b, **kw: copied.append(os.path.normcase(os.path.abspath(a))) or real(a, b, **kw)
+        mme_shadow.prepare(self.model, out)
+        self.assertNotIn(os.path.normcase(os.path.join(self.models, "tex", "skin.png")), copied)
+        self.assertNotIn(os.path.normcase(self.model), copied)
+
     def test_prepare_refuses_to_write_into_the_models_own_folder(self):
         with self.assertRaises(ValueError):
             mme_shadow.prepare(self.model, os.path.join(self.folder, "models"))
+        with self.assertRaises(ValueError):                                # nor into a folder inside it
+            mme_shadow.prepare(self.model, self.models)
+        self.assertEqual(sorted(os.listdir(self.models)), ["White.pmx", "tex"])
 
     def test_check_knows_mme_by_its_files(self):
         mmd = os.path.join(self.folder, "mmd")
@@ -224,6 +254,17 @@ class VerifyTest(unittest.TestCase):
         got = mme_shadow.verify(self.exe, self.model, "soft")
         self.assertEqual(got["self_shadow"], "soft")
         self.assertIn('"blur": 5.0', got["settings"])
+        mme_shadow.write(os.path.join(self.models, "White.fx"), key_share=None)          # --toon: a soft shadow too
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "soft")["self_shadow"], "soft")
+
+    def test_soft_refuses_the_effects_for_measuring(self):
+        # review of softshadow-mme: --debug draws the shadow alone (black and white) or the body lit, --sharp MMD's own
+        # test; a plan that says soft must not render either
+        self.install()
+        for settings in ({"debug": "shadow"}, {"debug": "lit"}, {"sharp": True}):
+            mme_shadow.write(os.path.join(self.models, "White.fx"), **settings)
+            with self.assertRaises(ValueError, msg=settings):
+                mme_shadow.verify(self.exe, self.model, "soft")
 
     def test_mmd_refuses_a_model_mme_would_draw_with_an_effect(self):
         self.assertEqual(mme_shadow.verify(self.exe, self.model, "mmd")["self_shadow"], "mmd")      # no MME at all
@@ -234,6 +275,17 @@ class VerifyTest(unittest.TestCase):
             mme_shadow.verify(self.exe, self.model, "mmd")
         with self.assertRaises(ValueError):
             mme_shadow.verify(self.exe, self.model, "hard")
+
+    def test_mmd_refuses_a_model_another_build_of_mme_would_draw_with_an_effect(self):
+        # review of softshadow-mme: MME of another build (not the digests this tool knows) applies the effect all the same
+        mme_shadow.write(os.path.join(self.models, "White.fx"))
+        with open(os.path.join(self.mmd, "MMEffect.dll"), "wb") as f:
+            f.write(b"another build of MME")
+        self.assertFalse(mme_shadow.check(self.exe)["installed"])
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "mmd")
+        os.remove(os.path.join(self.models, "White.fx"))
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "mmd")["self_shadow"], "mmd")   # no effect on the model
 
 
 if __name__ == "__main__":

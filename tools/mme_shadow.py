@@ -39,12 +39,13 @@ shading is MMD's).  --debug draws the shadow alone (white lit, black shadowed, o
 --debug lit draws the body lit everywhere (no shade, no shadow), to read what a shade keeps of the light.  The file is
 ASCII.
 
-prepare copies the folder of MODEL (its textures) into OUTDIR once, and writes the effect there under the model's name
-(MME applies <model name>.fx found beside the model when MMD loads it; MMEffect.txt).  The original folder is not written.
-check tells whether MME is installed beside an MMD (d3d9.dll, MMHack.dll, MMEffect.dll, by their SHA-256).  verify
-tells whether an MMD will draw a model with this effect (soft) or with MMD's own self shadow (mmd): tools/mv_chunks.py's
-driver runs it before rendering, so a plan that says soft cannot quietly render MMD's shadow, nor one that says mmd the
-effect.
+prepare copies the folder of MODEL (its textures) into OUTDIR, and again each file that changed since the last copy, and
+writes the effect there under the model's name (MME applies <model name>.fx found beside the model when MMD loads it;
+MMEffect.txt).  The original folder is not written.  check tells whether MME is installed beside an MMD (d3d9.dll,
+MMHack.dll, MMEffect.dll, by their SHA-256).  verify tells whether an MMD will draw a model with this effect (soft) or
+with MMD's own self shadow (mmd): tools/mv_chunks.py's driver runs it before rendering, so a plan that says soft cannot
+quietly render MMD's shadow or an effect for measuring (--debug, --sharp), nor one that says mmd the effect (beside any
+MMEffect.dll, of this build or another).
 """
 import argparse
 import hashlib
@@ -398,22 +399,36 @@ def write(path, **settings):
     return path
 
 
+def _sync(src, dst):
+    """the files of the folder src copied into dst where they are missing or differ in size or time (shutil.copy2 keeps
+    the time): a model or texture rebuilt since the last copy is taken again.  Files only dst has are left (the effects)"""
+    for root, _, names in os.walk(src):
+        here = os.path.join(dst, os.path.relpath(root, src))
+        os.makedirs(here, exist_ok=True)
+        for name in names:
+            a, b = os.path.join(root, name), os.path.join(here, name)
+            sa = os.stat(a)
+            sb = os.stat(b) if os.path.isfile(b) else None
+            if sb is None or sb.st_size != sa.st_size or sb.st_mtime_ns != sa.st_mtime_ns:
+                shutil.copy2(a, b)
+
+
 def prepare(model, outdir, variant=None, **settings):
-    """the model's folder copied into OUTDIR (once: an existing copy is kept) and the effect beside the copy of MODEL:
-    <model name>.fx, or with `variant` a copy of the model named <model name>[<variant>.fx].pmx beside <variant>.fx (MME
-    takes the effect named in brackets in the model's file name: several effects for one model side by side).  The
-    paths of the model to load and of the effect"""
+    """the model's folder copied into OUTDIR (and again each file that changed since: review of softshadow-mme, a copy
+    kept once would draw a model rebuilt since as it was) and the effect beside the copy of MODEL: <model name>.fx, or with
+    `variant` a copy of the model named <model name>[<variant>.fx].pmx beside <variant>.fx (MME takes the effect named in
+    brackets in the model's file name: several effects for one model side by side).  The paths of the model to load and
+    of the effect"""
     model = os.path.abspath(model)
     src = os.path.dirname(model)
     dst = os.path.join(os.path.abspath(outdir), os.path.basename(src))
-    if os.path.normcase(dst) == os.path.normcase(src):
-        raise ValueError("OUTDIR must not hold the model's own folder: the original is not written")
-    if not os.path.isdir(dst):
-        shutil.copytree(src, dst)
+    if os.path.normcase(dst) == os.path.normcase(src) or os.path.normcase(dst).startswith(os.path.normcase(src) + os.sep):
+        raise ValueError("OUTDIR must not hold the model's own folder nor lie in it: the original is not written")
+    if not os.path.isfile(model):
+        raise ValueError("no model at %s" % model)
+    _sync(src, dst)
     stem, ext = os.path.splitext(os.path.basename(model))
     copy = os.path.join(dst, stem + ext)
-    if not os.path.isfile(copy):
-        shutil.copy2(model, copy)
     if variant:
         if not variant.replace("_", "").replace("-", "").isalnum() or not variant.isascii():
             raise ValueError("a variant is a name of ASCII letters, digits, _ and -, not %r" % (variant,))
@@ -475,9 +490,21 @@ def verify(exe, model, want):
         if not head[0].startswith(MARK):
             raise ValueError("the effect %s was not written by tools/mme_shadow.py" % fx)
         settings = [line.split("Settings:")[-1].strip() for line in head if "Settings:" in line]
-        return {"self_shadow": "soft", "effect": fx.replace("\\", "/"), "settings": settings[0] if settings else None}
+        try:
+            values = json.loads(settings[0]) if settings else None
+        except ValueError:
+            values = None
+        if not isinstance(values, dict):
+            raise ValueError("the effect %s does not say its settings (write it again with tools/mme_shadow.py)" % fx)
+        # review of softshadow-mme: the effects for measuring draw no soft shadow (--debug: the shadow alone or the body
+        # lit; --sharp: MMD's own test)
+        if values.get("debug") or values.get("sharp"):
+            raise ValueError("the effect %s is one for measuring (debug %r, sharp %r), not the soft shadow"
+                             % (fx, values.get("debug"), values.get("sharp")))
+        return {"self_shadow": "soft", "effect": fx.replace("\\", "/"), "settings": settings[0]}
     if want == "mmd":
-        if mme["installed"] and fx is not None:
+        # MME of another build than the one this tool knows applies the effect all the same (review of softshadow-mme)
+        if fx is not None and (mme["installed"] or mme["files"]["MMEffect.dll"] != "missing"):
             raise ValueError("self_shadow mmd, but MME beside %s would apply %s to the model: the picture would not be "
                              "MMD's own (use the model without the effect, or self_shadow soft)" % (exe, fx))
         return {"self_shadow": "mmd", "effect": None}
