@@ -444,7 +444,7 @@ def joint_forcing(alpha, acc, axis, e, r=None, rho=None, gravity=True, coeff=Non
 
 FPS = 30.0
 UNIT_M = 0.08                    # one model unit is 8 cm (the analysis pack's README)
-STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "pace", "order", "follow", "passive", "speed", "rom")
+STEPS = ("hinge", "reach", "coupling", "enslave", "relax", "pace", "order", "transit", "follow", "passive", "speed", "rom")
 # the hinge joints (PIP, DIP, the thumb's IP and MP) bend in one plane: their sideways bend and their twist, read from
 # the rest pose, eased from the start toward the cap (degrees).  The thumb's MP has a second axis (Hollister 1995): it
 # moves sideways some 12 - 14 degrees passively (Kim 2014, Patel 2013) and about 20 each way in active circumduction
@@ -505,6 +505,18 @@ PACE = {"min": 20.0, "c": 1.10, "p": 0.35, "step": 0.2, "iterations": 4}
 # profile's 10 - 90 % time is about 2.563 of its standard deviation: h = PACE_H sqrt(T^2 - D^2) takes a 10 - 90 % time D
 # to T
 PACE_H = math.sqrt(3.0) / 2.563
+# the transit (_spike/out/stage6/fingers_v3/, v3_human.py, v3_human2.py, v3_human3.py: FineDance's K-pop and street
+# dances, 74,000 movements of the arm: the knuckle's speed smoothed, from one minimum to the next, its peak 0.3 m/s or
+# more, 6 - 60 frames; 1.9 - 2.1 a second, 12 - 13 frames).  In a movement that ends in the shape it started from (35 %
+# of them) the four long fingers still travel c h^p degrees on average (the medians of 10 bins of the knuckle's travel
+# h, 0.06 - 1.2 m: 6.6 at 0.06 m, 13 at 0.25, 24 at 0.64, 37 at 1.2), going out from the line between the two shapes
+# and back (the transit part: 6.5 - 8 degrees at the speed's peak, the 90th percentile 31 - 40; the trace's 0.1 - 0.8)
+TRANSIT = {"c": 30.79, "p": 0.564, "peak": 0.3, "span": (6, 60), "smooth": 2, "cap": 25.0, "open": 40.0, "shut": 150.0,
+           "spread": (30.0, 60.0), "closed": (150.0, 200.0)}
+# the transit parts of the twelve joints lie on one synergy (the first principal component, 78 - 85 % of their
+# variance; the mean of the K-pop and street dances' left and right hands): MP, PIP, DIP of each long finger
+TRANSIT_SYNERGY = {"人指": (0.327, 0.317, 0.150), "中指": (0.410, 0.316, 0.179), "薬指": (0.400, 0.355, 0.134),
+                   "小指": (0.296, 0.232, 0.149)}
 # the relaxed hand: an open hand (the four fingers' mean MP + PIP + DIP under OPEN[0], none over OPEN[2]) is relaxed
 # (fully at OPEN[0], not at all from OPEN[1]); it leans by RELAX_GAIN toward the relaxed hand Varghese 2020 measured
 # (seated, "the hand well supported", the forearm supinated - the palm up -, the wrist at 15 - 20 degrees extension,
@@ -584,14 +596,21 @@ def default_params():
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
              stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE,
              follow_scale=FOLLOW_SCALE, kime_stiffness=KIME_STIFFNESS, order_mode="centre", zeta_open=dict(ZETA_OPEN),
-             pace_c=PACE["c"], pace_p=PACE["p"])
+             pace_c=PACE["c"], pace_p=PACE["p"], transit_scale=1.0)
+    return p
+
+
+def as_v9(params):
+    """the switches back to the hands of v9 (main c012c32): no transit; everything else as given"""
+    p = dict(params)
+    p.update(transit=False)
     return p
 
 
 def as_v8(params):
     """the switches back to the hands of v8 (main 59b28e6): no pace, the order's stagger only delaying, the open hand
-    damped as the held one (0.85); everything else as given"""
-    p = dict(params)
+    damped as the held one (0.85), and v9's switches; everything else as given"""
+    p = as_v9(params)
     p.update(pace=False, order_mode="delay", zeta_open=None)
     return p
 
@@ -1132,6 +1151,106 @@ def pace(hands, ang, touch=None, c=PACE["c"], p=PACE["p"]):
     return report
 
 
+def knuckle_track(world, P, side):
+    """the middle finger's knuckle (中指１) in the world, metres [F, 3], carried by the wrist (the metacarpal's own turn
+    left out)"""
+    wpos, wrot = world[side]
+    off = P[side + "中指１"] - P[side + "手首"] if side + "中指１" in P else np.zeros(3)
+    return (wpos + qrot(wrot, np.broadcast_to(off, wpos.shape))) * UNIT_M
+
+
+def arm_movements(knuckle, peak=None, span=None, reach=None):
+    """[(a, p, b)] the arm's movements: the knuckle's speed (m/s, smoothed by a triangle TRANSIT["smooth"] frames each
+    way) from one minimum (a frame no faster than both its neighbours) to the next, its peak p at least `peak` m/s, the
+    movement `span` frames long (the measure of FineDance's dancers in _spike/out/stage6/fingers_v3/, v3_human.py)"""
+    peak = TRANSIT["peak"] if peak is None else peak
+    span = TRANSIT["span"] if span is None else span
+    reach = TRANSIT["smooth"] if reach is None else reach
+    F = len(knuckle)
+    if F < 3:
+        return []
+    speed = np.r_[0.0, np.linalg.norm(np.diff(knuckle, axis=0), axis=1) * FPS]
+    sp = smooth_frames(speed, reach)
+    mins = [i for i in range(1, F - 1) if sp[i] <= sp[i - 1] and sp[i] <= sp[i + 1]]
+    out = []
+    for a, b in zip(mins[:-1], mins[1:]):
+        if not span[0] <= b - a <= span[1]:
+            continue
+        p = a + int(np.argmax(sp[a:b + 1]))
+        if sp[p] >= peak and a < p < b:
+            out.append((a, p, b))
+    return out
+
+
+def transit_bump(F, a, p, b):
+    """0 .. 1 over the movement (a, p, b): a half cosine up from a to its peak at p and down to b, 0 elsewhere"""
+    e = np.zeros(F)
+    t = np.arange(a, p + 1)
+    e[a:p + 1] = 0.5 * (1.0 - np.cos(math.pi * (t - a) / float(p - a)))
+    t = np.arange(p, b + 1)
+    e[p:b + 1] = 0.5 * (1.0 + np.cos(math.pi * (t - p) / float(b - p)))
+    return e
+
+
+def transit_free(hand, ang):
+    """0 .. 1 per frame: how free the hand's shape is to move along the synergy: not a shape made with single fingers
+    (the four long fingers' MP + PIP + DIP spread over TRANSIT["spread"]: a pointing finger, a peace sign) nor a fist
+    (their mean over TRANSIT["closed"])"""
+    sums = finger_sums(hand, ang)
+    if not sums:
+        return None
+    s = np.stack([sums[f] for f in LONG if f in sums])
+    spread = s.max(axis=0) - s.min(axis=0)
+    return (1.0 - smoothstep(spread, *TRANSIT["spread"])) * (1.0 - smoothstep(s.mean(axis=0), *TRANSIT["closed"]))
+
+
+def transit(hands, ang, world, P, touch=None, scale=1.0):
+    """with each movement of the arm (arm_movements) the long fingers move out along FineDance's first synergy and come
+    back by the movement's end (transit_bump: the most at the speed's peak): the middle finger's MP + PIP + DIP by A,
+    the others by their shares (TRANSIT_SYNERGY), A = scale (TRANSIT["c"] h^TRANSIT["p"] - T) / (2 x the fingers' mean
+    share), h the knuckle's travel over the movement (m), T the long fingers' mean travel there already (degrees), at
+    most TRANSIT["cap"].  Flexion where the hand is open (the mean sum under TRANSIT["open"]), extension where it is
+    nearly closed (over TRANSIT["shut"]), else the other way than the last movement's.  Weighted per frame by
+    transit_free and by 1 - touch (what the hand touches holds the fingers).  Returns side -> the movements, how many
+    moved the fingers, the amplitudes (degrees of the middle finger's sum)"""
+    report = {}
+    mid = sum(TRANSIT_SYNERGY["中指"])
+    share = {f: sum(v) / mid for f, v in TRANSIT_SYNERGY.items()}
+    mean_share = float(np.mean(list(share.values())))
+    for side, hand in hands.items():
+        cs = chains(hand)
+        fingers = [f for f in LONG if f in cs and all(k in cs[f] for k in ("mp", "pip", "dip"))]
+        if side not in world or not fingers:
+            continue
+        F = len(ang[cs[fingers[0]]["mp"].bone][0])
+        free = transit_free(hand, ang)
+        w = free * ((1.0 - touch[side]) if touch is not None and side in touch else 1.0)
+        kn = knuckle_track(world, P, side)
+        sums = finger_sums(hand, ang)
+        moves = arm_movements(kn)
+        add = np.zeros(F)
+        amps, last = [], 1.0
+        for a, p, b in moves:
+            h = float(np.sum(np.linalg.norm(np.diff(kn[a:b + 1], axis=0), axis=1)))
+            T = float(np.mean([np.abs(np.diff(sums[f][a:b + 1])).sum() for f in fingers]))
+            amp = scale * max(0.0, TRANSIT["c"] * h ** TRANSIT["p"] - T) / (2.0 * mean_share)
+            amp = min(amp, TRANSIT["cap"])
+            if amp <= 1e-9 or not float(w[a:b + 1].max()) > 1e-9:
+                continue
+            level = float(np.mean([sums[f][a] for f in fingers]))
+            way = 1.0 if level < TRANSIT["open"] else (-1.0 if level > TRANSIT["shut"] else -last)
+            last = way
+            add += way * amp * transit_bump(F, a, p, b)
+            amps.append(amp)
+        add *= w
+        for f in fingers:
+            for k, j in zip(("mp", "pip", "dip"), TRANSIT_SYNERGY[f]):
+                ang[cs[f][k].bone][0] = ang[cs[f][k].bone][0] + add * (j / mid)
+        report[side] = {"movements": len(moves), "moved": len(amps), "amplitude_deg": stats(amps),
+                        "added_deg_s": stats(np.abs(np.diff(add)) * FPS)}
+    return report
+
+
 # ---- step 4: the passive lag --------------------------------------------------------------------------------------
 
 @dataclass
@@ -1546,7 +1665,7 @@ def layer(model, motion, params=None, pulp=None, log=None, beats=None):
     held = {s: (1.0 - r) if r is not None else np.ones(F) for s, r in relaxed.items()}
     wrist = wrist_angles(model, loc, F)
     touch = None
-    if p.get("contact", True) and (p["relax"] or p["passive"] or p["follow"] or p.get("pace")):
+    if p.get("contact", True) and (p["relax"] or p["passive"] or p["follow"] or p.get("pace") or p.get("transit")):
         touch = contact_weights(model, motion, F, [s for s in hands])
         report["steps"]["contact_frames"] = {s: int((c > 0.5).sum()) for s, c in touch.items()}
     if p["relax"]:
@@ -1561,10 +1680,12 @@ def layer(model, motion, params=None, pulp=None, log=None, beats=None):
         report["steps"]["pace"] = pace(hands, ang, touch, p.get("pace_c", PACE["c"]), p.get("pace_p", PACE["p"]))
     if p["order"]:
         report["steps"]["order"] = order(hands, ang, p["order_max"], p["order_scale"], p.get("order_mode", "centre"))
-    if p["follow"]:
-        report["steps"]["follow"] = follow(hands, ang, held, p, touch, kime)
     sides = [s for s, _ in SIDES if s + "手首" in P and s in hands]
     world = hand_world(model, motion, F, sides) if sides else {}
+    if p.get("transit"):
+        report["steps"]["transit"] = transit(hands, ang, world, P, touch, p.get("transit_scale", 1.0))
+    if p["follow"]:
+        report["steps"]["follow"] = follow(hands, ang, held, p, touch, kime)
     if p["passive"]:
         report["steps"]["passive"] = passive(hands, ang, loc, world, P, p, held, touch, kime)
     if p["speed"]:
@@ -1856,23 +1977,31 @@ def main(argv=None):
                     help="the open hand's stiffness at a grown finger's MP, N m/rad (default %g, the upper end of a relaxed "
                          "MCP; 0.42 gives the dancers' passive gain of FineDance and less a09 lag, and less motion)"
                          % STIFFNESS["open"])
+    ap.add_argument("--transit-scale", type=float, default=1.0,
+                    help="the transit's excursions (the fingers moving out and back with each movement of the arm) times "
+                         "this (default 1, FineDance's dancers; 0 leaves them out as --no-transit does)")
+    ap.add_argument("--as-v9", action="store_true", help="the hands of v9 (main c012c32) byte for byte: --no-transit")
     ap.add_argument("--as-v8", action="store_true",
-                    help="the hands of v8 byte for byte: --no-pace --order-mode delay --zeta-open 0.85")
+                    help="the hands of v8 byte for byte: --no-transit --no-pace --order-mode delay --zeta-open 0.85")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = ap.parse_args(argv)
     params = default_params()
     params.update({s: not getattr(a, "no_" + s) for s in STEPS if s != "follow"})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
                   gravity=a.gravity, contact=not a.no_contact, follow=a.follow, follow_scale=a.follow_scale,
-                  order_mode=a.order_mode)
+                  order_mode=a.order_mode, transit_scale=a.transit_scale)
     if a.zeta_open is not None:
         params["zeta_open"] = {f: a.zeta_open for f in LONG}
     if a.open_stiffness != STIFFNESS["open"]:
         params["stiffness"] = dict(params["stiffness"], open=a.open_stiffness)
+    if a.as_v9:
+        params = as_v9(params)
     if a.as_v8:
         params = as_v8(params)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
+        if a.transit_scale < 0.0:
+            raise ValueError("--transit-scale must not be negative")
         if not a.speed_max > 0.0:
             raise ValueError("--speed-max must be above 0")
         if not a.follow_scale > 0.0:

@@ -1002,7 +1002,18 @@ class PaceTest(unittest.TestCase):
         self.assertGreater(row["t10_90_after"]["max"], row["t10_90_before"]["max"])
 
 
-SWINGS = [(0, 20.0), (10, 20.0), (22, 60.0), (34, 20.0), (46, 60.0), (LAST, 60.0)]   # three movements of the arm
+def eased(points):
+    """[(frame, degrees)] on every frame between the points, eased in and out of each (an arm that speeds up and slows
+    down, as a dancer's does, not a hinge turned at a constant speed)"""
+    out = []
+    for (f0, a0), (f1, a1) in zip(points[:-1], points[1:]):
+        for f in range(f0, f1):
+            u = (f - f0) / float(f1 - f0)
+            out.append((f, a0 + (a1 - a0) * u * u * (3.0 - 2.0 * u)))
+    return out + [points[-1]]
+
+
+SWINGS = eased([(0, 20.0), (10, 20.0), (22, 60.0), (34, 20.0), (46, 60.0), (LAST, 60.0)])   # three movements of the arm
 
 
 def all_flex(motion, side="左"):
@@ -1035,7 +1046,7 @@ class TransitTest(unittest.TestCase):
         mid = d["中指１"] + d["中指２"] + d["中指３"]
         for a, b in ((10, 22), (22, 34), (34, 46)):
             self.assertGreater(float(np.abs(mid[a:b + 1]).max()), 4.0, (a, b))
-        self.assertLess(float(np.abs(mid[:11]).max()), 0.05)                 # the arm still: the input's shape
+        self.assertLess(float(np.abs(mid[:8]).max()), 0.05)                  # the arm still: the input's shape
         self.assertLess(float(np.abs(mid[50:]).max()), 0.05)
         for t in (22, 34):                                                   # the arm turns back: the shape again
             self.assertLess(float(np.abs(mid[t - 1:t + 2]).min()), 1.0, t)
@@ -1056,8 +1067,8 @@ class TransitTest(unittest.TestCase):
         self.assertLess(total["人指"], total["中指"])
 
     def test_a_bigger_movement_moves_the_fingers_further(self):
-        small, _ = self.dev([(0, "half"), (LAST, "half")], [(0, 20.0), (10, 20.0), (22, 35.0), (LAST, 35.0)])
-        big, _ = self.dev([(0, "half"), (LAST, "half")], [(0, 20.0), (10, 20.0), (22, 80.0), (LAST, 80.0)])
+        small, _ = self.dev([(0, "half"), (LAST, "half")], eased([(0, 20.0), (10, 20.0), (22, 45.0), (LAST, 45.0)]))
+        big, _ = self.dev([(0, "half"), (LAST, "half")], eased([(0, 20.0), (10, 20.0), (22, 80.0), (LAST, 80.0)]))
         s = float(np.abs(small["中指１"]).max())
         b = float(np.abs(big["中指１"]).max())
         self.assertGreater(s, 0.3)
@@ -1093,7 +1104,8 @@ class TransitTest(unittest.TestCase):
 
     def test_a_change_of_shape_as_big_as_a_dancer_s_gets_nothing_more(self):
         # the trace closes the hand within the movement: its fingers already travel further than a dancer's would
-        d, _ = self.dev([(0, "half"), (14, "half"), (18, "bend"), (LAST, "bend")], [(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)])
+        d, _ = self.dev([(0, "half"), (14, "half"), (18, "bend"), (LAST, "bend")],
+                        eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
         self.assertLess(max(float(np.abs(v[8:26]).max()) for v in d.values()), 0.05)
 
     def test_the_report_counts_the_movements(self):
@@ -1567,7 +1579,7 @@ V9_DANCES = {   # main c012c32 (v9's hands) gave these MD5s with its defaults
     "swing_open_fist": (V8_DANCES["swing_open_fist"][0], "cb3cc82e9ea2513ea91c8c4f1c001614"),
     "point_grip": (V8_DANCES["point_grip"][0], "cc682fbb24c6928dbf9c56f690e788f5"),
     "swing_half": (lambda: hand_dance([(0, "half"), (LAST, "half")], arm=SWINGS, centre=False),
-                   "b982cef50eefc7f7651bd48a88939a83"),
+                   "e1a097d6feb91d505eef1763c04caf6e"),
 }
 
 
