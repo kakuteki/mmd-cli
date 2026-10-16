@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 from mmd_cli.formats import pmm
 
@@ -105,6 +106,35 @@ class GravityTest(unittest.TestCase):
         off = pmm.loads(pmm_gravity.with_gravity(pmm_gravity.with_gravity(data, noise=20), noise=False))["gravity"]
         self.assertEqual((off["current"]["noise_enabled"], off["init"]["noise_enabled"]), (False, False))
         self.assertEqual(off["current"]["noise"], 20)          # the amount stays, as MMD keeps it when the box is cleared
+
+    def test_a_noise_that_does_not_read_back_is_refused(self):
+        data = read(FIXTURE)
+        real = pmm.loads
+
+        def lying(raw, **kw):                  # the copy reads back with the noise MMD would not see
+            out = real(raw, **kw)
+            if raw != data:
+                for part in [out["gravity"]["current"], out["gravity"]["init"]] + out["gravity"]["keys"]:
+                    part["noise"] += 1
+            return out
+        with unittest.mock.patch.object(pmm_gravity.pmm, "loads", lying):
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, noise=20)
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, acceleration=12.25)      # a field not asked for must not move either
+
+    def test_a_noise_switched_off_that_reads_back_on_is_refused(self):
+        data = pmm_gravity.with_gravity(read(FIXTURE), noise=20)
+        real = pmm.loads
+
+        def lying(raw, **kw):
+            out = real(raw, **kw)
+            if raw != data:
+                out["gravity"]["init"]["noise_enabled"] = True
+            return out
+        with unittest.mock.patch.object(pmm_gravity.pmm, "loads", lying):
+            with self.assertRaises(AssertionError):
+                pmm_gravity.with_gravity(data, noise=False)
 
     def test_bad_values_are_refused(self):
         data = read(FIXTURE)
