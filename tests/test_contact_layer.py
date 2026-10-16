@@ -251,6 +251,21 @@ class GroundTest(unittest.TestCase):
         out, plan = run(m)
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
 
+    def test_a_lowering_for_a_long_stance_leaves_a_later_moment_alone(self):
+        # the wide stance out of reach over frames 15-35 (lowered for it), and later a bob of a few frames (75): the check
+        # of the lowering on MMD's IK does not lower the body at that moment too
+        F = 110
+
+        def centre(t):
+            long_ = 0.9 if 15 <= t <= 35 else 0.0
+            u = max(0.0, 1.0 - abs(t - 80) / 4.0)
+            return (1.0, BENT + max(long_, 0.4 + 0.5 * u if 76 <= t <= 84 else 0.0), 0.0)
+        m = dance(F, centre=centre, left=lambda t: ((4.0, 0.0, 0.0), None))
+        out, plan = run(m)
+        d = world_y(m, F, "センター") - world_y(out, F, "センター")
+        self.assertGreater(float(d[20:31].min()), 0.1)                                 # the long stance lowered
+        self.assertLess(float(np.abs(d[70:]).max()), 1e-6)                             # the moment left alone
+
     def test_a_free_foot_out_of_reach_keeps_the_pelvis(self):
         # the body over the right foot, the left leg stretched out to the side with its shoe 2-3 cm up and its goal out of
         # reach: a pointed foot resting, not a support.  The pelvis stays; the left foot comes no lower than it reaches

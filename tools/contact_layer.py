@@ -656,6 +656,7 @@ def layer(model, rig, shoe, motion, params=None):
         # the least smooth lowering that lets the weight-bearing legs reach, within the bound on the floor's frames, then
         # checked on MMD's IK: a nearly straight leg stops short of a goal it reaches on paper (the balance layer's 1.5 cm
         # slack), so a weight-bearing foot still over the floor gets that much more
+        target = need_drop > 0.0                # (the weight-bearing feet standing out of reach REACH_MIN frames and more)
         for rnd in range(DROP_ROUNDS):
             drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F)
             offs = {s: np.stack([np.zeros(F), dy[s], np.zeros(F)], 1) for s in SIDES}
@@ -663,7 +664,7 @@ def layer(model, rig, shoe, motion, params=None):
             more = np.zeros(F)
             for s in SIDES:
                 lo_ = FL.shell_world(shoe.sides[s], trial[s])[:, :, 1].min(axis=1) - floor_y
-                over = stance[s] & (lo_ > LAND_TOL) & (dy[s] + low_j[s] < ON_FLOOR)
+                over = target & stance[s] & (lo_ > LAND_TOL) & (dy[s] + low_j[s] < ON_FLOOR)
                 if over.any():
                     nd = needed(s, np.flatnonzero(over))
                     more = np.maximum(more, np.where(over & nd, lo_, 0.0))
@@ -698,11 +699,11 @@ def layer(model, rig, shoe, motion, params=None):
             best = ({s: dy[s].copy() for s in SIDES}, lows)
             pushed = False
             for s in SIDES:
-                over = stance[s] & (lows[s] > LAND_TOL) & (drop > 0.0) & (dy[s] + low_j[s] < ON_FLOOR)
+                over = target & stance[s] & (lows[s] > LAND_TOL) & (dy[s] + low_j[s] < ON_FLOOR)
                 if over.any():
                     dy[s] = np.where(over, dy[s] - np.minimum(lows[s], PUSH_STEP), dy[s])
                     pushed = True
-            drop_rounds.append({"push_round": rnd, "frames_over": int(sum(int((stance[s] & (lows[s] > LAND_TOL) & (drop > 0.0)).sum()) for s in SIDES))})
+            drop_rounds.append({"push_round": rnd, "frames_over": int(sum(int((target & stance[s] & (lows[s] > LAND_TOL)).sum()) for s in SIDES))})
             if not pushed:
                 break
     dy_e = {s: eased_lowering(dy[s], stance[s], low[s]) for s in SIDES}
