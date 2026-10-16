@@ -6,8 +6,8 @@ threshold); the merged motion's vowel morphs (あ い う え お, linear betwee
 opening and its rises (frame f shown at f + 0.1875, the MV's folded subframes).  Per onset paired with a rise: the lag
 (+ the mouth first).  Judged against ITU-R BT.1359-1 (the picture 45 ms after the sound to 125 ms before it goes
 unnoticed): the median lag on the open vowels (the lipsync review's main number: after い and う the nearest rise is
-often the next syllable's and reads late) and on every onset.  Places: the onsets whose own lag lies outside that
-window.  Shown, not judged: the shares noticed late or early, and the time the voice clearly sings with the mouth
+often the next syllable's and reads late) and on every onset.  Places: the open vowels' onsets whose own lag lies
+outside that window (those of い and う are kept in the JSON, unlisted).  Shown, not judged: the shares noticed late or early, and the time the voice clearly sings with the mouth
 looking shut (inside the lyric lines when the version names its "lines").
 """
 import math
@@ -65,15 +65,17 @@ def measure(m):
     for (i, _), v in zip(pairs, lags):
         t = float(onsets[i])
         f = int(round(t * base.FPS))
-        kind = "開く母音" if opens[i] else "閉じた母音"
+        # the open vowels are the places (judged by their window); after い and う the nearest rise is often the next
+        # syllable's and reads late (the lipsync review), so those are kept apart, unlisted (an "info" measure)
+        mid = "mouth.lag_open_ms" if opens[i] else "mouth.late_pct"
+        kind = "開く母音" if opens[i] else "閉じた母音（い・う: 次の音節と組まれやすい）"
         if v < -1000.0 * lc.LATE:
-            events.append(base.event("mouth.lag_median_ms", f, f, v, "ms", -1000.0 * lc.LATE, 50.0,
-                                     "口が声より %.0f ms 遅い（%s）" % (-v, kind), side=-1))
+            events.append(base.event(mid, f, f, v, "ms", -1000.0 * lc.LATE, 50.0, "口が声より %.0f ms 遅い（%s）" % (-v, kind), side=-1))
         elif v > 1000.0 * lc.EARLY:
-            events.append(base.event("mouth.lag_median_ms", f, f, v, "ms", 1000.0 * lc.EARLY, 50.0, "口が声より %.0f ms 早い（%s）" % (v, kind)))
+            events.append(base.event(mid, f, f, v, "ms", 1000.0 * lc.EARLY, 50.0, "口が声より %.0f ms 早い（%s）" % (v, kind)))
     for a, b in sw["longest_s"]:
         events.append(base.event("mouth.shut_singing_pct", int(a * base.FPS), max(int(a * base.FPS), int(b * base.FPS) - 1),
                                  b - a, "s", 0.0, 0.25, "声が鳴るのに口が閉じて見える %.2f 秒" % (b - a)))
     series["mouth_open"] = {"label": "口の見える開き（あ = 1）", "unit": "", "y": np.asarray(o, dtype=np.float64)[:m.v.frames],
-                            "lo": None, "hi": None, "ids": ["mouth.lag_median_ms", "mouth.shut_singing_pct"]}
+                            "lo": None, "hi": None, "ids": ["mouth.lag_open_ms", "mouth.shut_singing_pct"]}
     return {"rows": rows, "events": events, "series": series}

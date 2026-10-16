@@ -67,6 +67,14 @@ def measures_md(report):
                  base.human().get("_about", {}).get("people", "")), ""]
     if report.get("failed"):
         lines += ["**測れなかった部品**: " + "、".join("%s（%s）" % (k, v.splitlines()[-1][:120]) for k, v in report["failed"].items()), ""]
+    far = sorted([r for r in report["measures"] if r.get("judge") and r["judge"]["side"] != 0 and (r.get("ref") or {}).get("kind") == "people"],
+                 key=lambda r: -r["judge"]["dist"])
+    if far:
+        lines += ["人から遠い物差し（人の幅を単位にした距離の大きい順、上位 %d / 外 %d）: " % (min(10, len(far)), len(far)) +
+                  "、".join("%s %s（%s %.1f）" % (r["name"], _value(r), r["judge"]["word"], r["judge"]["dist"]) for r in far[:10]), ""]
+    broken = [r for r in report["measures"] if r.get("judge") and r["judge"]["side"] != 0 and (r.get("ref") or {}).get("kind") in ("limit", "window")]
+    if broken:
+        lines += ["決まり・目安を外れた物差し: " + "、".join("%s %s（%s）" % (r["name"], _value(r), base.ref_text(r.get("ref"))) for r in broken), ""]
     by_c = {}
     for r in report["measures"]:
         by_c.setdefault(r["concept"], []).append(r)

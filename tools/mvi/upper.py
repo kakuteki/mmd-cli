@@ -50,7 +50,7 @@ def measure(m):
         rows.append(base.row("upper.head_acc_p99", "頭の加速度 99 % 点", a18["head_acc"]["p99"], "u/s²", "a18 body_motion"))
         for bone, mid, hi in (("頭", "upper.head_sudden_stops_per_min", 300.0), ("上半身", "upper.upper_sudden_stops_per_min", 250.0)):
             for f, g, hold, deg in ev["a18"]["sudden_stops"][bone]:
-                events.append(base.event(mid, f, g, deg, "度/秒", 0.0, hi,
+                events.append(base.event(mid, f, g, deg, "度/秒", hi, hi,
                                          "%s が %.0f 度/秒から 5 コマ以内に止まり、%d コマ止まったまま" % (bone, deg, hold)))
     ub = base.tool("upper_body_check")
     names, pos, rot = m.v.pack()

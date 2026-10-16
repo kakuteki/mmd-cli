@@ -12,6 +12,10 @@ from mvi import mouth, report
 F = 420
 
 
+def rep_events(res):
+    return report.mark_listed({"measures": res["rows"], "events": res["events"]})["events"]
+
+
 class MouthTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -47,8 +51,11 @@ class MouthTest(unittest.TestCase):
         r = self.rows(res)
         self.assertLess(r["mouth.lag_median_ms"]["value"], -45.0)
         self.assertEqual(r["mouth.lag_median_ms"]["judge"]["word"], "下へ外")
+        self.assertEqual(r["mouth.lag_open_ms"]["judge"]["word"], "下へ外")
+        closed = [e for e in rep_events(res) if e["id"] == "mouth.late_pct"]
+        self.assertTrue(all(not e["listed"] for e in closed))
         rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
-        listed = [e for e in rep["events"] if e["listed"] and e["id"] == "mouth.lag_median_ms"]
+        listed = [e for e in rep["events"] if e["listed"] and e["id"] == "mouth.lag_open_ms"]
         self.assertGreater(len(listed), 5)
         self.assertTrue(all(e["value"] < -45.0 for e in listed))
 
