@@ -1248,8 +1248,8 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         sums = finger_sums(hand, ang)
         moves = arm_movements(kn)
         # the choreography's changes of shape (a long finger's MP + PIP + DIP moving PACE["min"] degrees or more one
-        # way): a movement that overlaps one (or comes within TRANSIT["pad"] frames of it) is left, so its timing is
-        # the trace's
+        # way): a movement in which one meets its shape (its last frame within the movement or TRANSIT["pad"] frames of
+        # it), or which one spans, is left, so the shape is met when the trace meets it
         changes = [(r0, r1) for f in fingers for r0, r1 in monotone_changes(sums[f])
                    if abs(sums[f][r1] - sums[f][r0]) >= PACE["min"]]
         add = np.zeros(F)
@@ -1266,7 +1266,7 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
                 left["shape"] += 1
                 continue
             lo, hi = max(0, a - TRANSIT["pad"]), min(F - 1, b + TRANSIT["pad"])
-            if C >= TRANSIT["change"] or any(r0 <= hi and r1 >= lo for r0, r1 in changes):
+            if C >= TRANSIT["change"] or any(lo <= r1 <= hi or (r0 <= a and r1 >= b) for r0, r1 in changes):
                 # the trace changes the shape here: the choreography's change is left as it is (the dancers' fingers
                 # travel only 2 - 8 degrees beyond such a change for 0.06 - 0.4 m of the hand, 25.5 h^1.02; laid on the
                 # change's way it brought the right fingers 0.15 frames ahead of the wrist by the a09, past the dancers')

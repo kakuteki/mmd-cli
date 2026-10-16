@@ -1097,13 +1097,21 @@ class TransitTest(unittest.TestCase):
             self.assertLess(float(mid[a:b + 1].max()), 0.05, (a, b))
         self.assertLess(float(np.abs(mid[50:]).max()), 0.05)
 
-    def test_a_movement_running_into_a_change_of_shape_is_left(self):
-        # the trace starts to close the hand on the movement's last frames (the change runs on past its end): the
-        # change is the choreography's and its timing is kept, no excursion laid over its start
-        # (the movement found here runs from frame 8 to 25: the smoothed speed's minima)
+    def test_a_movement_in_which_a_change_of_shape_arrives_is_left(self):
+        # the trace closes the hand from frame 2 to 9 and the movement (found here from frame 8 to 25, the smoothed
+        # speed's minima) starts as the shape is met: the change is the choreography's, its arrival keeps its time
+        d, _ = self.dev([(0, "half"), (2, "half"), (9, "bend"), (LAST, "bend")],
+                        eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
+        self.assertLess(max(float(np.abs(v[0:34]).max()) for v in d.values()), 0.05)
+
+    def test_a_change_that_starts_as_the_movement_ends_does_not_stop_its_excursion(self):
+        # the trace starts to close the hand on the movement's last frame and meets the shape 6 frames later: the
+        # excursion is back by the movement's end, before the change, so the movement keeps it
         d, _ = self.dev([(0, "half"), (25, "half"), (31, "bend"), (LAST, "bend")],
                         eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
-        self.assertLess(max(float(np.abs(v[6:34]).max()) for v in d.values()), 0.05)
+        mid = d["中指１"] + d["中指２"] + d["中指３"]
+        self.assertGreater(float(np.abs(mid[8:26]).max()), 2.0)
+        self.assertLess(float(np.abs(mid[25:]).max()), 0.05)
 
     def test_an_open_hand_curls_and_a_half_closed_one_goes_both_ways(self):
         # a flat hand cannot extend much further: it curls; between, the hand flexes and extends in turn with the
