@@ -616,18 +616,25 @@ def mouth_track(voice, morae, face_rows=None):
                 X[v0:v1] = base[None, :] * g[v0:v1, None]
                 if m["consonant"]:
                     share, own = CONSONANTS[m["consonant"]]
-                    target = shape(own) if own else base
-                    X[c0:v0] = target[None, :] * (share * g[c0:v0, None])
                     if share == 0.0:
+                        # behind shut lips the jaw already takes the vowel (the lips alone close and part)
+                        X[c0:v0] = base[None, :] * g[c0:v0, None]
                         closures.append((c0, v0))
+                    else:
+                        target = shape(own) if own else base
+                        X[c0:v0] = target[None, :] * (share * g[c0:v0, None])
             elif m["vowel"] == "N":
                 shut = pause_after or (nxt is not None and nxt["consonant"] == "m")
                 if shut:
                     closures.append((v0, v1))
+                    if not pause_after and nxt["vowel"] in "aiueo":
+                        X[v0:v1] = shape(nxt["vowel"])[None, :] * g[v0:v1, None]
                 elif prev is not None and prev["vowel"] in "aiueo":
                     X[v0:v1] = shape(prev["vowel"])[None, :] * (N_OPEN * g[v0:v1, None])
             elif m["vowel"] == "Q":
                 closures.append((v0, v1))
+                if not pause_after and nxt["vowel"] in "aiueo":
+                    X[v0:v1] = shape(nxt["vowel"])[None, :] * g[v0:v1, None]
             sung[c0:v1] = True
             if phrases and c0 - phrases[-1][1] < 15:
                 phrases[-1][1] = v1
@@ -665,11 +672,6 @@ def mouth_track(voice, morae, face_rows=None):
         ker = np.exp(-0.5 * (np.arange(-rad, rad + 1) / sigma) ** 2)
         ker /= ker.sum()
         X = np.stack([np.convolve(np.pad(X[:, j], rad, mode="edge"), ker, mode="valid") for j in range(5)], axis=1)
-    # behind shut lips the jaw already takes the next vowel (the lips alone close and part)
-    for a, b in closures:
-        a, b = max(0, int(a)), min(T - 1, int(b))
-        if b > a:
-            X[a:b] = X[b][None, :] if sung[b] else 0.0
     env = np.ones(T)
     half = CLOSURE_MOVE / STEP / 2.0
     hold = CLOSURE_HOLD / STEP / 2.0
