@@ -211,7 +211,7 @@ class WeightShiftTest(unittest.TestCase):
         """back by the end (1 s after the landing) and not begun a second before the lift (a 17 cm move at the bounded
         acceleration takes about 0.8 s)"""
         x = np.abs(self.shift[:, 0])
-        self.assertLess(x[self.last], 0.01)
+        self.assertLess(x[self.last], 0.02)             # (1.6 mm: the still stance's pull is held 0.1 s past it, 0.9 mm left)
         self.assertLess(x[:10].max(), 0.01)
 
     def test_no_swing_the_wrong_way(self):
@@ -688,7 +688,7 @@ class RangeTest(unittest.TestCase):
         for s in ("左", "右"):
             on = before.height(s) < balance_layer.SUPPORT_H
             gain = (after.knee_flexion(s) - before.knee_flexion(s))[on]
-            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.0, s)
+            self.assertLess(gain.max(), balance_layer.KNEE_GIVE_DEG + 2.5, s)   # (the still hold: 14.004 on the right)
         heel, toe = before.sole("右")
         line_x = 0.5 * (heel[:, 0] + toe[:, 0])
         self.assertLess(np.abs(after.com()[65:80, 0] - line_x[65:80]).max() * CM, 3.0)
@@ -1137,7 +1137,7 @@ class MovingStanceTest(unittest.TestCase):
             return v
         v0, v1 = speed(com0), speed(com1)
         self.assertGreater(float(np.mean(v0[still] < 5.0)), 0.95)                      # the fixture: still
-        self.assertGreater(float(np.mean(v1[still] < 5.0)), 0.95)                      # and still after the layer
+        self.assertGreater(float(np.mean(v1[still] < 5.0)), 0.9)                       # and still after the layer (0.83 before)
         shift = centre_offsets(motion, result.motion, last)
         self.assertLess(float(np.median(speed(shift)[still])), 1.0)                     # the shift itself holds
         self.assertLess(result.report["stance"]["still_lateral_cm"]["after"], 4.0)     # over the foot all the same
@@ -1251,12 +1251,15 @@ class ReviewTest(unittest.TestCase):
         self.assertLess(far, 8.0)
 
     def test_pull_grows_with_the_other_foot_s_height(self):
-        """the plan: in a pulled run the pull's weight follows the other foot's height from 1.6 to 5 cm (half the full
-        weight while it is still low), full from 5 cm up; nothing where it never gets 5 cm up"""
+        """the plan before 2026-10-16 (still_hold off): in a pulled run the pull's weight follows the other foot's height
+        from 1.6 to 5 cm (half the full weight while it is still low), full from 5 cm up; nothing where it never gets 5
+        cm up.  Held (the default), a still stance gets the whole pull from the start of the stillness on: a pull that
+        grows moves the body inside the stillness"""
         last = 119
         motion = dance(last=last, left_lifts=[(40, 60, 70, 90, 2.5)])            # up slowly over 0.7 s
         body = balance_layer.Body(MODEL, motion)
-        plan = balance_layer.support_plan(body, balance_layer.params_default(), body.com())
+        p = dict(balance_layer.params_default(), still_hold=False)
+        plan = balance_layer.support_plan(body, p, body.com())
         low = body.height("左") * CM
         w = plan["w"]
         rising = np.flatnonzero((low > 2.0) & (low < 3.0) & (np.arange(last + 1) < 60))
@@ -1264,6 +1267,10 @@ class ReviewTest(unittest.TestCase):
         self.assertLess(w[rising].max(), 0.75)
         self.assertGreater(w[rising].min(), 0.45)
         self.assertEqual(float(w[(low > 6.0)].min()), 1.0)
+        held = balance_layer.support_plan(body, balance_layer.params_default(), body.com())
+        st = held["still"]
+        self.assertTrue(st[rising].all())
+        self.assertEqual(float(held["w"][st].min()), balance_layer.STILL_WEIGHT)
 
     def test_turned_root_still_goes_over_the_standing_foot(self):
         """the whole dance turned 90 degrees by a key on 全ての親: the shift is a world shift, written in センター's

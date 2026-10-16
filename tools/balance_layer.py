@@ -153,6 +153,18 @@ STILL_MIN_S = 0.3               # still, and pulled over the foot; elsewhere it 
                                 # 1 / w0, the fall's time constant).  Human dancers standing still keep the COM 1.7 cm from
                                 # the support's centre (FineDance; v8 3.4); moving, 8.0 cm [7.0, 9.4] (v8, which pulled every
                                 # single support onto the foot, 5.9)
+STILL_HOLD = True               # a still stretch: the whole pull, STILL_WEIGHT, all through it and STILL_TAIL_S after it,
+                                # and a stillness that starts inside its run led from STILL_LEAD_S before it, before the
+                                # run's start too (False: as before 2026-10-16, the pull grew with the other foot's height:
+                                # the pull itself moved the body 5-14 cm/s inside the MV's still stretches, and the human
+                                # measure found none left, the review of 2026-10-16)
+STILL_WEIGHT = 1.0              # the pull's weight there, times the run's peak (10 and 30 kept the body still a little longer
+                                # at the stillness's end but started the weight shift over a second early and sped up the
+                                # hips' drop past DROP_ACC_MAX on the fixtures)
+STILL_TAIL_S = 0.1              # the pull held this long after a still stretch (the foot still on the floor): the way back
+                                # then starts at its end, not inside it (0.2 s left a 17 cm shift 0.5 cm short 1 s after the
+                                # landing; on the coming-to-rest fixture the share of still frames kept under 5 cm/s is 0.83
+                                # before the hold, 0.88 without the tail, 0.91 with 0.1 s, 0.94 with 0.2 s)
 STILL_LEAD_S = 0.6              # a still stretch that starts inside its run is pulled from this long before it: carrying the
                                 # body 9 cm at ACC_MAX (up, then down) takes 2 sqrt(0.09 / 1) = 0.6 s
 SUPPORT_R_CM = 4.0              # a05's support of a foot: the capsule of this radius about the line from the heel point
@@ -280,7 +292,8 @@ def params_default():
             "dip_deg": DIP_DEG, "dip": False, "tau_s": TAU_S, "lam_in": LAM_IN, "lam_out": LAM_OUT, "clear_cm": CLEAR_CM,
             "catch": True, "vertical": True, "dip_deg_flat": DIP_DEG_FLAT, "dip_deg_fore": DIP_DEG_FORE,
             "down_acc_max": DOWN_ACC_MAX, "air_down_acc_max": AIR_DOWN_ACC_MAX, "despike": True, "spike_per_min": SPIKE_PER_MIN, "pull_moving": False,
-            "mos_ml_min_cm": MOS_ML_MIN_CM, "still_v_cm_s": STILL_V_CM_S, "still_min_s": STILL_MIN_S}
+            "mos_ml_min_cm": MOS_ML_MIN_CM, "still_v_cm_s": STILL_V_CM_S, "still_min_s": STILL_MIN_S,
+            "still_hold": STILL_HOLD}
 
 
 # ---- the body ---------------------------------------------------------------------------------------------------
@@ -924,6 +937,10 @@ def support_plan(body, p, com, low=None):
     still_lead = max(lead, int(round(STILL_LEAD_S * FPS)))
     still = np.zeros(F, bool)
     moving = np.zeros(F, bool)
+    groups = []                                         # (the lead's first frame, the still stretch's first and last, the
+                                                        # tail's last, the foot)
+    hold = bool(p.get("still_hold", STILL_HOLD))
+    still_tail = int(round(STILL_TAIL_S * FPS))
     stance_foot = np.full(F, "", dtype=object)
     for i, (a, b, s) in enumerate(ss):
         prev_end = ss[i - 1][1] if i else -10 ** 9
@@ -957,15 +974,33 @@ def support_plan(body, p, com, low=None):
         for r0, r1 in runs(st):                         # the pull on each still stretch, coming in before it
             pa, pb = a + r0, a + r1
             for t in range(pa, pb + 1):
-                put(t, max(float(lift[s][t]), 0.5 * peak))
+                # the whole pull all through the stillness (p["still_hold"]): a pull that grows with the other foot's
+                # height moved the body inside the stillness (the review of 2026-10-16)
+                put(t, STILL_WEIGHT * peak if hold else max(float(lift[s][t]), 0.5 * peak))
             # inside the run from STILL_LEAD_S before (the body must be over the foot when it stands still), before the
             # run's start --lead at most (the weight shift before the foot lifts)
-            n_lead = lead if pa == a else min(still_lead, pa - a + lead)
+            # (held: a stillness that starts inside its run gets STILL_LEAD_S before it wherever the foot is on the floor,
+            # before the run's start too: the weight goes over the foot before it stands still)
+            n_lead = lead if pa == a else (still_lead if hold else min(still_lead, pa - a + lead))
+            first = pa
             for j in range(1, n_lead + 1):
                 t = pa - j
                 if t <= prev_end or t < 0 or not sup[s][t]:
                     break
                 put(t, peak * (1.0 - j / (n_lead + 1.0)))
+                first = t
+            tail = pb
+            if hold:
+                # and kept over the foot STILL_TAIL_S after it (the other foot down again: the body goes back on two
+                # feet), so the way back does not start inside the stillness
+                for j in range(1, still_tail + 1):
+                    t = pb + j
+                    if t >= next_start or t >= F or not sup[s][t]:
+                        break
+                    put(t, STILL_WEIGHT * peak)
+                    tail = t
+            groups.append((first, pa, pb, tail, s))
+            pb = tail
             for j in range(1, lag + 1):
                 t = pb + j
                 if t >= next_start or t >= F or not sup[s][t]:
@@ -973,7 +1008,7 @@ def support_plan(body, p, com, low=None):
                 put(t, peak * (1.0 - j / (lag + 1.0)))
     return {"low": low, "sup": sup, "single": single, "runs": ss, "w": w, "foot": foot, "share": share,
             "run_shares": shares, "run_kinds": kinds, "still": still, "moving": moving, "stance_foot": stance_foot,
-            "vcom_cm_s": vcom}
+            "vcom_cm_s": vcom, "still_groups": groups}
 
 
 def travels(body, com, a, b, s):
@@ -2330,6 +2365,9 @@ def main(argv=None):
     ap.add_argument("--no-despike", action="store_true", help="leave センター's 1-frame spikes (a08) as they are")
     ap.add_argument("--pull-moving", action="store_true", help="pull every single support over the foot, moving or still "
                                                               "(the layer before 2026-10-15)")
+    ap.add_argument("--no-still-hold", action="store_true",
+                    help="a still single support's pull grows with the other foot's height and follows the COM (the layer "
+                         "before 2026-10-16), not one target held through the stillness")
     ap.add_argument("--mos-ml-min", type=float, default=MOS_ML_MIN_CM,
                     help="cm: moving single support keeps the XcoM's sideways margin at least this (human dancers' median "
                          "-4.2, quartiles -6.1 and -3.6)")
@@ -2348,7 +2386,7 @@ def main(argv=None):
         params = {"r_bal_cm": args.r_bal, "acc_max": args.acc_max, "lead_s": args.lead, "lag_s": args.lag,
                   "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": bool(args.dip and not args.no_dip), "catch": not args.no_catch,
                   "vertical": not args.no_vertical, "down_acc_max": args.down_acc_max,
-                  "air_down_acc_max": args.air_down_acc_max, "despike": not args.no_despike,
+                  "air_down_acc_max": args.air_down_acc_max, "still_hold": not args.no_still_hold, "despike": not args.no_despike,
                   "spike_per_min": args.spike_per_min, "pull_moving": args.pull_moving, "mos_ml_min_cm": args.mos_ml_min}
         ik_check, ik_note = None, None
         if args.mmd_ik:
