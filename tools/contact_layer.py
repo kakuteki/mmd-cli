@@ -26,8 +26,11 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
 
 1. The plan: a foot stands where its shoe is within ON_FLOOR of the floor, and where it is held still over it (under
    HOLD_MAX, its touching part slower than HOLD_SPEED along the floor and its lowest point slower than HOLD_RISE up or
-   down, HOLD_MIN frames or more) unless no foot is on the floor there and the pelvis falls like a flight (faster than half
-   of gravity over the run, or faster than FALL_BOUND on a frame of it: floaty's judge of a hop).  A foot's runs closer
+   down, HOLD_MIN frames or more) unless no foot is on the floor there and the pelvis falls faster than FALL_BOUND on a
+   frame of the run or next to it (faster than gravity: no floor holds it there).  A pelvis sinking slower than that over
+   a still foot is a supported sink (a squat), not a hop: people hold a foot still over the floor on 0.82 % of the feet's
+   frames, so a still foot under 4 cm is a foot the trace left over the floor (the song's 127.8-128.1 s, judged a hop by
+   the pelvis's half of gravity, became an 11-frame hop 6 cm higher over a foot held 2.7 cm up).  A foot's runs closer
    than BRIDGE frames are joined where its shoe stays under BRIDGE_LIFT (the foot layer's bridge).
 2. Ground: a standing foot over the floor is lowered (足ＩＫ's height: the foot's shape kept) until its shoe's lowest
    point is on the floor, eased in and out over EASE frames into the air around (never into the floor).
@@ -37,17 +40,21 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    DROP_MAX; spread and lessened as the foot layer's sink is, so that no frame on the floor has the pelvis fall faster than
    FALL_BOUND, or than the input where it already does); a free foot (a pointed foot resting) is lowered only as far as
    its leg reaches.
-4. Plant: a standing foot that bears weight (alone on the floor, or with LOAD_SHARE or more of it: the lever of the centre
-   of mass's floor point between the two feet) is held where it stands: the slide of its touching part is undone frame by
-   frame (足ＩＫ's horizontal place), so it turns on its ball or its heel as the dance has it but does not travel; after it
-   lifts, the correction goes back to none over its swing (a smoothstep), so that it lands where the dance puts it.
+4. Plant: a standing foot is held where the dance puts it down (the first frame of its run on the floor; the run's
+   lowest if it never is): the slow slide (under PLANT_SPEED) of its touching part is undone frame by frame from there,
+   forward and back (足ＩＫ's horizontal place), so it turns on its ball or its heel as the dance has it but does not
+   travel, as long as its knee stays within KNEE_GIVE of the leg's without the hold (and bent REACH_KNEE_DEG): further,
+   the body is going away from it as the dance has it, and the foot slides with it (the song's 70.4-71.2 s held a foot
+   11 cm from the dance's, the knee 35 degrees straighter and MMD's leg 2.3 cm short).  Between its runs the correction
+   goes from one run's to the next's over the swing (a smoothstep), so that it lands where the dance puts it.
 5. Flight: where no foot stands for AIR_MIN frames or more, the body's centre of mass falls by gravity (G): the pelvis's
    height (センター) changes over the flight and WINDOW frames each side (the push and the catch) by the least change, with
-   its third differences weighed SMOOTH, that makes the centre of mass's second differences -G on the frames with air on
-   both sides, keeps every frame on the floor no faster falling than FALL_BOUND (or the input) and every standing leg in
-   reach.  A foot in the air goes with the body (the leg keeps the dance's shape: people's feet clear the floor more in
-   longer flights, 3.3 cm the median of the highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP
-   frames from the floor.
+   its third differences weighed SMOOTH, that makes the second differences of the centre of mass -G on the frames with
+   air on both sides, keeps every frame on the floor no faster falling than FALL_BOUND (or the input) and every standing
+   leg in reach.  The centre of mass there is the pelvis's height and its limbs' part over it smoothed (LIMB_SMOOTH): a
+   limb's quick move (the trace's one-frame jumps) stays the dance's instead of the pelvis taking it up as a jolt.  A foot in the air goes with the body
+   (the leg keeps the dance's shape: people's feet clear the floor more in longer flights, 3.3 cm the median of the
+   highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP frames from the floor.
 6. Between the frames: MMD draws 240 fps and interpolates the keys; where a shoe would dip into the floor between two
    frames both are raised by the dip (the foot layer's sub-frame check).
 
@@ -97,7 +104,6 @@ HOLD_SPEED = 30.0               # cm/s: ... its touching part moving along the f
 HOLD_RISE = 20.0                # cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps
                                 # into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch or a lift)
 HOLD_MIN = 4                    # frames: a shorter hold is a foot passing by
-FLIGHT_ACC = 61.25              # units/s^2 (half of gravity): no foot on the floor and the pelvis falling faster over the run
 FALL_BOUND = 122.0              # units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance
                                 # layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot down is a hop
 FALL_TOL = 0.5                  # units/s^2: past a bound by more than this (as the balance layer's report counts)
@@ -109,8 +115,9 @@ NEED_CM = 10.0                  # cm: the centre of mass's floor point this far 
                                 # bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wide
                                 # stances -12 to -32 cm; people's single-support ZMP margin is -4.4 cm [-6.0, -2.2])
 SOLE_TOUCH = 0.15               # units (1.2 cm): the vertices of a shoe this near the floor make its sole on it
-LOAD_SHARE = 0.3                # a standing foot with this share of the weight (the lever of the centre of mass between the
-                                # feet) or alone on the floor is held where it stands
+KNEE_GIVE = 10.0                # degrees: a held foot's knee stays within this of the leg's without the hold; further the
+                                # foot slides as the dance has it (the knee change tools/sink_check.py and
+                                # tools/contact_check.py count is 10 degrees and more)
 REACH_KNEE_DEG = FL.REACH_KNEE_DEG   # degrees: the knee of a standing leg bent at least this much (people: none straighter
                                      # than 5 degrees on the floor; the foot layer's)
 DROP_MAX = 1.0                  # units (8 cm): the most the pelvis goes down to let a standing leg reach the floor
@@ -130,6 +137,8 @@ AIR_CLEAR = 0.2 + 0.0125        # units (1.6 cm and 1 mm): a shoe lower than 1.6
                                 # balance layer's support, tools/sink_check.py's SUPPORT_CM)
 CARRY_RAMP = 2                  # frames: a foot leaving the floor goes with the body's change by half on its first frame off
                                 # it and fully from the second (the same before a landing)
+LIMB_SMOOTH = (1, 4, 6, 4, 1)   # the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed
+                                # with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz passes)
 PAD = 2                         # frames pinned to no change each side of a window of the pelvis's solves
 SUB_NEAR = 0.25                 # units: the intervals checked between the frames (either end this near the floor)
 SUB_ROUNDS = 3
@@ -225,21 +234,18 @@ def bridge(stance, low, gap=BRIDGE, lift=BRIDGE_LIFT):
     return out
 
 
-def flight_frames(on, pelvis_y, fall, flight_acc=FLIGHT_ACC, bound=FALL_BOUND):
-    """[F] frames of the runs with no foot on the floor (on: side -> [F]) whose pelvis falls like a flight: its parabola
-    over the run and a frame each side falls faster than flight_acc, or a frame of those falls faster than bound"""
-    F = len(pelvis_y)
+def flight_frames(on, fall, bound=FALL_BOUND):
+    """[F] frames of the runs with no foot on the floor (on: side -> [F]) where the pelvis falls faster than `bound` (fall
+    [F]: its downward acceleration) on a frame of the run or a frame each side: faster than gravity, no floor holds the
+    body there"""
+    fall = np.asarray(fall, dtype=float)
+    F = len(fall)
     out = np.zeros(F, dtype=bool)
     none = np.logical_and.reduce([~np.asarray(m, dtype=bool) for m in on.values()])
     for a, b in runs(none):
         i0, i1 = max(a - 1, 0), min(b + 1, F - 1)
-        if np.any(np.asarray(fall)[i0:i1 + 1] > bound + FALL_TOL):
+        if np.any(fall[i0:i1 + 1] > bound + FALL_TOL):
             out[a:b + 1] = True
-            continue
-        if i1 - i0 >= 2:
-            t = np.arange(i0, i1 + 1) / FPS
-            if 2.0 * np.polyfit(t, pelvis_y[i0:i1 + 1], 2)[0] < -flight_acc:
-                out[a:b + 1] = True
     return out
 
 
@@ -253,22 +259,83 @@ def eased_lowering(dy, stance, low, ease=EASE):
     return out
 
 
-def swing_blend(corr, stance, plant_from, F):
-    """the planting correction [F, 2] after its standing runs: from the value on a run's last frame to none on the next
-    run's first frame (a smoothstep over the frames between), or over 2 EASE frames after the last run; none before the
-    first planted frame of a run"""
+def swing_blend(corr, stance, F):
+    """the planting correction [F, 2] between its standing runs: from the value on a run's last frame to the value on the
+    next run's first frame (a smoothstep over the frames between), from none over 2 EASE frames before the first run and
+    to none over 2 EASE frames after the last"""
     out = np.array(corr, dtype=float)
     rr = runs(stance)
+    if not rr:
+        return out
+    a0 = rr[0][0]
+    s0 = a0 - 2 * EASE
+    for t in range(max(0, s0), a0):
+        out[t] = out[a0] * float(smoothstep((t - s0) / float(a0 - s0)))
     for i, (a, b) in enumerate(rr):
         end = out[b].copy()
         if i + 1 < len(rr):
             nxt = rr[i + 1][0]
+            start = out[nxt].copy()
         else:
             nxt = min(F, b + 1 + 2 * EASE)
+            start = np.zeros(2)
         n = nxt - b
         for t in range(b + 1, min(nxt, F)):
-            out[t] = end * (1.0 - float(smoothstep((t - b) / float(n))))
+            u = float(smoothstep((t - b) / float(n)))
+            out[t] = end * (1.0 - u) + start * u
     return out
+
+
+def plant_band(e, L1, L2, give=KNEE_GIVE, straightest=None):
+    """per frame (r_lo, r_hi) [F]: the band of the hip's distance to a held foot's goal whose knee stays within `give`
+    degrees of the knee without the hold (e [F, 3]: the hip less that goal) and bent `straightest` degrees (REACH_KNEE_DEG)
+    or more; the distance without the hold is always inside"""
+    straightest = REACH_KNEE_DEG if straightest is None else straightest
+    r = np.linalg.norm(e, axis=1)
+    c = np.clip((r * r - L1 * L1 - L2 * L2) / (2.0 * L1 * L2), -1.0, 1.0)
+    knee = np.degrees(np.arccos(c))                     # (0: straight, as FL.knee_reach counts the bend)
+
+    def reach(deg):
+        return np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(deg)))
+    r_hi = np.maximum(reach(np.maximum(knee - give, straightest)), r)
+    r_lo = np.minimum(reach(np.minimum(knee + give, 180.0)), r)
+    return r_lo, r_hi
+
+
+def held_within(c, e, r_lo, r_hi):
+    """(the hold, limited): the most of a foot's hold c [2] (x, z; units: its goal moved so) toward none that keeps the
+    hip's distance to the goal (e [3]: the hip less the goal without the hold) within [r_lo, r_hi]"""
+    c = np.asarray(c, dtype=float)
+    d = np.array([c[0], 0.0, c[1]])
+    A = float(d @ d)
+    if A < 1e-18:
+        return c, False
+    B = -2.0 * float(e @ d)
+    C = float(e @ e)
+    lam = 1.0
+    disc = B * B - 4.0 * A * (C - r_hi * r_hi)
+    if disc >= 0.0:
+        lam = min(lam, (-B + math.sqrt(disc)) / (2.0 * A))
+    disc = B * B - 4.0 * A * (C - r_lo * r_lo)
+    if disc > 0.0:
+        mu = (-B - math.sqrt(disc)) / (2.0 * A)
+        if mu >= 0.0:
+            lam = min(lam, mu)
+    lam = max(lam, 0.0)
+    return lam * c, lam < 1.0 - 1e-9
+
+
+def limb_smoothed(com_y, pelvis_y, weights=LIMB_SMOOTH):
+    """the centre of mass's height [F] with its limbs' part (its height over the pelvis's) smoothed by `weights`"""
+    pelvis_y = np.asarray(pelvis_y, dtype=float)
+    k = np.asarray(com_y, dtype=float) - pelvis_y
+    w = np.asarray(weights, dtype=float)
+    w = w / w.sum()
+    h = len(w) // 2
+    if len(k) <= 2 * h:
+        return pelvis_y + k
+    kp = np.concatenate([np.full(h, k[0]), k, np.full(h, k[-1])])
+    return pelvis_y + np.convolve(kp, w, mode="valid")
 
 
 # ---- the pelvis in the air: a small quadratic programme -------------------------------------------------------------
@@ -578,7 +645,7 @@ def layer(model, rig, shoe, motion, params=None):
         rise[s] = step_min(low_j[s]) * UNIT_CM * FPS
     # 1. the plan
     on = {s: low_j[s] < ON_FLOOR for s in SIDES}
-    flying = flight_frames(on, hips_y, fall)
+    flying = flight_frames(on, fall)
     stance, held = {}, {}
     for s in SIDES:
         cand = (~on[s]) & (low_j[s] < HOLD_MAX) & (speed[s] < HOLD_SPEED) & (rise[s] < HOLD_RISE) & ~flying
@@ -714,22 +781,34 @@ def layer(model, rig, shoe, motion, params=None):
         floor_at = np.minimum(np.maximum(low[s], 0.0), AIR_CLEAR)
         keep = fast_fall & ~stance[s] & (low[s] + dy_e[s] < floor_at)
         dy_e[s] = np.where(keep, floor_at - low[s], dy_e[s])
-    # 4. plant: a standing foot that bears weight does not travel
+    # 4. plant: a standing foot does not travel: held where the dance puts it down, both ways from there, while its knee
+    # stays within KNEE_GIVE of the leg's without the hold
+    hips_low = {s: sol[s]["hip"] - np.stack([np.zeros(F), drop, np.zeros(F)], 1) for s in SIDES}
     corr, plant_rows = {}, {}
     for s in SIDES:
         c = np.zeros((F, 2))
         rows = []
         if p["plant"]:
             slow = np.linalg.norm(slip[s], axis=1) * UNIT_CM * FPS < PLANT_SPEED
+            e = hips_low[s] - (sol[s]["goal_ankle"] + np.stack([np.zeros(F), dy_e[s], np.zeros(F)], 1))
+            r_lo, r_hi = plant_band(e, *lengths[s])
             for a, b in runs(stance[s]):
-                p0 = a
-                for t in range(p0, b):
-                    c[t + 1] = c[t] - (slip[s][t] if slow[t] else 0.0)
-                if b > p0:
-                    rows.append({"s": [round(p0 / FPS, 2), round((b + 1) / FPS, 2)],
-                                 "drift_cm": _r(float(np.linalg.norm(c[b])) * UNIT_CM, 2),
-                                 "max_cm": _r(float(np.linalg.norm(c[p0:b + 1], axis=1).max()) * UNIT_CM, 2)})
-            c = swing_blend(c, stance[s], None, F)
+                put = np.flatnonzero(on[s][a:b + 1])
+                k0 = a + (int(put[0]) if len(put) else int(np.argmin(low_j[s][a:b + 1])))
+                limited = 0
+                for t in range(k0, b):
+                    c[t + 1], lim = held_within(c[t] - (slip[s][t] if slow[t] else 0.0), e[t + 1], r_lo[t + 1], r_hi[t + 1])
+                    limited += int(lim)
+                for t in range(k0, a, -1):
+                    c[t - 1], lim = held_within(c[t] + (slip[s][t - 1] if slow[t - 1] else 0.0), e[t - 1], r_lo[t - 1],
+                                                r_hi[t - 1])
+                    limited += int(lim)
+                if b > a:
+                    n = np.linalg.norm(c[a:b + 1], axis=1) * UNIT_CM
+                    rows.append({"s": [round(a / FPS, 2), round((b + 1) / FPS, 2)], "put_s": round(k0 / FPS, 2),
+                                 "start_cm": _r(float(n[0]), 2), "end_cm": _r(float(n[-1]), 2), "max_cm": _r(float(n.max()), 2),
+                                 "limited_frames": limited})
+            c = swing_blend(c, stance[s], F)
         corr[s] = c
         plant_rows[s] = rows
     # 5. flight: the pelvis's change, solved on the body's centre of mass as the changed dance moves it (the legs
@@ -739,7 +818,6 @@ def layer(model, rig, shoe, motion, params=None):
     flight_rows = []
     flights = [(a, b) for a, b in runs(air) if b - a + 1 >= AIR_MIN]
     lift = {s: np.stack([corr[s][:, 0], dy_e[s], corr[s][:, 1]], 1) for s in SIDES}
-    hips_low = {s: sol[s]["hip"] - np.stack([np.zeros(F), drop, np.zeros(F)], 1) for s in SIDES}
     goals = {s: sol[s]["goal_ankle"] + lift[s] for s in SIDES}
     away = {}
     for s in SIDES:                     # 0 on the floor, CARRY_RAMP frames off it and further: 1
@@ -790,7 +868,8 @@ def layer(model, rig, shoe, motion, params=None):
             in_flight[a:b + 1] = True
         interior = np.zeros(F, dtype=bool)
         interior[1:-1] = in_flight[1:-1] & in_flight[:-2] & in_flight[2:]
-        base = com[:, 1] - drop
+        ref = pelvis_ys[0]                          # the pelvis's height (lowered by the drop)
+        base = limb_smoothed(com[:, 1] - drop, ref)
         com_out = None
         for it in range(FLIGHT_ROUNDS):
             change, wrows = flight_change(wins, in_flight, floor_frames, base, pelvis_ys, fall_in, room, F)
@@ -799,11 +878,12 @@ def layer(model, rig, shoe, motion, params=None):
             com_out = body_com(model, comp.build(new), F)
             if com_out is None:                     # (no body: the hips stand for the centre of mass, moved with the pelvis)
                 break
-            r = down_acc(com_out[:, 1])[interior] - G
+            smooth_out = limb_smoothed(com_out[:, 1], ref + change)
+            r = down_acc(smooth_out)[interior] - G
             resid.append(_r(float(np.abs(r).max()) if len(r) else 0.0, 2))
             if not len(r) or np.abs(r).max() < FLIGHT_RESID:
                 break
-            base = com_out[:, 1] - change
+            base = smooth_out - change
         for a, b in flights:
             row = {"s": [round(a / FPS, 2), round((b + 1) / FPS, 2)], "frames": b - a + 1,
                    "rise_cm": _r(float(change[a:b + 1].max()) * UNIT_CM, 2),
@@ -954,9 +1034,10 @@ def report_of(plan, rig, before, after, F):
         c = np.linalg.norm(sd["plant"], axis=1) * UNIT_CM
         rows = sd["plant_rows"]
         rep["plant"][TAGS[s]] = {"frames_moved": int((c > 1e-4).sum()), "max_cm": _r(float(c.max()), 2),
-                                 "runs": len(rows), "drift_over_3cm": sum(1 for r in rows if r["drift_cm"] > 3.0),
-                                 "drift_over_10cm": sum(1 for r in rows if r["drift_cm"] > 10.0),
-                                 "worst": sorted(rows, key=lambda r: -r["drift_cm"])[:20]}
+                                 "runs": len(rows), "held_over_3cm": sum(1 for r in rows if r["max_cm"] > 3.0),
+                                 "held_over_10cm": sum(1 for r in rows if r["max_cm"] > 10.0),
+                                 "limited_frames": sum(r["limited_frames"] for r in rows),
+                                 "worst": sorted(rows, key=lambda r: -r["max_cm"])[:20]}
     rep["flight"] = dict(plan["flight_rows"])
     rep["flight"]["count"] = len(rep["flight"]["flights"])
     rep["flight"]["carry_max_cm"] = {TAGS[s]: _r(float(sides[s]["carry"].max()) * UNIT_CM, 2) for s in SIDES}

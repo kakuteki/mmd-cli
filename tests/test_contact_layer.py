@@ -324,6 +324,53 @@ class PlantTest(unittest.TestCase):
         step = np.linalg.norm(np.diff(g1[25:37, [0, 2]], axis=0), axis=1)
         self.assertLess(float(step.max()), 0.5)                                       # the swing makes up for it smoothly
 
+    def test_a_foot_coming_down_slowly_stands_where_the_dance_puts_it_down(self):
+        # the right foot high until frame 6, 3 cm up at frame 10, then coming down slowly onto the floor over frames 10-25
+        # while drifting 0.04 units a frame (10 cm/s) toward -z, on the floor and still after; the left foot in the air.
+        # The right foot stands from frame 10 on (held, brought down) and stands where the dance puts it down (its first
+        # frame on the floor), not where it was first held (the song's 237.9 s: 8.7 cm away for 3 s)
+        F = 50
+
+        def right(t):
+            if t <= 6:
+                return (0.0, 1.5, 0.0), None
+            if t < 10:
+                return (0.0, 1.5 + (0.375 - 1.5) * (t - 6) / 4.0, 0.0), None
+            if t <= 25:
+                return (0.0, 0.375 * (1.0 - (t - 10) / 16.0), -0.04 * (t - 10)), None
+            return (0.0, 0.0, -0.64), None
+        m = dance(F, left=lambda t: ((0.0, 1.25, 0.0), None), right=right)
+        a = shoes(m, F)
+        down = int(np.flatnonzero(a["右"]["low"] < 0.4)[0])
+        self.assertGreater(down, 20)                                                  # (as built: down late in the hold)
+        out, plan = run(m)
+        g0, g1 = goal(m, F, "右"), goal(out, F, "右")
+        self.assertLess(float(np.abs(g1[down, [0, 2]] - g0[down, [0, 2]]).max()), 0.01)    # put down where the dance does
+        b = shoes(out, F)
+        self.assertLess(float(np.abs(b["右"]["low"][12:down]).max()), 0.1)             # standing from the hold on ...
+        self.assertLess(float(np.abs(b["右"]["low"][down:]).max()), 0.4)               # (on the floor as the dance has it)
+        self.assertLess(float(b["右"]["slide"][12:F - 1].max()), 0.5)                  # ... without sliding (cm/s)
+
+    def test_a_standing_foot_the_body_moves_away_from_slides_before_its_knee_changes_much(self):
+        # single support on the left foot, which the dance slides slowly (0.08 units a frame, 19 cm/s) along -z for 40
+        # frames together with the body: held where it first stood, the leg would straighten some 19 degrees as the body
+        # goes 3.2 units away (the song's 70.4-71.2 s: 35 degrees and MMD's leg 2.3 cm short of its goal).  The layer
+        # holds it while the knee stays within KNEE_GIVE of the dance's, then lets it slide
+        F = 60
+
+        def z(t):
+            return -0.08 * min(max(t - 10, 0), 40)
+        m = dance(F, centre=lambda t: (0.0, BENT, z(t)), left=lambda t: ((0.0, 0.0, z(t)), None),
+                  right=lambda t: ((0.0, 1.25, z(t)), None))
+        out, plan = run(m)
+        k0 = sink_check.knee_bend(leg_ik.solve(RIG, m, range(F))["左"])
+        sol = leg_ik.solve(RIG, out, range(F))
+        k1 = sink_check.knee_bend(sol["左"])
+        self.assertLess(float(np.abs(k1 - k0).max()), contact_layer.KNEE_GIVE + 1.0)
+        self.assertLess(float(sol["左"]["reach"].max()), contact_layer.IK_MISS)         # MMD's leg reaches its goal
+        b = shoes(out, F)
+        self.assertLess(float(b["左"]["slide"][10:20].max()), 0.5)                     # held at first (cm/s)
+
     def test_a_foot_turning_on_its_sole_is_not_moved(self):
         # the left foot flat on the floor, turned 3 degrees a frame about the vertical through a sole vertex: that vertex
         # stays (no slide), so the layer has nothing to undo
@@ -448,6 +495,52 @@ class FlightTest(unittest.TestCase):
         out, plan = run(m)
         self.assertLess(float(np.abs(shoes(out, F)["右"]["low"][10:30]).max()), 0.1)          # brought down
         self.assertGreater(float(shoes(out, F)["右"]["low"][30:33].min()), 1.6)
+
+    def test_a_leg_kicked_for_a_frame_in_a_flight_does_not_jolt_the_pelvis(self):
+        # the hop above with the left foot kicked up 2.4 units on frame 23 only (a trace's one-frame jump of a limb): the
+        # centre of mass falls by gravity over the flight, and the pelvis does not take the kick up (no step of its
+        # height's speed above or below both neighbours by more than 0.15 m/s inside the flight: a08's one-frame spike)
+        F, a, b = 60, 20, 27
+
+        def x(t):
+            return 0.25 * min(max(t - a + 1, 0), b - a + 1)
+
+        def left(t):
+            return (x(t), (0.25 + (2.4 if t == 23 else 0.0)) if a <= t <= b else 0.0, 0.0), None
+
+        def right(t):
+            return (x(t), 0.25 if a <= t <= b else 0.0, 0.0), None
+        m = dance(F, centre=lambda t: (x(t), BENT, 0.0), left=left, right=right)
+        out, plan = run(m)
+        v = np.diff(world_y(out, F, "センター")) * FPS * CM / 100.0          # m/s, the step from frame t to t + 1
+        for i in range(a + 1, b - 1):                       # (the steps with flight steps each side)
+            up, dn = v[i] - v[i - 1], v[i] - v[i + 1]
+            self.assertFalse(up * dn > 0.0 and min(abs(up), abs(dn)) > 0.15, "a one-frame spike at step %d" % i)
+        y = com_y(out, F)
+        acc = 2.0 * np.polyfit(np.arange(a, b + 1) / FPS, y[a:b + 1], 2)[0]
+        self.assertLess(abs(-acc - G), 0.1 * G)
+
+    def test_a_still_foot_just_over_the_floor_while_the_body_sinks_fast_is_a_standing_foot(self):
+        # the right foot held still 2 cm up over frames 20-24 while the left is up in the air and the pelvis sinks at 70
+        # units/s^2 there (0.57 g, a quick squat, caught after: supported, not a fall): the right foot stands (brought
+        # down), no hop is made (the song's 127.8-128.1 s: the pelvis was raised 6 cm into a hop of 11 frames over a foot
+        # held 2.7 cm up, as the dance's pelvis fell faster than half of gravity there)
+        F = 60
+        acc = np.zeros(F)
+        acc[20:25] = -70.0
+        acc[25:30] = 70.0
+        y = np.zeros(F)
+        for t in range(2, F):
+            y[t] = 2.0 * y[t - 1] - y[t - 2] + acc[t - 1] / (FPS * FPS)
+        m = dance(F, centre=lambda t: (0.0, BENT + float(y[t]), 0.0),
+                  left=lambda t: ((0.0, 2.0, 0.0), None),
+                  right=lambda t: ((0.0, 0.25 if 20 <= t <= 24 else 0.0, 0.0), None))
+        fit = -2.0 * np.polyfit(np.arange(19, 26) / FPS, world_y(m, F, "下半身")[19:26], 2)[0]
+        self.assertGreater(float(fit), G / 2.0)                                     # (as built: faster than half of g)
+        self.assertGreater(float(shoes(m, F)["右"]["low"][20:25].min()), 1.5)       # (and the foot 2 cm up)
+        out, plan = run(m)
+        self.assertLess(float(np.abs(shoes(out, F)["右"]["low"][20:25]).max()), 0.1)
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
 
     def test_a_hover_with_one_foot_still_becomes_a_step_on_it(self):
         # both feet 2 cm up over frames 20-27, the left still, the right travelling 0.3 units a frame: the left is the
