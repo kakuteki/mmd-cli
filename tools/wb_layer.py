@@ -1,8 +1,8 @@
 """The upper body does not ride the hips' quick moves: the spine bends against the quick part of the pelvis's sideways and
 fore-and-aft motion, so the chest and the head stay steadier than the hips, and the head keeps its turn in the world.
 
-    python tools/wb_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--gain 0.75] [--cutoff 1.5]
-                             [--max-bend 6.0]
+    python tools/wb_layer.py DANCE.vmd MODEL.pmx OUT.vmd [--report r.json] [--gain 0.9] [--cutoff 1.5]
+                             [--max-bend 10.0]
 
 Why (the whole-body measures of 2026-10-17, tools/wb_dynamics.py, FineDance K-pop / choreography / jazz, 62 sequences,
 against the MV): how much a body part follows the pelvis's (下半身's origin's) horizontal motion, per frequency band (the
@@ -23,8 +23,16 @@ by -gain (p - LP(p)): the spine joints (腰椎上部, 上半身2 and 胸椎上�
 without them) each turn by the same small world tilt about the horizontal axis that moves the head's pivot so (the
 levers are the joints' distances under it, summed: a tilt phi moves it by phi x sum (head - joint), whose horizontal part
 needs the levers' height alone), and 頭 turns back by the whole bend (its world turn is the dance's).  The chest then
-moves by about 0.4 of the head's move (its levers are shorter): with the default gain the head follows the pelvis's
-quick part by 0.25-0.3 and the chest by about 0.7, people's values.  The belly, the hips and the legs do not move.
+moves by about 0.4 of the head's move (its levers are shorter).  On the song (balance-v3's final feet output; the
+measure's segment COMs; people's medians [quartiles] in brackets) the defaults give: the head's slope 0.89 -> 0.31
+(0.29 [0.13, 0.42]), its 2-4 Hz response 0.88 -> 0.29 (0.23 [0.06, 0.36]), 1-2 Hz 0.83 -> 0.75 (0.64 [0.52, 0.73]); the
+chest's slope 0.93 -> 0.65 (0.70 [0.56, 0.80]); the belly 0.98 -> 0.94 (0.96 [0.86, 1.05]); the bend's median 1.2,
+90th percentile 4.6, 99th 9.0 degrees, 43 frames at the bound.  Gain 0.75 with a 6 degree bound (the first try) left
+the head at 0.44 (225 frames at the bound); gain 1.0 takes the head to 0.25 and the chest to 0.62 with bigger bends.
+The hips themselves move faster than people's (センター's horizontal acceleration at its 90th percentile 5.6 m/s^2,
+people's pelvis 3.3), so a head kept as steady as people's needs more bend than theirs: the head's quick move against
+the pelvis (over 1.5 Hz, over the trunk's length) at its 90th percentile 2.58 degrees before, 3.08 after, people 1.81
+[1.59, 2.07].  The belly, the hips and the legs do not move.
 The bend is at most --max-bend degrees in all (MAX_BEND_DEG) and fades out where the trunk lies more than 70 degrees from
 upright (the levers' height under 0.3 of their length: no tilt of the spine moves the head sideways there).
 
@@ -66,9 +74,9 @@ B = _tool("balance_layer")
 D = _tool("wb_dynamics")
 
 FPS = 30.0
-GAIN = 0.75                     # the head's pivot moves back by this share of the pelvis's quick part (see the doc)
+GAIN = 0.9                      # the head's pivot moves back by this share of the pelvis's quick part (see the doc)
 CUTOFF_HZ = 1.5                 # the pelvis's slower part, which the upper body follows (people: 0.89 at 0.5 Hz, 0.47 at 1.5)
-MAX_BEND_DEG = 6.0              # the whole bend of the spine at most (the sum over its joints)
+MAX_BEND_DEG = 10.0             # the whole bend of the spine at most (the sum over its joints)
 UPRIGHT_SHARE = (0.3, 0.6)      # the levers' height over their length: no tilt under the first, the whole over the second
 SPINE = ("腰椎上部", "上半身2", "胸椎上部")
 SPINE_PLAIN = ("上半身", "上半身2")
