@@ -666,3 +666,6 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   **体の影の `self_shadow` "soft" は使わない**（査読: 影を落とすものまでの距離の探しが MMD の光の深さのずれ〈光の向きから約 53 度〉で受ける面そのものを拾い、距離で縁が広がらない・照らされた面が 0.83 まで暗くなる「にきび」。直しは枝 softshadow-mme2 で）。
   体の陰の濃さは加賀さんが選ぶ（A 体 0.40・床 0.40／B `--toon`／C 体 0.65・床 0.65／D 体 0.65・床 0.40。協調役の勧めは D。比べの絵は `_spike/out/stage6/review_softshadow_mme/pics/opts_*.jpg`）。C を選ぶなら `KEY_SHARE` を look の設定にする直しが要る。
   hinata の共有の `C:/work/mmd-cli` は c012c32 のまま（main より古い。体の影を使う計画は更新するまで描く前に止まる）。
+- 2026-10-17 inspect 取り込み（加賀さんの指示「都度見るより道具を作ってデバッグする」）: **査読と報告の数は `tools/mv_inspect.py`（部品 `tools/mvi/`）で出す。** `measure`（人の中央値 [四分位] と判定、外れた所の時刻表 outliers.md・csv、timeline.png）、`compare`（入った・近づいた・中のまま・変わらず・遠ざかった・直しすぎ、人からの距離つき）、`outliers --concept`、`timeline`、`mark`（正面固定のカメラの絵に重心・支持基底面・ZMP の印）、`pixels`（描いた絵の下着の画素・影のちらつき）。hinata で 1 版約 40 秒、MMD は起こさない。
+  人の値は `tools/mvi/human.json`（集計の値だけ、FineDance の列や生のデータは入れない）。今までの報告の数と v9 51 組・ほかの 6 版 88 組・人の当て直し 15 項目が一致。
+  査読（わざと欠陥を入れた v10 の写し 8 通り）で、外れの向きの誤りで 4 つが時刻表に出なかったのを直した（`review_inspect`、記録は hinata `stage6/review_inspect/`）。**1 秒に 20 cm の足の滑りは上位に出ない**（人も接地の 5 % は 1 秒に 20 cm 以上滑る。上限の決まりを足すまで、滑りは `outliers --concept feet` で見る）。ZMP の外れは重さが桁違いなので表は 1 物差し 8 行まで。
