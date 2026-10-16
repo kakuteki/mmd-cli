@@ -1434,12 +1434,20 @@ def air_cap(air, floor_cap, air_cap_value):
 
 
 AIR_RAMP = 3                    # frames: the drop goes from all to none over this many frames in from each end of the air
+AIR_RAMP_MIN = 4                # frames: and only in an air stretch this long or longer (a jump, as the song's tests read
+                                # it).  A shorter one is a shuffle with the feet 2-3 cm up: the hips coming up there for 1-3
+                                # frames, next to floor frames the floor's bound lowers, left MMD's IK short on the standing
+                                # leg (order C of the MV, 74.43 s, frame 2233; the IK rounds only halve the drop, and the
+                                # floor's bound lowers the same frames again)
 
 
 def air_ramp(air):
-    """[F] in [0, 1]: 0 off the air, rising over AIR_RAMP frames in from each end of each air stretch"""
+    """[F] in [0, 1]: 0 off the air, rising over AIR_RAMP frames in from each end of each air stretch of AIR_RAMP_MIN
+    frames or more (0 in a shorter one)"""
     w = np.zeros(len(air))
     for a, b in runs(air):
+        if b - a + 1 < AIR_RAMP_MIN:
+            continue
         t = np.arange(a, b + 1)
         w[a:b + 1] = np.minimum(1.0, np.minimum(t - a + 1, b - t + 1) / float(AIR_RAMP))
     return w
