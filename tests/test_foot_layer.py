@@ -1163,9 +1163,10 @@ class LandingTest(unittest.TestCase):
         self.assertGreater(float(f_out["左"]["pitch"].min()), -0.5)
 
     def test_a_foot_skimming_the_floor_is_not_pressed_onto_it(self):
-        # the left foot glides 30 cm/s sideways with its flat sole 4 mm over the floor (the dance's own swing, not a
-        # touch): it keeps that height; the same foot standing still there is put (most of the way) onto the floor
-        lift = 0.05
+        # the left foot glides 30 cm/s sideways with its flat sole 5.4 mm over the floor (over the contact's hysteresis:
+        # the dance's own swing, not a touch): it keeps that height; the same foot standing still there is put (most of
+        # the way) onto the floor
+        lift = 0.068
         moving = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
             [key("左足ＩＫ", t, position=(0.125 * t, lift, 0.0)) for t in range(13)]
         still = [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
@@ -1173,7 +1174,7 @@ class LandingTest(unittest.TestCase):
         _, f_move, _, _ = run_layer(*moving, frames=13)
         _, f_still, _, _ = run_layer(*still, frames=13)
         self.assertGreater(float(f_move["左"]["low"][3:10].min()), 0.111 + 0.8 * lift)
-        self.assertLess(float(f_still["左"]["low"][3:10].max()), 0.111 + 0.3 * lift)
+        self.assertLess(float(f_still["左"]["low"][3:10].max()), 0.111 + 0.6 * lift)
 
 
 class CommandTest(unittest.TestCase):

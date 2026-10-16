@@ -712,7 +712,8 @@ SKIM_SPEED = (5.0, 15.0)
 # The most the landing's heel comes down in a frame (degrees): the cap (some 25 degrees) over 5 frames, about the
 # humans' 0.1 s median from the touch to the heel down and inside the 0.2 s that 61 % of them take.
 HEEL_DROP_DEG = 5.0
-SKIM_LIFT = (CONTACT_ENTER, CONTACT_ENTER + 0.015)
+SKIM_LIFT = (CONTACT_EXIT, CONTACT_EXIT + 0.005)  # (over the contact's hysteresis: a foot the dance keeps on the floor
+                                                   # is not taken for a skimming one; the review's hovers, 2026-10-16)
 
 
 def toes_down_axis(o, q_foot):
@@ -1229,12 +1230,19 @@ def layer(rig, shoe, motion, params=None, log=None):
     frames = list(range(F))
     keys = IK.sample(rig, motion, frames)
     sol = IK.solve(rig, motion, frames, keys)
+    leg_length = {}
+    for s in shoe.sides:
+        side = rig.sides[s]
+        h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
+        leg_length[s] = float(np.linalg.norm(k0 - h0) + np.linalg.norm(a0 - k0))
     if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
         # (with the landing: the feet judged where the dance puts them, at their goals: where the leg does not reach, MMD
         # leaves the foot over the floor, and a foot the dance stands on the floor would be taken for one in the air)
         at_goal = {}
         for s, leg in sol.items():
-            short = (leg["reach"] > 1e-3)[:, None]
+            # only where the goal lies out of the leg's reach (MMD's lag behind a reachable goal is the pushes' to mend:
+            # judging such a frame at its goal took feet standing on the floor for lifted ones, 48.3 s)
+            short = (np.linalg.norm(leg["goal_ankle"] - leg["hip"], axis=1) > leg_length[s] - 1e-4)[:, None]
             d = np.where(short, leg["goal_ankle"] - leg["ankle"], 0.0)
             at_goal[s] = dict(leg, ankle=leg["ankle"] + d, ex=leg["ex"] + d, toe=leg["toe"] + d)
         feet = feet_of(rig, shoe, at_goal, frames, floor_y, p["heel_pitch_deg"])
@@ -1248,11 +1256,6 @@ def layer(rig, shoe, motion, params=None, log=None):
         pl = plan[s]
         return shell_at(shoe.sides[s], sol_[s]["ankle"], pl["q_t"], pl["toes"])[:, :, 1].min(axis=1)
 
-    leg_length = {}
-    for s in shoe.sides:
-        side = rig.sides[s]
-        h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (side.thigh, side.knee, side.ankle))
-        leg_length[s] = float(np.linalg.norm(k0 - h0) + np.linalg.norm(a0 - k0))
     heel = {s: None for s in shoe.sides}           # the heel raised about the ball (degrees, heel_turn), pass 2
     shift = {s: np.zeros((F, 3)) for s in shoe.sides}   # ... and the ankle's horizontal move that keeps the ball put
     key_shift = {s: np.zeros((F, 3)) for s in shoe.sides}
