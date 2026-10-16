@@ -1439,9 +1439,11 @@ AIR_MIN = 4                     # frames: the air is neither foot supporting for
                                 # keeps the floor's bound and the drop for the legs.  With no bound there the layer itself
                                 # sharpened the fall next to the floor (order C of the MV: 80 -> 318 units/s^2 at 132.13 s,
                                 # one frame with the right foot 1.9 cm up between floor frames; 118 -> 199 at 37.60 s,
-                                # 254 -> 311 at 213.30 s), and the hips coming up there for 1-3 frames, next to floor frames
-                                # the floor's bound lowers, left MMD's IK short on the standing leg (74.43 s, frame 2233; the
-                                # IK rounds only halve the drop, and the floor's bound lowers the same frames again)
+                                # 254 -> 311 at 213.30 s), and the hips coming up there for 1-3 frames left the floor frames
+                                # before them less lowered by the floor's bound, the standing knee straighter and MMD's IK
+                                # short on it (74.43 s, frame 2233, the first IK round: the hips -3.11 cm, the knee 28.9
+                                # degrees, 7.4 mm short; v9 and with AIR_MIN -4.09 cm, 35.7 degrees, 3.5 mm.  The IK rounds
+                                # halve the drop there, which raises the hips more: 8.7 mm short after 6 rounds)
 
 
 def long_air(air):
