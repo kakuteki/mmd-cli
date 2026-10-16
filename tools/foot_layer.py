@@ -1221,7 +1221,7 @@ def layer(rig, shoe, motion, params=None, log=None):
     frames = list(range(F))
     keys = IK.sample(rig, motion, frames)
     sol = IK.solve(rig, motion, frames, keys)
-    if p.get("landing", True):
+    if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
         # (with the landing: the feet judged where the dance puts them, at their goals: where the leg does not reach, MMD
         # leaves the foot over the floor, and a foot the dance stands on the floor would be taken for one in the air)
         at_goal = {}
@@ -1272,7 +1272,7 @@ def layer(rig, shoe, motion, params=None, log=None):
             # (with the landing: the shoe at the input's goal where its leg does not reach it, so that the goal is not
             # lowered by MMD's shortfall and run further out of reach)
             base = sol[s]["ankle"]
-            if p.get("landing", True):
+            if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
                 base = np.where((sol[s]["reach"] > 1e-3)[:, None], sol[s]["goal_ankle"], base)
             low0 = shell_at(o, base + shift[s], q_t, toes)[:, :, 1].min(axis=1)
             d1 = floor_y - o.floor
@@ -1294,7 +1294,7 @@ def layer(rig, shoe, motion, params=None, log=None):
         for s, pl in plan.items():
             pl["miss"] = pl["target_low"] - lowest(s, out_sol)
             pl["stuck"] = np.zeros(F, dtype=bool)
-        if p.get("landing", True):
+        if p.get("landing", True) and p.get("reach_knee", 0.0) > 0.0:
             # (with the landing: a goal out of the leg's reach is not pushed: lowering it only runs it further away)
             for s, pl in plan.items():
                 pl["stuck"] |= np.linalg.norm(out_sol[s]["goal_ankle"] - out_sol[s]["hip"], axis=1) > leg_length[s] - 1e-4
@@ -1503,10 +1503,11 @@ def main(argv=None):
     ap.add_argument("--toe-reach-cm", type=float, default=0.0,
                     help="a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, "
                          "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
-    ap.add_argument("--landing", choices=("human", "off"), default="human",
+    ap.add_argument("--landing", choices=("human", "heel", "off"), default="human",
                     help="human (the default): a loaded touchdown with a sinking pelvis comes down on the forefoot and "
                          "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball, a foot "
-                         "skimming the floor in the dance is not pressed onto it; off: the layer before them (c012c32), "
+                         "skimming the floor in the dance is not pressed onto it; heel: the touchdown's heel alone; "
+                         "off: the layer before them (c012c32), "
                          "byte for byte")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
@@ -1533,7 +1534,9 @@ def main(argv=None):
     if not args.measure_only:
         out, plan = layer(rig, shoe, motion, {"floor_y": floor_y, "trace_toe_extra": extra, "toe_model": args.toes,
                                               "toe_reach": max(0.0, args.toe_reach_cm) / UNIT_CM,
-                                              "landing": args.landing != "off"})
+                                              "landing": args.landing != "off",
+                                              "reach_knee": REACH_KNEE_DEG if args.landing == "human" else 0.0,
+                                              "skim": args.landing == "human"})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
         m_out, rep_out, _ = measure_report(rig, shoe, back, floor_y, contact_from=contacts)
