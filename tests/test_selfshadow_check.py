@@ -93,7 +93,7 @@ class ContactTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.out, True)
         self.doc = ssc.probe(self.out, 10.0, SIZE)
 
-    def ramp_picture(self, spread, gap=0.0, least=0.03, part="ramp"):
+    def ramp_picture(self, spread, gap=0.0, least=0.03, part="ramp", wall=None):
         """the floor of the ramp's picture with a shadow whose edge is a Gaussian of spread x distance (floor units, at
         least `least`) and which starts `gap` past the wall's foot.  The distance and the edge are worked out here from
         the light and the wall: the top edge at u is (u - u0) H / (u1 - u0) up, its ray down the light meets the floor"""
@@ -113,8 +113,20 @@ class ContactTest(unittest.TestCase):
         signed = (w - kk * (u - u0)) / math.hypot(1.0, kk)
         grey = ssc._phi(signed / sigma)
         grey = np.where((w < gap) | (u < u0) | (u > u1), 1.0, grey)
+        grey = np.where(on, grey, 0.0)
+        if wall is not None:
+            # the wall in front of the floor where the rays meet it first: the plane w = 0 under the top edge, of grey `wall`
+            _, _, l = ssc.frame_axes()
+            d = view.rays()
+            tw = -float(view.eye @ l) / (d @ l)
+            Q = view.eye[None, None, :] + tw[..., None] * d
+            qu, qy = Q @ t, Q[..., 1]
+            tf = ((P - view.eye[None, None, :]) * d).sum(axis=2) / (d * d).sum(axis=2)
+            front = (tw > 0) & (qu >= u0) & (qu <= u1) & (qy >= 0) & (qy <= (qu - u0) * H / (u1 - u0)) & (~on | (tw < tf))
+            grey = np.where(front, wall, grey)
+            on = on | front
         path = os.path.join(self.out, "%s_%g_%g.png" % (part, spread, gap))
-        save(path, np.where(on, grey, 0.0), np.where(on, 255, 0).astype(np.uint8))
+        save(path, grey, np.where(on, 255, 0).astype(np.uint8))
         return path
 
     def test_it_reads_the_spread_of_the_edge_and_the_gap_at_the_foot(self):
@@ -142,6 +154,14 @@ class ContactTest(unittest.TestCase):
         # the floor faces the light: what goes across the light is not stretched on it (the edge is across the light too)
         _, _, nf = ssc.floor_axes(ssc.FACING)
         np.testing.assert_allclose(nf, -ssc.unit(ssc.LIGHT), atol=1e-9)
+
+    def test_it_reads_how_dark_the_wall_shows_itself(self):
+        # nothing shadows the wall: its grey is the acne of the effect (here drawn 0.8 everywhere)
+        got = ssc.contact(self.doc, self.ramp_picture(0.06, wall=0.8))
+        self.assertAlmostEqual(got["wall_mean"], 0.8, delta=0.01)
+        self.assertIsNotNone(got["rows"])
+        lit = ssc.contact(self.doc, self.ramp_picture(0.06, wall=1.0))
+        self.assertAlmostEqual(lit["wall_mean"], 1.0, delta=0.01)
 
     def test_a_softer_edge_reads_softer(self):
         hard = ssc.contact(self.doc, self.ramp_picture(0.02))

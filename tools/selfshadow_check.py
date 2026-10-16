@@ -18,7 +18,8 @@
   floor units) set against the spread a light --blur degrees wide gives at the distance from the top edge along the
   light (as tools/mv_world.py's floor takes it: the spread on the plane across the light is the blur in radians times the
   distance, and the floor stretches it by 1 / |n.m|, n the floor's normal to the edge, m the normal to the plane of the
-  edge and the light), and the lit gap between the wall's foot and where its shadow is half dark.
+  edge and the light), the lit gap between the wall's foot and where its shadow is half dark, and the wall's own mean
+  grey (wall_mean: nothing shadows the wall, so below 1 is the wall shadowing itself, acne on a face lit from the side).
 * fan: on a picture of the fan drawn with --debug: for each plate, the share darker than 0.95 and than 0.5 and the mean.
   No other thing shadows a plate, so what is dark is the plate shadowing itself (shadow acne).
 * acne: on the dancer, two AVIs of the same frames drawn with --debug --sharp (MMD's own test at one point) and --debug:
@@ -371,7 +372,19 @@ def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5, part="ramp"):
     near = [r for r in rows if r["distance"] < 1.0]
     gaps = [r["lit_gap"] for r in rows if r.get("lit_gap") is not None]
     fit = np.polyfit([r["distance"] for r in far], [r["sigma"] for r in far], 1) if len(far) >= 3 else None
-    return {"placed": placed, "tilt": round(tilt, 3), "stretch": round(stretch, 4), "rows": rows,
+    # the wall itself: nothing shadows it (a plane), so what its points show below 1 is the wall shadowing itself (acne);
+    # its points 0.5 inside its edges, where the picture is opaque
+    wall = []
+    for u in np.arange(u0 + 2.0, u1 - 0.75, 0.25):
+        for y in np.arange(0.5, (u - u0) * H / (u1 - u0) - 0.5, 0.25):
+            wall.append(u * t + np.array([0.0, y, 0.0]))
+    wall_mean = None
+    if wall:
+        wu, wv, _ = view.project(wall)
+        wg, wa_ = sample(shadow, wu, wv), sample(alpha, wu, wv)
+        keep = np.isfinite(wg) & (np.nan_to_num(wa_, nan=0.0) > 250)
+        wall_mean = round(float(wg[keep].mean()), 4) if keep.sum() >= 20 else None
+    return {"placed": placed, "tilt": round(tilt, 3), "stretch": round(stretch, 4), "rows": rows, "wall_mean": wall_mean,
             "ratio_median_far": round(float(np.median([r["ratio"] for r in far])), 3) if far else None,
             "sigma_per_distance": round(float(fit[0]), 5) if fit is not None else None,
             "sigma_at_contact": round(float(fit[1]), 4) if fit is not None else None,
