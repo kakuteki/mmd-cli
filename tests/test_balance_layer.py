@@ -946,7 +946,9 @@ class AirTest(unittest.TestCase):
         self.assertGreater(float(self.y0[100] - self.y1[100]) * CM, 0.3)
 
     def test_air_bound_is_a_parameter(self):
-        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter, the same bytes"""
+        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter (the layer before
+        2026-10-16 byte for byte needs air_no_drop, still_hold and despike_passes back too: on the MV, order C, the
+        md5 of v9's balance layer came back only with all four)"""
         old = balance_layer.layer(MODEL, self.motion, {"despike": False, "air_down_acc_max": balance_layer.DOWN_ACC_MAX})
         a = pelvis_down_acc(old.motion, self.last)
         self.assertLessEqual(a.max(), balance_layer.DOWN_ACC_MAX + 0.5)

@@ -1009,8 +1009,9 @@ python tools/spine_check.py dance.vmd model.pmx dance_spine.vmd model_spine.pmx 
 ```
 python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.json [--arrays a.npz] [--r-bal 0.6]
                               [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip] [--dip-deg 15]
-                              [--no-catch] [--no-vertical] [--down-acc-max 122] [--air-down-acc-max 122] [--no-despike]
-                              [--spike-per-min 7.2] [--pull-moving] [--no-still-hold] [--mos-ml-min -4.2]
+                              [--no-catch] [--no-vertical] [--down-acc-max 122] [--air-down-acc-max 122] [--air-drop]
+                              [--no-despike] [--despike-passes 3] [--spike-per-min 7.2] [--pull-moving] [--no-still-hold]
+                              [--mos-ml-min -4.2]
                               [--support-from feet.vmd] [--mmd-ik tools/leg_ik.py]
 ```
 
@@ -1067,7 +1068,8 @@ python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.j
   253.5・253.8）。直すと全曲で 78 以下、下げは 256 区間・799 コマ、中央値 0.5 cm・p90 3.0 cm・最大 8.8 cm（132.2 秒）、踊りの低い点
   500 のうち 499 は 0.5 mm 以内で同じ。跳びの頂きでは宙の足ＩＫはそのままなので脚がたたまれる（MMD の IK のひざ +44 度まで）。
   宙（両足とも床を支えない。足ＩＫから読む 1.6 cm）では上限を外す（2026-10-16、balance-v3。`--air-down-acc-max` で値を置ける。
-  122 を渡すと前の作りとバイト単位で同じ）。宙では体は重力で落ち、腰は手足の振りで重心のまわりを動く。宙の上限のないコマを境に
+  前の作りとバイト単位で同じになるのは `--air-down-acc-max 122 --air-drop --no-still-hold --despike-passes 1` の 4 つを揃えたとき。
+  122 だけでは下げの戻し・止まりの保ち・ならしの繰り返しが残り、ヒビカセの順 C で md5 が違う）。宙では体は重力で落ち、腰は手足の振りで重心のまわりを動く。宙の上限のないコマを境に
   区間を分け、区間ごとに同じ凸包で解く（境のコマでは z の最大は 0 なので区間は独立）。122 を宙にもかけると、ヒビカセの跳び 31 回の
   うち 9 回で頂きが 2 cm 以上下がり、拍の上の窪み 18 か所が踊りの 8 割より浅かった（v8 は 0 回・7 か所）。外すと 1 回（213.53 秒
   −3.5 cm）・11 か所。残る下がりは脚が届くための腰の下げ（宙で 2〜9 cm 浮いた足へ）と突起のならしだったので、宙では
