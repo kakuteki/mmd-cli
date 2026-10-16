@@ -651,3 +651,13 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   - 残り: カプセルの影の手前へのずれ（正面 0.38〜0.48・カメラ D 0.28〜0.40 単位。D の方が大きくならないので地面影を描く面の高さの違いではない。
     体のカプセルが網目より前寄りか MMD の投影の違いかは未確かめ）。受ける面の傾きでの比べ（receiver plane depth bias）は試して入れなかった。
     本物の駆動台本（self_shadow soft、480 fps、2 区間）は通り、MME の無い MMD では描く前に止まることも確かめた。全体の試験 1991 本 OK（skipped 41）。
+  - 査読 review_softshadow_mme（2026-10-17、記録 `_spike/out/stage6/review_softshadow_mme/NOTES.md`、hinata `stage6/review_softshadow_mme/`）:
+    共有機の安全は確かめた（MME の DLL は C: 全体で写しと展開した所の 2 か所だけ、元の MMD・System32・PATH に無い。駆動台本が止めるのは失敗したバッチの
+    launch の pid で実行ファイルが計画の mmd のものだけ。壊れたエフェクトを本物の台本で流し、その MMD だけが止まり MME の窓も残らない）。self_shadow を書かない
+    台本は main とバイト同じ、エフェクト無しの写しの絵は元と描くたびの揺れの内（透明も）。全体の試験 2131 本 OK（skipped 39。main a3d815b は 2089 本で skip は同じ）。
+    直し: 床の濃さを前に戻す `stage.shadow_share` 0（舞台の絵 11 コマと畳んだ mp4 が main とバイト同じ）、mme_shadow の prepare の写し直しと verify の 2 つの穴、
+    測りの道具 `tools/selfshadow_check.py`。
+    **残り（体の影を使う前に）**: 影を落とすものまでの距離の探しはつもりどおりに効かない（MMD の光の深さが光の向きから約 53 度ずれていて、受ける面そのものを拾う。
+    縁は 0.08〜0.15 単位でほぼ一定、5 度の光なら 0.10〜0.95）。横から光を受ける面のにきび（試しの壁で 0.83、`--no-contact` で 0.98）。直すなら比べから深さの斜めの分を
+    引くか、`--no-contact` にして測り直す。陰の濃さは 4 案（A 0.40・B トゥーン・C 体と床 0.65・D 体 0.65 床 0.40）の絵 `_spike/out/stage6/review_softshadow_mme/pics/opts_*.jpg`
+    から加賀さんが選ぶ。
