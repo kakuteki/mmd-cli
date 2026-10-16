@@ -542,6 +542,29 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(shoes(out, F)["右"]["low"][20:25]).max()), 0.1)
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
 
+    def test_a_still_foot_just_over_the_floor_under_a_pelvis_that_turns_in_a_frame_is_a_standing_foot(self):
+        # the right foot held still 2 cm up over frames 20-31 while the left is up in the air; the pelvis rises 0.08 units a
+        # frame and falls at the same speed after frame 26 (a trace's keys: it turns over one frame, faster than gravity
+        # there): the right foot stands, no hop is made, and where it now stands the pelvis falls no faster than the
+        # skirt's bound (lowered a few millimetres at the turn; the song's 75.4-75.8 s: the pelvis turned so at 151
+        # units/s^2 and the run became a 12-frame hop 9.4 cm higher than the dance)
+        F = 60
+
+        def h(t):
+            return 0.08 * max(0.0, 6.0 - abs(t - 26)) if 20 <= t <= 32 else 0.0
+        m = dance(F, centre=lambda t: (0.0, BENT + h(t), 0.0), left=lambda t: ((0.0, 2.0, 0.0), None),
+                  right=lambda t: ((0.0, 0.25 if 20 <= t <= 31 else 0.0, 0.0), None))
+        y = world_y(m, F, "下半身")
+        self.assertGreater(float(down_acc(y)[26]), 122.5)                           # (as built: the turn, faster than g)
+        fit = -2.0 * np.polyfit(np.arange(19, 33) / FPS, y[19:33], 2)[0]
+        self.assertLess(float(fit), 122.0)                                          # (the run as a whole: slower than g)
+        out, plan = run(m)
+        self.assertLess(float(np.abs(shoes(out, F)["右"]["low"][20:32]).max()), 0.1)
+        d = world_y(out, F, "センター") - world_y(m, F, "センター")
+        self.assertLess(float(np.abs(d).max()), 0.05)                                # under 4 mm
+        for name in ("センター", "下半身"):
+            self.assertLess(float(down_acc(world_y(out, F, name))[19:33].max()), 122.0 + 0.5)
+
     def test_a_hover_with_one_foot_still_becomes_a_step_on_it(self):
         # both feet 2 cm up over frames 20-27, the left still, the right travelling 0.3 units a frame: the left is the
         # standing foot (brought onto the floor), no hop is made

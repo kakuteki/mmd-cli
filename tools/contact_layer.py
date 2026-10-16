@@ -26,12 +26,15 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
 
 1. The plan: a foot stands where its shoe is within ON_FLOOR of the floor, and where it is held still over it (under
    HOLD_MAX, its touching part slower than HOLD_SPEED along the floor and its lowest point slower than HOLD_RISE up or
-   down, HOLD_MIN frames or more) unless no foot is on the floor there and the pelvis falls faster than FALL_BOUND on a
-   frame of the run or next to it (faster than gravity: no floor holds it there).  A pelvis sinking slower than that over
-   a still foot is a supported sink (a squat), not a hop: people hold a foot still over the floor on 0.82 % of the feet's
-   frames, so a still foot under 4 cm is a foot the trace left over the floor (the song's 127.8-128.1 s, judged a hop by
-   the pelvis's half of gravity, became an 11-frame hop 6 cm higher over a foot held 2.7 cm up).  A foot's runs closer
-   than BRIDGE frames are joined where its shoe stays under BRIDGE_LIFT (the foot layer's bridge).
+   down, HOLD_MIN frames or more) unless no foot is on the floor there and the pelvis's parabola over the run and a frame
+   each side falls faster than FLIGHT_FIT (0.8 of gravity: a flight).  People (FineDance's near kinds, a05's 1.2 cm
+   contact, scripts/c03_lowhops.py): of their runs of 4 to 12 frames with no foot on the floor, those with a foot held so
+   fall that fast in 6 % (79 runs; slower than half of gravity in 72 %), those without one in 67 % (350; 88 % faster than
+   half): a foot held still just over the floor is the standing foot of a supported move.  A single frame faster than
+   gravity is in 15 % of the former (the turn of the trace's keys: the song's 75.4-75.8 s turned at 151 units/s^2 over a
+   foot held 1.3-2.5 cm up and became a 12-frame hop 9.4 cm higher than the dance), so it is no sign; where such a frame
+   comes to stand on the floor, the pelvis is eased under FALL_BOUND there (the skirt's bound; 3. below).  A foot's runs
+   closer than BRIDGE frames are joined where its shoe stays under BRIDGE_LIFT (the foot layer's bridge).
 2. Ground: a standing foot over the floor is lowered (足ＩＫ's height: the foot's shape kept) until its shoe's lowest
    point is on the floor, eased in and out over EASE frames into the air around (never into the floor).
 3. Reach: a standing leg must reach its goal with the knee bent REACH_KNEE_DEG (the foot layer's: people stand on no knee
@@ -39,7 +42,9 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    floor point more than NEED_CM outside the other foot's sole) gets the pelvis (センター) lowered until it reaches (at most
    DROP_MAX; spread and lessened as the foot layer's sink is, so that no frame on the floor has the pelvis fall faster than
    FALL_BOUND, or than the input where it already does); a free foot (a pointed foot resting) is lowered only as far as
-   its leg reaches.
+   its leg reaches.  A frame the input had in the air (both shoes 1.6 cm up and more, AIR_MIN frames running: the skirt's
+   bound left it free) that now stands and falls faster than FALL_BOUND gets the pelvis lowered by the same solve until
+   it does not (a few millimetres at the turn of the trace's keys).
 4. Plant: a standing foot is held where the dance puts it down (the first frame of its run on the floor; the run's
    lowest if it never is): the slow slide (under PLANT_SPEED) of its touching part is undone frame by frame from there,
    forward and back (足ＩＫ's horizontal place), so it turns on its ball or its heel as the dance has it but does not
@@ -104,6 +109,9 @@ HOLD_SPEED = 30.0               # cm/s: ... its touching part moving along the f
 HOLD_RISE = 20.0                # cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps
                                 # into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch or a lift)
 HOLD_MIN = 4                    # frames: a shorter hold is a foot passing by
+FLIGHT_FIT = 0.8 * G            # units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side
+                                # falling faster than this is a flight even over a foot held still (people: 6 % of their runs
+                                # with a held foot, 67 % of those without; scripts/c03_lowhops.py)
 FALL_BOUND = 122.0              # units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance
                                 # layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot down is a hop
 FALL_TOL = 0.5                  # units/s^2: past a bound by more than this (as the balance layer's report counts)
@@ -234,18 +242,19 @@ def bridge(stance, low, gap=BRIDGE, lift=BRIDGE_LIFT):
     return out
 
 
-def flight_frames(on, fall, bound=FALL_BOUND):
-    """[F] frames of the runs with no foot on the floor (on: side -> [F]) where the pelvis falls faster than `bound` (fall
-    [F]: its downward acceleration) on a frame of the run or a frame each side: faster than gravity, no floor holds the
-    body there"""
-    fall = np.asarray(fall, dtype=float)
-    F = len(fall)
+def flight_frames(on, pelvis_y, flight_acc=FLIGHT_FIT):
+    """[F] frames of the runs with no foot on the floor (on: side -> [F]) whose pelvis (heights pelvis_y [F]) falls like a
+    flight: its parabola over the run and a frame each side falls faster than flight_acc"""
+    pelvis_y = np.asarray(pelvis_y, dtype=float)
+    F = len(pelvis_y)
     out = np.zeros(F, dtype=bool)
     none = np.logical_and.reduce([~np.asarray(m, dtype=bool) for m in on.values()])
     for a, b in runs(none):
         i0, i1 = max(a - 1, 0), min(b + 1, F - 1)
-        if np.any(fall[i0:i1 + 1] > bound + FALL_TOL):
-            out[a:b + 1] = True
+        if i1 - i0 >= 2:
+            t = np.arange(i0, i1 + 1) / FPS
+            if 2.0 * np.polyfit(t, pelvis_y[i0:i1 + 1], 2)[0] < -flight_acc:
+                out[a:b + 1] = True
     return out
 
 
@@ -393,18 +402,20 @@ def solve_qp(H, A_eq, b_eq, A_in, b_in, rounds=60, batch=1):
     return x, active, rounds, ok
 
 
-def drop_profile(need, floor_frames, fall_down, allowed, F, window=None):
-    """the pelvis's lowering z [F] (units, >= 0) and per window its rows: over each run of need [F] > 0 and `window`
-    frames each side (merged where they meet), the least and smoothest z (z^2 plus SMOOTH times its third differences
-    squared) that is at least `need`, never negative, and on the floor's frames (floor_frames [F]) keeps the pelvis's
-    downward acceleration (fall_down [F], units/s^2, + down) within `allowed` [F]: z's second difference at most
-    (allowed - fall_down) / FPS^2 (a lowered pelvis falls faster where z bends up).  A window that has no such z keeps
-    the least violation the solve reached (solved False)"""
+def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=None):
+    """the pelvis's lowering z [F] (units, >= 0) and per window its rows: over each run of need [F] > 0 or of strict [F]
+    and `window` frames each side (merged where they meet), the least and smoothest z (z^2 plus SMOOTH times its third
+    differences squared) that is at least `need`, never negative, and keeps the pelvis's downward acceleration (fall_down
+    [F], units/s^2, + down) within `allowed` [F]: z's second difference at most (allowed - fall_down) / FPS^2 (a lowered
+    pelvis falls faster where z bends up), or 0 where the input is past it already, except on the strict frames, which
+    it brings within (z bends down there).  A window that has no such z keeps the least violation the solve reached
+    (solved False)"""
     window = DROP_WINDOW if window is None else window
+    strict = np.zeros(F, dtype=bool) if strict is None else np.asarray(strict, dtype=bool)
     z = np.zeros(F)
     rows = []
     wins = []
-    for a, b in runs(need > 0.0):
+    for a, b in runs((need > 0.0) | strict):
         w0, w1 = max(0, a - window), min(F - 1, b + window)
         if wins and w0 <= wins[-1][1] + 1:
             wins[-1] = (wins[-1][0], w1)
@@ -429,8 +440,9 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None):
                 A_in.append(e)
                 b_in.append(max(float(need[t]), 0.0))
             if 0 < t < F - 1:                    # (every frame: in the air too, no faster than the dance's own fall)
+                lim = (float(allowed[t]) - float(fall_down[t])) / (FPS * FPS)
                 A_in.append(-D2[k])
-                b_in.append(-max((float(allowed[t]) - float(fall_down[t])) / (FPS * FPS), 0.0))
+                b_in.append(-(lim if strict[t] else max(lim, 0.0)))
         x, act, rounds, ok = solve_qp(H, np.array(A_eq) if A_eq else np.zeros((0, n)), np.array(b_eq), np.array(A_in),
                                       np.array(b_in), rounds=DROP_QP_ROUNDS, batch=16)
         z[p0:p1 + 1] = np.maximum(x, 0.0)
@@ -645,7 +657,7 @@ def layer(model, rig, shoe, motion, params=None):
         rise[s] = step_min(low_j[s]) * UNIT_CM * FPS
     # 1. the plan
     on = {s: low_j[s] < ON_FLOOR for s in SIDES}
-    flying = flight_frames(on, fall)
+    flying = flight_frames(on, hips_y)
     stance, held = {}, {}
     for s in SIDES:
         cand = (~on[s]) & (low_j[s] < HOLD_MAX) & (speed[s] < HOLD_SPEED) & (rise[s] < HOLD_RISE) & ~flying
@@ -717,15 +729,23 @@ def layer(model, rig, shoe, motion, params=None):
     comp = Composer(rig, motion, keys, sol, F)
     floor_frames = stance["左"] | stance["右"]
     allowed = np.maximum(FALL_BOUND, fall) + FALL_TOL * 0.5          # (the input's own where it is past the bound already)
+    # the frames the input had in the air (both shoes AIR_CLEAR up, AIR_MIN frames running: the skirt's bound left them
+    # free) that now stand and fall faster than the bound: brought within it
+    up = np.logical_and.reduce([low[s] >= AIR_CLEAR - 0.0125 for s in SIDES])
+    input_air = np.zeros(F, dtype=bool)
+    for a, b in runs(up, AIR_MIN):
+        input_air[a:b + 1] = True
+    strict = floor_frames & input_air & (fall > FALL_BOUND + FALL_TOL)
+    allowed = np.where(strict, FALL_BOUND + FALL_TOL * 0.5, allowed)
     drop = np.zeros(F)
     drop_rows, drop_rounds, drop_windows = [], [], []
-    if np.any(need_drop > 0.0):
+    if np.any(need_drop > 0.0) or strict.any():
         # the least smooth lowering that lets the weight-bearing legs reach, within the bound on the floor's frames, then
         # checked on MMD's IK: a nearly straight leg stops short of a goal it reaches on paper (the balance layer's 1.5 cm
         # slack), so a weight-bearing foot still over the floor gets that much more
         target = need_drop > 0.0                # (the weight-bearing feet standing out of reach REACH_MIN frames and more)
         for rnd in range(DROP_ROUNDS):
-            drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F)
+            drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F, strict=strict)
             offs = {s: np.stack([np.zeros(F), dy[s], np.zeros(F)], 1) for s in SIDES}
             _, trial = comp.compose(offs, -drop)
             more = np.zeros(F)
@@ -899,7 +919,7 @@ def layer(model, rig, shoe, motion, params=None):
     plan["sides"] = {s: {"stance": stance[s], "held": held[s], "on": on[s], "need": need[s], "share": share[s], "dy": dy_e[s],
                          "plant": corr[s], "carry": carry[s], "low": low[s], "low_judged": low_j[s], "speed": speed[s],
                          "plant_rows": plant_rows[s]} for s in SIDES}
-    plan.update({"air": air, "flying": flying, "drop": drop, "change": change, "drop_rows": drop_rows,
+    plan.update({"air": air, "flying": flying, "strict": strict, "drop": drop, "change": change, "drop_rows": drop_rows,
                  "drop_rounds": drop_rounds, "drop_windows": drop_windows,
                  "flight_rows": {"flights": flight_rows, "windows": wrows, "rounds_resid": resid}, "fall_in": fall,
                  "com": com})
@@ -1027,7 +1047,9 @@ def report_of(plan, rig, before, after, F):
     rep["ground"]["drop"] = {"frames": int((plan["drop"] > 1e-6).sum()), "max_cm": _r(float(plan["drop"].max()) * UNIT_CM, 2),
                              "windows": len(plan["drop_windows"]),
                              "windows_unsolved": sum(1 for w in plan["drop_windows"] if not w["solved"]),
-                             "rounds": plan["drop_rounds"], "runs": plan["drop_rows"][:100]}
+                             "rounds": plan["drop_rounds"], "runs": plan["drop_rows"][:100],
+                             "bound_frames": int(plan["strict"].sum()),
+                             "bound_frames_s": [round(t / FPS, 2) for t in np.flatnonzero(plan["strict"])][:100]}
     rep["plant"] = {}
     for s in SIDES:
         sd = sides[s]
