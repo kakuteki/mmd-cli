@@ -8,10 +8,10 @@
 * light: the share of the key light that reaches the floor round her at a frame, by rays: a quadrature of the Gaussian
   light (side x side directions) and, for every floor point and direction, an exact test of the ray against every capsule
   of her body (mv_world.Body); a direction is blocked when any capsule blocks it.  Set against mv_world.soft_shadow_grid's
-  key at the same points, and against the product of each capsule's own share (what taking the capsules one by one, as
-  the soft shadow does, gives with exact capsules): the error of the capsule sums and the error of the product are told
-  apart.  The capsules are the soft shadow's own (the body is the soft shadow's model; how far it is from her mesh is
-  what `ground` measures).
+  key at the same points (with the parts of her body, when the figure has them), and against the product of each
+  capsule's own share by rays (what taking every capsule on its own gives with exact capsules): the error of the capsule
+  sums and the error of putting the capsules together are told apart.  The capsules are the soft shadow's own (the body
+  is the soft shadow's model; how far it is from her mesh is what `ground` measures).
 * pixels: the floor shadow as the viewer sees it, from two pictures of the stage drawn with and without it
   (mv_world.py frame): the ratio of their luma per pixel, read where the plain floor is bright enough, the floor point of
   each pixel (the camera of the frame), the darkest ratio, the area darker than half, the darkening's centre on the floor.
@@ -247,8 +247,11 @@ def _r(x, n=4):
 def cmd_light(args):
     world = _mv_world()
     figure = world.Figure.from_files(args.model, args.motion, body=True)
-    capsules = figure.state(args.frame).capsules
-    grid = world.soft_shadow_grid(capsules, args.light, args.blur, args.floor_y)
+    state = figure.state(args.frame)
+    capsules = state.capsules
+    groups = getattr(state, "capsule_groups", None)          # the parts of her body, as the floor takes them
+    grid = world.soft_shadow_grid(capsules, args.light, args.blur, args.floor_y,
+                                  **({"groups": groups} if groups is not None else {}))
     shaded = grid.key < 0.999
     rows, cols = np.nonzero(shaded)
     if not len(rows):

@@ -120,7 +120,8 @@ DEFAULT_LOOK = {
               "shadow_soft": 1,     # 1: the soft shadow of her whole body from a light (mv_world.soft_shadow_grid);
                                     # 0: the shadows of v8 and v9 (round her soles and her pelvis, straight down)
               "shadow_blur": 5.0,   # the soft shadow: the spread of the light, degrees (a standard deviation): the edge
-                                    # of a shadow blurs by about 2.6 x this x the height of what casts it
+                                    # of a shadow blurs by about 2.6 x this (in radians) x the distance along the light
+                                    # from what casts it (an edge facing the light up to 1 / sin(its elevation) more)
               "shadow_light": [-0.5, -1.0, 0.5],    # where the light shines to (MMD's light direction; its default)
               "shadow_contact": 0.9},               # how dark the light from all round leaves the floor under her, 0 to 1
 }
