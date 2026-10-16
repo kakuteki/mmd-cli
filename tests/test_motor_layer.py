@@ -371,6 +371,18 @@ class FloorTest(unittest.TestCase):
         self.assertGreaterEqual(float(np.min((d_out - motor_layer.floor_of(d_in))[near])), -0.5)
         self.assertTrue(any(s["reason"] == "floor" for s in result.report["fallback"]), result.report["fallback"])
 
+    def test_the_elbow_hinge_gives_back_the_same_stretches(self):
+        # the hinge split comes after the stretches given back are chosen: it must not change them (on the song it did,
+        # the wrist moved by the split tipping a check, and the right elbow moved 2.7 cm where nothing was given back)
+        p_off, p_on = self.weak(True), self.weak(True)
+        p_on["hinge"] = True
+        off = motor_layer.layer(self.model, self.dance, p_off)
+        on = motor_layer.layer(self.model, self.dance, p_on)
+        self.assertTrue(off.report["fallback"])
+        self.assertEqual(on.report["fallback"], off.report["fallback"])
+        self.assertLess(float(np.abs(on.world_out["左ひじ"][0] - off.world_out["左ひじ"][0]).max()), 1e-6)
+        self.assertLess(float(motor_layer.qangle_deg(on.world_out["左手首"][1], off.world_out["左手首"][1]).max()), 0.01)
+
     def test_the_contact_zone_keeps_the_input_there_by_itself(self):
         p = motor_layer.default_params()
         p["floor"] = False

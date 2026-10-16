@@ -1278,8 +1278,6 @@ class Fallback:
                 self.dev[s] = np.linalg.norm(world[n][0] - plan.world_in[n][0], axis=1) * UNIT_MM / 10.0
                 self.layer_steps[s] = np.linalg.norm(np.diff(world[n][0], axis=0), axis=1) * UNIT_MM / 10.0
         self.key_rot = key_layer
-        self.key_blended = key_layer
-        self.twist, self.hinge_info = {}, {}
         self.weights = np.zeros((plan.F, plan.nb))
 
     def sides_of(self, bones):
@@ -1310,10 +1308,8 @@ class Fallback:
             w = ramp_weight(plan.F, [(a - sp["ramp_in"], a, b, b + sp["ramp_out"])])
             fb[:, sp["bones"]] = np.maximum(fb[:, sp["bones"]], w[:, None])
         self.weights = fb
-        self.key_rot = self.key_blended = blend(plan, self.key_layer, fb)
-        if plan.p.get("hinge"):
-            self.key_rot, self.twist, self.hinge_info = rehinge(plan, self.key_blended)
-        return world_with(plan, self.key_rot, self.twist)
+        self.key_rot = blend(plan, self.key_layer, fb)
+        return world_with(plan, self.key_rot)
 
     def seams(self, world_out):
         """per edge of every span (and side whose wrist it moves): the largest step of the output's wrist from one frame
@@ -1478,17 +1474,21 @@ def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
     while seams_on and seam_rounds < SEAM_ROUNDS and fix.lengthen(world_out):
         seam_rounds += 1
         world_out = fix.apply()
+    # --elbow-hinge: the twist split again on the finished arms (after the stretches given back are chosen, so that it
+    # changes none of them; what it leaves of the floor and the checks is in floor_residual below)
+    key_rot, twist, hinge_info, world_before = fix.key_rot, {}, {}, world_out
+    if params.get("hinge"):
+        key_rot, twist, hinge_info = rehinge(plan, fix.key_rot)
+        world_out = world_with(plan, key_rot, twist)
     for reason, check, _ in checks:
         for s in SIDES:
             bad = check(plan, world_out, s)
             if bad is not None and bad.any():
                 residual += [{"reason": reason, "side": s, "first": a, "last": b} for a, b in runs(bad)]
-    key_rot = fix.key_rot
     fb = fix.weights
     spans = fix.report_spans()
-    out = build(plan, key_rot, fix.twist)
-    world_before = world_with(plan, fix.key_blended) if fix.twist else world_out
-    info = {"hinge": hinge_report(plan, world_before, world_out, fix.hinge_info), "leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
+    out = build(plan, key_rot, twist)
+    info = {"hinge": hinge_report(plan, world_before, world_out, hinge_info), "leads": leads, "passes": passes, "err": err, "clip": clip, "fallback": fb, "spans": spans,
             "residual": residual, "seconds": time.time() - started, "check_rounds": rounds, "seam_rounds": seam_rounds,
             "seams": fix.seams(world_out)}
     report = report_of(plan, world_out, out, info)
