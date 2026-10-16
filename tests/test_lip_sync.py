@@ -354,6 +354,75 @@ class SyntheticSongTest(unittest.TestCase):
         self.assertEqual(len(self.report["line_fit"]), 6)
 
 
+class GuideTest(unittest.TestCase):
+    """a sung sound just before a line that is no lyric (an ad lib, the echo of the intro): the voice alone may take it
+    for the line's first syllable; FACE's own vowels (keyed by hand to the song) tell which is which"""
+
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(3)
+        cls.folder = tempfile.mkdtemp()
+        x = np.zeros(int(6.0 * SR))
+        extra = _sung(FORMANTS["a"], int(0.16 * SR), 300.0, rng) * 0.3 * 10 ** (-10 / 20)
+        x[int(1.0 * SR):int(1.0 * SR) + len(extra)] += _fade(extra, 15)
+        t = 1.45
+        cls.truth = []
+        for c, v, dur in [("k", "a", 0.22), ("s", "o", 0.2), ("", "i", 0.22), ("k", "u", 0.24), ("s", "e", 0.3)]:
+            c0 = t
+            if c == "k":
+                t += 0.065
+            elif c == "s":
+                hiss = np.diff(rng.normal(0, 0.25, int(0.09 * SR) + 1))
+                x[int(t * SR):int(t * SR) + len(hiss)] += _fade(hiss, 10) * 0.5
+                t += 0.09
+            seg = _sung(FORMANTS[v], int(dur * SR), 260.0, rng) * 0.3
+            x[int(t * SR):int(t * SR) + len(seg)] += _fade(seg, 15)
+            cls.truth.append((c, v, c0, t))
+            t += dur
+        x += rng.normal(0, 1e-4, len(x))
+        cls.voice = os.path.join(cls.folder, "v.wav")
+        write_wav(cls.voice, x.astype(np.float32))
+        cls.lines = os.path.join(cls.folder, "l.tsv")
+        write_lines(cls.lines, [(1.3, 2.9, "かそいくせ")])
+        names = {"a": "あ", "i": "い", "u": "う", "e": "え", "o": "お"}
+        morphs = [vmd.MorphKey(n, 0, 0.0) for n in VOWEL_MORPHS]
+        for c, v, c0, v0 in cls.truth:                      # the hand-keyed mouth: open 2 frames before each vowel
+            f = int(round((v0 - 0.07) * FPS))
+            morphs += [vmd.MorphKey(names[v], f - 2, 0.0), vmd.MorphKey(names[v], f, 1.0), vmd.MorphKey(names[v], f + 5, 1.0),
+                       vmd.MorphKey(names[v], f + 6, 0.0)]
+        morphs.append(vmd.MorphKey("まばたき", 179, 0.0))
+        cls.face = os.path.join(cls.folder, "f.vmd")
+        vmd.dump(vmd.Motion(model_name="Rin", morphs=morphs), cls.face)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def aligned(self, *extra):
+        a = os.path.join(self.folder, "a.json")
+        r = os.path.join(self.folder, "r.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = lip_sync.main([self.face, self.voice, os.path.join(self.folder, "o.vmd"), "--lines", self.lines,
+                                  "--align-out", a, "--report", r] + list(extra))
+        self.assertEqual(code, 0)
+        with open(r, encoding="ascii") as f:
+            report = json.load(f)
+        with open(a, encoding="utf-8") as f:
+            return json.load(f), report
+
+    def test_the_guide_keeps_every_syllable_on_its_own_sound(self):
+        morae, report = self.aligned()
+        self.assertTrue(report["guide"])
+        for m, (c, v, c0, v0) in zip(morae, self.truth):
+            self.assertAlmostEqual(m["v0"], v0, delta=0.04, msg=m["kana"])
+            self.assertGreater(m["v1"] - m["v0"], 0.12, m["kana"])
+
+    def test_without_the_guide_the_report_says_so(self):
+        morae, report = self.aligned("--no-guide")
+        self.assertFalse(report["guide"])
+        self.assertEqual(len(morae), 5)
+
+
 class CliTest(unittest.TestCase):
     def test_a_missing_file_is_an_argument_error(self):
         with contextlib.redirect_stderr(io.StringIO()):

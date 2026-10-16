@@ -25,11 +25,15 @@ What is done:
    teeth for s z t d, ...), a vowel (a i u e o), ん (N), っ (Q) or ー (the vowel before, held).
 3. Alignment (align): the lines that follow each other with less than BLOCK_GAP seconds between them are aligned to the
    voice together, by Viterbi through a left-to-right chain: silence, then per mora a consonant (if it has one), its
-   vowel, an optional short pause, and silence after the block (a line may sit only within LINE_SLACK of its given
-   time).  The vowel's emission is its spectral model (a Gaussian on the MFCC per vowel and for ん, trained on this
-   voice: the first pass has none, each next pass is trained on the previous alignment, ITERATIONS passes), plus loud
-   and voiced; a consonant is a dip of the level or near silence; silence is quiet.  Each mora gets c0 (its consonant
-   starts), v0 (its vowel starts), v1 (its vowel ends), in seconds of the voice.
+   vowel (at least SHORTEST rows), an optional short pause, and silence after each line (which may also take a sound
+   that is no lyric, an ad lib or the echo of the line before, at FILLER a row).  A line may sit only within LINE_SLACK
+   of its given time.  A vowel's emission: loud, voiced and steady (no dip), its spectral model (a Gaussian on the MFCC
+   per vowel and for ん, trained on this voice: the first pass has none, each next pass is trained on the previous
+   alignment, ITERATIONS passes, weighed by SPECTRAL_WEIGHT), and the guide: FACE's own vowels, GUIDE_LAG later (a lip
+   motion keyed by hand to the song knows which syllable is which where the voice alone is ambiguous: GUIDE added where
+   its mouth shows that vowel, or another; --no-guide leaves it out).  A consonant is a dip of the level or near silence;
+   silence is quiet.  Each mora gets c0 (its consonant starts), v0 (its vowel starts), v1 (its vowel ends), in seconds of
+   the voice.
 4. The mouth (mouth_track), every 10 ms of the voice: on a vowel the vowel's SHAPE (a mix of the model's morphs, chosen on
    a rendered test of Sour's Rin: い with あ at 0.3 shows the teeth and a little opening, う with お at 0.2) times the gain
    of the voice (GAIN: from GAIN[0] at the soft level to 1 at the loud one, smoothed over GAIN_SMOOTH); on a consonant
@@ -110,14 +114,20 @@ REST_OPEN = 0.15                # outside the singing, where the voice is silent
 LEAD_MS = 50.0
 KEY_TOLERANCE = 0.025
 SIL_DB = -30.0                  # e below this: quiet
+FILLER = -2.5                   # log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a
+                                # breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line
+                                # that sounds like itself scores better, any other worse
 BLOCK_GAP = 2.0                 # s between lines that are aligned apart
 LINE_SLACK = (1.0, 1.5)         # s a line may begin before its given start, end after its given end
 MARGIN = (1.2, 1.6)             # s of the voice taken before and after a block
 ITERATIONS = 6
 STAY = {"V": 0.9, "C": 0.6, "N": 0.85, "Q": 0.85, "SIL": 0.95, "SP": 0.9}
 SP_PENALTY = (4.0, 1.5)         # log: a short pause inside a word, between words
-SPECTRAL_WEIGHT = 1.0
-POSTERIOR_FLOOR = -10.0
+SPECTRAL_WEIGHT = 0.5
+GUIDE = (2.0, -1.0)             # log a row added to a vowel where the guide's mouth shows that vowel, another vowel
+GUIDE_OPEN = 0.3                # the guide's mouth shows a vowel where its mixes add up to more than this
+GUIDE_LAG = 0.07                # s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12)
+POSTERIOR_FLOOR = -6.0
 CLASSES = ("a", "i", "u", "e", "o", "N")
 NEG = -1e9
 
@@ -302,7 +312,7 @@ class Unit:
     shortest: int               # frames
 
 
-SHORTEST = {"V": 3, "C": 2, "N": 3, "Q": 3, "SIL": 1, "SP": 3}
+SHORTEST = {"V": 5, "C": 2, "N": 4, "Q": 3, "SIL": 1, "SP": 3}
 
 
 def chain(lines_morae):
@@ -368,8 +378,9 @@ class Model:
         self.mean, self.std = mean, std
 
 
-def emissions(voice, model, rows):
-    """{column: [len(rows)] log score} for the unit kinds; columns V:a .. V:o, N, C, Q, SIL"""
+def emissions(voice, model, rows, guide=None):
+    """{column: [len(rows)] log score} for the unit kinds; columns V:a .. V:o, N, C, Q, SIL.  guide: [T, 5] the mixes of
+    あいうえお of a lip motion made for the song, on the rows of the voice (GUIDE_LAG later), or None"""
     e = voice.level[rows]
     loud = _logsig((e - SIL_DB) / 3.0)
     quiet = _logsig((SIL_DB - e) / 3.0)
@@ -377,14 +388,20 @@ def emissions(voice, model, rows):
     post = model.posteriors(voice.mfcc[rows]) * SPECTRAL_WEIGHT
     dip = voice.dip[rows]
     out = {}
+    steady = 0.5 * _logsig((4.0 - dip) / 1.5)
     for j, c in enumerate(CLASSES):
         if c == "N":
             out["N"] = loud + voiced + post[:, j] + 0.5 * _logsig((dip - 1.0) / 2.0)
         else:
-            out["V:" + c] = loud + voiced + post[:, j]
-    out["C"] = np.log(0.5 * np.exp(_logsig((dip - 3.0) / 1.5)) + 0.5 * np.exp(_logsig((SIL_DB + 5.0 - e) / 3.0)) + 1e-12)
+            out["V:" + c] = loud + voiced + post[:, j] + steady
+            if guide is not None:
+                g = guide[rows]
+                shown = g.sum(axis=1) > GUIDE_OPEN
+                dominant = np.argmax(g, axis=1)
+                out["V:" + c] = out["V:" + c] + np.where(shown, np.where(dominant == j, GUIDE[0], GUIDE[1]), 0.0)
+    out["C"] = np.log(0.5 * np.exp(_logsig((dip - 4.0) / 1.2)) + 0.5 * np.exp(_logsig((SIL_DB + 5.0 - e) / 3.0)) + 1e-4)
     out["Q"] = quiet
-    out["SIL"] = quiet
+    out["SIL"] = np.logaddexp(quiet, FILLER)          # between the lines also a sound that is no lyric (an ad lib)
     out["SP"] = quiet
     return out
 
@@ -479,7 +496,7 @@ def _segments(path, units, r0):
     return out
 
 
-def align(voice, lines, iterations=ITERATIONS):
+def align(voice, lines, iterations=ITERATIONS, guide=None):
     """every mora's times: [{"line", "mora", "kana", "consonant", "vowel", "c0", "v0", "v1"}] (seconds) and the per line
     fit, after `iterations` passes (the first without spectral models)"""
     parsed = [parse_line(text) for _, _, text in lines]
@@ -489,7 +506,7 @@ def align(voice, lines, iterations=ITERATIONS):
     model = Model()
     result = None
     for it in range(iterations):
-        result = _align_pass(voice, lines, parsed, model)
+        result = _align_pass(voice, lines, parsed, model, guide)
         segs = []
         for m in result["morae"]:
             if m["vowel"] in CLASSES and m["v1"] > m["v0"]:
@@ -499,7 +516,7 @@ def align(voice, lines, iterations=ITERATIONS):
     return result
 
 
-def _align_pass(voice, lines, parsed, model):
+def _align_pass(voice, lines, parsed, model, guide=None):
     morae_out, fits = [], []
     for block in blocks(lines):
         t0 = max(0.0, lines[block[0]][0] - MARGIN[0])
@@ -514,7 +531,7 @@ def _align_pass(voice, lines, parsed, model):
             else:
                 s, e, _ = lines[u.line]
                 allowed.append((max(0, int((s - LINE_SLACK[0]) / STEP) - r0), int((e + LINE_SLACK[1]) / STEP) - r0))
-        emis = emissions(voice, model, rows)
+        emis = emissions(voice, model, rows, guide)
         path, score = viterbi(units, emis, allowed)
         segs = _segments(path, units, r0)
         times = {}
@@ -676,14 +693,14 @@ def frame_values(X, frames, lead_ms):
     return np.stack([np.interp(t, rows, X[:, j], left=X[0, j], right=X[-1, j]) for j in range(5)], axis=1)
 
 
-def face_rows_of(face, voice_frames):
+def face_rows_of(face, voice_frames, lag=0.0):
     """FACE's vowel mixes on the rows of the voice (straight between keys, as MMD; row k at k * STEP s, frame f shown at
     (f + SHOWN) / FPS)"""
     keys = {}
     for k in face.morphs:
         if k.name in VOWELS:
             keys.setdefault(k.name, {})[k.frame] = float(k.weight)
-    t = np.arange(voice_frames) * STEP * FPS - SHOWN
+    t = (np.arange(voice_frames) * STEP - lag) * FPS - SHOWN
     out = np.zeros((voice_frames, 5))
     for j, name in enumerate(VOWELS):
         ks = sorted(keys.get(name, {}).items())
@@ -778,7 +795,7 @@ def face_lead(face, morae):
 # ---- the tool --------------------------------------------------------------------------------
 
 def run(face_path, vocal_path, lines_path, out_path, lead_ms=LEAD_MS, dance_path=None, max_keys=None,
-        report_path=None, align_path=None, sound=None):
+        report_path=None, align_path=None, sound=None, use_guide=True):
     """write OUT and return the report; sound: the voice as mono float32 at SR (for tests), else read from vocal_path"""
     face = vmd.load(face_path)
     dance = vmd.load(dance_path) if dance_path else None
@@ -787,8 +804,9 @@ def run(face_path, vocal_path, lines_path, out_path, lead_ms=LEAD_MS, dance_path
         raise ValueError("no lyric line in %s" % lines_path)
     x = read_sound(vocal_path) if sound is None else np.asarray(sound, np.float32)
     voice = features(x)
-    result = align(voice, lines)
     face_rows = face_rows_of(face, voice.frames)
+    guide = face_rows_of(face, voice.frames, GUIDE_LAG) if use_guide and face_rows.sum() > 0 else None
+    result = align(voice, lines, guide=guide)
     X, sung = mouth_track(voice, result["morae"], face_rows)
     frames = frames_of(face, dance)
     values = frame_values(X, frames, lead_ms)
@@ -807,11 +825,14 @@ def run(face_path, vocal_path, lines_path, out_path, lead_ms=LEAD_MS, dance_path
     before = {name: sum(1 for k in face.morphs if k.name == name) for name in VOWELS}
     report = {
         "lines": len(lines), "morae": len(result["morae"]), "model_classes": result["model_classes"],
-        "lead_ms": lead_ms, "key_tolerance": round(tolerance, 4),
+        "lead_ms": lead_ms, "key_tolerance": round(tolerance, 4), "guide": guide is not None,
         "keys": {"before": before, "after": {n: len(keys[n]) for n in VOWELS},
                  "before_total": sum(before.values()), "after_total": sum(len(keys[n]) for n in VOWELS)},
         "face_lead_ms": face_lead(face, result["morae"]),
         "sung_seconds": round(float(sung.sum() * STEP), 2),
+        "checks": {"vowels_squeezed": sum(1 for m in result["morae"] if m["vowel"] in "aiueo" and not m["held"]
+                                          and m["v1"] - m["v0"] < 0.04),
+                   "consonants_over_150ms": sum(1 for m in result["morae"] if m["v0"] - m["c0"] > 0.15)},
         "line_fit": result["lines"],
     }
     if report_path:
@@ -832,6 +853,7 @@ def main(argv=None):
     p.add_argument("--lead-ms", type=float, default=LEAD_MS, help="how far the mouth leads the voice (default %(default)s)")
     p.add_argument("--dance", help="the dance loaded before FACE: OUT keys the vowels wherever it does")
     p.add_argument("--max-keys", type=int, help="at most this many vowel keys (the tolerance grows to fit)")
+    p.add_argument("--no-guide", action="store_true", help="align on the voice alone (not helped by FACE's vowels)")
     p.add_argument("--report", help="write the report (JSON)")
     p.add_argument("--align-out", help="write every mora's times (JSON)")
     args = p.parse_args(argv)
@@ -847,11 +869,11 @@ def main(argv=None):
         return 2
     try:
         report = run(args.face, args.vocal, args.lines, args.out, args.lead_ms, args.dance, args.max_keys, args.report,
-                     args.align_out)
+                     args.align_out, use_guide=not args.no_guide)
     except (ValueError, subprocess.CalledProcessError) as e:
         print("lip_sync: %s" % e, file=sys.stderr)
         return 1
-    short = {k: report[k] for k in ("lines", "morae", "lead_ms", "key_tolerance", "face_lead_ms", "sung_seconds")}
+    short = {k: report[k] for k in ("lines", "morae", "lead_ms", "key_tolerance", "face_lead_ms", "sung_seconds", "checks")}
     short["keys"] = {"before_total": report["keys"]["before_total"], "after_total": report["keys"]["after_total"]}
     print(json.dumps(short, ensure_ascii=True))
     return 0
