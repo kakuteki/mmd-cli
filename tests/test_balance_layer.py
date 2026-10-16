@@ -946,7 +946,9 @@ class AirTest(unittest.TestCase):
         self.assertGreater(float(self.y0[100] - self.y1[100]) * CM, 0.3)
 
     def test_air_bound_is_a_parameter(self):
-        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter, the same bytes"""
+        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter (the layer before
+        2026-10-16 byte for byte needs air_no_drop, still_hold and despike_passes back too: on the MV, order C, the
+        md5 of v9's balance layer came back only with all four)"""
         old = balance_layer.layer(MODEL, self.motion, {"despike": False, "air_down_acc_max": balance_layer.DOWN_ACC_MAX})
         a = pelvis_down_acc(old.motion, self.last)
         self.assertLessEqual(a.max(), balance_layer.DOWN_ACC_MAX + 0.5)
@@ -975,6 +977,38 @@ class AirTest(unittest.TestCase):
         rep = self.result.report["vertical"]
         self.assertGreater(rep["air_frames"], 8)
         self.assertIn("air_bound_units_s2", rep)
+
+    def test_short_air_keeps_the_drop(self):
+        """the hips come back up from the legs' drop only in an air stretch of AIR_MIN frames or more (a jump, as
+        the song's tests read it): a shorter one is a shuffle with the feet 2-3 cm up, where the hips coming up for 1-3
+        frames left the floor frames before them less lowered by the floor's bound, the standing knee straighter and
+        MMD's IK short on it (order C of the MV, 74.43 s, frame 2233)"""
+        air = np.zeros(30, bool)
+        air[3:6] = True                                 # 3 frames: a shuffle
+        air[10:20] = True                               # 10 frames: a jump
+        w = balance_layer.air_ramp(air)
+        self.assertEqual(float(w[:10].max()), 0.0)
+        self.assertGreater(float(w[10]), 0.0)
+        self.assertEqual(float(w[14]), 1.0)
+        self.assertEqual(float(w[20:].max()), 0.0)
+
+    def test_shuffle_keeps_the_floor_bound(self):
+        """both feet off the floor for fewer frames than a jump (a shuffle, the feet 2-3 cm up) keep the floor's bound:
+        with no bound there the layer itself sharpened the MV's fall next to the floor (the review of 2026-10-17, order
+        C: 80 -> 318 units/s^2 at 132.13 s, one frame with the right foot 1.9 cm up between floor frames; 118 -> 199 at
+        37.60 s and 254 -> 311 at 213.30 s, three frames with a foot 1.6-2.2 cm up)"""
+        last = 99
+        hop = (47, 49, 51, 53, 0.3)                     # both feet 2.4 cm up on frames 49-51 only
+        motion = dance(last=last, left_lifts=[hop], right_lifts=[hop])
+        centre = [key("センター", f, (0.0, -1.1 + 0.3 * max(0.0, 1.0 - abs(f - 50) / 2.0), 0.0)) for f in range(last + 1)]
+        motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+        body = balance_layer.Body(MODEL, motion)
+        air = (body.height("左") >= balance_layer.SUPPORT_H) & (body.height("右") >= balance_layer.SUPPORT_H)
+        self.assertEqual([(int(a), int(b)) for a, b in balance_layer.runs(air)], [(49, 51)])     # the fixture: 3 frames
+        self.assertGreater(pelvis_down_acc(motion, last)[50], 200.0)                             # and past the bound
+        res = balance_layer.layer(MODEL, motion, {"despike": False})
+        self.assertLessEqual(pelvis_down_acc(res.motion, last).max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertEqual(res.report["vertical"]["air_frames"], 0)
 
 
 def a08_spikes(s, t):
