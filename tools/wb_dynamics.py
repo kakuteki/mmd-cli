@@ -79,6 +79,9 @@ ZMP_MIN_G = 0.2                 # the ZMP is read where the floor pushes up at l
 CUTOFF_HZ = 6.0                 # the low-pass on the segments' COMs (Winter 2009's 6 Hz for markers before differentiating)
 RUN_DEPTH_M = 0.005             # a stretch outside the base of support: the ZMP 5 mm and more outside ...
 EDGE_FRAMES = 3                 # (frames at each end left out of the statistics: the filter's and the differences' ends)
+KNEE_FLOOR_M = 0.08             # a knee joint this near the floor kneels on it (the joint's centre over the kneecap's skin)
+HAND_FLOOR_M = 0.04             # a hand's wrist or middle finger joint this near the floor is put down on it
+OTHER_R_M = 0.03                # the disc of floor under a knee or a hand
 AIR_MIN_FRAMES = 5              # an air stretch this long and longer is measured (its parabola and its angular momentum's line)
 
 # Rin's sole (White.pmx, the vertices under y 0.3 units = 2.4 cm, the left foot; the right is its mirror): the convex hulls
@@ -515,6 +518,18 @@ def support(lm, feet, unit_m=UNIT_M):
         part[s] = np.where(heel_dn & fore_dn, "flat", np.where(fore_dn, "fore", np.where(heel_dn, "heel",
                                                                                          np.where(tip_dn, "tip", ""))))
         pts[s] = (heel, fore, tip, heel_dn, fore_dn, tip_dn)
+    # a knee or a hand on the floor (kneeling, a hand put down): a disc of OTHER_R_M under the joint
+    fy = float(feet["floor_y"]) * unit_m
+    ring = OTHER_R_M * np.stack([np.cos(np.linspace(0.0, 2.0 * math.pi, 9)[:-1]), np.sin(np.linspace(0.0, 2.0 * math.pi, 9)[:-1])], 1)
+    others = []
+    for s in SIDES:
+        for key, limit in (("knee_", KNEE_FLOOR_M), ("mid3_", HAND_FLOOR_M), ("wrist_", HAND_FLOOR_M)):
+            if key + s in lm:
+                P_ = np.asarray(lm[key + s], dtype=np.float64)
+                others.append((P_[:, 1] * unit_m - fy < limit, P_[:, [0, 2]] * unit_m))
+    other = np.zeros(F, bool)
+    for m_, _ in others:
+        other |= m_
     hulls = []
     for t in range(F):
         P = []
@@ -526,8 +541,11 @@ def support(lm, feet, unit_m=UNIT_M):
                 P.append(fore[t])
             if td[t]:
                 P.append(tip[t])
+        for m_, xz in others:
+            if m_[t]:
+                P.append(xz[t] + ring)
         hulls.append(_hull(np.concatenate(P, 0)) if P else np.zeros((0, 2)))
-    return {"contact": contact, "part": part, "hull": hulls}
+    return {"contact": contact, "part": part, "hull": hulls, "other": other}
 
 
 # ---- the measures --------------------------------------------------------------------------------------------------

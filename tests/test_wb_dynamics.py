@@ -369,6 +369,27 @@ class SupportTest(unittest.TestCase):
         # without the tip template (Rin: her toe IK is the tip) the same foot is off the floor
         self.assertFalse(np.any(wb.support(lm, self.feet)["contact"]["L"]))
 
+    def test_a_knee_or_a_hand_on_the_floor_supports(self):
+        """dances kneel and put a hand down (FineDance has floor work): a knee joint within KNEE_FLOOR_M of the floor or
+        a hand (the wrist or the middle finger) within HAND_FLOOR_M is part of the base of support"""
+        lm = still(3)
+        for k in ("ankle_L", "toe_L"):
+            lm[k][:, 1] += 2.0                         # the left foot up
+        lm["knee_L"][:, 1] = 0.111 + 0.05 / U          # the left knee down, 5 cm over the floor
+        lm["knee_L"][:, 2] = -3.0                      # 24 cm ahead
+        lm["mid3_R"][:, 1] = 0.111 + 0.01 / U          # the right hand's fingers on the floor
+        lm["mid3_R"][:, 0] = -6.0
+        sup = wb.support(lm, self.feet)
+        hull = sup["hull"][1]
+        self.assertGreater(wb.polygon_margin(lm["knee_L"][1, [0, 2]] * U, hull), 0.0)
+        self.assertGreater(wb.polygon_margin(lm["mid3_R"][1, [0, 2]] * U, hull), 0.0)
+        self.assertTrue(sup["other"][1])
+        lm["knee_L"][:, 1] = 0.111 + 0.20 / U          # 20 cm up: not touching
+        lm["mid3_R"][:, 1] = 0.111 + 0.20 / U
+        sup = wb.support(lm, self.feet)
+        self.assertLess(wb.polygon_margin(lm["knee_L"][1, [0, 2]] * U, sup["hull"][1]), 0.0)
+        self.assertFalse(sup["other"][1])
+
     def test_outward_is_away_from_the_body(self):
         """a sole that lies outwards of the foot's line on both feet: the left one's to +x (the model's left), the right
         one's to -x"""
