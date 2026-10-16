@@ -1081,7 +1081,10 @@ class MovingStanceTest(unittest.TestCase):
         motion = moving_stance(last, spread=1.0, x=(0.0, 0.0), sway_cm=3.0)
         result = balance_layer.layer(MODEL, motion)
         rep = result.report["stance"]
-        bound = 4.0 - (-4.2)                     # the human median margin (the baseline's number, not the layer's constant)
+        # -3.0 cm on every frame it bounds: on the song the moving frames then come to the human quartiles in the human
+        # measure (the COM 9.31 cm against 8.0 [7.0, 9.4], the margin -5.09 against -4.2 [-6.1, -3.6]; with -4.2 the COM
+        # stayed out at 9.75, balance_v3 2026-10-16).  The baseline's numbers, not the layer's constant
+        bound = 4.0 - (-3.0)
         self.assertEqual(rep["bound_cm"], round(bound, 2))
         self.assertGreater(rep["moving_frames"], 30)
         self.assertGreater(rep["moving_xcom_cm"]["before"], bound + 4.0)               # the fixture: past the bound
