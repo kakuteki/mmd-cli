@@ -797,7 +797,10 @@ def parse_rate(text):
         fps = float(num) / float(den)
     except (ValueError, ZeroDivisionError):
         raise ValueError("not a frame rate: %r" % (text,))
-    return int(round(fps)) if abs(fps - round(fps)) < 0.001 else fps
+    # MMD writes a frame's time in whole 100 ns units (960 fps: 10416, which reads 960.06): a rate within that rounding of a
+    # whole number n (n * n / 1e7) is n
+    n = round(fps)
+    return int(n) if n and abs(fps - n) < max(0.001, n * n / 1e7) else fps
 
 
 def parse_size(text):
