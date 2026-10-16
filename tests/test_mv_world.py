@@ -356,7 +356,7 @@ class FloorTest(unittest.TestCase):
         self.assertLess(core[2], 80)
 
     def test_a_planted_foot_darkens_the_floor_under_its_sole_and_a_lifted_one_less(self):
-        look = world_look(shadow=1.0, pool=1.0)
+        look = world_look(shadow=1.0, pool=1.0, shadow_soft=0)               # the shadows of v8 and v9
         view = self.view(angles=(25.0, 0.0, 0.0), distance=30.0, look_at=(0, 0, 0))
         planted = FakeFigure()
         lifted = FakeFigure(right=((2.0, 4.7, 0.0), (2.2, 3.1, -1.6)))        # the right foot 3 units up
@@ -420,7 +420,8 @@ class FloorTest(unittest.TestCase):
                             pelvis=(40.0, 10.0, 40.0))                                        # her body's shade far off
         figure.rest = (1.7 + lift, 0.1 + lift)
         lit = mv_world.floor([view], world_look(floor_y=lift, shadow=0.0), view.size, [figure])[0].sum(axis=2)
-        shaded = mv_world.floor([view], world_look(floor_y=lift, shadow=1.0), view.size, [figure])[0].sum(axis=2)
+        shaded = mv_world.floor([view], world_look(floor_y=lift, shadow=1.0, shadow_soft=0), view.size,
+                                [figure])[0].sum(axis=2)
         dark = numpy.clip(lit - shaded, 0, None)
         u, v, _ = view.project([(2.5, lift, 2.5)])
         _, v0, _ = view.project([(2.5, 0.0, 2.5)])
@@ -442,6 +443,289 @@ class FloorTest(unittest.TestCase):
         self.assertLess(float(numpy.abs(cab - (ca + cb) / 2).max()), 1e-9)
         both = (ra * ca[..., None] + rb * cb[..., None]) / 2
         self.assertLess(float(numpy.abs(rab * cab[..., None] - both).max()), 1e-6)
+
+
+def rin_path():
+    """Sour's Rin: MMD_CLI_RIN when set, else the model folder of MMD under the user's Desktop"""
+    rel = os.path.join("MikuMikuDance_v932x64", "UserFile", "Model", "Sour式鏡音リンVer.2.01", "White.pmx")
+    for path in (os.environ.get("MMD_CLI_RIN"), os.path.join(os.path.expanduser("~"), "Desktop", rel)):
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+RIN = rin_path()
+
+
+@unittest.skipUnless(mv_world, "needs Pillow and numpy")
+class SoftShadowTest(unittest.TestCase):
+    """the soft shadow of her body (stage.shadow_soft 1): capsules lit by a light whose brightness spreads as a Gaussian
+    round its direction, and the light from all round"""
+    DOWN = (0.0, -1.0, 0.0)
+
+    def through(self, capsules, points, light=(-0.5, -1.0, 0.5), blur=3.0):
+        """the shares of the key light and of the light from all round that reach the floor points (x, z)"""
+        ell = mv_world.toward_light(light)
+        P = numpy.array([(x, 0.0, z) for x, z in points], dtype=float)
+        key, contact = numpy.ones(len(P)), numpy.ones(len(P))
+        for a, b, r in capsules:
+            k, c = mv_world.capsule_shade(P, a, b, r, ell, math.radians(blur))
+            key *= 1.0 - k
+            contact *= 1.0 - c
+        return key, contact
+
+    def test_a_ball_casts_its_shadow_away_from_the_light(self):
+        # MMD's light shines to (-0.5, -1, 0.5): the shadow of a point 5 up lies 2.5 to -x and 2.5 to +z of it
+        ball = [((0.0, 5.0, 0.0), (0.0, 5.0, 0.0), 1.0)]
+        key, contact = self.through(ball, [(-2.5, 2.5), (0.0, 0.0), (2.5, -2.5)])
+        self.assertLess(key[0], 0.1)
+        self.assertGreater(key[1], 0.99)                 # right under it the slanting light gets through
+        self.assertGreater(key[2], 0.999)                # and on the side of the light
+        self.assertLess(contact[1], contact[2])          # but it hides a little of the sky from under it
+        self.assertGreater(contact[1], 0.9)
+
+    def test_the_edge_of_a_shadow_blurs_in_proportion_to_the_height_of_what_casts_it(self):
+        # a long bar across x, the light straight down with a spread of 3 degrees: across z the light comes back from
+        # 10 % to 90 % over 2.563 x 3 degrees x the bar's height (the integral of a Gaussian: contact hardening)
+        widths = []
+        for h in (2.0, 8.0):
+            bar = [((-40.0, h, 0.0), (40.0, h, 0.0), 0.5)]
+            zs = numpy.linspace(0.0, 4.0, 4001)
+            key, _ = self.through(bar, [(0.0, z) for z in zs], light=self.DOWN, blur=3.0)
+            width = zs[numpy.argmax(key >= 0.9)] - zs[numpy.argmax(key >= 0.1)]
+            want = 2.563 * math.radians(3.0) * h
+            self.assertAlmostEqual(width, want, delta=0.1 * want, msg=h)
+            widths.append(width)
+        self.assertAlmostEqual(widths[1] / widths[0], 4.0, delta=0.3)
+
+    def test_with_no_spread_the_edge_is_sharp(self):
+        bar = [((-40.0, 8.0, 0.0), (40.0, 8.0, 0.0), 0.5)]
+        zs = numpy.linspace(0.0, 1.0, 1001)
+        key, _ = self.through(bar, [(0.0, z) for z in zs], light=self.DOWN, blur=0.0)
+        self.assertLess(zs[numpy.argmax(key >= 0.9)] - zs[numpy.argmax(key >= 0.1)], 0.01)
+
+    def test_a_sole_on_the_floor_takes_all_the_light_under_it_and_less_the_higher_it_lifts(self):
+        def under(lift):
+            sole = [((-1.0, 0.42 + lift, 0.0), (1.0, 0.42 + lift, 0.0), 0.42)]
+            return self.through(sole, [(0.0, 0.0), (0.0, 1.5)])
+        key, contact = under(0.0)
+        self.assertLess(key[0], 0.01)
+        self.assertLess(contact[0], 0.01)
+        self.assertGreater(contact[1], 0.9)              # 1.5 to its side: a little
+        key, contact = under(1.0)
+        self.assertGreater(contact[0], 0.9)              # a unit up: under 1/10 of the sky hidden
+        self.assertGreater(key[0], 0.9)                  # and the slanting light gets under it
+
+    def test_a_long_bar_shades_as_much_as_its_width_whatever_its_length_past_the_light(self):
+        # the band model: lengthening a bar that already crosses the whole light changes nothing
+        short = [((-3.0, 4.0, 0.0), (3.0, 4.0, 0.0), 0.3)]
+        long = [((-30.0, 4.0, 0.0), (30.0, 4.0, 0.0), 0.3)]
+        points = [(0.0, z) for z in (0.0, 0.2, 0.4)]
+        for a, b in zip(self.through(short, points, light=self.DOWN), self.through(long, points, light=self.DOWN)):
+            numpy.testing.assert_allclose(a, b, atol=1e-6)
+        # past its end the light comes back: the end is a disc
+        key, _ = self.through(short, [(3.0, 0.0), (3.8, 0.0), (5.0, 0.0)], light=self.DOWN)
+        self.assertLess(key[0], key[1])
+        self.assertLess(key[1], key[2])
+        self.assertGreater(key[2], 0.999)
+
+    def test_the_grid_lies_on_whole_cells_of_the_world_and_has_each_points_value(self):
+        capsules = [((0.3, 4.0, 0.2), (1.1, 1.0, -0.4), 0.5)]
+        grid = mv_world.soft_shadow_grid(capsules, (-0.5, -1.0, 0.5), 3.0)
+        for origin in (grid.x0, grid.z0):
+            self.assertAlmostEqual(origin / grid.cell, round(origin / grid.cell), places=6)
+        moved = mv_world.soft_shadow_grid([((0.31, 4.0, 0.2), (1.11, 1.0, -0.4), 0.5)], (-0.5, -1.0, 0.5), 3.0)
+        self.assertAlmostEqual(moved.x0 / grid.cell, round(moved.x0 / grid.cell), places=6)
+        i, j = numpy.unravel_index(int(numpy.argmin(grid.key)), grid.key.shape)
+        x, z = grid.x0 + j * grid.cell, grid.z0 + i * grid.cell
+        want_key, want_contact = self.through(capsules, [(x, z)])
+        got_key, got_contact = grid.at([x], [z])
+        self.assertAlmostEqual(float(got_key[0]), float(want_key[0]), places=9)
+        # the light from all round changes over the axis's height (1 here): worked out on a grid twice as coarse
+        self.assertAlmostEqual(float(got_contact[0]), float(want_contact[0]), delta=0.005)
+        self.assertLess(float(got_key[0]), 0.2)
+        # off the grid all the light comes; along its border (nearly) all of it already, so it shows no edge
+        k, c = grid.at([grid.x0 - 1.0], [grid.z0 - 1.0])
+        self.assertEqual((float(k[0]), float(c[0])), (1.0, 1.0))
+        for g in (grid.key, grid.contact):
+            border = numpy.concatenate([g[0], g[-1], g[:, 0], g[:, -1]])
+            self.assertGreater(float(border.min()), 0.999)
+
+    def test_a_capsule_high_above_is_worked_out_coarser_and_still_gives_each_points_value(self):
+        # a head 17 above the floor: its shadow is blurred over units, so it is worked out on a coarser grid and laid onto
+        # the floor's grid; every point of the floor's grid stays within 0.005 of its own value
+        head = [((0.0, 16.9, 0.0), (0.0, 17.7, 0.0), 1.55)]
+        light = (-0.5, -1.0, 0.5)
+        ell = mv_world.toward_light(light)
+        low = mv_world._low(head[0][0], head[0][1], 1.55)
+        self.assertGreater(mv_world._level(math.radians(5.0) * low / ell[1], mv_world.SHADOW_CELL), 0)
+        grid = mv_world.soft_shadow_grid(head, light, 5.0)
+        zs, xs = numpy.mgrid[0:grid.key.shape[0]:7, 0:grid.key.shape[1]:7]
+        points = [(grid.x0 + j * grid.cell, grid.z0 + i * grid.cell) for i, j in zip(zs.ravel(), xs.ravel())]
+        want, _ = self.through(head, points, light=light, blur=5.0)
+        got = grid.key[zs.ravel(), xs.ravel()]
+        self.assertLess(float(numpy.abs(got - want).max()), 0.005)
+        self.assertLess(float(want.min()), 0.6)                          # a shadow is there to get right
+        # a skirt-sized ball 9.7 up darkens the floor from all round over many units: also worked out coarser
+        skirt = [((0.0, 9.7, 0.0), (0.0, 9.7, 0.0), 2.9)]
+        grid = mv_world.soft_shadow_grid(skirt, light, 5.0)
+        zs, xs = numpy.mgrid[0:grid.contact.shape[0]:7, 0:grid.contact.shape[1]:7]
+        points = [(grid.x0 + j * grid.cell, grid.z0 + i * grid.cell) for i, j in zip(zs.ravel(), xs.ravel())]
+        want_key, want_contact = self.through(skirt, points, light=light, blur=5.0)
+        self.assertLess(float(numpy.abs(grid.contact[zs.ravel(), xs.ravel()] - want_contact).max()), 0.005)
+        self.assertLess(float(numpy.abs(grid.key[zs.ravel(), xs.ravel()] - want_key).max()), 0.005)
+        self.assertLess(float(want_contact.min()), 0.95)
+
+    def test_a_floor_raised_takes_the_shadow_at_its_height(self):
+        # a ball 3 above a floor raised by 1: its shadow is the one a ball 2 above the floor at 0 casts
+        here = mv_world.soft_shadow_grid([((0.0, 3.0, 0.0), (0.0, 3.0, 0.0), 0.8)], self.DOWN, 3.0, floor_y=1.0)
+        there = mv_world.soft_shadow_grid([((0.0, 2.0, 0.0), (0.0, 2.0, 0.0), 0.8)], self.DOWN, 3.0)
+        xs = numpy.linspace(-2.0, 2.0, 41)
+        for a, b in zip(here.at(xs, 0 * xs), there.at(xs, 0 * xs)):
+            numpy.testing.assert_allclose(a, b, atol=1e-9)
+        self.assertLess(float(here.at([0.0], [0.0])[0][0]), 0.1)
+
+    def test_a_light_from_below_is_refused(self):
+        with self.assertRaises(ValueError):
+            mv_world.toward_light((0.0, 1.0, 0.0))
+
+    def view(self):
+        return mv_world.View(state((0, 0, 0), 30.0, (25.0, 0.0, 0.0)), (640, 360))
+
+    def test_the_soft_shadow_darkens_the_lines_and_the_pool_as_well_as_the_plane(self):
+        # a sole lying on the floor across the line x = 5 at z = 2.5: under it the line goes dark too (the shadows of v8
+        # and v9 darkened the plane only)
+        view = self.view()
+        figure = FakeFigure(centre=(5.0, 2.5))
+        figure.capsules = [((4.0, 0.42, 2.5), (6.0, 0.42, 2.5), 0.42)]
+        lit = mv_world.floor([view], world_look(shadow=0.0, pool=1.0), view.size, [figure])[0]
+        soft = mv_world.floor([view], world_look(shadow=1.0, pool=1.0), view.size, [figure])[0]
+        u, v, _ = view.project([(5.0, 0.0, 2.5), (5.0, 0.0, 6.0)])
+        on_line = lambda img: float(img[int(round(v[0])), int(round(u[0]))].sum())
+        self.assertGreater(on_line(lit), 60)                                  # a line (and the pool) there
+        self.assertLess(on_line(soft), 0.1 * on_line(lit))
+        away = lambda img: float(img[int(round(v[1])), int(round(u[1]))].sum())
+        self.assertAlmostEqual(away(soft), away(lit), delta=0.5)              # 3.5 behind it: untouched
+
+    def test_a_body_without_capsules_casts_no_shadow(self):
+        view = self.view()
+        figure = FakeFigure()
+        figure.capsules = []
+        soft = mv_world.floor([view], world_look(shadow=1.0, pool=1.0), view.size, [figure])[0]
+        none = mv_world.floor([view], world_look(shadow=0.0, pool=1.0), view.size, [figure])[0]
+        self.assertLess(float(numpy.abs(soft - none).max()), 1e-9)
+
+    def test_capsules_of_one_part_of_her_hide_the_light_once(self):
+        # a ball inside a bigger one (the hips inside the skirt): together they hide what the bigger hides.  Each taken on
+        # its own and multiplied, the light both hide is hidden twice (review_softshadow); capsules of different parts
+        # still multiply
+        ball = ((0.0, 6.0, 0.0), (0.0, 6.0, 0.0), 1.0)
+        bigger = ((0.0, 6.0, 0.0), (0.0, 6.0, 0.0), 1.3)
+        xs = numpy.linspace(-2.5, 2.5, 51)
+        one = mv_world.soft_shadow_grid([bigger], self.DOWN, 5.0).at(xs, 0 * xs)[0]
+        same = mv_world.soft_shadow_grid([ball, bigger], self.DOWN, 5.0, groups=["waist", "waist"]).at(xs, 0 * xs)[0]
+        apart = mv_world.soft_shadow_grid([ball, bigger], self.DOWN, 5.0, groups=["a", "b"]).at(xs, 0 * xs)[0]
+        each = mv_world.soft_shadow_grid([ball, bigger], self.DOWN, 5.0).at(xs, 0 * xs)[0]
+        numpy.testing.assert_allclose(same, one, atol=1e-9)
+        numpy.testing.assert_allclose(apart, each, atol=1e-12)
+        self.assertLess(float((apart - same).min()), -0.05)
+        with self.assertRaises(ValueError):
+            mv_world.soft_shadow_grid([ball, bigger], self.DOWN, 5.0, groups=["waist"])
+
+    def test_a_body_of_overlapping_capsules_lets_through_what_rays_past_them_let_through(self):
+        # a torso, the hips in a skirt of two balls and the thighs, as Body puts them: the key light that reaches the floor
+        # round her, by part, against rays past all the capsules at once (tools/shadow_check.py: a direction is blocked
+        # when any capsule blocks it).  Multiplying every capsule's own share comes out darker than the rays
+        shadow_check = load("shadow_check")
+        caps = [((0.0, 10.5, 0.0), (0.0, 13.5, 0.0), 1.0), ((-0.75, 9.3, 0.45), (0.75, 9.3, 0.45), 1.2),
+                ((0.0, 9.5, 0.6), (0.0, 9.5, 0.6), 2.0), ((0.0, 8.0, 0.6), (0.0, 8.0, 0.6), 2.9),
+                ((-0.9, 9.0, 0.0), (-1.0, 5.0, 0.0), 0.78), ((0.9, 9.0, 0.0), (1.0, 5.0, 0.0), 0.78)]
+        groups = ["torso", "waist", "waist", "waist", "left leg", "right leg"]
+        light = (-0.5, -1.0, 0.5)
+        gx, gz = numpy.meshgrid(numpy.arange(-11.0, 1.01, 0.5), numpy.arange(-1.0, 11.01, 0.5))
+        points = numpy.stack([gx.ravel(), 0 * gx.ravel(), gz.ravel()], axis=1)
+        rays = shadow_check.light_through(points, caps, light, 5.0, side=32)
+        shaded = rays < 0.98
+        by_part = mv_world.soft_shadow_grid(caps, light, 5.0, groups=groups).at(gx.ravel(), gz.ravel())[0]
+        each = mv_world.soft_shadow_grid(caps, light, 5.0).at(gx.ravel(), gz.ravel())[0]
+        err_part, err_each = (by_part - rays)[shaded], (each - rays)[shaded]
+        self.assertGreater(int(shaded.sum()), 100)
+        self.assertLess(float(numpy.abs(err_part).mean()), 0.6 * float(numpy.abs(err_each).mean()))
+        self.assertLess(abs(float(err_part.mean())), 0.02)                   # no lean either way
+        self.assertLess(float(err_each.mean()), -0.03)                        # the product: darker than the rays
+
+    def test_the_floor_takes_the_parts_of_her_body(self):
+        view = self.view()
+        ball = ((5.0, 3.0, 2.5), (5.0, 3.0, 2.5), 0.8)
+        bigger = ((5.0, 3.0, 2.5), (5.0, 3.0, 2.5), 1.0)
+        figure = FakeFigure(centre=(5.0, 2.5))
+        look = world_look(shadow=1.0, pool=1.0, shadow_contact=0.0)       # the key light only (parts: its shadow)
+        figure.capsules = [bigger]
+        one = mv_world.floor([view], look, view.size, [figure])[0]
+        figure.capsules = [ball, bigger]
+        figure.capsule_groups = ["waist", "waist"]
+        same = mv_world.floor([view], look, view.size, [figure])[0]
+        figure.capsule_groups = None
+        each = mv_world.floor([view], look, view.size, [figure])[0]
+        self.assertLess(float(numpy.abs(same - one).max()), 1e-6)
+        self.assertGreater(float((one - each).max()), 1.0)
+
+    def test_the_soft_shadow_needs_her_body(self):
+        view = self.view()
+        with self.assertRaises(ValueError) as caught:
+            mv_world.floor([view], world_look(shadow=1.0), view.size, [FakeFigure()])
+        self.assertIn("shadow_soft", str(caught.exception))
+        self.assertTrue(mv_world.needs_body(world_look(shadow=1.0)))
+        self.assertFalse(mv_world.needs_body(world_look(shadow=1.0, shadow_soft=0)))
+        self.assertFalse(mv_world.needs_body(world_look(shadow=0.0)))
+
+
+@unittest.skipUnless(mv_world and RIN, "needs Pillow, numpy and Sour's Rin (MMD_CLI_RIN)")
+class BodyTest(unittest.TestCase):
+    """her body as capsules (mv_world.Body) on Sour's Rin"""
+
+    def body(self, *keys):
+        from mmd_cli.formats import pmx
+        return mv_world.Body.from_file(RIN, pmx.load(RIN), bone_motion(*keys))
+
+    def test_at_rest_the_capsules_fill_her_height_and_reach_and_the_soles_stand_on_the_floor(self):
+        caps = self.body(bone_key("センター", 0), bone_key("センター", 4)).capsules(0)
+        low = min(min(a[1], b[1]) - r for a, b, r in caps)
+        top = max(max(a[1], b[1]) + r for a, b, r in caps)
+        reach = max(max(abs(a[0]), abs(b[0])) + r for a, b, r in caps)
+        self.assertAlmostEqual(low, 0.1, delta=0.03)          # the toes' height: her soles on the floor
+        self.assertAlmostEqual(top, 20.55, delta=0.3)         # the top of the ribbon (the mesh's 20.55)
+        self.assertAlmostEqual(reach, 6.05, delta=0.4)        # the finger tips with the arms out (the mesh's 6.06)
+        self.assertEqual(len(caps), len(mv_world.BODY_PARTS) + 2 * (len(mv_world.LEG_PARTS) + 2))
+
+    def test_her_capsules_come_with_the_parts_they_belong_to(self):
+        body = self.body(bone_key("センター", 0), bone_key("センター", 4))
+        caps = body.capsules(0)
+        groups = body.groups
+        self.assertEqual(len(groups), len(caps))
+        # the hips and the skirt's two balls are one part; each leg, each foot and each arm is a part of its own
+        n = len(mv_world.BODY_PARTS)
+        names = [p[0] + p[2] for p in mv_world.BODY_PARTS]
+        self.assertEqual(len({groups[names.index("下半身下半身") + k] for k in range(3)}), 1)
+        self.assertEqual(groups[names.index("左腕左ひじ")], groups[names.index("左手首左中指３")])
+        self.assertNotEqual(groups[names.index("左腕左ひじ")], groups[names.index("右腕右ひじ")])
+        legs = groups[n:]
+        self.assertEqual(len(set(legs)), 4)                   # a leg (thigh, shin) and a foot (instep, sole) a side
+        self.assertEqual(legs[0], legs[1])
+        self.assertEqual(legs[2], legs[3])
+        self.assertNotEqual(legs[1], legs[2])
+        self.assertTrue(set(legs).isdisjoint(groups[:n]))
+
+    def test_moving_her_whole_moves_every_capsule_and_between_frames_in_a_straight_line(self):
+        body = self.body(bone_key("全ての親", 0), bone_key("全ての親", 10, pos=(3.0, 0.0, -2.0)))
+        at0, at10 = body.capsules(0), body.capsules(10)
+        for (a0, b0, r0), (a1, b1, r1) in zip(at0, at10):
+            numpy.testing.assert_allclose(a1 - a0, (3.0, 0.0, -2.0), atol=1e-6)
+            numpy.testing.assert_allclose(b1 - b0, (3.0, 0.0, -2.0), atol=1e-6)
+            self.assertEqual(r0, r1)
+        at5, at6, part = body.capsules(5), body.capsules(6), body.capsules(5.25)
+        for (a5, _, _), (a6, _, _), (ap, _, _) in zip(at5, at6, part):
+            numpy.testing.assert_allclose(ap, 0.75 * a5 + 0.25 * a6, atol=1e-9)
 
 
 def camera_file(folder, shots, step=1, name="camera.vmd"):
