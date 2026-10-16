@@ -588,26 +588,35 @@ class ShadowGrid:
         return out[0], out[1]
 
 
-def soft_shadow_grid(capsules, light, blur_degrees, floor_y=0.0, cell=SHADOW_CELL):
+def soft_shadow_grid(capsules, light, blur_degrees, floor_y=0.0, cell=SHADOW_CELL, groups=None):
     """the ShadowGrid of `capsules` ((a, b, r) world positions and radius) on the floor at y = floor_y, lit from
     `light` (where it shines to) with a Gaussian spread of `blur_degrees`; None without capsules.  The grid is fixed in
-    the world (its points at whole multiples of `cell`), so it does not crawl as the camera moves"""
+    the world (its points at whole multiples of `cell`), so it does not crawl as the camera moves.
+
+    `groups` (a label for each capsule; None: each capsule a part of its own) are the parts of her body (Body.groups):
+    the capsules of a part overlap (one joins the next, or lies in another), and from the key light they keep off at each
+    point what the one that keeps most off keeps off; the parts multiply.  Multiplying every capsule's own share counts the
+    light two overlapping capsules both keep off twice (BODY_GROUPS).  The light from all round multiplies capsule by
+    capsule"""
     if not capsules:
         return None
+    if groups is not None and len(groups) != len(capsules):
+        raise ValueError("soft_shadow_grid: a part for each capsule, not %d for %d" % (len(groups), len(capsules)))
     ell = toward_light(light)
     sigma = math.radians(max(float(blur_degrees), 0.0))
     lifted = [(np.asarray(a, dtype=np.float64) - [0.0, floor_y, 0.0], np.asarray(b, dtype=np.float64) - [0.0, floor_y, 0.0],
                float(r)) for a, b, r in capsules]
     cell = float(cell)
     jobs = []
-    for a, b, r in lifted:
+    for n, (a, b, r) in enumerate(lifted):
         low = _low(a, b, r)
         # the shadow along the light changes over its least blur (at the lowest point's distance), the light from all
         # round over the distance to the capsule's axis
-        jobs.append((a, b, r, "key", _key_box(a, b, r, ell, sigma), _level(sigma * low / ell[1], cell)))
+        jobs.append((a, b, r, "key", _key_box(a, b, r, ell, sigma), _level(sigma * low / ell[1], cell),
+                     ("key", groups[n] if groups is not None else n)))
         box = _contact_box(a, b, r)
         if box is not None:
-            jobs.append((a, b, r, "contact", box, _level(low + r, cell)))
+            jobs.append((a, b, r, "contact", box, _level(low + r, cell), ("contact", n)))
     lo_x, hi_x = min(j[4][0] for j in jobs), max(j[4][1] for j in jobs)
     lo_z, hi_z = min(j[4][2] for j in jobs), max(j[4][3] for j in jobs)
     while max(hi_x - lo_x, hi_z - lo_z) / cell > SHADOW_GRID_MAX:
@@ -616,22 +625,32 @@ def soft_shadow_grid(capsules, light, blur_degrees, floor_y=0.0, cell=SHADOW_CEL
     w = int(math.ceil((hi_x - x0) / cell)) + 1
     h = int(math.ceil((hi_z - z0) / cell)) + 1
     grids = {"key": np.ones((h, w)), "contact": np.ones((h, w))}
-    for a, b, r, which, (bx0, bx1, bz0, bz1), level in jobs:
+    parts = {}
+    for job in jobs:                        # the capsules of each part, the parts in the order they first come
+        a, b, r, which, (bx0, bx1, bz0, bz1), level, part = job
         j0, j1 = max(0, int(math.floor((bx0 - x0) / cell))), min(w, int(math.ceil((bx1 - x0) / cell)) + 1)
         i0, i1 = max(0, int(math.floor((bz0 - z0) / cell))), min(h, int(math.ceil((bz1 - z0) / cell)) + 1)
-        if j1 <= j0 or i1 <= i0:
-            continue
-        xs, zs = x0 + cell * np.arange(j0, j1), z0 + cell * np.arange(i0, i1)
-        coarse = cell * 2 ** level
-        if coarse > cell:
-            # far from the floor the shade changes slowly: worked out on a coarser grid (also fixed in the world) and
-            # laid onto this one bilinearly
-            cxs = math.floor(xs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((xs[-1] - xs[0]) / coarse)) + 2)
-            czs = math.floor(zs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((zs[-1] - zs[0]) / coarse)) + 2)
-            got = _resample(_shade_on(cxs, czs, a, b, r, ell, sigma, which), cxs, czs, xs, zs)
-        else:
-            got = _shade_on(xs, zs, a, b, r, ell, sigma, which)
-        grids[which][i0:i1, j0:j1] *= 1.0 - got
+        if j1 > j0 and i1 > i0:
+            parts.setdefault(part, []).append((a, b, r, which, level, i0, i1, j0, j1))
+    for members in parts.values():
+        which = members[0][3]
+        pi0, pi1 = min(m[5] for m in members), max(m[6] for m in members)
+        pj0, pj1 = min(m[7] for m in members), max(m[8] for m in members)
+        held = np.zeros((pi1 - pi0, pj1 - pj0))        # the most any capsule of the part keeps off
+        for a, b, r, _, level, i0, i1, j0, j1 in members:
+            xs, zs = x0 + cell * np.arange(j0, j1), z0 + cell * np.arange(i0, i1)
+            coarse = cell * 2 ** level
+            if coarse > cell:
+                # far from the floor the shade changes slowly: worked out on a coarser grid (also fixed in the world) and
+                # laid onto this one bilinearly
+                cxs = math.floor(xs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((xs[-1] - xs[0]) / coarse)) + 2)
+                czs = math.floor(zs[0] / coarse) * coarse + coarse * np.arange(int(math.ceil((zs[-1] - zs[0]) / coarse)) + 2)
+                got = _resample(_shade_on(cxs, czs, a, b, r, ell, sigma, which), cxs, czs, xs, zs)
+            else:
+                got = _shade_on(xs, zs, a, b, r, ell, sigma, which)
+            sub = held[i0 - pi0:i1 - pi0, j0 - pj0:j1 - pj0]
+            np.maximum(sub, got, out=sub)
+        grids[which][pi0:pi1, pj0:pj1] *= 1.0 - held
     return ShadowGrid(x0, z0, cell, grids["key"], grids["contact"])
 
 
@@ -741,7 +760,8 @@ def _floor_once(view, stage, figure):
                          "(Figure.from_files(..., body=True)), or set stage.shadow_soft 0")
     if soft:
         # the soft shadow of her body (soft_shadow_grid): the plane, the lines and the pool each keep their share of light
-        grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]))
+        grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]),
+                                groups=getattr(figure, "capsule_groups", None))
         through = grid.at(X, Z) if grid is not None else (np.ones(X.shape), np.ones(X.shape))
         lit, pooled = soft_light(*through, stage)
         base = base * lit[:, None]
@@ -801,6 +821,7 @@ class FigureState:
     centre: Tuple[float, float]       # x and z of the centre, averaged over FIGURE_WINDOW frames (where the pool stands)
     rest: Tuple[float, float]         # the height of an ankle and of a toe on the floor (FIGURE_REST_PERCENTILE of the song)
     capsules: list = None             # her body as capsules (a, b, radius), world positions, for the soft shadow (Body)
+    capsule_groups: list = None       # the part of her body each capsule belongs to (Body.groups)
 
 
 FIGURE_WINDOW = 90                    # frames: the pool follows the centre averaged like make_camera's look-at point
@@ -848,6 +869,13 @@ BODY_PARTS = (
     ("下半身", (0.0, -1.0, 0.6), "下半身", (0.0, -1.0, 0.6), 2.0),       # the skirt: its upper part
     ("下半身", (0.0, -2.5, 0.6), "下半身", (0.0, -2.5, 0.6), 2.9),       # and its hem
 )
+# the part of her body each of BODY_PARTS belongs to (soft_shadow_grid's groups; each leg and each foot is a part too): the
+# capsules of a part overlap, one joining the next or lying in another.  Against rays past her capsules (tools/shadow_check.py
+# light, front inputs, 7 frames, blur 5: review_softshadow), multiplying every capsule's share of the key light came out
+# darker than the rays by 0.03 to 0.05 on average (0.22 to 0.30 at the 99th percentile; the floor under half the key light
+# 1.17 to 1.37 times the rays'), by these parts by 0.018 to 0.023 (on average -0.009 to +0.007: no lean; 0.09 to 0.15)
+BODY_GROUPS = ("torso", "torso", "torso", "head", "head", "left arm", "left arm", "left arm", "right arm", "right arm",
+               "right arm", "waist", "waist", "waist")
 # the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with
 # 足首: the instep from the ankle to above the ball of the foot (足先EX) and the sole from under the heel to the tip of the
 # toe, each with its lowest point at the toe's rest height (the sole of the shoe)
@@ -882,7 +910,8 @@ class Body:
         bones = {bone.name: bone for bone in model.bones}
         head = bones.get("頭")
         self.scale = (head.position[1] / REFERENCE_HEAD) if head is not None and head.position and head.position[1] > 0 else 1.0
-        self.parts = [p for p in BODY_PARTS if p[0] in bones and p[2] in bones]
+        kept = [(p, g) for p, g in zip(BODY_PARTS, BODY_GROUPS) if p[0] in bones and p[2] in bones]
+        self.parts = [p for p, _ in kept]
         names = sorted({p[0] for p in self.parts} | {p[2] for p in self.parts})
         self.pose = fk.Pose(model, motion, names) if names else None
         self.rig = rig
@@ -898,6 +927,10 @@ class Body:
             tip = np.array([t[0], t[1] + r, t[2] + r])
             ball = np.array([ex[0], max(ex[1], t[1] + ri), ex[2]])
             self.foot[s] = ((np.zeros(3), ball - a, ri), (heel - a, tip - a, r))
+        # the part of her body each capsule belongs to, in the order capsules() gives them (soft_shadow_grid's groups)
+        self.groups = [g for _, g in kept]
+        for s in rig.sides:
+            self.groups += ["%s leg" % s] * len(LEG_PARTS) + ["%s foot" % s] * len(self.foot[s])
         self._legs = {}
         self._frames = {}
 
@@ -928,7 +961,8 @@ class Body:
                                 + np.asarray(fk.rotate(q, tuple(self.scale * v for v in offset)), dtype=np.float64))
                 out.append((ends[0], ends[1], r * self.scale))
         legs = self._legs_at(frame)
-        for s, leg in legs.items():
+        for s in self.rig.sides:                     # the order of self.groups
+            leg = legs[s]
             for a, b, r in LEG_PARTS:
                 out.append((np.asarray(leg[a], dtype=np.float64), np.asarray(leg[b], dtype=np.float64), r * self.scale))
             q = leg["q_foot"]
@@ -1006,7 +1040,8 @@ class Figure:
         k = f - i
         centre = (self.centre_x[i] * (1 - k) + self.centre_x[j] * k, self.centre_z[i] * (1 - k) + self.centre_z[j] * k)
         capsules = self.body.capsules(frame) if self.body is not None else None
-        return FigureState(feet, tuple(at[self.pelvis_name][0]), centre, self.rest, capsules)
+        groups = self.body.groups if self.body is not None else None
+        return FigureState(feet, tuple(at[self.pelvis_name][0]), centre, self.rest, capsules, groups)
 
 
 def _centred_mean(values, window):
