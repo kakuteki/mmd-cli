@@ -607,6 +607,14 @@ class SoftShadowTest(unittest.TestCase):
         away = lambda img: float(img[int(round(v[1])), int(round(u[1]))].sum())
         self.assertAlmostEqual(away(soft), away(lit), delta=0.5)              # 3.5 behind it: untouched
 
+    def test_a_body_without_capsules_casts_no_shadow(self):
+        view = self.view()
+        figure = FakeFigure()
+        figure.capsules = []
+        soft = mv_world.floor([view], world_look(shadow=1.0, pool=1.0), view.size, [figure])[0]
+        none = mv_world.floor([view], world_look(shadow=0.0, pool=1.0), view.size, [figure])[0]
+        self.assertLess(float(numpy.abs(soft - none).max()), 1e-9)
+
     def test_the_soft_shadow_needs_her_body(self):
         view = self.view()
         with self.assertRaises(ValueError) as caught:

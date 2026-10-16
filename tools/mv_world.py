@@ -742,7 +742,8 @@ def _floor_once(view, stage, figure):
     if soft:
         # the soft shadow of her body (soft_shadow_grid): the plane, the lines and the pool each keep their share of light
         grid = soft_shadow_grid(figure.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(stage["floor_y"]))
-        lit, pooled = soft_light(*grid.at(X, Z), stage)
+        through = grid.at(X, Z) if grid is not None else (np.ones(X.shape), np.ones(X.shape))
+        lit, pooled = soft_light(*through, stage)
         base = base * lit[:, None]
         if pool is not None:
             base += pool * pooled[:, None]
