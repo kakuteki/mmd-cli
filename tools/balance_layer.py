@@ -1420,6 +1420,16 @@ def despike_room(body, plan, before):
     return up, xz
 
 
+def despike_overreach(body, plan, before):
+    """per frame: a leg on the floor reaches farther than the reach report allows (REACH_TOL_CM short of full length, or
+    the dance's own reach where that is farther)"""
+    over = np.zeros(body.F, bool)
+    for s in SIDES:
+        allow = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M)
+        over |= body.reach(s) > allow
+    return over
+
+
 def speed_spikes(P):
     """a08's 1-frame spikes of a path P [F, 3] (units): the steps k (frame k -> k + 1) whose speed is above, or below,
     both neighbours' by more than SPIKE_T, and each one's excess over SPIKE_T (m/s)"""
@@ -1783,6 +1793,15 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
             room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
             e_sp, spikes = despike(body.p(CENTRE) + shift, [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)],
                                    p["down_acc_max"], p["spike_per_min"], room_up=room_up, room_xz=room_xz)
+            # the linear room is a guess: where a leg on the floor still reaches past its bound, the despike is taken
+            # back there (scaled by a smooth cover of what is past, until none is)
+            for _ in range(8):
+                over = despike_overreach(body.moved(shift + e_sp, carry), plan, body) & \
+                    np.any(np.abs(e_sp) > 0.0, axis=1)
+                if not over.any():
+                    break
+                e_sp = e_sp * (1.0 - np.clip(smooth_cover(over.astype(float), 3), 0.0, 1.0))[:, None]
+                e_sp[over] = 0.0
             shift += e_sp
             if p.get("vertical", True):
                 # what the despike's solve left over the cap (it stops where the box cannot meet the kinks): lowered
