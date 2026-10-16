@@ -484,7 +484,8 @@ class MeasureTest(unittest.TestCase):
             want = math.degrees(np.sum(np.cumsum(fy * d / h ** 2) / FPS) / FPS)
             self.assertAlmostEqual(run["tilt_deg"], want, delta=0.01 + 0.01 * want, msg=str(a_up))
             if a_up:
-                np.testing.assert_allclose(fy, G + a_up, atol=1e-6)        # (the push is the weight and the lift)
+                # (the push is the weight and the lift of the COM: all but the standing foot and part of its shank rise)
+                self.assertTrue(np.all(fy > G + 0.9 * a_up) and np.all(fy < G + a_up + 1e-9))
 
     def test_air_horizontal_acceleration(self):
         """in the air nothing pushes the body sideways: a hop with the body drifting at a steady speed has no horizontal
