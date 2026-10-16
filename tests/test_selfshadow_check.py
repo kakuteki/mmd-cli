@@ -24,12 +24,14 @@ if np is not None:
 SIZE = (960, 540)
 
 
-def floor_points(view):
-    """the floor point (y = 0) of every pixel, by the rays of mv_world (not the projection the measures use): x, z, hit"""
+def floor_points(view, normal=(0.0, 1.0, 0.0)):
+    """the point on the floor (the plane through the origin with this normal) of every pixel, by the rays of mv_world (not
+    the projection the measures use): points, hit"""
     d = view.rays()
-    t = -view.eye[1] / d[..., 1]
-    hit = (d[..., 1] < 0) & (t > 0)
-    return view.eye[0] + t * d[..., 0], view.eye[2] + t * d[..., 2], hit
+    n = np.asarray(normal, dtype=np.float64)
+    t = -float(view.eye @ n) / (d @ n)
+    hit = (t > 0) & np.isfinite(t)
+    return view.eye[None, None, :] + t[..., None] * d, hit
 
 
 def save(path, grey, alpha):
@@ -47,7 +49,7 @@ class ProbeTest(unittest.TestCase):
         self.doc = ssc.probe(self.out, 10.0, SIZE)
 
     def test_the_models_read_back_as_pmx(self):
-        for name, faces in (("ramp.pmx", 3), ("fan.pmx", 2 * len(ssc.FAN_ANGLES))):
+        for name, faces in (("ramp.pmx", 2 * 3), ("fan.pmx", 2 * 2 * len(ssc.FAN_ANGLES))):     # both windings
             model = pmx.load(os.path.join(self.out, name))
             self.assertEqual(model.counts["faces"], faces, name)
             self.assertEqual((model.counts["materials"], model.counts["bones"], model.counts["display_frames"]), (1, 1, 2))
@@ -91,24 +93,27 @@ class ContactTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.out, True)
         self.doc = ssc.probe(self.out, 10.0, SIZE)
 
-    def ramp_picture(self, spread, gap=0.0, least=0.03):
+    def ramp_picture(self, spread, gap=0.0, least=0.03, part="ramp"):
         """the floor of the ramp's picture with a shadow whose edge is a Gaussian of spread x distance (floor units, at
-        least `least`) and which starts `gap` past the wall's foot"""
-        view = ssc._view(self.doc, "ramp", SIZE)
-        X, Z, hit = floor_points(view)
-        L, t, l = ssc.frame_axes()
-        u = X * t[0] + Z * t[2]
-        w = X * l[0] + Z * l[2]
-        ramp = self.doc["ramp"]
+        least `least`) and which starts `gap` past the wall's foot.  The distance and the edge are worked out here from
+        the light and the wall: the top edge at u is (u - u0) H / (u1 - u0) up, its ray down the light meets the floor"""
+        view = ssc._view(self.doc, part, SIZE)
+        ramp = self.doc[part]
+        t, wa, nf = ssc.floor_axes(ramp["tilt"])
+        P, hit = floor_points(view, nf)
+        u, w = P @ t, P @ wa
         on = hit & (u >= ramp["floor_u"][0]) & (u <= ramp["floor_u"][1]) & (w >= ramp["floor_w"][0]) & (w <= ramp["floor_w"][1])
         H, u0, u1 = ramp["height"], ramp["from"], ramp["to"]
-        k = math.hypot(L[0], L[2]) / -L[1] * H / (u1 - u0)
-        d = np.clip((u - u0) * H / (u1 - u0), 0, None) / -L[1]
-        sigma = np.maximum(least, spread * d)
-        signed = (w - k * (u - u0)) / math.hypot(1.0, k)
+        L = ssc.unit(ssc.LIGHT)
+        top = np.clip((u - u0) * H / (u1 - u0), 0, None)
+        along = -nf[1] / float(nf @ L)           # the light's length from the top edge to the floor per unit of height (n.t = 0)
+        s = top * along
+        kk = (H / (u1 - u0)) * (wa[1] + along * float(L @ wa))     # where it meets the floor: w = kk (u - u0)
+        sigma = np.maximum(least, spread * s)
+        signed = (w - kk * (u - u0)) / math.hypot(1.0, kk)
         grey = ssc._phi(signed / sigma)
         grey = np.where((w < gap) | (u < u0) | (u > u1), 1.0, grey)
-        path = os.path.join(self.out, "ramp_%g_%g.png" % (spread, gap))
+        path = os.path.join(self.out, "%s_%g_%g.png" % (part, spread, gap))
         save(path, np.where(on, grey, 0.0), np.where(on, 255, 0).astype(np.uint8))
         return path
 
@@ -124,6 +129,19 @@ class ContactTest(unittest.TestCase):
         # the light's own spread on the floor: radians(5) x the stretch
         self.assertAlmostEqual(got["light_per_distance"], math.radians(5.0) * got["stretch"], places=3)
         self.assertGreater(got["stretch"], 1.0)
+
+    def test_on_a_floor_that_faces_the_light_too(self):
+        got = ssc.contact(self.doc, self.ramp_picture(0.06, gap=0.1, part="ramp_tilt"), part="ramp_tilt")
+        self.assertTrue(got["placed"])
+        self.assertAlmostEqual(got["tilt"], ssc.FACING, places=2)
+        rows = [r for r in got["rows"] if r["distance"] >= 1.0]
+        self.assertGreater(len(rows), 10)
+        for r in rows:
+            self.assertAlmostEqual(r["sigma"], 0.06 * r["distance"], delta=0.06 * 0.06 * r["distance"] + 0.006, msg=r)
+        self.assertAlmostEqual(got["lit_gap_median"], 0.1, delta=0.03)
+        # the floor faces the light: what goes across the light is not stretched on it (the edge is across the light too)
+        _, _, nf = ssc.floor_axes(ssc.FACING)
+        np.testing.assert_allclose(nf, -ssc.unit(ssc.LIGHT), atol=1e-9)
 
     def test_a_softer_edge_reads_softer(self):
         hard = ssc.contact(self.doc, self.ramp_picture(0.02))

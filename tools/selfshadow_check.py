@@ -1,15 +1,17 @@
 """selfshadow_check: measures of the soft self shadow of tools/mme_shadow.py (through MME) that do not go through its sums.
 
     python tools/selfshadow_check.py probe OUTDIR [--height 10] [--size 1920x1080]
-    python tools/selfshadow_check.py contact PROBE.json RAMP.png [--blur 5] [--min-blur 0.05]
+    python tools/selfshadow_check.py contact PROBE.json RAMP.png [--part ramp|ramp_tilt] [--blur 5] [--min-blur 0.05]
     python tools/selfshadow_check.py fan PROBE.json FAN.png
     python tools/selfshadow_check.py acne SHARP.avi SOFT.avi [--far 60] [--box X0,Y0,X1,Y1]
     python tools/selfshadow_check.py seen SHADED.avi LIT.avi [--sub 16] [--shutter 0.5] [--box X0,Y0,X1,Y1]
 
-* probe: two models of plain geometry (PMX 2.0, written here) under MMD's default light (-0.5, -1, 0.5), each with a
-  camera (VMD) that sees it, and PROBE.json with what the measures need.  The ramp: a floor and a thin wall standing on
+* probe: two models of plain geometry (PMX 2.0, written here; every triangle in both windings, as MMD's shadow map culls
+  the faces turned from the light) under MMD's default light (-0.5, -1, 0.5), each with a camera (VMD) that sees it, and
+  PROBE.json with what the measures need.  The ramp: a floor and a thin wall standing on
   it across the light, its top edge rising from the floor at one end to --height at the other, so that its shadow on the
-  floor starts where it touches the floor and its edge is cast from ever further up.  The fan: square plates in a row,
+  floor starts where it touches the floor and its edge is cast from ever further up; ramp_tilt: the same wall on a floor
+  turned to face the light (a floor that faces the light cannot shadow itself; the level floor is 35 degrees from it).  The fan: square plates in a row,
   each turned from facing the light by 0 to 75 degrees, with nothing between them and the light.
 * contact: on a picture of the ramp drawn with an effect of tools/mme_shadow.py --debug (the shadow alone, grey), along
   the wall: the spread of the edge of its shadow on the floor (the standard deviation of a Gaussian edge fitted across it,
@@ -81,6 +83,23 @@ def world(u, y, w, light=LIGHT):
     return u * t + np.array([0.0, y, 0.0]) + w * l
 
 
+FACING = math.degrees(math.atan2(math.hypot(LIGHT[0], LIGHT[2]), -LIGHT[1]))   # the tilt that turns the floor to the light
+
+
+def floor_axes(tilt, light=LIGHT):
+    """(t, w, n): the floor's directions across the light (u) and along it (w, rising by `tilt` degrees toward the side the
+    light goes to) and its normal (up, turned toward the light by `tilt`; FACING turns it to face the light)"""
+    _, t, l = frame_axes(light)
+    a = math.radians(tilt)
+    w = math.cos(a) * l + math.sin(a) * np.array([0.0, 1.0, 0.0])
+    return t, w, unit(np.cross(w, t))
+
+
+def floor_point(u, w, tilt=0.0, light=LIGHT):
+    t, wa, _ = floor_axes(tilt, light)
+    return u * t + w * wa
+
+
 # ---- PMX 2.0 ----------------------------------------------------------------------------------
 
 def _text(s):
@@ -117,10 +136,17 @@ def pmx_bytes(name, vertices, triangles):
     return b"".join(out)
 
 
+def _both(triangles, tris):
+    """each triangle in both windings: MMD draws its self shadow map with the faces turned away from the light culled,
+    whatever the material's both-sides flag (a single wall of one winding cast no shadow at all, review_softshadow_mme)"""
+    for a, b, c in tris:
+        triangles.extend([(a, b, c), (a, c, b)])
+
+
 def _quad(vertices, triangles, corners, normal):
     k = len(vertices)
     vertices.extend((tuple(map(float, c)), tuple(map(float, normal))) for c in corners)
-    triangles.extend([(k, k + 1, k + 2), (k, k + 2, k + 3)])
+    _both(triangles, [(k, k + 1, k + 2), (k, k + 2, k + 3)])
 
 
 def plate_normal(alpha, light=LIGHT):
@@ -139,15 +165,16 @@ def plate_corners(index, alpha, light=LIGHT, half=PLATE_HALF):
                     centre - half * t + half * a2], n
 
 
-def ramp_model(height):
+def ramp_model(height, tilt=0.0):
     L, t, l = frame_axes()
+    _, _, n = floor_axes(tilt)
     vertices, triangles = [], []
-    _quad(vertices, triangles, [world(FLOOR_U[0], 0, FLOOR_W[0]), world(FLOOR_U[1], 0, FLOOR_W[0]),
-                                world(FLOOR_U[1], 0, FLOOR_W[1]), world(FLOOR_U[0], 0, FLOOR_W[1])], (0.0, 1.0, 0.0))
+    _quad(vertices, triangles, [floor_point(FLOOR_U[0], FLOOR_W[0], tilt), floor_point(FLOOR_U[1], FLOOR_W[0], tilt),
+                                floor_point(FLOOR_U[1], FLOOR_W[1], tilt), floor_point(FLOOR_U[0], FLOOR_W[1], tilt)], n)
     k = len(vertices)
     vertices.extend((tuple(map(float, p)), tuple(map(float, -l)))
                     for p in (world(RAMP_FROM, 0, 0), world(RAMP_TO, 0, 0), world(RAMP_TO, height, 0)))
-    triangles.append((k, k + 1, k + 2))
+    _both(triangles, [(k, k + 1, k + 2)])
     return vertices, triangles
 
 
@@ -187,14 +214,15 @@ def probe(outdir, height=10.0, size=(1920, 1080)):
     outdir = os.path.abspath(outdir)
     os.makedirs(outdir, exist_ok=True)
     doc = {"light": list(LIGHT), "size": list(size), "frame": 0}
-    v, tr = ramp_model(height)
-    with open(os.path.join(outdir, "ramp.pmx"), "wb") as f:
-        f.write(pmx_bytes("probe ramp", v, tr))
-    pts = [p for p, _ in v]
-    cam = _camera_for(pts, world(-1.0, 0.0, 3.5), size)
-    _write_camera(os.path.join(outdir, "ramp_cam.vmd"), cam)
-    doc["ramp"] = {"model": "ramp.pmx", "camera": "ramp_cam.vmd", "camera_state": cam, "height": height,
-                   "from": RAMP_FROM, "to": RAMP_TO, "floor_u": list(FLOOR_U), "floor_w": list(FLOOR_W)}
+    for part, tilt in (("ramp", 0.0), ("ramp_tilt", FACING)):
+        v, tr = ramp_model(height, tilt)
+        with open(os.path.join(outdir, part + ".pmx"), "wb") as f:
+            f.write(pmx_bytes("probe " + part, v, tr))
+        # the floor turned to the light is seen from higher up (at 50 degrees it would be seen 75 degrees from its normal)
+        cam = _camera_for([p for p, _ in v], floor_point(-1.0, 3.5, tilt), size, down=50.0 if tilt == 0 else 75.0)
+        _write_camera(os.path.join(outdir, part + "_cam.vmd"), cam)
+        doc[part] = {"model": part + ".pmx", "camera": part + "_cam.vmd", "camera_state": cam, "height": height,
+                     "from": RAMP_FROM, "to": RAMP_TO, "floor_u": list(FLOOR_U), "floor_w": list(FLOOR_W), "tilt": tilt}
     v, tr = fan_model()
     with open(os.path.join(outdir, "fan.pmx"), "wb") as f:
         f.write(pmx_bytes("probe fan", v, tr))
@@ -273,27 +301,38 @@ def fit_edge(tau, values):
     return best[0], best[1], math.sqrt(best[2])
 
 
-def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5):
+def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5, part="ramp"):
     shadow, alpha = read_png(img_path)
-    view = _view(doc, "ramp", shadow.shape[::-1])
-    ramp = doc["ramp"]
-    L, t, l = frame_axes(doc["light"])
+    view = _view(doc, part, shadow.shape[::-1])
+    ramp = doc[part]
+    tilt = float(ramp.get("tilt", 0.0))
+    L = unit(doc["light"])
+    t, wa, nf = floor_axes(tilt, doc["light"])
     H, u0, u1 = ramp["height"], ramp["from"], ramp["to"]
-    k = math.hypot(L[0], L[2]) / -L[1] * H / (u1 - u0)          # the edge on the floor: w = k (u - u0)
+
+    def boundary(u):
+        """(w on the floor, distance along the light) where the light past the wall's top edge at u meets the floor"""
+        e = u * t + (u - u0) * H / (u1 - u0) * np.array([0.0, 1.0, 0.0])
+        s_ = -float(nf @ e) / float(nf @ L)
+        return float((e + s_ * L) @ wa), s_
+    k = boundary(u1)[0] / (u1 - u0)                              # the edge on the floor: w = k (u - u0)
     n2 = np.array([-k, 1.0]) / math.hypot(1.0, k)                # its normal on the floor (u, w), out of the shadow
-    n_world = n2[0] * t + n2[1] * l
+    n_world = n2[0] * t + n2[1] * wa
     edge = unit(t + np.array([0.0, H / (u1 - u0), 0.0]))
     m = unit(np.cross(L, edge))
     stretch = 1.0 / abs(float(n_world @ m))
     theta = math.radians(blur)
+
+    def fp(a, b):
+        return floor_point(a, b, tilt, doc["light"])
     # the floor is where it should be on the picture: opaque just inside its corners, clear just outside
-    inside = [world(a, 0, b) for a, b in ((ramp["floor_u"][0] + 0.5, ramp["floor_w"][0] + 0.5),
-                                         (ramp["floor_u"][1] - 0.5, ramp["floor_w"][0] + 0.5),
-                                         (ramp["floor_u"][1] - 0.5, ramp["floor_w"][1] - 0.5),
-                                         (ramp["floor_u"][0] + 0.5, ramp["floor_w"][1] - 0.5))]
-    outside = [world(a, 0, b) for a, b in ((ramp["floor_u"][0] - 0.5, ramp["floor_w"][1] - 3.0),
-                                          (ramp["floor_u"][1] + 0.5, ramp["floor_w"][1] - 3.0),
-                                          (0.0, ramp["floor_w"][1] + 0.5))]
+    inside = [fp(a, b) for a, b in ((ramp["floor_u"][0] + 0.5, ramp["floor_w"][0] + 0.5),
+                                    (ramp["floor_u"][1] - 0.5, ramp["floor_w"][0] + 0.5),
+                                    (ramp["floor_u"][1] - 0.5, ramp["floor_w"][1] - 0.5),
+                                    (ramp["floor_u"][0] + 0.5, ramp["floor_w"][1] - 0.5))]
+    outside = [fp(a, b) for a, b in ((ramp["floor_u"][0] - 0.5, ramp["floor_w"][1] - 3.0),
+                                     (ramp["floor_u"][1] + 0.5, ramp["floor_w"][1] - 3.0),
+                                     (0.0, ramp["floor_w"][1] + 0.5))]
     ui, vi, _ = view.project(inside)
     uo, vo, _ = view.project(outside)
     placed = bool((sample(alpha, ui, vi) > 250).all() and (np.nan_to_num(sample(alpha, uo, vo), nan=0.0) < 5).all())
@@ -301,19 +340,18 @@ def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5):
     across = math.hypot(1.0, k)          # a profile along w at one u crosses the edge this many times slower than along n
     for u in np.arange(u0 + 0.5, u1, step):
         h = (u - u0) * H / (u1 - u0)
-        d = h / -L[1]                                            # from the top edge down the light to the floor
+        wb, d = boundary(u)                                      # d: from the top edge down the light to the floor
         sigma_phys = theta * d * stretch
         sigma_floor = min_blur * stretch
         spread = max(sigma_phys, sigma_floor)
         if u > u1 - 3.0 * spread * across - 0.3:
             continue                                             # the shadow of the wall's end reaches here
-        wb = k * (u - u0)
         reach = max(0.4, 4.0 * spread) * across
         lo = -min(reach, wb - 0.3)                               # clear of the wall's foot (its lit gap)
         if lo > -2.0 * spread * across:
             continue                                             # the shadow is narrower than its own edge here
         tau = np.linspace(lo, reach, 161)
-        pts = [world(u, 0, wb + x, doc["light"]) for x in tau]
+        pts = [fp(u, wb + x) for x in tau]
         px, py, _ = view.project(pts)
         vals = sample(shadow, px, py)
         c, s, rms = fit_edge(tau, vals)
@@ -323,7 +361,7 @@ def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5):
                "ratio": round(s / sigma_phys, 3) if sigma_phys > 0 else None, "centre": round(c, 4), "fit_rms": round(rms, 4)}
         if wb > 1.0:                                             # the lit gap at the wall's foot
             ws = np.arange(0.01, 0.8, 0.005)
-            gu, gv, _ = view.project([world(u, 0, w, doc["light"]) for w in ws])
+            gu, gv, _ = view.project([fp(u, w) for w in ws])
             g = sample(shadow, gu, gv)
             dark = np.nonzero(g < 0.5)[0]
             row["lit_gap"] = round(float(ws[dark[0]]), 3) if dark.size else None
@@ -333,7 +371,7 @@ def contact(doc, img_path, blur=5.0, min_blur=0.05, step=0.5):
     near = [r for r in rows if r["distance"] < 1.0]
     gaps = [r["lit_gap"] for r in rows if r.get("lit_gap") is not None]
     fit = np.polyfit([r["distance"] for r in far], [r["sigma"] for r in far], 1) if len(far) >= 3 else None
-    return {"placed": placed, "stretch": round(stretch, 4), "rows": rows,
+    return {"placed": placed, "tilt": round(tilt, 3), "stretch": round(stretch, 4), "rows": rows,
             "ratio_median_far": round(float(np.median([r["ratio"] for r in far])), 3) if far else None,
             "sigma_per_distance": round(float(fit[0]), 5) if fit is not None else None,
             "sigma_at_contact": round(float(fit[1]), 4) if fit is not None else None,
@@ -593,6 +631,8 @@ def main(argv=None):
     s = sub.add_parser("contact")
     s.add_argument("probe")
     s.add_argument("picture")
+    s.add_argument("--part", default="ramp", choices=("ramp", "ramp_tilt"),
+                   help="the ramp on the level floor, or the one whose floor faces the light (ramp_tilt)")
     s.add_argument("--blur", type=float, default=5.0)
     s.add_argument("--min-blur", type=float, default=0.05)
     s = sub.add_parser("fan")
@@ -616,7 +656,8 @@ def main(argv=None):
         elif a.command in ("contact", "fan"):
             with open(a.probe, encoding="utf-8") as f:
                 doc = json.load(f)
-            out = contact(doc, a.picture, a.blur, a.min_blur) if a.command == "contact" else fan(doc, a.picture)
+            out = (contact(doc, a.picture, a.blur, a.min_blur, part=a.part) if a.command == "contact"
+                   else fan(doc, a.picture))
         elif a.command == "acne":
             out = acne(a.sharp, a.soft, a.far, _box(a.box))
         else:
