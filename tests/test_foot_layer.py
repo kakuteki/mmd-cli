@@ -1518,37 +1518,48 @@ class HoverSupportTest(unittest.TestCase):
         f_in, f_out, out, plan = run_layer(*keys, frames=10)
         self.assertEqual(plan["左"]["sink_info"]["runs"], [])
 
-    def test_a_foot_gliding_over_the_floor_is_not_sunk_onto_it(self):
-        # both feet 1.5 cm over the floor for 10 frames, the pelvis held, but the lower one travels 30 cm/s sideways (a
-        # step's swing skimming the floor, as the landing's own test has it): lowering the figure would drag it along the
-        # floor (the song's sunk runs slid their toe at 50-200 cm/s, a05's slides 10 cm and longer 21.9 -> 29.5 a minute,
-        # people 11.3 [7.7, 16.8]); the same hover standing still is lowered (test_a_figure_hovering_...)
+    def glide_keys(self, step, first=8, last=21, up=None):
+        """both feet 1.5 cm over the floor (frames `up`, HOVER when not given), the pelvis held, the lower (left) one
+        travelling `step` units a frame sideways from frame `first` to `last`"""
+        up = self.HOVER if up is None else up
         keys = []
         for t in range(self.F):
-            h = 0.1875 if t in self.HOVER else 0.0
-            x = 0.125 * (min(max(t, 8), 21) - 8)
+            h = 0.1875 if t in up else 0.0
+            x = step * (min(max(t, first), last) - first)
             keys += [key("左足ＩＫ", t, position=(x, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
                      key("センター", t, position=(0, -1.2, 0))]
+        return keys
+
+    def test_a_foot_gliding_over_the_floor_is_not_sunk_onto_it(self):
+        # both feet 1.5 cm over the floor for 10 frames, the pelvis held, but the lower one travels 45 cm/s sideways (a
+        # step's swing skimming the floor: the layer takes a pointed foot as on the trace model's toe only below 30 cm/s,
+        # TOE_SLIDE): lowering the figure would drag it along the floor (the song's sunk runs slid their toe at 50-200
+        # cm/s, a05's slides 10 cm and longer 21.9 -> 29.5 a minute, people 11.3 [7.7, 16.8]); the same hover standing
+        # still is lowered (test_a_figure_hovering_...)
+        keys = self.glide_keys(0.1875)
         f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
         self.assertEqual(plan["左"]["sink_info"]["runs"], [])
         for t in range(12, 18):
             self.assertGreater(float(f_out["左"]["low"][t]) - 0.111, 0.15)        # left over the floor as the dance has it
-        # hover_glide (--hover-glide) sets the speed: set over the foot's 30 cm/s, it lowers the gliding foot onto the floor
+        # hover_glide (--hover-glide) sets the speed: set over the foot's 45 cm/s, it lowers the gliding foot onto the floor
         f_in, f_out, out, plan = run_layer(*keys, frames=self.F, hover_glide=1000.0)
         self.assertEqual(len(plan["左"]["sink_info"]["runs"]), 1)
         for t in range(13, 17):
             self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
 
+    def test_a_toe_drifting_slowly_is_lowered(self):
+        # the same hover, the lower foot drifting 20 cm/s (0.7 cm a frame: a toe on the floor slides that slowly, people's
+        # contact steps slip faster than 20 cm/s in 5 % of them): lowered onto the floor like a held one
+        f_in, f_out, out, plan = run_layer(*self.glide_keys(0.0833), frames=self.F)
+        self.assertEqual(len(plan["左"]["sink_info"]["runs"]), 1)
+        for t in range(13, 17):
+            self.assertLess(abs(float(f_out["左"]["low"][t]) - 0.111), 0.02)
+
     def test_only_the_held_part_of_a_hover_is_lowered(self):
-        # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 14 and then travelling 30 cm/s (the song's
+        # both feet 1.5 cm up from frame 4 to 27, the lower one still until frame 14 and then travelling 45 cm/s (the song's
         # 26.0 s: the toe held for 12 frames, then sliding off at 80-200 cm/s): the held part is lowered onto the floor, the
         # travelling part comes back up to the dance's height once the sink has eased out
-        keys = []
-        for t in range(self.F):
-            h = 0.1875 if 4 <= t <= 27 else 0.0
-            x = 0.125 * max(0, t - 14)
-            keys += [key("左足ＩＫ", t, position=(x, h, 0)), key("右足ＩＫ", t, position=(0, h + (0.2 if h else 0.0), 0)),
-                     key("センター", t, position=(0, -1.2, 0))]
+        keys = self.glide_keys(0.1875, first=14, last=self.F, up=range(4, 28))
         f_in, f_out, out, plan = run_layer(*keys, frames=self.F)
         rr = plan["左"]["sink_info"]["runs"]
         self.assertEqual(len(rr), 1)

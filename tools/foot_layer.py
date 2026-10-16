@@ -694,8 +694,8 @@ def trace_floor(shoe):
 # faster than HOVER_ACC_BOUND on any frame of it (a hop whose take-off and landing in the run flatten the fit), keeps
 # its height, and so does a run shorter than HOVER_MIN_RUN (a hover of a frame or two between steps: people have 1.4 %
 # of such frames, runs of 6 frames or more not at all).  Only the frames where the lower shoe is held are taken: where
-# it travels along the floor faster than HOVER_GLIDE it is a step's swing skimming the floor (the landing does not
-# press such a foot onto it either), and the sink would drag the toe along the floor.
+# it travels along the floor faster than HOVER_GLIDE it is a step's swing skimming the floor (the trace model's toe
+# would not have stood there either), and the sink would drag the toe along the floor.
 HOVER_MAX = 0.5                 # units over the trace's floor (4 cm, a05 s11's band): the lower shoe this low counts as hovering
 HOVER_FLIGHT_ACC = 61.25        # units/s^2 down (half of gravity): a run whose pelvis falls faster is a flight
 HOVER_MIN_RUN = 4               # frames: a shorter hover is left as it is
@@ -718,13 +718,14 @@ HOVER_ACC_BOUND = 122.0         # units/s^2: the pelvis's downward acceleration 
                                 # units/s^2 on three frames, yet flatter than half of gravity over the run, its take-off
                                 # and landing in it; it had been lowered onto the floor)
 HOVER_ACC_TOL = 0.5             # units/s^2: past a bound by more than this (as the balance layer's report counts)
-HOVER_GLIDE = 15.0              # cm/s: a frame whose lower shoe's forefoot moves along the floor faster than this is a step's
-                                # swing skimming the floor, not a foot held over it (the landing's SKIM_SPEED, the top of its
-                                # band).  Sunk, such frames dragged the toe along the floor (before the review of 2026-10-17
-                                # the toe of 36 of the song's 46 sunk runs slid faster than this, the run's median, up to
-                                # 50-200 cm/s: tools/sink_check.py): a05's slides of 10 cm and longer 21.9 -> 29.5 a minute,
-                                # the slide path 706 -> 899 cm a minute (people 11.3 [7.7, 16.8] and 455 [352, 528],
-                                # FineDance's near kinds)
+HOVER_GLIDE = TOE_SLIDE[0]      # cm/s (30): a frame whose lower shoe's forefoot moves along the floor faster than this is a
+                                # step's swing skimming the floor, not a foot held over it: the speed under which the layer
+                                # takes a pointed foot as standing on the trace model's toe (TOE_SLIDE: a toe on the floor
+                                # stays or slides slowly).  Sunk, such frames dragged the toe along the floor (before the
+                                # review of 2026-10-17 the toe of 28 of the song's 46 sunk runs slid faster than this, the
+                                # run's median, up to 50-200 cm/s: tools/sink_check.py): a05's slides of 10 cm and longer
+                                # 21.9 -> 29.5 a minute, the slide path 706 -> 899 cm a minute (people 11.3 [7.7, 16.8] and
+                                # 455 [352, 528], FineDance's near kinds)
 
 
 def hover_runs(e, pelvis_y, on_floor=ON_FLOOR, low_max=HOVER_MAX, flight_acc=HOVER_FLIGHT_ACC, min_run=HOVER_MIN_RUN,
@@ -1785,8 +1786,9 @@ def main(argv=None):
                          "off): left as the dance has it")
     ap.add_argument("--hover-glide", type=float, default=HOVER_GLIDE, metavar="CM_S",
                     help="the sink takes only the frames whose lower shoe moves along the floor slower than this (cm/s, "
-                         "%(default)s: the landing's skim); a step's swing skimming the floor faster is left over it, "
-                         "lowered it would slide along the floor (a large value lowers those too)")
+                         "%(default)s: TOE_SLIDE's, under which a pointed foot is taken to stand on the trace model's toe); "
+                         "a step's swing skimming the floor faster is left over it, lowered it would slide along the floor "
+                         "(a large value lowers those too)")
     ap.add_argument("--measure-only", action="store_true")
     args = ap.parse_args(argv)
     t0 = time.time()
