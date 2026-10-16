@@ -368,6 +368,43 @@ class FlightTest(unittest.TestCase):
         d = world_y(out, F, "センター") - world_y(m, F, "センター")
         self.assertLess(float(np.abs(d).max()), 0.05)                                 # under 4 mm
 
+    def test_the_feet_of_a_flight_clear_the_floor(self):
+        # a low hop: both feet 0.8 cm up over frames 20-27, travelling: in the flight both shoes are 1.6 cm and more up
+        # (under that a shoe stands as the skirt's bound counts it, and the body is falling by gravity)
+        F, a, b = 60, 20, 27
+        m = self.hop(F, a, b, lift=0.1)
+        out, plan = run(m)
+        sh = shoes(out, F)
+        for s in SIDES:
+            self.assertGreater(float(sh[s]["low"][a:b + 1].min()), 1.6)
+
+    def test_a_foot_eased_down_does_not_stand_where_the_dance_falls_fast(self):
+        # the right foot held 2 cm up over frames 10-29 (brought down), then both feet off and travelling over frames 30-32
+        # while the dance's pelvis falls at 200 units/s^2 (the air, faster than the bound): the easing of the right foot's
+        # lowering does not bring its shoe under 1.6 cm there
+        F = 50
+        acc = np.zeros(F)
+        acc[30:33] = -200.0
+        acc[33:36] = 200.0
+        y = np.zeros(F)
+        for t in range(2, F):
+            y[t] = 2.0 * y[t - 1] - y[t - 2] + acc[t - 1] / (FPS * FPS)
+
+        def left(t):
+            return (0.0, 0.375 if 30 <= t <= 32 else 0.0, 0.3 * min(max(t - 29, 0), 3)), None
+
+        def right(t):
+            if 10 <= t <= 29:
+                return (0.0, 0.25, 0.0), None
+            if 30 <= t <= 32:
+                return (0.0, 0.25, 0.3 * (t - 29)), None
+            return (0.0, 0.0, 0.9 if t > 32 else 0.0), None
+        m = dance(F, centre=lambda t: (0.0, BENT + float(y[t]), 0.0), left=left, right=right)
+        self.assertGreater(float(down_acc(world_y(m, F, "センター"))[30:33].max()), 150.0)    # (as built)
+        out, plan = run(m)
+        self.assertLess(float(np.abs(shoes(out, F)["右"]["low"][10:30]).max()), 0.1)          # brought down
+        self.assertGreater(float(shoes(out, F)["右"]["low"][30:33].min()), 1.6)
+
     def test_a_hover_with_one_foot_still_becomes_a_step_on_it(self):
         # both feet 2 cm up over frames 20-27, the left still, the right travelling 0.3 units a frame: the left is the
         # standing foot (brought onto the floor), no hop is made

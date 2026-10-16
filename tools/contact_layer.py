@@ -125,6 +125,8 @@ PLANT_SPEED = 30.0              # cm/s: a standing foot's touching part moving s
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
+AIR_CLEAR = 0.2 + 0.0125        # units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the
+                                # balance layer's support, tools/sink_check.py's SUPPORT_CM)
 CARRY_RAMP = 2                  # frames: a foot leaving the floor goes with the body's change by half on its first frame off
                                 # it and fully from the second (the same before a landing)
 SUB_NEAR = 0.25                 # units: the intervals checked between the frames (either end this near the floor)
@@ -553,9 +555,10 @@ def layer(model, rig, shoe, motion, params=None):
             either = short[:-1] | short[1:]
             sl[:-1] = np.where(either[:, None], gm, sl[:-1])
         slip[s] = sl
-        v = np.linalg.norm(sl, axis=1) * UNIT_CM * FPS
+        v = np.linalg.norm(sl, axis=1) * UNIT_CM * FPS                  # (the step to the next frame)
         if F > 1:
             v[-1] = v[-2]
+            v[1:] = np.minimum(v[1:], v[:-1])                           # the smaller of the steps into and out of a frame
         speed[s] = v
         rise[s] = step_min(low_j[s]) * UNIT_CM * FPS
     # 1. the plan
@@ -680,6 +683,13 @@ def layer(model, rig, shoe, motion, params=None):
             if not pushed:
                 break
     dy_e = {s: eased_lowering(dy[s], stance[s], low[s]) for s in SIDES}
+    # (a frame the dance falls through faster than the bound is the air: the easing does not bring a shoe down into the
+    # band the skirt's bound counts as standing there)
+    fast_fall = fall > FALL_BOUND + FALL_TOL
+    for s in SIDES:
+        floor_at = np.minimum(np.maximum(low[s], 0.0), AIR_CLEAR)
+        keep = fast_fall & ~stance[s] & (low[s] + dy_e[s] < floor_at)
+        dy_e[s] = np.where(keep, floor_at - low[s], dy_e[s])
     # 4. plant: a standing foot that bears weight does not travel
     corr, plant_rows = {}, {}
     for s in SIDES:
@@ -718,14 +728,21 @@ def layer(model, rig, shoe, motion, params=None):
             k = np.minimum(left, right).astype(float)
         away[s] = np.minimum(k / CARRY_RAMP, 1.0)
 
+    flying_frames = np.zeros(F, dtype=bool)
+    for a, b in flights:
+        flying_frames[a:b + 1] = True
+
     def offsets_of(ch):
         """the feet's offsets with the change ch of the pelvis: a foot in the air goes with the body (the leg keeps the
         dance's shape), from half on its first frame off the floor (and its last before landing) to all, never into the
-        floor"""
+        floor; in a flight both shoes clear the floor by AIR_CLEAR (a flight is the air: the skirt's bound counts a shoe
+        lower than that as standing)"""
         cr, offs = {}, {}
         for s in SIDES:
             cr[s] = np.where(~stance[s], away[s] * ch, 0.0)
             cr[s] = np.maximum(cr[s], -np.maximum(low[s] + dy_e[s] - FL.PEN_TOL, 0.0))
+            h = low[s] + dy_e[s] + cr[s]
+            cr[s] = np.where(flying_frames & (h < AIR_CLEAR), cr[s] + (AIR_CLEAR - h), cr[s])
             offs[s] = lift[s] + np.stack([np.zeros(F), cr[s], np.zeros(F)], 1)
         return offs, cr
     wrows, resid = [], []
@@ -840,10 +857,10 @@ def untouched(before, after, written):
             "morphs_identical": [(k.name, k.frame, k.weight) for k in before.morphs] == [(k.name, k.frame, k.weight) for k in after.morphs]}
 
 
-def pelvis_report(rig, before, after, stance, F):
+def pelvis_report(rig, before, after, stance, F, drop=None, change=None):
     """the pelvis (下半身 and センター) before and after: the largest downward acceleration on the floor's frames (a foot
     standing in the plan) and the frames past FALL_BOUND there (after past it and faster than before by more than
-    FALL_TOL), the change of height"""
+    FALL_TOL) with what the lowering (drop) and the flight's change added there, the change of height"""
     out = {}
     ys = {}
     for tag, m in (("before", before), ("after", after)):
@@ -857,6 +874,15 @@ def pelvis_report(rig, before, after, stance, F):
     past = stance & (fa > FALL_BOUND + FALL_TOL) & (fa > fb + FALL_TOL)
     out["floor_past_bound_after"] = int(past.sum())
     out["floor_past_bound_frames"] = [int(t) for t in np.flatnonzero(past)[:50]]
+    if drop is not None and change is not None:
+        rows = []
+        for t in np.flatnonzero(past)[:50]:
+            if 0 < t < F - 1:
+                dd = (drop[t + 1] - 2.0 * drop[t] + drop[t - 1]) * FPS * FPS
+                dc = -(change[t + 1] - 2.0 * change[t] + change[t - 1]) * FPS * FPS
+                rows.append({"frame": int(t), "s": _r(t / FPS, 2), "before": _r(fb[t], 1), "after": _r(fa[t], 1),
+                             "by_drop": _r(dd, 1), "by_flight": _r(dc, 1)})
+        out["floor_past_bound_rows"] = rows
     d = ys["after"]["センター"] - ys["before"]["センター"]
     out["centre_change_cm"] = {"max_up": _r(float(d.max()) * UNIT_CM, 2), "max_down": _r(float(-d.min()) * UNIT_CM, 2),
                                "frames": int((np.abs(d) > 1e-6).sum())}
@@ -911,7 +937,7 @@ def report_of(plan, rig, before, after, F):
     rep["flight"]["count"] = len(rep["flight"]["flights"])
     rep["flight"]["carry_max_cm"] = {TAGS[s]: _r(float(sides[s]["carry"].max()) * UNIT_CM, 2) for s in SIDES}
     stance = sides["左"]["stance"] | sides["右"]["stance"]
-    rep["pelvis"] = pelvis_report(rig, before, after, stance, F)
+    rep["pelvis"] = pelvis_report(rig, before, after, stance, F, plan["drop"], plan["change"])
     rep["between_frames"] = {TAGS[s]: {"raised_frames": int((plan["sub_raise"][s] > 0.0).sum()),
                                        "max_raise_cm": _r(float(plan["sub_raise"][s].max()) * UNIT_CM, 2)} for s in SIDES}
     return rep

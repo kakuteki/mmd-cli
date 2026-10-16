@@ -22,8 +22,9 @@ model has no body).  Measured on a dance (and on BEFORE the same way, with the c
 * air: runs with no shoe within SUPPORT_CM, a minute by length (1-3, 4-6, 7-12, 13+ frames) and for those of AIR_MIN
   frames and more the parabola (a frame each side) of the pelvis's height (下半身) and of the centre of mass's: their
   accelerations, the share falling slower than half of gravity;
-* the pelvis on the floor: 下半身's and センター's downward acceleration on the frames a shoe is within SUPPORT_FALL_CM
-  (the balance layer's support, 1.6 cm): its largest and the frames past BOUND (+ BOUND_TOL);
+* the pelvis on the floor: 下半身's and センター's downward acceleration on the floor's frames as tools/sink_check.py counts
+  them (all but runs of AIR_MIN frames and more with neither shoe within SUPPORT_FALL_CM, the balance layer's support):
+  its largest and the frames past BOUND (+ BOUND_TOL), with their times;
 * with BEFORE: where each of BEFORE's contacts (CONTACT_CM, 3 frames and more) touched down and where that touching vertex
   is on that frame now (its shift along the floor), the contacts whose start or end moved by more than a frame, the
   knees' change of bend and the pelvis's change of height.
@@ -262,7 +263,8 @@ def report_one(rig, doc, m, floor_y):
                        "pelvis_slower_than_half_g": _r(np.mean(pel > -G / 2.0), 3) if len(pel) else None,
                        "com_slower_than_half_g": _r(np.mean(com > -G / 2.0), 3) if len(com) else None,
                        "list": rows[:200]})
-    floor = (lo["左"] < SUPPORT_FALL_CM) | (lo["右"] < SUPPORT_FALL_CM)
+    # (tools/sink_check.py's floor and air: neither shoe within SUPPORT_FALL_CM for AIR_MIN frames running is the air)
+    floor = ~SC.long_runs((lo["左"] >= SUPPORT_FALL_CM) & (lo["右"] >= SUPPORT_FALL_CM), AIR_MIN)
     fa = np.max([SC.down_acc(m["lower_y"]), SC.down_acc(m["centre_y"])], axis=0)
     past = floor & (fa > BOUND + BOUND_TOL)
     out["pelvis_floor"] = {"max": _r(fa[floor].max() if floor.any() else 0.0, 1), "past_bound": int(np.sum(past)),
