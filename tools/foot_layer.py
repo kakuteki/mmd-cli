@@ -1514,7 +1514,7 @@ def main(argv=None):
     ap.add_argument("--toe-reach-cm", type=float, default=0.0,
                     help="a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, "
                          "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
-    ap.add_argument("--landing", choices=("human", "heel", "off"), default="human",
+    ap.add_argument("--landing", choices=("human", "heel", "off"), default=None,
                     help="human (the default): a loaded touchdown with a sinking pelvis comes down on the forefoot and "
                          "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball, a foot "
                          "skimming the floor in the dance is not pressed onto it; heel: the touchdown's heel alone; "
@@ -1536,9 +1536,21 @@ def main(argv=None):
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
     floor_y = trace_floor(shoe) if args.floor_y is None else args.floor_y
     extra = args.trace_toe_cm / UNIT_CM
+    landing_warning = None
+    if args.landing is None:
+        args.landing = "human"
+        if not after_a_foot_layer(motion):
+            # the order C (feet -> balance -> feet) runs this layer twice; its first run, before the balance layer, wants
+            # --landing off (with the heel there the balance layer sets the pelvis elsewhere and the landing's sink
+            # leaves the human range, feet_landing NOTES).  A dance that no foot layer has written yet may be that run.
+            landing_warning = ("no --landing given on a dance that no foot layer has written (its toes have no key on "
+                               "every frame): if this is the first foot layer of the order C, before the balance layer, "
+                               "give --landing off")
+            print("WARNING: " + landing_warning, file=sys.stderr)
     m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y, toe_extra=extra)
     report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
               "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "landing_model": args.landing,
+              "landing_warning": landing_warning,
               "toe_reach_cm": max(0.0, args.toe_reach_cm),
               "seconds": None}
     report["toes"] = {"input": {TAGS[s]: toe_summary(m_in[s], contacts[s], floor_y) for s in m_in}}
@@ -1589,6 +1601,15 @@ def main(argv=None):
     if "untouched" in report:
         print("untouched bones identical: %s" % report["untouched"]["identical"])
     return 0
+
+
+def after_a_foot_layer(motion):
+    """True when a foot layer has written the dance already: its toes' bone (足先EX) holds a key on (nearly) every frame,
+    as build writes it"""
+    F = fk.last_frame(motion) + 1
+    tracks = fk.tracks_of(motion)
+    n = max(len(tracks.get(s + "足先EX", []) or tracks.get(fk.vmd_name(s + "足先EX"), []) or []) for s in SIDES)
+    return F > 1 and n >= 0.9 * F
 
 
 def untouched(before, after, plan):

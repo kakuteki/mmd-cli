@@ -1254,6 +1254,29 @@ class CommandTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_warns_when_the_first_foot_layer_has_no_landing_given(self):
+        # the order C runs the foot layer twice and its first run (on a dance no foot layer has written) wants
+        # --landing off: without --landing there it warns (stderr and the report); with it, or on the layer's own
+        # output (the second run), it does not
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            out2 = os.path.join(folder, "out2.vmd")
+            for args, warned, mode in (([src, model, out], True, "human"),
+                                       ([src, model, out, "--landing", "off"], False, "off"),
+                                       ([out, model, out2], False, "human")):
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    self.assertEqual(foot_layer.main(args + ["--report", rep]), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    r = json.load(fh)
+                self.assertEqual(r["landing_model"], mode)
+                self.assertEqual(r["landing_warning"] is not None, warned)
+                self.assertEqual("WARNING" in err.getvalue(), warned)
+        finally:
+            shutil.rmtree(folder)
+
     def test_refuses_to_write_over_the_dance(self):
         folder = tempfile.mkdtemp()
         try:
