@@ -1102,25 +1102,12 @@ class TransitTest(unittest.TestCase):
         self.assertEqual(ways[0], -ways[1])
         self.assertEqual(ways[1], -ways[2])
 
-    def test_a_change_of_shape_gets_the_dancers_smaller_excess_and_is_met_no_later(self):
-        # the trace closes the hand within the movement: dancers' fingers then travel a little beyond the change (2 - 8
-        # degrees for 0.06 - 0.4 m of the hand, against 7 - 16 in a movement that keeps its shape); the excursion goes
-        # the change's way, so the shape is met no later, and is gone by the movement's end
-        arm = eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)])
-        shapes = [(0, "half"), (14, "half"), (18, "bend"), (LAST, "bend")]
-        d, _ = self.dev(shapes, arm)
-        kept, _ = self.dev([(0, "half"), (LAST, "half")], arm)
-        mid = d["中指１"] + d["中指２"] + d["中指３"]
-        mid_kept = kept["中指１"] + kept["中指２"] + kept["中指３"]
-        self.assertGreater(float(mid[8:26].max()), 0.3)                      # the change's way: flexion
-        self.assertGreater(float(mid[8:26].min()), -0.05)
-        self.assertLess(float(np.abs(mid).max()), 0.7 * float(np.abs(mid_kept).max()))
-        self.assertLess(float(np.abs(mid[26:]).max()), 0.05)
-        dance = hand_dance(shapes, arm=arm, centre=False)
-        s1 = middle_sum(hand_layer.layer(MODEL, dance, only("transit"), pulp=PULP).motion)
-        s0 = middle_sum(hand_layer.layer(MODEL, dance, only(), pulp=PULP).motion)
-        level = s0[14] + 0.9 * (s0[18] - s0[14])
-        self.assertLessEqual(float(np.argmax(s1 >= level)), float(np.argmax(s0 >= level)))
+    def test_a_change_of_shape_is_left_as_the_choreography_makes_it(self):
+        # the trace closes the hand within the movement: the change is the choreography's (and the dancers' fingers
+        # travel little beyond such a change: 2 - 8 degrees for 0.06 - 0.4 m of the hand)
+        d, _ = self.dev([(0, "half"), (14, "half"), (18, "bend"), (LAST, "bend")],
+                        eased([(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)]))
+        self.assertLess(max(float(np.abs(v[8:26]).max()) for v in d.values()), 0.05)
 
     def test_a_movement_whose_speed_peaks_at_its_start_makes_no_jump(self):
         # the excursion's peak is kept 3 frames from either end: never more than half of it in one frame (a peak on the
