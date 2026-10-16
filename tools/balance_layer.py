@@ -1132,7 +1132,14 @@ def stance_terms(body, com, plan, mos_min_cm):
     offset from the support's centre, u towards the lifted foot): the XcoM's sideways margin at least mos_min_cm.  Where
     the dance keeps inside it, it holds 0 (nothing to do); where it does not, the body is held back to it"""
     F = body.F
-    frames = np.flatnonzero(plan["moving"] & (np.arange(F) >= 1) & (np.arange(F) <= F - 2))
+    # not near a still stretch (STILL_LEAD_S each way): there the pull onto the foot leads, and the XcoM's rows, which
+    # read the velocity, fought it (89.4 s of the MV: the body went 4 cm outwards over the still stance, the solve stalled)
+    near_still = np.zeros(F, bool)
+    for s in SIDES:                                     # the same standing foot's still stretches only
+        mine = plan["stance_foot"] == s
+        cover = smooth_cover((plan["still"] & mine).astype(float), int(round(STILL_LEAD_S * FPS))) > 1e-6
+        near_still |= cover & mine
+    frames = np.flatnonzero(plan["moving"] & ~near_still & (np.arange(F) >= 1) & (np.arange(F) <= F - 2))
     foot = np.where(plan["moving"], plan["stance_foot"], "")
     u, X, _, w0 = stance_lateral(body, com, foot)
     xhi = (SUPPORT_R_CM - mos_min_cm) / CM
