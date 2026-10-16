@@ -1002,6 +1002,108 @@ class PaceTest(unittest.TestCase):
         self.assertGreater(row["t10_90_after"]["max"], row["t10_90_before"]["max"])
 
 
+SWINGS = [(0, 20.0), (10, 20.0), (22, 60.0), (34, 20.0), (46, 60.0), (LAST, 60.0)]   # three movements of the arm
+
+
+def all_flex(motion, side="左"):
+    """bone -> its flexion every frame (rest-relative) for the long fingers' MP, PIP and DIP"""
+    return {f + p: out_angles(motion, side, f + p)[0] for f in hand_layer.LONG for p in ("１", "２", "３")}
+
+
+class TransitTest(unittest.TestCase):
+    """with each movement of the arm the whole hand flexes or extends a little and comes back by the movement's end (the
+    dancers of FineDance's K-pop and street dances: their fingers travel 8 - 37 degrees in a movement that ends in the
+    shape it started from, more the further the hand goes, the twelve joints along one synergy; the trace holds them
+    still): not in a shape the choreography makes with single fingers (pointing, a peace sign), nor in a fist, nor where
+    the hand touches something, nor where the trace's own change of shape already moves them as much"""
+
+    def dev(self, shapes, arm, steps=("transit",), contact=None):
+        dance = hand_dance(shapes, arm=arm, centre=False)
+        kept = hand_layer.contact_weights
+        if contact is not None:
+            hand_layer.contact_weights = lambda model, motion, F, sides: {s: np.full(F, contact) for s in sides}
+        try:
+            out = hand_layer.layer(MODEL, dance, only(*steps), pulp=PULP)
+            ref = hand_layer.layer(MODEL, dance, only(), pulp=PULP)
+        finally:
+            hand_layer.contact_weights = kept
+        a, b = all_flex(out.motion), all_flex(ref.motion)
+        return {k: a[k] - b[k] for k in a}, out.report
+
+    def test_each_movement_of_the_arm_moves_the_fingers_and_they_come_back(self):
+        d, _ = self.dev([(0, "half"), (LAST, "half")], SWINGS)
+        mid = d["中指１"] + d["中指２"] + d["中指３"]
+        for a, b in ((10, 22), (22, 34), (34, 46)):
+            self.assertGreater(float(np.abs(mid[a:b + 1]).max()), 4.0, (a, b))
+        self.assertLess(float(np.abs(mid[:11]).max()), 0.05)                 # the arm still: the input's shape
+        self.assertLess(float(np.abs(mid[50:]).max()), 0.05)
+        for t in (22, 34):                                                   # the arm turns back: the shape again
+            self.assertLess(float(np.abs(mid[t - 1:t + 2]).min()), 1.0, t)
+
+    def test_the_whole_hand_moves_along_one_synergy(self):
+        # FineDance's first principal component of the transit parts: every joint of the four fingers the same way, the
+        # MP the most, the DIP the least; the little finger less than the others
+        d, _ = self.dev([(0, "half"), (LAST, "half")], SWINGS)
+        t = int(np.argmax(np.abs(d["中指１"][10:23]))) + 10
+        sign = np.sign(d["中指１"][t])
+        for k, v in d.items():
+            self.assertGreater(sign * float(v[t]), 0.0, k)
+        for f in hand_layer.LONG:
+            self.assertGreater(abs(d[f + "１"][t]), abs(d[f + "３"][t]), f)
+            self.assertGreater(abs(d[f + "２"][t]), abs(d[f + "３"][t]), f)
+        total = {f: sum(abs(d[f + p][t]) for p in ("１", "２", "３")) for f in hand_layer.LONG}
+        self.assertLess(total["小指"], total["中指"])
+        self.assertLess(total["人指"], total["中指"])
+
+    def test_a_bigger_movement_moves_the_fingers_further(self):
+        small, _ = self.dev([(0, "half"), (LAST, "half")], [(0, 20.0), (10, 20.0), (22, 35.0), (LAST, 35.0)])
+        big, _ = self.dev([(0, "half"), (LAST, "half")], [(0, 20.0), (10, 20.0), (22, 80.0), (LAST, 80.0)])
+        s = float(np.abs(small["中指１"]).max())
+        b = float(np.abs(big["中指１"]).max())
+        self.assertGreater(s, 0.3)
+        self.assertGreater(b, 1.3 * s)
+
+    def test_a_still_arm_moves_nothing(self):
+        d, _ = self.dev([(0, "half"), (LAST, "half")], None)
+        self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 1e-9)
+
+    def test_a_hand_on_something_is_left(self):
+        d, _ = self.dev([(0, "half"), (LAST, "half")], SWINGS, contact=1.0)
+        self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 1e-9)
+
+    def test_the_choreography_s_own_shapes_are_left(self):
+        # a pointing finger (the others closed) and a fist are the dance's shapes, kept through the movement
+        for shape in ("point", "fist"):
+            d, _ = self.dev([(0, shape), (LAST, shape)], SWINGS)
+            self.assertLess(max(float(np.abs(v).max()) for v in d.values()), 0.05, shape)
+
+    def test_an_open_hand_curls_and_a_half_closed_one_goes_both_ways(self):
+        # a flat hand cannot extend much further: it curls; between, the hand flexes and extends in turn with the
+        # movements (the dancers' transit parts change their way a little more often than not: 53 - 56 %)
+        d, _ = self.dev([(0, "open"), (LAST, "open")], SWINGS)
+        mid = d["中指１"] + d["中指２"] + d["中指３"]
+        for a, b in ((10, 22), (22, 34), (34, 46)):
+            self.assertGreater(float(mid[a:b + 1].max()), 2.0, (a, b))
+            self.assertGreater(float(mid[a:b + 1].min()), -0.05, (a, b))
+        d, _ = self.dev([(0, "bend"), (LAST, "bend")], SWINGS)
+        mid = d["中指１"] + d["中指２"] + d["中指３"]
+        ways = [np.sign(mid[a + int(np.argmax(np.abs(mid[a:b + 1])))]) for a, b in ((10, 22), (22, 34), (34, 46))]
+        self.assertEqual(ways[0], -ways[1])
+        self.assertEqual(ways[1], -ways[2])
+
+    def test_a_change_of_shape_as_big_as_a_dancer_s_gets_nothing_more(self):
+        # the trace closes the hand within the movement: its fingers already travel further than a dancer's would
+        d, _ = self.dev([(0, "half"), (14, "half"), (18, "bend"), (LAST, "bend")], [(0, 20.0), (10, 20.0), (22, 60.0), (LAST, 60.0)])
+        self.assertLess(max(float(np.abs(v[8:26]).max()) for v in d.values()), 0.05)
+
+    def test_the_report_counts_the_movements(self):
+        _, rep = self.dev([(0, "half"), (LAST, "half")], SWINGS)
+        row = rep["steps"]["transit"]["左"]
+        self.assertGreaterEqual(row["movements"], 3)
+        self.assertGreaterEqual(row["moved"], 3)
+        self.assertGreater(row["amplitude_deg"]["max"], 2.0)
+
+
 class LayerPassiveTest(unittest.TestCase):
     """the fingers lag the hand: they trail when it speeds up and run on when it stops, the open hand more than a fist"""
 
@@ -1461,6 +1563,60 @@ class AsV8Test(unittest.TestCase):
             shutil.rmtree(folder)
 
 
+V9_DANCES = {   # main c012c32 (v9's hands) gave these MD5s with its defaults
+    "swing_open_fist": (V8_DANCES["swing_open_fist"][0], "cb3cc82e9ea2513ea91c8c4f1c001614"),
+    "point_grip": (V8_DANCES["point_grip"][0], "cc682fbb24c6928dbf9c56f690e788f5"),
+    "swing_half": (lambda: hand_dance([(0, "half"), (LAST, "half")], arm=SWINGS, centre=False),
+                   "b982cef50eefc7f7651bd48a88939a83"),
+}
+
+
+class AsV9Test(unittest.TestCase):
+    """--as-v9 gives back the hands of v9 (main c012c32) byte for byte"""
+
+    def test_as_v9_gives_back_v9_byte_for_byte(self):
+        import hashlib
+        for name, (make, digest) in V9_DANCES.items():
+            out = hand_layer.layer(MODEL, make(), hand_layer.as_v9(hand_layer.default_params()), pulp=PULP).motion
+            self.assertEqual(hashlib.md5(vmd.dumps(out)).hexdigest(), digest, name)
+
+    def test_the_default_moves_the_fingers_otherwise(self):
+        import hashlib
+        make, digest = V9_DANCES["swing_half"]
+        out = hand_layer.layer(MODEL, make(), pulp=PULP).motion
+        self.assertNotEqual(hashlib.md5(vmd.dumps(out)).hexdigest(), digest)
+
+    def test_the_command_takes_as_v9_and_the_transit_s_scale(self):
+        folder = tempfile.mkdtemp()
+        try:
+            dance_path, model_path = os.path.join(folder, "d.vmd"), os.path.join(folder, "m.pmx")
+            with open(model_path, "wb") as fh:
+                fh.write(model_bytes())
+            make, _ = V9_DANCES["swing_half"]
+            vmd.dump(make(), dance_path)
+            got = {}
+            for name, extra in {"v9": ["--as-v9"], "default": [], "half": ["--transit-scale", "0.5"],
+                                "off": ["--no-transit"]}.items():
+                out, rep = os.path.join(folder, name + ".vmd"), os.path.join(folder, name + ".json")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = hand_layer.main([dance_path, model_path, out, "--report", rep] + extra)
+                self.assertEqual(code, 0, name)
+                got[name] = (read_bytes(out), read_json(rep))
+            ref = hand_layer.layer(pmx.loads(model_bytes()), vmd.load(dance_path),
+                                   hand_layer.as_v9(hand_layer.default_params()), pulp={}).motion
+            self.assertEqual(got["v9"][0], vmd.dumps(ref))
+            self.assertNotEqual(got["v9"][0], got["default"][0])
+            self.assertFalse(got["v9"][1]["params"]["transit"])
+            amp = {k: got[k][1]["steps"]["transit"]["左"]["amplitude_deg"]["max"] for k in ("default", "half")}
+            self.assertAlmostEqual(amp["half"], 0.5 * amp["default"], delta=0.01 + 0.02 * amp["default"])
+            self.assertNotIn("transit", got["off"][1]["steps"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(hand_layer.main([dance_path, model_path, os.path.join(folder, "x.vmd"),
+                                                  "--transit-scale", "-1"]), 2)
+        finally:
+            shutil.rmtree(folder)
+
+
 # ---- the real dance (skipped where it is not; MMD_CLI_TRACE and MMD_CLI_RIN point at them elsewhere) ---------------
 
 MAIN_TREE = "C:/Users/kaga/Desktop/mmd-cli"           # the main working tree, where the real data lives
@@ -1594,7 +1750,8 @@ class RealDanceTest(unittest.TestCase):
         part = crop(self.dance, 3300, 4200)
         new = hand_layer.layer(self.model, part, pulp=self.pulp)
         old = hand_layer.layer(self.model, part, hand_layer.as_v8(hand_layer.default_params()), pulp=self.pulp)
-        bare = dict(hand_layer.default_params(), pace=False, passive=False, order=False, speed=False)
+        # (the transit's excursions, which come back by each movement's end, are left out: this measures the pace)
+        bare = dict(hand_layer.default_params(), pace=False, passive=False, order=False, speed=False, transit=False)
         unpaced = hand_layer.layer(self.model, part, bare, pulp=self.pulp).motion
         paced = hand_layer.layer(self.model, part, dict(bare, pace=True), pulp=self.pulp).motion
         for side in ("左", "右"):
