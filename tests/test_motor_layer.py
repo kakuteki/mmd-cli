@@ -747,9 +747,21 @@ class ElbowHingeTest(unittest.TestCase):
             turned(relative(self.off.world_out, "左腕", "左腕捩"), (0, 0, 0, 1))
         self.assertGreater(float(np.abs(tw).max()), 0.1)
 
+    def test_the_twist_is_split_as_the_anatomy_layer_splits_it(self):
+        # 腕 a swing only (the upper arm's roll on 腕捩), the forearm's twist shared between 手捩 and 手首 (its default)
+        u = bone_axis("左腕", "左ひじ")
+        self.assertLess(float(np.abs(roll_deg(relative(self.on.world_out, "左肩C", "左腕"), u)).max()), 0.01)
+        b = bone_axis("左手捩", "左手首")
+        tf = roll_deg(relative(self.on.world_out, "左ひじ", "左手首"), b)
+        kept = roll_deg(relative(self.on.world_out, "左ひじ", "左手捩"), b)
+        want = np.array([share_of(x) for x in tf])
+        self.assertLess(float(np.abs(kept - want).max()), 0.01)
+
     def test_the_elbow_and_the_hand_stay(self):
         on, off = self.on.world_out, self.off.world_out
-        self.assertLess(float(np.abs(on["左ひじ"][0] - off["左ひじ"][0]).max()), 1e-6)
+        # this model's 腕捩 is 0.03 mm off the line 腕 - ひじ (Rin's 0.0001 mm): moving 腕's roll onto it moves the elbow by
+        # that times the roll, 0.01 mm here
+        self.assertLess(float(np.abs(on["左ひじ"][0] - off["左ひじ"][0]).max()), 2e-4)
         hand = [angle_deg(p, q) for p, q in zip(on["左手首"][1], off["左手首"][1])]
         self.assertLess(max(hand), 0.01)
         finger = [angle_deg(p, q) for p, q in zip(on["左中指３"][1], off["左中指３"][1])]
@@ -769,7 +781,7 @@ class ElbowHingeTest(unittest.TestCase):
         self.assertGreater(rep["off_hinge_deg_before"]["max"], 0.3)
 
     def test_nothing_else_changes(self):
-        moved = {"左腕捩", "左ひじ", "左手捩", "左手首"}
+        moved = {"左腕", "左腕捩", "左ひじ", "左手捩", "左手首"}
         k_on = key_bytes([k for k in self.on.motion.bones if k.name not in moved])
         k_off = key_bytes([k for k in self.off.motion.bones if k.name not in moved])
         self.assertEqual(k_on, k_off)
@@ -797,37 +809,83 @@ class ElbowHingeTest(unittest.TestCase):
         self.assertFalse(motor_layer.default_params()["hinge"])
 
 
+def roll_deg(q, axis):
+    """the twist (degrees, -180 .. 180) of rotations q [F, 4] about a unit axis"""
+    q = np.asarray(q, float)
+    q = np.where(q[..., 3:4] < 0, -q, q)
+    return np.degrees(2.0 * np.arctan2(q[..., :3] @ np.asarray(axis, float), q[..., 3]))
+
+
+def share_of(tf_deg):
+    """what 手捩 keeps of the forearm's twist in tools/anatomy_layer.py's default (--forearm-twist share, as
+    tools/fix_twist.py): half of it up to a quarter turn, then less, nothing at a half turn"""
+    d = abs(tf_deg)
+    return math.copysign(0.5 * (d if d <= 90.0 else 180.0 - d), tf_deg)
+
+
 class HingeSplitTest(unittest.TestCase):
-    """the split itself, on keys made by hand"""
+    """the split itself, on keys made by hand.  The input as the anatomy layer leaves an arm (its defaults): 腕 a swing
+    only, the upper arm's roll on 腕捩, ひじ a hinge, the forearm's twist shared between 手捩 and 手首"""
 
     def setUp(self):
         self.geo = motor_layer.elbow_geometry(motor_layer.Skeleton(MODEL), "左")
         self.h, self.o, self.m = hinge_axis()
+        a = self.geo["a"]
+        self.p = np.cross(a, [0.0, 0.0, 1.0])
+        self.p /= np.linalg.norm(self.p)
+        b = self.geo["b"]
+        self.pb = np.cross(b, [0.0, 0.0, 1.0])
+        self.pb /= np.linalg.norm(self.pb)
 
-    def split(self, ke, frames=3):
-        F = frames
-        ident = np.tile(motor_layer.IDENT, (F, 1))
-        Ke = np.tile(np.asarray(ke, float), (F, 1))
-        tw = np.tile(np.asarray(axis_angle(tuple(self.geo["a"]), 20.0)), (F, 1))
-        ht = np.tile(np.asarray(axis_angle(tuple(self.geo["b"]), -15.0)), (F, 1))
-        return Ke, tw, ht, ident, motor_layer.hinge_split(self.geo, Ke, tw, ht, ident)
+    def keys(self, ke, upper_roll=0.0, handtw=-15.0, wrist_tw=-15.0, frames=3):
+        a, b = self.geo["a"], self.geo["b"]
+        tile = lambda q: np.tile(np.asarray(q, float), (frames, 1))      # noqa: E731
+        U = tile(motor_layer.qmul(np.asarray(axis_angle(tuple(self.p), 25.0)), np.asarray(axis_angle(tuple(a), upper_roll))))
+        T = tile(axis_angle(tuple(a), 20.0))
+        Ke = tile(ke)
+        Hk = tile(axis_angle(tuple(b), handtw))
+        Kw = tile(motor_layer.qmul(np.asarray(axis_angle(tuple(b), wrist_tw)), np.asarray(axis_angle(tuple(self.pb), 10.0))))
+        return U, T, Ke, Hk, Kw
+
+    def split(self, *keys):
+        return motor_layer.hinge_split(self.geo, *keys)
 
     def test_a_hinge_is_kept(self):
-        Ke, tw, ht, kw, (T2, E2, H2, W2, info) = self.split(axis_angle(tuple(self.h), 60.0))
-        for got, want in ((T2, tw), (E2, Ke), (H2, ht), (W2, kw)):
-            self.assertLess(max(angle_deg(p, q) for p, q in zip(got, want)), 1e-6)
-        self.assertLess(float(np.abs(info["delta_deg"]).max()), 1e-6)
+        k = self.keys(axis_angle(tuple(self.h), 60.0))
+        got = self.split(*k)
+        for g, want in zip(got[:5], k):
+            self.assertLess(max(angle_deg(p, q) for p, q in zip(g, want)), 1e-5)
+        self.assertLess(float(np.abs(got[5]["delta_deg"]).max()), 1e-6)
+
+    def test_the_upper_arm_keeps_its_swing_and_腕捩_takes_the_roll(self):
+        k = self.keys(axis_angle(tuple(self.h), 60.0), upper_roll=12.0)
+        U2, T2, E2, H2, W2, info = self.split(*k)
+        self.assertLess(float(np.abs(roll_deg(U2, self.geo["a"])).max()), 1e-6)
+        whole, whole2 = motor_layer.qmul(k[0], k[1]), motor_layer.qmul(U2, T2)
+        self.assertLess(max(angle_deg(p, q) for p, q in zip(whole, whole2)), 1e-6)
+        self.assertAlmostEqual(float(roll_deg(T2, self.geo["a"])[0]), 32.0, places=4)
+
+    def test_the_forearm_twist_is_shared_as_the_anatomy_layer_does(self):
+        for handtw, wrist_tw in ((0.0, -40.0), (-60.0, 0.0), (70.0, 80.0)):
+            k = self.keys(axis_angle(tuple(self.h), 60.0), handtw=handtw, wrist_tw=wrist_tw)
+            U2, T2, E2, H2, W2, info = self.split(*k)
+            tf = handtw + wrist_tw
+            tf = (tf + 180.0) % 360.0 - 180.0
+            self.assertAlmostEqual(float(roll_deg(H2, self.geo["b"])[0]), share_of(tf), places=4)
+            self.assertLess(float(np.max(np.abs(roll_deg(H2, self.geo["b"])))), 45.0 + 1e-9)
+            hand, hand2 = motor_layer.qmul(k[3], k[4]), motor_layer.qmul(H2, W2)
+            self.assertLess(max(angle_deg(p, q) for p, q in zip(hand, hand2)), 1e-6)
 
     def test_a_bent_arm_is_solved_exactly(self):
         side = motor_layer.qmul(np.asarray(axis_angle(tuple(self.m), 2.0)), np.asarray(axis_angle(tuple(self.h), 60.0)))
-        _, _, _, _, (T2, E2, H2, W2, info) = self.split(side)
+        info = self.split(*self.keys(side))[5]
         self.assertLess(float(info["wrist_shift_cm"].max()), 0.05)
         self.assertGreater(float(np.abs(info["delta_deg"]).min()), 1.0)        # the 2 degrees moved onto the roll
 
     def test_a_straight_arm_does_not_spin_the_upper_arm(self):
         # bent 1 degree with 1 degree to the side: exactly, the upper arm would roll about 45 degrees for 2.5 mm of wrist
         side = motor_layer.qmul(np.asarray(axis_angle(tuple(self.m), 1.0)), np.asarray(axis_angle(tuple(self.h), 1.0)))
-        _, _, _, _, (T2, E2, H2, W2, info) = self.split(side)
+        info = self.split(*self.keys(side))[5]
         self.assertLess(float(np.abs(info["delta_deg"]).max()), 10.0)
         forearm_cm = self.geo["forearm_cm"]
         self.assertLessEqual(float(info["wrist_shift_cm"].max()), forearm_cm * 2.0 * math.sin(math.radians(0.5)) + 1e-6)

@@ -257,6 +257,8 @@ FLOOR_ROUNDS = 5
 LEAD_LIMIT = 2.0
 ELBOW_SKIN_CM = 2.5             # --elbow-hinge: the skin's distance from the arm's axis at the elbow (r in the cost; Rin: 2.4 - 2.7 cm)
 HINGE_GRID_DEG = (90.0, 0.5, 0.5, 0.01)   # the roll searched: +-90 by 0.5 degrees, then +-0.5 about the best by 0.01
+FOREARM_SHARE = 0.5             # --elbow-hinge: what 手捩 keeps of the forearm's twist (tools/anatomy_layer.py's default)
+LINE_MM = 0.1                   # --elbow-hinge: 腕捩 this near the line 腕 - ひじ takes 腕's roll
 SONG =(600, 7600)              # the analysts' frames for a02 (on the MV's 7,743 frames; a shorter motion: all)
 ACTIVE = (167, 7661)            # a04's dancing part and the trace's keys (the same)
 
@@ -1149,13 +1151,18 @@ def elbow_geometry(skel, side):
             raise ValueError("the rest positions of %s's arm coincide" % side)
         return v / n
     a, o, b = unit(P["ひじ"] - P["腕捩"]), unit(P["手捩"] - P["ひじ"]), unit(P["手首"] - P["手捩"])
+    u = unit(P["ひじ"] - P["腕"])
     z = np.array([0.0, 0.0, 1.0])
     helper = side + "ひじ補助"
     if skel.has(helper) and skel.bones[skel.i(helper)].local_axes:
         z = unit(np.array(skel.bones[skel.i(helper)].local_axes["z"], dtype=np.float64))
     m = -unit(z - (z @ o) * o)
     h = unit(np.cross(o, m))
-    return {"a": a, "o": o, "b": b, "h": h, "m": m, "index": k,
+    # 腕's roll can go onto 腕捩 (as the anatomy layer puts it) only where 腕捩 is on the line 腕 - ひじ (within LINE_MM):
+    # else the elbow would move (by that distance times the roll; Rin's is 0.0001 mm off)
+    v = P["腕捩"] - P["腕"]
+    off_line_mm = float(np.linalg.norm(v - (v @ u) * u)) * UNIT_MM
+    return {"a": a, "o": o, "b": b, "h": h, "m": m, "index": k, "upper_on_line": off_line_mm <= LINE_MM,
             "forearm_cm": float(np.linalg.norm(P["手首"] - P["ひじ"])) * UNIT_MM / 10.0}
 
 
@@ -1165,17 +1172,36 @@ def axis_turn(axis, angle):
     return np.concatenate([np.sin(h)[:, None] * axis[None, :], np.cos(h)[:, None]], axis=1)
 
 
-def hinge_split(geo, Ke, T, Hk, Kw, skin_cm=ELBOW_SKIN_CM):
-    """ひじ's key Ke [F, 4] made a hinge, the roll it held moved onto 腕捩 (T) and 手捩 (Hk), 手首's key Kw keeping the hand's
-    turn: (T', Ke', Hk', Kw', info).  Per frame the upper arm rolls by delta more (T' = T aa(a, delta)), ひじ is the hinge
-    angle theta that brings the forearm nearest to where Ke has it (Ke' = aa(h, theta)), and delta minimises
+def roll_of(q, axis):
+    """the twist (radians, -pi .. pi) of rotations q [F, 4] about a fixed unit axis"""
+    q = np.where(q[:, 3:4] < 0, -q, q)
+    return 2.0 * np.arctan2(q[:, :3] @ axis, q[:, 3])
+
+
+def forearm_share(tf):
+    """what 手捩 keeps of the forearm's twist tf (radians, -pi .. pi): tools/anatomy_layer.py's default rule (as
+    tools/fix_twist.py): FOREARM_SHARE of it up to a quarter turn, then less, nothing at a half turn"""
+    d = np.abs(tf)
+    return np.sign(tf) * FOREARM_SHARE * np.where(d <= 0.5 * np.pi, d, np.pi - d)
+
+
+def hinge_split(geo, U, T, Ke, Hk, Kw, skin_cm=ELBOW_SKIN_CM):
+    """the arm's keys [F, 4] (腕 U, 腕捩 T, ひじ Ke, 手捩 Hk, 手首 Kw) with the twist split again as tools/anatomy_layer.py
+    splits it (its defaults): ひじ a hinge, 腕 a swing with the upper arm's roll on 腕捩, the forearm's twist shared between
+    手捩 and 手首; the elbow stays and the hand keeps its world rotation.  (U', T', Ke', Hk', Kw', info).
+
+    ひじ is the hinge angle theta that brings the forearm nearest to where Ke has it (Ke' = aa(h, theta)) after the upper
+    arm rolls by delta more; delta minimises, frame by frame,
         (skin_cm delta)^2 + (forearm_cm eps)^2
     with eps the angle left between the forearms: how far the elbow's surface turns against how far the wrist moves.  A
     bent arm is solved all but exactly (the wrist stays); a nearly straight arm, whose hinge plane is nearly undefined,
     is not rolled round for a millimetre of wrist (bent 1 degree with 1 degree to the side, the exact roll is about 45
-    degrees).  The rest of Ke's turn, Dl = (aa(a, delta) Ke')^-1 Ke, goes on: its roll about b onto 手捩, the remainder
-    onto 手首, so the hand's world rotation is unchanged.  info: delta and theta (degrees), the wrist's shift (cm, by the
-    forearm's direction) and 手捩's added roll (degrees)."""
+    degrees), and its wrist moves at most as far as dropping ひじ onto the hinge without a roll would move it.  Then the
+    upper arm (U T aa(a, delta)) is cut into its swing (腕) and its roll about a (腕捩) where 腕, 腕捩 and ひじ are on one
+    line (else 腕 is kept and 腕捩 rolls by delta); the rest of Ke's turn with 手捩's and 手首's, X = (aa(a, delta) Ke')^-1
+    Ke Hk Kw, gives the forearm's twist tf about b, of which 手捩 keeps forearm_share(tf), and 手首 is the remainder.
+    info: delta and theta (degrees), the wrist's shift (cm, by the forearm's direction), 手捩's change (degrees) and the
+    roll taken off 腕 (degrees)."""
     a, o, h, b = geo["a"], geo["o"], geo["h"], geo["b"]
     L = geo["forearm_cm"]
     F = len(Ke)
@@ -1200,21 +1226,25 @@ def hinge_split(geo, Ke, T, Hk, Kw, skin_cm=ELBOW_SKIN_CM):
     theta, eps = fit(delta[:, None])
     theta, eps = theta[:, 0], eps[:, 0]
     roll = axis_turn(a, delta)
-    T2 = qnorm(qmul(T, roll))
+    upper = qnorm(qmul(qmul(U, T), roll))
+    if geo.get("upper_on_line", True):
+        tau = np.unwrap(roll_of(upper, a))
+        U2 = qnorm(qmul(upper, axis_turn(a, -tau)))
+        T2 = axis_turn(a, tau)
+    else:
+        U2, T2 = np.array(U, copy=True), qnorm(qmul(T, roll))
     Ke2 = axis_turn(h, theta)
-    Dl = qnorm(qmul(qconj(qmul(roll, Ke2)), Ke))
-    X = qnorm(qmul(Dl, Hk))
-    X = np.where(X[:, 3:4] < 0, -X, X)
-    H2 = axis_turn(b, 2.0 * np.arctan2(X[:, :3] @ b, X[:, 3]))
-    Kw2 = qnorm(qmul(qmul(qconj(H2), X), Kw))
+    X = qnorm(qmul(qmul(qmul(qconj(qmul(roll, Ke2)), Ke), Hk), Kw))
+    H2 = axis_turn(b, forearm_share(roll_of(X, b)))
+    Kw2 = qnorm(qmul(qconj(H2), X))
     info = {"delta_deg": np.degrees(delta), "theta_deg": np.degrees(theta), "wrist_shift_cm": L * 2.0 * np.sin(0.5 * eps),
-            "forearm_roll_deg": qangle_deg(H2, Hk)}
-    return T2, Ke2, H2, Kw2, info
+            "forearm_roll_deg": qangle_deg(H2, Hk), "upper_roll_off_deg": np.degrees(np.abs(roll_of(U, a)))}
+    return U2, T2, Ke2, H2, Kw2, info
 
 
 def rehinge(plan, key_rot):
-    """key_rot with ひじ a hinge and 手首 keeping the hand, on both sides, and the new keys of 腕捩 and 手捩 (bone index ->
-    (positions, rotations)): the hinge split of each frame (hinge_split)"""
+    """key_rot with 腕 a swing, ひじ a hinge and 手首 keeping the hand, on both sides, and the new keys of 腕捩 and 手捩 (bone
+    index -> (positions, rotations)): the hinge split of each frame (hinge_split)"""
     out = np.array(key_rot, copy=True)
     twist, info = {}, {}
     ident = np.tile(IDENT, (plan.F, 1))
@@ -1223,11 +1253,11 @@ def rehinge(plan, key_rot):
         if geo is None or "skipped" in geo:
             continue
         k = geo["index"]
-        je, jw = plan.names.index(s + "ひじ"), plan.names.index(s + "手首")
+        ju, je, jw = (plan.names.index(s + n) for n in ("腕", "ひじ", "手首"))
         Pt, T = plan.keys.get(k["腕捩"], (np.zeros((plan.F, 3)), ident))
         Ph, Hk = plan.keys.get(k["手捩"], (np.zeros((plan.F, 3)), ident))
-        T2, Ke2, H2, Kw2, info[s] = hinge_split(geo, key_rot[:, je], T, Hk, key_rot[:, jw])
-        out[:, je], out[:, jw] = continuous(Ke2), continuous(Kw2)
+        U2, T2, Ke2, H2, Kw2, info[s] = hinge_split(geo, key_rot[:, ju], T, key_rot[:, je], Hk, key_rot[:, jw])
+        out[:, ju], out[:, je], out[:, jw] = continuous(U2), continuous(Ke2), continuous(Kw2)
         twist[k["腕捩"]] = (Pt, continuous(T2))
         twist[k["手捩"]] = (Ph, continuous(H2))
     return out, twist, info
@@ -1263,7 +1293,9 @@ def hinge_report(plan, world_before, world_out, info):
                   "off_hinge_deg_after": spread(off_hinge_deg(plan, world_out, s)),
                   "upper_roll_added_deg": spread(np.abs(d)),
                   "upper_roll_step_deg": spread(np.abs(np.diff(d))) if len(d) > 1 else None,
-                  "forearm_roll_added_deg": spread(info[s]["forearm_roll_deg"]),
+                  "forearm_roll_changed_deg": spread(info[s]["forearm_roll_deg"]),
+                  "upper_roll_moved_off_arm_deg": spread(info[s]["upper_roll_off_deg"]),
+                  "upper_on_line": geo["upper_on_line"],
                   "wrist_shift_cm": spread(np.linalg.norm(world_out[w][0] - world_before[w][0], axis=1) * UNIT_MM / 10.0),
                   "elbow_shift_cm_max": _r(float(np.linalg.norm(world_out[el][0] - world_before[el][0], axis=1).max())
                                            * UNIT_MM / 10.0, 6),
