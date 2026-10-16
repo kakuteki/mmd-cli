@@ -86,9 +86,10 @@ class MassModelTest(unittest.TestCase):
     def test_standing_com_on_the_midplane_at_a_human_height(self):
         com = wb.com(wb.segments(still()))
         self.assertLess(abs(com[0, 0]), 1e-3)
-        # people of either sex stand with the COM at 54-58 % of their stature (the vertex)
+        # people stand with the COM at 54-58 % of their stature (the vertex); Rin's legs are long (her hips at 57 % of the
+        # vertex's height, a person's at about 50 %), so hers is higher
         share = com[0, 1] / REST["vertex"][1]
-        self.assertTrue(0.52 < share < 0.60, share)
+        self.assertTrue(0.54 < share < 0.62, share)
 
     def test_arm_moved_out_moves_the_com_by_the_arm_share(self):
         base = still()
@@ -99,6 +100,15 @@ class MassModelTest(unittest.TestCase):
         # upper arm: its COM at 57.54 % of the way to the elbow moves 0.5754; forearm and hand move 1 (2.55, 1.38, 0.56 %)
         want = (2.55 * 0.5754 + 1.38 + 0.56) / 99.99
         self.assertAlmostEqual(dx, want, places=6)
+
+    def test_hand_com_along_the_hand(self):
+        """de Leva's hand (0.56 %) has its COM 34.27 % of the way from the wrist to the middle finger's tip; the tool reads
+        the middle finger's distal joint, HAND_TIP_SHARE of that way"""
+        base, moved = still(), still()
+        moved["mid3_L"][:, 0] += 1.0
+        dx = wb.com(wb.segments(moved))[0, 0] - wb.com(wb.segments(base))[0, 0]
+        self.assertAlmostEqual(dx, 0.56 * (0.3427 / wb.HAND_TIP_SHARE) / 99.99, places=7)
+        self.assertTrue(0.8 < wb.HAND_TIP_SHARE < 0.95)
 
 
 class FilterTest(unittest.TestCase):
@@ -231,6 +241,50 @@ class ZmpTest(unittest.TestCase):
         lean = np.abs(d["com"][inner][:, 2] - pivot_z * U)
         self.assertGreater(lean[-1], lean[0] + 0.05)    # (and it does fall, away from the pivot, 5 cm and more)
 
+    def test_inverted_pendulum_with_the_segments_own_turning(self):
+        """the same fall with the segments' own inertia (their bones turn with the body; the legs, which have no bone
+        here, by their long axis' turn): I_O counts each segment's own moment about the pivot line too, and the ZMP
+        still stays on the pivot (the segments' angular momentum enters the moment with the right sign)"""
+        F = 20
+        lm0 = still(F)
+        pivot = np.array([0.0, 0.111, -1.15])
+        segs = wb.segments(lm0)
+        total = sum(s["mass"] for s in segs.values())
+        I_O, mc = 0.0, np.zeros(3)
+        for name, s in segs.items():
+            m = s["mass"] / total
+            r = (s["com"][0] - pivot) * U
+            e, L = s["axis"][0], s["length"][0] * U
+            rt, rl = 0.5 * (s["r"][0] + s["r"][1]) / 100.0, s["r"][2] / 100.0
+            own = L * L * (rt * rt * (1.0 - e[0] ** 2) + (rl * rl * e[0] ** 2 if s["rot"] else 0.0))
+            I_O += m * (r[1] ** 2 + r[2] ** 2 + own)
+            mc += m * r
+        l = math.hypot(mc[1], mc[2])
+        th0 = math.atan2(-mc[2], mc[1])
+        k_ = G * l / I_O
+        th, om, ths = th0, 0.0, []
+        for _ in range(F):
+            ths.append(th)
+            for _ in range(200):
+                om += k_ * math.sin(th) / (FPS * 200)
+                th += om / (FPS * 200)
+        dth = np.array(ths) - th0
+        lm = {}
+        for k, p in lm0.items():
+            y, z = p[:, 1] - pivot[1], p[:, 2] - pivot[2]
+            cs, sn = np.cos(dth), np.sin(dth)
+            lm[k] = np.stack([p[:, 0], y * cs + z * sn + pivot[1], -y * sn + z * cs + pivot[2]], 1)
+        # the bones turn by -dth about +x (y' = y cos + z sin is a turn by -dth in the y-z plane)
+        q = np.stack([np.sin(-dth / 2), np.zeros(F), np.zeros(F), np.cos(-dth / 2)], 1)
+        rots = {k: q for k in wb.ROTATED}
+        d = wb.dynamics(lm, rots=rots, floor_y=0.111, cutoff_hz=None)
+        inner = slice(3, F - 3)
+        np.testing.assert_allclose(d["zmp"][inner][:, 1], pivot[2] * U, atol=0.0005)       # 0.5 mm (measured 0.14)
+        # and leaving the segments' own turning out puts the ZMP off the pivot (it is a real part of this fall: 1.8 mm,
+        # so a wrong sign of it would show twice that)
+        d0 = wb.dynamics(lm, rots=rots, floor_y=0.111, cutoff_hz=None, spin=False)
+        self.assertGreater(np.abs(d0["zmp"][inner][:, 1] - pivot[2] * U).max(), 0.001)
+
 
 class SupportTest(unittest.TestCase):
     def setUp(self):
@@ -269,6 +323,27 @@ class SupportTest(unittest.TestCase):
         foot = wb.foot_polygon(lm, self.feet, "L", 1, "fore")
         self.assertLess(wb.polygon_margin(heel, foot), 0.0)
         self.assertGreater(wb.polygon_margin(np.array([1.08 * U, -0.9 * U]), foot), 0.0)   # the ball inside
+
+    def test_toes_up_keeps_the_heel(self):
+        lm = still(3)
+        lm["toe_L"][:, 1] += 0.5                       # the toes 4 cm up, the heel on the floor
+        sup = wb.support(lm, self.feet)
+        self.assertTrue(np.all(sup["part"]["L"] == "heel"))
+        self.assertTrue(np.all(sup["contact"]["L"]))
+        foot = wb.foot_polygon(lm, self.feet, "L", 1, "heel")
+        behind = np.array([1.1205 * U, (0.37 + 0.25) * U])                  # 2 cm behind the ankle
+        self.assertGreater(wb.polygon_margin(behind, foot), 0.0)
+        self.assertLess(wb.polygon_margin(np.array([1.08 * U, -0.9 * U]), foot), 0.0)      # the ball is off the floor
+
+    def test_outward_is_away_from_the_body(self):
+        """a sole that lies outwards of the foot's line on both feet: the left one's to +x (the model's left), the right
+        one's to -x"""
+        feet = dict(self.feet, fore=np.array([(-0.02, 0.01), (0.0, 0.01), (0.0, 0.03), (-0.02, 0.03)]))
+        lm = still(3)
+        for s, sign in (("L", 1.0), ("R", -1.0)):
+            poly = wb.foot_polygon(lm, feet, s, 1, "fore")
+            toe_x = REST["toe_" + s][0] * U
+            self.assertTrue(np.all(sign * (poly[:, 0] - toe_x) > 0.005), s)
 
 
 class MeasureTest(unittest.TestCase):
@@ -323,6 +398,25 @@ class MeasureTest(unittest.TestCase):
                 self.assertLess(acc, 0.1)
             else:
                 self.assertGreater(acc, 2.0)
+
+    def test_air_reads_the_air_alone(self):
+        """a push off the floor (3.3 m/s^2 sideways for 0.3 s, up to 1 m/s) that ends as the feet leave it: in the air the
+        speed stays, and the push on the floor is not counted as an acceleration in the air (a low-pass would spread it
+        +-4 frames into the air)"""
+        F = 60
+        t = np.arange(F) / FPS
+        t0, a = 0.7, 1.0 / 0.3
+        air = (t >= t0) & (t <= t0 + 0.2)              # a short hop (5 frames in the air), where the spread would show
+        lm = still(F)
+        up = np.where(air, 0.5 * G * (t - t0) * (t0 + 0.2 - t) / U, 0.0)
+        push = np.where(t < t0 - 0.3, 0.0, np.where(t < t0, 0.5 * a * (t - (t0 - 0.3)) ** 2, 0.15 + (t - t0) * 1.0))
+        for k in lm:
+            lm[k][:, 1] += up
+            lm[k][:, 0] += push / U
+        rep = wb.measure(lm, wb.RIN_FEET, floor_y=0.111)
+        self.assertEqual(rep["air"]["runs"], 1)
+        self.assertLess(rep["air"]["stretches"][0]["com_acc_h_m_s2"], 0.05)
+        self.assertLess(rep["air"]["stretches"][0]["angmom_change_per_s2"], 0.01)
 
 
 class LandmarksTest(unittest.TestCase):
