@@ -1,0 +1,404 @@
+"""tools/wb_dynamics.py: the whole body's centre of mass by segment masses, the base of support from the feet on the floor,
+the zero moment point (the centre of pressure a flat floor would need) and the whole-body angular momentum about the COM.
+The tests check the physics on bodies whose answer is known without the tool: a still body, a body swaying as one rigid
+piece, a free fall, a spin about a principal axis, an inverted pendulum falling freely about its toe."""
+import json
+import math
+import os
+import shutil
+import tempfile
+import unittest
+
+import numpy as np
+
+from mmd_cli import fk
+from mmd_cli.formats import vmd
+from tests.test_balance_layer import MODEL, balance_layer, dance, key, model_bytes
+
+import importlib.util
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_tool():
+    spec = importlib.util.spec_from_file_location("wb_dynamics", os.path.join(ROOT, "tools", "wb_dynamics.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+wb = load_tool()
+
+FPS = 30.0
+U = 0.08                         # metres a model unit
+G = 9.81
+
+# Sour's Rin's rest landmarks (model units, White.pmx): the bones the tool reads
+REST = {"vertex": (0.0, 18.7663, -0.1601), "cerv": (0.0, 15.6456, -0.1343), "xyph": (0.0, 13.7985, -0.6784),
+        "omph": (0.0, 12.2248, -0.6493)}
+for _s, _x in (("L", 1.0), ("R", -1.0)):
+    REST.update({"hip_" + _s: (_x * 0.9012, 10.6579 if _s == "L" else 10.591, 0.0073),
+                 "knee_" + _s: (_x * 1.0032, 6.2313, -0.0361), "ankle_" + _s: (_x * 1.1205, 1.7452, 0.37),
+                 "toe_" + _s: (_x * 1.0462, 0.1, -1.1496), "shoulder_" + _s: (_x * 0.9114, 15.2768, -0.2484),
+                 "elbow_" + _s: (_x * 2.9071, 13.7325, -0.27), "wrist_" + _s: (_x * 4.6524, 12.4104, -0.2368),
+                 "mid3_" + _s: (_x * 5.8701, 11.5382, -0.2637)})
+
+
+def still(F=60, rest=None):
+    rest = REST if rest is None else rest
+    return {k: np.tile(np.asarray(v, dtype=np.float64), (F, 1)) for k, v in rest.items()}
+
+
+def symmetric_rest():
+    """REST with every z put to 0 and the right side the left side's mirror: x -> -x and z -> -z are symmetries, so the
+    vertical axis through the COM is a principal axis"""
+    out = {}
+    for k, v in REST.items():
+        if k.endswith("_R"):
+            continue
+        x, y, z = v
+        if k.endswith("_L"):
+            out[k] = (x, y, 0.0)
+            out[k[:-2] + "_R"] = (-x, y, 0.0)
+        else:
+            out[k] = (0.0, y, 0.0)
+    return out
+
+
+def rotate_y(lm, angles, about):
+    """every landmark turned about the vertical through `about` (x, z) by angles [F] (radians)"""
+    out = {}
+    c, s = np.cos(angles), np.sin(angles)
+    for k, p in lm.items():
+        d = p.copy()
+        d[:, 0] -= about[0]
+        d[:, 2] -= about[1]
+        out[k] = np.stack([c * d[:, 0] + s * d[:, 2] + about[0], p[:, 1], -s * d[:, 0] + c * d[:, 2] + about[1]], 1)
+    return out
+
+
+class MassModelTest(unittest.TestCase):
+    def test_segments_cover_the_whole_body(self):
+        total = sum(v["mass"] for v in wb.SEGMENTS.values())
+        self.assertAlmostEqual(total, 99.99, places=2)
+        self.assertEqual(len(wb.SEGMENTS), 16)
+
+    def test_standing_com_on_the_midplane_at_a_human_height(self):
+        com = wb.com(wb.segments(still()))
+        self.assertLess(abs(com[0, 0]), 1e-3)
+        # people of either sex stand with the COM at 54-58 % of their stature (the vertex)
+        share = com[0, 1] / REST["vertex"][1]
+        self.assertTrue(0.52 < share < 0.60, share)
+
+    def test_arm_moved_out_moves_the_com_by_the_arm_share(self):
+        base = still()
+        moved = still()
+        for k in ("elbow_L", "wrist_L", "mid3_L"):
+            moved[k][:, 0] += 1.0                    # the forearm and hand go 8 cm out (the upper arm's far end too)
+        dx = wb.com(wb.segments(moved))[0, 0] - wb.com(wb.segments(base))[0, 0]
+        # upper arm: its COM at 57.54 % of the way to the elbow moves 0.5754; forearm and hand move 1 (2.55, 1.38, 0.56 %)
+        want = (2.55 * 0.5754 + 1.38 + 0.56) / 99.99
+        self.assertAlmostEqual(dx, want, places=6)
+
+
+class FilterTest(unittest.TestCase):
+    def test_slow_kept_fast_removed_no_lag(self):
+        t = np.arange(300) / FPS
+        slow = np.sin(2 * math.pi * 1.0 * t)
+        fast = np.sin(2 * math.pi * 12.0 * t)
+        ys, yf = wb.lowpass(slow[:, None], 6.0)[:, 0], wb.lowpass(fast[:, None], 6.0)[:, 0]
+        inner = slice(45, 255)
+        self.assertLess(np.abs(ys[inner] - slow[inner]).max(), 0.02)        # 1 Hz: kept, and on time (no lag)
+        self.assertLess(np.abs(yf[inner]).max(), 0.1)                       # 12 Hz: gone
+
+    def test_constant_and_line_kept_to_the_ends(self):
+        x = np.stack([np.full(50, 3.0), np.linspace(0.0, 1.0, 50)], 1)
+        np.testing.assert_allclose(wb.lowpass(x, 6.0), x, atol=1e-9)
+
+
+class AngularVelocityTest(unittest.TestCase):
+    def test_spin_about_the_vertical(self):
+        w = 4.0                                      # rad/s
+        t = np.arange(40) / FPS
+        q = np.stack([np.zeros(40), np.sin(w * t / 2), np.zeros(40), np.cos(w * t / 2)], 1)
+        om = wb.angular_velocity(q)
+        np.testing.assert_allclose(om[1:-1], np.tile([0.0, w, 0.0], (38, 1)), atol=1e-9)
+
+    def test_sign_flips_of_the_quaternion_do_not_matter(self):
+        w = 2.0
+        t = np.arange(20) / FPS
+        q = np.stack([np.sin(w * t / 2), np.zeros(20), np.zeros(20), np.cos(w * t / 2)], 1)
+        q[::3] *= -1.0
+        np.testing.assert_allclose(wb.angular_velocity(q)[1:-1, 0], w, atol=1e-9)
+
+
+class ZmpTest(unittest.TestCase):
+    def test_still_body_presses_under_its_com(self):
+        lm = still()
+        d = wb.dynamics(lm, floor_y=0.111)
+        c = wb.com(wb.segments(lm))
+        ok = d["zmp_ok"]
+        self.assertTrue(ok[5:-5].all())
+        np.testing.assert_allclose(d["zmp"][ok], c[ok][:, [0, 2]] * U, atol=1e-9)
+        np.testing.assert_allclose(d["force"][ok][:, 1], G, atol=1e-9)      # the floor holds the weight (per kg)
+
+    def test_rigid_sway_moves_the_pressure_against_the_acceleration(self):
+        """a body swaying sideways as one rigid piece, x = A sin(2 pi f t): the floor's push must accelerate it, so the
+        centre of pressure goes ahead of the COM: p = c - (c_y - h) x'' / g (the cart-table, exactly, for a rigid
+        translation)"""
+        F, A, f, h = 150, 0.5, 1.0, 0.111
+        t = np.arange(F) / FPS
+        x = A * np.sin(2 * math.pi * f * t)
+        lm = still(F)
+        for k in lm:
+            lm[k][:, 0] += x
+        d = wb.dynamics(lm, floor_y=h, cutoff_hz=6.0)
+        c = wb.com(wb.segments(lm)) * U
+        acc = -A * U * (2 * math.pi * f) ** 2 * np.sin(2 * math.pi * f * t)
+        want = c[:, 0] - (c[:, 1] - h * U) * acc / G
+        inner = slice(30, F - 30)
+        np.testing.assert_allclose(d["zmp"][inner, 0], want[inner], atol=0.002)     # 2 mm
+        self.assertGreater(np.abs(want - c[:, 0])[inner].max(), 0.03)               # (and the shift is a real one)
+
+    def test_free_fall_presses_on_nothing(self):
+        F = 40
+        t = np.arange(F) / FPS
+        lm = still(F)
+        for k in lm:
+            lm[k][:, 1] += 20.0 - 0.5 * G * t ** 2 / U
+        d = wb.dynamics(lm, floor_y=0.111)
+        inner = slice(12, F - 12)
+        self.assertLess(np.abs(d["force"][inner]).max(), 0.05)
+        self.assertFalse(d["zmp_ok"][inner].any())
+
+    def test_spin_about_a_principal_axis(self):
+        """a body with x -> -x and z -> -z symmetry turning at a steady rate about the vertical through its COM: its angular
+        momentum points up and stays, so the floor presses under the COM; the segments' own turning adds to the point
+        masses' (I = sum m r^2 + the segments' inertia)"""
+        F, w = 90, 3.0
+        lm0 = still(F, symmetric_rest())
+        c0 = wb.com(wb.segments(lm0))[0]
+        lm = rotate_y(lm0, w * np.arange(F) / FPS, (c0[0], c0[2]))
+        rots = {k: np.stack([np.zeros(F), np.sin(w * np.arange(F) / FPS / 2), np.zeros(F), np.cos(w * np.arange(F) / FPS / 2)], 1)
+                for k in wb.ROTATED}
+        d = wb.dynamics(lm, rots=rots, floor_y=0.111)
+        inner = slice(20, F - 20)
+        L = d["angmom"][inner]                          # per kg (m^2/s)
+        self.assertLess(np.abs(L[:, [0, 2]]).max(), 1e-6)
+        self.assertLess(np.ptp(L[:, 1]), 1e-6 * max(1.0, abs(L[0, 1])))
+        segs = wb.segments(lm0)
+        point = sum(s["mass"] / 99.99 * ((s["com"][0, 0] - c0[0]) ** 2 + (s["com"][0, 2] - c0[2]) ** 2) for s in segs.values()) * U * U
+        self.assertGreater(L[0, 1], point * w * 1.001)                       # the segments' own inertia adds
+        self.assertLess(L[0, 1], point * w * 1.6)
+        np.testing.assert_allclose(d["zmp"][inner], np.tile([c0[0] * U, c0[2] * U], (F - 40, 1)), atol=1e-6)
+
+    def test_inverted_pendulum_falling_on_its_toe_presses_at_the_toe(self):
+        """the whole body as one rigid piece pivoting about a line on the floor (the toes) with no torque there falls as
+        an inverted pendulum, I_O theta'' = M g l sin(theta): the floor pushes only through the pivot, so the ZMP stays on
+        it while the body falls (point masses only: the segments' own spin is part of the same rigid turn and switched off
+        here so that I_O is the point masses' sum).  The COM stands 7 cm behind the toes: the body falls back about them"""
+        F = 20
+        lm0 = still(F)
+        pivot_z = -1.15                                 # the toes' line (z), units; the pivot is at the floor
+        segs = wb.segments(lm0)
+        m = {k: s["mass"] / 99.99 for k, s in segs.items()}
+        r = {k: (s["com"][0] - np.array([0.0, 0.111, pivot_z])) * U for k, s in segs.items()}
+        I_O = sum(m[k] * (r[k][1] ** 2 + r[k][2] ** 2) for k in segs)
+        c = sum(m[k] * r[k] for k in segs) / sum(m.values())
+        l = math.hypot(c[1], c[2])
+        th0 = math.atan2(-c[2], c[1])                   # the COM's lean forward of the pivot (towards -z)
+        # integrate theta'' = (g l / I_O) sin(theta) finely (per unit mass: M = sum m)
+        k_ = G * l * sum(m.values()) / I_O
+        th, om = th0, 0.0
+        sub = 200
+        ths = []
+        for _ in range(F):
+            ths.append(th)
+            for _ in range(sub):
+                om += k_ * math.sin(th) / (FPS * sub)
+                th += om / (FPS * sub)
+        dth = np.array(ths) - th0                      # the turn about the pivot line (the x axis), forward
+        lm = {}
+        for k, p in lm0.items():
+            y, z = p[:, 1] - 0.111, p[:, 2] - pivot_z
+            cs, sn = np.cos(dth), np.sin(dth)
+            lm[k] = np.stack([p[:, 0], y * cs + z * sn + 0.111, -y * sn + z * cs + pivot_z], 1)
+        d = wb.dynamics(lm, floor_y=0.111, spin=False, cutoff_hz=None)
+        inner = slice(3, F - 3)
+        ok = d["zmp_ok"][inner]
+        self.assertTrue(ok.all())
+        np.testing.assert_allclose(d["zmp"][inner][:, 1], pivot_z * U, atol=0.003)   # 3 mm (the finite differences)
+        lean = np.abs(d["com"][inner][:, 2] - pivot_z * U)
+        self.assertGreater(lean[-1], lean[0] + 0.05)    # (and it does fall, away from the pivot, 5 cm and more)
+
+
+class SupportTest(unittest.TestCase):
+    def setUp(self):
+        self.feet = wb.RIN_FEET
+
+    def test_two_flat_feet_one_polygon_round_both_soles(self):
+        lm = still(3)
+        sup = wb.support(lm, self.feet)
+        hull = sup["hull"][1]
+        self.assertTrue(sup["contact"]["L"][1] and sup["contact"]["R"][1])
+        self.assertEqual(sup["part"]["L"][1], "flat")
+        mid = np.array([0.0, 0.37 * U - 0.03])                                    # between the feet
+        self.assertGreater(wb.polygon_margin(mid, hull), 0.0)
+        ahead = np.array([0.0, -1.1496 * U - 0.10])                              # 10 cm in front of the toes (-z)
+        self.assertTrue(-0.12 < wb.polygon_margin(ahead, hull) < -0.08)
+        # the polygon reaches out past both shoes' outer edges (Rin's soles are 6.8 cm wide at the forefoot)
+        xs = hull[:, 0] / U
+        self.assertGreater(xs.max(), 1.4)
+        self.assertLess(xs.min(), -1.4)
+
+    def test_lifted_foot_does_not_support(self):
+        lm = still(3)
+        for k in ("ankle_L", "toe_L"):
+            lm[k][:, 1] += 1.0                        # 8 cm up
+        sup = wb.support(lm, self.feet)
+        self.assertFalse(np.any(sup["contact"]["L"]))
+        hull = sup["hull"][1]
+        self.assertTrue(np.all(hull[:, 0] < 0.0))      # the right foot alone (-x)
+
+    def test_heel_up_keeps_the_forefoot(self):
+        lm = still(3)
+        lm["ankle_L"][:, 1] += 0.5                     # 4 cm: the heel up, the toes on the floor
+        sup = wb.support(lm, self.feet)
+        self.assertTrue(np.all(sup["part"]["L"] == "fore"))
+        heel = np.array([1.1205 * U, (0.37 + 0.5) * U])                     # where the heel was
+        foot = wb.foot_polygon(lm, self.feet, "L", 1, "fore")
+        self.assertLess(wb.polygon_margin(heel, foot), 0.0)
+        self.assertGreater(wb.polygon_margin(np.array([1.08 * U, -0.9 * U]), foot), 0.0)   # the ball inside
+
+
+class MeasureTest(unittest.TestCase):
+    def one_leg(self, F, push=0.0):
+        """standing on the right foot (the left 8 cm up), the body over the right forefoot; push: the whole body
+        swings sideways x = push sin(2 pi t / 1 s) units"""
+        lm = still(F)
+        for k in ("ankle_L", "toe_L"):
+            lm[k][:, 1] += 1.0
+        c = wb.com(wb.segments(lm))[0]
+        right = 0.5 * (np.array(REST["ankle_R"]) + np.array(REST["toe_R"]))
+        x = (right[0] - c[0]) + push * np.sin(2 * math.pi * np.arange(F) / FPS)
+        z = (right[2] - c[2])
+        for k in lm:
+            if k in ("ankle_R", "toe_R"):
+                continue
+            lm[k][:, 0] += x
+            lm[k][:, 2] += z
+        return lm
+
+    def test_quiet_stance_on_one_foot_stays_inside(self):
+        rep = wb.measure(self.one_leg(120), wb.RIN_FEET, floor_y=0.111)
+        self.assertEqual(rep["zmp"]["outside_runs"], [])
+        self.assertGreater(rep["zmp"]["inside_share"], 0.99)
+
+    def test_swinging_on_one_foot_leaves_the_sole_and_says_when(self):
+        rep = wb.measure(self.one_leg(120, push=0.6), wb.RIN_FEET, floor_y=0.111)
+        runs = rep["zmp"]["outside_runs"]
+        self.assertGreater(len(runs), 0)
+        r = runs[0]
+        self.assertIn("s", r)
+        self.assertGreater(r["depth_cm"], 1.0)
+        self.assertLess(rep["zmp"]["inside_share"], 0.9)
+        json.dumps(rep)                                  # plain JSON
+
+    def test_air_horizontal_acceleration(self):
+        """in the air nothing pushes the body sideways: a hop with the body drifting at a steady speed has no horizontal
+        COM acceleration; one that speeds up in the air is counted"""
+        F = 60
+        t = np.arange(F) / FPS
+        base = still(F)
+        air = (t >= 0.7) & (t <= 1.3)
+        up = np.where(air, 0.5 * G * (t - 0.7) * (1.3 - t) / U, 0.0)       # a 0.6 s hop, 44 cm high at its top
+        for drift, want_small in ((lambda tt: 0.5 * tt / U, True), (lambda tt: 1.5 * tt * tt / U, False)):
+            lm = {k: v.copy() for k, v in base.items()}
+            for k in lm:
+                lm[k][:, 1] += up
+                lm[k][:, 0] += drift(t)
+            rep = wb.measure(lm, wb.RIN_FEET, floor_y=0.111)
+            acc = rep["air"]["com_acc_h_m_s2"]["p50"]
+            if want_small:
+                self.assertLess(acc, 0.1)
+            else:
+                self.assertGreater(acc, 2.0)
+
+
+class LandmarksTest(unittest.TestCase):
+    def test_from_body_and_from_a_pack_agree(self):
+        """the landmarks from the layer's body (FK of a VMD) and from an analysis pack's 26 bones are the same points"""
+        motion = dance(left_lifts=[(20, 30, 40, 50, 2.0)], arms=True)
+        body = balance_layer.Body(MODEL, motion)
+        a = wb.landmarks_from_body(body)
+        names = wb.PACK_BONES
+        pos = np.stack([body.p(n) if body.has(n) else np.zeros((body.F, 3)) for n in names], 1)
+        rot = np.stack([body.q(n) if body.has(n) else np.tile([0.0, 0.0, 0.0, 1.0], (body.F, 1)) for n in names], 1)
+        b = wb.landmarks_from_pack(names, pos, rot, wb.rin_rest(MODEL))
+        for k in a[0]:
+            np.testing.assert_allclose(a[0][k], b[0][k], atol=1e-6, err_msg=k)
+        for k in a[1]:
+            np.testing.assert_allclose(a[1][k], b[1][k], atol=1e-9, err_msg=k)
+
+    def test_body_com_close_to_the_layers(self):
+        body = balance_layer.Body(MODEL, dance())
+        lm, _ = wb.landmarks_from_body(body)
+        c = wb.com(wb.segments(lm))
+        # the layer puts the head's and the hands' far ends a little differently: within 5 mm on the floor
+        np.testing.assert_allclose(c[:, [0, 2]], body.com()[:, [0, 2]], atol=0.5 / 8.0)
+
+
+class CommandTest(unittest.TestCase):
+    def test_measure_a_motion(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            dpath = os.path.join(tmp, "d.vmd")
+            mpath = os.path.join(tmp, "m.pmx")
+            rpath = os.path.join(tmp, "r.json")
+            with open(dpath, "wb") as f:
+                f.write(vmd.dumps(dance(left_lifts=[(20, 30, 60, 70, 2.0)])))
+            with open(mpath, "wb") as f:
+                f.write(model_bytes())
+            rc = wb.main(["measure", dpath, mpath, "--report", rpath])
+            self.assertEqual(rc, 0)
+            with open(rpath, encoding="utf-8") as f:
+                rep = json.load(f)
+            for k in ("zmp", "com", "angmom", "air", "support", "params"):
+                self.assertIn(k, rep)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_measure_a_pack_as_the_motion(self):
+        """an analysis pack (meta.json's bone names, bones_final.npz's pos and rot) measures as its motion does"""
+        tmp = tempfile.mkdtemp()
+        try:
+            motion = dance(left_lifts=[(20, 30, 60, 70, 2.0)], arms=True)
+            dpath, mpath = os.path.join(tmp, "d.vmd"), os.path.join(tmp, "m.pmx")
+            with open(dpath, "wb") as f:
+                f.write(vmd.dumps(motion))
+            with open(mpath, "wb") as f:
+                f.write(model_bytes())
+            body = balance_layer.Body(MODEL, motion)
+            names = wb.PACK_BONES
+            pos = np.stack([body.p(n) if body.has(n) else np.zeros((body.F, 3)) for n in names], 1).astype(np.float32)
+            rot = np.stack([body.q(n) if body.has(n) else np.tile([0.0, 0.0, 0.0, 1.0], (body.F, 1)) for n in names], 1).astype(np.float32)
+            pack = os.path.join(tmp, "pack")
+            os.makedirs(pack)
+            with open(os.path.join(pack, "meta.json"), "w", encoding="utf-8") as f:
+                json.dump({"bones": names}, f, ensure_ascii=False)
+            np.savez_compressed(os.path.join(pack, "bones_final.npz"), pos=pos, rot=rot)
+            r1, r2 = os.path.join(tmp, "r1.json"), os.path.join(tmp, "r2.json")
+            self.assertEqual(wb.main(["measure", dpath, mpath, "--report", r1]), 0)
+            self.assertEqual(wb.main(["measure-pack", pack, mpath, "--report", r2]), 0)
+            with open(r1, encoding="utf-8") as f:
+                a = json.load(f)
+            with open(r2, encoding="utf-8") as f:
+                b = json.load(f)
+            self.assertAlmostEqual(a["zmp"]["inside_share"], b["zmp"]["inside_share"], places=3)
+            self.assertAlmostEqual(a["com"]["height_m_p50"], b["com"]["height_m_p50"], places=4)
+        finally:
+            shutil.rmtree(tmp)
+
+
+if __name__ == "__main__":
+    unittest.main()
