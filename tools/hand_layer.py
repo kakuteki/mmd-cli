@@ -512,7 +512,8 @@ PACE_H = math.sqrt(3.0) / 2.563
 # h, 0.06 - 1.2 m: 6.6 at 0.06 m, 13 at 0.25, 24 at 0.64, 37 at 1.2), going out from the line between the two shapes
 # and back (the transit part: 6.5 - 8 degrees at the speed's peak, the 90th percentile 31 - 40; the trace's 0.1 - 0.8)
 TRANSIT = {"c": 30.79, "p": 0.564, "peak": 0.3, "span": (6, 60), "smooth": 2, "cap": 25.0, "open": 40.0, "shut": 150.0,
-           "spread": (30.0, 60.0), "closed": (150.0, 200.0), "half": 3, "change": 10.0}
+           "spread": (30.0, 60.0), "closed": (150.0, 200.0), "half": 3, "change": 10.0, "c_change": 25.51,
+           "p_change": 1.017}
 # the transit parts of the twelve joints lie on one synergy (the first principal component, 78 - 85 % of their
 # variance; the mean of the K-pop and street dances' left and right hands): MP, PIP, DIP of each long finger
 TRANSIT_SYNERGY = {"人指": (0.327, 0.317, 0.150), "中指": (0.410, 0.316, 0.179), "薬指": (0.400, 0.355, 0.134),
@@ -1234,25 +1235,29 @@ def transit(hands, ang, world, P, touch=None, scale=1.0):
         moves = arm_movements(kn)
         add = np.zeros(F)
         amps, last = [], 1.0
-        left = {"change": 0, "shape": 0, "travel": 0}
+        left = {"shape": 0, "travel": 0}
         for a, p, b in moves:
             h = float(np.sum(np.linalg.norm(np.diff(kn[a:b + 1], axis=0), axis=1)))
             T = float(np.mean([np.abs(np.diff(sums[f][a:b + 1])).sum() for f in fingers]))
+            net = float(np.mean([sums[f][b] - sums[f][a] for f in fingers]))
             C = float(np.mean([abs(sums[f][b] - sums[f][a]) for f in fingers]))
-            if C >= TRANSIT["change"]:
-                left["change"] += 1          # the trace changes the shape here: the choreography's change, kept
-                continue
             if not float(w[a:b + 1].max()) > 1e-9:
                 left["shape"] += 1
                 continue
-            amp = scale * max(0.0, TRANSIT["c"] * h ** TRANSIT["p"] - (T - C)) / (2.0 * mean_share)
+            changes = C >= TRANSIT["change"]
+            c, pw = (TRANSIT["c_change"], TRANSIT["p_change"]) if changes else (TRANSIT["c"], TRANSIT["p"])
+            amp = scale * max(0.0, c * h ** pw - (T - C)) / (2.0 * mean_share)
             amp = min(amp, TRANSIT["cap"])
             if amp <= 1e-9:
                 left["travel"] += 1
                 continue
-            level = float(np.mean([sums[f][a] for f in fingers]))
-            way = 1.0 if level < TRANSIT["open"] else (-1.0 if level > TRANSIT["shut"] else -last)
-            last = way
+            if changes:
+                # the trace changes the shape here: the excursion goes the change's way (the shape is met no later)
+                way = 1.0 if net > 0.0 else -1.0
+            else:
+                level = float(np.mean([sums[f][a] for f in fingers]))
+                way = 1.0 if level < TRANSIT["open"] else (-1.0 if level > TRANSIT["shut"] else -last)
+                last = way
             add += way * amp * transit_bump(F, a, p, b)
             amps.append(amp)
         add *= w
