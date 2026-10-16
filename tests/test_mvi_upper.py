@@ -62,6 +62,29 @@ class CarriedTest(unittest.TestCase):
         rep = report.mark_listed({"measures": res["rows"], "events": res["events"]})
         self.assertEqual([e["why"] for e in rep["events"] if e["id"] == "upper.local_follow_carried"], ["measure"])
 
+    def test_a_head_held_on_the_hips_is_a_place_past_any_persons(self):
+        # the same body: from 300 to 599 the head moves exactly as the hips (left-over 0, people's least 0.33), else it
+        # stays (left-over 1, not carried: no place).  Listed past people's 1 % point even where the song's slope is like
+        # people's (the review of 10-17: the upper body held still on the hips for 10 s in v10 was listed nowhere)
+        F_ = 900
+
+        def move(n, t, p):
+            if n == "下半身" or (n in MF.UPPER and 300 <= t < 600):
+                return p + np.array([0.3 * np.sin(2.0 * np.pi * 2.0 * t / 30.0), 0.0, 0.0])
+            return None
+        names, pos, rot = MF.pack(F_, move, sway=0.0)
+        res = upper.measure(MF.FakeMeasured(MF.FakeVersion(names, pos, rot), wb=wb()))
+        ev = [e for e in res["events"] if e["id"] == "upper.head_follow"]
+        self.assertEqual(len(ev), 1, ev)
+        self.assertTrue(280 <= ev[0]["first"] <= 315 and 585 <= ev[0]["last"] <= 620, ev[0])
+        # (its largest left-over is a window that half lies before 300; past people's 1 % point all the same)
+        self.assertLess(ev[0]["value"], base.reference("upper.head_follow")["event"]["p01"])
+        self.assertEqual((ev[0]["side"], ev[0].get("toward")), (-1, 1))
+        rows = [r for r in res["rows"] if r["id"] != "upper.head_follow"]
+        rows.append(base.row("upper.head_follow", "follow", 0.3, "", "test"))                  # like people's
+        rep = report.mark_listed({"measures": rows, "events": res["events"]})
+        self.assertEqual([e["why"] for e in rep["events"] if e["id"] == "upper.head_follow"], ["extreme"])
+
     def test_the_windows_are_upper_body_checks(self):
         # the windows give upper_body_check.local_follow's share carried (the people's check of the review: 62 of 62 equal)
         F_ = 900
@@ -78,6 +101,13 @@ class CarriedTest(unittest.TestCase):
         theirs = ub.local_follow(ub.eyes(parts), parts["下半身"][0], rng)
         self.assertEqual(len(st), theirs["windows"])
         self.assertAlmostEqual(round(float(wt[sl > upper.CARRIED].sum() / wt.sum()), 4), theirs["share_carried"], places=6)
+        st2, sl2, wt2, lo = upper.local_windows(ub.eyes(parts), parts["下半身"][0], rng, left_over=True)
+        self.assertTrue((st2 == st).all() and (sl2 == sl).all() and (wt2 == wt).all())
+        inside = (st >= 310) & (st + 60 <= 590)                               # (10 frames off the ends: the 6 Hz filter)
+        before = (st > 20) & (st + 60 <= 290)
+        self.assertTrue(inside.any() and before.any())
+        self.assertTrue((lo[inside] < 1e-3).all(), lo[inside])                # carried exactly: nothing left over
+        self.assertTrue((abs(lo[before] - 1.0) < 0.02).all(), lo[before])     # the head still: all of the hips' left
 
 
 class StopTest(unittest.TestCase):

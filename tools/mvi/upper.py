@@ -15,6 +15,13 @@
   median, as local_follow's worst), longer than people's (their pooled stretches' 90 % point, 4.5 s; 99 % 8.2 s,
   human.json's "event"): the head riding on the hips for seconds, which the song's shares hardly show when the rest of
   the song is not carried.
+* 頭が骨盤と一体 (the same windows): per window the head's horizontal acceleration left over after the hips' (sum
+  |head - hips|^2 / sum |hips|^2; 0 = the head moves exactly as the hips, 1 = it stays still while they move).  People
+  never go near 0 (their windows' 1 % point 0.69, the least of 11,764 windows 0.33).  Places of upper.head_follow: two
+  or more consecutive windows where the hips move (the windows where they hardly move skipped), each carried (slope over
+  0.75: not a head that stays) and under people's 10 % point; their largest left-over is the value, past people's 1 %
+  point listed whatever the song's slope (a head held on the hips, as by a frozen upper body, is far past it: about 0;
+  people's 62 sequences have 70 such stretches, 7 of them past their 1 % point).
 """
 import numpy as np
 
@@ -25,23 +32,55 @@ CARRIED = 0.75                  # upper_body_check.local_follow: a window whose 
 WIN, HOP = 60, 15               # frames: its windows
 
 
-def local_windows(head, pelvis, rng, fs=30.0, win=WIN, hop=HOP, cutoff_hz=6.0):
-    """upper_body_check.local_follow's 2 s windows one by one (the same expressions): (starts, slopes, weights), the
-    weight of a window the hips' power in it"""
+def _windows(head, pelvis, rng, fs, win, hop, cutoff_hz):
+    """[(start, head's acceleration, the hips')] of local_follow's windows (6 Hz, horizontal)"""
     D = base.tool("wb_dynamics")
     ah = D.diff2(D.lowpass(np.asarray(head, dtype=np.float64), cutoff_hz, fs), fs)[:, [0, 2]]
     ap = D.diff2(D.lowpass(np.asarray(pelvis, dtype=np.float64), cutoff_hz, fs), fs)[:, [0, 2]]
     a, b = rng
-    starts, slopes, weights = [], [], []
-    for st in range(a + 3, b - 3 - win + 2, hop):
-        x, p = ah[st:st + win], ap[st:st + win]
+    return [(st, ah[st:st + win], ap[st:st + win]) for st in range(a + 3, b - 3 - win + 2, hop)]
+
+
+def local_windows(head, pelvis, rng, fs=30.0, win=WIN, hop=HOP, cutoff_hz=6.0, left_over=False):
+    """upper_body_check.local_follow's 2 s windows one by one (the same expressions): (starts, slopes, weights), the
+    weight of a window the hips' power in it; with left_over also the head's acceleration left over after the hips'
+    (sum |head - hips|^2 / weight)"""
+    starts, slopes, weights, rest = [], [], [], []
+    for st, x, p in _windows(head, pelvis, rng, fs, win, hop, cutoff_hz):
         den = float(np.sum(p * p))
         if den <= 0:
             continue
         starts.append(st)
         slopes.append(float(np.sum(x * p)) / den)
         weights.append(den)
-    return np.array(starts, int), np.array(slopes, float), np.array(weights, float)
+        rest.append(float(np.sum((x - p) ** 2)) / den)
+    out = (np.array(starts, int), np.array(slopes, float), np.array(weights, float))
+    return out + (np.array(rest, float),) if left_over else out
+
+
+def locked_runs(starts, slopes, rest, weights, edge, win=WIN, hop=HOP, least=2):
+    """[(first frame, last frame, windows, largest left-over)] of the stretches of `least` or more windows where the hips
+    move, each carried (slope over CARRIED) with its left-over under `edge`; a window where the hips hardly move neither
+    breaks a stretch nor counts, a gap in the windows' steps does break it"""
+    if not len(starts):
+        return []
+    strong = weights >= 0.25 * np.median(weights)
+    out, cur = [], None
+    for k in range(len(starts)):
+        if cur is not None and starts[k] - starts[k - 1] != hop:
+            out.append(cur)
+            cur = None
+        if not strong[k]:
+            continue
+        if rest[k] < edge and slopes[k] > CARRIED:
+            cur = [int(starts[k]), int(starts[k]), 1, float(rest[k])] if cur is None else \
+                [cur[0], int(starts[k]), cur[2] + 1, max(cur[3], float(rest[k]))]
+        elif cur is not None:
+            out.append(cur)
+            cur = None
+    if cur is not None:
+        out.append(cur)
+    return [(a, b + win - 1, n, r) for a, b, n, r in out if n >= least]
 
 
 def carried_runs(starts, slopes, weights, win=WIN, hop=HOP):
@@ -109,11 +148,17 @@ def measure(m):
         w = loc.get("weighted") or {}
         rows.append(base.row("upper.local_follow_p50", "2 秒窓の頭の付き方 中央値", w.get("p50"), "", src))
         rows.append(base.row("upper.local_follow_carried", "2 秒窓で頭が骨盤に運ばれる窓の割合（> 0.75）", loc.get("share_carried"), "", src))
-        st, sl, wt = local_windows(ub.eyes(parts), parts["下半身"][0], (rng[0], rng[1] - 1))
+        st, sl, wt, lo = local_windows(ub.eyes(parts), parts["下半身"][0], (rng[0], rng[1] - 1), left_over=True)
         edge, scale = base.event_rule("upper.local_follow_carried", 4.0, 4.0)
         for a, b, n, med in carried_runs(st, sl, wt):
             sec = (b - a + 1) / base.FPS
             if sec > edge:
                 events.append(base.event("upper.local_follow_carried", a, b, sec, "s", edge, scale,
                                          "頭が骨盤に運ばれる 2 秒窓が %d 続く（傾きの中央値 %.2f、1 = 一緒）" % (n, med)))
+        edge, scale = base.event_rule("upper.head_follow", 1.32, 0.63)
+        for a, b, n, worst in locked_runs(st, sl, lo, wt, edge):
+            # the left-over lies under its edge (side -1); such stretches push the head's slope on the hips up (toward +1)
+            events.append(base.event("upper.head_follow", a, b, worst, "", edge, scale,
+                                     "頭が骨盤と一体に動く 2 秒窓が %d 続く（頭の加速度の残り 最大 %.2f、0 = 骨盤と同じ）" % (n, worst),
+                                     side=-1, toward=1))
     return {"rows": rows, "events": events, "series": series}
