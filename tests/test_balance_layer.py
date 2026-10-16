@@ -898,6 +898,68 @@ class VerticalTest(unittest.TestCase):
         self.assertEqual(result.report["vertical"]["bound_units_s2"], 78.0)
 
 
+def jump_and_bounce(last=119):
+    """a jump: both feet 8 cm up from 1.4 to 1.9 s (frames 42-57), センター rising 4 cm to its top at 1.67 s (frame 50)
+    and turned down there in a frame (a tent of 4 frames each way: 225 units/s^2 down at the top, as the traced dance's
+    jump tops 132.2 and 201.6 s); and on the floor a bounce of the same shape at 3.33 s (frame 100)"""
+    air = (38, 44, 55, 61, 1.0)
+    motion = dance(last=last, left_lifts=[air], right_lifts=[air])
+    centre = []
+    for f in range(last + 1):
+        h = 0.5 * max(0.0, 1.0 - abs(f - 50) / 4.0) + 0.5 * max(0.0, 1.0 - abs(f - 100) / 4.0)
+        centre.append(key("センター", f, (0.0, -1.1 + h, 0.0)))
+    motion.bones = [k for k in motion.bones if k.name != "センター"] + centre
+    return motion
+
+
+class AirTest(unittest.TestCase):
+    """in the air nothing holds the body up: it falls with gravity, the pelvis about the COM with the limbs' swing (human
+    dancers' largest downward acceleration of the pelvis, a sequence's median, 142 [128, 156] units/s^2, which jumps
+    reach).  The bound that keeps a body the floor holds from falling faster than gravity (DOWN_ACC_MAX) is not the
+    bound in the air: there the jump's top stays as high as the dance has it (the review of 2026-10-16: with 122 in the
+    air 9 of the song's 31 jumps came 2 cm and more lower)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.last = 119
+        cls.motion = jump_and_bounce(cls.last)
+        cls.result = balance_layer.layer(MODEL, cls.motion, {"despike": False})
+        cls.y0 = world(cls.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+        cls.y1 = world(cls.result.motion, ["下半身"], cls.last)["下半身"][0][:, 1]
+
+    def test_fixture_in_the_air_and_past_the_bound(self):
+        low = {s: balance_layer.Body(MODEL, self.motion).height(s) for s in ("左", "右")}
+        air = (low["左"] >= balance_layer.SUPPORT_H) & (low["右"] >= balance_layer.SUPPORT_H)
+        self.assertTrue(air[46:55].all())
+        self.assertFalse(air[90:110].any())
+        a = pelvis_down_acc(self.motion, self.last)
+        self.assertGreater(a[50], 200.0)
+        self.assertGreater(a[100], 200.0)
+
+    def test_jump_top_kept_in_the_air(self):
+        self.assertLess(abs(self.y1[50] - self.y0[50]) * CM, 0.05)
+        self.assertLess(float(np.max(np.abs(self.y1[44:57] - self.y0[44:57]))) * CM, 0.05)
+
+    def test_bounce_on_the_floor_still_bounded(self):
+        a = pelvis_down_acc(self.result.motion, self.last)
+        self.assertLessEqual(a[70:].max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        self.assertGreater(float(self.y0[100] - self.y1[100]) * CM, 0.3)
+
+    def test_air_bound_is_a_parameter(self):
+        """the bound before 2026-10-16 (DOWN_ACC_MAX in the air too) is there by the parameter, the same bytes"""
+        old = balance_layer.layer(MODEL, self.motion, {"despike": False, "air_down_acc_max": balance_layer.DOWN_ACC_MAX})
+        a = pelvis_down_acc(old.motion, self.last)
+        self.assertLessEqual(a.max(), balance_layer.DOWN_ACC_MAX + 0.5)
+        y = world(old.motion, ["下半身"], self.last)["下半身"][0][:, 1]
+        self.assertGreater(float(self.y0[50] - y[50]) * CM, 0.3)
+        self.assertEqual(old.report["vertical"]["air_bound_units_s2"], balance_layer.DOWN_ACC_MAX)
+
+    def test_report_names_the_air(self):
+        rep = self.result.report["vertical"]
+        self.assertGreater(rep["air_frames"], 8)
+        self.assertIn("air_bound_units_s2", rep)
+
+
 def a08_spikes(s, t):
     """a08's s2_spectrum.spikes, verbatim (the human baseline's measure): up and down 1-frame spikes of a speed series"""
     up = (s[1:-1] - s[:-2] > t) & (s[1:-1] - s[2:] > t)
