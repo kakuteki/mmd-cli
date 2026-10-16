@@ -301,7 +301,7 @@ def landmarks_from_pack(names, pos, rot, rest):
     R = lambda n: np.asarray(rot[:, ix[n]], dtype=np.float64)          # noqa: E731
     F = pos.shape[0]
     lower = R("下半身")
-    lm = {"cerv": P("首"), "xyph": P("上半身2"), "omph": P("上半身"),
+    lm = {"cerv": P("首"), "xyph": P("上半身2"), "omph": P("上半身"), "pelvis": P("下半身"),
           "vertex": P("頭") + qrot(R("頭"), np.broadcast_to(rest["頭先"] - rest["頭"], (F, 3)))}
     for s in SIDES:
         j = JP[s]
@@ -321,7 +321,8 @@ def landmarks_from_pack(names, pos, rot, rest):
 def landmarks_from_body(body):
     """(landmarks, rotations) from tools/balance_layer.py's Body (the FK of a VMD on the model): the same points as
     landmarks_from_pack, the knees as the body solves them"""
-    lm = {"cerv": body.p("首"), "xyph": body.p("上半身2"), "omph": body.p("上半身"), "vertex": body._vertex()}
+    lm = {"cerv": body.p("首"), "xyph": body.p("上半身2"), "omph": body.p("上半身"), "vertex": body._vertex(),
+          "pelvis": body.p("下半身")}
     for s in SIDES:
         j = JP[s]
         lm.update({"hip_" + s: body.hip(j), "knee_" + s: body.knee(j), "ankle_" + s: body.ankle(j), "toe_" + s: body.toe(j),
@@ -662,6 +663,17 @@ def measure(lm, feet, rots=None, floor_y=None, cutoff_hz=CUTOFF_HZ, rng=None, un
            "air": {"runs": len(air_rows), "frames": int(air.sum()), "com_acc_h_m_s2": _q(acc_h, (0.5, 0.9)),
                    "angmom_change_per_s2": _q(dL, (0.5, 0.9)), "stretches": air_rows[:100],
                    "min_frames": AIR_MIN_FRAMES}}
+    if "pelvis" in lm:
+        # how the parts follow the pelvis's horizontal motion (the upper body's isolation; tools/wb_layer.py)
+        pel = np.asarray(lm["pelvis"], dtype=np.float64)[a:b + 1]
+        segs = dyn["segments"]
+        groups = {"head": ["head"], "chest": ["upper_trunk"], "belly": ["middle_trunk"],
+                  "arms": [n for n in segs if n.startswith(("upper_arm", "forearm", "hand"))], "com": list(segs)}
+        rep["follow"] = {}
+        for part, names in groups.items():
+            mass = sum(segs[n]["mass"] for n in names)
+            x = (sum(segs[n]["mass"] * segs[n]["com"] for n in names) / mass)[a:b + 1]
+            rep["follow"][part] = dict(follow_response(x, pel, fs=fs), slope=round(follow_slope(x, pel, cutoff_hz or CUTOFF_HZ, fs), 4))
     if arrays:
         arr = {"com": dyn["com"], "zmp": dyn["zmp"], "zmp_lin": dyn["zmp_lin"], "margin": margin, "com_margin": com_margin,
                "angmom": dyn["angmom"], "force": dyn["force"], "contact_L": sup["contact"]["L"], "contact_R": sup["contact"]["R"],

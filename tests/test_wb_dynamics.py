@@ -501,6 +501,27 @@ class FollowTest(unittest.TestCase):
         self.assertLess(wb.follow_slope(wb.lowpass(self.pel, 1.0), self.pel), 0.2)
 
 
+class MeasureFollowTest(unittest.TestCase):
+    def test_measure_reports_how_the_parts_follow_the_pelvis(self):
+        """with a pelvis landmark (people: the skeleton's pelvis joint; Rin: 下半身's origin) the report has, per part
+        (the head, the chest = the upper trunk, the belly = the middle trunk, the arms, the whole COM), its response per
+        band and its slope; a body swaying as one rigid piece follows by 1 everywhere"""
+        F = 240
+        t = np.arange(F) / FPS
+        lm = still(F)
+        x = 0.4 * np.sin(2 * math.pi * 3.0 * t) + 0.6 * np.sin(2 * math.pi * 0.7 * t)
+        for k in lm:
+            lm[k][:, 0] += x
+        lm["pelvis"] = np.tile(np.array([0.0, 12.2248, -0.6493]), (F, 1))
+        lm["pelvis"][:, 0] += x
+        rep = wb.measure(lm, wb.RIN_FEET, floor_y=0.111)
+        f = rep["follow"]
+        for part in ("head", "chest", "belly", "arms", "com"):
+            self.assertAlmostEqual(f[part]["slope"], 1.0, places=3, msg=part)
+            self.assertAlmostEqual(f[part]["2-4Hz"], 1.0, places=3, msg=part)
+        self.assertNotIn("follow", wb.measure(still(F), wb.RIN_FEET, floor_y=0.111))
+
+
 class LandmarksTest(unittest.TestCase):
     def test_from_body_and_from_a_pack_agree(self):
         """the landmarks from the layer's body (FK of a VMD) and from an analysis pack's 26 bones are the same points"""
