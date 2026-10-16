@@ -833,6 +833,58 @@ class HandTest(unittest.TestCase):
             self.assertLess(min(degrees_between(g, toward(finger(k / 10.0))) for k in range(0, 11)), 1.5, i)
             self.assertGreater(degrees_between(g, toward(curled)), 5.0, i)
 
+    def slanted(self, up=2.2):
+        """the raised index finger slanted to her right as well as up `up` units (2.2: its tip out of the eyes' reach,
+        above and to the side of the wrist): the model, the dance (the hand before her face from 40 to 79) and the wrist
+        and tip at the look"""
+        offset = (0.8, up, -0.25)
+        fingers = (("人指３先", offset),) + POINTING[1:]
+        model = pmx.loads(rin_like_bytes(hands=True, fingers=fingers))
+        wrist = ahead(-2.0, -14.0, 0.33)
+        move = tuple(w - r for w, r in zip(wrist, WRISTS["右"]))
+        keys = list(head_turn({0: 0.0}).bones) + [vmd.BoneKey("右手首", f, m, fk.IDENTITY) for f, m in
+                                                  ((0, fk.ZERO), (39, fk.ZERO), (40, move), (79, move), (80, fk.ZERO))]
+        tip = tuple(w + d for w, d in zip(wrist, (-offset[0], offset[1], offset[2])))
+        return model, vmd.Motion(model_name="dancer", bones=keys), wrist, tip
+
+    def test_a_slanted_finger_out_of_reach_draws_the_eyes_onto_the_finger(self):
+        # the tip lies beyond the eyes' reach up and to the side: clamped toward the tip axis by axis, the gaze would
+        # pass beside the finger (the MV v9's 52 s: 3.6 degrees off the raised finger, 9.6 off its tip).  The eyes aim at
+        # the point of the finger nearest the tip that they reach, and the report names that point (tools/eye_optics.py
+        # brings the eyes together at its distance)
+        model, dance, wrist, tip = self.slanted()
+        result = eye_gaze.gaze(model, dance, BEHIND, life=False)
+        self.assertEqual(len(result.report["hands"]["list"]), 1, result.report["hands"])
+        look = result.report["hands"]["list"][0]
+        into = [s for s in result.saccades if s["reason"] == "hand"]
+        landed = into[0]["frame"] + into[0]["frames"] - 1
+        rest = eye_gaze.angles_of(FORWARD)
+        tip_seen, _ = eye_gaze._seen(result.sights[60], tip, FORWARD, rest)
+        self.assertGreater(tip_seen[1], eye_gaze.contact_zone(LIMITS).up + 3.0)        # out of reach: above
+        finger = lambda k: tuple(w + k * (t - w) for w, t in zip(wrist, tip))
+        for i in range(landed + 1, 79):
+            sight, seen = result.sights[i], result.looks[i]
+            g = world_gaze(sight, seen)
+            toward = lambda p: tuple(a - e for a, e in zip(p, sight.eye))
+            self.assertLess(min(degrees_between(g, toward(finger(k / 50.0))) for k in range(0, 51)), 0.6, i)
+            aim = look["aim"][i - look["first"]]
+            self.assertLess(min(math.dist(aim, finger(k / 200.0)) for k in range(0, 201)), 0.02, i)   # on the finger
+            self.assertLess(degrees_between(g, toward(aim)), 0.6, i)
+
+    def test_a_finger_within_reach_is_aimed_at_its_tip(self):
+        # raised less, the slanted finger's tip is within reach: the aim is the tip itself
+        model, dance, _, tip = self.slanted(up=0.9)
+        result = eye_gaze.gaze(model, dance, BEHIND, life=False)
+        rest = eye_gaze.angles_of(FORWARD)
+        tip_seen, _ = eye_gaze._seen(result.sights[60], tip, FORWARD, rest)
+        self.assertLess(tip_seen[1], eye_gaze.contact_zone(LIMITS).up - 1.0)
+        look = result.report["hands"]["list"][0]
+        tips = result.hand_aims["右"]
+        for k, p in enumerate(look["aim"]):
+            i = look["first"] + k
+            if i >= 41:
+                self.assertLess(math.dist(p, tips[min(look["last"], i + 1)]), 1e-3, i)
+
     def test_the_eyes_follow_a_hand_that_moves_slowly_ahead_of_it(self):
         # the hand moves 16 degrees across before her face in 2 seconds: the eyes follow it with no saccade (a person
         # tracks the hand she moves herself smoothly, the eyes a little ahead of it)
