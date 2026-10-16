@@ -677,6 +677,50 @@ def _scale(q, k):
     return {key: (round(v * k, 3) if key != "n" else v) for key, v in q.items()}
 
 
+# ---- how a body part follows the pelvis ----------------------------------------------------------------------------
+
+BANDS = {"0.5-1Hz": (0.5, 1.0), "1-2Hz": (1.0, 2.0), "2-4Hz": (2.0, 4.0), "4-8Hz": (4.0, 8.0)}
+WELCH_N = 60                    # frames (2 s Hann windows, half overlap)
+
+
+def follow_response(part, pelvis, bands=BANDS, nw=WELCH_N, fs=FPS):
+    """per band, how much `part` [F, 3] follows `pelvis` [F, 3] on the floor plane (x and z pooled): the real part of
+    the summed cross-spectrum over the summed spectrum of the pelvis in the band (Welch: Hann windows of nw frames, half
+    overlap, each window's mean taken off).  1 moves with the pelvis, 0 stays, -1 goes the other way"""
+    part = np.asarray(part, dtype=np.float64)
+    pelvis = np.asarray(pelvis, dtype=np.float64)
+    F = len(pelvis)
+    win = np.hanning(nw)
+    freqs = np.fft.rfftfreq(nw, 1.0 / fs)
+    sxp = np.zeros(len(freqs), complex)
+    spp = np.zeros(len(freqs))
+    for st in range(0, max(F - nw, 0) + 1, nw // 2):
+        if st + nw > F:
+            break
+        for ax in (0, 2):
+            pp = pelvis[st:st + nw, ax]
+            xx = part[st:st + nw, ax]
+            P = np.fft.rfft((pp - pp.mean()) * win)
+            X = np.fft.rfft((xx - xx.mean()) * win)
+            sxp += X * np.conj(P)
+            spp += np.abs(P) ** 2
+    out = {}
+    for name, (lo, hi) in bands.items():
+        m = (freqs >= lo - 1e-9) & (freqs < hi - 1e-9) if hi < fs / 2 else (freqs >= lo - 1e-9)
+        den = float(spp[m].sum())
+        out[name] = round(float(sxp[m].sum().real) / den, 4) if den > 0 else None
+    return out
+
+
+def follow_slope(part, pelvis, cutoff_hz=CUTOFF_HZ, fs=FPS):
+    """how much `part` [F, 3] follows `pelvis` [F, 3] in one number: the slope of its horizontal acceleration (both low-
+    passed at cutoff_hz, central differences) regressed on the pelvis's"""
+    ap = diff2(lowpass(np.asarray(pelvis, dtype=np.float64), cutoff_hz, fs), fs)[:, [0, 2]]
+    ax = diff2(lowpass(np.asarray(part, dtype=np.float64), cutoff_hz, fs), fs)[:, [0, 2]]
+    den = float(np.sum(ap * ap))
+    return float(np.sum(ax * ap)) / den if den > 0 else float("nan")
+
+
 # ---- the command ---------------------------------------------------------------------------------------------------
 
 def _balance_layer():
