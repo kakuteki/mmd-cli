@@ -976,6 +976,20 @@ class AirTest(unittest.TestCase):
         self.assertGreater(rep["air_frames"], 8)
         self.assertIn("air_bound_units_s2", rep)
 
+    def test_short_air_keeps_the_drop(self):
+        """the hips come back up from the legs' drop only in an air stretch of AIR_RAMP_MIN frames or more (a jump, as
+        the song's tests read it): a shorter one is a shuffle with the feet 2-3 cm up, where the hips coming up for 1-3
+        frames next to the floor frames the floor's bound lowers left MMD's IK short on the standing leg (order C of the
+        MV, 74.43 s, frame 2233)"""
+        air = np.zeros(30, bool)
+        air[3:6] = True                                 # 3 frames: a shuffle
+        air[10:20] = True                               # 10 frames: a jump
+        w = balance_layer.air_ramp(air)
+        self.assertEqual(float(w[:10].max()), 0.0)
+        self.assertGreater(float(w[10]), 0.0)
+        self.assertEqual(float(w[14]), 1.0)
+        self.assertEqual(float(w[20:].max()), 0.0)
+
 
 def a08_spikes(s, t):
     """a08's s2_spectrum.spikes, verbatim (the human baseline's measure): up and down 1-frame spikes of a speed series"""
