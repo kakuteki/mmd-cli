@@ -335,6 +335,40 @@ class SupportTest(unittest.TestCase):
         self.assertGreater(wb.polygon_margin(behind, foot), 0.0)
         self.assertLess(wb.polygon_margin(np.array([1.08 * U, -0.9 * U]), foot), 0.0)      # the ball is off the floor
 
+    def test_each_foot_on_its_own_rest_height(self):
+        """a person's planted feet need not stand at the same height (FineDance 001: the left ball 1 cm over the right's
+        when both are planted): the rest heights may be per foot"""
+        lm = still(3)
+        for k in ("ankle_L", "toe_L"):
+            lm[k][:, 1] += 0.2                         # the left foot 1.6 cm over the right one, planted
+        one = wb.support(lm, dict(self.feet, contact=0.15))
+        self.assertFalse(np.any(one["contact"]["L"]))
+        feet = dict(self.feet, contact=0.15, ankle_rest_y={"L": 1.7452 + 0.2, "R": 1.7452}, toe_rest_y={"L": 0.3, "R": 0.1})
+        two = wb.support(lm, feet)
+        self.assertTrue(np.all(two["contact"]["L"]) and np.all(two["part"]["L"] == "flat"))
+
+    def test_pointed_foot_on_its_toe_tip(self):
+        """a person's toe landmark is the ball (SMPL's foot joint); a pointed foot (tendu) touches with the toes' tip
+        alone: with a tip landmark and a tip template the foot is on the floor there"""
+        lm = still(3)
+        lm["ankle_L"][:, 1] += 1.0
+        lm["toe_L"][:, 1] += 0.6                       # the ball 5 cm up
+        lm["tip_L"] = lm["toe_L"].copy()
+        lm["tip_L"][:, 2] -= 0.8                       # the tip 6.4 cm ahead,
+        lm["tip_L"][:, 1] = 0.111                      # on the floor
+        lm["tip_R"] = lm["toe_R"].copy()
+        lm["tip_R"][:, 1] = 0.111
+        feet = dict(self.feet, tip=np.array([(0.015 * math.cos(a), 0.015 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 9)[:-1]]),
+                    tip_floor_y=0.111)
+        sup = wb.support(lm, feet)
+        self.assertTrue(np.all(sup["contact"]["L"]))
+        self.assertTrue(np.all(sup["part"]["L"] == "tip"))
+        poly = wb.foot_polygon(lm, feet, "L", 1, "tip")
+        self.assertGreater(wb.polygon_margin(lm["tip_L"][1, [0, 2]] * U, poly), 0.01)
+        self.assertLess(wb.polygon_margin(lm["toe_L"][1, [0, 2]] * U, poly), 0.0)
+        # without the tip template (Rin: her toe IK is the tip) the same foot is off the floor
+        self.assertFalse(np.any(wb.support(lm, self.feet)["contact"]["L"]))
+
     def test_outward_is_away_from_the_body(self):
         """a sole that lies outwards of the foot's line on both feet: the left one's to +x (the model's left), the right
         one's to -x"""

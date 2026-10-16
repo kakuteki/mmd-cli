@@ -97,11 +97,13 @@ RIN_FEET = {"fore": np.array([(u - RIN_TOE_U, w) for u, w in _RIN_FORE]), "heel"
             "stature_m": (18.7663 - 0.111) * UNIT_M, "name": "Rin (White.pmx)"}
 
 
-def human_feet(ankle_to_ball_m, ankle_rest_y, toe_rest_y, floor_y, stature_m, contact=0.15):
+def human_feet(ankle_to_ball_m, ankle_rest_y, toe_rest_y, floor_y, stature_m, contact=0.15, tip_floor_y=None):
     """a person's sole from the ankle -> ball (first metatarsal head row) length on the floor: the heel 0.24 of the foot
     behind the ankle, the ball at 0.73 of it, the tip at 1.0 (foot length = ankle_to_ball / 0.49); the forefoot 0.38 of
     the foot wide, the heel 0.25 (foot breadth / length 0.38-0.40 in young women; the heel breadth about 2/3 of it).  The
-    toe landmark of a person is the ball (SMPL's foot joint); contact 0.15 units (1.2 cm, the human baseline's)"""
+    toe landmark of a person is the ball (SMPL's foot joint); contact 0.15 units (1.2 cm, the human baseline's).  The rest
+    heights may be per foot ({'L', 'R'}).  tip_floor_y: the toes' tip landmarks' planted height (a pointed foot touches
+    with the tip alone: a disc of 1.5 cm there)"""
     Lf = ankle_to_ball_m / 0.49
     fore_w, heel_w = 0.38 * Lf / 2.0, 0.25 * Lf / 2.0
     tip = 0.27 * Lf
@@ -109,8 +111,12 @@ def human_feet(ankle_to_ball_m, ankle_rest_y, toe_rest_y, floor_y, stature_m, co
     ang = np.linspace(0.0, math.pi, 7)
     fore = [(-0.10 * Lf, -fore_w), (-0.10 * Lf, fore_w)] + [(tip - 0.12 * Lf * (1 - math.sin(a)), fore_w * math.cos(a)) for a in ang]
     heel = [(0.05 * Lf, -heel_w), (0.05 * Lf, heel_w)] + [(back + heel_w * (1 - math.sin(a)), heel_w * math.cos(a)) for a in ang]
-    return {"fore": np.array(fore), "heel": np.array(heel), "ankle_rest_y": ankle_rest_y, "toe_rest_y": toe_rest_y,
-            "floor_y": floor_y, "contact": contact, "foot_length_m": Lf, "stature_m": stature_m, "name": "person"}
+    out = {"fore": np.array(fore), "heel": np.array(heel), "ankle_rest_y": ankle_rest_y, "toe_rest_y": toe_rest_y,
+           "floor_y": floor_y, "contact": contact, "foot_length_m": Lf, "stature_m": stature_m, "name": "person"}
+    if tip_floor_y is not None:
+        out["tip"] = np.array([(0.015 * math.cos(a), 0.015 * math.sin(a)) for a in np.linspace(0.0, 2.0 * math.pi, 13)[:-1]])
+        out["tip_floor_y"] = tip_floor_y
+    return out
 
 
 # ---- quaternions (x, y, z, w; v' = q v q^-1) -----------------------------------------------------------------------
@@ -454,8 +460,14 @@ def _foot_axes(lm, s):
     return f, o
 
 
+def _rest(feet, key, s):
+    """a rest height (units) of foot s: one number for both feet or a dict per foot"""
+    v = feet[key]
+    return float(v[s]) if isinstance(v, dict) else float(v)
+
+
 def foot_polygon(lm, feet, s, frame, part, unit_m=UNIT_M):
-    """the part ('flat', 'fore' or 'heel') of foot s's sole on the floor at `frame`, [k, 2] metres (x, z)"""
+    """the part ('flat', 'fore', 'heel' or 'tip') of foot s's sole on the floor at `frame`, [k, 2] metres (x, z)"""
     f, o = _foot_axes(lm, s)
     f, o = f[frame], o[frame]
     A = np.asarray(lm["ankle_" + s][frame], dtype=np.float64)[[0, 2]] * unit_m
@@ -465,39 +477,55 @@ def foot_polygon(lm, feet, s, frame, part, unit_m=UNIT_M):
         pts += [A + u * f + w * o for u, w in feet["heel"]]
     if part in ("flat", "fore"):
         pts += [T + u * f + w * o for u, w in feet["fore"]]
+    if part == "tip" and "tip" in feet and ("tip_" + s) in lm:
+        X = np.asarray(lm["tip_" + s][frame], dtype=np.float64)[[0, 2]] * unit_m
+        pts += [X + u * f + w * o for u, w in feet["tip"]]
     return _hull(np.array(pts)) if pts else np.zeros((0, 2))
 
 
 def support(lm, feet, unit_m=UNIT_M):
     """per foot: `contact` [F] (its lowest point under feet['contact'] units over its rest heights), `part` [F] ('flat',
-    'fore', 'heel' or ''), and per frame the base of support `hull` (the convex hull [k, 2] of the parts on the floor,
-    metres, x and z; an empty array in the air)"""
+    'fore', 'heel', 'tip' or ''), and per frame the base of support `hull` (the convex hull [k, 2] of the parts on the
+    floor, metres, x and z; an empty array in the air).  The rest heights may be per foot ({'L': .., 'R': ..}).  With a
+    tip template (feet['tip'], feet['tip_floor_y']) and tip landmarks (a person's toes' tip: the toe landmark is the
+    ball), a foot whose ball and heel are up touches with the tip alone ('tip')"""
     F = len(lm["ankle_L"])
     eps = feet["contact"]
     contact, part = {}, {}
     pts = {}
+    use_tip = "tip" in feet and all(("tip_" + s) in lm for s in SIDES)
     for s in SIDES:
         A, T = np.asarray(lm["ankle_" + s], dtype=np.float64), np.asarray(lm["toe_" + s], dtype=np.float64)
-        heel_dn = A[:, 1] - feet["ankle_rest_y"] < eps
-        fore_dn = T[:, 1] - feet["toe_rest_y"] < eps
-        contact[s] = heel_dn | fore_dn
-        part[s] = np.where(heel_dn & fore_dn, "flat", np.where(fore_dn, "fore", np.where(heel_dn, "heel", "")))
+        heel_dn = A[:, 1] - _rest(feet, "ankle_rest_y", s) < eps
+        fore_dn = T[:, 1] - _rest(feet, "toe_rest_y", s) < eps
         f, o = _foot_axes(lm, s)
         hu, hw = feet["heel"][:, 0], feet["heel"][:, 1]
         fu, fw = feet["fore"][:, 0], feet["fore"][:, 1]
         Axz, Txz = A[:, [0, 2]] * unit_m, T[:, [0, 2]] * unit_m
         heel = Axz[:, None, :] + hu[None, :, None] * f[:, None, :] + hw[None, :, None] * o[:, None, :]
         fore = Txz[:, None, :] + fu[None, :, None] * f[:, None, :] + fw[None, :, None] * o[:, None, :]
-        pts[s] = (heel, fore, heel_dn, fore_dn)
+        tip_dn = np.zeros(F, bool)
+        tip = None
+        if use_tip:
+            X = np.asarray(lm["tip_" + s], dtype=np.float64)
+            tip_dn = (X[:, 1] - _rest(feet, "tip_floor_y", s) < eps) & ~heel_dn & ~fore_dn
+            tu, tw = feet["tip"][:, 0], feet["tip"][:, 1]
+            tip = X[:, None, [0, 2]] * unit_m + tu[None, :, None] * f[:, None, :] + tw[None, :, None] * o[:, None, :]
+        contact[s] = heel_dn | fore_dn | tip_dn
+        part[s] = np.where(heel_dn & fore_dn, "flat", np.where(fore_dn, "fore", np.where(heel_dn, "heel",
+                                                                                         np.where(tip_dn, "tip", ""))))
+        pts[s] = (heel, fore, tip, heel_dn, fore_dn, tip_dn)
     hulls = []
     for t in range(F):
         P = []
         for s in SIDES:
-            heel, fore, hd, fd = pts[s]
+            heel, fore, tip, hd, fd, td = pts[s]
             if hd[t]:
                 P.append(heel[t])
             if fd[t]:
                 P.append(fore[t])
+            if td[t]:
+                P.append(tip[t])
         hulls.append(_hull(np.concatenate(P, 0)) if P else np.zeros((0, 2)))
     return {"contact": contact, "part": part, "hull": hulls}
 
