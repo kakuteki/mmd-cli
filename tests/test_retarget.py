@@ -20,8 +20,14 @@ MIKU_DATA = humanoid_bytes(MIKU, MIKU_BLOBS, twist_axis=True, name="miku")
 PURE = {"feet": False, "hands": False, "clear": False}
 
 
+_BODIES = {}
+
+
 def body(data):
-    return retarget.Body.loads(data)
+    """the tool's body of a model (one per model: its surfaces are built once)"""
+    if data not in _BODIES:
+        _BODIES[data] = retarget.Body.loads(data)
+    return _BODIES[data]
 
 
 def world(data, m, names, frames):
@@ -155,3 +161,237 @@ class PureMappingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---- the per-frame machinery ---------------------------------------------------------------------------------------------
+
+def fk_values(m, name, frames):
+    """(positions, rotations as applied) of a bone's keys as mmd_cli.fk samples them"""
+    keys = fk.tracks_of(m).get(name)
+    kf = [k.frame for k in keys]
+    out = [fk.sample(keys, f, kf) for f in frames]
+    return np.array([p for p, _ in out]), np.array([fk.applied(q) for _, q in out])
+
+
+def same_turn(a, b):
+    return np.abs(np.sum(np.asarray(a) * np.asarray(b), axis=-1))
+
+
+class TrackTest(unittest.TestCase):
+    """the keys of one bone: MMD's values between them, and a key added without changing the motion"""
+
+    def keys(self):
+        return [key("左腕", 0, position=(0.0, 0.0, 0.0)),
+                key("左腕", 6, axis_angle((0.2, 1.0, 0.1), 50.0), position=(1.0, -2.0, 0.5)),
+                key("左腕", 15, axis_angle((1.0, 0.0, 0.3), -80.0), position=(0.5, 1.0, 2.0), curve=(64, 0, 64, 127)),
+                key("左腕", 22, axis_angle((0.0, 0.0, 1.0), 30.0), position=(0.0, 0.0, 0.0), curve=(10, 90, 100, 30))]
+
+    def test_values_are_mmds(self):
+        m = motion(*self.keys())
+        tr = retarget.Track(m.bones)
+        frames = list(range(-2, 26))
+        p, q = tr.sample(np.array(frames))
+        fp, fq = fk_values(m, "左腕", frames)
+        np.testing.assert_allclose(p, fp, atol=1e-6)
+        self.assertGreater(float(same_turn(q, fq).min()), 1 - 1e-9)
+
+    def test_a_split_keeps_the_motion(self):
+        m = motion(*self.keys())
+        tr = retarget.Track(m.bones)
+        for f in (3, 9, 12, 19):
+            tr.split(f)
+        self.assertEqual(list(tr.frames), [0, 3, 6, 9, 12, 15, 19, 22])
+        frames = np.arange(0, 23)
+        p, q = tr.sample(frames)
+        fp, fq = fk_values(m, "左腕", list(frames))
+        # straight segments split exactly; a curved one within the curve's 1/127 steps
+        np.testing.assert_allclose(p[:7], fp[:7], atol=1e-9)
+        np.testing.assert_allclose(p, fp, atol=0.03)
+        self.assertGreater(float(same_turn(q, fq).min()), math.cos(math.radians(1.0) / 2))
+        # and through the VMD the same values come back
+        again = retarget.Track(tr.keys())
+        p2, q2 = again.sample(frames)
+        np.testing.assert_allclose(p2, p, atol=1e-5)
+
+    def test_fitting_targets_adds_keys_only_where_they_are_needed(self):
+        m = motion(key("左腕", 0), key("左腕", 30, axis_angle((0.0, 0.0, 1.0), 60.0)))
+        tr = retarget.Track(m.bones)
+        frames = np.arange(0, 31)
+        _, base = tr.sample(frames)
+        # a bump of up to 12 degrees about X between frames 10 and 20
+        bump = np.where((frames >= 10) & (frames <= 20), np.sin(np.pi * (frames - 10) / 10.0), 0.0) * math.radians(12.0)
+        want = retarget.qmul(retarget.qaxis(np.array([1.0, 0.0, 0.0]), bump), base)
+        added = tr.fit_rotations(frames, want, tol_deg=0.5)
+        _, got = tr.sample(frames)
+        self.assertLess(float(np.degrees(retarget.qangle(retarget.qmul(retarget.qconj(want), got))).max()), 0.5)
+        self.assertGreater(added, 0)
+        self.assertLess(added, 12)
+        self.assertEqual([f for f in tr.frames if f < 9 or f > 21], [0, 30])
+
+
+# ---- the contacts ------------------------------------------------------------------------------------------------------
+
+from tests.retarget_fixtures import RIN_SHOE, blob_centre  # noqa: E402
+
+leg_ik = load_tool("leg_ik")
+RIN_SHOE_DATA = humanoid_bytes(RIN, RIN_BLOBS, twist_axis=True, name="rin", shoe=RIN_SHOE)
+
+
+def legs(data, m, frames):
+    return leg_ik.solve(leg_ik.LegRig.loads(data), m, list(frames))
+
+
+def foot_point(leg, offset):
+    """world positions of a point given relative to the ankle at rest, carried by the solved foot"""
+    return leg["ankle"] + leg_ik.qrot(leg["q_foot"], np.asarray(offset, dtype=np.float64))
+
+
+class FeetTest(unittest.TestCase):
+    """a foot that stands on the floor in the source stands still on the floor in the target, and the hips stay"""
+
+    def test_a_toe_stand_reaches_the_floor_by_the_ankle_not_the_hips(self):
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        th = math.radians(10.0)
+        rise = l * math.sin(th) - h * (1 - math.cos(th))
+        q = axis_angle((1.0, 0.0, 0.0), -10.0)
+        # the knees well bent: MMD's IK leaves a nearly straight leg short of its goal (tools/leg_ik.py, saba)
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, q, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, q, position=(0.0, rise, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        src = legs(MIKU_DATA, m, range(0, 21))
+        toe_s = foot_point(src["左"], np.subtract(MIKU["つま先"], MIKU["足首"]))
+        self.assertLess(float(np.abs(toe_s[:, 1] - MIKU["つま先"][1]).max()), 1e-3)     # the source's toe is on its floor
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        toe_off = (RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"])
+        toe_off = np.subtract(toe_off, RIN["足首"])
+        before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 21))["左"], toe_off)
+        after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 21))["左"], toe_off)
+        self.assertGreater(float(before[:, 1].min()) - RIN_SHOE["sole"], 0.03)               # the mapping alone floats
+        self.assertLess(float(np.abs(after[:, 1] - RIN_SHOE["sole"]).max()), 0.0125)        # on the floor within 1 mm
+        out = {(k.name, k.frame): k for k in res.motion.bones}
+        ref = {(k.name, k.frame): k for k in pure.motion.bones}
+        for f in (0, 20):
+            self.assertAlmostEqual(out[("左足ＩＫ", f)].position[1], ref[("左足ＩＫ", f)].position[1], places=4)   # the ankle's height
+            np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
+        self.assertEqual(res.report["feet"]["左"]["kinds"]["toe"], 1)
+
+    def test_a_foot_pivoting_on_its_ball_keeps_the_targets_ball_still(self):
+        ankle = np.array(MIKU["足首"])
+        ball = np.array([MIKU["足先EX"][0], MIKU["つま先"][1], MIKU["足先EX"][2]])
+        turns = [axis_angle((0.0, 1.0, 0.0), 4.0 * f) for f in range(0, 11)]
+        goals = [ball - leg_ik.qrot(np.array(q), ball - ankle) for q in turns]
+        for _ in range(4):                       # the source's own ball held still as MMD's IK turns its foot
+            keys = [key("左足ＩＫ", f, q, position=tuple(g - ankle)) for f, (q, g) in enumerate(zip(turns, goals))]
+            m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), *keys, key("右足ＩＫ", 0))
+            b = foot_point(legs(MIKU_DATA, m, range(0, 11))["左"], ball - ankle)
+            goals = [g + np.array([ball[0] - p[0], 0.0, ball[2] - p[2]]) for g, p in zip(goals, b)]
+        self.assertLess(float(np.linalg.norm(b[:, [0, 2]] - ball[[0, 2]], axis=1).max()), 0.005)
+        ball_t = np.array([RIN["足先EX"][0], RIN_SHOE["sole"], RIN["足先EX"][2]]) - np.array(RIN["足首"])
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 11))["左"], ball_t)
+        after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 11))["左"], ball_t)
+
+        def drift(p):
+            return float(np.linalg.norm(p[:, [0, 2]] - p[0, [0, 2]], axis=1).max())
+        self.assertGreater(drift(before), 0.1)
+        self.assertLess(drift(after), 0.0125)
+        self.assertLess(float(np.abs(after[:, 1] - RIN_SHOE["sole"]).max()), 0.0125)
+
+
+def palm(data, rest, m, side, frames):
+    w = world(data, m, [side + "手首", side + "中指１"], frames)
+    return np.array([np.asarray(w[f][side + "手首"][0]) + 0.5 * (np.asarray(w[f][side + "中指１"][0]) - np.asarray(w[f][side + "手首"][0]))
+                     for f in frames])
+
+
+def sphere_distance(data, rest, blobs, bone, m, points, frames):
+    """distance of points [F, 3] from the blob sphere on the bone, carried by the bone"""
+    c0, r = blob_centre(rest, blobs, bone)
+    w = world(data, m, [bone], frames)
+    out = []
+    for n, f in enumerate(frames):
+        p, q = w[f][bone]
+        c = np.asarray(p) + leg_ik.qrot(np.asarray(q), np.subtract(c0, rest[bone]))
+        out.append(float(np.linalg.norm(points[n] - c)) - r)
+    return np.array(out)
+
+
+def arm_pose_keys(a, b, g):
+    return [key("左腕", 0, tuple(retarget.qnorm(retarget.qmul(axis_angle((0.0, 0.0, 1.0), a), axis_angle((0.0, 1.0, 0.0), b))))),
+            key("左ひじ", 0, axis_angle((0.0, 1.0, 0.0), g))]
+
+
+class HandsTest(unittest.TestCase):
+    """a hand on the head stays on the head; a hand far from the body is left alone"""
+
+    def test_a_hand_on_the_head_stays_on_the_head(self):
+        k = RIN_BLOBS[0][2] / MIKU_BLOBS[0][2]
+        best = None
+        for a in range(60, 171, 10):                 # raise the arm, swing it, bend the elbow: palms on the source's head
+            for b in range(-60, 61, 20):
+                for g in range(0, 151, 15):
+                    m = motion(*arm_pose_keys(a, b, g))
+                    d = sphere_distance(MIKU_DATA, MIKU, MIKU_BLOBS, "頭", m, palm(MIKU_DATA, MIKU, m, "左", [0]), [0])[0]
+                    if abs(d - 0.05) > 0.08:
+                        continue
+                    pure = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), PURE)
+                    dp = sphere_distance(RIN_DATA, RIN, RIN_BLOBS, "頭", pure.motion, palm(RIN_DATA, RIN, pure.motion, "左", [0]), [0])[0]
+                    miss = abs(dp - max(d, 0.0) * k)
+                    if best is None or miss > best[0]:
+                        best = (miss, d, a, b, g)
+        self.assertGreater(best[0], 0.15)                # the mapping alone takes this hand off the head (or into it)
+        m = motion(*arm_pose_keys(*best[2:]))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), {"feet": False, "clear": False})
+        d_res = sphere_distance(RIN_DATA, RIN, RIN_BLOBS, "頭", res.motion, palm(RIN_DATA, RIN, res.motion, "左", [0]), [0])[0]
+        self.assertLess(abs(d_res - max(best[1], 0.0) * k), 0.06)
+
+    def test_a_hand_far_from_the_body_is_left_alone(self):
+        m = motion(*arm_pose_keys(30, 0, 0))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), {"feet": False})
+        a = {(k.name, k.frame): k for k in pure.motion.bones}
+        b = {(k.name, k.frame): k for k in res.motion.bones}
+        self.assertEqual(set(a), set(b))
+        for n in a:
+            self.assertGreater(abs(float(np.dot(a[n].rotation, b[n].rotation))), 1 - 1e-9)
+
+
+def arm_penetration(data, rest, blobs, m, frames, radii=(0.35, 0.3, 0.25)):
+    """the deepest a target arm (capsules on its bones, the tool's default radii) goes into the hips' blob sphere"""
+    names = ["左腕", "左ひじ", "左手首", "左中指３"]
+    w = world(data, m, names + ["下半身"], frames)
+    c0, R = blob_centre(rest, blobs, "下半身")
+    deep = -1e9
+    for f in frames:
+        p, q = w[f]["下半身"]
+        c = np.asarray(p) + leg_ik.qrot(np.asarray(q), np.subtract(c0, rest["下半身"]))
+        pts = [np.asarray(w[f][n][0]) for n in names]
+        for (a, b), r in zip(zip(pts[:-1], pts[1:]), radii):
+            for t in np.linspace(0, 1, 15):
+                deep = max(deep, r + R - float(np.linalg.norm(a + t * (b - a) - c)))
+    return deep
+
+
+class ClearTest(unittest.TestCase):
+    """an arm that clears the source's hips but would go into the target's is kept out"""
+
+    def test_an_arm_kept_out_of_the_hips(self):
+        found = None
+        for a in range(-60, -24, 2):
+            for b in (-20, -10, 0, 10, 20):
+                m = motion(*arm_pose_keys(a, b, 0))
+                src = arm_penetration(MIKU_DATA, MIKU, MIKU_BLOBS, m, [0])
+                pure = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), PURE)
+                tgt = arm_penetration(RIN_DATA, RIN, RIN_BLOBS, pure.motion, [0])
+                if src < -0.05 and 0.1 < tgt < 0.4:
+                    found = (a, b, src, tgt)
+                    break
+            if found:
+                break
+        self.assertIsNotNone(found)
+        m = motion(*arm_pose_keys(found[0], found[1], 0))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), {"feet": False, "hands": False})
+        self.assertLess(arm_penetration(RIN_DATA, RIN, RIN_BLOBS, res.motion, [0]), 0.03)

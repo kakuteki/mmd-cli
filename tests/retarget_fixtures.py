@@ -34,10 +34,12 @@ MIKU = {
     "つま先": (0.929, 0.0, -2.464), "足先EX": (0.9, 0.3, -1.2),
 }
 # spheres of vertices for the body's surfaces: (bone, centre offset from the bone's rest, radius, points)
-RIN_BLOBS = (("頭", (0.0, 1.43, -0.35), 1.35, 60), ("上半身2", (0.0, 0.6, -0.1), 1.0, 30), ("上半身", (0.0, 0.5, 0.0), 1.0, 30),
-             ("下半身", (0.0, -1.2, 0.4), 1.3, 40))
-MIKU_BLOBS = (("頭", (0.0, 1.47, 0.23), 1.6, 60), ("上半身2", (0.0, 0.6, 0.0), 1.0, 30), ("上半身", (0.0, 0.5, 0.0), 1.0, 30),
-              ("下半身", (0.0, -1.2, 0.2), 1.2, 40))
+RIN_BLOBS = (("頭", (0.0, 1.43, -0.35), 1.35, 400), ("上半身2", (0.0, 0.6, -0.1), 1.0, 200), ("上半身", (0.0, 0.5, 0.0), 1.0, 200),
+             ("下半身", (0.0, -1.2, 0.4), 1.3, 300))
+MIKU_BLOBS = (("頭", (0.0, 1.47, 0.23), 1.6, 400), ("上半身2", (0.0, 0.6, 0.0), 1.0, 200), ("上半身", (0.0, 0.5, 0.0), 1.0, 200),
+              ("下半身", (0.0, -1.2, 0.2), 1.2, 300))
+# Rin's shoe: a box of vertices on 足首 from the heel (0.63 behind the ankle) to the toe tip (1.50 ahead), its sole at 0.111
+RIN_SHOE = {"heel_back": 0.63, "toe_ahead": 1.50, "sole": 0.111, "top": 1.0, "half_width": 0.35}
 
 
 def mid(a, b):
@@ -55,8 +57,9 @@ def sphere(n):
     return out
 
 
-def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid"):
-    """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x) and vertex `blobs`"""
+def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None):
+    """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x), vertex `blobs` (each
+    vertex's normal points out of its sphere) and, with `shoe`, a box of shoe vertices on each 足首"""
     w = Writer(bone=2, vertex=2)
     pos = {}
     for n, p in rest.items():
@@ -123,8 +126,28 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid"):
             for p in sphere(n):
                 raw = w.vertex("BDEF1", (index[b],))
                 q = (c[0] + offset[0] + radius * p[0], c[1] + offset[1] + radius * p[1], c[2] + offset[2] + radius * p[2])
-                verts.append(struct.pack("<3f", *q) + raw[12:])
+                verts.append(struct.pack("<3f", *q) + struct.pack("<3f", *p) + raw[24:])
+    if shoe:
+        for s in ("左", "右"):
+            ax, ay, az = where(s + "足首", "足首")
+            for i in range(12):
+                for j in range(4):
+                    for k in range(3):
+                        z = az + shoe["heel_back"] - (shoe["heel_back"] + shoe["toe_ahead"]) * i / 11.0
+                        y = shoe["sole"] + (shoe["top"] - shoe["sole"]) * j / 3.0
+                        x = ax + shoe["half_width"] * (k - 1)
+                        raw = w.vertex("BDEF1", (index[s + "足首"],))
+                        verts.append(struct.pack("<3f", x, y, z) + struct.pack("<3f", 0.0, -1.0 if j == 0 else 0.0, 0.0) + raw[24:])
     return w.build(name=name, bones=built, vertices=verts)
+
+
+def blob_centre(rest, blobs, bone):
+    """(centre at rest, radius) of the blob on `bone` (a name without the side for the middle bones)"""
+    for b, offset, radius, _ in blobs:
+        if b == bone:
+            base = rest[bone]
+            return tuple(base[i] + offset[i] for i in range(3)), radius
+    raise KeyError(bone)
 
 
 def axis_angle(axis, degrees):
