@@ -82,12 +82,21 @@ class FakeVersion:
 
 
 class FakeMeasured:
-    """shared.Measured's face: hb, a05 and fq run on the fake pack; wb, shoes and vertical give what the test set"""
+    """shared.Measured's face: hb, a05 and fq run on the fake pack (a05 with the rest given, Rin's by default); wb, shoes
+    and vertical give what the test set; scaled(s) is shared.Scaled on it"""
 
-    def __init__(self, version, wb=None, shoes=None, ref_shoes=None, vertical=None):
+    def __init__(self, version, wb=None, shoes=None, ref_shoes=None, vertical=None, rest=None):
         self.v = version
         self._wb, self._shoes, self._ref_shoes, self._vertical = wb, shoes, ref_shoes, vertical
+        self._rest = rest
         self._c = {}
+
+    def rest(self):
+        return self._rest if self._rest is not None else rin_rest()
+
+    def scaled(self, s):
+        from mvi import shared
+        return shared.Scaled(self, s)
 
     def hb(self):
         if "hb" not in self._c:
@@ -97,7 +106,7 @@ class FakeMeasured:
     def a05(self):
         if "a05" not in self._c:
             names, pos, rot = self.v.pack()
-            self._c["a05"] = A05.run(names, pos, rot, rest=rin_rest())
+            self._c["a05"] = A05.run(names, pos, rot, rest=self.rest())
         return self._c["a05"]
 
     def fq(self):

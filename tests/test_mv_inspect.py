@@ -140,6 +140,63 @@ class SyntheticTest(unittest.TestCase):
                         "--parts", "gravity,nonsense")
         self.assertEqual(code, 2)
 
+    def test_the_size_aligned_values_are_added_to_the_length_measures(self):
+        rep = self.report(self.out_a)
+        from tests.test_leg_ik import REST as LEG_REST
+        rest = {s + n: np.array([sx * LEG_REST[n][0], LEG_REST[n][1], LEG_REST[n][2]])
+                for s, sx in (("左", 1.0), ("右", -1.0)) for n in ("足", "ひざ", "足首")}
+        size = rep["size"]
+        self.assertEqual(size["by"], "legs")
+        self.assertAlmostEqual(size["leg_cm"], MF.base.leg_cm(rest), places=2)
+        self.assertAlmostEqual(size["scale"], MF.base.people_leg_cm() / size["leg_cm"], places=3)
+        aligned = 0
+        for r in rep["measures"]:
+            if r["id"] in MF.base.SIZE_ALIGNED and r["value"] is not None:
+                self.assertIn("size", r, r["id"])
+                self.assertEqual(r["size"]["judge"] is None, r["judge"] is None, r["id"])
+                aligned += 1
+            else:
+                self.assertNotIn("size", r, r["id"])
+        self.assertGreater(aligned, 10)
+        md = text(os.path.join(self.out_a, "report.md"))
+        self.assertIn("脚でそろえた", md)
+        self.assertIn("%.3f" % size["scale"], md)
+
+    def test_size_none_leaves_the_report_as_before(self):
+        out = os.path.join(self.folder, "nosize")
+        code, res = run("measure", "--model", self.model, "--motions", self.dropping, "--label", "drop", "--out", out,
+                        "--no-figure", "--parts", "feet,balance", "--size", "none")
+        self.assertEqual(code, 0, res)
+        rep = self.report(out)
+        self.assertNotIn("size", rep)
+        self.assertFalse(any("size" in r for r in rep["measures"]))
+        self.assertNotIn("脚でそろえた", text(os.path.join(out, "report.md")))
+        a = {r["id"]: (r["value"], r["judge"]) for r in self.report(self.out_a)["measures"] if r["concept"] in ("feet", "balance")}
+        self.assertEqual({r["id"]: (r["value"], r["judge"]) for r in rep["measures"]}, a)
+
+    def test_no_size_alignment_without_a_part_that_measures_lengths(self):
+        # --parts skirt: nothing is measured again at people's size, so the report must not print the size note and
+        # "0 measures change" as if they had been (review_adapt)
+        out = os.path.join(self.folder, "skirt_only")
+        code, res = run("measure", "--model", self.model, "--motions", self.dropping, "--label", "drop", "--out", out,
+                        "--no-figure", "--parts", "skirt", "--cache", os.path.join(self.out_a, "cache"))
+        self.assertEqual(code, 0, res)
+        rep = self.report(out)
+        self.assertIsNone(rep["size"]["by"])
+        self.assertFalse(any("size" in r for r in rep["measures"]))
+        self.assertNotIn("脚でそろえ", text(os.path.join(out, "report.md")))
+
+    def test_compare_judges_the_size_aligned_values_too(self):
+        out = os.path.join(self.folder, "cmp_size")
+        code, res = run("compare", self.out_a, self.out_b, "--out", out)
+        self.assertEqual(code, 0)
+        c = json.loads(text(os.path.join(out, "compare.json")))
+        rows = {r["id"]: r for r in c["rows"]}
+        for mid in MF.base.SIZE_ALIGNED:
+            r = rows.get(mid)
+            if r and r["a"] is not None and r["b"] is not None and r.get("ref", {}).get("kind", "people") == "people":
+                self.assertIn("word_size", r, mid)
+
 
 # ---- the MV itself ----------------------------------------------------------------------------------------------------
 

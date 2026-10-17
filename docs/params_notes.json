@@ -1,0 +1,205 @@
+{
+ "_about": "tools/param_inventory.py joins these to the values it takes from the code, by \"tool:NAME\": from = where the value was decided in the records (HANDOVER's items by date, the reviews, the measures), and any field given here (unit, review) in place of the guess from the code's words. A note whose value is gone is stale (param_inventory --check fails). Written by hand from the records (adapt, 2026-10-17).",
+ "mvi/base.py:UNIT_CM": {
+  "from": "解析の資料の README の「1 ≒ 8 cm」。adapt（10-17）の測り: リンの背（靴底 0.111 から髪の上 19.197、リボン・アホ毛を除く）19.086 単位で公式 152 cm なら 7.96 cm/単位、頭先の骨なら 8.15。MMD 付属のミク（158 cm）は 7.85、Blender の mmd_tools の既定の倍率 0.08",
+  "review": "retarget"
+ },
+ "mvi/base.py:G_UNITS": {
+  "from": "9.8 m/s² を 8 cm/単位で（122.5）。リンの大きさの幅 7.96〜8.15 cm/単位なら 120.4〜123.1（adapt 10-17）",
+  "review": "retarget"
+ },
+ "mvi/base.py:MV_SECONDS": {
+  "from": "human_baseline の p31_table の分解能（踊りの範囲 246 秒）",
+  "review": "dance"
+ },
+ "balance_layer.py:DOWN_ACC_MAX": {
+  "from": "HANDOVER 2026-10-16 balance-v2 の取り込み: 上限 122（1 単位 8 cm の重力 122.5。天井 70 のスカートで 99.4・213.4・253.6 秒の下着 0）。78 は拍の窪み 38 か所を浅くしたので緩めた"
+ },
+ "balance_layer.py:G_MMD": {
+  "from": "再実装（saba・three.js・MMDAgent-EX・babylon-mmd）の 9.8 × 10。MMD 9.32 で測ると窓の値 1 あたり 9.6 単位/s²（窓 9.8 → 94。README の pmm_gravity の節）",
+  "review": "rig"
+ },
+ "balance_layer.py:MOS_ML_MIN_CM": {
+  "from": "HANDOVER 2026-10-16 balance-v2: 動きながらの片足立ちは XcoM の余裕で守る（人 −4.2 [−6.1, −3.6]、human_baseline の stance_summary）"
+ },
+ "balance_layer.py:DESPIKE_PASSES": {
+  "from": "HANDOVER 2026-10-17 balance-v3: 突起のならしは最大 3 回（11.2 → 8.5 回/分）"
+ },
+ "foot_layer.py:HOVER_GLIDE": {
+  "from": "HANDOVER 2026-10-17 floaty: 協調役の決め「--hover-glide は既定 30 のまま」（1000 にすると浮き 4.12 % だが 10 cm 以上の滑りが 27.9 回/分）"
+ },
+ "foot_layer.py:HOVER_ACC_BOUND": {
+  "from": "HANDOVER 2026-10-17 floaty の査読の直し: 床のコマで腰の下向きの加速度が 122 を越えない（実装は 130 で 41 コマ越えていた）"
+ },
+ "foot_layer.py:HOVER_FLIGHT_ACC": {
+  "from": "重力の半分（122.5 / 2、8 cm/単位）。floaty の fq.py の宙の決めと同じ"
+ },
+ "foot_layer.py:HOVER_MAX": {
+  "from": "a05 s11 の帯（4 cm）。floaty（10-17）"
+ },
+ "foot_layer.py:TOE_REACH": {
+  "from": "HANDOVER 2026-10-15 toes: 振付の元のモデルは足首からつま先が 3.2〜3.6 cm 長く、リンでは爪先が 1.3〜1.6 cm 浮く（トレースの模型 DIVA風ミク_105改。retarget で変わる）",
+  "review": "retarget"
+ },
+ "foot_layer.py:UNIT_CM": {
+  "from": "解析の資料の 8 cm/単位（adapt 10-17 の測りで 7.96〜8.15）",
+  "review": "retarget"
+ },
+ "anatomy_layer.py:UNIT_CM": {
+  "from": "解析の資料の 8 cm/単位（adapt 10-17 の測りで 7.96〜8.15）",
+  "review": "retarget"
+ },
+ "sink_check.py:BOUND": {
+  "from": "体重の層の DOWN_ACC_MAX 122（HANDOVER 2026-10-16）"
+ },
+ "mvi/skirt.py:BOUND": {
+  "from": "体重の層の DOWN_ACC_MAX 122（HANDOVER 2026-10-16）。スカートの研究（2026-10-15）: 腰の下向きの加速度が重力を越えると布が水平を越える",
+  "unit": "units/s^2",
+  "review": "retarget"
+ },
+ "mvi/fq.py:HALF_G": {
+  "from": "重力の半分（8 cm/単位で 61.25）。floaty（10-17）の宙の放物線の決め"
+ },
+ "mvi/a05.py:CM": {
+  "from": "a05 の台本の 8 cm/単位（人の資料も 12.5 単位/m で置いた: human_baseline の hbpack）",
+  "review": "retarget"
+ },
+ "mvi/a05.py:EPS_MV": {
+  "from": "human_baseline の HB_EPS: MV の接地の許し 4 mm（人は 1.2 cm。打ち込みの足は雑音が無い）"
+ },
+ "mvi/a05.py:R": {
+  "from": "a05 の推定（靴底の幅の半分 4 cm）。人の資料にも同じ値（human_baseline）"
+ },
+ "wb_dynamics.py:UNIT_M": {
+  "from": "解析の資料の 8 cm/単位",
+  "review": "retarget"
+ },
+ "wb_dynamics.py:RIN_FEET.stature_m": {
+  "from": "リンの頭先の骨 18.7663 − 床 0.111（8 cm/単位で 1.49 m）。髪の上までなら 19.086 単位（adapt 10-17）",
+  "review": "rig"
+ },
+ "wb_dynamics.py:RIN_FEET.foot_length_m": {
+  "from": "リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.91 倍（adapt 10-17、左右の平均は review_adapt）",
+  "review": "rig"
+ },
+ "wb_layer.py:GAIN": {
+  "from": "HANDOVER 2026-10-17 wbbalance: 骨盤の左右・前後の 1.5 Hz より速い分の 0.9 倍だけ頭を戻す（頭が骨盤に付く傾き 0.89 → 0.31、人 0.29）"
+ },
+ "wb_layer.py:CUTOFF_HZ": {
+  "from": "HANDOVER 2026-10-17 wbbalance（1.5 Hz）"
+ },
+ "wb_layer.py:MAX_BEND_DEG": {
+  "from": "HANDOVER 2026-10-17 wbbalance（曲げの合計 10 度まで）"
+ },
+ "smooth_motion.py:DENOISE_CAP": {
+  "from": "既定 3 度/0.05。本番は 6 度/0.05（HANDOVER 2026-10-06: 右ひじ p99 −25.7 %、6 度/0.3 は足が床で 0.11 横滑りするので使わない）"
+ },
+ "eye_optics.py:PARAMS.vergence.ipd_mm": {
+  "from": "女性の平均 61.5 mm（Murray 2017）。リンのモデルの目の骨の間は 0.82 単位（8 cm/単位で 65.6 mm、adapt 10-17）: 寄り目の角は人の値で、モデルの目の位置とは 6.7 % 違う（MV のカメラでは片目 1 px ほど）",
+  "review": "rig"
+ },
+ "eye_gaze.py:UNIT_M": {
+  "from": "eye_optics の unit_mm 80（8 cm/単位）",
+  "review": "retarget"
+ },
+ "breath_layer.py:UNIT_MM": {
+  "from": "「リンは約 19 単位で 1.5 m」（8 cm/単位）",
+  "review": "retarget"
+ },
+ "motor_layer.py:F1_HEIGHT_M": {
+  "from": "Holzbaur の被験者 F1（1.575 m・49.9 kg）。リンの背は頭先 × 0.08 = 1.49 m で、体重は (h / 1.575)³ で縮める"
+ },
+ "motor_layer.py:UNIT_M": {
+  "from": "解析の資料の 8 cm/単位（リンの頭先 1.50 m）",
+  "review": "retarget"
+ },
+ "hand_layer.py:UNIT_M": {
+  "from": "解析の資料の 8 cm/単位",
+  "review": "retarget"
+ },
+ "hand_layer.py:CONTACT_MM.face": {
+  "from": "手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値",
+  "review": "retarget・rig"
+ },
+ "face_life.py:LID_FOLLOW": {
+  "from": "HANDOVER 2026-10-14 face-v2: 瞼が毎コマ目の縦の向きに付く（下 0.029/度・上 0.021/度）"
+ },
+ "face_life.py:LID_SHOWN": {
+  "from": "HANDOVER 2026-10-14 face-v2: KAZUSA 様の真顔の瞼を見せる割合 歌う間 0.85・休み 0.95・句の後 1.0（査読の 0.4〜0.55 は丸い目に見えた）"
+ },
+ "face_life.py:KIME_MIN_SPEED": {
+  "from": "決めの頂きの速さ 8 単位/秒（8 cm/単位で 0.64 m/s）",
+  "review": "retarget"
+ },
+ "lip_sync.py:LEAD_MS": {
+  "from": "HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中）"
+ },
+ "lip_sync.py:SHAPES.i.あ": {
+  "from": "HANDOVER 2026-10-17 lipsync: い＝い＋あ 0.3（リンの描いた試しで選んだ）",
+  "review": "rig"
+ },
+ "lip_sync.py:SHAPES.u.お": {
+  "from": "HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ）",
+  "review": "rig"
+ },
+ "make_camera.py:SHOT_VALUES.push_in.height": {
+  "from": "リンに合わせた注視点の高さ（頭の上 19.5、リボン 20.8 の注釈。adapt 10-17 の測りで髪の上 19.197・リボン 20.55）。カメラの仕事は加賀さんの指示で後回し",
+  "review": "rig"
+ },
+ "make_camera.py:SHOT_VALUES.orbit.height": {
+  "from": "リンに合わせた注視点の高さ（カメラの仕事は後回し）",
+  "review": "rig"
+ },
+ "mv_world.py:REFERENCE_HEAD": {
+  "from": "リンの頭の骨の休みの高さ 16.243。体のカプセル（BODY_PARTS、リンの頂点から測った）をほかのモデルではこの比で縮める",
+  "review": "rig"
+ },
+ "mv_world.py:SHADOW_CELL": {
+  "from": "softshadow（10-17）: 床の上の影の格子 0.08 単位"
+ },
+ "mv_look.py:DEFAULT_LOOK.glow.threshold": {
+  "from": "2026-10-05 の最初の抜粋で決めた（150 / 16 / 0.6 は白い服を飛ばし肌が桃色に）。リン White の服に合わせた値",
+  "review": "rig"
+ },
+ "mv_look.py:DEFAULT_LOOK.stage.shadow_soft": {
+  "from": "HANDOVER 2026-10-17 softshadow: やわらかい床の影を既定に（0 で v9 とバイト単位で同じ）"
+ },
+ "mv_look.py:DEFAULT_LOOK.stage.shadow_blur": {
+  "from": "HANDOVER 2026-10-17 softshadow: 光の広がり 5 度"
+ },
+ "mv_look.py:FLARE_HEIGHT": {
+  "from": "「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48"
+ },
+ "mme_shadow.py:DEFAULTS.key_share": {
+  "from": "HANDOVER 2026-10-17 softshadow-mme（0.6 = mv_world.KEY_SHARE）。加賀さんは陰の濃さ D（体 0.65・床 0.40）を選んだ（10-17、枝 softshadow-mme2 で既定にする）"
+ },
+ "mv_chunks.py:--fps": {
+  "from": "HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚）",
+  "review": "dance"
+ },
+ "mv_chunks.py:--lead": {
+  "from": "HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット）"
+ },
+ "pmx_spine.py:LUMBAR_Y": {
+  "from": "HANDOVER 2026-10-12〜13 第 4 段: 腰椎上部の骨の高さ（リンの体の割合で置いた絶対の高さ）",
+  "unit": "units",
+  "review": "rig"
+ },
+ "pmx_spine.py:THORACIC_Y": {
+  "from": "HANDOVER 2026-10-12〜13 第 4 段: 胸椎上部の骨の高さ（リンの体の割合で置いた絶対の高さ）",
+  "unit": "units",
+  "review": "rig"
+ },
+ "pmx_spine.py:UPPER_Y": {
+  "from": "リンの上半身2 の高さ（build はモデルのものを読む）",
+  "unit": "units",
+  "review": "rig"
+ },
+ "pmx_spine.py:BLEND_HALF": {
+  "from": "HANDOVER 2026-10-12〜13 第 4 段: 関節の両側 0.35 単位（約 2.8 cm）で重みを混ぜる",
+  "review": "rig"
+ },
+ "pmm_gravity.py:CURRENT.acceleration": {
+  "from": "pmm の中の位置（重力の今の値の加速度）。値の決めではない。窓の値と単位: MMD 9.32 で窓の値 1 あたり 9.6 単位/s²（README）"
+ }
+}
