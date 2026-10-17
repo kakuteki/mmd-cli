@@ -516,3 +516,39 @@ class ArmIkTest(unittest.TestCase):
 
     def test_without_twist_bones(self):
         self.check(humanoid_bytes(RIN, RIN_BLOBS, name="rin-no-twist", twists=False))
+
+
+BIG_HEAD = (("頭", (0.0, 1.43, -0.35), 1.8, 400),) + tuple(RIN_BLOBS[1:])
+BIG_HEAD_DATA = humanoid_bytes(RIN, BIG_HEAD, twist_axis=True, name="rin-big-head")
+
+
+def upper_arm_in_head(data, rest, blobs, m, frames=(0,), radius=0.35):
+    """the deepest the upper arm's half by the elbow (a capsule of the tool's default radius) goes into the head's sphere"""
+    out = -1e9
+    for f in frames:
+        w = world(data, m, ["左腕", "左ひじ", "頭"], [f])[f]
+        c0, R = blob_centre(rest, blobs, "頭")
+        p, q = w["頭"]
+        c = np.asarray(p) + leg_ik.qrot(np.asarray(q), np.subtract(c0, rest["頭"]))
+        S, E = np.asarray(w["左腕"][0]), np.asarray(w["左ひじ"][0])
+        out = max(out, max(radius + R - float(np.linalg.norm(S + t * (E - S) - c)) for t in np.linspace(0.5, 1.0, 11)))
+    return out
+
+
+class ClearUpperArmTest(unittest.TestCase):
+    """an upper arm raised beside the head: clear of the source's head, into the target's (a bigger head) -> kept out
+    by turning the whole arm about the shoulder"""
+
+    def test_an_upper_arm_kept_out_of_the_head(self):
+        best = None
+        for a in range(90, 181, 6):
+            for b in range(-60, 61, 10):
+                m = motion(*arm_pose_keys(a, b, 0))
+                s = upper_arm_in_head(MIKU_DATA, MIKU, MIKU_BLOBS, m)
+                t = upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, retarget.layer(m, body(MIKU_DATA), body(BIG_HEAD_DATA), PURE).motion)
+                if s < -0.05 and (best is None or t > best[0]):
+                    best = (t, a, b)
+        self.assertGreater(best[0], 0.15)
+        m = motion(*arm_pose_keys(best[1], best[2], 0))
+        out = retarget.layer(m, body(MIKU_DATA), body(BIG_HEAD_DATA), {"feet": False, "hands": False}).motion
+        self.assertLess(upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, out), 0.03)

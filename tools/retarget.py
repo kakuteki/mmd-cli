@@ -1012,6 +1012,9 @@ NEAR = 0.8                      # units (6.4 cm): the hand's place on a part is 
 HAND_THICK = 0.15               # units: half a hand's thickness (the two palms' points touch at twice this)
 CLEAR_ROUNDS = 3
 CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the surface
+CLEAR_TOL = 0.005               # units: an arm this little into a part is left as it is
+ELBOW_SHARE = 0.25              # the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder)
+TOUCH_ALLOW = 0.05              # units (4 mm): a hand on a part the source's hand touches may sink this far into it
 SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder is not tested against the head (the shoulder is under it)
 TOL_DEG = 0.3                   # the keys meet the wanted turns this closely
 
@@ -1257,90 +1260,108 @@ def arm_points(body, side, ap, radii, hand):
 
 
 def penetration(tgt, side, ap, hand, parts, contact_w):
-    """per frame the deepest the arm goes into a part (units, >= 0) and the pushes that take the wrist and the elbow out
-    (world [F, 3]: the deepest point's push, by its share of the lever)"""
+    """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
+    point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; and the push that takes the wrist out
+    of what the forearm and the hand go into [F, 3].  A hand point a part the source's hand touches then (contact_w of
+    that part at least 0.3) may go TOUCH_ALLOW into it."""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
+    S = ap[side + "腕"][0]
     F = P.shape[0]
     deepest = np.zeros(F)
+    best_s = np.zeros(F)
     best_w = np.zeros(F)
-    best_e = np.zeros(F)
+    push_s = np.zeros((F, 3))
+    at_s = np.zeros((F, 3))
     push_w = np.zeros((F, 3))
-    push_e = np.zeros((F, 3))
-    lever_w = np.where(seg == 0, 0.0, np.where(seg == 1, share, 1.0))
-    lever_e = np.where(seg == 0, share, np.where(seg == 1, 1.0 - share, 0.0))
+    near_shoulder = (seg == 0) | ((seg == 1) & (share < ELBOW_SHARE))
+    lever_w = np.where(seg == 1, share, np.where(seg == 2, 1.0, 0.0)) * ~near_shoulder
     for part, (pos, rot) in parts.items():
         if soft(part):
             continue
         s = surf[part]
         local = qrot(qconj(rot)[:, None, :], P - pos[:, None, :])
         pen = rad[None, :] - s.sdf(local)
-        # the upper arm lies against the trunk, the hips and the thighs in many a pose (its skin and the trunk's meet at the
-        # armpit and along the side): only the forearm and the hand are kept out of them; the upper arm, its half by
-        # the elbow, out of the head
+        # the upper arm lies against the trunk, the hips and the thighs in many a pose (its skin and the trunk's meet at
+        # the armpit and along the side): only the forearm and the hand are kept out of them; the upper arm, its half
+        # by the elbow, out of the head
         if part == "head":
             pen[:, (seg == 0) & (share < SHOULDER_SKIP)] = 0.0
         else:
             pen[:, seg == 0] = 0.0
         if part in contact_w:
-            pen[:, seg == 2] *= (contact_w[part] < 0.3)[:, None]
+            touching = (contact_w[part] >= 0.3)[:, None] & (seg == 2)[None, :]
+            pen = np.where(touching, pen - TOUCH_ALLOW, pen)
         pen = np.maximum(pen, 0.0)
         if not np.any(pen > 0):
             continue
         deepest = np.maximum(deepest, pen.max(axis=1))
         g = qrot(rot[:, None, :], s.grad(local))
         vec = (pen + CLEAR_MARGIN * (pen > 0))[:, :, None] * g
-        for lever, best, push in ((lever_w, best_w, push_w), (lever_e, best_e, push_e)):
-            score = pen * lever[None, :]
-            j = np.argmax(score, axis=1)
-            sc = score[np.arange(F), j]
-            take = sc > best
-            push[take] = vec[np.arange(F), j][take] * lever[j][take][:, None]
-            best[take] = sc[take]
-    return deepest, push_w, push_e
+        sc = np.where(near_shoulder[None, :], pen, 0.0)
+        j = np.argmax(sc, axis=1)
+        v = sc[np.arange(F), j]
+        take = v > best_s
+        push_s[take] = vec[np.arange(F), j][take]
+        at_s[take] = P[np.arange(F), j][take]
+        best_s[take] = v[take]
+        sc = pen * lever_w[None, :]
+        j = np.argmax(sc, axis=1)
+        v = sc[np.arange(F), j]
+        take = v > best_w
+        push_w[take] = vec[np.arange(F), j][take] * lever_w[j][take][:, None]
+        best_w[take] = v[take]
+    turn_s = np.tile(IDENTITY, (F, 1))
+    has = best_s > 0
+    if np.any(has):
+        turn_s[has] = qbetween(at_s[has] - S[has], at_s[has] + push_s[has] - S[has])
+    return deepest, turn_s, push_w
 
 
 def clear_arms(tgt, trk, frames, contact_weights, parts, log):
-    """push the target's arms out of its head, trunk, hips and thighs (arm IK on the frames that go in; the change eases
-    in and out over EASE frames); returns the report per side"""
+    """push the target's arms out of its head, ribbon, trunk, hips and thighs: what the upper arm or the elbow goes into
+    is cleared by turning the whole arm about the shoulder, what the forearm or the hand goes into by moving the wrist
+    (arm IK, the elbow kept on its side); each change eases in and out over EASE frames around the frames that go in.
+    Returns the report per side."""
     F = len(frames)
     rep = {}
     for side in SIDES:
         if not all(tgt.has(n) for n in arm_names(side)):
             continue
-        cw = {}
+        cw = contact_weights.get(side, {})
         before = None
         moved_any = np.zeros(F, bool)
         for rnd in range(CLEAR_ROUNDS):
             ap = arm_pose(tgt, trk, frames, side)
             hand = hand_world(tgt, trk, frames, side)
-            if not cw:
-                cw = contact_weights.get(side, {})
-            deep, pw, pe = penetration(tgt, side, ap, hand, parts, cw)
+            deep, ts, pw = penetration(tgt, side, ap, hand, parts, cw)
             if before is None:
                 before = deep.copy()
-            bad = deep > 0.005
+            bad = deep > CLEAR_TOL
             if not np.any(bad):
                 break
-            # ease the pushes in and out
-            which, weight = ease_weights(F, runs(bad))
+            spans = runs(bad)
+            which, weight = ease_weights(F, spans)
+            ts2 = np.tile(IDENTITY, (F, 1))
             pw2 = np.zeros_like(pw)
-            pe2 = np.zeros_like(pe)
-            for n, (a, b) in enumerate(runs(bad)):
+            for n, (a, b) in enumerate(spans):
                 m = which == n
-                peak_w = pw[a:b + 1][np.argmax(np.linalg.norm(pw[a:b + 1], axis=1))]
-                peak_e = pe[a:b + 1][np.argmax(np.linalg.norm(pe[a:b + 1], axis=1))]
                 inside = np.zeros(F, bool)
                 inside[a:b + 1] = True
+                k = a + int(np.argmax(qangle(ts[a:b + 1])))
+                kw = a + int(np.argmax(np.linalg.norm(pw[a:b + 1], axis=1)))
+                ts2[m & inside] = ts[m & inside]
                 pw2[m & inside] = pw[m & inside]
-                pe2[m & inside] = pe[m & inside]
-                pw2[m & ~inside] = weight[m & ~inside, None] * peak_w
-                pe2[m & ~inside] = weight[m & ~inside, None] * peak_e
+                ramp = m & ~inside
+                ts2[ramp] = slerp_n(np.tile(IDENTITY, (int(ramp.sum()), 1)), np.tile(ts[k], (int(ramp.sum()), 1)), weight[ramp])
+                pw2[ramp] = weight[ramp, None] * pw[kw]
             moved = weight > 0
             moved_any |= moved
             S, E, W = ap[side + "腕"][0], ap[side + "ひじ"][0], ap[side + "手首"][0]
-            Es, Ws = arm_ik(S, E, W, W + pw2, pole=E + pe2)
+            E1 = S + qrot(ts2, E - S)
+            W1 = S + qrot(ts2, W - S)
+            Es, Ws = arm_ik(S, E1, W1, W1 + pw2, pole=E1)
             Es = np.where(moved[:, None], Es, E)
             Ws = np.where(moved[:, None], Ws, W)
             loc = arm_locals(tgt, trk, frames, side, Es, Ws, hand[1])
@@ -1349,8 +1370,9 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
         ap = arm_pose(tgt, trk, frames, side)
         hand = hand_world(tgt, trk, frames, side)
         after, _, _ = penetration(tgt, side, ap, hand, parts, cw)
-        rep[side] = {"in_before_frames": int(np.sum(before > 0.005)) if before is not None else 0,
-                     "in_after_frames": int(np.sum(after > 0.005)), "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,
+        rep[side] = {"in_before_frames": int(np.sum(before > CLEAR_TOL)) if before is not None else 0,
+                     "in_after_frames": int(np.sum(after > CLEAR_TOL)), "in_after_over_1cm": int(np.sum(after > 0.125)),
+                     "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,
                      "deepest_after_cm": round(float(after.max()) * UNIT_CM, 3), "moved_frames": int(moved_any.sum())}
         log("clear %s: frames in %d -> %d, deepest %.2f -> %.2f cm" % (side, rep[side]["in_before_frames"], rep[side]["in_after_frames"],
                                                                     rep[side]["deepest_before_cm"], rep[side]["deepest_after_cm"]))
