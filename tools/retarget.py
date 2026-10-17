@@ -1045,39 +1045,51 @@ FEET_ROUNDS = 2
 # a hold given back near the floor in a frame (review_integ 2026-10-17: the song's 128.0 s right foot turned on the floor
 # 3834-3840, lifted 1 cm for a frame and stood again; the hold, 13.7 cm, went back in that one frame of air, and the later
 # layers put that frame on the floor; 104.4 s landed with 9 cm in its last frame): where the shoe, under JUMP_NEAR on
-# either frame, moves along the floor (the slowest point of its sole's line, LINE_T) more than JUMP_RATE further than it
-# would without the correction (the holds, and the offsets between them), that frame's move of the correction is spread
-# over the frames round it (a raised cosine over 2k + 1 of them, the least k up to JUMP_SPREAD that keeps each frame's
-# share under JUMP_RATE), the correction's own moves there kept: the foot skids into its next hold over a few frames, at
-# up to JUMP_RATE a frame more than the mapping moves it; a hold that keeps a point still (its correction moving as fast as
-# the mapping, the other way) is no jump
+# either frame, moves along the floor (the slowest point of its sole's line, LINE_T) more than JUMP_RATE further than the
+# source's foot does (its own line's slowest point, by the legs' ratio), that frame's move of the correction (the holds,
+# and the offsets between them) is spread over the frames round it (a raised cosine over 2k + 1 of them, the least k up to
+# JUMP_SPREAD that keeps the shoe within JUMP_RATE of the source's foot there, else the k that comes nearest), the
+# correction's own moves there kept: the foot skids into its next hold over a few frames instead of jumping; a hold that
+# keeps a point still is no jump
 JUMP_NEAR = 0.25                # units (2 cm)
 JUMP_RATE = 2.5 / UNIT_CM       # units a frame (2.5 cm: 75 cm/s)
 JUMP_SPREAD = 6                 # frames each way at most
 
 
-def spread_jumps(H, low, P0, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD):
+def line_steps(body, legs, side):
+    """[F - 1] the move along the floor (units) to the next frame of the slowest point of a foot's sole line (LINE_T,
+    from behind its heel point to its toe point) as the solved legs carry it"""
+    pts, _ = sole_points(body, side)
+    line = pts["heel"][None, :] + LINE_T[:, None] * (pts["toe"] - pts["heel"])[None, :]
+    W = legs[side]["ankle"][:, None, :] + qrot(legs[side]["q_foot"][:, None, :], line[None, :, :])
+    if len(W) < 2:
+        return np.zeros(0)
+    return np.linalg.norm(np.diff(W[:, :, [0, 2]], axis=0), axis=2).min(axis=1)
+
+
+def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD):
     """(H [F, 2] (the correction along the floor, x and z) with its jumps spread, the rows [frame, the shoe's step past the
-    mapping's (cm), the largest share of it a frame takes (cm), k]) (see JUMP_RATE); low [F]: the shoe's lowest point over
-    the floor (units); P0 [F, k, 2]: the sole's line's points along the floor as the mapping puts them (without the
-    correction).  rate None: H as it is"""
+    source's (cm), what is left of it in the frames that take it (cm), k]) (see JUMP_RATE); low [F]: the shoe's lowest
+    point over the floor (units); P0 [F, k, 2]: the sole's line's points along the floor as the mapping puts them (without
+    the correction); src [F - 1]: the source's foot's move a frame (units, by the legs' ratio).  rate None: H as it is"""
     H = np.array(H, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     P0 = np.asarray(P0, dtype=np.float64)
+    src = np.asarray(src, dtype=np.float64)
     F = len(H)
     rows, done = [], set()
     if F < 2 or rate is None:
         return H, rows
     d0 = np.diff(P0, axis=0)                                   # [F - 1, k, 2]
-    s0 = np.linalg.norm(d0, axis=2).min(axis=1)
     lowish = (low[:-1] < near) | (low[1:] < near)
     for _ in range(F):
         d = np.diff(H, axis=0)
-        s = np.linalg.norm(d0 + d[:, None, :], axis=2).min(axis=1)
-        bad = [t for t in np.flatnonzero((s > s0 + rate * (1.0 + 1e-6)) & lowish) if int(t) not in done]
+        excess = np.linalg.norm(d0 + d[:, None, :], axis=2).min(axis=1) - src
+        bad = [t for t in np.flatnonzero((excess > rate * (1.0 + 1e-6)) & lowish) if int(t) not in done]
         if not bad:
             break
-        t = int(max(bad, key=lambda i: s[i] - s0[i]))
+        t = int(max(bad, key=lambda i: excess[i]))
+        done.add(t)
         J = d[t].copy()
         best = None
         for k in range(1, spread + 1):
@@ -1089,15 +1101,16 @@ def spread_jumps(H, low, P0, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD)
             dd = d[a:b + 1].copy()
             dd[k] -= J
             dd += w[:, None] * J[None, :]
-            best = (k, a, dd, float(np.linalg.norm(J)) * float(w.max()))
-            if best[3] <= rate * (1.0 + 1e-6):
+            left = float((np.linalg.norm(d0[a:b + 1] + dd[:, None, :], axis=2).min(axis=1) - src[a:b + 1]).max())
+            if best is None or left < best[3] - 1e-9:
+                best = (k, a, dd, left)
+            if left <= rate * (1.0 + 1e-6):
                 break
-        done.add(t)
-        if best is None:
+        if best is None or best[3] >= float(excess[t]) - 1e-9:
             continue
-        k, a, dd, share = best
+        k, a, dd, left = best
         H[a + 1:a + 1 + len(dd)] = H[a] + np.cumsum(dd, axis=0)
-        rows.append([t, round(float(s[t] - s0[t]) * UNIT_CM, 2), round(share * UNIT_CM, 2), k])
+        rows.append([t, round(float(excess[t]) * UNIT_CM, 2), round(left * UNIT_CM, 2), k])
     return H, rows
 
 
@@ -1342,7 +1355,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 Qw = slerp_n(Q[easing], want_turn[easing], weight[easing])
                 H[easing] += (qrot(Q[easing], pk) - qrot(Qw, pk))[:, [0, 2]]
             # a hold given back near the floor in a frame is spread over the frames round it (spread_jumps)
-            H, jumps = spread_jumps(H, shoe_low, line_mapped, rate=params.get("jump_rate", JUMP_RATE))
+            H, jumps = spread_jumps(H, shoe_low, line_mapped, line_steps(src, src_legs, side) * scale_of(src, tgt),
+                                    rate=params.get("jump_rate", JUMP_RATE))
             shift = np.zeros((F, 3))
             shift[:, 0], shift[:, 2] = H[:, 0], H[:, 1]
             shift[:, 1] = weight * lift + clear
