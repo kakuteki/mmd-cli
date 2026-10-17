@@ -186,6 +186,35 @@ class SmoothTest(unittest.TestCase):
         self.assertLess(float(np.abs(a - b).max()), 0.01)
 
 
+class BrushTest(unittest.TestCase):
+    """a touch of one frame (a hand brushing the head in a swing) that a later layer moved off: the change that puts it
+    back comes in and goes out at no more than RAMP_CM a frame (not in one frame), the touching frame's place kept"""
+
+    def test_a_brief_touch_is_put_back_without_a_jump(self):
+        d, (a, b, g) = head_pose()
+        far = (a - 50, b, g)
+        src = motion(*arm_pose_keys(*far), *arm_pose_keys(*far, frame=9), *arm_pose_keys(a, b, g, frame=10),
+                     *arm_pose_keys(*far, frame=11), *arm_pose_keys(*far, frame=20))
+        on = sphere_distance(MIKU_DATA, MIKU, MIKU_LEGS, "頭", src, palm(MIKU_DATA, src, "左", [9, 10, 11]), [9, 10, 11])
+        self.assertLess(on[1], 0.1)                                         # (the source's hand on its head at 10 only)
+        self.assertGreater(min(on[0], on[2]), 1.0)
+        rt = retarget.layer(src, body(MIKU_DATA), body(RIN_DATA), {"feet": False}).motion
+        moved = turned(rt, "左腕", (0.0, 0.0, 1.0), -20.0)                  # a later layer: the arm 20 degrees down
+        frames = list(range(0, 21))
+        w0 = wrist(RIN_DATA, moved, frames)
+        rough = touch_layer.layer(moved, src, body(MIKU_DATA), body(RIN_DATA), {"ramp_cm": 0.0}).motion
+        ramped = touch_layer.layer(moved, src, body(MIKU_DATA), body(RIN_DATA)).motion
+        limit = touch_layer.RAMP_CM / touch_layer.UNIT_CM
+        steps = [np.linalg.norm(np.diff(wrist(RIN_DATA, m, frames) - w0, axis=0), axis=1) for m in (rough, ramped)]
+        self.assertGreater(float(steps[0].max()), 2.0 * limit)              # (put back in one frame without it)
+        self.assertLess(float(steps[1].max()), 1.3 * limit)
+        x = [sphere_distance(RIN_DATA, RIN, RIN_LEGS, "頭", m, palm(RIN_DATA, m, "左", [10]), [10])[0] for m in (rough, ramped)]
+        self.assertLess(abs(x[0] - x[1]), 0.01)
+        far = np.linalg.norm(wrist(RIN_DATA, ramped, frames) - w0, axis=1)
+        self.assertLess(float(far[[0, 20]].max()), 1e-6)                    # (the dance's own keys at the ends)
+        self.assertLess(float(far[[1, 2, 3, 17, 18, 19]].max()), 0.05)      # the ramp stays round the touch
+
+
 class LeaveTest(unittest.TestCase):
     """a hand far from the body and every bone but the arms are left as they were, byte for byte"""
 
