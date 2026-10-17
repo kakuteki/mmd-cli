@@ -484,7 +484,7 @@ def markdown(inv):
             "、".join(s["measures"]) or "（物差しなし）", "・".join(s["checks"]) or "-"))
     lines += ["", "各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は"
               "視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`"
-              "（--size legs の「脚でそろえた」値も見る）と `compare`。", ""]
+              "（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。", ""]
     by_tool = {}
     for e in inv["entries"]:
         if not e.get("same_as"):

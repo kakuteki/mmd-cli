@@ -140,15 +140,12 @@ class SyntheticTest(unittest.TestCase):
                         "--parts", "gravity,nonsense")
         self.assertEqual(code, 2)
 
-    def test_the_size_aligned_values_are_added_to_the_length_measures(self):
-        rep = self.report(self.out_a)
+    def leg_rest(self):
         from tests.test_leg_ik import REST as LEG_REST
-        rest = {s + n: np.array([sx * LEG_REST[n][0], LEG_REST[n][1], LEG_REST[n][2]])
+        return {s + n: np.array([sx * LEG_REST[n][0], LEG_REST[n][1], LEG_REST[n][2]])
                 for s, sx in (("左", 1.0), ("右", -1.0)) for n in ("足", "ひざ", "足首")}
-        size = rep["size"]
-        self.assertEqual(size["by"], "legs")
-        self.assertAlmostEqual(size["leg_cm"], MF.base.leg_cm(rest), places=2)
-        self.assertAlmostEqual(size["scale"], MF.base.people_leg_cm() / size["leg_cm"], places=3)
+
+    def assert_aligned_rows(self, rep):
         aligned = 0
         for r in rep["measures"]:
             if r["id"] in MF.base.SIZE_ALIGNED and r["value"] is not None:
@@ -158,9 +155,48 @@ class SyntheticTest(unittest.TestCase):
             else:
                 self.assertNotIn("size", r, r["id"])
         self.assertGreater(aligned, 10)
+
+    def test_the_size_aligned_values_are_added_to_the_length_measures(self):
+        # by default by the hip's height over the floor her soles stand on at rest (the coordinator's choice of
+        # 2026-10-17: gait's usual normalisation), people's over the ball of the foot (their floor)
+        rep = self.report(self.out_a)
+        from mmd_cli.formats import pmx_edit
+        floor = MF.base.tool("sink_check").rest_floor(MF.base.tool("leg_ik").LegRig.load(self.model), pmx_edit.load(self.model))
+        self.assertAlmostEqual(floor, 0.111, places=3)             # the soles of tests.test_foot_layer
+        size = rep["size"]
+        self.assertEqual(size["by"], "hip")
+        self.assertAlmostEqual(size["floor_y"], floor, places=4)
+        self.assertAlmostEqual(size["hip_cm"], MF.base.hip_cm(self.leg_rest(), floor), places=2)
+        self.assertAlmostEqual(size["people_hip_cm"], MF.base.people_hip_cm(), places=2)
+        self.assertAlmostEqual(size["scale"], MF.base.people_hip_cm() / size["hip_cm"], places=3)
+        self.assert_aligned_rows(rep)
         md = text(os.path.join(self.out_a, "report.md"))
-        self.assertIn("脚でそろえた", md)
+        self.assertIn("股関節の高さでそろえた", md)
+        self.assertNotIn("脚でそろえた", md)
         self.assertIn("%.3f" % size["scale"], md)
+
+    def test_size_legs_aligns_by_the_legs_as_before(self):
+        out = os.path.join(self.folder, "legs")
+        code, res = run("measure", "--model", self.model, "--motions", self.dropping, "--label", "drop", "--out", out,
+                        "--no-figure", "--parts", "gravity,feet,balance", "--size", "legs", "--cache", os.path.join(self.out_a, "cache"))
+        self.assertEqual(code, 0, res)
+        rep = self.report(out)
+        size = rep["size"]
+        self.assertEqual(size["by"], "legs")
+        self.assertAlmostEqual(size["leg_cm"], MF.base.leg_cm(self.leg_rest()), places=2)
+        self.assertAlmostEqual(size["scale"], MF.base.people_leg_cm() / size["leg_cm"], places=3)
+        self.assert_aligned_rows(rep)
+        md = text(os.path.join(out, "report.md"))
+        self.assertIn("脚でそろえた", md)
+        self.assertNotIn("股関節の高さでそろえた", md)
+        self.assertIn("%.3f" % size["scale"], md)
+        # the raw values and judgements do not depend on how the size is aligned
+        a = {r["id"]: (r["value"], r["judge"]) for r in self.report(self.out_a)["measures"]
+             if r["concept"] in ("gravity", "feet", "balance")}
+        self.assertEqual({r["id"]: (r["value"], r["judge"]) for r in rep["measures"]}, a)
+        hip = self.report(self.out_a)
+        self.assertEqual(sorted(r["id"] for r in hip["measures"] if "size" in r), sorted(r["id"] for r in rep["measures"] if "size" in r))
+        self.assertGreater(size["scale"] - hip["size"]["scale"], 0.05)       # the legs are shorter than the hips are low
 
     def test_size_none_leaves_the_report_as_before(self):
         out = os.path.join(self.folder, "nosize")
@@ -196,6 +232,24 @@ class SyntheticTest(unittest.TestCase):
             r = rows.get(mid)
             if r and r["a"] is not None and r["b"] is not None and r.get("ref", {}).get("kind", "people") == "people":
                 self.assertIn("word_size", r, mid)
+        self.assertEqual(c["size_by"], "hip")
+        self.assertIn("股関節の高さでそろえた判定", text(os.path.join(out, "compare.md")))
+
+    def test_compare_does_not_judge_values_aligned_two_ways(self):
+        # A aligned by the hip's height, B by the legs: their aligned values are of two scales, not one body
+        legs = os.path.join(self.folder, "legs_b")
+        code, res = run("measure", "--model", self.model, "--motions", self.smooth, "--label", "smooth", "--out", legs,
+                        "--no-figure", "--parts", "gravity,feet,balance", "--size", "legs")
+        self.assertEqual(code, 0, res)
+        out = os.path.join(self.folder, "cmp_two_ways")
+        code, res = run("compare", self.out_a, legs, "--out", out)
+        self.assertEqual(code, 0)
+        c = json.loads(text(os.path.join(out, "compare.json")))
+        self.assertFalse(any("word_size" in r for r in c["rows"]))
+        self.assertIsNone(c["size_by"])
+        md = text(os.path.join(out, "compare.md"))
+        self.assertNotIn("そろえた判定 |", md)
+        self.assertIn("そろえ方が違う", md)
 
 
 # ---- the MV itself ----------------------------------------------------------------------------------------------------
