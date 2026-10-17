@@ -1116,7 +1116,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     the floor the same way and turns in place: the sole point it turns on is held.  The turn and the lift ease in and out
     over EASE frames (the corrections made on the span's edges, eased out); the hold along the floor changes only while the target's shoe is off the floor (hold_offsets), and
     while the turn eases the point held next is kept where the mapping puts it.  Off the spans a shoe the source carries
-    over the floor (faster than TOUCH_SPEED) is carried at least as high (up to CLEAR_TO).  The hips are never lowered.
+    over the floor (faster than TOUCH_SPEED) is carried at least as high (up to CLEAR_TO), also while a span's correction
+    eases out (not on a single frame between two spans).  The hips are never lowered.
     Returns the report."""
     F = len(frames)
     rep = {}
@@ -1254,14 +1255,21 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             # off the spans a shoe the source carries over the floor (its sole's slowest point faster than TOUCH_SPEED)
             # is carried at least as high, up to CLEAR_TO (its shoe, from its mesh: the mapping scales the heights by the
             # legs' ratio and the shoes differ, and the song's carried feet came down onto the floor and slid along it
-            # while the source's shoe stayed over it; a slower foot, standing or turning, is left to the spans)
+            # while the source's shoe stayed over it; a slower foot, standing or turning, is left to the spans), also
+            # while a span's correction eases out (a turn eases its foot onto the floor: the song's 128.0 s right foot,
+            # lifting off after its turn, stayed on the floor and the hold was given back along it, 14 cm in one frame).
+            # Not on one frame between two spans (the foot is down again at once; lifted there the hold's change came in
+            # that one frame and the 99.6 s right shoe went to 1.3-1.5 cm between two turns)
             Qw = slerp_n(Q, want_turn, weight)
             low_now = A[:, 1] + weight * lift + np.min(qrot(Qw[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
             shell_s = sole_shell(src, side, mesh=True)
             src_low = (src_legs[side]["ankle"][:, 1] + np.min(qrot(Qs[:, None, :], shell_s[None, :, :])[:, :, 1], axis=1)
                        - float(src.rest(side + "足首")[1] + shell_s[:, 1].min()))
-            clear = np.clip(np.minimum(src_low, CLEAR_TO) - low_now, 0.0, CLEAR_TO) * (1.0 - weight)
-            clear[arrays["line_speed"].min(axis=1) < TOUCH_SPEED] = 0.0
+            clear = np.clip(np.minimum(src_low, CLEAR_TO) - low_now, 0.0, CLEAR_TO)
+            clear[in_span | (arrays["line_speed"].min(axis=1) < TOUCH_SPEED)] = 0.0
+            for g0, g1 in runs(~in_span):
+                if g0 > 0 and g1 < F - 1 and g1 == g0:
+                    clear[g0] = 0.0
             shoe_low = low_now + clear
             # along the floor: the holds, and between them an offset that changes only while the shoe is off the floor
             # (as the turn and the lift leave it, easing)

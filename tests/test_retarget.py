@@ -355,6 +355,29 @@ class PivotTest(unittest.TestCase):
             np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
 
 
+class TurnLiftTest(unittest.TestCase):
+    """a foot that lifts off right after it turned on the floor (the song's 128.0 s right foot) goes up with the source's
+    shoe while the turn eases out, not held on the floor (held there, the hold was given back along the floor: 14 cm in
+    one frame)"""
+
+    def test_a_foot_lifting_after_a_turn_goes_up_with_the_source(self):
+        rise = TOE_RISE_10 + 0.12
+        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+        m = pivot_motion(rise)                               # frames 0-20 turning on the left toe, then lifted and carried
+        up = (0.6, rise + 0.3, 0.0)                         # 2.4 cm up and 4.8 cm along in 3 frames
+        m = motion(*m.bones, key("左足ＩＫ", 23, pitch, position=up), key("左足ＩＫ", 30, pitch, position=up))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["on_floor_moving"], 1)
+        src = legs(MIKU_DATA, m, range(0, 31))["左"]
+        pts, floor = retarget.sole_points(body(MIKU_DATA), "左")
+        src_low = np.min(np.stack([foot_point(src, p)[:, 1] for p in pts.values()], axis=1), axis=1) - floor
+        after = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res.motion, range(0, 31))
+        cap = 0.125                                          # 1 cm (retarget.CLEAR_TO)
+        self.assertGreater(float(src_low[21]), cap)                                       # the source's shoe goes up
+        for f in (21, 22):
+            self.assertGreater(float(after[f]), min(float(src_low[f]), cap) - 0.0125, f)
+
+
 class CarriedTest(unittest.TestCase):
     """a foot carried low and fast along the floor while the other foot is up (a step: the trace's 198.9-199.3 s carries
     the right foot 1-2 cm over the floor) is left as the mapping puts it, not pressed onto the floor and dragged along it"""
