@@ -37,6 +37,7 @@ and how far (cm), the clearance's frames in before and after and the deepest, an
 import argparse
 import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -66,10 +67,68 @@ SIDES = RT.SIDES
 UNIT_CM = RT.UNIT_CM
 ARM = tuple(s + n for s in SIDES for n in ("腕", "ひじ", "手首"))
 THIGHS = {"thigh_左": "左", "thigh_右": "右"}
+# the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a
+# Gaussian of this many frames (its standard deviation; 0: not smoothed), the arm put through the smoothed points with
+# the hand's world turn kept.  The source the hands are put back on is the trace before the smoothing layers (its keys
+# joined by MMD's curves, kinked at the keys) and fix_hands sets every frame on its own: unsmoothed, on Hibikase the right
+# wrist's velocity above 8 Hz went 0.60 -> 0.98 % (people 0.15) and its one-frame spikes 21 -> 26 a minute (people 9)
+SMOOTH_FRAMES = 1.5
 
 
 def default_params():
-    return {"hands": True, "clear": True, "ik_thighs": True}
+    return {"hands": True, "clear": True, "ik_thighs": True, "smooth_frames": SMOOTH_FRAMES}
+
+
+def smooth_rows(x, sigma):
+    """x [F, k] smoothed over its rows (frames) by a zero-phase Gaussian of standard deviation sigma frames (cut at 3
+    sigma), the ends held"""
+    x = np.asarray(x, dtype=np.float64)
+    if sigma <= 0 or len(x) < 2:
+        return x.copy()
+    r = int(math.ceil(3.0 * sigma))
+    t = np.arange(-r, r + 1)
+    k = np.exp(-0.5 * (t / sigma) ** 2)
+    k /= k.sum()
+    xp = np.pad(x, ((r, r), (0, 0)), mode="edge")
+    return np.stack([np.convolve(xp[:, j], k, mode="valid") for j in range(x.shape[1])], axis=1)
+
+
+def arm_points(body, trk, frames, side):
+    """(shoulder, elbow, wrist [F, 3], the hand's world turn [F, 4]) of a side"""
+    ap = RT.arm_pose(body, trk, frames, side)
+    return ap[side + "腕"][0], ap[side + "ひじ"][0], ap[side + "手首"][0], ap[side + "手首"][1]
+
+
+def smoothed(body, trk, frames, before, sigma):
+    """the arms' change since `before` (side -> arm_points) smoothed over the frames (smooth_rows of the wrist's and the
+    elbow's moves), the arm put through the smoothed wrist with its elbow toward the smoothed elbow and the hand's world
+    turn as before; returns per side the frames changed and the largest step taken off the wrist (cm)"""
+    out = {}
+    for side, (S0, E0, W0, R0) in before.items():
+        S, E1, W1, _ = arm_points(body, trk, frames, side)
+        dW, dE = W1 - W0, E1 - E0
+        changed = (np.linalg.norm(dW, axis=1) > 1e-7) | (np.linalg.norm(dE, axis=1) > 1e-7)
+        if not changed.any():
+            continue
+        r = int(math.ceil(3.0 * sigma))
+        reach = changed.copy()
+        for k in range(1, r + 1):
+            reach[k:] |= changed[:-k]
+            reach[:-k] |= changed[k:]
+        Wt = W0 + smooth_rows(dW, sigma)
+        pole = E0 + smooth_rows(dE, sigma)
+        Es, Ws = RT.arm_ik(S, E1, W1, Wt, pole=pole)
+        Es = np.where(reach[:, None], Es, E1)
+        Ws = np.where(reach[:, None], Ws, W1)
+        loc = RT.arm_locals(body, trk, frames, side, Es, Ws, R0)
+        for name, q in loc.items():
+            RT._fit_turns(trk, name, frames, q, reach)
+        out[side] = {"frames": int(reach.sum())}
+        if len(frames) > 2:
+            step0 = np.linalg.norm(np.diff(W1, n=2, axis=0), axis=1) * UNIT_CM
+            step1 = np.linalg.norm(np.diff(Ws, n=2, axis=0), axis=1) * UNIT_CM
+            out[side]["wrist_acc_cm_max"] = [round(float(step0.max()), 3), round(float(step1.max()), 3)]
+    return out
 
 
 @dataclass
@@ -105,6 +164,7 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
     tgt_all = part_frames(tgt, tgt_trk, frames, p["ik_thighs"])
     tgt_parts = {q: v for q, v in tgt_all.items() if q in have}
     want, weights = {}, {}
+    before = {side: arm_points(tgt, tgt_trk, frames, side) for side in SIDES if all(tgt.has(n) for n in RT.arm_names(side))}
     hands_src = {side: RT.hand_world(src, src_trk, frames, side) for side in SIDES}
     hands_tgt = {side: RT.hand_world(tgt, tgt_trk, frames, side) for side in SIDES}
     for side in SIDES:
@@ -164,6 +224,9 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         clr = RT.clear_arms(tgt, tgt_trk, frames, weights, tgt_all, log)
         for side in SIDES:
             rep.setdefault(side, {})["clear"] = clr.get(side)
+    if p.get("smooth_frames", 0.0) > 0:
+        for side, row in smoothed(tgt, tgt_trk, frames, before, p["smooth_frames"]).items():
+            rep.setdefault(side, {})["smoothed"] = row
     return rep
 
 
@@ -197,6 +260,24 @@ def merged(dance, tracks, names):
             if (n, f) not in used:
                 out.append(made[n][j])
     return out
+
+
+def keep_layer(body_in, motion_in, body_out, motion_out, params=None, log=None):
+    """(motion_out with its arm keys refit, the report): a layer's output whose hands keep the places they had on the
+    body's parts in the layer's input (keep with the input as the source and its body, the output on its own body; a hand
+    far from the body untouched), then its arms out of the body.  For a layer that moves the trunk under the arms (the
+    spine layer, wb): a hand that lies on a thigh, the hips or the head stays on it"""
+    last = max(max(k.frame for k in motion_in.bones), max(k.frame for k in motion_out.bones))
+    frames = np.arange(0, last + 1)
+    trk_in = RT.tracks_of(motion_in.bones)
+    trk_out = RT.tracks_of(motion_out.bones)
+    rep = keep(body_in, body_out, trk_in, trk_out, frames, params, log)
+    out = vmd.Motion(model_name=motion_out.model_name, bones=merged(motion_out, trk_out, ARM), morphs=list(motion_out.morphs),
+                     cameras=list(motion_out.cameras), lights=list(motion_out.lights), shadows=list(motion_out.shadows),
+                     show_iks=list(motion_out.show_iks))
+    short = {s: {"moved_frames": rep.get(s, {}).get("moved_frames"), "moved_cm": rep.get(s, {}).get("moved_cm"),
+                 "clear": rep.get(s, {}).get("clear")} for s in SIDES}
+    return out, short
 
 
 def layer(dance, source, src_body, tgt_body, params=None, log=None):
@@ -237,10 +318,14 @@ def main(argv=None):
     ap.add_argument("--no-hands", action="store_true", help="leave the hands' places; only push the arms out of the body")
     ap.add_argument("--no-clear", action="store_true", help="only put the hands back; leave the arms in the body")
     ap.add_argument("--fk-thighs", action="store_true", help="read the thighs by their keys, as tools/retarget.py does")
+    ap.add_argument("--smooth-frames", type=float, default=SMOOTH_FRAMES,
+                    help="the Gaussian (frames) the arm's change is smoothed by (default %g; 0 leaves it as fix_hands sets it)"
+                         % SMOOTH_FRAMES)
     args = ap.parse_args(argv)
     try:
         RT.check_distinct(args.dance, args.source, args.source_body, args.model, args.out, args.report)
-        params = {"hands": not args.no_hands, "clear": not args.no_clear, "ik_thighs": not args.fk_thighs}
+        params = {"hands": not args.no_hands, "clear": not args.no_clear, "ik_thighs": not args.fk_thighs,
+                  "smooth_frames": args.smooth_frames}
         res = layer(vmd.load(args.dance), vmd.load(args.source), RT.Body.load(args.source_body), RT.Body.load(args.model), params)
         RT.write_bytes(os.path.abspath(args.out), vmd.dumps(res.motion))
         rep = dict(res.report, dance=os.path.abspath(args.dance), source=os.path.abspath(args.source),
