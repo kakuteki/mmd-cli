@@ -1,4 +1,5 @@
-"""tools/selfshadow_check.py: the probe models and cameras, and the measures on pictures whose answer is known."""
+"""tools/selfshadow_check.py: the probe models and cameras, the reference of a wide light, and the measures on pictures
+whose answer is known."""
 import importlib.util
 import math
 import os
@@ -269,6 +270,188 @@ class SeenTest(unittest.TestCase):
         self.assertEqual(len(got), 1)
         np.testing.assert_allclose(got[0][1], 127.5)
         np.testing.assert_allclose(got[0][0], 100.0)                       # the transparent subframe adds no colour
+
+
+@unittest.skipUnless(np is not None, "needs numpy and Pillow")
+class JitterTest(unittest.TestCase):
+    """the reference of a wide light that does not go through the effect's sums: MMD's own hard test drawn under many
+    directions of the light and averaged (review of softshadow-mme2)"""
+
+    def axes(self):
+        L = ssc.unit(ssc.LIGHT)
+        a = ssc.unit(np.cross(L, [0.0, 1.0, 0.0]))
+        return L, a, np.cross(L, a)
+
+    def test_the_directions_spread_as_a_light_of_the_blur_round_it(self):
+        L, a, b = self.axes()
+        dirs = ssc.light_jitter(64, 5.0)
+        self.assertEqual(len(dirs), 64)
+        angles = []
+        for d in dirs:
+            d = np.asarray(d)
+            self.assertAlmostEqual(float(np.abs(d).max()), 1.0, places=9)          # MMD's light boxes: -1 to 1
+            u = ssc.unit(d)
+            angles.append((math.atan2(float(u @ a), float(u @ L)), math.atan2(float(u @ b), float(u @ L))))
+        angles = np.degrees(np.array(angles))
+        for k in (0, 1):                     # a standard deviation of 5 degrees on each axis, round the light itself
+            self.assertAlmostEqual(float(np.sqrt((angles[:, k] ** 2).mean())), 5.0, delta=0.2)
+            self.assertLess(abs(float(angles[:, k].mean())), 0.3)
+        self.assertEqual(len({tuple(np.round(d, 6)) for d in dirs}), 64)
+        np.testing.assert_allclose(ssc.light_jitter(1, 5.0)[0], ssc.LIGHT)
+        self.assertEqual(ssc.light_jitter(64, 5.0), dirs)                           # the same each time
+
+    def test_a_hard_edge_averaged_over_them_is_the_wide_lights_edge(self):
+        # a straight edge 4 units up the light from a plane across it: under each direction its hard shadow falls
+        # 4 x tan(the angle) aside; the mean is a Gaussian edge of radians(5) x 4
+        L, a, _ = self.axes()
+        x = np.linspace(-2.0, 2.0, 801)
+        mean = np.zeros_like(x)
+        dirs = ssc.light_jitter(64, 5.0)
+        for d in dirs:
+            u = ssc.unit(d)
+            mean += x > 4.0 * float(u @ a) / float(u @ L)
+        c, s, _ = ssc.fit_edge(x, mean / len(dirs))
+        self.assertAlmostEqual(s, math.radians(5.0) * 4.0, delta=0.04 * math.radians(5.0) * 4.0)
+        self.assertAlmostEqual(c, 0.0, delta=0.02)
+
+    def test_the_reference_is_the_mean_of_the_pictures(self):
+        out = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out, True)
+        h, w = 20, 30
+        g1, g2 = np.zeros((h, w)), np.ones((h, w))
+        a1, a2 = np.full((h, w), 255, dtype=np.uint8), np.full((h, w), 255, dtype=np.uint8)
+        a2[0, 0] = 0
+        save(os.path.join(out, "1.png"), g1, a1)
+        save(os.path.join(out, "2.png"), g2, a2)
+        grey, alpha = ssc.truth([os.path.join(out, "1.png"), os.path.join(out, "2.png")])
+        np.testing.assert_allclose(grey, 0.5)
+        self.assertEqual(alpha[0, 0], 0)                                # the least alpha: a pixel not always body
+        self.assertEqual(alpha[1, 1], 255)
+        ssc.save_truth(os.path.join(out, "t.npz"), grey, alpha, 2)
+        g, a = ssc.load_truth(os.path.join(out, "t.npz"))
+        np.testing.assert_allclose(g, grey, atol=1e-6)
+        np.testing.assert_array_equal(a, alpha)
+
+
+@unittest.skipUnless(np is not None, "needs numpy and Pillow")
+class AgainstTest(unittest.TestCase):
+    H, W = 120, 240
+
+    def edge(self, sigma, centre=100.0):
+        x = np.arange(self.W)[None, :].repeat(self.H, axis=0).astype(np.float64)
+        return ssc._phi((x - centre) / sigma)
+
+    def alpha(self):
+        return np.full((self.H, self.W), 255.0)
+
+    def test_the_same_shadow_has_no_error(self):
+        t = self.edge(6.0)
+        got = ssc.against(t, self.alpha(), t.copy(), self.alpha())
+        self.assertEqual(got["mae"], 0.0)
+        self.assertEqual((got["leak"], got["dark"]), (0.0, 0.0))
+        self.assertAlmostEqual(got["mass_ratio"], 1.0, places=9)
+        self.assertEqual(got["edge_px_soft"], got["edge_px_truth"])
+        self.assertEqual(got["rough"], 0.0)
+        self.assertEqual((got["tiles_leak"], got["tiles_dark"]), ([], []))
+
+    def test_a_leak_in_the_shadow_and_a_stain_on_the_lit_are_found_where_they_are(self):
+        t = self.edge(6.0)
+        s = t.copy()
+        s[40:60, 20:44] = 0.8                                  # in the shadow (x under 82): light let through
+        s[72:96, 168:192] = 0.5                                # on the lit side: a stain (one tile of 24)
+        got = ssc.against(t, self.alpha(), s, self.alpha(), tile=24)
+        n = got["px"]
+        self.assertEqual(n, (self.H - 2) * (self.W - 2))       # the inner pixels
+        self.assertAlmostEqual(got["leak"], 20 * 24 / float(n), places=6)
+        self.assertAlmostEqual(got["dark"], 24 * 24 / float(n), places=6)
+        self.assertLess(got["mass_ratio"], 1.0)                # more light let through than taken
+        x0, y0, x1, y1 = got["tiles_leak"][0]["box"]
+        self.assertTrue(x0 < 44 and x1 > 20 and y0 < 60 and y1 > 40, got["tiles_leak"][0])
+        self.assertEqual(got["tiles_dark"][0]["box"], [168, 72, 192, 96])
+        self.assertGreater(got["umbra_soft_over_05"], 0.0)
+        self.assertGreater(got["lit_soft_under_095"], 0.0)
+
+    def test_a_wider_edge_reads_wider(self):
+        got = ssc.against(self.edge(6.0), self.alpha(), self.edge(12.0), self.alpha())
+        # a Gaussian edge: 1 / its steepest slope is sqrt(2 pi) sigma
+        self.assertAlmostEqual(got["edge_px_truth"], math.sqrt(2.0 * math.pi) * 6.0, delta=0.6)
+        self.assertAlmostEqual(got["edge_px_soft"] / got["edge_px_truth"], 2.0, delta=0.1)
+        self.assertEqual(got["leak"], 0.0)
+
+    def test_with_a_toon_picture_only_the_side_facing_the_light_counts(self):
+        t = self.edge(6.0)
+        s = t.copy()
+        s[72:96, 180:204] = 0.5
+        toon = np.ones((self.H, self.W))
+        toon[:, 160:] = 0.4                                    # turned from the light: its own shade covers the stain
+        got = ssc.against(t, self.alpha(), s, self.alpha(), toon=toon)
+        self.assertEqual(got["dark"], 0.0)
+        self.assertLess(got["px"], (self.H - 2) * (self.W - 2))
+
+    def test_a_penumbra_cut_short_and_steps_in_it_are_read(self):
+        # the soft edge stops 0.9 standard deviations out (lit past it, as a search that finds nothing there leaves it)
+        # and has a bright line through it: neither is in the reference
+        t = self.edge(6.0)
+        x = np.arange(self.W)[None, :].repeat(self.H, axis=0)
+        s = np.where(x > 100 + 0.9 * 6.0, 1.0, t)
+        s[:, 92] = np.minimum(1.0, s[:, 92] + 0.2)
+        got = ssc.against(t, self.alpha(), s, self.alpha())
+        ti, xi = t[1:-1, 1:-1], x[1:-1, 1:-1]
+        pen = (ti > 0.05) & (ti < 0.95)
+        self.assertEqual(got["penumbra_px"], int(pen.sum()))
+        tail = (ti > 0.05) & (ti < 0.9)
+        self.assertAlmostEqual(got["tail_cut"], (tail & (xi > 105.4)).sum() / float(tail.sum()), places=6)
+        # the steps: where the soft one jumps to a neighbour 0.08 more than the reference does, in its penumbra (the
+        # cut at 105 to 106 and the line at 91 to 93), and nowhere in the reference itself
+        steps = got["steps"] * pen.sum()
+        self.assertAlmostEqual(steps, 5 * (self.H - 2), delta=1.0)
+        clean = ssc.against(t, self.alpha(), t.copy(), self.alpha())
+        self.assertEqual((clean["tail_cut"], clean["steps"]), (0.0, 0.0))
+        # ripples: a line brighter (or darker) than both its neighbours across the edge is one; the cut is a step, not a
+        # ripple, and a narrower edge that keeps going one way has none
+        self.assertAlmostEqual(got["ripples"] * pen.sum(), 1 * (self.H - 2), delta=1.0)
+        self.assertEqual(clean["ripples"], 0.0)
+        narrow = ssc.against(t, self.alpha(), self.edge(2.0), self.alpha())
+        self.assertEqual(narrow["ripples"], 0.0)
+        self.assertGreater(narrow["steps"], 0.0)                 # a narrower edge is steeper than the reference
+
+    def test_speckle_reads_rough_and_a_box_keeps_to_its_part(self):
+        t = self.edge(6.0)
+        s = t.copy()
+        yy, xx = np.mgrid[0:self.H, 0:self.W]
+        s = np.clip(s + np.where((xx > 85) & (xx < 115), 0.2 * ((xx + yy) % 2 * 2 - 1), 0.0), 0.0, 1.0)
+        got = ssc.against(t, self.alpha(), s, self.alpha())
+        self.assertGreater(got["rough"], 0.04)
+        part = ssc.against(t, self.alpha(), s, self.alpha(), box=(150, 0, 240, 120))
+        self.assertEqual(part["rough"], 0.0)
+        self.assertEqual(part["px"], (self.H - 2) * (90 - 2))
+
+
+@unittest.skipUnless(np is not None, "needs numpy and Pillow")
+class TogglesTest(unittest.TestCase):
+    def frames(self, greys):
+        alpha = np.full(greys[0].shape, 255.0)
+        return [(np.repeat((g * 255.0)[..., None], 3, axis=2), alpha) for g in greys]
+
+    def test_a_shadow_sliding_over_jumps_once_and_a_blinking_patch_jumps_back(self):
+        h, w = 40, 120
+        x = np.arange(w)[None, :].repeat(h, axis=0)
+        slide = [np.where(x < 30 + i, 0.0, 1.0) for i in range(32)]         # a hard edge, a pixel each frame
+        got = ssc.toggles_of(self.frames(slide), sub=4, shutter=0.5)
+        self.assertGreater(got["at_subframes"]["jump_share"], 0.0)
+        self.assertEqual(got["at_subframes"]["reversal_share"], 0.0)
+        blink = []
+        for i in range(32):
+            g = np.ones((h, w))
+            g[10:20, 80:90] = 0.2 if i % 2 else 0.9                         # a patch flickering each frame
+            blink.append(g)
+        got = ssc.toggles_of(self.frames(blink), sub=4, shutter=0.5, tile=10)
+        inner = (h - 2) * (w - 2)
+        self.assertAlmostEqual(got["at_subframes"]["reversal_share"], 100.0 / inner, places=6)
+        self.assertEqual(got["at_subframes"]["tiles"][0]["box"], [80, 10, 90, 20])
+        # folded (the first 2 of every 4 averaged) the patch is the same in every video frame: no flicker left
+        self.assertEqual(got["at_video"]["reversal_share"], 0.0)
+        self.assertEqual(got["at_video"]["frames"], 8)
 
 
 if __name__ == "__main__":

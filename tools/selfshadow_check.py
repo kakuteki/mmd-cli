@@ -5,6 +5,10 @@
     python tools/selfshadow_check.py fan PROBE.json FAN.png
     python tools/selfshadow_check.py acne SHARP.avi SOFT.avi [--far 60] [--box X0,Y0,X1,Y1]
     python tools/selfshadow_check.py seen SHADED.avi LIT.avi [--sub 16] [--shutter 0.5] [--box X0,Y0,X1,Y1]
+    python tools/selfshadow_check.py jitter N [--blur 5]
+    python tools/selfshadow_check.py truth OUT.npz PICTURE.png [PICTURE.png ...]
+    python tools/selfshadow_check.py against TRUTH.npz SOFT.png [--toon TOON.png] [--box X0,Y0,X1,Y1] [--tile 24] [--top 8]
+    python tools/selfshadow_check.py toggles SHADOW.avi [--jump 0.25] [--sub 16] [--shutter 0.5] [--box X0,Y0,X1,Y1]
 
 * probe: two models of plain geometry (PMX 2.0, written here; every triangle in both windings, as MMD's shadow map culls
   the faces turned from the light) under MMD's default light (-0.5, -1, 0.5), each with a camera (VMD) that sees it, and
@@ -30,6 +34,17 @@
   tools/mv_look.py folds (the first round(--shutter x --sub) of every --sub frames averaged, premultiplied): its change
   from one video frame to the next (rms), how rough that is in time (mean |second difference| / mean |first difference|:
   about 1.7 for noise, near 0 for a change that glides), and how deep the shade is (percentiles of the ratio).
+* jitter, truth, against: a reference of the wide light that does not go through the effect's sums.  jitter gives N
+  directions of a light --blur degrees wide (a standard deviation on each axis) round MMD's default light, for
+  `mmd light set --dir`; a picture of the same frame drawn with --debug --sharp (MMD's own hard test) under each, averaged
+  by truth into OUT.npz, is the shadow of that wide light (its penumbra, the umbra of a thin thing gone, the contact).
+  against measures a picture drawn with --debug (the soft shadow) against it: the error, the light let through where
+  the reference is dark (leak) and taken where it is lit (dark), the darkness kept (mass_ratio), the edges' widths, the
+  speckle (rough) and the tiles where the errors gather.  --toon: a picture of the toon's share of the light
+  (saturate(3 N.L)), to keep to where the shadow is what shows.
+* toggles: on an AVI of the shadow alone at a high rate: the share of pixels that jump by more than --jump and come back
+  in the next frame (a flicker; a shadow sliding over a pixel jumps once), at the subframes and folded to the video's
+  rate, and the tiles where they gather.
 
 Each command prints one JSON object (probe also writes PROBE.json).
 """
@@ -620,6 +635,241 @@ def seen(shaded_path, lit_path, sub=16, shutter=0.5, box=None):
     return seen_of(zip(frames(shaded_path, box), frames(lit_path, box)), sub, shutter)
 
 
+# ---- the reference of a wide light: MMD's own hard test under many directions, averaged ---------------
+
+GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
+
+
+def light_jitter(n, blur=5.0, light=LIGHT):
+    """n directions of a light `blur` degrees wide (a standard deviation on each axis, as tools/mme_shadow.py --blur and
+    tools/mv_world.py's floor take it) round `light`, as MMD's light boxes take them: their angles from `light` at the
+    quantiles of the Gaussian's radius (not cut), scaled so that their spread is `blur`, round the golden angle; each
+    scaled so that its largest component is 1 in size (the boxes take -1 to 1).  A picture drawn with MMD's own test
+    (tools/mme_shadow.py --debug --sharp) under each, averaged (truth), is the shadow of that wide light: a reference
+    for the soft shadow that does not go through its sums (review of softshadow-mme2)"""
+    if n < 1:
+        raise ValueError("n is 1 or more, not %r" % (n,))
+    L = unit(light)
+    if n == 1:
+        return [tuple(float(x) for x in L / np.abs(L).max())]
+    a = unit(np.cross(L, [0.0, 1.0, 0.0] if abs(L[1]) < 0.9 else [1.0, 0.0, 0.0]))
+    b = np.cross(L, a)
+    q = np.sqrt(-2.0 * np.log(1.0 - (np.arange(n) + 0.5) / n))
+    q *= math.sqrt(2.0 / float((q * q).mean()))                   # a radius of mean square 2: 1 on each axis
+    out = []
+    for i, r in enumerate(q * math.radians(blur)):
+        phi = i * GOLDEN
+        d = math.cos(r) * L + math.sin(r) * (math.cos(phi) * a + math.sin(phi) * b)
+        out.append(tuple(float(x) for x in d / np.abs(d).max()))
+    return out
+
+
+def truth(paths):
+    """the mean grey (0..1) of pictures of one frame, and their least alpha (a pixel that is not always body is not)"""
+    total = least = None
+    for p in paths:
+        g, a = read_png(p)
+        total = g.copy() if total is None else total + g
+        least = a.copy() if least is None else np.minimum(least, a)
+    if total is None:
+        raise ValueError("no pictures")
+    return total / float(len(paths)), least
+
+
+def save_truth(path, grey, alpha, n):
+    np.savez_compressed(path, grey=np.asarray(grey, dtype=np.float32), alpha=np.asarray(alpha, dtype=np.uint8),
+                        n=np.int32(n))
+
+
+def load_truth(path):
+    with np.load(path) as z:
+        return z["grey"].astype(np.float64), z["alpha"].astype(np.float64)
+
+
+def _summed(m, r):
+    """the sum of m over the square of side 2r + 1 round each pixel (summed areas, cut at the picture's border)"""
+    c = np.zeros((m.shape[0] + 1, m.shape[1] + 1))
+    c[1:, 1:] = m.cumsum(axis=0).cumsum(axis=1)
+    h, w = m.shape
+    y0, y1 = np.clip(np.arange(h) - r, 0, h), np.clip(np.arange(h) + r + 1, 0, h)
+    x0, x1 = np.clip(np.arange(w) - r, 0, w), np.clip(np.arange(w) + r + 1, 0, w)
+    return c[y1][:, x1] - c[y0][:, x1] - c[y1][:, x0] + c[y0][:, x0]
+
+
+def edge_px(grey, mask):
+    """an edge's width as tools/shadow_measure.py reads it: the median of 1 / the slope (central differences) over the
+    mask where the grey is half way (0.4 to 0.6), px; None without such pixels"""
+    gx, gy = np.zeros(grey.shape), np.zeros(grey.shape)
+    gx[:, 1:-1] = 0.5 * (grey[:, 2:] - grey[:, :-2])
+    gy[1:-1, :] = 0.5 * (grey[2:, :] - grey[:-2, :])
+    s = np.hypot(gx, gy)
+    half = mask & (grey > 0.4) & (grey < 0.6) & (s > 1e-6)
+    return round(float(np.median(1.0 / s[half])), 3) if half.any() else None
+
+
+def _share(mask, within):
+    k = int(within.sum())
+    return round(float((mask & within).sum()) / k, 6) if k else None
+
+
+def _ripples(s, t, least=0.04):
+    """the pixels of s brighter than both neighbours across the edge, or darker than both, by `least`: across the edge
+    is along the gradient of t (the reference) rounded to the 8 neighbours.  A penumbra goes one way across its edge; a
+    line in it (a search that finds nothing for a row of pixels) does not"""
+    gx, gy = np.zeros(t.shape), np.zeros(t.shape)
+    gx[:, 1:-1] = 0.5 * (t[:, 2:] - t[:, :-2])
+    gy[1:-1, :] = 0.5 * (t[2:, :] - t[:-2, :])
+    g = np.hypot(gx, gy)
+    dx = np.where(g > 1e-3, np.round(gx / np.maximum(g, 1e-9)), 0).astype(int)
+    dy = np.where(g > 1e-3, np.round(gy / np.maximum(g, 1e-9)), 0).astype(int)
+    h, w = s.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    ya, xa = np.clip(yy - dy, 0, h - 1), np.clip(xx - dx, 0, w - 1)
+    yb, xb = np.clip(yy + dy, 0, h - 1), np.clip(xx + dx, 0, w - 1)
+    a, b = s[ya, xa], s[yb, xb]
+    across = (dx != 0) | (dy != 0)
+    return across & ((s - np.maximum(a, b) > least) | (np.minimum(a, b) - s > least))
+
+
+def _jumps(g):
+    """the largest difference of each pixel to its four neighbours"""
+    j = np.zeros(g.shape)
+    dx, dy = np.abs(np.diff(g, axis=1)), np.abs(np.diff(g, axis=0))
+    j[:, :-1] = np.maximum(j[:, :-1], dx)
+    j[:, 1:] = np.maximum(j[:, 1:], dx)
+    j[:-1, :] = np.maximum(j[:-1, :], dy)
+    j[1:, :] = np.maximum(j[1:, :], dy)
+    return j
+
+
+def against(truth_grey, truth_alpha, soft_grey, soft_alpha, toon=None, box=None, tile=24, top=8, gap=0.25):
+    """the soft shadow (a picture drawn with --debug) against the reference of the wide light (truth: the same frame),
+    over the body's inner pixels in both (and, with a toon picture, where the toon lets all the light through: the
+    shadow is what shows there).  mae and bias of soft - truth; the darkness (1 - grey) soft keeps of the truth's
+    (mass_ratio: under 1 the shadow is too light); leak: the share where the truth is dark (under `gap`) and soft lets
+    `gap` more through; dark: where the truth is lit (over 1 - gap) and soft takes `gap` more; the truth's umbra (under
+    0.05) and lit (over 0.99) and what soft draws there; the edges' widths (edge_px); rough: the rms of soft - truth less
+    its mean over 5 x 5 px (speckle the truth has not); steps: of the truth's penumbra, the share where soft jumps to a
+    neighbour 0.08 more than the truth does; tail_cut: of the penumbra's tail (the truth 0.05 to 0.9), the share soft
+    draws all lit; and the tiles (px, the picture's) where most light leaks (sum of soft - truth over 0.15) and where
+    most is taken"""
+    arrays = [np.asarray(v, dtype=np.float64) for v in (truth_grey, truth_alpha, soft_grey, soft_alpha)]
+    if toon is not None:
+        arrays.append(np.asarray(toon, dtype=np.float64))
+    ox = oy = 0
+    if box:
+        x0, y0, x1, y1 = box
+        arrays = [v[y0:y1, x0:x1] for v in arrays]
+        ox, oy = x0, y0
+    t, ta, s, sa = arrays[:4]
+    front = inner(ta) & inner(sa)
+    if toon is not None:
+        front &= arrays[4] > 0.999
+    n = int(front.sum())
+    if n == 0:
+        return {"px": 0}
+    e = s - t
+    ef, tf, sf = e[front], t[front], s[front]
+    hf = e - _summed(np.where(front, e, 0.0), 2) / np.maximum(_summed(front.astype(np.float64), 2), 1.0)
+    umbra, lit = front & (t < 0.05), front & (t > 0.99)
+    mass_t = float((1.0 - tf).sum())
+    out = {"px": n, "mae": round(float(np.abs(ef).mean()), 6), "bias": round(float(ef.mean()), 6),
+           "mass_truth": round(mass_t / n, 6), "mass_soft": round(float((1.0 - sf).sum()) / n, 6),
+           "mass_ratio": round(float((1.0 - sf).sum()) / mass_t, 6) if mass_t > 0 else None,
+           "leak": round(float(((tf < gap) & (ef > gap)).mean()), 6),
+           "dark": round(float(((tf > 1.0 - gap) & (ef < -gap)).mean()), 6),
+           "umbra_px": int(umbra.sum()), "umbra_soft_mean": round(float(s[umbra].mean()), 4) if umbra.any() else None,
+           "umbra_soft_over_05": _share(s > 0.5, umbra), "lit_px": int(lit.sum()),
+           "lit_soft_mean": round(float(s[lit].mean()), 4) if lit.any() else None,
+           "lit_soft_under_095": _share(s < 0.95, lit),
+           "full_shadow_truth": round(float((tf < 0.05).mean()), 6), "full_shadow_soft": round(float((sf < 0.05).mean()), 6),
+           "edge_px_truth": edge_px(t, front), "edge_px_soft": edge_px(s, front),
+           "rough": round(float(np.sqrt((hf[front] ** 2).mean())), 6)}
+    # the reference's penumbra (0.05 to 0.95): where soft jumps to a neighbour 0.08 more than the reference does (a
+    # step or a line the wide light has not), and of its tail (0.05 to 0.9) where soft is all lit (the penumbra cut
+    # short: past where the search finds what casts it)
+    pen = front & (t > 0.05) & (t < 0.95)
+    tail = front & (t > 0.05) & (t < 0.9)
+    out["penumbra_px"] = int(pen.sum())
+    out["steps"] = _share(_jumps(s) > _jumps(t) + 0.08, pen)
+    out["tail_cut"] = _share(s > 0.98, tail)
+    out["ripples"] = _share(_ripples(s, t), pen)
+    rows = []
+    h, w = front.shape
+    for y in range(0, h, tile):
+        for x in range(0, w, tile):
+            m = front[y:y + tile, x:x + tile]
+            k = int(m.sum())
+            if k < tile * tile // 4:
+                continue
+            el = e[y:y + tile, x:x + tile][m]
+            rows.append({"box": [x + ox, y + oy, min(x + tile, w) + ox, min(y + tile, h) + oy], "px": k,
+                         "leak": round(float(np.maximum(el - 0.15, 0.0).sum()), 2),
+                         "dark": round(float(np.maximum(-el - 0.15, 0.0).sum()), 2),
+                         "truth": round(float(t[y:y + tile, x:x + tile][m].mean()), 3),
+                         "soft": round(float(s[y:y + tile, x:x + tile][m].mean()), 3)})
+    out["tiles_leak"] = [r for r in sorted(rows, key=lambda r: -r["leak"])[:top] if r["leak"] > 0]
+    out["tiles_dark"] = [r for r in sorted(rows, key=lambda r: -r["dark"])[:top] if r["dark"] > 0]
+    return out
+
+
+class _Toggles:
+    """over grey maps fed one at a time: the change from one to the next, and the pixels that jump by more than `jump`
+    and back in the next (up then down or down then up), counted per pixel"""
+
+    def __init__(self, jump):
+        self.jump = jump
+        self.prev = self.prev2 = self.count = None
+        self.frames = self.n = self.px = self.jumps = self.reversals = 0
+        self.sq = 0.0
+
+    def add(self, grey, alpha):
+        m = inner(alpha)
+        self.frames += 1
+        if self.prev is not None:
+            g1, m1 = self.prev
+            both = m & m1
+            d = grey - g1
+            self.sq += float((d[both] ** 2).sum())
+            self.n += int(both.sum())
+            self.jumps += int((np.abs(d[both]) > self.jump).sum())
+            if self.prev2 is not None:
+                g0, m0 = self.prev2
+                all3 = both & m0
+                d0 = g1 - g0
+                rev = all3 & (np.abs(d0) > self.jump) & (np.abs(d) > self.jump) & (np.sign(d0) != np.sign(d))
+                self.count = rev.astype(np.int64) if self.count is None else self.count + rev
+                self.reversals += int(rev.sum())
+                self.px += int(all3.sum())
+        self.prev2, self.prev = self.prev, (grey, m)
+
+    def result(self, tile, top):
+        out = {"frames": self.frames, "rms_change": round(math.sqrt(self.sq / self.n), 6) if self.n else None,
+               "jump_share": round(self.jumps / float(self.n), 6) if self.n else None,
+               "reversal_share": round(self.reversals / float(self.px), 8) if self.px else None, "tiles": []}
+        if self.count is not None and self.reversals:
+            h, w = self.count.shape
+            rows = [{"box": [x, y, min(x + tile, w), min(y + tile, h)], "reversals": int(self.count[y:y + tile, x:x + tile].sum())}
+                    for y in range(0, h, tile) for x in range(0, w, tile)]
+            out["tiles"] = [r for r in sorted(rows, key=lambda r: -r["reversals"])[:top] if r["reversals"] > 0]
+        return out
+
+
+def toggles_of(seq, jump=0.25, sub=16, shutter=0.5, tile=24, top=8):
+    """over (rgb straight, alpha) subframes of the shadow alone (--debug: the grey is the light let through), at their
+    rate and folded to the video's as tools/mv_look.py folds: the rms change from one frame to the next, the share of
+    pixels that jump by more than `jump`, and the share that jump and come back in the next frame (a flicker; a shadow
+    sliding over a pixel jumps once), with the tiles where those gather"""
+    at_sub, at_video, folder = _Toggles(jump), _Toggles(jump), Folder(sub, shutter)
+    for rgb, a in seq:
+        at_sub.add(rgb.mean(axis=2) / 255.0, a)
+        f = folder.add(rgb, a)
+        if f is not None:
+            at_video.add(f[0].mean(axis=2) / 255.0, f[1])
+    return {"jump": jump, "sub": sub, "shutter": shutter, "at_subframes": at_sub.result(tile, top),
+            "at_video": at_video.result(tile, top)}
+
+
 def _box(text):
     if not text:
         return None
@@ -662,6 +912,25 @@ def main(argv=None):
     s.add_argument("--sub", type=int, default=16)
     s.add_argument("--shutter", type=float, default=0.5)
     s.add_argument("--box")
+    s = sub.add_parser("jitter")
+    s.add_argument("n", type=int)
+    s.add_argument("--blur", type=float, default=5.0)
+    s = sub.add_parser("truth")
+    s.add_argument("out")
+    s.add_argument("pictures", nargs="+")
+    s = sub.add_parser("against")
+    s.add_argument("truth")
+    s.add_argument("soft")
+    s.add_argument("--toon")
+    s.add_argument("--box")
+    s.add_argument("--tile", type=int, default=24)
+    s.add_argument("--top", type=int, default=8)
+    s = sub.add_parser("toggles")
+    s.add_argument("shadow")
+    s.add_argument("--jump", type=float, default=0.25)
+    s.add_argument("--sub", type=int, default=16)
+    s.add_argument("--shutter", type=float, default=0.5)
+    s.add_argument("--box")
     a = p.parse_args(argv)
     try:
         if a.command == "probe":
@@ -673,6 +942,20 @@ def main(argv=None):
                    else fan(doc, a.picture))
         elif a.command == "acne":
             out = acne(a.sharp, a.soft, a.far, _box(a.box))
+        elif a.command == "jitter":
+            out = {"blur": a.blur, "light": list(LIGHT), "directions": [list(d) for d in light_jitter(a.n, a.blur)]}
+        elif a.command == "truth":
+            grey, alpha = truth(a.pictures)
+            save_truth(a.out, grey, alpha, len(a.pictures))
+            out = {"out": a.out, "pictures": len(a.pictures), "mean": round(float(grey[alpha > 250].mean()), 6)
+                   if (alpha > 250).any() else None}
+        elif a.command == "against":
+            tg, ta = load_truth(a.truth)
+            sg, sa = read_png(a.soft)
+            toon = read_png(a.toon)[0] if a.toon else None
+            out = against(tg, ta, sg, sa, toon, _box(a.box), a.tile, a.top)
+        elif a.command == "toggles":
+            out = toggles_of(frames(a.shadow, _box(a.box)), a.jump, a.sub, a.shutter)
         else:
             out = seen(a.shaded, a.lit, a.sub, a.shutter, _box(a.box))
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:

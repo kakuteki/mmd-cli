@@ -80,11 +80,14 @@ class LookSettingsTest(unittest.TestCase):
                     {"floor_step": 0}, {"floor_accent_every": 1.5}, {"pool_colour": [1, 2]}, {"wrold": 1},
                     {"world": 1, "floor": 0, "shadow": 0.5}, {"floor_y": float("nan")}, {"floor_y": "high"},
                     {"shadow_soft": 2}, {"shadow_blur": -1}, {"shadow_blur": 45}, {"shadow_light": [0, 1, 0]},
-                    {"shadow_light": [0, -1]}, {"shadow_contact": 1.5}, {"shadow_share": 2}, {"shadow_share": 0.5}):
+                    {"shadow_light": [0, -1]}, {"shadow_contact": 1.5}, {"shadow_share": 2}, {"shadow_share": 0.5},
+                    {"shadow_key": -0.1}, {"shadow_key": 1.5}):
             with self.assertRaises(ValueError, msg=bad):
                 mv_look.merge_look({"stage": bad})
         # the floor shadow's shares of light: 1 (2026-10-17) unless the look asks for the floor of before (0)
         self.assertEqual(mv_look.merge_look({})["stage"]["shadow_share"], 1)
+        self.assertEqual(mv_look.merge_look({})["stage"]["shadow_key"], 0.6)              # mv_world.KEY_SHARE
+        self.assertEqual(mv_look.merge_look({"stage": {"shadow_key": 0.35}})["stage"]["shadow_key"], 0.35)
         self.assertEqual(mv_look.merge_look({"stage": {"shadow_share": 0}})["stage"]["shadow_share"], 0)
         # the floor's height: 0 (make_stage.py's floor) unless the look raises it (0.111: where the model's soles stand)
         self.assertEqual(mv_look.merge_look({})["stage"]["floor_y"], 0.0)

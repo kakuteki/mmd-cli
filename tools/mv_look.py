@@ -124,6 +124,8 @@ DEFAULT_LOOK = {
                                     # from what casts it (an edge facing the light up to 1 / sin(its elevation) more)
               "shadow_light": [-0.5, -1.0, 0.5],    # where the light shines to (MMD's light direction; its default)
               "shadow_contact": 0.9,                # how dark the light from all round leaves the floor under her, 0 to 1
+              "shadow_key": 0.6,    # the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE):
+                                    # the core of a shadow keeps 1 - this (the rest comes from all round)
               "shadow_share": 1},   # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
                                     # pool's light and the darkening from all round the rest, the lines keep their own
                                     # (mv_world.soft_light, 2026-10-17); 0 the floor of before (the pool the key light's
@@ -200,7 +202,7 @@ def _check_stage(stage):
                          % (stage["specks"],))
     if int(stage["floor_accent_every"]) != stage["floor_accent_every"] or stage["floor_accent_every"] < 0:
         raise ValueError("stage.floor_accent_every is a whole number, 0 for no accent lines")
-    for key in ("pool", "shadow", "shadow_contact"):
+    for key in ("pool", "shadow", "shadow_contact", "shadow_key"):
         if not 0 <= stage[key] <= 1:
             raise ValueError("stage.%s is 0 (none) to 1, not %r" % (key, stage[key]))
     if stage["shadow_soft"] not in (0, 1):
