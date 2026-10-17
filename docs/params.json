@@ -20087,7 +20087,7 @@
   {
    "tool": "lip_sync.py",
    "kind": "const",
-   "name": "STAY.C",
+   "name": "STAY.BR",
    "value": "0.6",
    "line": 151,
    "comment": "",
@@ -20107,21 +20107,21 @@
   {
    "tool": "lip_sync.py",
    "kind": "const",
-   "name": "STAY.G",
+   "name": "STAY.C",
    "value": "0.6",
    "line": 151,
    "comment": "",
    "above": "",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -20367,7 +20367,7 @@
   {
    "tool": "lip_sync.py",
    "kind": "const",
-   "name": "SHORTEST.C",
+   "name": "SHORTEST.BR",
    "value": "2",
    "line": 342,
    "comment": "",
@@ -20387,21 +20387,21 @@
   {
    "tool": "lip_sync.py",
    "kind": "const",
-   "name": "SHORTEST.G",
+   "name": "SHORTEST.C",
    "value": "2",
    "line": 342,
    "comment": "",
    "above": "",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -40368,7 +40368,7 @@
     "lip_check.py"
    ],
    "values": 84,
-   "retarget": 2,
+   "retarget": 0,
    "rig": 1,
    "dance": 1,
    "noted": 4
@@ -40440,8 +40440,8 @@
   "option": 93,
   "option_of_constant": 37,
   "default": 281,
-  "review": 387,
-  "retarget": 248,
+  "review": 385,
+  "retarget": 246,
   "rig": 58,
   "dance": 91,
   "noted": 57

@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1934（定数 1560・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 387（retarget 248・rig 58・踊りだけ 91）、記録の出所つき 57。
+- 数: 全部 1934（定数 1560・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 385（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 57。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -26,7 +26,7 @@
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
-| 16 | 口 | lip_sync.py・lip_timing.py | 84 | 2 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
+| 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
@@ -1213,8 +1213,8 @@
 | LINE_SLACK | (1.0, 1.5) | s | 148 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
 | MARGIN | (1.2, 1.6) | s | 149 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
 | ITERATIONS | 6 |  | 150 |  |  |  |  |  |  |  |  |  |
+| STAY.BR | 0.6 |  | 151 |  |  |  |  |  |  |  |  |  |
 | STAY.C | 0.6 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.G | 0.6 |  | 151 |  |  |  | ○ |  |  |  |  | retarget |
 | STAY.N | 0.85 |  | 151 |  |  |  |  |  |  |  |  |  |
 | STAY.Q | 0.85 |  | 151 |  |  |  |  |  |  |  |  |  |
 | STAY.SIL | 0.95 |  | 151 |  |  |  |  |  |  |  |  |  |
@@ -1227,8 +1227,8 @@
 | GUIDE_LAG | 0.07 | s | 156 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
 | POSTERIOR_FLOOR | -6.0 |  | 157 |  |  |  |  |  |  |  |  |  |
 | NEG | -1e9 |  | 159 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.BR | 2 |  | 342 |  |  |  |  |  |  |  |  |  |
 | SHORTEST.C | 2 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.G | 2 |  | 342 |  |  |  | ○ |  |  |  |  | retarget |
 | SHORTEST.N | 4 |  | 342 |  |  |  |  |  |  |  |  |  |
 | SHORTEST.Q | 3 |  | 342 |  |  |  |  |  |  |  |  |  |
 | SHORTEST.SIL | 1 |  | 342 |  |  |  |  |  |  |  |  |  |

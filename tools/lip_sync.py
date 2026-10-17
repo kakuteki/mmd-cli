@@ -148,7 +148,7 @@ BLOCK_GAP = 2.0                 # s between lines that are aligned apart
 LINE_SLACK = (1.0, 1.5)         # s a line may begin before its given start, end after its given end
 MARGIN = (1.2, 1.6)             # s of the voice taken before and after a block
 ITERATIONS = 6
-STAY = {"V": 0.9, "C": 0.6, "G": 0.6, "N": 0.85, "Q": 0.85, "SIL": 0.95, "SP": 0.9}
+STAY = {"V": 0.9, "C": 0.6, "BR": 0.6, "N": 0.85, "Q": 0.85, "SIL": 0.95, "SP": 0.9}
 SP_PENALTY = (4.0, 1.5)         # log: a short pause inside a word, between words
 SPECTRAL_WEIGHT = 0.5
 GUIDE = (2.0, -1.0)             # log a row added to a vowel where the guide's mouth shows that vowel, another vowel
@@ -330,7 +330,7 @@ def _logsig(x):
 
 @dataclasses.dataclass
 class Unit:
-    kind: str                   # V C N Q SIL SP
+    kind: str                   # V C BR N Q SIL SP
     label: str                  # the vowel (V), the class (C), "" otherwise
     line: int                   # the line it belongs to (-1: silence between lines and around the block)
     mora: int                   # its mora in the line (-1 for silences)
@@ -339,11 +339,11 @@ class Unit:
     shortest: int               # frames
 
 
-SHORTEST = {"V": 5, "C": 2, "G": 2, "N": 4, "Q": 3, "SIL": 1, "SP": 3}
+SHORTEST = {"V": 5, "C": 2, "BR": 2, "N": 4, "Q": 3, "SIL": 1, "SP": 3}
 
 
 def breaks_before(morae, mi):
-    """whether mora mi of a line gets an optional break (G) before its vowel: a vowel alone after another syllable of
+    """whether mora mi of a line gets an optional break (BR) before its vowel: a vowel alone after another syllable of
     the line (と お: sung legato it needs none, sung as a new note it may start after a dip of the voice)"""
     m = morae[mi]
     return mi > 0 and not m.consonant and m.vowel in "aiueo"
@@ -357,7 +357,7 @@ def chain(lines_morae):
             if m.consonant:
                 units.append(Unit("C", m.consonant, li, mi, False, 0.0, SHORTEST["C"]))
             elif breaks_before(morae, mi):
-                units.append(Unit("G", "", li, mi, True, 0.0, SHORTEST["G"]))
+                units.append(Unit("BR", "", li, mi, True, 0.0, SHORTEST["BR"]))
             kind = "V" if m.vowel in "aiueo" else m.vowel
             units.append(Unit(kind, m.vowel if kind == "V" else "", li, mi, False, 0.0, SHORTEST[kind]))
             last = mi == len(morae) - 1
@@ -437,7 +437,7 @@ def emissions(voice, model, rows, guide=None):
                 dominant = np.argmax(g, axis=1)
                 out["V:" + c] = out["V:" + c] + np.where(shown, np.where(dominant == j, GUIDE[0], GUIDE[1]), 0.0)
     out["C"] = np.log(0.5 * np.exp(_logsig((dip - 4.0) / 1.2)) + 0.5 * np.exp(_logsig((SIL_DB + 5.0 - e) / 3.0)) + 1e-4)
-    out["G"] = out["C"]                               # a break before a vowel: a dip of the voice or near silence
+    out["BR"] = out["C"]                              # a break before a vowel: a dip of the voice or near silence
     out["Q"] = quiet
     out["SIL"] = np.logaddexp(quiet, FILLER)          # between the lines also a sound that is no lyric (an ad lib)
     out["SP"] = quiet
@@ -580,7 +580,7 @@ def _align_pass(voice, lines, parsed, model, guide=None):
             d = times.setdefault((u.line, u.mora), {})
             if u.kind == "C":
                 d["c0"] = a * STEP
-            elif u.kind == "G":
+            elif u.kind == "BR":
                 d["g0"] = a * STEP
             else:
                 d["v0"] = a * STEP
