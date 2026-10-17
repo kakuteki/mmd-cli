@@ -788,24 +788,32 @@ def foot_turned(c, axis, angles, goal, shell):
     return goals, q
 
 
-def carry_to_edges(turn, stance, edge=None):
+def carry_to_edges(turn, stance, edge=None, allow=None):
     """the turns [F] (degrees, signed) with a turn within `edge` frames of a standing run's end, and nearer its end than its
     start, held on to that end where the foot lifts after it (and one nearer its start held back to the start where the
-    foot lands before it): the larger of the same sign carried over"""
+    foot lands before it): the larger of the same sign carried over, as far as allow(frame, turn) lets it (a frame that
+    does not take it stops the carry)"""
     edge = KNEE_EDGE if edge is None else edge
     out = np.array(turn, dtype=float)
     F = len(out)
+
+    def take(t, src):
+        if abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
+            if allow is not None and not allow(t, out[src]):
+                return False
+            out[t] = out[src]
+        return True
     for a, b in runs(stance):
         if b < F - 1:                                   # the foot lifts after b
             for t in range(max(a, b - edge + 1) + 1, b + 1):
                 src = t - 1
-                if b - src < src - a and abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
-                    out[t] = out[src]
+                if b - src < src - a and not take(t, src):
+                    break
         if a > 0:                                       # the foot lands at a
             for t in range(min(b, a + edge - 1) - 1, a - 1, -1):
                 src = t + 1
-                if src - a < b - src and abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
-                    out[t] = out[src]
+                if src - a < b - src and not take(t, src):
+                    break
     return out
 
 
@@ -837,8 +845,8 @@ def knee_plan(rig, shoe, sol, stance):
     foot keeps its turn).  A standing foot turns about the front of the part of its shoe that touches (onto its toes) or
     about its back (onto its heel), by the least turn of the two (knee_turn) that brings the distance down to the target
     (its last frame before it lifts onto its toes only: a push-off), the shoe's lowest point kept where it was, held on to
-    the end of the run within KNEE_EDGE frames of a lift or a landing (carry_to_edges): its toes (or heel) stay on the floor
-    where they stand.  A standing foot whose goal MMD's ankle does not reach (by IK_MISS: its foot is not where the plan
+    the end of the run within KNEE_EDGE frames of a lift or a landing (carry_to_edges) as long as it does not straighten the
+    knee there: its toes (or heel) stay on the floor where they stand.  A standing foot whose goal MMD's ankle does not reach (by IK_MISS: its foot is not where the plan
     stands it, but short of it in the air), or that no turn brings to its target on the first or the last frame of its
     run (it then lands a frame late, or lifts a frame early), moves as a swing foot does.  A turn held on bends that frame
     more, so the targets are found again on the distances the changes leave, KNEE_PLAN_ROUNDS times at most (only ever
@@ -885,7 +893,11 @@ def knee_plan(rig, shoe, sol, stance):
                     else:
                         deg[t] = d_t
                 st = ~free
-                deg = np.where(st, carry_to_edges(deg, st), 0.0)
+
+                def straighter(t, d, Dr=Dr):        # (a turn held on that would take the ankle further from the hip there)
+                    c = front[t] if d > 0.0 else back[t]
+                    return np.linalg.norm(hip[t] - foot_turned(c, axis[t], np.array([math.radians(d)]), g[t], w[t])[0][0]) <= Dr[t] + 1e-9
+                deg = np.where(st, carry_to_edges(deg, st, allow=straighter), 0.0)
                 for t in np.flatnonzero(np.abs(deg) > 1e-9):
                     goal[t] = foot_turned(front[t] if deg[t] > 0.0 else back[t], axis[t], np.array([math.radians(deg[t])]),
                                           g[t], w[t])[0][0]

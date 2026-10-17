@@ -1015,6 +1015,25 @@ class KneeTest(unittest.TestCase):
         self.assertEqual([float(x) for x in out[5:11]], [0.0, 0.0, 0.0, 7.0, 0.0, 0.0])
         self.assertEqual([float(x) for x in out[18:21]], [0.0, 0.0, 4.0])
 
+    def test_a_held_turn_stops_at_a_frame_that_does_not_take_it(self):
+        # carry_to_edges with allow: a turn held on toward a run's end goes no further than the first frame that refuses it
+        # (the knee step refuses a turn that would take the ankle further from the hip there: the song's 2371-2372, a
+        # right foot's 2 degrees onto its toes held on from 2370 straightened its knee by 0.4 and 1.4 degrees)
+        st = np.zeros(20, dtype=bool)
+        st[2:12] = True                     # a run 2..11, the foot lifting after 11
+        turn = np.zeros(20)
+        turn[9] = 5.0
+        refused = []
+
+        def allow(t, d):
+            refused.append(t)
+            return t != 10
+        out = contact_layer.carry_to_edges(turn, st, edge=3, allow=allow)
+        self.assertEqual([float(x) for x in out[8:12]], [0.0, 5.0, 0.0, 0.0])
+        self.assertEqual(refused, [10])                                               # (11 is not asked: the carry stopped)
+        out = contact_layer.carry_to_edges(turn, st, edge=3, allow=lambda t, d: True)
+        self.assertEqual([float(x) for x in out[8:12]], [0.0, 5.0, 5.0, 5.0])
+
     def test_the_band_is_a_part_of_the_leg(self):
         # knee_targets on one leg and on the same leg 1.6 times as long with the distances 1.6 times as long: the same
         # bends and 1.6 times the distances (the band near the reach is a part of the leg's reach)
