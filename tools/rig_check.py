@@ -10,6 +10,9 @@ another), as numbers and pictures.  No MMD: the pose and the skinning are MMD's 
     python tools/rig_check.py skin DANCE.vmd --model TAG=MODEL.pmx ... --out DIR [--angles angles.npz] [--pick N]
                                    [--frames F ...] [--figures N]
     python tools/rig_check.py physics MODEL.pmx --out r.json [--gravity 94 118]
+    python tools/rig_check.py diff A.pmx B.pmx --out r.json
+    python tools/rig_check.py delta DANCE.vmd --model TAG=A.pmx --model TAG=B.pmx ... --out r.json [--frames F ...]
+                                   [--angles angles.npz --pick N]
 
 receivers: per VMD, every bone and morph it keys, with the key count, whether the model has it (a VMD names a bone with
   at most 15 bytes of cp932: a longer model name is matched by its first 15), and how much it moves (the largest turn
@@ -46,12 +49,24 @@ physics: the rigid bodies and joints at rest, by family (the name without its nu
   or 1: the trunk, head, shoulders, arms, legs) and the gap to it, with whether the two collide.  A rigid body's
   rotation (x, y, z radians) turns its frame by Ry Rx Rz (yaw, pitch, roll as Direct3D builds it), a capsule lies along
   its own Y (size: radius, height between the end centres), a box has half extents.
+diff: two PMX files part by part (pmx_diff): the header; per vertex its place, normal, UVs, edge, SDEF points and its
+  weights merged per bone (the vertices whose weights changed listed with their material and both weightings, the sum
+  of each bone's weights over all vertices before and after); faces, textures, materials field by field; bones, morphs
+  and display frames matched by name (added, removed, each changed field, indices into other parts as the names they
+  point to); rigid bodies and joints field by field; the soft bodies' bytes.  A copy made by tools/pmx_rig.py should
+  differ only by what its recipe names.
+delta: two or more models with the same vertices (the first the reference) posed and skinned on the same frames of a
+  dance (skin_delta): per frame the vertices that land elsewhere than on the reference (more than 1e-4 units), the
+  most per material (cm), and where they lie along the limbs (t along the limb's rest axis, 0 at its first joint, 1 at
+  its second: a wrist band is near 1 of the forearm, the hand past it, the cuff on the forearm before it).
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
 import os
+import struct
 import sys
 
 import numpy as np
@@ -637,6 +652,343 @@ def physics_report(doc, gravities=(94.0, 122.5)):
             "overlaps_at_rest": overlaps, "dynamic_nearest_body": near}
 
 
+# ---- two copies of a model compared ----------------------------------------------------------------------------------------
+
+def _r6(x):
+    if isinstance(x, float):
+        return round(x, 6)
+    if isinstance(x, (tuple, list)):
+        return [_r6(v) for v in x]
+    return x
+
+
+def _keyed(names):
+    """(name, how many before it had the name) for each name: a key that stays the same when items are appended"""
+    seen, out = {}, []
+    for n in names:
+        out.append((n, seen.get(n, 0)))
+        seen[n] = seen.get(n, 0) + 1
+    return out
+
+
+def _merged(v):
+    """a vertex's weights merged per bone, the zero ones left out (BDEF4 pads with its first bone at weight 0)"""
+    out = {}
+    for b, w in v.pairs():
+        if b >= 0 and w > 0.0:
+            out[b] = out.get(b, 0.0) + w
+    return out
+
+
+def _bone_fields(doc, b):
+    def name(i):
+        return doc.bones[i].name if 0 <= i < len(doc.bones) else None
+    links = [[name(l), None if raw is None else _r6(list(struct.unpack("<6f", raw)))] for l, raw in b.ik_links]
+    out = {"name_en": b.name_en, "position": _r6(list(b.position)), "parent": name(b.parent), "layer": b.layer,
+           "flags": "0x%04x" % b.flags}
+    if b.flags & 0x0001:
+        out["tail_bone"] = name(b.tail_bone)
+    else:
+        out["tail_offset"] = _r6(list(b.tail_offset))
+    if b.flags & 0x0300:
+        out["append_parent"], out["append_ratio"] = name(b.append_parent), _r6(b.append_ratio)
+    if b.flags & 0x0400:
+        out["fixed_axis"] = _r6(list(b.fixed_axis))
+    if b.flags & 0x0800:
+        out["local_axes"] = _r6(list(b.local_axes))
+    if b.flags & 0x2000:
+        out["external_key"] = b.external_key
+    if b.flags & 0x0020:
+        out.update({"ik_target": name(b.ik_target), "ik_loops": b.ik_loops, "ik_angle": _r6(b.ik_angle), "ik_links": links})
+    return out
+
+
+def _morph_fields(doc, m):
+    r = pmx_edit._Reader(m.head, doc.encoding)
+    name, name_en = r.text(), r.text()
+    panel, kind = r.u8(), r.u8()
+    out = {"name_en": name_en, "panel": panel, "kind": kind, "count": m.count if kind != 2 else len(m.bone_offsets)}
+    if kind == 2:
+        out["offsets_md5"] = hashlib.md5(b"".join(doc.bones[b].name.encode("utf-8") + raw for b, raw in m.bone_offsets)).hexdigest()
+    else:
+        out["offsets_md5"] = hashlib.md5(m.body).hexdigest()
+    return name, out
+
+
+def _largest_offset(doc, m):
+    if m.kind != 1:
+        return None
+    size = doc.sizes["vertex"] + 12
+    best = 0.0
+    for k in range(m.count):
+        d = struct.unpack_from("<3f", m.body, k * size + doc.sizes["vertex"])
+        best = max(best, math.sqrt(sum(c * c for c in d)))
+    return round(best, 6)
+
+
+def _frame_items(doc, f):
+    out = []
+    for k, i in f.items:
+        if k:
+            out.append(["morph", _morph_fields(doc, doc.morphs[i])[0] if 0 <= i < len(doc.morphs) else None])
+        else:
+            out.append(["bone", doc.bones[i].name if 0 <= i < len(doc.bones) else None])
+    return out
+
+
+def _fields_changed(a, b):
+    return {k: [a.get(k), b.get(k)] for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)}
+
+
+def _header_fields(doc):
+    r = pmx._Reader(doc.header)
+    version, extra, sizes = pmx._header(r)
+    texts = [r.text() for _ in range(4)]
+    return {"version": version, "encoding": doc.encoding, "extra_uv": extra, "sizes": sizes, "name": texts[0],
+            "name_en": texts[1], "comment": texts[2], "comment_en": texts[3]}
+
+
+def pmx_diff(a, b, limit=2000):
+    """every part of two PMX documents (formats.pmx_edit) compared: the header; the vertices by index (place, normal,
+    UVs, weights merged per bone, SDEF points, edge); faces, textures and materials; bones, morphs, display frames by
+    name (the n-th of a name); rigid bodies and joints by index; the soft bodies' bytes.  Indices into other parts are
+    compared as the names they point to, so items appended at the end change nothing before them.  Returns the changes
+    per part ("same", "changed_sections"); at most `limit` vertices are listed per kind of change."""
+    rep = {"counts": {}, "changed_sections": []}
+    ga, gb = pmx_edit.geometry(a), pmx_edit.geometry(b)
+    for tag, doc, g in (("a", a, ga), ("b", b, gb)):
+        rep["counts"][tag] = {"vertices": len(doc.vertices), "faces": len(g.faces) // 3, "textures": len(g.textures),
+                              "materials": len(g.materials), "bones": len(doc.bones), "morphs": len(doc.morphs),
+                              "display_frames": len(doc.frames), "rigid_bodies": len(doc.rigid_bodies),
+                              "joints": len(pmx_edit.joints(doc))}
+    ha, hb = _header_fields(a), _header_fields(b)
+    rep["header"] = {"same": a.header == b.header, "changed": _fields_changed(ha, hb)}
+    # vertices
+    mat_of = np.full(len(b.vertices), "(none)", dtype=object)
+    start = 0
+    for m in gb.materials:
+        idx = np.array(gb.faces[start:start + m.faces], dtype=np.int64)
+        mat_of[np.unique(idx[idx < len(b.vertices)])] = m.name
+        start += m.faces
+    v = {"count": [len(a.vertices), len(b.vertices)], "position_changed": 0, "normal_changed": 0, "uv_changed": 0,
+         "extra_uv_changed": 0, "edge_changed": 0, "weights_changed": 0, "kind_changed": {}, "sdef_changed": 0,
+         "weight_changes": [], "position_changes": []}
+    sums = {}
+    na, nb = len(a.bones), len(b.bones)
+    for i in range(min(len(a.vertices), len(b.vertices))):
+        va, vb = a.vertices[i], b.vertices[i]
+        if va.head[0:12] != vb.head[0:12]:
+            v["position_changed"] += 1
+            if len(v["position_changes"]) < limit:
+                pa, pb = np.array(va.position()), np.array(vb.position())
+                v["position_changes"].append({"vertex": i, "material": mat_of[i], "moved": round(float(np.linalg.norm(pb - pa)), 6)})
+        v["normal_changed"] += va.head[12:24] != vb.head[12:24]
+        v["uv_changed"] += va.head[24:32] != vb.head[24:32]
+        v["extra_uv_changed"] += va.head[32:] != vb.head[32:]
+        v["edge_changed"] += va.edge != vb.edge
+        v["sdef_changed"] += va.sdef != vb.sdef
+        if va.kind != vb.kind:
+            key = "%s->%s" % (va.kind, vb.kind)
+            v["kind_changed"][key] = v["kind_changed"].get(key, 0) + 1
+        wa = {a.bones[k].name if k < na else k: w for k, w in _merged(va).items()}
+        wb = {b.bones[k].name if k < nb else k: w for k, w in _merged(vb).items()}
+        for n in set(wa) | set(wb):
+            s = sums.setdefault(n, [0.0, 0.0])
+            s[0] += wa.get(n, 0.0)
+            s[1] += wb.get(n, 0.0)
+        if set(wa) != set(wb) or any(abs(wa[n] - wb[n]) > 1e-6 for n in wa):
+            v["weights_changed"] += 1
+            if len(v["weight_changes"]) < limit:
+                v["weight_changes"].append({"vertex": i, "material": mat_of[i], "position": _r6(list(vb.position())),
+                                            "a": [[n, round(w, 6)] for n, w in sorted(wa.items(), key=lambda x: -x[1])],
+                                            "b": [[n, round(w, 6)] for n, w in sorted(wb.items(), key=lambda x: -x[1])]})
+    v["bone_weight_sums"] = {str(n): [round(s[0], 6), round(s[1], 6)] for n, s in sums.items() if abs(s[0] - s[1]) > 1e-6}
+    rep["vertices"] = v
+    # faces, textures, materials
+    fa, fb = np.array(ga.faces).reshape(-1, 3), np.array(gb.faces).reshape(-1, 3)
+    rep["faces"] = {"same": ga.faces == gb.faces, "count": [len(fa), len(fb)],
+                    "triangles_changed": int((fa[:min(len(fa), len(fb))] != fb[:min(len(fa), len(fb))]).any(axis=1).sum())}
+    rep["textures"] = {"same": ga.textures == gb.textures, "a": ga.textures if ga.textures != gb.textures else None,
+                       "b": gb.textures if ga.textures != gb.textures else None}
+    mats = []
+    for ma, mb in zip(ga.materials, gb.materials):
+        da = {k: _r6(list(x) if isinstance(x, tuple) else x) for k, x in vars(ma).items()}
+        db = {k: _r6(list(x) if isinstance(x, tuple) else x) for k, x in vars(mb).items()}
+        ch = _fields_changed(da, db)
+        if ch:
+            mats.append({"material": mb.name, "fields": ch})
+    rep["materials"] = {"count": [len(ga.materials), len(gb.materials)], "changed": mats,
+                        "added": [m.name for m in gb.materials[len(ga.materials):]],
+                        "removed": [m.name for m in ga.materials[len(gb.materials):]]}
+    # bones
+    ka, kb = _keyed([x.name for x in a.bones]), _keyed([x.name for x in b.bones])
+    ia = {k: i for i, k in enumerate(ka)}
+    bones = {"count": [na, nb], "added": [], "removed": [], "changed": []}
+    for j, k in enumerate(kb):
+        fb_ = _bone_fields(b, b.bones[j])
+        if k not in ia:
+            bones["added"].append(dict({"index": j, "name": k[0]}, **fb_))
+            continue
+        i = ia[k]
+        ch = _fields_changed(_bone_fields(a, a.bones[i]), fb_)
+        if i != j:
+            ch["index"] = [i, j]
+        if ch:
+            bones["changed"].append({"index": j, "name": k[0], "fields": ch})
+    bones["removed"] = [{"index": ia[k], "name": k[0]} for k in ka if k not in set(kb)]
+    rep["bones"] = bones
+    # morphs
+    ma_ = [_morph_fields(a, m) for m in a.morphs]
+    mb_ = [_morph_fields(b, m) for m in b.morphs]
+    ka, kb = _keyed([n for n, _ in ma_]), _keyed([n for n, _ in mb_])
+    ia = {k: i for i, k in enumerate(ka)}
+    morphs = {"count": [len(a.morphs), len(b.morphs)], "added": [], "removed": [], "changed": []}
+    for j, k in enumerate(kb):
+        if k not in ia:
+            morphs["added"].append(dict({"index": j, "name": k[0], "largest_offset": _largest_offset(b, b.morphs[j])}, **mb_[j][1]))
+            continue
+        ch = _fields_changed(ma_[ia[k]][1], mb_[j][1])
+        if ia[k] != j:
+            ch["index"] = [ia[k], j]
+        if ch:
+            morphs["changed"].append({"index": j, "name": k[0], "fields": ch})
+    morphs["removed"] = [{"index": ia[k], "name": k[0]} for k in ka if k not in set(kb)]
+    rep["morphs"] = morphs
+    # display frames
+    fa_ = {pmx_edit._Reader(f.names, a.encoding).text(): f for f in a.frames}
+    fb_ = {pmx_edit._Reader(f.names, b.encoding).text(): f for f in b.frames}
+    frames = {"count": [len(a.frames), len(b.frames)], "changed": [], "added": sorted(set(fb_) - set(fa_)),
+              "removed": sorted(set(fa_) - set(fb_))}
+    for n in [pmx_edit._Reader(f.names, b.encoding).text() for f in b.frames]:
+        if n not in fa_:
+            continue
+        xa, xb = _frame_items(a, fa_[n]), _frame_items(b, fb_[n])
+        added = list(xb)
+        removed = []
+        for it in xa:
+            if it in added:
+                added.remove(it)
+            else:
+                removed.append(it)
+        if added or removed or fa_[n].names != fb_[n].names or (not added and not removed and xa != xb):
+            frames["changed"].append({"frame": n, "added": added, "removed": removed})
+    rep["display_frames"] = frames
+    # rigid bodies, joints, soft bodies
+    rbs = []
+    for i, (ra, rb) in enumerate(zip(a.rigid_bodies, b.rigid_bodies)):
+        da = dict({"names": list(pmx_edit.rigid_names(a, ra)), "bone": a.bones[ra.bone].name if 0 <= ra.bone < na else None},
+                  **{k: _r6(list(x) if isinstance(x, tuple) else x) for k, x in vars(pmx_edit.rigid_body(ra)).items()})
+        db = dict({"names": list(pmx_edit.rigid_names(b, rb)), "bone": b.bones[rb.bone].name if 0 <= rb.bone < nb else None},
+                  **{k: _r6(list(x) if isinstance(x, tuple) else x) for k, x in vars(pmx_edit.rigid_body(rb)).items()})
+        ch = _fields_changed(da, db)
+        if ch:
+            rbs.append({"rigid_body": db["names"][0], "fields": ch})
+    rep["rigid_bodies"] = {"count": [len(a.rigid_bodies), len(b.rigid_bodies)], "changed": rbs,
+                           "added": [pmx_edit.rigid_names(b, x)[0] for x in b.rigid_bodies[len(a.rigid_bodies):]],
+                           "removed": [pmx_edit.rigid_names(a, x)[0] for x in a.rigid_bodies[len(b.rigid_bodies):]]}
+    jts = []
+    ja, jb = pmx_edit.joints(a), pmx_edit.joints(b)
+    rname_a = [pmx_edit.rigid_names(a, x)[0] for x in a.rigid_bodies]
+    rname_b = [pmx_edit.rigid_names(b, x)[0] for x in b.rigid_bodies]
+    for x, y in zip(ja, jb):
+        da = {k: _r6(list(val) if isinstance(val, tuple) else val) for k, val in vars(x).items()}
+        db = {k: _r6(list(val) if isinstance(val, tuple) else val) for k, val in vars(y).items()}
+        da["a"], da["b"] = [rname_a[i] if 0 <= i < len(rname_a) else None for i in (x.a, x.b)]
+        db["a"], db["b"] = [rname_b[i] if 0 <= i < len(rname_b) else None for i in (y.a, y.b)]
+        ch = _fields_changed(da, db)
+        if ch:
+            jts.append({"joint": y.name, "fields": ch})
+    rep["joints"] = {"count": [len(ja), len(jb)], "changed": jts, "added": [x.name for x in jb[len(ja):]],
+                     "removed": [x.name for x in ja[len(jb):]]}
+    rep["soft_bodies"] = {"same": pmx_edit._split_tail(a)[1] == pmx_edit._split_tail(b)[1]}
+    # which parts differ
+    if not rep["header"]["same"]:
+        rep["changed_sections"].append("header")
+    if v["count"][0] != v["count"][1] or any(v[k] for k in ("position_changed", "normal_changed", "uv_changed", "extra_uv_changed",
+                                                              "edge_changed", "weights_changed", "sdef_changed")) or v["kind_changed"]:
+        rep["changed_sections"].append("vertices")
+    if not rep["faces"]["same"]:
+        rep["changed_sections"].append("faces")
+    if not rep["textures"]["same"]:
+        rep["changed_sections"].append("textures")
+    if mats or len(ga.materials) != len(gb.materials):
+        rep["changed_sections"].append("materials")
+    for part in ("bones", "morphs"):
+        if rep[part]["added"] or rep[part]["removed"] or rep[part]["changed"]:
+            rep["changed_sections"].append(part)
+    if frames["changed"] or frames["added"] or frames["removed"]:
+        rep["changed_sections"].append("display_frames")
+    if rbs or len(a.rigid_bodies) != len(b.rigid_bodies):
+        rep["changed_sections"].append("rigid_bodies")
+    if jts or len(ja) != len(jb):
+        rep["changed_sections"].append("joints")
+    if not rep["soft_bodies"]["same"]:
+        rep["changed_sections"].append("soft_bodies")
+    rep["same"] = not rep["changed_sections"]
+    return rep
+
+
+def _limb_axes(m):
+    """(limb_side, rest a, rest b) of the limbs (LIMBS) the model has"""
+    out = []
+    for s in SIDES:
+        for limb, (a, b, _, _) in LIMBS.items():
+            if (s + a) in m.by_name and (s + b) in m.by_name:
+                out.append(("%s_%s" % (limb, TAGS[s]), m.rest[m.by_name[s + a]], m.rest[m.by_name[s + b]]))
+    return out
+
+
+def skin_delta(models, motion, frames, tol=1e-4, limit=400):
+    """{tag: rig_skin Model} (the first is the reference; all with its vertices) posed and skinned on `frames` of
+    `motion`: per other model and frame, the vertices that land more than `tol` units from where the reference puts
+    them, the most (cm), per material, and their places along the limbs (LIMBS: t 0 at the limb's first joint, 1 at its
+    second, at rest; each vertex to the limb whose axis is nearest, t within -0.25..1.5; "other" when none)"""
+    tags = list(models)
+    ref = models[tags[0]]
+    tracks = fk.tracks_of(motion)
+    parts = Parts(ref)
+    axes = _limb_axes(ref)
+    out = {t: {} for t in tags[1:]}
+    for f in frames:
+        p0 = SKIN.skin(ref, SKIN.solve(ref, SKIN.keys_at(ref, tracks, f)))
+        for t in tags[1:]:
+            m = models[t]
+            if len(m.points) != len(ref.points):
+                raise ValueError("model %s has %d vertices, %s %d" % (t, len(m.points), tags[0], len(ref.points)))
+            p = SKIN.skin(m, SKIN.solve(m, SKIN.keys_at(m, tracks, f)))
+            d = np.linalg.norm(p - p0, axis=1)
+            moved = np.flatnonzero(d > tol)
+            mats = {}
+            for k in moved:
+                name = parts.mat_of_vertex[k] or "(none)"
+                e = mats.setdefault(name, {"moved": 0, "max_cm": 0.0})
+                e["moved"] += 1
+                e["max_cm"] = max(e["max_cm"], round(float(d[k]) * UNIT_CM, 4))
+            places = {}
+            if len(moved):
+                rest = ref.points[moved]
+                best_r = np.full(len(moved), np.inf)
+                best = np.full(len(moved), -1)
+                best_t = np.zeros(len(moved))
+                for n, (_, a, b) in enumerate(axes):
+                    r, tt = _line_distance(rest, a, b)
+                    ok = (tt >= -0.25) & (tt <= 1.5) & (r < best_r)
+                    best_r = np.where(ok, r, best_r)
+                    best = np.where(ok, n, best)
+                    best_t = np.where(ok, tt, best_t)
+                for n, (name, _, _) in enumerate(axes):
+                    sel = best == n
+                    if sel.any():
+                        places[name] = {"vertices": int(sel.sum()), "t_min": round(float(best_t[sel].min()), 6),
+                                        "t_max": round(float(best_t[sel].max()), 6),
+                                        "max_cm": round(float(d[moved][sel].max()) * UNIT_CM, 4)}
+                if (best < 0).any():
+                    places["other"] = {"vertices": int((best < 0).sum()), "max_cm": round(float(d[moved][best < 0].max()) * UNIT_CM, 4)}
+            out[t][str(int(f))] = {"moved": int(len(moved)), "max_cm": round(float(d.max()) * UNIT_CM, 4) if len(d) else 0.0,
+                                   "materials": mats, "places": places, "vertices": moved.tolist()[:limit]}
+    return out
+
+
 # ---- the parts of Sour's Rin (and models built like her) -----------------------------------------------------------------
 
 TRUNK = ("上半身", "腰椎上部", "上半身2", "胸椎上部")
@@ -921,7 +1273,53 @@ def main(argv=None):
     e.add_argument("model")
     e.add_argument("--out", required=True)
     e.add_argument("--gravity", type=float, nargs="+", default=[94.0, 122.5])
+    g = sub.add_parser("diff")
+    g.add_argument("a")
+    g.add_argument("b")
+    g.add_argument("--out", required=True)
+    h = sub.add_parser("delta")
+    h.add_argument("dance")
+    h.add_argument("--model", action="append", default=[], help="TAG=PATH (the first is the reference)")
+    h.add_argument("--out", required=True)
+    h.add_argument("--frames", type=int, nargs="*", default=[])
+    h.add_argument("--angles")
+    h.add_argument("--pick", type=int, default=4)
     args = ap.parse_args(argv)
+    if args.cmd == "diff":
+        with open(args.a, "rb") as f:
+            da = f.read()
+        with open(args.b, "rb") as f:
+            db = f.read()
+        rep = pmx_diff(pmx_edit.loads(da), pmx_edit.loads(db))
+        rep["a"], rep["b"] = os.path.abspath(args.a), os.path.abspath(args.b)
+        rep["md5"] = {"a": hashlib.md5(da).hexdigest(), "b": hashlib.md5(db).hexdigest()}
+        _json(args.out, rep)
+        print(json.dumps({"same": rep["same"], "changed_sections": rep["changed_sections"],
+                          "bones_added": [x["name"] for x in rep["bones"]["added"]],
+                          "bones_changed": [x["name"] for x in rep["bones"]["changed"]],
+                          "morphs_added": [x["name"] for x in rep["morphs"]["added"]],
+                          "vertices_weights_changed": rep["vertices"]["weights_changed"],
+                          "vertices_moved": rep["vertices"]["position_changed"]}, ensure_ascii=True))
+        return 0
+    if args.cmd == "delta":
+        paths = _tagged(args.model, "--model")
+        if len(paths) < 2:
+            raise SystemExit("give two or more --model TAG=PATH")
+        models = {tag: SKIN.Model.load(p) for tag, p in paths.items()}
+        frames = set(args.frames)
+        picked = {}
+        if args.angles:
+            ang = dict(np.load(args.angles))
+            frames0 = ang.pop("frames")
+            picked = {k: [(int(frames0[f]), v) for f, v in got] for k, got in pick_frames(ang, per=args.pick).items()}
+            frames |= {f for got in picked.values() for f, _ in got}
+        rep = skin_delta(models, vmd.load(args.dance), sorted(frames))
+        _json(args.out, {"models": paths, "picked": picked, "frames": sorted(frames), "report": rep})
+        print(json.dumps({t: {"frames": len(r), "moved_max": max((x["moved"] for x in r.values()), default=0),
+                              "max_cm": max((x["max_cm"] for x in r.values()), default=0.0),
+                              "materials": sorted({m for x in r.values() for m in x["materials"]})}
+                          for t, r in rep.items()}, ensure_ascii=True))
+        return 0
     if args.cmd == "physics":
         rep = physics_report(pmx_edit.load(args.model), tuple(args.gravity))
         rep["model"] = os.path.abspath(args.model)

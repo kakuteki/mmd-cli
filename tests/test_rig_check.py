@@ -20,6 +20,7 @@ from tests.test_rig_skin import vertex_rec
 
 rig_check = load_tool("rig_check")
 rig_skin = rig_check.SKIN
+PMX_RIG = load_tool("pmx_rig")
 
 
 def tube(w, x0, x1, rings, radius, n, weight_of):
@@ -263,6 +264,161 @@ class PhysicsTest(unittest.TestCase):
         hz = rep["families"]["髪"]["pendulum_hz"]["98.0"][0]
         self.assertAlmostEqual(hz, math.sqrt(98.0 / 0.5) / (2 * math.pi), places=3)
         self.assertAlmostEqual(rep["families"]["髪"]["decay_s"][0], -1.0 / math.log(0.001), places=4)
+
+
+def rich_model():
+    """a small model with something in every part: 3 bones (one an IK), 4 vertices on 2 triangles of one material, a
+    vertex morph, the display frames Root and 表情, 2 rigid bodies and a joint between them"""
+    w = Writer(bone=2, vertex=2, morph=2, rigid=2)
+    bones = [w.bone("root", position=(0, 0, 0), flags=NORMAL | TRANSLATE),
+             w.bone("arm", parent=0, position=(0, 1, 0)),
+             w.bone("armIK", parent=0, position=(0, 2, 0), flags=NORMAL | TRANSLATE | 0x0020,
+                    ik={"target": 1, "loops": 40, "angle": 2.0, "links": [(1, ((-1.0, 0.0, 0.0), (0.0, 0.0, 0.0)))]})]
+    vs = [vertex_rec(w, (0.0, 0.0, 0.0), "BDEF1", (0,)), vertex_rec(w, (1.0, 0.0, 0.0), "BDEF2", (0, 1), (0.5,)),
+          vertex_rec(w, (0.0, 1.0, 0.0), "BDEF2", (0, 1), (0.25,)), vertex_rec(w, (1.0, 1.0, 0.0), "BDEF1", (1,))]
+    faces = [0, 1, 2, 2, 1, 3]
+    morph = w.text("あ") + w.text("a") + bytes([3, 1]) + struct.pack("<i", 1) + w.index(2, "vertex") + struct.pack("<3f", 0, 0.1, 0)
+    frames = [w.frame("Root", "Root", special=True, items=[("bone", 0)]), w.frame("表情", "Exp", special=True, items=[("morph", 0)])]
+    data = w.build(bones=bones, vertices=vs, faces=[w.index(i, "vertex") for i in faces], materials=[w.material(name="skin", faces=6)],
+                   morphs=[morph], frames=frames)
+    doc = pmx_edit.loads(data)
+    for name, bone, y in (("体", 0, 0.0), ("髪", 1, 1.0)):
+        doc.rigid_bodies.append(pmx_edit.new_rigid(doc, name, name, bone, pmx_edit.RigidBody(
+            0, 0xFFFF, 0, (0.2, 0.0, 0.0), (0.0, y, 0.0), (0.0, 0.0, 0.0), 1.0, 0.5, 0.5, 0.0, 0.5, 0 if bone == 0 else 1)))
+    pmx_edit.set_joints(doc, [pmx_edit.Joint("髪", "hair", 0, 0, 1, (0.0, 0.5, 0.0), (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                                             (-0.1, 0, 0), (0.1, 0, 0), (0, 0, 0), (0, 0, 0))])
+    return pmx_edit.dumps(doc)
+
+
+class DiffTest(unittest.TestCase):
+    """rig_check.pmx_diff: every part of two PMX files compared, the changes named (the copy's recipe must be all
+    that differs from the model it was made from)"""
+
+    def test_a_model_against_itself_differs_in_nothing(self):
+        rep = rig_check.pmx_diff(pmx_edit.loads(rich_model()), pmx_edit.loads(rich_model()))
+        self.assertTrue(rep["same"])
+        self.assertEqual(rep["changed_sections"], [])
+        self.assertEqual(rep["counts"]["a"], rep["counts"]["b"])
+        self.assertEqual(rep["counts"]["a"]["vertices"], 4)
+
+    def test_each_kind_of_change_is_found_and_nothing_else(self):
+        a, b = pmx_edit.loads(rich_model()), pmx_edit.loads(rich_model())
+        b.bones[2].ik_loops = 400                                           # an IK's loops
+        b.bones[1].position = (0.0, 1.5, 0.0)                               # a bone moved
+        b.bones.append(pmx_edit.new_bone("追加", "added", (1.0, 2.0, 3.0), parent=1))
+        b.vertices[2].set_weights([(0, 0.6), (1, 0.4)])                     # weights (BDEF2 0.25 / 0.75 before)
+        head = bytearray(b.vertices[3].head)
+        struct.pack_into("<f", head, 4, 1.25)                               # a vertex moved (y)
+        b.vertices[3].head = bytes(head)
+        b.morphs.append(pmx_edit.Morph(b.morphs[0].head, 1, 0, b""))
+        b.frames[1].items.append((1, 1))
+        g = pmx_edit.geometry(b)
+        g.materials[0].diffuse = (1.0, 0.0, 0.0, 1.0)
+        pmx_edit.set_geometry(b, g)
+        rb = pmx_edit.rigid_body(b.rigid_bodies[1])
+        rb.linear_damping = 0.9
+        pmx_edit.set_rigid_body(b.rigid_bodies[1], rb)
+        j = pmx_edit.joints(b)
+        j[0].spring_rotate = (1.0, 0.0, 0.0)
+        j.append(pmx_edit.Joint("追加", "", 0, 0, 1, (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0)))
+        pmx_edit.set_joints(b, j)
+        rep = rig_check.pmx_diff(a, b)
+        self.assertFalse(rep["same"])
+        self.assertEqual(sorted(rep["changed_sections"]), ["bones", "display_frames", "joints", "materials", "morphs",
+                                                           "rigid_bodies", "vertices"])
+        bones = rep["bones"]
+        self.assertEqual([x["name"] for x in bones["added"]], ["追加"])
+        self.assertEqual(bones["added"][0]["parent"], "arm")
+        changed = {x["name"]: x["fields"] for x in bones["changed"]}
+        self.assertEqual(sorted(changed), ["arm", "armIK"])
+        self.assertEqual(changed["armIK"], {"ik_loops": [40, 400]})
+        self.assertEqual(sorted(changed["arm"]), ["position"])
+        v = rep["vertices"]
+        self.assertEqual((v["weights_changed"], v["position_changed"], v["normal_changed"], v["uv_changed"]), (1, 1, 0, 0))
+        self.assertEqual(v["weight_changes"][0]["vertex"], 2)
+        self.assertEqual(v["weight_changes"][0]["material"], "skin")
+        self.assertEqual(v["weight_changes"][0]["a"], [["arm", 0.75], ["root", 0.25]])
+        self.assertEqual(v["weight_changes"][0]["b"], [["root", 0.6], ["arm", 0.4]])
+        self.assertEqual(v["position_changes"][0]["vertex"], 3)
+        self.assertAlmostEqual(v["position_changes"][0]["moved"], 0.25, places=6)
+        self.assertAlmostEqual(v["bone_weight_sums"]["root"][1] - v["bone_weight_sums"]["root"][0], 0.35, places=5)
+        self.assertEqual([m["name"] for m in rep["morphs"]["added"]], ["あ"])
+        self.assertEqual(rep["morphs"]["changed"], [])
+        self.assertEqual(rep["display_frames"]["changed"], [{"frame": "表情", "added": [["morph", "あ"]], "removed": []}])
+        self.assertEqual(rep["materials"]["changed"], [{"material": "skin", "fields": {"diffuse": [[0.5, 0.5, 0.5, 0.5], [1.0, 0.0, 0.0, 1.0]]}}])
+        self.assertTrue(rep["faces"]["same"])
+        self.assertEqual(rep["rigid_bodies"]["changed"], [{"rigid_body": "髪", "fields": {"linear_damping": [0.5, 0.9]}}])
+        self.assertEqual(rep["joints"]["changed"], [{"joint": "髪", "fields": {"spring_rotate": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]}}])
+        self.assertEqual((rep["joints"]["added"], rep["joints"]["removed"]), (["追加"], []))
+        self.assertEqual((rep["rigid_bodies"]["added"], rep["materials"]["added"]), ([], []))
+        self.assertTrue(rep["soft_bodies"]["same"])
+
+    def test_a_recipe_of_pmx_rig_is_all_that_differs(self):
+        from tests.test_pmx_rig import brow_model, wrist_model
+        for data, recipe, added_bones, added_morphs in (
+                (wrist_model(), {"joint_helpers": ["wrist"], "leg_ik_loops": None}, ["右手首補助", "左手首補助"], []),
+                (brow_model(), {"inner_brow": 0.1}, [], ["眉頭右", "眉頭左"])):
+            recipe = {k: v for k, v in recipe.items() if v is not None}
+            doc = pmx_edit.loads(data)
+            out = PMX_RIG.apply(doc, recipe)
+            rep = rig_check.pmx_diff(pmx_edit.loads(data), pmx_edit.loads(pmx_edit.dumps(doc)))
+            self.assertEqual([x["name"] for x in rep["bones"]["added"]], added_bones)
+            self.assertEqual(rep["bones"]["changed"], [])
+            self.assertEqual([x["name"] for x in rep["morphs"]["added"]], added_morphs)
+            self.assertEqual(rep["vertices"]["position_changed"], 0)
+            self.assertEqual(rep["vertices"]["weights_changed"], sum(h["vertices"] for h in out["helpers"]))
+            self.assertFalse({"materials", "faces", "rigid_bodies", "joints", "soft_bodies", "header"} & set(rep["changed_sections"]))
+
+    def test_command_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            pa, pb, out = os.path.join(d, "a.pmx"), os.path.join(d, "b.pmx"), os.path.join(d, "r.json")
+            doc = pmx_edit.loads(rich_model())
+            with open(pa, "wb") as f:
+                f.write(pmx_edit.dumps(doc))
+            doc.bones[2].ik_loops = 7
+            with open(pb, "wb") as f:
+                f.write(pmx_edit.dumps(doc))
+            self.assertEqual(rig_check.main(["diff", pa, pb, "--out", out]), 0)
+            with open(out, encoding="utf-8") as f:
+                rep = json.load(f)
+            self.assertEqual(rep["changed_sections"], ["bones"])
+            self.assertEqual(len(rep["md5"]["a"]), 32)
+
+
+class DeltaTest(unittest.TestCase):
+    """rig_check.skin_delta: two models with the same vertices posed and skinned on the same frames, the vertices that
+    land elsewhere, per material and along the limbs"""
+
+    def setUp(self):
+        from tests.test_pmx_rig import wrist_model
+        self.data = wrist_model()
+        doc = pmx_edit.loads(self.data)
+        PMX_RIG.apply(doc, {"joint_helpers": ["wrist"]})
+        self.out = pmx_edit.dumps(doc)
+
+    def test_only_the_reweighted_vertices_land_elsewhere(self):
+        # the wrist helper re-weights the three rings at the right wrist (x 1.8 to 2.0); a wrist twisted 170 degrees moves
+        # them (the half and half ring from 0.3 cos 85 off the axis to 0.3), not the vertex on 右中指０; the same model
+        # moves nothing
+        models = {"v10": rig_skin.Model.loads(self.data), "same": rig_skin.Model.loads(self.data),
+                  "v7": rig_skin.Model.loads(self.out)}
+        rep = rig_check.skin_delta(models, motion(key("右手首", 0, axis_angle((1, 0, 0), 170.0))), [0])
+        self.assertEqual(rep["same"]["0"]["moved"], 0)
+        got = rep["v7"]["0"]
+        self.assertEqual(got["moved"], 36)
+        self.assertNotIn(36, got["vertices"])
+        # the half and half ring moves straight out, from 0.3 cos 85 to 0.3 (both 85 degrees round): the most
+        self.assertAlmostEqual(got["max_cm"], 0.3 * (1 - math.cos(math.radians(85))) * rig_check.UNIT_CM, places=4)
+        places = got["places"]["forearm_R"]
+        self.assertAlmostEqual(places["t_min"], 0.9, places=6)
+        self.assertAlmostEqual(places["t_max"], 1.0, places=6)
+        self.assertEqual(places["vertices"], 36)
+        self.assertEqual(got["materials"], {"(none)": {"moved": 36, "max_cm": got["max_cm"]}})
+
+    def test_rest_moves_nothing(self):
+        models = {"v10": rig_skin.Model.loads(self.data), "v7": rig_skin.Model.loads(self.out)}
+        rep = rig_check.skin_delta(models, motion(key("右ひじ", 0)), [0])
+        self.assertEqual(rep["v7"]["0"]["moved"], 0)
 
 
 class SourRinTest(unittest.TestCase):
