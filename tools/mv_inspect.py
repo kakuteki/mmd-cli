@@ -15,7 +15,7 @@ and debug with them instead of looking each time").  Nothing here starts MMD.
 
 measure: a version (its render inputs in their loading order and the model; see tools/mvi/body.py for the spec) is
 measured by every part (tools/mvi/: gravity 重力感, feet 足, balance 重心とバランス, upper 上体, arms 腕と指, eyes 目,
-mouth 口, skirt スカートの危なさ, spikes 突起), each measure against people's values (tools/mvi/human.json: FineDance
+mouth 口, skirt スカートの危なさ, spikes 突起, retarget 体の触れ), each measure against people's values (tools/mvi/human.json: FineDance
 K-pop, choreography and jazz, 62 sequences, the median and quartiles, from the earlier work's outputs) or a rule of the
 project, judged 中 / 上へ外 / 下へ外 (the human baseline's p31_table rule).  DIR gets report.json (everything),
 report.md (the table), outliers.md and outliers.csv (the places outside, the heaviest first, with times, and the
@@ -58,10 +58,10 @@ if HERE not in sys.path:
 import numpy as np  # noqa: E402
 
 from mvi import base, body, marks as MK, pixels as PX, plot as PL, report as RP, shared  # noqa: E402
-from mvi import arms, balance, eyes, feet, gravity, mouth, skirt, spikes, upper  # noqa: E402
+from mvi import arms, balance, eyes, feet, gravity, mouth, retarget, skirt, spikes, upper  # noqa: E402
 
 PARTS = [("gravity", gravity), ("feet", feet), ("balance", balance), ("upper", upper), ("arms", arms), ("eyes", eyes),
-         ("mouth", mouth), ("skirt", skirt), ("spikes", spikes)]
+         ("mouth", mouth), ("skirt", skirt), ("spikes", spikes), ("retarget", retarget)]
 
 
 def log(*a):

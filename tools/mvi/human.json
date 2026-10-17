@@ -948,5 +948,41 @@
  "pixels.shadow_total_rough": {
   "kind": "info",
   "source": "review_softshadow の pixel_checks.rough（影の量の粗さ。白色雑音で約 1.73、なめらかな動きで 0 に近い）"
+ },
+ "retarget.arms_in_body_frames": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 腕は体（頭・胴・腰・もも）に 1 cm を越えて入らない"
+ },
+ "retarget.contacts_kept_share": {
+  "kind": "limit",
+  "min": 0.9,
+  "scale": 0.1,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 元の体で触れる手の 9 割以上を同じ所に 1 cm 以内で保つ"
+ },
+ "retarget.contacts_lost_runs": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 元の触れを 2 cm 以上離す・入る区間を作らない"
+ },
+ "retarget.plants_sliding": {
+  "kind": "limit",
+  "max": 0,
+  "scale": 1.0,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 元で床に立つ足は 1 cm を越えて滑らない"
+ },
+ "retarget.plant_float_pct": {
+  "kind": "limit",
+  "max": 1.0,
+  "scale": 1.0,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 元で床に立つ足が 1 cm を越えて浮くコマは 1 % まで"
+ },
+ "retarget.toe_float_pct": {
+  "kind": "limit",
+  "max": 5.0,
+  "scale": 5.0,
+  "source": "この案件の決まり（体の触れ、retarget 2026-10-17）: 元で爪先で立つ足が 1 cm を越えて浮くコマは 5 % まで（リンの靴は母指球が足首に近く、元の踊りの高い爪先立ちには届かない）"
  }
 }

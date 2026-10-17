@@ -54,7 +54,8 @@ ORDER = [
      ["skirt.floor_over122_frames", "skirt.floor_max", "pixels.pants_frames"], ["rig_check.py", "spine_check.py", "skirt_probe.py"]),
     (2, "踊りを体に写す（retarget の受け持ち）と手捩", ["retarget.py", "fix_twist.py"],
      "体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ",
-     ["feet.under_floor_frames", "feet.ik_miss_floor_frames"], ["motion_fk.py"]),
+     ["feet.under_floor_frames", "feet.ik_miss_floor_frames", "retarget.contacts_kept_share", "retarget.arms_in_body_frames",
+      "retarget.toe_float_pct"], ["motion_fk.py", "retarget_check.py"]),
     (3, "平滑化と手ぶれ除去（v4s）", ["smooth_motion.py"], "キーを曲線で通し直し、密なキーのゆらぎを均す",
      ["spikes.centre_per_min", "spikes.wrist_R_per_min", "spikes.wrist_L_per_min", "spikes.head_per_min", "arms.wrist_8hz_pct",
       "arms.wrist_3_6hz_pct", "upper.head_stop_ms"], ["motion_jerk.py"]),
@@ -110,7 +111,8 @@ CHECKERS = ["mv_inspect.py", "param_inventory.py", "spine_check.py", "skirt_prob
             "selfshadow_check.py", "dump_controls.py", "live_in_session.py", "run_live_tests_in_session.py", "make_figures.py",
             "mvi/a05.py", "mvi/analysts.py", "mvi/arms.py", "mvi/balance.py", "mvi/base.py", "mvi/body.py", "mvi/eyes.py",
             "mvi/feet.py", "mvi/fq.py", "mvi/gravity.py", "mvi/hb.py", "mvi/marks.py", "mvi/mouth.py", "mvi/pixels.py",
-            "mvi/plot.py", "mvi/report.py", "mvi/shared.py", "mvi/skirt.py", "mvi/spikes.py", "mvi/upper.py", "mvi/vertical.py"]
+            "mvi/plot.py", "mvi/report.py", "mvi/retarget.py", "mvi/shared.py", "mvi/skirt.py", "mvi/spikes.py", "mvi/upper.py",
+            "mvi/vertical.py"]
 
 
 def placed_tools():

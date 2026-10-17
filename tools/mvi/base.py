@@ -40,7 +40,8 @@ UNIT_CM = 8.0                   # one unit of Sour's Rin is 8 cm (the analysis p
 G_UNITS = 122.5                 # 9.8 m/s^2 in her units (8 cm a unit)
 MV_SECONDS = 246.0              # the MV's dance range (p31_table's resolution)
 CONCEPTS = [("gravity", "重力感"), ("feet", "足"), ("balance", "重心とバランス"), ("upper", "上体"), ("arms", "腕と指"),
-            ("eyes", "目"), ("mouth", "口"), ("skirt", "スカートの危なさ"), ("spikes", "突起"), ("pixels", "描いた絵")]
+            ("eyes", "目"), ("mouth", "口"), ("skirt", "スカートの危なさ"), ("spikes", "突起"), ("retarget", "体の触れ"),
+            ("pixels", "描いた絵")]
 CONCEPT_NAMES = dict(CONCEPTS)
 SIDE_WORDS = {0: "中", 1: "上へ外", -1: "下へ外"}
 HUMAN_PATH = os.path.join(HERE, "human.json")

@@ -5,14 +5,14 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1840（定数 1485・引数 91・関数の既定 264。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 353（retarget 214・rig 57・踊りだけ 90）、記録の出所つき 56。
+- 数: 全部 1918（定数 1546・引数 92・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 386（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
 | 順 | 段 | 道具 | 値 | retarget | rig | 踊り | 確かめの物差し（tools/mv_inspect.py） | ほかの確かめ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 38 | 2 | 7 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
-| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 6 | 0 | 0 | 0 | feet.under_floor_frames、feet.ik_miss_floor_frames | motion_fk.py |
+| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 62 | 22 | 1 | 1 | feet.under_floor_frames、feet.ik_miss_floor_frames、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.toe_float_pct | motion_fk.py・retarget_check.py |
 | 3 | 平滑化と手ぶれ除去（v4s） | smooth_motion.py | 18 | 1 | 0 | 0 | spikes.centre_per_min、spikes.wrist_R_per_min、spikes.wrist_L_per_min、spikes.head_per_min、arms.wrist_8hz_pct、arms.wrist_3_6hz_pct、upper.head_stop_ms | motion_jerk.py |
 | 4 | 呼吸 | breath_layer.py | 60 | 6 | 0 | 3 | upper.head_stops_per_min、upper.upper_sudden_stops_per_min | - |
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
@@ -96,9 +96,66 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FREE | 100.0 | units | 50 | a translation range never reached (model units) |  | ○ |  |  |  |  |  | retarget |
 
-## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、0）
+## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、56）
 
-（この枝にはまだ無い。枝 retarget の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FPS | 30.0 |  | 79 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 80 | one unit of Sour's Rin is 8 cm (the analysis pack) |  | ○ |  |  | ○ |  |  | retarget・rig |
+| IDENTITY | np.array([0.0, 0.0, 0.0, 1.0]) |  | 84 |  |  |  |  |  |  |  |  |  |
+| fit(tol_deg) | 0.5 | deg | 344 |  |  |  |  |  |  |  |  |  |
+| fit(tol_pos) | 0.01 |  | 344 |  |  |  |  |  |  |  |  |  |
+| fit_rotations(tol_deg) | 0.5 | deg | 375 |  |  |  |  |  |  |  |  |  |
+| fit_positions(tol) | 0.01 |  | 378 |  |  |  |  |  |  |  |  |  |
+| place(depth) | 0 |  | 569 |  |  |  |  |  |  |  |  |  |
+| _directions(n) | 98 |  | 692 |  |  |  |  |  |  |  |  |  |
+| FLOOR_EPS | 0.06 | units | 798 | units (5 mm): a sole point this close to the floor touches it |  | ○ |  |  |  |  |  | retarget |
+| STILL | 0.025 | units | 799 | units a frame (6 cm/s): a touching point slower than this stands |  | ○ |  |  |  |  |  | retarget |
+| PLANT_MIN | 3 | frames | 800 | frames: standing this long is a plant |  |  |  |  |  |  |  |  |
+| PITCH_FLAT_DEG | 4.0 | deg | 801 | a foot pitched less than this stands flat; toe down more: on the toe; toe up more: on the heel |  |  |  |  |  |  |  |  |
+| MAX_PITCH_DEG | 75.0 | deg | 802 | the foot's pitch from flat at most (toe down) |  |  |  |  |  |  |  |  |
+| EASE | 3 | frames | 803 | frames a correction takes to come in and to go out |  |  |  |  |  |  |  |  |
+| TOUCH_FLOOR | 0.25 | units | 813 | units (2 cm) |  | ○ |  | ○ |  |  |  | retarget |
+| TOUCH_RISE | 0.03 | units | 814 | units a frame (7 cm/s) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_SPEED | 20.0 / UNIT_CM / FPS | units | 815 | units a frame (20 cm/s) |  | ○ |  |  |  |  |  | retarget |
+| TURN_MIN | math.radians(60.0) / FPS | deg/s | 816 | radians a frame (60 degrees a second) |  |  |  |  |  |  |  |  |
+| TURN_NEAR | 18.0 / UNIT_CM | units | 817 | units (18 cm): how far the turn's centre may lie from the sole's slowest point (the song's 127.9 s right foot turns 320-460 degrees a second about a point 15-17 cm off i… |  | ○ |  | ○ |  |  |  | retarget |
+| LINE_T | np.linspace(-0.3, 1.0, 27) |  | 820 | the sole's line: shares of the way from the heel point to the toe point |  |  |  |  |  |  |  |  |
+| TOUCH_MIN | 3 |  | 821 |  |  |  |  |  |  |  |  |  |
+| AIR_H | 0.05 | units | 827 | units (4 mm) |  | ○ |  | ○ |  |  |  | retarget |
+| HOLD_AIR | 6 | frames | 828 | frames |  |  |  |  |  |  |  |  |
+| CLEAR_TO | 0.125 | units | 829 | units (1 cm): a carried shoe is kept as high over the floor as the source's, up to this (over main's contact_check's floor, 4 mm; under the review's 1.2 cm, within which… |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_PITCH_MAX | 20.0 | deg | 833 | degrees: the most a foot's pitch is changed from the source's to reach the floor, on the floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing o… |  |  |  | ○ |  |  |  | dance |
+| HEEL_BACK | 0.3 |  | 837 | without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle |  |  |  |  |  |  |  |  |
+| sole_shell(cap) | 256 |  | 869 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 904 |  |  |  |  |  |  |  |  |  |
+| PITCH_ON_FLOOR | 0.0125 | units | 996 | units (1 mm): a point this close to the floor is on it (solve_pitch takes it as found) |  | ○ |  |  |  |  |  | retarget |
+| solve_pitch(step) | 0.5 |  | 999 |  |  |  |  |  |  |  |  |  |
+| FLAT_LIFT_MAX | 0.15 | units | 1043 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
+| FEET_ROUNDS | 2 |  | 1044 |  |  |  |  |  |  |  |  |  |
+| _quant(qs) | (50, 90, 99, 100) |  | 1339 |  |  |  |  |  |  |  |  |  |
+| TOUCH | 0.12 | units | 1348 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| NEAR | 0.8 | units | 1349 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
+| HAND_THICK | 0.15 | units | 1350 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_BAND | 0.08 | units | 1351 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_ROUNDS | 4 |  | 1352 |  |  |  |  |  |  |  |  |  |
+| CLEAR_MARGIN | 0.02 | units | 1353 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_TOL | 0.005 | units | 1354 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
+| ELBOW_SHARE | 0.25 |  | 1355 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
+| HOLD_FROM | 0.6 |  | 1356 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
+| SHOULDER_SKIP | 0.5 |  | 1357 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
+| TOL_DEG | 0.3 | deg | 1358 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
+| SWIVELS | 24 |  | 1698 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
+| SWIVEL_COST | 0.02 | units | 1699 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
+| SWIVEL_CLEARS | 0.03 | units | 1700 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
+| of(depth) | 0 |  | 1876 |  |  |  |  |  |  |  |  |  |
+| STANCE_LOW | 0.1 | units | 1991 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
+| STANCE_SLOW | 0.05 | units | 1992 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| TOE_STILL | 0.03 | units | 1993 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
+| TOE_PITCH | (6.0, 45.0) | deg | 1994 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
+| lower_envelope(q) | 10.0 |  | 2019 |  |  |  |  |  |  |  |  |  |
+| lower_envelope(width) | 6.0 |  | 2019 |  |  |  |  |  |  |  |  |  |
+| --stance | "legs" |  | 2210 |  |  |  |  |  |  |  |  |  |
 
 ## fix_twist.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、6）
 
@@ -1702,6 +1759,33 @@
 
 （数を持つ定数・引数の既定なし）
 
+### retarget_check.py（確かめ・部品、22）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNIT_CM | 8.0 | cm | 78 |  |  | ○ |  |  |  |  |  | retarget |
+| TOUCH | 0.15 | units | 79 | units (1.2 cm): a source hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| KEEP | 0.125 | units | 80 | units (1 cm): the target's point within this of the source's distance keeps the touch |  | ○ |  |  |  |  |  | retarget |
+| LOST | 0.25 | units | 81 | units (2 cm): more than this off (or inside) loses it |  | ○ |  |  |  |  |  | retarget |
+| PLANT_EPS | 0.05 | units | 82 | units (4 mm, a05's contact): a goal this close to its rest height is on the floor |  | ○ |  |  |  |  |  | retarget |
+| STILL | 0.025 | units | 83 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| PLANT_MIN | 3 |  | 84 |  |  |  |  |  |  |  |  |  |
+| TOE_PITCH | 4.0 |  | 85 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 86 |  |  |  |  |  |  |  |  |  |
+| FLOOR_CM | 0.4 | cm | 87 | cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it |  | ○ |  |  |  |  |  | retarget |
+| RESTING_MIN | 4 | frames | 88 | frames: a touch this long ... |  |  |  |  |  |  |  |  |
+| RESTING_SPEED | 35.0 | cm/s | 89 | cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it |  | ○ |  |  |  |  |  | retarget |
+| LAG_WINDOW | 60 | frames | 90 | frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX |  |  |  |  |  |  |  |  |
+| LAG_HOP | 30 |  | 91 |  |  |  |  |  |  |  |  |  |
+| LAG_MAX | 5 |  | 92 |  |  |  |  |  |  |  |  |  |
+| STEP_MIN_CM | 10.0 | cm | 93 | cm: the source's steps between plants this long and longer are compared |  | ○ |  |  |  |  |  | retarget |
+| JUMP_CM | 2.5 | cm | 94 | cm (mv_inspect's 宙): both feet this high over their rest heights ... |  | ○ |  |  |  |  |  | retarget |
+| JUMP_MIN | 4 | frames | 95 | frames: ... this long is a jump |  |  |  |  |  |  |  |  |
+| SKIP_SHOULDER | 0.5 |  | 97 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 121 |  |  |  |  |  |  |  |  |  |
+| quant(qs) | (50, 90, 99, 100) |  | 127 |  |  |  |  |  |  |  |  |  |
+| _cube_directions(n) | 4 |  | 159 |  |  |  |  |  |  |  |  |  |
+
 ### motion_jerk.py（確かめ・部品、0）
 
 （数を持つ定数・引数の既定なし）
@@ -1947,7 +2031,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
 | ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 442 |  |  |  |  |  |  |  |  |  |
+| _cell(n) | 170 |  | 444 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 
@@ -2078,18 +2162,18 @@
 | UNIT_CM | 8.0 | cm | 39 | one unit of Sour's Rin is 8 cm (the analysis pack's README) | 解析の資料の README の「1 ≒ 8 cm」。adapt（10-17）の測り: リンの背（靴底 0.111 から髪の上 19.197、リボン・アホ毛を除く）19.086 単位で公式 152 cm なら 7.96 cm/単位、頭先の骨… | ○ |  |  | ○ |  |  | retarget |
 | G_UNITS | 122.5 | m/s^2 | 40 | 9.8 m/s^2 in her units (8 cm a unit) | 9.8 m/s² を 8 cm/単位で（122.5）。リンの大きさの幅 7.96〜8.15 cm/単位なら 120.4〜123.1（adapt 10-17） | ○ | ○ |  |  |  |  | retarget |
 | MV_SECONDS | 246.0 |  | 41 | the MV's dance range (p31_table's resolution) | human_baseline の p31_table の分解能（踊りの範囲 246 秒） |  |  | ○ |  |  |  | dance |
-| SIDE_WORDS | {0: "中", 1: "上へ外", -1: "下へ外"} |  | 45 |  |  |  |  |  |  |  |  |  |
-| ref_text(digits) | 3 |  | 222 |  |  |  |  |  |  |  |  |  |
-| _num(digits) | 3 |  | 242 |  |  |  |  |  |  |  |  |  |
-| event(side) | 1 |  | 273 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 299 |  |  |  |  |  |  |  |  |  |
-| round_tree(digits) | 6 |  | 324 |  |  |  |  |  |  |  |  |  |
+| SIDE_WORDS | {0: "中", 1: "上へ外", -1: "下へ外"} |  | 46 |  |  |  |  |  |  |  |  |  |
+| ref_text(digits) | 3 |  | 223 |  |  |  |  |  |  |  |  |  |
+| _num(digits) | 3 |  | 243 |  |  |  |  |  |  |  |  |  |
+| event(side) | 1 |  | 274 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 300 |  |  |  |  |  |  |  |  |  |
+| round_tree(digits) | 6 |  | 325 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/body.py（確かめ・部品、1）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CACHE_VERSION | 1 |  | 37 |  |  |  |  |  |  |  |  |  |
+| CACHE_VERSION | 1 |  | 39 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/eyes.py（確かめ・部品、1）
 
@@ -2179,6 +2263,10 @@
 | PER_CONCEPT | 3 |  | 210 |  |  |  |  |  |  |  |  |  |
 | PER_MEASURE | 8 |  | 211 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
 | compare_md(top) | 30 |  | 357 |  |  |  |  |  |  |  |  |  |
+
+### mvi/retarget.py（確かめ・部品、0）
+
+（数を持つ定数・引数の既定なし）
 
 ### mvi/shared.py（確かめ・部品、2）
 

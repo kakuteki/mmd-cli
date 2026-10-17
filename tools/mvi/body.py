@@ -13,6 +13,8 @@ A version (a spec, JSON or the command's flags):
   (tools/leg_ik.py, tools/sink_check.py) and the balance layer's body (tools/balance_layer.Body).
 * reference: the dance before the body's layers (for the measures that keep the dance's own jumps and accents).
 * camera, vocal, lines: for the marks on pictures and the mouth.
+* source: {"dance": the VMD the version's dance was moved from, "body": the body it was traced on (tools/retarget.py's
+  SOURCE)}, for the touches and plants the retarget keeps (tools/mvi/retarget.py).
 
 pack(): the 26 bones of the uncanny analysis pack (PACK_BONES), pos [F, 26, 3] and rot [F, 26, 4] as float32, by
 mmd_cli.fk (no IK, no physics: the legs' FK bones mean nothing, the IK targets are the feet) on the merged motion,
@@ -105,6 +107,11 @@ def load_spec(path_or_dict):
     spec.setdefault("dance", spec["motions"][0])
     missing = [(k, p) for k in ("model", "dance", "reference", "camera", "vocal", "lines")
                for p in [spec.get(k)] if p and not os.path.isfile(p)]
+    src = spec.get("source")
+    if src is not None:
+        if not isinstance(src, dict) or not src.get("dance") or not src.get("body"):
+            raise ValueError("a version's source is {'dance': the VMD it came from, 'body': the body it was traced on}")
+        missing += [("source " + k, src[k]) for k in ("dance", "body") if not os.path.isfile(src[k])]
     missing += [("motions", p) for p in spec["motions"] if not os.path.isfile(p)]
     if missing:
         raise ValueError("files of the version that are not there: %s" % "; ".join("%s %s" % kp for kp in missing))
