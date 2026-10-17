@@ -1323,6 +1323,21 @@ class CommandTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_hover_sink_is_off_unless_asked(self):
+        # --hover: off by default with any --landing since v11feet (after the retarget the song's second foot layer sank one
+        # run of 23 frames, by 1.3 cm, and every measure of the chain's last came out the same without it); sink when asked
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            for extra, hover in (([], "off"), (["--landing", "off"], "off"), (["--hover", "sink"], "sink")):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh)["hover"], hover)
+        finally:
+            shutil.rmtree(folder)
+
     def test_refuses_to_write_over_the_dance(self):
         folder = tempfile.mkdtemp()
         try:

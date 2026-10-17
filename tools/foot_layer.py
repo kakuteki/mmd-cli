@@ -1799,11 +1799,13 @@ def main(argv=None):
                     help="on (the default, with any --landing): a foot the dance moves faster than SKIM_SPEED over the "
                          "floor (its flat sole higher than SKIM_LIFT) is not pressed onto it; off: as before v11feet "
                          "(the skim only with --landing human, over 4.8 mm)")
-    ap.add_argument("--hover", choices=("sink", "off"), default=None,
-                    help="sink (the default with --landing human or heel): where no foot is on the floor but the lower shoe "
-                         "hovers under HOVER_MAX over it and the pelvis does not fall as in a flight, the whole figure "
-                         "(centre and leg IKs) is lowered onto the floor (hover_runs); off (the default with --landing "
-                         "off): left as the dance has it")
+    ap.add_argument("--hover", choices=("sink", "off"), default="off",
+                    help="sink: where no foot is on the floor but the lower shoe hovers under HOVER_MAX over it and the "
+                         "pelvis does not fall as in a flight, the whole figure (centre and leg IKs) is lowered onto the "
+                         "floor (hover_runs); off (the default since v11feet, with any --landing: after the retarget the "
+                         "song's second foot layer sank one run of 23 frames, by 1.3 cm, and the chain's last measured "
+                         "the same without it; the contact layer's glide stands such runs on the floor): left as the dance "
+                         "has it")
     ap.add_argument("--hover-glide", type=float, default=HOVER_GLIDE, metavar="CM_S",
                     help="the sink takes only the frames whose lower shoe moves along the floor slower than this (cm/s, "
                          "%(default)s: TOE_SLIDE's, under which a pointed foot is taken to stand on the trace model's toe); "
@@ -1840,7 +1842,7 @@ def main(argv=None):
     report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
               "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "landing_model": args.landing, "skim": args.skim,
               "landing_warning": landing_warning,
-              "hover": (args.hover or ("off" if args.landing == "off" else "sink")), "hover_glide_cm_s": args.hover_glide,
+              "hover": args.hover, "hover_glide_cm_s": args.hover_glide,
               "toe_reach_cm": max(0.0, args.toe_reach_cm),
               "seconds": None}
     report["toes"] = {"input": {TAGS[s]: toe_summary(m_in[s], contacts[s], floor_y) for s in m_in}}
@@ -1851,7 +1853,7 @@ def main(argv=None):
                                               "reach_knee": REACH_KNEE_DEG if args.landing == "human" else 0.0,
                                               "skim": args.skim == "on" or args.landing == "human",
                                               "skim_lift": SKIM_LIFT if args.skim == "on" else SKIM_LIFT_BEFORE,
-                                              "hover": (args.hover or ("off" if args.landing == "off" else "sink")) == "sink",
+                                              "hover": args.hover == "sink",
                                               "hover_glide": args.hover_glide})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back
