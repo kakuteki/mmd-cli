@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from tests import test_retarget as T
-from tests.retarget_fixtures import MIKU, RIN, axis_angle, key, motion
+from tests.retarget_fixtures import MIKU, RIN, axis_angle, blob_centre, humanoid_bytes, key, motion
 from tests.test_pmx_spine import load_tool
 
 check = load_tool("retarget_check")
@@ -72,6 +72,33 @@ class ArmsInBodyTest(unittest.TestCase):
         self.assertEqual(a["target"]["左"]["part_frames_over_1cm"]["hips"], 5)
         self.assertEqual(b["target"]["左"]["frames_over_1cm"], 0)
         self.assertEqual(a["source"]["左"]["frames_over_1cm"], 0)     # the source's own arm clears its hips
+
+    def test_a_body_without_finger_bones_is_measured_with_its_hands_at_the_wrists(self):
+        # mv_inspect's 体の触れ on a body without the middle finger (tests/mvi_fixtures' Rin) failed on the missing bones:
+        # its hand is measured at the wrist, and a forearm in the hips is still counted
+        data = humanoid_bytes(RIN, T.RIN_BLOBS, twist_axis=True, name="rin-no-fingers", fingers=False)
+        body = check.RT.Body.loads(data)
+        c0, R = blob_centre(RIN, T.RIN_BLOBS, "下半身")
+        found = None
+        for a in range(-70, -20, 2):
+            for b in (-30, -20, -10, 0, 10, 20, 30):
+                m = motion(*T.arm_pose_keys(a, b, 0))
+                w = T.world(data, m, ["左ひじ", "左手首"], [0])[0]
+                e, h = np.asarray(w["左ひじ"][0]), np.asarray(w["左手首"][0])
+                deep = max(0.3 + R - float(np.linalg.norm(e + t * (h - e) - np.asarray(c0))) for t in np.linspace(0, 1, 15))
+                if 0.2 < deep < 0.5:
+                    found = m
+                    break
+            if found:
+                break
+        self.assertIsNotNone(found)
+        frames = np.arange(0, 1)
+        rows = check.arms_in(check.Pose(body, found, frames), body, check.parts_of(body))
+        self.assertEqual(rows["左"]["frames_over_1cm"], 1)
+        self.assertGreater(rows["左"]["part_frames_over_1cm"]["hips"], 0)
+        self.assertEqual(rows["右"]["frames_over_1cm"], 0)
+        rep = check.measure(found, body, found, body)                       # a dance against itself: no finger bones
+        self.assertEqual(rep["summary"]["contact_frames"], 0)
 
     def test_the_source_is_measured_by_the_same_rule(self):
         # a dance measured against itself: the source's hand on its head is counted apart just as the target's is

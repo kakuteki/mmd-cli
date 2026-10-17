@@ -57,11 +57,11 @@ def sphere(n):
     return out
 
 
-def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True, extra=()):
+def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True, extra=(), fingers=True):
     """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x), vertex `blobs` (each
     vertex's normal points out of its sphere), with `shoe` a box of shoe vertices on each 足首, and `extra` bones after
     the others: (name, parent, rest position, sided) — sided ones on both sides as 左name and 右name (the right mirrored),
-    their parent a middle bone or the same side's"""
+    their parent a middle bone or the same side's; without `fingers` no middle finger (中指１..３)"""
     w = Writer(bone=2, vertex=2)
     pos = {}
     for n, p in rest.items():
@@ -83,9 +83,10 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None,
                    (s + "手捩", s + "ひじ", "手捩", twist, {"axis": "ひじ"}), (s + "手首", s + "手捩", "手首", NORMAL, {})]
         else:
             arm = [(s + "ひじ", s + "腕", "ひじ", NORMAL, {}), (s + "手首", s + "ひじ", "手首", NORMAL, {})]
-        rows += [(s + "肩", "上半身2", "肩", NORMAL, {}), (s + "腕", s + "肩", "腕", NORMAL, {})] + arm + [
-                 (s + "中指１", s + "手首", "中指１", NORMAL, {}), (s + "中指２", s + "中指１", "中指２", NORMAL, {}),
-                 (s + "中指３", s + "中指２", "中指３", NORMAL, {})]
+        rows += [(s + "肩", "上半身2", "肩", NORMAL, {}), (s + "腕", s + "肩", "腕", NORMAL, {})] + arm
+        if fingers:
+            rows += [(s + "中指１", s + "手首", "中指１", NORMAL, {}), (s + "中指２", s + "中指１", "中指２", NORMAL, {}),
+                     (s + "中指３", s + "中指２", "中指３", NORMAL, {})]
         rows += [("腰キャンセル" + s, "下半身", "足", NORMAL | APPEND_ROTATE, {"append": ("腰", -1.0)}),
                  (s + "足", "腰キャンセル" + s, "足", NORMAL, {}), (s + "ひざ", s + "足", "ひざ", NORMAL, {}),
                  (s + "足首", s + "ひざ", "足首", NORMAL, {}), (s + "つま先", s + "足首", "つま先", NORMAL, {}),

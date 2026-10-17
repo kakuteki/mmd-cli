@@ -185,6 +185,11 @@ def parts_of(body):
 
 
 def hand_points(pose, side):
+    """the palm's middle (half way from the wrist to 中指１) and the middle finger's tip (中指３ past 中指２ by 0.6 of their
+    bone) [F, 3]; a body without the middle finger's bones: both at the wrist"""
+    if not all(pose.sk.has(side + n) for n in ("中指１", "中指２", "中指３")):
+        W = pose.get([side + "手首"])[side + "手首"][0]
+        return {"palm": W, "tip": W}
     w = pose.get([side + "手首", side + "中指１", side + "中指２", side + "中指３"])
     palm = 0.5 * (w[side + "手首"][0] + w[side + "中指１"][0])
     tip = w[side + "中指３"][0] + 0.6 * (w[side + "中指３"][0] - w[side + "中指２"][0])
@@ -231,7 +236,7 @@ def arm_radii(body, side):
     def radius(bones, a, b, default):
         idx = [body.i(side + n) for n in bones if body.has(side + n)]
         m = np.isin(body.main_bone, idx) if len(body.vertices) else np.zeros(0, bool)
-        if m.sum() < 8:
+        if m.sum() < 8 or not (body.has(side + a) and body.has(side + b)):
             return default
         A, B = body.rest(side + a), body.rest(side + b)
         P = body.vertices[m]
