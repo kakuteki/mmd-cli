@@ -340,6 +340,29 @@ class SpinTest(unittest.TestCase):
         np.testing.assert_allclose(ik_out[:, [0, 2]], ik_ref[:, [0, 2]], atol=1e-4)                     # the foot's path
 
 
+class DragTest(unittest.TestCase):
+    """a foot low over the floor and moving while the other foot stands (it carries no weight: a small step, a drag) is
+    left as the mapping puts it, not dragged along the floor"""
+
+    def test_a_low_moving_foot_beside_a_standing_one_stays_off_the_floor(self):
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        th = math.radians(10.0)
+        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.12            # the source's toe 1 cm over its floor
+        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(1.0, rise, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["右"]["plants"], 1)                        # the other foot stands throughout
+        toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
+        before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 21))["左"], toe_off)
+        after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 21))["左"], toe_off)
+        self.assertGreater(float(before[:, 1].min()) - RIN_SHOE["sole"], 0.03)
+        np.testing.assert_allclose(after, before, atol=1e-3)
+
+
 class SpinPitchTest(unittest.TestCase):
     """the spinning toe of SpinTest left 1.9 cm over the floor: Rin's shorter foot reaches it only pitched 25 degrees past
     the source's; the pitch changes at most TOUCH_PITCH_MAX from the source's and the ankle comes down the rest (a foot

@@ -801,8 +801,9 @@ MAX_PITCH_DEG = 75.0            # the foot's pitch from flat at most (toe down)
 EASE = 3                        # frames a correction takes to come in and to go out
 # a foot on the floor that does not stand still (turning on its ball or toe: the toe sweeps round faster than STILL; the
 # trace leaves such a foot up to 1.7 cm over the floor, the song's 59.2 s): its lowest sole point this close to the floor
-# and rising or falling slower than TOUCH_RISE for TOUCH_MIN frames.  The target's same point is put on the floor (the
-# foot's pitch, a flat foot's ankle), its path along the floor left as it is.
+# and rising or falling slower than TOUCH_RISE for TOUCH_MIN frames, while the other foot does not stand.  The target's
+# lowest sole point is put on the floor (the foot's pitch, the ankle), its path along the floor left as it is.  (Beside a
+# standing foot such a foot is a small step or a drag: put on the floor too, the song's feet slid twice as far along it.)
 TOUCH_FLOOR = 0.25              # units (2 cm)
 TOUCH_RISE = 0.03               # units a frame (7 cm/s)
 TOUCH_MIN = 3
@@ -901,13 +902,17 @@ def plants(body, legs, side):
     return out, {"height": low, "pitch": pitch, "stand": stand, "touch": touch}
 
 
-def touches(F, spans, arrays):
+def touches(F, spans, arrays, other_spans=()):
     """the runs of frames (TOUCH_MIN and longer) a source foot is on the floor without standing still, outside its
-    plants: [(first, last)]"""
+    plants and while the other foot does not stand (then this foot carries the body: turning on it; beside a standing foot
+    a low moving foot is a small step or a drag, left as the mapping puts it): [(first, last)]"""
     planted = np.zeros(F, bool)
     for a, b, _ in spans:
         planted[a:b + 1] = True
-    return runs(arrays["touch"] & ~planted, TOUCH_MIN)
+    other = np.zeros(F, bool)
+    for a, b, _ in other_spans:
+        other[a:b + 1] = True
+    return runs(arrays["touch"] & ~planted & ~other, TOUCH_MIN)
 
 
 def ease_weights(F, spans, ease=EASE):
@@ -994,7 +999,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     F = len(frames)
     rep = {}
     found = {side: plants(src, src_legs, side) for side in SIDES}
-    on_floor = {side: touches(F, *found[side]) for side in SIDES}
+    on_floor = {side: touches(F, *found[side], found[[s for s in SIDES if s != side][0]][0]) for side in SIDES}
     for rnd in range(FEET_ROUNDS):
         tgt_legs = leg_pose(tgt, tgt_trk, frames)
         for side in SIDES:
