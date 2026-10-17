@@ -784,6 +784,13 @@ PLANT_MIN = 3                   # frames: standing this long is a plant
 PITCH_FLAT_DEG = 4.0            # a foot pitched less than this stands flat; toe down more: on the toe; toe up more: on the heel
 MAX_PITCH_DEG = 75.0            # the foot's pitch from flat at most (toe down)
 EASE = 3                        # frames a correction takes to come in and to go out
+# a foot on the floor that does not stand still (turning on its ball or toe: the toe sweeps round faster than STILL; the
+# trace leaves such a foot up to 1.7 cm over the floor, the song's 59.2 s): its lowest sole point this close to the floor
+# and rising or falling slower than TOUCH_RISE for TOUCH_MIN frames.  The target's same point is put on the floor (the
+# foot's pitch, a flat foot's ankle), its path along the floor left as it is.
+TOUCH_FLOOR = 0.25              # units (2 cm)
+TOUCH_RISE = 0.03               # units a frame (7 cm/s)
+TOUCH_MIN = 3
 HEEL_BACK = 0.3                 # without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle
 SHOE = ("足首", "足首D", "足先EX", "つま先")
 
@@ -850,7 +857,22 @@ def plants(body, legs, side):
         p = float(np.median(pitch[a:b + 1]))
         kind = "toe" if p > PITCH_FLAT_DEG else ("heel" if p < -PITCH_FLAT_DEG else "flat")
         out.append((a, b, kind))
-    return out, {"height": H.min(axis=1), "pitch": pitch, "stand": stand}
+    low = H.min(axis=1)
+    rise = np.zeros(len(low))
+    if len(low) > 2:
+        rise[1:-1] = 0.5 * np.abs(low[2:] - low[:-2])
+        rise[0], rise[-1] = abs(low[1] - low[0]), abs(low[-1] - low[-2])
+    touch = (low < TOUCH_FLOOR) & (rise < TOUCH_RISE)
+    return out, {"height": low, "pitch": pitch, "stand": stand, "touch": touch}
+
+
+def touches(F, spans, arrays):
+    """the runs of frames (TOUCH_MIN and longer) a source foot is on the floor without standing still, outside its
+    plants: [(first, last)]"""
+    planted = np.zeros(F, bool)
+    for a, b, _ in spans:
+        planted[a:b + 1] = True
+    return runs(arrays["touch"] & ~planted, TOUCH_MIN)
 
 
 def ease_weights(F, spans, ease=EASE):
@@ -927,20 +949,23 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
     by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it) until
     that point reaches the floor; a flat foot's ankle moves up or down (at most FLAT_LIFT_MAX) until its sole does; the
-    touching point is held still.  The hips are never lowered.  The changes ease in and out over EASE frames.  Returns
-    the report."""
+    touching point is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the
+    same way, frame by frame, and not held.  The hips are never lowered.  The changes ease in and out over EASE frames.
+    Returns the report."""
     F = len(frames)
     rep = {}
     found = {side: plants(src, src_legs, side) for side in SIDES}
+    on_floor = {side: touches(F, *found[side]) for side in SIDES}
     for rnd in range(FEET_ROUNDS):
         tgt_legs = leg_pose(tgt, tgt_trk, frames)
         for side in SIDES:
             spans, _ = found[side]
+            moving = on_floor[side]
             pts_t, floor_t = sole_points(tgt, side)
             leg = tgt_legs[side]
             A, Q = leg["ankle"], leg["q_foot"]
             Qs = src_legs[side]["q_foot"]
-            which, weight = ease_weights(F, [(a, b) for a, b, _ in spans])
+            which, weight = ease_weights(F, [(a, b) for a, b, _ in spans] + moving)
             want_turn = Q.copy()
             shift = np.zeros((F, 3))
             d_all = np.zeros(F)
@@ -978,8 +1003,35 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 want_turn[idx] = Qn
                 shift[idx] = sh
                 d_all[idx] = d
+            for n, (a, b) in enumerate(moving, start=len(spans)):
+                # on the floor but moving: the point the source's foot is on (by its pitch, frame by frame) onto the floor,
+                # no hold along it
+                idx = np.flatnonzero(which == n)
+                if not len(idx):
+                    continue
+                base = Qs[idx]
+                p0 = foot_pitch(base)
+                d = np.zeros(len(idx))
+                lift = np.zeros(len(idx))
+                for kind, sel in (("toe", p0 > PITCH_FLAT_DEG), ("heel", p0 < -PITCH_FLAT_DEG)):
+                    if not np.any(sel):
+                        continue
+                    if kind == "toe":
+                        lo, hi = -np.maximum(p0[sel], 0.0), MAX_PITCH_DEG - p0[sel]
+                    else:
+                        lo, hi = -MAX_PITCH_DEG - p0[sel], -np.minimum(p0[sel], 0.0)
+                    d[sel], left_over[idx[sel]] = solve_pitch(A[idx[sel]], base[sel], pts_t[kind], floor_t, lo, hi)
+                flat = np.abs(p0) <= PITCH_FLAT_DEG
+                if np.any(flat):
+                    low = np.min(np.stack([A[idx[flat], 1] + qrot(base[flat], v)[:, 1] for v in pts_t.values()], axis=1), axis=1) - floor_t
+                    lift[flat] = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
+                    left_over[idx[flat]] = low + lift[flat]
+                want_turn[idx] = qmul(pitch_turn(base, d), base)
+                shift[idx, 1] = lift
+                d_all[idx] = d
             moved = np.flatnonzero(weight > 0)
             r = rep.setdefault(side, {"plants": len(spans), "kinds": kinds, "plant_frames": int(sum(b - a + 1 for a, b, _ in spans)),
+                                      "on_floor_moving": len(moving), "on_floor_moving_frames": int(sum(b - a + 1 for a, b in moving)),
                                       "keys_added": 0})
             if len(moved):
                 w = weight[moved]
@@ -1014,7 +1066,10 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             inside_toe = np.isin(which, [n for n, s in enumerate(spans) if s[2] != "flat"]) & (weight >= 1.0)
             r["toe_left_over_cm"] = _quant(np.abs(left_over[inside_toe & ~np.isnan(left_over)]) * UNIT_CM)
             r["toe_unreached_frames"] = int(np.sum(inside_toe & (np.abs(np.nan_to_num(left_over)) > 0.0125)))
-            log("feet %s round %d: %d plants (%s), %d keys added" % (side, rnd, len(spans), kinds, r["keys_added"]))
+            inside_moving = (which >= len(spans)) & (weight >= 1.0)
+            r["on_floor_moving_left_over_cm"] = _quant(np.abs(left_over[inside_moving & ~np.isnan(left_over)]) * UNIT_CM)
+            log("feet %s round %d: %d plants (%s), %d on the floor moving, %d keys added" % (side, rnd, len(spans), kinds,
+                                                                                       len(moving), r["keys_added"]))
     return rep
 
 
