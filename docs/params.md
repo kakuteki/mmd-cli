@@ -31,7 +31,7 @@
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
-各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
+各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
 
 ## pmx_rig.py（1. 模型の写し（rig の受け持ち）、6）
 
@@ -2021,9 +2021,9 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| --size | "legs" |  | 291 | legs: the measures of lengths also measured with her body as large as people's (the module's doc) |  |  |  |  |  | ○ |  |  |
-| --top | 40 |  | 295 |  |  |  |  |  |  |  |  |  |
-| --reach | 0.95 |  | 323 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
+| --size | "hip" |  | 323 | the measures of lengths also measured with her body as large as people's: by the hip's height over the floor (hip, the default) or by the legs (legs); none: not (the mod… |  |  |  |  |  | ○ |  |  |
+| --top | 40 |  | 328 |  |  |  |  |  |  |  |  |  |
+| --reach | 0.95 |  | 356 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
 
 ### param_inventory.py（確かめ・部品、3）
 
@@ -2163,11 +2163,11 @@
 | G_UNITS | 122.5 | m/s^2 | 40 | 9.8 m/s^2 in her units (8 cm a unit) | 9.8 m/s² を 8 cm/単位で（122.5）。リンの大きさの幅 7.96〜8.15 cm/単位なら 120.4〜123.1（adapt 10-17） | ○ | ○ |  |  |  |  | retarget |
 | MV_SECONDS | 246.0 |  | 41 | the MV's dance range (p31_table's resolution) | human_baseline の p31_table の分解能（踊りの範囲 246 秒） |  |  | ○ |  |  |  | dance |
 | SIDE_WORDS | {0: "中", 1: "上へ外", -1: "下へ外"} |  | 46 |  |  |  |  |  |  |  |  |  |
-| ref_text(digits) | 3 |  | 223 |  |  |  |  |  |  |  |  |  |
-| _num(digits) | 3 |  | 243 |  |  |  |  |  |  |  |  |  |
-| event(side) | 1 |  | 274 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 300 |  |  |  |  |  |  |  |  |  |
-| round_tree(digits) | 6 |  | 325 |  |  |  |  |  |  |  |  |  |
+| ref_text(digits) | 3 |  | 256 |  |  |  |  |  |  |  |  |  |
+| _num(digits) | 3 |  | 276 |  |  |  |  |  |  |  |  |  |
+| event(side) | 1 |  | 307 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 333 |  |  |  |  |  |  |  |  |  |
+| round_tree(digits) | 6 |  | 358 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/body.py（確かめ・部品、1）
 
@@ -2260,9 +2260,9 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TOP_MD | 60 |  | 23 |  |  |  |  |  |  |  |  |  |
 | FORMAT | 2 |  | 24 | 2: which places are listed changed (toward / also / extreme, the review of 10-17) |  |  |  |  |  |  |  |  |
-| PER_CONCEPT | 3 |  | 210 |  |  |  |  |  |  |  |  |  |
-| PER_MEASURE | 8 |  | 211 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
-| compare_md(top) | 30 |  | 357 |  |  |  |  |  |  |  |  |  |
+| PER_CONCEPT | 3 |  | 226 |  |  |  |  |  |  |  |  |  |
+| PER_MEASURE | 8 |  | 227 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
+| compare_md(top) | 30 |  | 379 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/retarget.py（確かめ・部品、0）
 
@@ -2272,8 +2272,8 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| WB_CONTACT | 0.15 | units | 22 | units (1.2 cm): wbbalance's contact for people and the MV alike |  | ○ |  |  |  | ○ |  | retarget |
-| WB_CUTOFF | 6.0 |  | 23 |  |  |  |  |  |  |  |  |  |
+| WB_CONTACT | 0.15 | units | 23 | units (1.2 cm): wbbalance's contact for people and the MV alike |  | ○ |  |  |  | ○ |  | retarget |
+| WB_CUTOFF | 6.0 |  | 24 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/skirt.py（確かめ・部品、2）
 
