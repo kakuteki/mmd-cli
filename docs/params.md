@@ -1162,79 +1162,79 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 100 |  |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 101 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
-| SR | 16000 |  | 102 |  |  |  |  |  |  |  |  |  |
-| HOP | 160 | ms | 103 | 10 ms |  |  |  |  |  |  |  |  |
-| WIN | 400 | ms | 104 | 25 ms |  |  |  |  |  |  |  |  |
-| NFFT | 512 |  | 105 |  |  |  |  |  |  |  |  |  |
-| AC_FFT | 1024 |  | 106 |  |  |  |  |  |  |  |  |  |
-| N_MELS | 40 |  | 107 |  |  |  |  |  |  |  |  |  |
-| MEL_RANGE | (80.0, 7600.0) |  | 108 |  |  |  |  |  |  |  |  |  |
-| N_MFCC | 12 |  | 109 |  |  |  |  |  |  |  |  |  |
-| BAND | (250.0, 4000.0) |  | 110 |  |  |  |  |  |  |  |  |  |
-| F0_RANGE | (150.0, 1300.0) |  | 111 |  |  |  |  |  |  |  |  |  |
-| SHAPES.a.あ | 1.0 |  | 115 |  |  |  |  |  |  |  |  |  |
-| SHAPES.e.え | 1.0 |  | 115 |  |  |  |  |  |  |  |  |  |
-| SHAPES.i.あ | 0.3 |  | 115 |  | v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて… |  |  |  |  |  |  | rig |
-| SHAPES.i.い | 1.0 |  | 115 |  |  |  |  |  |  |  |  |  |
-| SHAPES.o.お | 1.0 |  | 115 |  |  |  |  |  |  |  |  |  |
-| SHAPES.u.う | 1.0 |  | 115 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.f | (0.25, "u") |  | 119 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.m | (0.0, None) |  | 119 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.n | (0.35, None) |  | 119 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.s | (0.35, None) |  | 119 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.v | (0.12, None) |  | 119 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.h | (0.6, None) |  | 120 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.k | (0.5, None) |  | 120 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.r | (0.55, None) |  | 120 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.w | (0.45, "u") |  | 120 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.y | (0.5, "i") |  | 120 |  |  |  |  |  |  |  |  |  |
-| N_OPEN | 0.15 |  | 121 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
-| BREAK_SHARE | 0.6 |  | 122 | a break before a vowel alone keeps this share of its opening where the voice sounds (chosen as for h: the jaw stays, nothing closes it) | v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた） |  |  |  |  |  |  |  |
-| CONSONANT_LONGEST | 0.10 | s | 124 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
-| GAIN | (0.5, -24.0, -6.0) |  | 125 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
-| GAIN_SMOOTH | 0.05 | s | 126 | s |  |  |  |  |  |  |  |  |
-| INHALE | 0.22 |  | 127 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
-| INHALE_REST | 0.45 | s | 128 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
-| INHALE_SPAN | (0.40, 0.12) | s | 129 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
-| COARTICULATION | 30.0 | ms | 130 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
-| CLOSURE_MOVE | 0.16 | s | 131 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
-| CLOSURE_HOLD | 0.04 | s | 135 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
-| CLOSURE_RAMP | 0.10 | s | 136 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
-| RELEASE | 0.12 | s | 137 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
-| REST_OPEN | 0.15 |  | 138 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
-| HOLD_DB | -20.0 |  | 139 | outside the lines, FACE's last vowel is held while the voice stays above this (e: the voice clearly sings, tools/lip_check.py's LOUD_DB) | v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり） |  |  |  |  |  |  |  |
-| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 141 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
-| KEY_TOLERANCE | 0.025 |  | 142 |  |  |  |  |  |  |  |  |  |
-| SIL_DB | -30.0 |  | 143 | e below this: quiet |  |  |  |  |  |  |  |  |
-| FILLER | -2.5 |  | 144 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
-| BLOCK_GAP | 2.0 | s | 147 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
-| LINE_SLACK | (1.0, 1.5) | s | 148 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
-| MARGIN | (1.2, 1.6) | s | 149 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
-| ITERATIONS | 6 |  | 150 |  |  |  |  |  |  |  |  |  |
-| STAY.BR | 0.6 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.C | 0.6 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.N | 0.85 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.Q | 0.85 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.SIL | 0.95 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.SP | 0.9 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.V | 0.9 |  | 151 |  |  |  |  |  |  |  |  |  |
-| SP_PENALTY | (4.0, 1.5) |  | 152 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
-| SPECTRAL_WEIGHT | 0.5 |  | 153 |  |  |  |  |  |  |  |  |  |
-| GUIDE | (2.0, -1.0) |  | 154 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
-| GUIDE_OPEN | 0.3 |  | 155 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
-| GUIDE_LAG | 0.07 | s | 156 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
-| POSTERIOR_FLOOR | -6.0 |  | 157 |  |  |  |  |  |  |  |  |  |
-| NEG | -1e9 |  | 159 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.BR | 2 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.C | 2 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.N | 4 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.Q | 3 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SIL | 1 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SP | 3 |  | 342 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.V | 5 |  | 342 |  |  |  |  |  |  |  |  |  |
-| face_rows_of(lag) | 0.0 |  | 758 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 101 |  |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 102 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
+| SR | 16000 |  | 103 |  |  |  |  |  |  |  |  |  |
+| HOP | 160 | ms | 104 | 10 ms |  |  |  |  |  |  |  |  |
+| WIN | 400 | ms | 105 | 25 ms |  |  |  |  |  |  |  |  |
+| NFFT | 512 |  | 106 |  |  |  |  |  |  |  |  |  |
+| AC_FFT | 1024 |  | 107 |  |  |  |  |  |  |  |  |  |
+| N_MELS | 40 |  | 108 |  |  |  |  |  |  |  |  |  |
+| MEL_RANGE | (80.0, 7600.0) |  | 109 |  |  |  |  |  |  |  |  |  |
+| N_MFCC | 12 |  | 110 |  |  |  |  |  |  |  |  |  |
+| BAND | (250.0, 4000.0) |  | 111 |  |  |  |  |  |  |  |  |  |
+| F0_RANGE | (150.0, 1300.0) |  | 112 |  |  |  |  |  |  |  |  |  |
+| SHAPES.a.あ | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.e.え | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.i.あ | 0.3 |  | 116 |  | v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて… |  |  |  |  |  |  | rig |
+| SHAPES.i.い | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.o.お | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.u.う | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.f | (0.25, "u") |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.m | (0.0, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.n | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.s | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.v | (0.12, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.h | (0.6, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.k | (0.5, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.r | (0.55, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.w | (0.45, "u") |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.y | (0.5, "i") |  | 121 |  |  |  |  |  |  |  |  |  |
+| N_OPEN | 0.15 |  | 122 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
+| BREAK_SHARE | 0.6 |  | 123 | a break before a vowel alone keeps this share of its opening where the voice sounds (chosen as for h: the jaw stays, nothing closes it) | v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた） |  |  |  |  |  |  |  |
+| CONSONANT_LONGEST | 0.10 | s | 125 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
+| GAIN | (0.5, -24.0, -6.0) |  | 126 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
+| GAIN_SMOOTH | 0.05 | s | 127 | s |  |  |  |  |  |  |  |  |
+| INHALE | 0.22 |  | 128 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
+| INHALE_REST | 0.45 | s | 129 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
+| INHALE_SPAN | (0.40, 0.12) | s | 130 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
+| COARTICULATION | 30.0 | ms | 131 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
+| CLOSURE_MOVE | 0.16 | s | 132 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
+| CLOSURE_HOLD | 0.04 | s | 136 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
+| CLOSURE_RAMP | 0.10 | s | 137 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
+| RELEASE | 0.12 | s | 138 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
+| REST_OPEN | 0.15 |  | 139 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
+| HOLD_DB | -20.0 |  | 140 | outside the lines, FACE's last vowel is held while the voice stays above this (e: the voice clearly sings, tools/lip_check.py's LOUD_DB) | v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり） |  |  |  |  |  |  |  |
+| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 142 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
+| KEY_TOLERANCE | 0.025 |  | 143 |  |  |  |  |  |  |  |  |  |
+| SIL_DB | -30.0 |  | 144 | e below this: quiet |  |  |  |  |  |  |  |  |
+| FILLER | -2.5 |  | 145 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
+| BLOCK_GAP | 2.0 | s | 148 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
+| LINE_SLACK | (1.0, 1.5) | s | 149 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
+| MARGIN | (1.2, 1.6) | s | 150 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
+| ITERATIONS | 6 |  | 151 |  |  |  |  |  |  |  |  |  |
+| STAY.BR | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.C | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.N | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.Q | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.SIL | 0.95 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.SP | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.V | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
+| SP_PENALTY | (4.0, 1.5) |  | 153 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
+| SPECTRAL_WEIGHT | 0.5 |  | 154 |  |  |  |  |  |  |  |  |  |
+| GUIDE | (2.0, -1.0) |  | 155 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
+| GUIDE_OPEN | 0.3 |  | 156 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
+| GUIDE_LAG | 0.07 | s | 157 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
+| POSTERIOR_FLOOR | -6.0 |  | 158 |  |  |  |  |  |  |  |  |  |
+| NEG | -1e9 |  | 160 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.BR | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.C | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.N | 4 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.Q | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SIL | 1 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SP | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.V | 5 |  | 343 |  |  |  |  |  |  |  |  |  |
+| face_rows_of(lag) | 0.0 |  | 759 |  |  |  |  |  |  |  |  |  |
 
 ## lip_timing.py（16. 口、11）
 
