@@ -422,6 +422,53 @@ class SpinShellTest(unittest.TestCase):
         self.assertLess(float(np.abs(lowest_sole(RIN_SPRING_DATA, RIN_SPRING, res, range(0, 21))).max()), 0.0125)
 
 
+class PlantShellTest(unittest.TestCase):
+    """a foot standing still on the floor stands on the shoe itself: a flat foot rolled sideways (Hibikase's flat feet
+    roll 7 degrees in the median) on its lower edge, not on the middle of its sole with that edge 4 mm under the floor;
+    a toe stand on a sole turned up at the toe on its lowest vertex, not on a point of the tip at the floor's height"""
+
+    def test_a_rolled_flat_foot_stands_on_the_shoes_edge(self):
+        roll = axis_angle((0.0, 0.0, 1.0), -8.0)                  # the outer (+x) edge of the left foot down
+        base = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                key("左足ＩＫ", 0, roll), key("左足ＩＫ", 20, roll), key("右足ＩＫ", 0), key("右足ＩＫ", 20)]
+        shin = legs(MIKU_DATA, motion(*base), [0])["左"]["q_shin"][0]
+        ankle_key = tuple(retarget.qmul(retarget.qconj(shin), np.array(roll)))
+        m = motion(*base, key("左足首", 0, ankle_key), key("左足首", 20, ankle_key))
+        src = legs(MIKU_DATA, m, range(0, 21))["左"]
+        turn = np.degrees(2 * np.arccos(np.clip(np.abs(np.sum(src["q_foot"] * np.array(roll), axis=1)), 0, 1)))
+        self.assertLess(float(turn.max()), 0.5)                    # the source's foot rolled as keyed
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["kinds"]["flat"], 1)
+        low = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res.motion, range(0, 21))
+        self.assertLess(float(np.abs(low).max()), 0.0125)                          # the edge on the floor within 1 mm
+        out = {(k.name, k.frame): k for k in res.motion.bones}
+        ref = {(k.name, k.frame): k for k in pure.motion.bones}
+        for f in (0, 20):
+            np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
+
+    def test_a_toe_stand_on_a_turned_up_toe_stands_on_the_shoe(self):
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        th = math.radians(10.0)
+        rise = l * math.sin(th) - h * (1 - math.cos(th))
+        q = axis_angle((1.0, 0.0, 0.0), -10.0)
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, q, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, q, position=(0.0, rise, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["kinds"]["toe"], 1)
+        self.assertGreater(float(lowest_sole(RIN_SPRING_DATA, RIN_SPRING, pure.motion, range(0, 21)).min()), 0.03)
+        low = lowest_sole(RIN_SPRING_DATA, RIN_SPRING, res.motion, range(0, 21))
+        self.assertLess(float(np.abs(low).max()), 0.0125)
+        out = {(k.name, k.frame): k for k in res.motion.bones}
+        ref = {(k.name, k.frame): k for k in pure.motion.bones}
+        for f in (0, 20):
+            self.assertAlmostEqual(out[("左足ＩＫ", f)].position[1], ref[("左足ＩＫ", f)].position[1], places=4)   # the ankle's height
+            np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
+
+
 def palm(data, rest, m, side, frames):
     w = world(data, m, [side + "手首", side + "中指１"], frames)
     return np.array([np.asarray(w[f][side + "手首"][0]) + 0.5 * (np.asarray(w[f][side + "中指１"][0]) - np.asarray(w[f][side + "手首"][0]))

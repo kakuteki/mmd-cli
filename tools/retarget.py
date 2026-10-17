@@ -31,9 +31,9 @@ up, the model faces -Z; a key turns its bone in its parent's frame, mmd_cli/fk.p
 Then the corrections, measured on both bodies frame by frame (fix_feet, fix_hands, clear_arms; the hips are never moved):
 
 * feet: where the source's foot stands still on the floor (a plant) the target's takes the source's foot's world turn,
-  its toe or heel pitched (a flat foot's ankle up or down) onto the floor and its touching point held; where the
-  source's foot is on the floor but moving (turning on its toe) the target's lowest sole point is put on the floor the
-  same way, not held.
+  its toe or heel pitched (a flat foot's ankle up or down) until the shoe's lowest vertex is on the floor and its
+  touching point held; where the source's foot is on the floor but moving (turning on its toe) and the other foot does
+  not stand, the target's shoe is put on the floor the same way, not held.
 * hands: a hand near a part of the source's body (head, chest, belly, hips, thighs, within NEAR) is put at the same
   place of the target's part (scaled by the parts' sizes), and the two hands as far apart as the shoulders' ratio says;
   the hand's points are the palm and the middle finger's tip as the dance's finger keys bend them.
@@ -992,9 +992,11 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     """the target's foot keys for the source's plants (the foot IK's goal and turn, the ankle's key): the foot takes the
     source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
     by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it) until
-    that point reaches the floor; a flat foot's ankle moves up or down (at most FLAT_LIFT_MAX) until its sole does; the
-    touching point is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the
-    same way, frame by frame, and not held.  The hips are never lowered.  The changes ease in and out over EASE frames.
+    the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot's ankle moves up or down (at most FLAT_LIFT_MAX)
+    until it does (a foot rolled sideways stands on its lower edge: Hibikase's flat feet roll 7 degrees in the median,
+    and with the sole's middle on the floor the edge was 3 mm under it in the median, 1.4 cm at most); the touching point
+    is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the same way, frame
+    by frame, and not held.  The hips are never lowered.  The changes ease in and out over EASE frames.
     Returns the report."""
     F = len(frames)
     rep = {}
@@ -1026,7 +1028,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 p0 = foot_pitch(base)
                 if kind == "flat":
                     d = np.zeros(len(idx))
-                    low = np.min(np.stack([A[idx, 1] + qrot(base, v)[:, 1] for v in pts_t.values()], axis=1), axis=1) - floor_t
+                    low = A[idx, 1] + np.min(qrot(base[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
                     lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
                     left_over[idx] = low + lift
                 else:
@@ -1034,7 +1036,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -np.maximum(p0, 0.0), MAX_PITCH_DEG - p0
                     else:
                         lo, hi = -MAX_PITCH_DEG - p0, -np.minimum(p0, 0.0)
-                    d, rest_h = solve_pitch(A[idx], base, point, floor_t, lo, hi)
+                    d, rest_h = solve_pitch(A[idx], base, shell_t, floor_t, lo, hi)
                     lift = np.zeros(len(idx))
                     left_over[idx] = rest_h
                 Qn = qmul(pitch_turn(base, d), base)
