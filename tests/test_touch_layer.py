@@ -130,6 +130,62 @@ class PutBackTest(unittest.TestCase):
         self.assertGreater(res.report["左"]["moved_frames"], 0)
 
 
+def wrist(data, m, frames):
+    w = world(data, m, ["左手首"], frames)
+    return np.array([np.asarray(w[f]["左手首"][0]) for f in frames])
+
+
+class SmoothTest(unittest.TestCase):
+    """the change is smoothed over the frames where the source's hand is only near a part (its trace shakes there: the
+    change follows it frame by frame), and kept as it is where the source's hand touches (the touch's place)"""
+
+    def near_pose(self, lo, hi):
+        """an arm pose of the source whose palm lies lo .. hi units off its hips' sphere"""
+        for a in range(-78, -41, 3):
+            for b in (-50, -40, -30, -20, -10):
+                for g in (30, 50, 60, 70, 80, 90):
+                    m = motion(*arm_pose_keys(a, b, g))
+                    d = sphere_distance(MIKU_DATA, MIKU, MIKU_LEGS, "下半身", m, palm(MIKU_DATA, m, "左", [0]), [0])[0]
+                    if lo <= d <= hi:
+                        return d, (a, b, g)
+        return None
+
+    def shaken(self, pose, last=20, deg=1.5):
+        """the pose with the source's upper arm shaken by +-deg degrees every other frame (a trace's jitter)"""
+        a, b, g = pose
+        keys = []
+        for f in range(last + 1):
+            keys += arm_pose_keys(a + (deg if f % 2 else -deg), b, g, frame=f)
+        return motion(*keys)
+
+    def test_a_near_hand_s_shake_is_smoothed(self):
+        found = self.near_pose(0.25, 0.45)
+        self.assertIsNotNone(found)
+        d, pose = found
+        src = self.shaken(pose)
+        rt = retarget.layer(motion(*arm_pose_keys(*pose), *arm_pose_keys(*pose, frame=20)), body(MIKU_DATA), body(RIN_DATA),
+                            {"feet": False}).motion
+        frames = list(range(2, 19))
+        rough = touch_layer.layer(rt, src, body(MIKU_DATA), body(RIN_DATA), {"smooth_frames": 0.0}).motion
+        smooth = touch_layer.layer(rt, src, body(MIKU_DATA), body(RIN_DATA)).motion
+        acc = [float(np.linalg.norm(np.diff(wrist(RIN_DATA, m, frames), n=2, axis=0), axis=1).max()) for m in (rough, smooth)]
+        self.assertGreater(acc[0], 0.01)                                   # (the shake reaches the output unsmoothed)
+        self.assertLess(acc[1], 0.6 * acc[0])
+
+    def test_a_touch_keeps_its_place(self):
+        d, pose = head_pose()
+        src = self.shaken(pose, deg=0.5)
+        rt = retarget.layer(motion(*arm_pose_keys(*pose), *arm_pose_keys(*pose, frame=20)), body(MIKU_DATA), body(RIN_DATA),
+                            {"feet": False}).motion
+        moved = turned(rt, "左腕", (0.0, 0.0, 1.0), -12.0)
+        frames = list(range(0, 21))
+        rough = touch_layer.layer(moved, src, body(MIKU_DATA), body(RIN_DATA), {"smooth_frames": 0.0}).motion
+        smooth = touch_layer.layer(moved, src, body(MIKU_DATA), body(RIN_DATA)).motion
+        a = sphere_distance(RIN_DATA, RIN, RIN_LEGS, "頭", rough, palm(RIN_DATA, rough, "左", frames), frames)
+        b = sphere_distance(RIN_DATA, RIN, RIN_LEGS, "頭", smooth, palm(RIN_DATA, smooth, "左", frames), frames)
+        self.assertLess(float(np.abs(a - b).max()), 0.01)
+
+
 class LeaveTest(unittest.TestCase):
     """a hand far from the body and every bone but the arms are left as they were, byte for byte"""
 

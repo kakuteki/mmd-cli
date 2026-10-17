@@ -69,14 +69,18 @@ ARM = tuple(s + n for s in SIDES for n in ("腕", "ひじ", "手首"))
 THIGHS = {"thigh_左": "左", "thigh_右": "右"}
 # the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a
 # Gaussian of this many frames (its standard deviation; 0: not smoothed), the arm put through the smoothed points with
-# the hand's world turn kept.  The source the hands are put back on is the trace before the smoothing layers (its keys
-# joined by MMD's curves, kinked at the keys) and fix_hands sets every frame on its own: unsmoothed, on Hibikase the right
-# wrist's velocity above 8 Hz went 0.60 -> 0.98 % (people 0.15) and its one-frame spikes 21 -> 26 a minute (people 9)
-SMOOTH_FRAMES = 1.5
+# the hand's world turn kept; where the source's hand touches a part (fix_hands' relation's weight from HOLD_FROM to 1)
+# the change is kept as it is (the touch's place), blended toward the smoothed one where the hand is only near.  The source
+# the hands are put back on is the trace before the smoothing layers (its keys joined by MMD's curves) and fix_hands sets
+# every frame on its own.  On Hibikase (the new hand layer's output, mv_inspect's arms, spikes and retarget parts): not
+# smoothed, the right wrist's velocity above 8 Hz 0.60 -> 0.97 % (people 0.15) and its one-frame spikes 21.5 -> 26.1 a
+# minute (people 9.4); smoothed everywhere by 1.0, 0.61 % and 21.2 but the touches kept 0.86 -> 0.82 (a short touch's
+# change thinned); smoothed but where it touches, 0.71 % and 22.4 with the touches kept 0.86 (1.5: 0.72 %, 22.7, 0.86)
+SMOOTH_FRAMES = 1.0
 
 
 def default_params():
-    return {"hands": True, "clear": True, "ik_thighs": True, "smooth_frames": SMOOTH_FRAMES}
+    return {"hands": True, "clear": True, "ik_thighs": True, "smooth_frames": SMOOTH_FRAMES, "smooth_keep_touch": True}
 
 
 def smooth_rows(x, sigma):
@@ -99,15 +103,17 @@ def arm_points(body, trk, frames, side):
     return ap[side + "腕"][0], ap[side + "ひじ"][0], ap[side + "手首"][0], ap[side + "手首"][1]
 
 
-def smoothed(body, trk, frames, before, sigma):
+def smoothed(body, trk, frames, before, sigma, hold=None):
     """the arms' change since `before` (side -> arm_points) smoothed over the frames (smooth_rows of the wrist's and the
     elbow's moves), the arm put through the smoothed wrist with its elbow toward the smoothed elbow and the hand's world
-    turn as before; returns per side the frames changed and the largest step taken off the wrist (cm)"""
+    turn as before.  hold (side -> 0 .. 1 per frame): where the source's hand touches a part (1), the change as it was
+    (the touch's place kept), blended toward the smoothed one where the hand is only near.  Returns per side the frames
+    changed and the largest step taken off the wrist (cm)"""
     out = {}
     for side, (S0, E0, W0, R0) in before.items():
         S, E1, W1, _ = arm_points(body, trk, frames, side)
         dW, dE = W1 - W0, E1 - E0
-        changed = (np.linalg.norm(dW, axis=1) > 1e-7) | (np.linalg.norm(dE, axis=1) > 1e-7)
+        changed = (np.linalg.norm(dW, axis=1) > 1e-6) | (np.linalg.norm(dE, axis=1) > 1e-6)
         if not changed.any():
             continue
         r = int(math.ceil(3.0 * sigma))
@@ -115,8 +121,9 @@ def smoothed(body, trk, frames, before, sigma):
         for k in range(1, r + 1):
             reach[k:] |= changed[:-k]
             reach[:-k] |= changed[k:]
-        Wt = W0 + smooth_rows(dW, sigma)
-        pole = E0 + smooth_rows(dE, sigma)
+        lam = np.zeros(len(frames)) if hold is None or side not in hold else np.asarray(hold[side], dtype=np.float64)
+        Wt = W0 + lam[:, None] * dW + (1.0 - lam[:, None]) * smooth_rows(dW, sigma)
+        pole = E0 + lam[:, None] * dE + (1.0 - lam[:, None]) * smooth_rows(dE, sigma)
         Es, Ws = RT.arm_ik(S, E1, W1, Wt, pole=pole)
         Es = np.where(reach[:, None], Es, E1)
         Ws = np.where(reach[:, None], Ws, W1)
@@ -163,7 +170,7 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
     src_parts = {q: v for q, v in part_frames(src, src_trk, frames, p["ik_thighs"]).items() if q in have}
     tgt_all = part_frames(tgt, tgt_trk, frames, p["ik_thighs"])
     tgt_parts = {q: v for q, v in tgt_all.items() if q in have}
-    want, weights = {}, {}
+    want, weights, holds = {}, {}, {}
     before = {side: arm_points(tgt, tgt_trk, frames, side) for side in SIDES if all(tgt.has(n) for n in RT.arm_names(side))}
     hands_src = {side: RT.hand_world(src, src_trk, frames, side) for side in SIDES}
     hands_tgt = {side: RT.hand_world(tgt, tgt_trk, frames, side) for side in SIDES}
@@ -197,6 +204,7 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         weights[side] = {part: {"w": c["w"], "d": c["d"], "want": np.maximum(c["d"], 0.0) * RT.part_scale(src, tgt, part)}
                          for part, c in rel.items()}
         rep[side] = {"touch_frames": used}
+        holds[side] = RT.smoothstep((top - RT.HOLD_FROM) / (1.0 - RT.HOLD_FROM))
     if p["hands"] and all(s in want for s in SIDES):
         ps = hands_src["左"][2]["palm"] - hands_src["右"][2]["palm"]
         pt = hands_tgt["左"][2]["palm"] - hands_tgt["右"][2]["palm"]
@@ -225,7 +233,8 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         for side in SIDES:
             rep.setdefault(side, {})["clear"] = clr.get(side)
     if p.get("smooth_frames", 0.0) > 0:
-        for side, row in smoothed(tgt, tgt_trk, frames, before, p["smooth_frames"]).items():
+        hold = holds if p.get("smooth_keep_touch", True) else None
+        for side, row in smoothed(tgt, tgt_trk, frames, before, p["smooth_frames"], hold).items():
             rep.setdefault(side, {})["smoothed"] = row
     return rep
 
@@ -318,6 +327,8 @@ def main(argv=None):
     ap.add_argument("--no-hands", action="store_true", help="leave the hands' places; only push the arms out of the body")
     ap.add_argument("--no-clear", action="store_true", help="only put the hands back; leave the arms in the body")
     ap.add_argument("--fk-thighs", action="store_true", help="read the thighs by their keys, as tools/retarget.py does")
+    ap.add_argument("--smooth-touches", action="store_true",
+                    help="smooth the change where the source's hand touches a part too (by default kept as fix_hands puts it)")
     ap.add_argument("--smooth-frames", type=float, default=SMOOTH_FRAMES,
                     help="the Gaussian (frames) the arm's change is smoothed by (default %g; 0 leaves it as fix_hands sets it)"
                          % SMOOTH_FRAMES)
@@ -325,7 +336,7 @@ def main(argv=None):
     try:
         RT.check_distinct(args.dance, args.source, args.source_body, args.model, args.out, args.report)
         params = {"hands": not args.no_hands, "clear": not args.no_clear, "ik_thighs": not args.fk_thighs,
-                  "smooth_frames": args.smooth_frames}
+                  "smooth_frames": args.smooth_frames, "smooth_keep_touch": not args.smooth_touches}
         res = layer(vmd.load(args.dance), vmd.load(args.source), RT.Body.load(args.source_body), RT.Body.load(args.model), params)
         RT.write_bytes(os.path.abspath(args.out), vmd.dumps(res.motion))
         rep = dict(res.report, dance=os.path.abspath(args.dance), source=os.path.abspath(args.source),
