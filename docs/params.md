@@ -637,9 +637,9 @@
 | knee_targets(least_deg) | 0.0 | deg | 458 |  |  |  |  |  |  |  |  |  |
 | solve_qp(batch) | 1 |  | 494 |  |  |  |  |  |  |  |  |  |
 | solve_qp(rounds) | 60 |  | 494 |  |  |  |  |  |  |  |  |  |
-| knee_turn(least) | 0.0 |  | 812 |  |  |  |  |  |  |  |  |  |
-| knee_turn(sign) | 0.0 |  | 812 |  |  |  |  |  |  |  |  |  |
-| knee_jump_frames(deg) | 10.0 |  | 1412 |  |  |  |  |  |  |  |  |  |
+| knee_turn(least) | 0.0 |  | 820 |  |  |  |  |  |  |  |  |  |
+| knee_turn(sign) | 0.0 |  | 820 |  |  |  |  |  |  |  |  |  |
+| knee_jump_frames(deg) | 10.0 |  | 1424 |  |  |  |  |  |  |  |  |  |
 
 ## wb_layer.py（12. 上体の慣性、5）
 
