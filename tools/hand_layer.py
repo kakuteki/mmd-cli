@@ -596,11 +596,13 @@ CONTACT_PAD = 4
 # its face, the ribbon, the chest, the belly, the hips, the thighs where the leg IK puts them).  The face rule above reads
 # the distance from the eyes, which fits a hand on the face; on Rin a hand laid on the side or the top of the head has its
 # fingertips 125 - 148 mm from the eyes (her head reaches that far from them), past the rule, and the curl and the lag
-# then took the fingers into the head (the v11 review: the head 25 -> 101 frames of an arm more than 1 cm in, all at
-# fingertips 0 - 16 mm from the head's surface before this layer).  20 mm: the tips nearer than that before this layer
-# went into a part (the right hand -11 .. +10 mm, the left -5 .. +16, the median 5 mm); 40 mm: the curl and the lag move a
-# fingertip 1 - 2 cm (the review: the middle finger's tip 1.4 cm at the median), so a tip further than that stays out
-CONTACT_SURFACE_MM = (20.0, 40.0)
+# then took the fingers into the head (the v11 review: the head 25 -> 101 frames of an arm more than 1 cm in).  Where this
+# layer took a fingertip or the palm 5 mm into a part (and 2 mm deeper than its input), the input had it -11 .. +16 mm
+# from the part's surface (the median 5 mm; 54 frames, the head 43): fully a touch within 10 mm, two thirds at 16 mm, none
+# past 25 mm (the curl and the lag move a fingertip 1 - 2 cm, the review: the middle finger's tip 1.4 cm at the median).
+# (20, 40) caught the same frames and held still 1.8 times as many, the hands passing within 2 - 4 cm of the hips and
+# the thighs, and slowed the fingers more (FineDance's dancers' fingers move about twice as fast as this layer's)
+CONTACT_SURFACE_MM = (10.0, 25.0)
 # the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive
 # body's spring and damper (its omega and zeta between the open and the held hand), so a change comes 2 zeta / omega
 # (= B / K) late.  --follow-scale multiplies that time (omega divided by it).  When on, the scale keeps half of the
@@ -1682,8 +1684,9 @@ def padded(c):
 
 
 def surface_weights(body, motion, F, sides):
-    """(side -> 0 .. 1 per frame: a long fingertip or the palm's middle of the hand within CONTACT_SURFACE_MM of one of
-    the body's hard parts, padded and smoothed as contact_weights; side -> the nearest distance, mm, per frame) under the
+    """(side -> 0 .. 1 per frame: a long fingertip (its last joint where the model has no tip bone) or the palm's middle
+    of the hand within CONTACT_SURFACE_MM of one of the body's hard parts, padded and smoothed as contact_weights; side ->
+    the nearest distance, mm, per frame) under the
     input.  body: tools/retarget.py's Body with the model's mesh; the parts as tools/touch_layer.py reads them (the
     thighs where the leg IK puts them)"""
     TL = _tool("touch_layer")
@@ -1699,7 +1702,9 @@ def surface_weights(body, motion, F, sides):
     parts = TL.part_frames(body, trk, frames)
     mm = UNIT_M * 1000.0
     for s in sides:
-        tips = [s + f + "３先" for f in LONG if body.has(s + f + "３先")]
+        # each long finger's tip bone, or its last joint where the model has no tip bone
+        tips = [s + f + t for f in LONG for t in ("３先",) if body.has(s + f + t)]
+        tips += [s + f + "３" for f in LONG if not body.has(s + f + "３先") and body.has(s + f + "３")]
         palm = [s + n for n in ("手首", "中指１") if body.has(s + n)]
         if not tips and len(palm) < 2:
             continue
