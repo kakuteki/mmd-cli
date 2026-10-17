@@ -401,7 +401,8 @@ def _shade(X, Z, figure, strength):
 # where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with
 MMD_LIGHT = (-0.5, -1.0, 0.5)
 KEY_SHARE = 0.6          # of the light on the floor's plane and pool, the share of the key light (the rest is all round):
-                         # the default of stage.shadow_key; tools/mme_shadow.py's key_share for her body defaults to it too
+                         # the default of stage.shadow_key (the core of a shadow keeps 0.40); her body's shade
+                         # (tools/mme_shadow.py --key-share) defaults to 0.35 instead: it keeps 0.65 (option D, 2026-10-17)
 SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
 SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
 CUTOFF = 8.0             # standard deviations of the light's spread past which a capsule keeps none of it off

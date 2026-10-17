@@ -99,13 +99,17 @@ class EffectTest(unittest.TestCase):
         self.assertIn("#define SKII2 8000.0", text)
         self.assertIn("slope - 0.3f", text)
 
-    def test_the_shade_keeps_what_the_floor_keeps_in_a_shadow(self):
-        # by default the shade keeps 1 - key_share of the light, the key light's share of tools/mv_world.py's floor
+    def test_the_shade_keeps_option_d_by_default_and_the_floor_its_own(self):
+        # the shade keeps 1 - key_share of the light.  By default option D (Kaga-san's choice of 2026-10-17 among A: the
+        # shade 0.40, B: MMD's toon, C and D: the shade 0.65, the floor 0.65 in C and 0.40 in D): the shade keeps 0.65
+        # (key_share 0.35) while the floor's shadow keeps 0.40 (tools/mv_world.py KEY_SHARE 0.6, stage.shadow_key)
         text = mme_shadow.effect()
         self.assertEqual(define(text, "SS_ALIGN"), 1)
-        self.assertAlmostEqual(define(text, "SS_KEEP"), 1.0 - mme_shadow.DEFAULTS["key_share"], places=6)
+        self.assertAlmostEqual(mme_shadow.DEFAULTS["key_share"], 0.35, places=9)
+        self.assertAlmostEqual(define(text, "SS_KEEP"), 0.65, places=6)
         self.assertAlmostEqual(define(mme_shadow.effect(key_share=0.3), "SS_KEEP"), 0.7, places=6)
-        self.assertIn('"key_share": 0.6', text.splitlines()[2])
+        self.assertAlmostEqual(define(mme_shadow.effect(key_share=0.6), "SS_KEEP"), 0.4, places=6)     # option A
+        self.assertIn('"key_share": 0.35', text.splitlines()[2])
         # the toon's hue kept, its luma set (BT.709, as tools/shadow_check.py reads the floor); a white toon left white
         self.assertIn("float3(0.2126f, 0.7152f, 0.0722f)", text)
         self.assertIn("if (luma < 0.999f)", text)
@@ -119,7 +123,7 @@ class EffectTest(unittest.TestCase):
             spec.loader.exec_module(mv_world)
         except ImportError:                    # mv_world needs numpy and Pillow
             return
-        self.assertEqual(mme_shadow.DEFAULTS["key_share"], mv_world.KEY_SHARE)
+        self.assertAlmostEqual(1.0 - mv_world.KEY_SHARE, 0.40, places=9)      # the floor's shadow stays 0.40 (option D)
 
     def test_debug_draws_the_shadow_alone_or_the_body_lit(self):
         self.assertEqual(define(mme_shadow.effect(debug="shadow"), "SS_DEBUG"), 1)
@@ -149,8 +153,8 @@ class EffectTest(unittest.TestCase):
     def test_the_command_line_takes_the_shade(self):
         out = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out, True)
-        for args, keep, align in (([], 0.4, 1), (["--key-share", "0.5"], 0.5, 1), (["--toon"], 1.0, 0),
-                                  (["--debug", "lit"], 0.4, 1), (["--debug"], 0.4, 1)):
+        for args, keep, align in (([], 0.65, 1), (["--key-share", "0.5"], 0.5, 1), (["--toon"], 1.0, 0),
+                                  (["--key-share", "0.6"], 0.4, 1), (["--debug", "lit"], 0.65, 1), (["--debug"], 0.65, 1)):
             path = os.path.join(out, "e.fx")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(mme_shadow.main(["write", path] + args), 0, args)

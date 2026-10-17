@@ -1,7 +1,7 @@
 """A soft self shadow for MMD through MikuMikuEffect (MME): the effect file that draws a model's body with MMD's own
 shading but reads the self shadow map at many points weighted by a Gaussian, and the files round it.
 
-    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.6 | --toon]
+    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.35 | --toon]
                                      [--debug [shadow|lit]] [--sharp]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py check MMD.exe
@@ -46,12 +46,12 @@ the review's fan) casts no shadow on it, and a point of the receiver's own surfa
 (a small gap beside the pixel) is not taken for a caster.
 
 How dark the shade is: MMD shades with the toon's colour (this model's keep 72 to 89 % of the light), while
-tools/mv_world.py's floor takes KEY_SHARE (0.6) of its light from the key light and keeps the rest in a shadow.  Under
-one light the two would not agree (MMD's shade takes 11 to 28 % of the light away, the floor's shadow 60 %), so by
-default (--key-share 0.6, mv_world's KEY_SHARE) the shade keeps 1 - key_share of the light: the toon's colour keeps
-its hue and its luma (BT.709, as tools/shadow_check.py reads the floor) is set to 1 - key_share, on the shadowed side
-and in the shadow alike, as on the floor.  A material whose toon is white (here the face and the eyes: MMD draws no
-shade on them) is left so.  --toon keeps MMD's toon colours as they are.
+tools/mv_world.py's floor takes KEY_SHARE (0.6) of its light from the key light and keeps the rest in a shadow.  The
+shade keeps 1 - --key-share of the light: the toon's colour keeps its hue and its luma (BT.709, as tools/shadow_check.py
+reads the floor) is set to 1 - key_share, on the shadowed side and in the shadow alike, as on the floor.  By default
+--key-share 0.35: the shade keeps 0.65 (option D, Kaga-san's choice of 2026-10-17), lighter than the floor's shadow
+(0.40: stage.shadow_key 0.6); --key-share 0.6 is option A, the shade as dark as the floor's.  A material whose toon is
+white (here the face and the eyes: MMD draws no shade on them) is left so.  --toon keeps MMD's toon colours as they are.
 
 --sharp writes the same file with one point and no blur and MMD's toon colours: MMD's own test (to check that the
 shading is MMD's).  --debug draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py;
@@ -85,7 +85,10 @@ KERNEL_SIGMAS = 2.5               # the points lie within this many standard dev
 CUT_STD = math.sqrt((1.0 - (1.0 + 0.5 * KERNEL_SIGMAS ** 2) * math.exp(-0.5 * KERNEL_SIGMAS ** 2))
                     / (1.0 - math.exp(-0.5 * KERNEL_SIGMAS ** 2)))
 GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
-DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 64, "search_taps": 64, "contact": True, "key_share": 0.6}
+# key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40,
+# B: MMD's toon, C: the shade and the floor 0.65, D: the shade 0.65 and the floor 0.40); the floor's shadow keeps
+# 1 - stage.shadow_key = 0.40 (tools/mv_world.py KEY_SHARE 0.6)
+DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 64, "search_taps": 64, "contact": True, "key_share": 0.35}
 # the casters' gaps found by the search are averaged plainly (0) or harmonically (1: the nearest caster rules).  Review
 # of softshadow-mme2, against the reference of a 5 degree light (MMD's own hard shadow under 64 directions of the light,
 # averaged; tools/selfshadow_check.py against) at 4 frames of the dancer: with the harmonic mean over 16 points one
@@ -682,8 +685,8 @@ def _options(s):
     s.add_argument("--no-contact", action="store_true", help="the same blur everywhere (--min-blur)")
     shade = s.add_mutually_exclusive_group()
     shade.add_argument("--key-share", type=float, default=DEFAULTS["key_share"],
-                       help="the key light's share: the shade keeps the rest of the light, as the floor of "
-                            "tools/mv_world.py does (default 0.6, its KEY_SHARE)")
+                       help="the key light's share: the shade keeps the rest of the light (default 0.35: it keeps 0.65, "
+                            "option D of 2026-10-17; 0.6 keeps 0.40 as the floor of tools/mv_world.py does, option A)")
     shade.add_argument("--toon", action="store_true", help="shade with MMD's toon colours as they are")
     s.add_argument("--debug", nargs="?", const="shadow", default=False, choices=("shadow", "lit", "toon"),
                    help="draw the shadow alone (shadow, for tools/shadow_measure.py), the body lit everywhere (lit) or "
