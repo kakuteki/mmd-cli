@@ -5,13 +5,13 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1769（定数 1438・引数 87・関数の既定 244。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 343（retarget 209・rig 53・踊りだけ 88）、記録の出所つき 56。
+- 数: 全部 1824（定数 1474・引数 91・関数の既定 259。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 349（retarget 213・rig 56・踊りだけ 88）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
 | 順 | 段 | 道具 | 値 | retarget | rig | 踊り | 確かめの物差し（tools/mv_inspect.py） | ほかの確かめ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 19 | 2 | 6 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
+| 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 38 | 2 | 7 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
 | 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 6 | 0 | 0 | 0 | feet.under_floor_frames、feet.ik_miss_floor_frames | motion_fk.py |
 | 3 | 平滑化と手ぶれ除去（v4s） | smooth_motion.py | 18 | 1 | 0 | 0 | spikes.centre_per_min、spikes.wrist_R_per_min、spikes.wrist_L_per_min、spikes.head_per_min、arms.wrist_8hz_pct、arms.wrist_3_6hz_pct、upper.head_stop_ms | motion_jerk.py |
 | 4 | 呼吸 | breath_layer.py | 60 | 6 | 0 | 3 | upper.head_stops_per_min、upper.upper_sudden_stops_per_min | - |
@@ -33,13 +33,34 @@
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
 
-## pmx_rig.py（1. 模型の写し（rig の受け持ち）、0）
+## pmx_rig.py（1. 模型の写し（rig の受け持ち）、6）
 
-（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| HELPERS.wrist | ("{s}手首補助", "{s}手捩", "{s}手首", ("{s}手首",), ("{s}手捩", "{s}ひじ"… |  | 63 |  |  |  |  |  |  |  |  |  |
+| HELPERS.shoulder | ("{s}腕補助", "{s}肩", "{s}腕", ("{s}腕W", "{s}腕"), ("{s}肩",) + T… |  | 64 |  |  |  |  |  |  |  |  |  |
+| HELPERS.hip | ("{s}足補助", "腰キャンセル{s}", "{s}足D", ("{s}足D",), ("下半身", "腰キャンセ… |  | 65 |  |  |  |  |  |  |  |  |  |
+| HELPER_FLAGS | 0x0002 ／ 0x0100 |  | 67 | rotatable, an append of the turn; hidden and not to be keyed (like ひじ補助) |  |  |  |  |  |  |  |  |
+| BROW_UP | (0.0, 0.1992, -0.0419) |  | 69 | Sour's Rin's 上: the brow's raise, in the face's slope |  |  |  |  | ○ |  |  | rig |
+| PANEL_BROW | 1 |  | 70 |  |  |  |  |  |  |  |  |  |
 
-## rig_skin.py（1. 模型の写し（rig の受け持ち）、0）
+## rig_skin.py（1. 模型の写し（rig の受け持ち）、13）
 
-（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| F_IK | 0x0020 |  | 67 |  |  |  |  |  |  |  |  |  |
+| F_LOCAL_APPEND | 0x0080 |  | 67 |  |  |  |  |  |  |  |  |  |
+| F_TAIL_BONE | 0x0001 |  | 67 |  |  |  |  |  |  |  |  |  |
+| F_AFTER_PHYSICS | 0x1000 |  | 68 |  |  |  |  |  |  |  |  |  |
+| F_APPEND_ROTATE | 0x0100 |  | 68 |  |  |  |  |  |  |  |  |  |
+| F_APPEND_TRANSLATE | 0x0200 |  | 68 |  |  |  |  |  |  |  |  |  |
+| KIND_CODE.BDEF1 | 0 |  | 69 |  |  |  |  |  |  |  |  |  |
+| KIND_CODE.BDEF2 | 1 |  | 69 |  |  |  |  |  |  |  |  |  |
+| KIND_CODE.BDEF4 | 2 |  | 69 |  |  |  |  |  |  |  |  |  |
+| KIND_CODE.QDEF | 4 |  | 69 |  |  |  |  |  |  |  |  |  |
+| KIND_CODE.SDEF | 3 |  | 69 |  |  |  |  |  |  |  |  |  |
+| IDENTITY | np.array([0.0, 0.0, 0.0, 1.0]) |  | 70 |  |  |  |  |  |  |  |  |  |
+| XYZ | np.eye(3) |  | 71 |  |  |  |  |  |  |  |  |  |
 
 ## pmx_spine.py（1. 模型の写し（rig の受け持ち）、4）
 
@@ -1589,9 +1610,46 @@
 
 ## 確かめの道具と部品（物差しの決め）
 
-### rig_check.py（確かめ・部品、0）
+### rig_check.py（確かめ・部品、36）
 
-（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNIT_CM | 8.0 | cm | 94 | Sour's Rin: one unit is 8 cm |  | ○ |  |  | ○ |  |  | retarget・rig |
+| MOVE_DEG | 0.01 | deg | 97 | a key turned less than this from rest does not move |  |  |  |  |  |  |  |  |
+| MOVE_UNITS | 1e-4 |  | 98 | nor one slid less than this |  |  |  |  |  |  |  |  |
+| MORPH_W | 1e-4 |  | 99 | a morph key below this weight does nothing |  |  |  |  | ○ |  |  | rig |
+| KNEE_JUMP_DEG | 10.0 | deg | 100 |  |  |  |  |  |  |  |  |  |
+| DEPTH | 0.02 | units | 101 | units (1.6 mm): a vertex this far inside another part is pushed into it |  | ○ |  |  |  |  |  | retarget |
+| GAP | 15 | frames | 102 | frames between two picked frames of one yardstick |  |  |  |  |  |  |  |  |
+| section_profile(bins) | 20 |  | 120 |  |  |  |  |  |  |  |  |  |
+| section_profile(hi) | 1.0 |  | 120 |  |  |  |  |  |  |  |  |  |
+| section_profile(lo) | 0.0 |  | 120 |  |  |  |  |  |  |  |  |  |
+| section_profile(min_radius) | 0.02 |  | 120 |  |  |  |  |  |  |  |  |  |
+| signed_distance(chunk) | 2048 |  | 204 |  |  |  |  |  |  |  |  |  |
+| signed_distance(k) | 8 |  | 204 |  |  |  |  |  |  |  |  |  |
+| pick_frames(per) | 5 |  | 258 |  |  |  |  |  |  |  |  |  |
+| dance_angles(first) | 0 |  | 474 |  |  |  |  |  |  |  |  |  |
+| gap(samples) | 21 |  | 590 |  |  |  |  |  |  |  |  |  |
+| physics_report(gravities) | (94.0, 122.5) |  | 618 |  |  |  | ○ |  |  |  |  | retarget |
+| pmx_diff(limit) | 2000 |  | 772 |  |  |  |  |  |  |  |  |  |
+| skin_delta(limit) | 400 |  | 962 |  |  |  |  |  |  |  |  |  |
+| skin_delta(tol) | 1e-4 |  | 962 |  |  |  |  |  |  |  |  |  |
+| LIMBS.upper_arm | ("腕", "ひじ", ("腕W", "腕", "腕補助", "腕捩", "腕捩1", "腕捩2", "腕捩3"), … |  | 1017 |  |  |  |  |  |  |  |  |  |
+| LIMBS.forearm | ("ひじ", "手首", ("ひじ", "ひじ補助", "ひじ補助+", "手捩", "手捩1", "手捩2", "手… |  | 1018 |  |  |  |  |  |  |  |  |  |
+| LIMBS.thigh | ("足", "ひざ", ("足D", "足", "足補助"), (0.15, 0.9)) |  | 1019 |  |  |  |  |  |  |  |  |  |
+| LIMBS.shin | ("ひざ", "足首", ("ひざD", "ひざ"), (0.1, 0.9)) |  | 1020 |  |  |  |  |  |  |  |  |  |
+| JOINTS.shoulder | ("腕", 0.75, ("肩", "腕W", "腕", "腕補助", "腕捩", "腕捩1", "腕捩2", "腕捩… |  | 1023 |  |  |  |  |  |  |  |  |  |
+| JOINTS.elbow | ("ひじ", 0.6, ("腕捩", "腕捩1", "腕捩2", "腕捩3", "腕W", "ひじ", "ひじ補助",… |  | 1024 |  |  |  |  |  |  |  |  |  |
+| JOINTS.wrist | ("手首", 0.45, ("手捩", "手捩1", "手捩2", "手捩3", "手首", "手首補助")) |  | 1025 |  |  |  |  |  |  |  |  |  |
+| JOINTS.hip | ("足", 1.1, ("足D", "足", "足補助")) |  | 1026 |  |  |  |  |  |  |  |  |  |
+| JOINTS.knee | ("ひざ", 0.8, ("足D", "ひざD", "足", "ひざ")) |  | 1027 |  |  |  |  |  |  |  |  |  |
+| JOINTS.ankle | ("足首", 0.6, ("ひざD", "足首D", "足先EX", "ひざ", "足首")) |  | 1028 |  |  |  |  |  |  |  |  |  |
+| vertices(at_least) | 0.9 |  | 1058 |  |  |  |  |  |  |  |  |  |
+| vertices(physics_max) | 0.05 |  | 1058 |  |  |  |  |  |  |  |  |  |
+| --pick | 4 |  | 1290 |  |  |  |  |  |  |  |  |  |
+| --figures | 0 |  | 1292 |  |  |  |  |  |  |  |  |  |
+| --gravity | [94.0, 122.5] |  | 1296 |  |  |  | ○ |  |  |  |  | retarget |
+| --pick | 4 |  | 1307 |  |  |  |  |  |  |  |  |  |
 
 ### spine_check.py（確かめ・部品、1）
 

@@ -29154,6 +29154,126 @@
    "same_as": "MARGIN"
   },
   {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "HELPERS.wrist",
+   "value": "(\"{s}手首補助\", \"{s}手捩\", \"{s}手首\", (\"{s}手首\",), (\"{s}手捩\", \"{s}ひじ\"), (\"{s}手首\",), 0)",
+   "line": 63,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "HELPERS.shoulder",
+   "value": "(\"{s}腕補助\", \"{s}肩\", \"{s}腕\", (\"{s}腕W\", \"{s}腕\"), (\"{s}肩\",) + TRUNK, (\"{s}腕W\", \"{s}腕\"), 2)",
+   "line": 64,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "HELPERS.hip",
+   "value": "(\"{s}足補助\", \"腰キャンセル{s}\", \"{s}足D\", (\"{s}足D\",), (\"下半身\", \"腰キャンセル{s}\"), (\"{s}足D\",), 2)",
+   "line": 65,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "HELPER_FLAGS",
+   "value": "0x0002 | 0x0100",
+   "line": 67,
+   "comment": "rotatable, an append of the turn; hidden and not to be keyed (like ひじ補助)",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "BROW_UP",
+   "value": "(0.0, 0.1992, -0.0419)",
+   "line": 69,
+   "comment": "Sour's Rin's 上: the brow's raise, in the face's slope",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": true,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "rig",
+   "step": 1
+  },
+  {
+   "tool": "pmx_rig.py",
+   "kind": "const",
+   "name": "PANEL_BROW",
+   "value": "1",
+   "line": 70,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
    "tool": "pmx_skirt.py",
    "kind": "const",
    "name": "FREE",
@@ -29256,6 +29376,1005 @@
    "review": "rig",
    "step": 1,
    "from": "HANDOVER 2026-10-12〜13 第 4 段: 関節の両側 0.35 単位（約 2.8 cm）で重みを混ぜる"
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "UNIT_CM",
+   "value": "8.0",
+   "line": 94,
+   "comment": "Sour's Rin: one unit is 8 cm",
+   "above": "",
+   "unit": "cm",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": true,
+    "people": false,
+    "literature": false,
+    "body": true
+   },
+   "review": "retarget・rig",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "MOVE_DEG",
+   "value": "0.01",
+   "line": 97,
+   "comment": "a key turned less than this from rest does not move",
+   "above": "",
+   "unit": "deg",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "MOVE_UNITS",
+   "value": "1e-4",
+   "line": 98,
+   "comment": "nor one slid less than this",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "MORPH_W",
+   "value": "1e-4",
+   "line": 99,
+   "comment": "a morph key below this weight does nothing",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": true,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "rig",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "KNEE_JUMP_DEG",
+   "value": "10.0",
+   "line": 100,
+   "comment": "",
+   "above": "",
+   "unit": "deg",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "DEPTH",
+   "value": "0.02",
+   "line": 101,
+   "comment": "units (1.6 mm): a vertex this far inside another part is pushed into it",
+   "above": "",
+   "unit": "units",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": true
+   },
+   "review": "retarget",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "GAP",
+   "value": "15",
+   "line": 102,
+   "comment": "frames between two picked frames of one yardstick",
+   "above": "",
+   "unit": "frames",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "section_profile(bins)",
+   "value": "20",
+   "line": 120,
+   "comment": "",
+   "above": "",
+   "function": "section_profile",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "section_profile(hi)",
+   "value": "1.0",
+   "line": 120,
+   "comment": "",
+   "above": "",
+   "function": "section_profile",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "section_profile(lo)",
+   "value": "0.0",
+   "line": 120,
+   "comment": "",
+   "above": "",
+   "function": "section_profile",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "section_profile(min_radius)",
+   "value": "0.02",
+   "line": 120,
+   "comment": "",
+   "above": "",
+   "function": "section_profile",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "signed_distance(chunk)",
+   "value": "2048",
+   "line": 204,
+   "comment": "",
+   "above": "",
+   "function": "signed_distance",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "signed_distance(k)",
+   "value": "8",
+   "line": 204,
+   "comment": "",
+   "above": "",
+   "function": "signed_distance",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "pick_frames(per)",
+   "value": "5",
+   "line": 258,
+   "comment": "",
+   "above": "",
+   "function": "pick_frames",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "dance_angles(first)",
+   "value": "0",
+   "line": 474,
+   "comment": "",
+   "above": "",
+   "function": "dance_angles",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "gap(samples)",
+   "value": "21",
+   "line": 590,
+   "comment": "",
+   "above": "",
+   "function": "gap",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "physics_report(gravities)",
+   "value": "(94.0, 122.5)",
+   "line": 618,
+   "comment": "",
+   "above": "",
+   "function": "physics_report",
+   "unit": "",
+   "depends": {
+    "gravity": true,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "retarget",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "pmx_diff(limit)",
+   "value": "2000",
+   "line": 772,
+   "comment": "",
+   "above": "",
+   "function": "pmx_diff",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "skin_delta(limit)",
+   "value": "400",
+   "line": 962,
+   "comment": "",
+   "above": "",
+   "function": "skin_delta",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "skin_delta(tol)",
+   "value": "1e-4",
+   "line": 962,
+   "comment": "",
+   "above": "",
+   "function": "skin_delta",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "LIMBS.upper_arm",
+   "value": "(\"腕\", \"ひじ\", (\"腕W\", \"腕\", \"腕補助\", \"腕捩\", \"腕捩1\", \"腕捩2\", \"腕捩3\"), (0.08, 0.92))",
+   "line": 1017,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "LIMBS.forearm",
+   "value": "(\"ひじ\", \"手首\", (\"ひじ\", \"ひじ補助\", \"ひじ補助+\", \"手捩\", \"手捩1\", \"手捩2\", \"手捩3\", \"手首\", \"手首補助\"), (0.08, 1.06))",
+   "line": 1018,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "LIMBS.thigh",
+   "value": "(\"足\", \"ひざ\", (\"足D\", \"足\", \"足補助\"), (0.15, 0.9))",
+   "line": 1019,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "LIMBS.shin",
+   "value": "(\"ひざ\", \"足首\", (\"ひざD\", \"ひざ\"), (0.1, 0.9))",
+   "line": 1020,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.shoulder",
+   "value": "(\"腕\", 0.75, (\"肩\", \"腕W\", \"腕\", \"腕補助\", \"腕捩\", \"腕捩1\", \"腕捩2\", \"腕捩3\"))",
+   "line": 1023,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.elbow",
+   "value": "(\"ひじ\", 0.6, (\"腕捩\", \"腕捩1\", \"腕捩2\", \"腕捩3\", \"腕W\", \"ひじ\", \"ひじ補助\", \"ひじ補助+\", \"手捩\", \"手捩1\", \"手捩2\", \"手捩3\"))",
+   "line": 1024,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.wrist",
+   "value": "(\"手首\", 0.45, (\"手捩\", \"手捩1\", \"手捩2\", \"手捩3\", \"手首\", \"手首補助\"))",
+   "line": 1025,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.hip",
+   "value": "(\"足\", 1.1, (\"足D\", \"足\", \"足補助\"))",
+   "line": 1026,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.knee",
+   "value": "(\"ひざ\", 0.8, (\"足D\", \"ひざD\", \"足\", \"ひざ\"))",
+   "line": 1027,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "const",
+   "name": "JOINTS.ankle",
+   "value": "(\"足首\", 0.6, (\"ひざD\", \"足首D\", \"足先EX\", \"ひざ\", \"足首\"))",
+   "line": 1028,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "vertices(at_least)",
+   "value": "0.9",
+   "line": 1058,
+   "comment": "",
+   "above": "",
+   "function": "vertices",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "default",
+   "name": "vertices(physics_max)",
+   "value": "0.05",
+   "line": 1058,
+   "comment": "",
+   "above": "",
+   "function": "vertices",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "option",
+   "name": "--pick",
+   "line": 1290,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "4",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "option",
+   "name": "--figures",
+   "line": 1292,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "0",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "option",
+   "name": "--gravity",
+   "line": 1296,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "[94.0, 122.5]",
+   "unit": "",
+   "depends": {
+    "gravity": true,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "retarget",
+   "step": null
+  },
+  {
+   "tool": "rig_check.py",
+   "kind": "option",
+   "name": "--pick",
+   "line": 1307,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "4",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": null
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_IK",
+   "value": "0x0020",
+   "line": 67,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_LOCAL_APPEND",
+   "value": "0x0080",
+   "line": 67,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_TAIL_BONE",
+   "value": "0x0001",
+   "line": 67,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_AFTER_PHYSICS",
+   "value": "0x1000",
+   "line": 68,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_APPEND_ROTATE",
+   "value": "0x0100",
+   "line": 68,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "F_APPEND_TRANSLATE",
+   "value": "0x0200",
+   "line": 68,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "KIND_CODE.BDEF1",
+   "value": "0",
+   "line": 69,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "KIND_CODE.BDEF2",
+   "value": "1",
+   "line": 69,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "KIND_CODE.BDEF4",
+   "value": "2",
+   "line": 69,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "KIND_CODE.QDEF",
+   "value": "4",
+   "line": 69,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "KIND_CODE.SDEF",
+   "value": "3",
+   "line": 69,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "IDENTITY",
+   "value": "np.array([0.0, 0.0, 0.0, 1.0])",
+   "line": 70,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
+  },
+  {
+   "tool": "rig_skin.py",
+   "kind": "const",
+   "name": "XYZ",
+   "value": "np.eye(3)",
+   "line": 71,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 1
   },
   {
    "tool": "run_live_tests_in_session.py",
@@ -36608,9 +37727,9 @@
     "spine_check.py",
     "skirt_probe.py"
    ],
-   "values": 19,
+   "values": 38,
    "retarget": 2,
-   "rig": 6,
+   "rig": 7,
    "dance": 0,
    "noted": 4
   },
@@ -37015,14 +38134,14 @@
  ],
  "stale_notes": [],
  "counts": {
-  "entries": 1769,
-  "const": 1438,
-  "option": 87,
+  "entries": 1824,
+  "const": 1474,
+  "option": 91,
   "option_of_constant": 34,
-  "default": 244,
-  "review": 343,
-  "retarget": 209,
-  "rig": 53,
+  "default": 259,
+  "review": 349,
+  "retarget": 213,
+  "rig": 56,
   "dance": 88,
   "noted": 56
  }
