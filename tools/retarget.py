@@ -1014,7 +1014,6 @@ CLEAR_ROUNDS = 4
 CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the surface
 CLEAR_TOL = 0.005               # units: an arm this little into a part is left as it is
 ELBOW_SHARE = 0.25              # the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder)
-TOUCH_ALLOW = 0.05              # units (4 mm): a hand on a part the source's hand touches may sink this far into it
 HOLD_FROM = 0.6                 # the relation's weight from which the clearance keeps the hand where it is (1 at a touch)
 SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder is not tested against the head (the shoulder is under it)
 TOL_DEG = 0.3                   # the keys meet the wanted turns this closely
@@ -1263,8 +1262,8 @@ def arm_points(body, side, ap, radii, hand):
 def penetration(tgt, side, ap, hand, parts, contact_w):
     """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
     point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; and the push that takes the wrist out
-    of what the forearm and the hand go into [F, 3].  A hand point a part the source's hand touches then (contact_w of
-    that part at least 0.3) may go TOUCH_ALLOW into it."""
+    of what the forearm and the hand go into [F, 3].  The hand and the forearm's half by it are not tested against a part
+    the source's hand touches then (contact_w of that part at least 0.3): the contact sets them there."""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
@@ -1291,10 +1290,12 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
             pen[:, (seg == 0) & (share < SHOULDER_SKIP)] = 0.0
         else:
             pen[:, seg == 0] = 0.0
-        if part in contact_w:                       # the hand and the forearm by it lie on a part the hand touches
+        if part in contact_w:
+            # the hand and the forearm by it lie on a part the source's hand touches: where they lie is the contact's
+            # (the hand set where the source's is, its turn the source's), not pushed off it here
             near_hand = (seg == 2) | ((seg == 1) & (share >= 0.5))
             touching = (contact_w[part] >= 0.3)[:, None] & near_hand[None, :]
-            pen = np.where(touching, pen - TOUCH_ALLOW, pen)
+            pen = np.where(touching, 0.0, pen)
         pen = np.maximum(pen, 0.0)
         if not np.any(pen > 0):
             continue
@@ -1422,11 +1423,11 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
             # elbow (the IK turns the elbow towards where the turned arm would have it) and the wrist does not follow
             # the turn
             Wt = W1 + pw2
-            keep = np.zeros(F)
-            swivel = None
+            pole = E1.copy()
             if hold is not None:
                 # a held hand: first the elbow round the arm's circle where it goes in least, the hand where it is; only
-                # where no elbow position clears the body does the arm turn and the hand leave the contact
+                # where no elbow position clears the upper arm does the arm turn at the shoulder and the hand leave the
+                # contact
                 idx = np.flatnonzero((hold >= 0.5) & moved)
                 if len(idx):
                     sub = {p: (pos[idx], rot[idx]) for p, (pos, rot) in parts.items()}
@@ -1434,13 +1435,11 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
                     touched = np.array(names, dtype=object)[np.argmax(np.stack([cw[n][idx] for n in names]), axis=0)]
                     Esw = best_swivel(tgt, side, S[idx], E[idx], W[idx], sub, touched)
                     clears = upper_depth(tgt, side, S[idx], Esw, W[idx], sub, touched) <= SWIVEL_CLEARS
-                    keep[idx[clears]] = hold[idx[clears]]
-                    swivel = (idx[clears], Esw[clears])
-            Wt = Wt + keep[:, None] * (W - Wt)
-            Es, Ws = arm_ik(S, E1, W1, Wt, pole=E1)
-            if swivel is not None and len(swivel[0]):
-                Es[swivel[0]] = swivel[1]
-                Ws[swivel[0]] = W[swivel[0]]
+                    k = idx[clears]
+                    h = hold[k][:, None]
+                    Wt[k] = (1 - h) * Wt[k] + h * W[k]
+                    pole[k] = (1 - h) * E1[k] + h * Esw[clears]
+            Es, Ws = arm_ik(S, E1, W1, Wt, pole=pole)
             Es = np.where(moved[:, None], Es, E)
             Ws = np.where(moved[:, None], Ws, W)
             loc = arm_locals(tgt, trk, frames, side, Es, Ws, hand[1])
