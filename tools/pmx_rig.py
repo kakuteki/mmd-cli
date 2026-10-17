@@ -31,7 +31,11 @@ Recipe:
                         wrist     右手首補助: on 右手捩, at 右手首, x 0.5 of 右手首; upper 右手捩 (and 右ひじ), lower 右手首
                                   (tools/fix_twist.py puts the forearm's twist past 45 degrees on 右手首: v10 up to 175)
                         shoulder  右腕補助: on 右肩, at 右腕, x 0.5 of 右腕W (the arm's swing without its twist, by its IK;
-                                  右腕 for a model without 腕W); upper 右肩 and the trunk, lower 右腕W
+                                  右腕 for a model without 腕W); upper 右肩 and the trunk, lower 右腕W.  On Sour's Rin the
+                                  shoulder's blended band lies at the dress' armhole, whose edge hangs on 肩 and the trunk
+                                  only: with the arm lifted about 170 degrees the skin the helper keeps round shows over the
+                                  dress' back by about a centimetre (the linear blend had pulled it in behind), so the
+                                  work's final copy leaves the shoulder out
                         hip       右足補助: on 腰キャンセル右 (足D's parent), at 右足D, x 0.5 of 右足D; upper 下半身, lower 右足D
 
 The copy is for this work only and is not to be distributed (Sour's ReadMe allows editing; distribution would need the
