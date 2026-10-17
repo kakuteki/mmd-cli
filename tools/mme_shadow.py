@@ -1,7 +1,7 @@
 """A soft self shadow for MMD through MikuMikuEffect (MME): the effect file that draws a model's body with MMD's own
 shading but reads the self shadow map at many points weighted by a Gaussian, and the files round it.
 
-    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 32] [--search-taps 16] [--key-share 0.6 | --toon]
+    python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.6 | --toon]
                                      [--debug [shadow|lit]] [--sharp]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py check MMD.exe
@@ -20,12 +20,13 @@ laid as a Gaussian lies (the same weight each, their radii its quantiles), and t
 Gaussian's spread on the shadow map:
 
 * with contact hardening (the default) it is the spread of a light --blur degrees wide (a standard deviation) at the
-  distance from the shadowed point back to what casts the shadow (a search of --search-taps points, from 3 % of its
-  radius out to all of it on a logarithm of the radius, finds the casters' gaps and takes their harmonic mean, so the
-  nearest caster rules; with none found the least blur stays; MMD's light projection is orthographic, so a depth
-  gap over the depth's rate along the light is a distance along the light, and a distance across the light times
-  |x| / 2 of the light's matrix is a share of the map).  An arm on the dress casts a shadow whose edge blurs with the
-  gap, as tools/mv_world.py's floor shadow does with the same --blur;
+  distance from the shadowed point back to what casts the shadow (a search of --search-taps points, 64 by default, from
+  3 % of its radius out to all of it on a logarithm of the radius, finds the casters' gaps and takes their mean: plain
+  by default, HARMONIC; the harmonic mean, where the nearest caster rules, speckled and lined the penumbra, review of
+  softshadow-mme2; with none found the least blur stays; a depth gap over the depth's rate along the light is a
+  distance along the light, and a distance across the light times |x| / 2 of the light's matrix is a share of the
+  map).  An arm on the dress casts a shadow whose edge blurs with the gap, as tools/mv_world.py's floor shadow does
+  with the same --blur;
 * never under --min-blur (a standard deviation in MMD units): the stair steps of MMD's map (some 4.5 mm on the dress at
   the default shadow distance) are blurred away even where the gap is 0.
 
@@ -54,8 +55,9 @@ shade on them) is left so.  --toon keeps MMD's toon colours as they are.
 
 --sharp writes the same file with one point and no blur and MMD's toon colours: MMD's own test (to check that the
 shading is MMD's).  --debug draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py;
---debug lit draws the body lit everywhere (no shade, no shadow), to read what a shade keeps of the light.  The file is
-ASCII.
+--debug lit draws the body lit everywhere (no shade, no shadow), to read what a shade keeps of the light; --debug toon
+draws the toon's share of the light where a shade shows (0 on a white toon), for tools/selfshadow_check.py against.
+The file is ASCII.
 
 prepare copies the folder of MODEL (its textures) into OUTDIR, and again each file that changed since the last copy, and
 writes the effect there under the model's name (MME applies <model name>.fx found beside the model when MMD loads it;
@@ -83,10 +85,18 @@ KERNEL_SIGMAS = 2.5               # the points lie within this many standard dev
 CUT_STD = math.sqrt((1.0 - (1.0 + 0.5 * KERNEL_SIGMAS ** 2) * math.exp(-0.5 * KERNEL_SIGMAS ** 2))
                     / (1.0 - math.exp(-0.5 * KERNEL_SIGMAS ** 2)))
 GOLDEN = math.pi * (3.0 - math.sqrt(5.0))
-DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 32, "search_taps": 16, "contact": True, "key_share": 0.6}
+DEFAULTS = {"blur": 5.0, "min_blur": 0.05, "taps": 64, "search_taps": 64, "contact": True, "key_share": 0.6}
+# the casters' gaps found by the search are averaged plainly (0) or harmonically (1: the nearest caster rules).  Review
+# of softshadow-mme2, against the reference of a 5 degree light (MMD's own hard shadow under 64 directions of the light,
+# averaged; tools/selfshadow_check.py against) at 4 frames of the dancer: with the harmonic mean over 16 points one
+# search point that found a near thing (a fold of the dress) shrank the blur of its pixel alone, and the penumbra came
+# out speckled and lined (8.4 % of its pixels brighter or darker than both neighbours across it; MMD's own 2.1 %) with
+# its outer edge cut (4.5 % of its tail all lit).  The plain mean over 64 search points and 64 Gaussian points: 2.4 %
+# and 0.4 %, the mean error from the reference the same (0.026 against 0.027)
+HARMONIC = 0
 FACING_MIN = 0.25         # the receiver's normal is held at least this far towards the light (75.5 degrees from it) when
                           # the plane round the pixel is worked out: a face along the light has no depth of its own
-DEBUGS = {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2}
+DEBUGS = {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2, "toon": 3}
 SEARCH_INNER = 0.03       # the innermost point of the search, a share of its radius (0.054 units: a caster's cone near
                           # the pixel is small, 0.38 units at 1.5 for 5 degrees)
 SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
@@ -144,7 +154,7 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
         raise ValueError("--taps and --search-taps are 1 to 64")
     kernel = [(0.0, 0.0, 1.0)] if n_taps == 1 else taps(n_taps)
     search = search_points(search_taps)
-    debug = {0: False, 1: "shadow", 2: "lit"}[DEBUGS[debug]]
+    debug = {0: False, 1: "shadow", 2: "lit", 3: "toon"}[DEBUGS[debug]]
     settings = {"blur": blur, "min_blur": min_blur, "taps": n_taps, "search_taps": search_taps, "contact": bool(contact),
                 "debug": debug, "sharp": bool(sharp), "key_share": key_share}
     head = ("// soft_self_shadow.fx: MMD's body pass with the self shadow (object_ss) read at many points of the shadow map\n"
@@ -152,9 +162,10 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
             "// passes are MMD's own.  Settings: %s\n" % json.dumps(settings, sort_keys=True))
     defines = ("#define SS_BLUR_RAD %.9f\n#define SS_MIN_WORLD %.6f\n#define SS_TAPS %d\n#define SS_SEARCH %d\n"
                "#define SS_CONTACT %d\n#define SS_DEBUG %d\n#define SS_SEARCH_WORLD %.6f\n#define SS_ALIGN %d\n"
-               "#define SS_KEEP %.6f\n#define SS_FACING_MIN %.6f\n#define SS_CONE %.6f\n"
+               "#define SS_KEEP %.6f\n#define SS_FACING_MIN %.6f\n#define SS_CONE %.6f\n#define SS_HARMONIC %d\n"
                % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, DEBUGS[debug], SEARCH,
-                  0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share, FACING_MIN, KERNEL_SIGMAS))
+                  0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share, FACING_MIN, KERNEL_SIGMAS,
+                  HARMONIC))
     return (head + defines + _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f") + BODY)
 
 
@@ -225,8 +236,9 @@ sampler ObjSphereSampler = sampler_state {
 // the texture and the sphere map are read through MMD's own samplers (s1, s2: MMD binds them there, with its own
 // filtering): through samplers of the effect's own the picture differed at the textures' fine lines (4 to 30 levels at
 // 3,200 px of a frame), through MMD's it differs by 1 level at most but at 84 px (NOTES)
-// the casters' gaps are averaged harmonically (the nearest caster rules): with the plain mean an arm and the chest above
-// it made the shadow on the dress as blurred as the chest's alone, and at 5 degrees it all but went (NOTES)
+// the casters' gaps: SS_HARMONIC 1 averages them harmonically (the nearest caster rules), 0 plainly.  The plain mean is
+// the default (tools/mme_shadow.py HARMONIC, review of softshadow-mme2: one near hit of the harmonic mean shrank the blur
+// of its pixel alone, a speckled and lined penumbra); an effect written without the define keeps the harmonic mean
 #ifndef SS_HARMONIC
 #define SS_HARMONIC 1
 #endif
@@ -357,7 +369,7 @@ float SoftShadow(float3 zc, float2 uv, float2 plane, float w)
     // or soft from one pixel to the next, review of softshadow-mme2)
     if (found > 0.5f) {
 #if SS_HARMONIC
-        // the casters' harmonic mean: the nearest caster rules (an arm over the dress), as a light's penumbra does
+        // the casters' harmonic mean: the nearest caster rules (an arm over the dress)
         gap = found / gap;
 #else
         gap /= found;
@@ -419,6 +431,13 @@ float4 SS_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, unif
         Color.a = 0.5f;
     }
     return Color;
+#endif
+#if SS_DEBUG == 3
+    // the toon's share of the light where a shade shows, 0 where none can (no toon, or a white one: MMD draws no shade
+    // there): where it is 1 the shadow is what shows (tools/selfshadow_check.py against --toon)
+    float tshare = (useToon && dot(MaterialToon, float3(0.2126f, 0.7152f, 0.0722f)) < 0.999f)
+                   ? saturate(dot(IN.Normal, -LightDirection) * TOON_SLOPE) : 0.0f;
+    return float4(tshare, tshare, tshare, 1.0f);
 #endif
     float3 zc = IN.ZCalcTex.xyz / IN.ZCalcTex.w;
     float2 uv = float2((1.0f + zc.x) * 0.5f, (1.0f - zc.y) * 0.5f);
@@ -666,8 +685,9 @@ def _options(s):
                        help="the key light's share: the shade keeps the rest of the light, as the floor of "
                             "tools/mv_world.py does (default 0.6, its KEY_SHARE)")
     shade.add_argument("--toon", action="store_true", help="shade with MMD's toon colours as they are")
-    s.add_argument("--debug", nargs="?", const="shadow", default=False, choices=("shadow", "lit"),
-                   help="draw the shadow alone (shadow, for tools/shadow_measure.py) or the body lit everywhere (lit)")
+    s.add_argument("--debug", nargs="?", const="shadow", default=False, choices=("shadow", "lit", "toon"),
+                   help="draw the shadow alone (shadow, for tools/shadow_measure.py), the body lit everywhere (lit) or "
+                        "the toon's share of the light where a shade shows (toon, for tools/selfshadow_check.py against)")
     s.add_argument("--sharp", action="store_true", help="MMD's own shadow test (one point) and toon colours")
 
 

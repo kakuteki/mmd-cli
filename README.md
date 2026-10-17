@@ -546,8 +546,8 @@ MikuMikuEffect（MME）0.37 x64 を入れた MMD の写しで、人物の本体�
 
 ```
 python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME]   # モデルのフォルダを OUTDIR に写し、隣に <名>.fx（--variant なら <名>[NAME.fx].pmx と NAME.fx）
-python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 32] [--search-taps 16] [--key-share 0.6 | --toon]
-                                [--debug [shadow|lit]] [--sharp]
+python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.6 | --toon]
+                                [--debug [shadow|lit|toon]] [--sharp]
 python tools/mme_shadow.py check MMD.exe                               # MME（3 つの DLL を SHA-256 で）が隣にあるか
 python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd           # この MMD がこのモデルの体の影をどちらで描くか
 python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [--shade SHADED.avi LIT.avi]
@@ -556,9 +556,11 @@ python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [
 
 - 陰の付け方は MMD の標準のまま（環境色と発光色の和を飽和、トゥーン、テクスチャとスフィアは MMD 自身の標本器）。`--sharp`（1 点・トゥーンの色）で描くと
   MMD の絵と 1 コマ 1,931 画素だけ違う（1 段階 1,690、5 段階以上 84）。
-- 影の比べ: 影のマップを画素のまわりの 32 点（同じ重み、半径をガウスの分位に、黄金角の渦巻き。2.5 標準偏差で切ったガウスの標準偏差 0.925 で
+- 影の比べ: 影のマップを画素のまわりの 64 点（同じ重み、半径をガウスの分位に、黄金角の渦巻き。2.5 標準偏差で切ったガウスの標準偏差 0.925 で
   割って広げ、散らばりの標準偏差を 1 に）で引き、平均を影とする。ぼかしの広がりは「光の広がり `--blur` 度 × 影を落とすものまでの光に沿った距離」
-  （16 点、半径の 3 %〜100 % を対数で等間隔に探し、見つけた距離の調和平均）、下限 `--min-blur` 0.05 単位で MMD のマップの階段を消す。
+  （64 点、半径の 3 %〜100 % を対数で等間隔に探し、見つけた距離の算術平均）、下限 `--min-blur` 0.05 単位で MMD のマップの階段を消す。
+  探し 16 点・ガウス 32 点・調和平均（softshadow-mme2 の直しの時点）は、探しの 1 点が近い物（服のしわ・すぐそばの物）を拾うとその画素だけ広がりが縮み、
+  半影が点と筋のむらになり外側が段で切れた（査読 review_softshadow_mme2、下）。
   **比べはどれも受ける面の平面で**（softshadow-mme2）: 画素のまわりのマップの点を、画素自身の深さでなく、補間した法線から求めた受ける面の平面の
   その点での深さと比べる（`plane_slope`）。MME が渡す光の行列は透視を含み（4 列目 _14・_24・_34 が 1 単位あたり 0.005 以上で光と直交、光に沿っては w が
   変わらない）、深さの列は光から 73 度ずれる（水平の成分が光と逆向き、光に沿った増え方は w で割った _33）。列から透視の分を引いた平面の傾きが、床の
@@ -569,6 +571,8 @@ python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [
 - 試しの壁の縁（`tools/selfshadow_check.py contact`、床の上の標準偏差・単位、5 度の光 / 直す前 / 直した後）: 距離 1.8 で 0.18 / 0.09 / 0.14、4.4 で
   0.45 / 0.10 / 0.39、9.2 で 0.95 / 0.15 / 0.72。距離 2 以上の比（縁 / 5 度の光）の中央値 0.21 → 0.79（光に正対させた床で 0.26 → 0.84）。探しが壁の
   下の方（光に近い所）も拾うので 5 度の光の約 8 割（算術平均にしても 2 %）。遠い影の角では 32 点が扇に見える。
+  査読の直し（算術平均・探し 64・ガウス 64）の後: 0.15 / 0.40 / 0.86（距離 1.75・4.37・9.19）、距離 2 以上の比の中央値 0.89（光に正対させた床 0.89）、
+  壁と板の明るさはどれも 1.000。
 - 陰の濃さ（`--key-share`、既定 0.6 = `mv_world.KEY_SHARE`）: 床と同じく光の 6 割が主の光とし、光に背いた側と影の中は光の 4 割を残す（トゥーンの色合いは
   保ち、輝度を 0.4 に）。MMD のトゥーンのままでは 0.72〜0.89 が残り、床の影の芯（0.4）と同じ光に見えない。トゥーンの無い（白い）材質（このモデルの
   顔・目）は MMD と同じく陰を描かない。`--toon` で MMD のトゥーンの色に戻る。
@@ -587,6 +591,15 @@ python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [
   同じ（足もとから 0.33〜0.36 単位。MMD 自身の深さのずれ）。
 - 人物の影だけの絵（同じ 256 枚、`tools/shadow_measure.py`）: 縁の幅 MMD 4.8 px・直す前 9.0・直した後 9.4、全部影 20 %・10.7 %・5.0 %、体の明るさの平均
   0.727・0.730・0.746、1/480 秒ごとに半分を超えて跳ぶ画素 1.56 %・0.31 %・0.24 %。
+- 査読 review_softshadow_mme2（`_spike/out/stage6/review_softshadow_mme2/NOTES.md`）: 実装の式を通らない基準として、MMD 自身の硬い比べ（`--debug --sharp`）を
+  光を 5 度に散らした 64 方向で 1 枚ずつ描いて平均した「5 度の光の影」と比べた（`tools/selfshadow_check.py jitter`・`truth`・`against`。試しの壁の縁は
+  式どおりの 1.02 倍）。人物 9 コマ（正面固定 5・カメラ D 4、物理なし）の陰の出る面の平均（MMD / main / softshadow-mme2 / 査読の直しの後）:
+  基準との平均の差 0.064 / 0.040 / 0.026 / 0.024、半影の筋（縁を横切る向きに両隣より 0.04 以上明るいか暗い画素）2.3 / 3.0 / 7.9 / 2.8 %、
+  隣との段 21 / 11 / 17 / 2.7 %、半影の外側（基準 0.05〜0.9）を真っ白に描く割合 39 / 10 / 5.3 / 0.5 %、基準で照らされた所を 0.95 より暗くする（にきび）
+  0 / 2.8 / 0.11 / 0.25 %、暗さの総量（基準を 1）0.96 / 0.97 / 0.95 / 0.96。筋と段の元は調和平均（探しの 1 点の近い物で広がりが縮む）、外側の切れは
+  探しの点の少なさ。直しの後は試しの形（細い板・球・柱・服のしわの波板、`zoo`）でも筋 0.1〜1.9 %、にきびなし。480 fps のちらつき（正面 2998〜3013）は
+  1/480 秒の変わり rms 0.070 → 0.064、跳んで次で戻る画素 0.14 → 0.10 %。描く時間は同じ（256 枚 37〜44 秒）。残り: 遠い物の広い影では 64 点の写しが
+  薄い帯・輪に見える（細い板の影、球の影のまわり）。
 - `verify` は soft で測り用のエフェクト（`--debug`・`--sharp`）を断り、mmd では隣に別の版の MMEffect.dll があるときも断る。`prepare` はモデルのフォルダを
   一度写したあとも、変わったファイル（作り直したモデル・テクスチャ）を写し直す（査読の直し）。
 - 計画の `self_shadow`（`tools/mv_chunks.py`、下）: "soft" は MME 入りの MMD とエフェクトを隣に置いたモデルの写しで描く。書かなければ今の絵
@@ -605,7 +618,16 @@ python tools/selfshadow_check.py contact PROBE.json RAMP.png [--part ramp|ramp_t
 python tools/selfshadow_check.py fan PROBE.json FAN.png                              # 光から 0〜75 度傾けた板が自分に落とす影
 python tools/selfshadow_check.py acne SHARP.avi SOFT.avi [--far 60]                  # 人物: MMD の影から離れた所の暗さ
 python tools/selfshadow_check.py seen SHADED.avi LIT.avi [--sub 16] [--shutter 0.5]  # 見える陰: 動画の速さに畳んだ変わりと粗さ、陰の深さ
+python tools/selfshadow_check.py jitter 64 [--blur 5]                                # 5 度の光を MMD の光 64 方向に（mmd light set --dir ... --register へ）
+python tools/selfshadow_check.py truth OUT.npz JIT_00.png ...                        # その向きで描いた --debug --sharp の絵の平均 = 5 度の光の影の基準
+python tools/selfshadow_check.py against TRUTH.npz SOFT.png [--toon TOON.png] [--box X0,Y0,X1,Y1]  # 影だけの絵を基準と比べる
+python tools/selfshadow_check.py toggles SHADOW.avi [--jump 0.25]                    # 480 fps の影だけの絵: 跳んで次で戻る画素（ちらつき）
 ```
+
+- 基準（査読 review_softshadow_mme2）: 光の向きを 5 度（各軸の標準偏差）に散らした 64 方向で、同じコマを MMD 自身の硬い比べで 1 枚ずつ描いて平均する。
+  エフェクトの式を通らない「5 度の光の影」（縁の広がり・細い物の影の薄まり・接する所の締まり）。against は差・偏り・暗さの総量の比・基準が暗い所で
+  明るすぎ（leak）・明るい所で暗すぎ（dark）・半影の筋（ripples）・隣との段（steps）・半影の外側が真っ白（tail_cut）・ずれの集まる所（tiles、画素の箱）を出す。
+  `--toon` は `tools/mme_shadow.py write --debug toon` の絵（トゥーンの割合、白いトゥーンの材質は 0）で、陰の出る面だけに絞る。
 
 - probe の壁は床に立ち、上の縁が床から 10 単位まで斜めに上がる（影の縁が接する所から遠い所まで続く）。ramp は水平な床、ramp_tilt は光に正対させた床。
   三角形は両まわりで書く（MMD は影のマップを光に背いた面を除いて描き、片まわりの壁は影を落とさなかった）。カメラの写しは mv_world.View。

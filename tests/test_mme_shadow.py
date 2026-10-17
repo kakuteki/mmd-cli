@@ -128,6 +128,16 @@ class EffectTest(unittest.TestCase):
         self.assertIn('"debug": "lit"', lit.splitlines()[2])
         self.assertIn("#if SS_DEBUG == 2", lit)
         self.assertEqual(define(mme_shadow.effect(), "SS_DEBUG"), 0)
+        # --debug toon (review of softshadow-mme2): the toon's share of the light where a shade shows, 0 where none can
+        # (no toon or a white one), for tools/selfshadow_check.py against --toon
+        toon = mme_shadow.effect(debug="toon")
+        self.assertEqual(define(toon, "SS_DEBUG"), 3)
+        self.assertIn('"debug": "toon"', toon.splitlines()[2])
+        body = toon[toon.index("#if SS_DEBUG == 3"):]
+        body = body[:body.index("#endif")]
+        self.assertIn("saturate(dot(IN.Normal, -LightDirection) * TOON_SLOPE)", body)
+        self.assertIn("MaterialToon", body)
+        self.assertIn("useToon", body)
 
     def test_wrong_settings_are_refused(self):
         for bad in ({"blur": -1}, {"blur": 45}, {"min_blur": -0.1}, {"min_blur": 3}, {"n_taps": 0}, {"n_taps": 65},
@@ -307,9 +317,32 @@ class PlaneTest(unittest.TestCase):
         self.assertGreaterEqual(sum(1 for r in radii if r <= cone), 6)
         n, rows = array(mme_shadow.effect(), "SEARCH")
         self.assertEqual(n, mme_shadow.DEFAULTS["search_taps"])
-        for (x, y, _), (a, b, _) in zip(rows, pts):
+        for (x, y, _), (a, b, _) in zip(rows, mme_shadow.search_points(n)):
             self.assertAlmostEqual(x, a, places=6)
             self.assertAlmostEqual(y, b, places=6)
+
+    def test_the_casters_gaps_are_averaged_plainly_over_64_points_by_default(self):
+        # review of softshadow-mme2, against the reference of a 5 degree light (MMD's own hard shadow under 64 directions
+        # of the light, averaged: tools/selfshadow_check.py against) at 4 frames of the dancer: with the harmonic mean
+        # of the gaps (the nearest caster rules) one search point that found a near thing (a fold of the dress) shrank
+        # the blur of its pixel alone, and the penumbra came out speckled and lined (8.4 % of its pixels brighter or
+        # darker than both neighbours across it, MMD's own 2.1 %) with its outer edge cut (4.5 % of its tail all lit).
+        # The plain mean over 64 search points and 64 Gaussian points: 2.4 % and 0.4 %, the mean error the same
+        text = mme_shadow.effect()
+        self.assertEqual(define(text, "SS_HARMONIC"), 0)
+        self.assertLess(text.index("#define SS_HARMONIC 0"), text.index("#ifndef SS_HARMONIC"))   # the body takes it
+        self.assertEqual(define(text, "SS_SEARCH"), 64)
+        self.assertEqual(define(text, "SS_TAPS"), 64)
+        self.assertEqual(array(text, "SEARCH")[0], 64)
+        self.assertEqual(array(text, "KERNEL")[0], 64)
+        # the points of 64 still lie as the Gaussian lies (a standard deviation of 1 on each axis) and the search from
+        # SEARCH_INNER of its radius out to all of it
+        pts = mme_shadow.taps(64)
+        for axis in (0, 1):
+            self.assertAlmostEqual(math.sqrt(sum(p[axis] ** 2 for p in pts) / 64.0), 1.0, delta=0.03)
+        radii = sorted(math.hypot(x, y) for x, y, _ in mme_shadow.search_points(64))
+        self.assertAlmostEqual(radii[0], mme_shadow.SEARCH_INNER, places=6)
+        self.assertAlmostEqual(radii[-1], 1.0, places=6)
 
     def test_with_no_caster_found_the_least_blur_is_kept(self):
         # no caster in the cone is not a reason for MMD's hard test: the Gaussian at the least blur, as everywhere
@@ -460,7 +493,7 @@ class VerifyTest(unittest.TestCase):
         # review of softshadow-mme: --debug draws the shadow alone (black and white) or the body lit, --sharp MMD's own
         # test; a plan that says soft must not render either
         self.install()
-        for settings in ({"debug": "shadow"}, {"debug": "lit"}, {"sharp": True}):
+        for settings in ({"debug": "shadow"}, {"debug": "lit"}, {"debug": "toon"}, {"sharp": True}):
             mme_shadow.write(os.path.join(self.models, "White.fx"), **settings)
             with self.assertRaises(ValueError, msg=settings):
                 mme_shadow.verify(self.exe, self.model, "soft")
