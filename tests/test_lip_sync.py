@@ -279,6 +279,15 @@ class SyntheticSongTest(unittest.TestCase):
                 self.assertGreater(self.tr["い"][mid], 0.6)
                 self.assertGreater(self.tr["あ"][mid], 0.1)
 
+    def test_u_is_u_alone(self):
+        # う alone shows a gap of 0.49 of あ's height (1.2 to 2.6 pixels on the MV's pictures); with お 0.2 it stood taller
+        # than お itself (tools/mouth_shape.py, v11 face review)
+        for li, mi, c, v, c0, v0, v1 in self.truth:
+            if v == "u" and SONG[li][2] == 0.0:
+                mid = int(frame_at((v0 + v1) / 2))
+                self.assertGreater(self.tr["う"][mid], 0.6)
+                self.assertLess(self.tr["お"][mid], 0.02)
+
     def test_the_mouth_is_shut_in_the_rests(self):
         sung = [(c0, v1) for li, mi, c, v, c0, v0, v1 in self.truth]
         lines = [(SONG[li][0], max(v1 for l2, _, _, _, _, _, v1 in self.truth if l2 == li)) for li in range(len(SONG))]
@@ -423,6 +432,115 @@ class GuideTest(unittest.TestCase):
         self.assertEqual(len(morae), 5)
 
 
+class HiatusTest(unittest.TestCase):
+    """a syllable that is a vowel alone after another syllable (と お), sung after a short break that is soft but not
+    silent (the voice falls 15 to 20 dB, as at 85.3 s of the MV): before 2026-10-17 the alignment had no unit for that
+    break but the next syllable's consonant, squeezed と and お into the first note (50 and 60 ms) and spread the next
+    と over two notes (review lipsync 5, 85.2 to 85.9 s)"""
+
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(7)
+        cls.folder = tempfile.mkdtemp()
+        x = np.zeros(int(4.0 * SR))
+        t = 1.0
+        cls.truth = []
+
+        def vowel(v, dur, db=0.0, f0=260.0):
+            seg = _sung(FORMANTS[v], int(dur * SR), f0, rng) * 0.3 * 10 ** (db / 20)
+            x[int(t * SR):int(t * SR) + len(seg)] += _fade(seg, 15)
+
+        def closure(dur):
+            # the tongue's stop: a near silence, then a short burst
+            n = int(0.012 * SR)
+            burst = rng.normal(0, 0.3, n)
+            x[int((t + dur - 0.015) * SR):int((t + dur - 0.015) * SR) + n] += _fade(burst, 3)
+        # き
+        c0 = t
+        t += 0.065
+        vowel("i", 0.24)
+        cls.truth.append(("k", "i", c0, t))
+        t += 0.24
+        # と: a closure, a short note
+        c0 = t
+        closure(0.08)
+        t += 0.08
+        vowel("o", 0.12)
+        cls.truth.append(("s", "o", c0, t))
+        t += 0.12
+        # the break: the voice dies down to about -20 dB (reverb, breath) for 0.2 s, then お starts a new note
+        vowel("o", 0.2, db=-19.0, f0=250.0)
+        t += 0.2
+        vowel("o", 0.13, f0=300.0)
+        cls.truth.append(("", "o", t, t))
+        t += 0.13
+        # と と: two more notes after closures
+        for dur in (0.14, 0.24):
+            c0 = t
+            closure(0.11)
+            t += 0.11
+            vowel("o", dur, f0=280.0)
+            cls.truth.append(("s", "o", c0, t))
+            t += dur
+        end1 = t
+        # a second line, か then あ after a silent break (a breath): the mouth closes in the silence
+        t += 0.6
+        c0 = t
+        t += 0.065
+        vowel("a", 0.2)
+        cls.truth.append(("k", "a", c0, t))
+        t += 0.2
+        cls.silence = (t, t + 0.25)
+        t += 0.25
+        vowel("a", 0.3, f0=300.0)
+        cls.truth.append(("", "a", t, t))
+        t += 0.3
+        x += rng.normal(0, 1e-4, len(x))
+        cls.voice = os.path.join(cls.folder, "v.wav")
+        write_wav(cls.voice, x.astype(np.float32))
+        cls.lines = os.path.join(cls.folder, "l.tsv")
+        write_lines(cls.lines, [(0.8, end1 + 0.2, "ちと おこと"), (end1 + 0.45, t + 0.2, "かあ")])
+        morphs = [vmd.MorphKey(n, 0, 0.0) for n in VOWEL_MORPHS] + [vmd.MorphKey("まばたき", 149, 0.0)]
+        cls.face = os.path.join(cls.folder, "f.vmd")
+        vmd.dump(vmd.Motion(model_name="Rin", morphs=morphs), cls.face)
+        cls.align = os.path.join(cls.folder, "a.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.code = lip_sync.main([cls.face, cls.voice, os.path.join(cls.folder, "o.vmd"), "--lines", cls.lines,
+                                      "--align-out", cls.align])
+        with open(cls.align, encoding="utf-8") as f:
+            cls.morae = json.load(f)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def test_each_syllable_starts_on_its_own_note(self):
+        self.assertEqual(self.code, 0)
+        self.assertEqual([m["kana"] for m in self.morae], ["き", "と", "お", "と", "と", "か", "あ"])
+        for m, (c, v, c0, v0) in zip(self.morae, self.truth):
+            self.assertAlmostEqual(m["v0"], v0, delta=0.04, msg=m["kana"])
+
+    def test_no_vowel_is_squeezed_to_its_shortest(self):
+        for m in self.morae:
+            self.assertGreater(m["v1"] - m["v0"], 0.08, m["kana"])
+
+    def test_the_break_is_found_and_the_jaw_stays_near_the_vowel_through_it(self):
+        o = [m for m in self.morae if m["kana"] == "お"][0]
+        self.assertIn("g0", o)
+        self.assertAlmostEqual(o["g0"], self.truth[1][3] + 0.12, delta=0.05)       # where the と's note dies down
+        tr = tracks(vmd.load(os.path.join(self.folder, "o.vmd")), 150)
+        mid = int(round(frame_at(o["v0"] - 0.1)))                                 # 0.1 s into the break's end
+        self.assertGreater(tr["お"][mid], 0.2)
+        self.assertLess(tr["お"][mid], 0.8)
+
+    def test_the_mouth_closes_in_a_silent_break(self):
+        a = [m for m in self.morae if m["kana"] == "あ"][0]
+        self.assertIn("g0", a)
+        tr = tracks(vmd.load(os.path.join(self.folder, "o.vmd")), 150)
+        mid = int(round(frame_at(sum(self.silence) / 2.0)))
+        self.assertLess(tr["あ"][mid], lip_sync.REST_OPEN)
+
+
 class OutsideTheLinesTimingTest(unittest.TestCase):
     """outside the lines the mouth is FACE's own, a hand-made mouth that leads the voice by GUIDE_LAG: the output must
     lead the voice there by --lead-ms as it does in the lines, not by both (review 2026-10-17: the mouth closed 0.12 s
@@ -497,6 +615,73 @@ class OutsideTheLinesTimingTest(unittest.TestCase):
     def test_the_mouth_closes_the_lead_before_the_ad_lib_ends(self):
         lead = self.off - self.crossing(4.5, 5.3, False)
         self.assertAlmostEqual(lead, lip_sync.LEAD_MS / 1000.0, delta=0.025)
+
+
+class HoldOutsideTheLinesTest(unittest.TestCase):
+    """outside the lines the mouth is FACE's own: where FACE closes it while the voice sings on (the end of a long note
+    after the lines, 233.2 s of the MV: closed 0.3 s before the voice), the last vowel it showed is held until the voice
+    stops; a sound FACE never opened the mouth on (an instrument leaking into the separated voice, 247.3 s of the MV, or
+    a sound that is no singing) stays closed"""
+
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(11)
+        cls.folder = tempfile.mkdtemp()
+        x = np.zeros(int(8.0 * SR))
+        t = 1.0
+        for c, v, dur in [("k", "a", 0.24), ("s", "a", 0.22), ("m", "a", 0.26), ("", "o", 0.34)]:
+            if c == "k":
+                t += 0.065
+            elif c == "s":
+                hiss = np.diff(rng.normal(0, 0.25, int(0.09 * SR) + 1))
+                x[int(t * SR):int(t * SR) + len(hiss)] += _fade(hiss, 10) * 0.5
+                t += 0.09
+            elif c == "m":
+                hum = _sung(FORMANTS["N"], int(0.07 * SR), 260.0, rng) * 0.08
+                x[int(t * SR):int(t * SR) + len(hum)] += _fade(hum, 10)
+                t += 0.07
+            seg = _sung(FORMANTS[v], int(dur * SR), 260.0, rng) * 0.3
+            x[int(t * SR):int(t * SR) + len(seg)] += _fade(seg, 15)
+            t += dur
+        cls.on, cls.off = 4.0, 4.9                            # a long note after the line
+        seg = _sung(FORMANTS["e"], int((cls.off - cls.on) * SR), 300.0, rng) * 0.3
+        x[int(cls.on * SR):int(cls.on * SR) + len(seg)] += _fade(seg, 20)
+        cls.tone = (6.0, 6.6)                                 # a loud steady tone FACE does not sing (a leak)
+        n = int((cls.tone[1] - cls.tone[0]) * SR)
+        x[int(cls.tone[0] * SR):int(cls.tone[0] * SR) + n] += _fade(0.2 * np.sin(2 * np.pi * 523.0 * np.arange(n) / SR), 20)
+        x += rng.normal(0, 1e-4, len(x))
+        cls.voice = os.path.join(cls.folder, "v.wav")
+        write_wav(cls.voice, x.astype(np.float32))
+        cls.lines = os.path.join(cls.folder, "l.tsv")
+        write_lines(cls.lines, [(0.8, t + 0.2, "かさまお")])
+        lag = lip_sync.GUIDE_LAG
+        fa = int(round((cls.on - lag) * FPS - lip_sync.SHOWN)) - 1
+        fb = int(round((cls.off - 0.3 - lag) * FPS - lip_sync.SHOWN)) - 1   # FACE closes 0.3 s before the voice ends
+        morphs = [vmd.MorphKey(n_, 0, 0.0) for n_ in VOWEL_MORPHS]
+        morphs += [vmd.MorphKey("え", fa, 0.0), vmd.MorphKey("え", fa + 2, 1.0), vmd.MorphKey("え", fb, 1.0),
+                   vmd.MorphKey("え", fb + 2, 0.0), vmd.MorphKey("まばたき", 239, 0.0)]
+        cls.face = os.path.join(cls.folder, "f.vmd")
+        vmd.dump(vmd.Motion(model_name="Rin", morphs=morphs), cls.face)
+        cls.out = os.path.join(cls.folder, "o.vmd")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.code = lip_sync.main([cls.face, cls.voice, cls.out, "--lines", cls.lines])
+        cls.frames = 240
+        cls.open = opening(tracks(vmd.load(cls.out), cls.frames), cls.frames)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def test_the_mouth_stays_open_until_the_voice_ends(self):
+        self.assertEqual(self.code, 0)
+        # 0.15 s before the voice ends (after FACE closed): still open
+        self.assertGreater(self.open[int(round(frame_at(self.off - 0.15)))], 0.3)
+        # and closed soon after it ends
+        self.assertLess(self.open[int(round(frame_at(self.off + 0.15)))], 0.1)
+
+    def test_a_sound_face_never_sang_stays_closed(self):
+        a, b = int(round(frame_at(self.tone[0] + 0.1))), int(round(frame_at(self.tone[1] - 0.1)))
+        self.assertLessEqual(self.open[a:b + 1].max(), lip_sync.REST_OPEN + 1e-6)
 
 
 class CliTest(unittest.TestCase):
