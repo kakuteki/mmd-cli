@@ -201,5 +201,47 @@
  },
  "pmm_gravity.py:CURRENT.acceleration": {
   "from": "pmm の中の位置（重力の今の値の加速度）。値の決めではない。窓の値と単位: MMD 9.32 で窓の値 1 あたり 9.6 単位/s²（README）"
+ },
+ "foot_layer.py:SKIM_LIFT": {
+  "from": "v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 4.8〜5.2 mm → 0〜0.4 mm。retarget が元の高さで運ぶ足を足の層が床へ下ろして滑らせていた（足の層 1 の後の靴の滑り 380 → 604 cm/分、うち 160 は 3〜4 mm 浮いて 30 cm/s より速い足）。0.4 mm で 467、鎖の最後 621 → 316"
+ },
+ "foot_layer.py:SKIM_LIFT_BEFORE": {
+  "from": "v11feet 2026-10-17: --skim off で前の作り（landing human だけ、CONTACT_EXIT の 4.8〜5.2 mm）"
+ },
+ "foot_layer.py:--skim": {
+  "from": "v11feet 2026-10-17: 新設、既定 on（--landing off の 1 回目にも）。--landing off --skim off で c012c32 とバイト同じ"
+ },
+ "foot_layer.py:--hover": {
+  "from": "v11feet 2026-10-17: 既定 sink（--landing human）→ off。retarget の後は 2 回目の足の層の下げが 1 か所 23 コマ・最大 1.3 cm だけで、off でも鎖の最後の数が同じ（靴の滑り 296.6 → 294.9、宙 4.63、浮き 2.42 %）"
+ },
+ "contact_layer.py:SWING_CLEAR": {
+  "from": "v11feet 2026-10-17: 新設 5 mm（ON_FLOOR + 1 mm）。立ちの回りへの下げの馴らし・宙の体の変化に連れる下げで、30 cm/s より速い振りの足を床へ下ろしていた（曲の 22 + 15 cm/分）"
+ },
+ "contact_layer.py:GLIDE_MAX": {
+  "from": "v11feet 2026-10-17: 新設 2 cm（retarget の TOUCH_FLOOR）。立つ足の無い 4 コマ以上で腰が宙のように落ちない所を低い方の足で支える。1.6 cm（AIR_CLEAR）では宙 4.63 回/分・浮き 2.42 %、2 cm で 2.68・2.04 %（人 1.26 [0, 2.92]・1.39 [0.55, 2.19]）、靴の滑り 297 → 316 cm/分"
+ },
+ "contact_layer.py:PLANT_POP": {
+  "from": "v11feet 2026-10-17: 新設 2 歩。立つ足の 1〜2 歩の跳び（前後は遅い）は踊りの滑りでなく止める"
+ },
+ "contact_layer.py:PLANT_SPIKE": {
+  "from": "v11feet 2026-10-17: 新設（2 倍、5 cm）。滑りの中の 1 歩の跳び（曲の 242.1 秒、前後 1.7・1.9 cm の間の 11.35 cm）を前後の速さへ"
+ },
+ "retarget.py:JUMP_NEAR": {
+  "from": "v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ）"
+ },
+ "retarget.py:JUMP_RATE": {
+  "from": "v11feet 2026-10-17: 新設 2.5 cm/コマ。床の近くで止めの分を 1 コマで返す跳び（128.0 秒の 13.7 cm）を、元の足より 2.5 cm/コマ以上速く動かないように前後へ配る"
+ },
+ "retarget.py:JUMP_SPREAD": {
+  "from": "v11feet 2026-10-17: 新設 6 コマ（各側）"
+ },
+ "retarget_check.py:POP_NEAR_CM": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ 2 cm"
+ },
+ "retarget_check.py:POP_CM": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ 8 cm"
+ },
+ "retarget_check.py:POP_SHARE": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ（元の動きがその半分未満なら元に無い跳び）"
  }
 }
