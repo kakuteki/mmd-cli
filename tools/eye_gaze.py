@@ -115,8 +115,8 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   a turn that goes less than GATE_TURN degrees its way (a shake that comes back: held in the head before it, the
   eyes would ride the head's first swing).
 * Eye contact (state contact) is planned first, on the whole song.  The camera is within reach on a frame when the
-  eyes, held inside the contact zone, would be within CONTACT_ERROR of it (and it is not behind her); gaps of
-  CONTACT_GAP frames or less are closed (the analysis joins them too).  No contact from END_CLEAR frames before a
+  eyes, held inside the contact zone and the eccentric wall, would be within CONTACT_ERROR of it (not behind her); gaps
+  of CONTACT_GAP frames or less are closed (the analysis joins them too).  No contact from END_CLEAR frames before a
   cut to CUT_CLEAR after it: she cannot see the edit, and searching for the camera at every cut was one of the
   analysis' findings.  Every run of CONTACT_MIN frames or more becomes a contact, cut to CONTACT_MAX with an anchor
   of the song two thirds in when it is longer; runs of CONTACT_MID frames or more become contacts only near an anchor
