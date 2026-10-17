@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1934（定数 1560・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 385（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 57。
+- 数: 全部 1936（定数 1562・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 385（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 59。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -24,7 +24,7 @@
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
-| 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
+| 14 | 視線 | eye_gaze.py | 105 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
@@ -898,113 +898,115 @@
 | --order-mode | "centre" |  | 2040 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
 | --transit-scale | 1.0 |  | 2051 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
 
-## eye_gaze.py（14. 視線、103）
+## eye_gaze.py（14. 視線、105）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 213 |  |  |  |  |  |  |  |  |  |
-| MAX_YAW | 18.0 | deg | 214 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
-| MAX_DOWN | 10.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| MAX_UP | 6.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| LIMIT_MAX | 45.0 | deg | 217 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
-| SOFT_FROM | 0.6 |  | 218 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
-| EDGE | 0.9 |  | 219 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
-| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 220 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
-| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 221 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
-| CONTACT_ERROR | 4.0 | deg | 222 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
-| CONTACT_GAP | 2 | frames | 224 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
-| CONTACT_MIN | 48 | frames | 225 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
-| CONTACT_MID | 30 | frames | 226 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
-| CONTACT_SPARE | 2 |  | 227 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
-| CONTACT_MAX | 150 | frames | 228 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
-| ANCHOR_NEAR | 30 | frames | 229 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
-| CUT_CLEAR | 6 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| END_CLEAR | 2 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| LOOK_AHEAD | 2 | frames | 231 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
-| GAP | 8.0 | deg | 232 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
-| SUSTAIN | 6 | frames | 233 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
-| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 234 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
-| FIXATION_SPREAD | 5 | frames | 235 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
-| GLANCE | (45, 120) | frames | 236 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
-| VOR_GAIN | (1.0, 1.0) |  | 237 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
-| GATE_TURN | 20.0 | deg | 238 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
-| QUICK_AFTER | 5 | frames | 239 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
-| QUICK_SPREAD | 3 |  | 240 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
-| QUICK_SUSTAIN | 6 | frames | 241 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
-| QUICK_AHEAD | 3 | frames | 242 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
-| FACE_AHEAD | 12 |  | 244 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
-| WALL | 0.85 |  | 245 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
-| WALL_SEEN | 0.84 |  | 246 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
-| MAX_STEP | 8.0 | deg | 247 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
-| FLIP_STEP | 4.0 | deg | 248 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
-| LONG_SACCADE | 35.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| SHORT_SACCADE | 15.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 251 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
-| AVOID | 6.0 | deg | 252 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
-| KEEP_OFF | 5.0 | deg | 253 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
-| TURN_SPEED | 150.0 | deg/s | 254 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
-| LEAD | (2, 4) | frames | 255 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
-| LEAD_SHARE | 13.0 / 18.0 |  | 256 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
-| LEAD_STEP | 6.0 | deg | 257 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
-| QUIET | 8 | frames | 258 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
-| GUARD | 3 | frames | 259 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
-| MIN_SACCADE | 0.5 | deg | 260 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
-| CUT_JUMP | 1.0 | units | 261 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
-| CUT_TURN | 5.0 | deg | 262 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
-| DRIFT_STEP | 0.03 | deg | 263 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
-| DRIFT_LIMIT | 0.3 | deg | 264 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
-| MICRO_INTERVAL | (15, 45) | frames | 265 | frames between microsaccades |  |  |  |  |  |  |  |  |
-| MICRO_SIZE | 0.15 | deg | 266 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
-| FORWARD_TOLERANCE | 20.0 | deg | 267 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
-| WALL_GAP | 3.0 | deg | 268 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
-| UNIT_M | 0.08 | m | 274 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
-| HAND_FAR | 0.60 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_NEAR | 0.18 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_REACH | 4.0 |  | 278 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
-| HAND_CAMERA | 10.0 | deg | 279 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_FAST | 300.0 | deg/s | 280 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
-| HAND_SLOW | 100.0 | deg/s | 281 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
-| HAND_MIN | 9 | frames | 282 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
-| HAND_PALM | 45.0 | deg | 284 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_JOIN | 2 | frames | 285 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
-| HAND_AHEAD | 1 | frames | 286 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
-| PURSUIT_SPEED | 100.0 | deg/s | 287 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
-| CATCH_UP | 3.0 | deg | 288 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
-| CATCH_UP_AFTER | 4 | frames | 289 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
-| DEBUG_STEP | 30 |  | 290 |  |  |  |  |  |  |  |  |  |
-| REVERSAL | 3.0 | deg | 293 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
-| REVERSAL_WITHIN | 10 |  | 294 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
-| STEADY_GAZE | 10.0 | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_HEAD | (15.0, 120.0) | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 299 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
-| STILL_FLOW | 0.1 |  | 300 |  |  |  |  |  |  |  |  |  |
-| STILL_HEAD | 20.0 |  | 300 |  |  |  |  |  |  |  |  |  |
-| CONTACT_SEEN | 4.0 | deg | 302 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
-| CONTACT_JOIN | 2 | frames | 303 | frames: gaps it joins |  |  |  |  |  |  |  |  |
-| LARGE_CHANGE | 20.0 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LARGE_WINDOW | 15 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LEAD_MIN_FRAMES | 3 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_SEEN | 3.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_TURN | 200.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_MARGINS | (330, 172) |  | 306 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
-| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 308 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
-| _r(places) | 4 |  | 312 |  |  |  |  |  |  |  |  |  |
-| _vec(places) | 4 |  | 316 |  |  |  |  |  |  |  |  |  |
-| sights(first) | 0 |  | 415 |  |  |  |  |  |  |  |  |  |
-| hand_points(first) | 0 |  | 440 |  |  |  |  |  |  |  |  |  |
-| hand_palms(first) | 0 |  | 455 |  |  |  |  |  |  |  |  |  |
-| hand_aims(first) | 0 |  | 485 |  |  |  |  |  |  |  |  |  |
-| REACH_STEPS | 24 |  | 515 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
-| REACH_SAMPLES | 16 |  | 516 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
-| hand_fingers(first) | 0 |  | 519 |  |  |  |  |  |  |  |  |  |
-| plan(seed) | 0 |  | 957 |  |  |  |  |  |  |  |  |  |
-| world_measures(rest) | (0.0, 0.0) |  | 1429 |  |  |  |  |  |  |  |  |  |
-| gaze(seed) | 0 |  | 1610 |  |  |  |  |  |  |  |  |  |
-| write_json(indent) | 1 |  | 1737 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 1780 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 1848 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
-| --aim | "finger" |  | 1854 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
-| --hand-still | "wrist" |  | 1858 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
+| FPS | 30.0 |  | 221 |  |  |  |  |  |  |  |  |  |
+| MAX_YAW | 18.0 | deg | 222 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
+| MAX_DOWN | 10.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| MAX_UP | 6.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| LIMIT_MAX | 45.0 | deg | 225 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
+| SOFT_FROM | 0.6 |  | 226 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
+| EDGE | 0.9 |  | 227 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
+| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 228 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
+| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 229 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
+| CONTACT_ERROR | 4.0 | deg | 230 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
+| CONTACT_GAP | 2 | frames | 232 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
+| CONTACT_MIN | 48 | frames | 233 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
+| CONTACT_MID | 30 | frames | 234 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
+| CONTACT_SPARE | 2 |  | 235 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
+| CONTACT_MAX | 150 | frames | 236 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
+| ANCHOR_NEAR | 30 | frames | 237 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
+| CUT_CLEAR | 6 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| END_CLEAR | 2 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| LOOK_AHEAD | 2 | frames | 239 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
+| GAP | 8.0 | deg | 240 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
+| SUSTAIN | 6 | frames | 241 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
+| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 242 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
+| FIXATION_SPREAD | 5 | frames | 243 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
+| GLANCE | (45, 120) | frames | 244 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
+| VOR_GAIN | (1.0, 1.0) |  | 245 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
+| GATE_TURN | 20.0 | deg | 246 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
+| QUICK_AFTER | 5 | frames | 247 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
+| QUICK_SPREAD | 3 |  | 248 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
+| QUICK_SUSTAIN | 6 | frames | 249 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
+| QUICK_AHEAD | 3 | frames | 250 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
+| FACE_AHEAD | 12 |  | 252 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
+| WALL | 0.85 |  | 253 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
+| WALL_SEEN | 0.84 |  | 254 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
+| ECCENTRIC_FROM | 13.9 | deg | 255 | degrees off the middle, yaw and pitch together, from which a fixation, a saccade's goal or a lead is pressed along tanh toward ECCENTRIC_WALL (just beyond the free zone'… | v11face 2026-10-17: 自由な範囲の一番遠い角（横 12・下 7 は正面から 13.87 度）のすぐ外。ここから ECCENTRIC_WALL へ tanh で押す（自由な範囲の中は前のまま） |  |  |  |  |  |  |  |
+| ECCENTRIC_WALL | 14.5 | deg | 258 | degrees off the middle that no angle the plan holds goes beyond (people keep the eyes within 15 degrees of it 99 % of the time, a13; 15 less the drift's 0.42) | v11face 2026-10-17: 人は目を正面から 15 度以内に置く（目の動きの 99 %、a13・mv_inspect eyes.eccentric15_pct の決まり 1 % 以下）。15 から目の揺れ（drift）の最大 … |  |  |  |  | ○ |  |  |
+| MAX_STEP | 8.0 | deg | 261 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
+| FLIP_STEP | 4.0 | deg | 262 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
+| LONG_SACCADE | 35.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| SHORT_SACCADE | 15.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 265 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
+| AVOID | 6.0 | deg | 266 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
+| KEEP_OFF | 5.0 | deg | 267 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
+| TURN_SPEED | 150.0 | deg/s | 268 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
+| LEAD | (2, 4) | frames | 269 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
+| LEAD_SHARE | 13.0 / 18.0 |  | 270 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
+| LEAD_STEP | 6.0 | deg | 271 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
+| QUIET | 8 | frames | 272 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
+| GUARD | 3 | frames | 273 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
+| MIN_SACCADE | 0.5 | deg | 274 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
+| CUT_JUMP | 1.0 | units | 275 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
+| CUT_TURN | 5.0 | deg | 276 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
+| DRIFT_STEP | 0.03 | deg | 277 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
+| DRIFT_LIMIT | 0.3 | deg | 278 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
+| MICRO_INTERVAL | (15, 45) | frames | 279 | frames between microsaccades |  |  |  |  |  |  |  |  |
+| MICRO_SIZE | 0.15 | deg | 280 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
+| FORWARD_TOLERANCE | 20.0 | deg | 281 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
+| WALL_GAP | 3.0 | deg | 282 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
+| UNIT_M | 0.08 | m | 288 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
+| HAND_FAR | 0.60 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_NEAR | 0.18 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_REACH | 4.0 |  | 292 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
+| HAND_CAMERA | 10.0 | deg | 293 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_FAST | 300.0 | deg/s | 294 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
+| HAND_SLOW | 100.0 | deg/s | 295 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
+| HAND_MIN | 9 | frames | 296 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
+| HAND_PALM | 45.0 | deg | 298 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_JOIN | 2 | frames | 299 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
+| HAND_AHEAD | 1 | frames | 300 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
+| PURSUIT_SPEED | 100.0 | deg/s | 301 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
+| CATCH_UP | 3.0 | deg | 302 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
+| CATCH_UP_AFTER | 4 | frames | 303 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
+| DEBUG_STEP | 30 |  | 304 |  |  |  |  |  |  |  |  |  |
+| REVERSAL | 3.0 | deg | 307 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
+| REVERSAL_WITHIN | 10 |  | 308 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
+| STEADY_GAZE | 10.0 | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_HEAD | (15.0, 120.0) | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 313 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
+| STILL_FLOW | 0.1 |  | 314 |  |  |  |  |  |  |  |  |  |
+| STILL_HEAD | 20.0 |  | 314 |  |  |  |  |  |  |  |  |  |
+| CONTACT_SEEN | 4.0 | deg | 316 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
+| CONTACT_JOIN | 2 | frames | 317 | frames: gaps it joins |  |  |  |  |  |  |  |  |
+| LARGE_CHANGE | 20.0 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LARGE_WINDOW | 15 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LEAD_MIN_FRAMES | 3 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_SEEN | 3.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_TURN | 200.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_MARGINS | (330, 172) |  | 320 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
+| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 322 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 326 |  |  |  |  |  |  |  |  |  |
+| _vec(places) | 4 |  | 330 |  |  |  |  |  |  |  |  |  |
+| sights(first) | 0 |  | 429 |  |  |  |  |  |  |  |  |  |
+| hand_points(first) | 0 |  | 454 |  |  |  |  |  |  |  |  |  |
+| hand_palms(first) | 0 |  | 469 |  |  |  |  |  |  |  |  |  |
+| hand_aims(first) | 0 |  | 499 |  |  |  |  |  |  |  |  |  |
+| REACH_STEPS | 24 |  | 529 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
+| REACH_SAMPLES | 16 |  | 530 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
+| hand_fingers(first) | 0 |  | 533 |  |  |  |  |  |  |  |  |  |
+| plan(seed) | 0 |  | 999 |  |  |  |  |  |  |  |  |  |
+| world_measures(rest) | (0.0, 0.0) |  | 1471 |  |  |  |  |  |  |  |  |  |
+| gaze(seed) | 0 |  | 1655 |  |  |  |  |  |  |  |  |  |
+| write_json(indent) | 1 |  | 1783 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1826 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1895 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
+| --aim | "finger" |  | 1901 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
+| --hand-still | "wrist" |  | 1905 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
 
 ## face_life.py（15. 表情、147）
 

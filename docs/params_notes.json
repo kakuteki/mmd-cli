@@ -202,5 +202,11 @@
  },
  "mouth_shape.py:TEETH_GREY": {
   "from": "v11face 2026-10-17: リンの skin.png の歯の帯は (246, 220, 220) 前後、歯ぐき・舌は (240, 176, 178) 前後（色の差 60 以上）"
+ },
+ "eye_gaze.py:ECCENTRIC_FROM": {
+  "from": "v11face 2026-10-17: 自由な範囲の一番遠い角（横 12・下 7 は正面から 13.87 度）のすぐ外。ここから ECCENTRIC_WALL へ tanh で押す（自由な範囲の中は前のまま）"
+ },
+ "eye_gaze.py:ECCENTRIC_WALL": {
+  "from": "v11face 2026-10-17: 人は目を正面から 15 度以内に置く（目の動きの 99 %、a13・mv_inspect eyes.eccentric15_pct の決まり 1 % 以下）。15 から目の揺れ（drift）の最大 0.42 を引いた。v11 の土台は正面固定 3.11 %・カメラ D 4.34 %（横の壁 15.3・角の 17.5・接触の 16 度）"
  }
 }

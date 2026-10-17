@@ -632,10 +632,14 @@ class ContactPlanTest(unittest.TestCase):
         self.assertLess(zone.yaw, 0.9 * LIMITS.yaw)
         self.assertLess(zone.up, 0.9 * LIMITS.up)
         self.assertLess(zone.down, 0.9 * LIMITS.down)
-        inside = eye_gaze.contact_angles((zone.yaw + eye_gaze.CONTACT_ERROR - 0.5, 0.0), LIMITS)
-        self.assertAlmostEqual(inside[0], zone.yaw, places=9)
         error = eye_gaze.CONTACT_ERROR
-        self.assertEqual(eye_gaze.reachable([((zone.yaw + error - 0.5, 0.0), False), ((zone.yaw + error + 0.5, 0.0), False),
+        # sideways the eccentric wall (v11) comes before the zone's edge (16); up and down the zone's edges hold
+        side = min(zone.yaw, eye_gaze.ECCENTRIC_WALL)
+        self.assertEqual(side, eye_gaze.ECCENTRIC_WALL)
+        for edge, way in ((side, (1.0, 0.0)), (side, (-1.0, 0.0)), (zone.down, (0.0, -1.0)), (zone.up, (0.0, 1.0))):
+            held = eye_gaze.contact_angles((way[0] * (edge + error - 0.5), way[1] * (edge + error - 0.5)), LIMITS)
+            self.assertAlmostEqual(held[0] * way[0] + held[1] * way[1], edge, places=9)
+        self.assertEqual(eye_gaze.reachable([((side + error - 0.5, 0.0), False), ((side + error + 0.5, 0.0), False),
                                              ((0.0, 0.0), True)], LIMITS), [True, False, False])
 
 
@@ -1443,6 +1447,92 @@ class LimitTest(unittest.TestCase):
                 run_gaze(max_yaw=max_yaw, max_up=max_up, max_down=max_down)
 
 
+def eccentricity(yaw, pitch):
+    """degrees off the middle of the face, yaw and pitch together (as eye_measures counts them)"""
+    return degrees_between(direction(yaw, pitch), FORWARD)
+
+
+class EccentricTest(unittest.TestCase):
+    """v11 (2026-10-17): the eyes stayed 15 degrees or more off the middle on 3.11 % of the frames of the front camera
+    and 4.34 % of camera D, where people do on 1 % at most (a13; mv_inspect eyes.eccentric15_pct): pressed against the
+    side wall (15.3) or into a corner of the walls (15.3 sideways and 8.5 down make 17.5), and in contacts out to 16
+    degrees.  Every angle the plan holds now stays within ECCENTRIC_WALL of the middle, yaw and pitch together, short of
+    15 by the drift"""
+
+    def test_the_wall_is_short_of_15_degrees_by_the_drift(self):
+        self.assertLess(eye_gaze.ECCENTRIC_FROM, eye_gaze.ECCENTRIC_WALL)
+        self.assertLess(eye_gaze.ECCENTRIC_WALL + math.hypot(eye_gaze.DRIFT_LIMIT, eye_gaze.DRIFT_LIMIT), 15.0)
+        self.assertLess(eye_gaze.ECCENTRIC_WALL, eye_gaze.WALL * LIMITS.yaw)     # it is the wall sideways
+        # the free zone is left as it was: its farthest corner (12 sideways, 7 down) is 13.87 degrees off the middle
+        free = eye_gaze.free_zone(LIMITS)
+        self.assertLessEqual(eccentricity(free.yaw, -free.down), eye_gaze.ECCENTRIC_FROM)
+        for angles in ((free.yaw, -free.down), (-free.yaw, free.up), (free.yaw, 0.0)):
+            self.assertEqual(eye_gaze.within(angles), angles)
+            self.assertEqual(eye_gaze.pressed(angles, LIMITS), angles)
+
+    def test_the_same_inside_then_along_tanh_toward_the_wall(self):
+        start, wall = eye_gaze.ECCENTRIC_FROM, eye_gaze.ECCENTRIC_WALL
+        for angles in ((0.0, 0.0), (5.0, -3.0), (-11.9, 0.5), (8.0, -8.0), (13.8, 0.0)):
+            self.assertEqual(eye_gaze.within(angles), angles)
+        for turn in range(0, 360, 15):
+            c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+            last = start
+            for r in (14.0, 14.2, 15.0, 17.0, 20.0):
+                y, p = eye_gaze.within((r * c, r * s))
+                e = math.hypot(y, p)
+                self.assertTrue(last < e < wall, (turn, r, e))
+                self.assertAlmostEqual(y * s, p * c, places=9)                      # the same way off the middle
+                last = e
+            for r in (40.0, 400.0):                                                 # tanh is 1.0 in floating point
+                self.assertLessEqual(math.hypot(*eye_gaze.within((r * c, r * s))), wall)
+        h = 1e-6
+        self.assertAlmostEqual((eye_gaze.within((start + h, 0.0))[0] - start) / h, 1.0, places=4)   # no kink
+        # inside(): the same inside the wall, else onto it
+        self.assertEqual(eye_gaze.inside((10.0, -6.0)), (10.0, -6.0))
+        y, p = eye_gaze.inside((16.0, -12.0))
+        self.assertAlmostEqual(math.hypot(y, p), wall, places=9)
+        self.assertAlmostEqual(y / p, 16.0 / -12.0, places=9)
+
+    def test_every_angle_held_stays_inside_the_wall(self):
+        # fixations, saccade goals and leads (soften), contacts and the keep-off: corners too
+        wall = eye_gaze.ECCENTRIC_WALL
+        camera_at = (13.0, -6.0)
+        for yaw in range(-60, 61, 3):
+            for pitch in range(-40, 41, 2):
+                a = (float(yaw), float(pitch))
+                for name, got in (("pressed", eye_gaze.pressed(a, LIMITS)), ("soften", eye_gaze.soften(a, LIMITS)),
+                                  ("contact", eye_gaze.contact_angles(a, LIMITS)),
+                                  ("keep_off", eye_gaze.keep_off(eye_gaze.soften(a, LIMITS), camera_at, eye_gaze.KEEP_OFF,
+                                                                 LIMITS))):
+                    self.assertLessEqual(eccentricity(*got), wall + 1e-9, (name, a, got))
+
+    def test_a_camera_off_to_the_side_and_below_is_looked_at_from_inside_the_wall(self):
+        # the camera 15 degrees to her left and 7 below (16.5 off the middle): within reach, the contact holds the eyes
+        # on the wall, and with the drift they stay under 15
+        rot = (-7.0, 15.0, 0.0)
+        yaw, pitch = expected_yaw(rot)
+        self.assertGreater(eccentricity(yaw, pitch), 15.5)
+        result = run_gaze(cam_motion=camera(cam(0, rot), cam(LAST, rot)), life=True)
+        self.assertEqual(len(result.contacts), 1)
+        self.assertTrue(all(look.error <= eye_gaze.CONTACT_ERROR for look in result.looks if look.state == "contact"))
+        self.assertLess(max(eccentricity(look.yaw, look.pitch) for look in result.looks), 15.0)
+
+    def test_a_head_that_swings_away_keeps_the_eyes_under_15_degrees(self):
+        # the head looks 25 to 45 degrees away and back, up and down too: the reflex presses the eyes into their walls
+        for seed in (0, 7, 21, 53):
+            result = eye_gaze.gaze(MODEL, swings(seed), camera(cam(0), cam(400)), life=True, seed=seed)
+            far = [look.frame for look in result.looks if eccentricity(look.yaw, look.pitch) >= 15.0]
+            self.assertEqual(far, [], seed)
+            m = eye_gaze.eye_measures([(look.yaw, look.pitch) for look in result.looks], LIMITS)
+            self.assertEqual(m["eccentric_15_share"], 0.0, seed)
+
+    def test_restless_heads_and_cuts_keep_the_eyes_under_15_degrees(self):
+        for seed in (1, 5, 9):
+            dance, cams = restless(seed, last=300)
+            result = run_gaze(dance=dance, cam_motion=cams, life=True, seed=seed)
+            self.assertLess(max(eccentricity(look.yaw, look.pitch) for look in result.looks), 15.0, seed)
+
+
 class LifeTest(unittest.TestCase):
     def test_drift_and_microsaccades_stay_well_under_a_degree(self):
         result = run_gaze(life=True)
@@ -1600,15 +1690,20 @@ class MeasureTest(unittest.TestCase):
         self.assertEqual(bands["15_60"], {"steps": 0, "share": 0.0})
 
     def test_the_frames_at_the_wall(self):
-        # the eyes at WALL_SEEN of a limit or beyond, sideways and up or down; a fixation pressed against its wall
-        # is there
-        w = eye_gaze.WALL_SEEN
+        # the eyes at WALL_SEEN of a limit or beyond, sideways and up or down, and (v11) at ECCENTRIC_SEEN off the
+        # middle or beyond, yaw and pitch together; a fixation pressed against a wall is there
+        w, e = eye_gaze.WALL_SEEN, eye_gaze.ECCENTRIC_SEEN
         angles = [(w * 18.0 + 0.01, 0.0), (w * 18.0 - 0.01, 0.0), (-w * 18.0 - 0.01, 0.0), (0.0, w * 6.0 + 0.01),
                   (0.0, -w * 10.0 - 0.01), (0.0, -w * 10.0 + 0.01), (0.0, 0.0), (0.0, 0.0)]
-        self.assertEqual(eye_gaze.wall_measures(angles, LIMITS), {"yaw": 2 / 8.0, "pitch": 2 / 8.0})
+        self.assertEqual(eye_gaze.wall_measures(angles, LIMITS), {"yaw": 2 / 8.0, "pitch": 2 / 8.0, "eccentric": 3 / 8.0})
         self.assertLess(w, eye_gaze.WALL)
-        pressed = eye_gaze.pressed((400.0, -400.0), LIMITS)
-        self.assertEqual(eye_gaze.wall_measures([pressed], LIMITS), {"yaw": 1.0, "pitch": 1.0})
+        self.assertLess(e, eye_gaze.ECCENTRIC_WALL)
+        self.assertEqual(eye_gaze.wall_measures([(10.2, -10.2), (10.0, -10.0)], LIMITS)["eccentric"], 0.5)  # 14.38, 14.11
+        # pressed far sideways or into a corner: at the eccentric wall; far down: at the wall below
+        for far in ((400.0, 0.0), (-400.0, 0.0), (400.0, -400.0), (-400.0, 400.0)):
+            self.assertEqual(eye_gaze.wall_measures([eye_gaze.pressed(far, LIMITS)], LIMITS)["eccentric"], 1.0, far)
+        self.assertEqual(eye_gaze.wall_measures([eye_gaze.pressed((0.0, -400.0), LIMITS)], LIMITS),
+                         {"yaw": 0.0, "pitch": 1.0, "eccentric": 0.0})
 
     def test_large_gaze_changes_made_by_saccades_or_carried_by_the_head(self):
         # the gaze turns 30 degrees in the world over 10 frames: once inside a listed saccade, once without one
@@ -1979,7 +2074,9 @@ class RealSongTest(unittest.TestCase):
         self.assertGreaterEqual(m["lead"]["share"], 0.5, m["lead"])
         self.assertLessEqual(m["edge_share"], 0.15)
         self.assertLess(m["edge_longest_s"], 1.0)
-        self.assertLess(m["eccentric_15_share"], 0.10)
+        # v11: 15 degrees or more off the middle on 1 % of the frames at most, as people (a13; mv_inspect
+        # eyes.eccentric15_pct; stage 1 to v10 had 3 to 4 %, the target of stage 1 was under 10 %)
+        self.assertLessEqual(m["eccentric_15_share"], 0.01, m)
         self.assertGreaterEqual(m["contact"]["episode_median_s"], 1.5, m["contact"])
         # stage 5 (the coordinator's acceptance of the review fix): fewer saccades, none of one frame, long fixations
         # (median), at most 8 degrees a frame outside saccades, few reversals (0.05 a second, the stage-1 tool 0.76)
@@ -2052,6 +2149,7 @@ class OlderSongTest(unittest.TestCase):
         self.assertGreaterEqual(m["lead"]["share"], 0.5, m["lead"])
         self.assertLessEqual(m["edge_share"], 0.15)
         self.assertLess(m["edge_longest_s"], 1.0)
+        self.assertLessEqual(m["eccentric_15_share"], 0.01, m)
         self.assertEqual([s for s in report["saccades"]["list"] if s["frames"] < 2], [])
         self.assertLessEqual(m["eye_steps"]["outside_saccades_max"], 8.0 + 0.005, m["eye_steps"])
         others = [s for s in report["saccades"]["list"] if s["reason"] != "quick"]

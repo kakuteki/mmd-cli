@@ -28,7 +28,11 @@ v8 fell where she looked at no hand); it moves the eyes on from the wall, where 
 full had left them (frames at the wall up or down 3.3 % -> 12.8 % in stage 5, the iris low in the eye); and, after
 the remeasure of the MV v7 (the head carried the gaze in 57 % of a07's large gaze changes, 1 to 2 % before stage 5;
 with the head at 60 to 120 deg/s the gaze stayed put in the world on 54 % of the steps, 89 % before), it keeps the
-reflex on in the fast turns too and makes quick phases where the head runs the eyes into their wall.
+reflex on in the fast turns too and makes quick phases where the head runs the eyes into their wall.  v11 (2026-10-17:
+the eyes were 15 degrees or more off the middle on 3.11 % of the frames of the front camera and 4.34 % of camera D,
+where people are on 1 % at most, a13: pressed against the side wall at 15.3, into a corner of the walls, 15.3
+sideways and 8.5 down making 17.5, and in contacts out to 16) adds the eccentric wall: no angle the plan holds lies
+more than ECCENTRIC_WALL off the middle, yaw and pitch together.
 
 Where the camera is, seen from her eyes (sights; mmd_cli/fk.py does the forward kinematics):
 
@@ -50,7 +54,11 @@ How the eyes move (plan: the whole song is known, so the plan looks ahead):
   rest between saccades; beyond it a fixation is pressed softly (tanh) against the wall (WALL of each limit: 15.3,
   5.1 and 8.5), short of the 90 % lines the analysis counts as the edge; and the contact zone (CONTACT_SHARE: 16,
   5.3 and 8.9) for eye contact.  Saccade goals, contacts and leads go through soften() (the last part of each range
-  approached along tanh).
+  approached along tanh).  Over all of them the eccentric wall (v11): ECCENTRIC_WALL (14.5) off the middle, yaw and
+  pitch together, which fixations, saccade goals and leads approach along tanh from ECCENTRIC_FROM (13.9, beyond the
+  free zone's farthest corner) and contacts, the keep-off and the pursuit of a hand are held inside; it is the wall
+  sideways (before the 15.3) and in the corners.  It is in degrees, not a share of the limits: people keep the eyes
+  within 15 degrees of the middle whatever their range (a13), and the drift adds 0.42 at most.
 * Fixations (state free), stage 5 (2026-10-13: "make the movement of the light and the iris smooth").  The eyes look
   at a point in the world (a direction: far away) and each frame:
   1. turn against the head (the vestibulo-ocular reflex) by VOR_GAIN of what holding the point would take: all of it,
@@ -183,7 +191,7 @@ error on the camera during the contacts,
 and measures: the target numbers of the analysis computed on the plan, by the analysts' definitions (eye_measures,
 contact_measures, lead_measure, carried_measure; README: eye_gaze.py), the smoothness of stage 5 (smooth_measures),
 whether the gaze stays put in the world between saccades (world_measures) and the frames at the wall
-(wall_measures).  --debug writes, for --debug-frames (default: every DEBUG_STEP-th frame), the geometry of those
+(wall_measures: sideways, up or down, and at the eccentric wall).  --debug writes, for --debug-frames (default: every DEBUG_STEP-th frame), the geometry of those
 frames.
 
 --probe P.vmd also writes a short 両目 motion to check the convention on a render: frames 0-29 rest, 30-59 window Y
@@ -244,6 +252,12 @@ QUICK_AHEAD = 3                       # frames: a quick phase goes toward where 
 FACE_AHEAD = 12                       # the face's way: the head's forward averaged over the frame and the next 12
 WALL = 0.85                           # share of each limit a fixation is pressed softly against beyond the free zone
 WALL_SEEN = 0.84                      # share of each limit from which the measures count the eyes as at the wall
+ECCENTRIC_FROM = 13.9                 # degrees off the middle, yaw and pitch together, from which a fixation, a saccade's
+                                      # goal or a lead is pressed along tanh toward ECCENTRIC_WALL (just beyond the free
+                                      # zone's farthest corner: 12 sideways and 7 down are 13.87 off the middle)
+ECCENTRIC_WALL = 14.5                 # degrees off the middle that no angle the plan holds goes beyond (people keep the
+                                      # eyes within 15 degrees of it 99 % of the time, a13; 15 less the drift's 0.42)
+ECCENTRIC_SEEN = ECCENTRIC_WALL * WALL_SEEN / WALL    # degrees from which the measures count the eyes at that wall
 MAX_STEP = 8.0                        # degrees the eyes turn in the head a frame at most outside saccades
 FLIP_STEP = 4.0                       # degrees the kept-off gaze may move beyond the gaze's own move before it is a
                                       # saccade (the keep-off flipping to the other side of the camera)
@@ -680,22 +694,50 @@ def soft(value, limit):
     return out if value > 0 else -out
 
 
-def soften(angles, limits):
-    """soft() on each axis: yaw against limits.yaw, pitch against limits.up above and limits.down below"""
+def within(angles):
+    """angles pressed toward the eccentric wall: the same up to ECCENTRIC_FROM off the middle (yaw and pitch together),
+    beyond it along tanh toward ECCENTRIC_WALL (slope 1 where it starts), the same way off the middle"""
+    yaw, pitch = angles
+    e = math.hypot(yaw, pitch)
+    if e <= ECCENTRIC_FROM:
+        return angles
+    k = _press(e, ECCENTRIC_FROM, ECCENTRIC_WALL) / e
+    return yaw * k, pitch * k
+
+
+def inside(angles):
+    """angles held at most ECCENTRIC_WALL off the middle: the same inside the wall, else onto it the same way"""
+    yaw, pitch = angles
+    e = math.hypot(yaw, pitch)
+    if e <= ECCENTRIC_WALL:
+        return angles
+    k = ECCENTRIC_WALL / e
+    return yaw * k, pitch * k
+
+
+def _soft_axes(angles, limits):
     yaw, pitch = angles
     return soft(yaw, limits.yaw), soft(pitch, limits.up if pitch > 0 else limits.down)
 
 
+def soften(angles, limits):
+    """soft() on each axis (yaw against limits.yaw, pitch against limits.up above and limits.down below), then within()
+    the eccentric wall"""
+    return within(_soft_axes(angles, limits))
+
+
 def contact_angles(camera, limits):
-    """the eye angles that look at the camera (yaw, pitch) during a contact: softened, then held in the contact zone"""
+    """the eye angles that look at the camera (yaw, pitch) during a contact: soft() on each axis, then held in the
+    contact zone and inside() the eccentric wall (sideways the wall comes first: 14.5 against the zone's 16)"""
     zone = contact_zone(limits)
-    yaw, pitch = soften(camera, limits)
-    return min(max(yaw, -zone.yaw), zone.yaw), min(max(pitch, -zone.down), zone.up)
+    yaw, pitch = _soft_axes(camera, limits)
+    return inside((min(max(yaw, -zone.yaw), zone.yaw), min(max(pitch, -zone.down), zone.up)))
 
 
 def keep_off(angles, camera, degrees, limits):
-    """angles moved away from the camera's angles until they are `degrees` off it, inside the limits: straight away
-    when that stays inside, else the nearest of the other ways round the camera that does (or the farthest)"""
+    """angles moved away from the camera's angles until they are `degrees` off it, inside the limits and the eccentric
+    wall: straight away when that stays inside, else the nearest of the other ways round the camera that does (or the
+    farthest)"""
     dy, dp = angles[0] - camera[0], angles[1] - camera[1]
     d = math.hypot(dy, dp)
     if d >= degrees:
@@ -704,7 +746,7 @@ def keep_off(angles, camera, degrees, limits):
     best = None
     for k in (0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6):
         a = base + k * math.pi / 6.0
-        cand = _clamp((camera[0] + degrees * math.cos(a), camera[1] + degrees * math.sin(a)), limits)
+        cand = inside(_clamp((camera[0] + degrees * math.cos(a), camera[1] + degrees * math.sin(a)), limits))
         sep = math.hypot(cand[0] - camera[0], cand[1] - camera[1])
         if sep >= degrees - 1e-9:
             return cand
@@ -739,12 +781,12 @@ def _press(value, start, ceiling):
 
 def pressed(angles, limits):
     """a fixation's eye angles: the same inside the free zone, pressed softly against the wall (WALL of each limit)
-    beyond it, so a fixation never runs to the edge"""
+    beyond it, so a fixation never runs to the edge, and within() the eccentric wall (sideways and in the corners)"""
     free = free_zone(limits)
     yaw, pitch = angles
     yaw = _press(yaw, free.yaw, WALL * limits.yaw)
     pitch = _press(pitch, free.up, WALL * limits.up) if pitch >= 0.0 else _press(pitch, free.down, WALL * limits.down)
-    return yaw, pitch
+    return within((yaw, pitch))
 
 
 def drift_track(frames, rng):
@@ -1236,7 +1278,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             if d > most:
                 dy, dp = dy * most / d, dp * most / d
             zone = contact_zone(limits)
-            base = (min(max(full[0] + dy, -zone.yaw), zone.yaw), min(max(full[1] + dp, -zone.down), zone.up))
+            base = inside((min(max(full[0] + dy, -zone.yaw), zone.yaw), min(max(full[1] + dp, -zone.down), zone.up)))
             sy, sp = base[0] - origin[0], base[1] - origin[1]
             moved = math.hypot(sy, sp)
             if moved > MAX_STEP:
@@ -1477,10 +1519,13 @@ def world_measures(heads, angles, saccades, contacts=(), rest=(0.0, 0.0)):
 
 
 def wall_measures(angles, limits):
-    """the share of frames with the eyes at WALL_SEEN of their limit or beyond: sideways, and up or down"""
+    """the share of frames with the eyes at WALL_SEEN of their limit or beyond: sideways, and up or down; and at
+    ECCENTRIC_SEEN off the middle or beyond (yaw and pitch together: the eccentric wall, v11)"""
     n = float(len(angles)) or 1.0
+    middle = (0.0, 0.0, -1.0)
     return {"yaw": _r(sum(1 for y, _ in angles if abs(y) >= WALL_SEEN * limits.yaw) / n),
-            "pitch": _r(sum(1 for _, p in angles if p >= WALL_SEEN * limits.up or p <= -WALL_SEEN * limits.down) / n)}
+            "pitch": _r(sum(1 for _, p in angles if p >= WALL_SEEN * limits.up or p <= -WALL_SEEN * limits.down) / n),
+            "eccentric": _r(sum(1 for y, p in angles if degrees_between(direction_of(y, p), middle) >= ECCENTRIC_SEEN) / n)}
 
 
 def plan_measures(seen, looks, saccades, forward, limits, contacts=()):
@@ -1656,7 +1701,8 @@ def gaze(model, dance, camera, max_yaw=MAX_YAW, max_up=MAX_UP, max_down=MAX_DOWN
         "limits": dict(limits.to_json(), soft_from=SOFT_FROM),
         "zones": {"free": free_zone(limits).to_json(), "contact": contact_zone(limits).to_json(),
                   "contact_error": CONTACT_ERROR,
-                  "wall": {k: _r(v) for k, v in _zone(limits, (WALL, WALL, WALL)).to_json().items()}},
+                  "wall": {k: _r(v) for k, v in _zone(limits, (WALL, WALL, WALL)).to_json().items()},
+                  "eccentric": {"from": ECCENTRIC_FROM, "wall": ECCENTRIC_WALL, "seen": _r(ECCENTRIC_SEEN)}},
         "motion": {"vor_gain": list(VOR_GAIN), "gate_turn": GATE_TURN, "quick_after": QUICK_AFTER,
                    "quick_spread": QUICK_SPREAD, "quick_sustain": QUICK_SUSTAIN, "quick_ahead": QUICK_AHEAD,
                    "face_ahead": FACE_AHEAD,
@@ -1841,7 +1887,8 @@ def main(argv=None):
     p.add_argument("--debug", help="write the geometry of some frames to this JSON")
     p.add_argument("--debug-frames", type=int, nargs="+", help="the frames for --debug (default every %d)" % DEBUG_STEP)
     p.add_argument("--probe", help="also write the convention probe (a short 両目 motion) to this .vmd")
-    p.add_argument("--max-yaw", type=float, help="degrees the eyes turn sideways (default %g)" % MAX_YAW)
+    p.add_argument("--max-yaw", type=float, help="degrees the eyes turn sideways (default %g; the eccentric wall, %g off "
+                   "the middle, comes first)" % (MAX_YAW, ECCENTRIC_WALL))
     p.add_argument("--max-up", type=float, help="degrees the eyes turn up (default %g)" % MAX_UP)
     p.add_argument("--max-down", type=float, help="degrees the eyes turn down (default %g)" % MAX_DOWN)
     p.add_argument("--max-pitch", type=float, help="sets --max-up and --max-down to one value (not with either of them)")
