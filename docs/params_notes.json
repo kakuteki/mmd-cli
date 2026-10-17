@@ -201,5 +201,20 @@
  },
  "pmm_gravity.py:CURRENT.acceleration": {
   "from": "pmm の中の位置（重力の今の値の加速度）。値の決めではない。窓の値と単位: MMD 9.32 で窓の値 1 あたり 9.6 単位/s²（README）"
+ },
+ "balance_layer.py:CATCH_HOLD_MAX_CM": {
+  "from": "v11bal 2026-10-17: v11 の鎖で受け止めを 9.8・10.0・27.1 cm 外す着地を引き戻すと体を 10〜22 cm ずらし解き方が収まらない（195・200 秒の ZMP の外れ）→ 8 cm を越えて外す着地は引き戻さない（試験の倒れる一歩 5.6 cm は引き戻す）",
+  "unit": "cm"
+ },
+ "balance_layer.py:REACH_TOL_FULL_CM": {
+  "from": "v11bal 2026-10-17: 足ＩＫ 120 回以上の模型（rig の写し 400 回）は余り 0〜1.5 cm の床のコマで MMD の IK が 4 mm より届かないコマ 0 → 余り 0.5 cm（1.5 cm のままでは 3 コマで余りの決めを破った）",
+  "unit": "cm"
+ },
+ "balance_layer.py:REACH_FULL_LOOPS": {
+  "from": "v11bal 2026-10-17: 余り 0〜0.25 cm で届かないのは 40 回 89 %・60 回 83 %・80 回 28 %・120 回以上 0 %"
+ },
+ "balance_layer.py:REACH_TOL_CM": {
+  "from": "HANDOVER 2026-10-14 balance の査読: 足ＩＫ 40 回の MMD の IK は余り 1 cm 未満で 70〜100 %、1.5〜4 cm で 2〜3 % 届かない。v11bal 2026-10-17: 足ＩＫ 120 回未満の模型だけに使う（以上は REACH_TOL_FULL_CM）",
+  "unit": "cm"
  }
 }
