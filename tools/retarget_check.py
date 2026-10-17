@@ -302,20 +302,22 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
         f = feet[side]
         h = (f["low"] - floor) * UNIT_CM
         sl = f["slide"] * UNIT_CM
-        fl, paths, toe_fl = [], [], []
+        fl, paths, toe_fl, where = [], [], [], []
         for a, b, toe in found[side]:
             fl.append(h[a:b + 1])
             paths.append(float(sl[a:b].sum()))
+            where.append((a, b, toe))
             if toe:
                 toe_fl.append(h[a:b + 1])
         fl = np.concatenate(fl) if fl else np.zeros(0)
         tf = np.concatenate(toe_fl) if toe_fl else np.zeros(0)
         out[side] = {"plants": len(found[side]), "frames": int(len(fl)), "float_cm": quant(np.maximum(fl, 0.0)),
                      "float_over_1cm_pct": round(100.0 * float(np.mean(fl > 1.0)), 3) if len(fl) else None,
-                     "under_floor_frames": int(np.sum(fl < -0.1)),
+                     "under_floor_frames": int(np.sum(fl < -0.1)), "under_floor_cm": quant(np.maximum(-fl, 0.0), (50, 90, 99, 100)),
                      "slide_path_cm": quant(paths), "plants_sliding_over_1cm": int(np.sum(np.array(paths) > 1.0)),
                      "toe_plants": int(sum(1 for _, _, t in found[side] if t)), "toe_float_cm": quant(np.maximum(tf, 0.0)),
-                     "toe_float_over_1cm_pct": round(100.0 * float(np.mean(tf > 1.0)), 3) if len(tf) else None}
+                     "toe_float_over_1cm_pct": round(100.0 * float(np.mean(tf > 1.0)), 3) if len(tf) else None,
+                     "sliding_runs": [[a, b, round(p, 2)] for (a, b, _), p in zip(where, paths) if p > 1.0]}
     return out
 
 
