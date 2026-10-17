@@ -31,7 +31,10 @@ uses 98 others).
   shoes' lowest point at rest) and its slide (sink_check's: the slowest touching vertex's move), per plant the path.
   Over the whole dance, the path the target's shoe slides while it is on the floor (within FLOOR_CM; the slowest touching
   vertex, so a foot turning on its ball, toe or heel does not travel), on the source's plants and elsewhere, a minute:
-  a foot the source turns or moves near the floor and the target puts on it slides there.
+  a foot the source turns or moves near the floor and the target puts on it slides there.  And the one-frame jumps
+  along the floor (pops): the target's shoe under POP_NEAR_CM on both frames moving more than POP_CM to the next, with
+  the source's foot's move there (the slowest point of its heel-to-toe line); a jump the source does not make (it moves
+  less than POP_SHARE of that) is the target's own (the summary's pops_not_in_source).
 * touch runs (in contacts): each run of the source's touch with its frames, the source's distance, the hand point's
   speed in the part's frame (a hand resting on a part moves with it: a run of RESTING_MIN frames and more slower than
   RESTING_SPEED rests; a short or fast one passes by), the distance to the part's nearest vertex on both bodies (the
@@ -85,6 +88,14 @@ PLANT_MIN = 3
 TOE_PITCH = 4.0
 FPS = 30.0
 FLOOR_CM = 0.4                  # cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it
+# a one-frame jump along the floor the source does not make (review_integ 2026-10-17, its scripts/pops.py: the retarget
+# gave a turning foot's hold back in one frame, the song's 128.0 s 13.7 cm with the shoe 1 cm up, and the later layers put
+# that frame on the floor): the target's shoe lower than POP_NEAR_CM on both frames and its slowest touching vertex moving
+# more than POP_CM to the next, while the source's foot (the slowest point of its heel-to-toe line, as source_plants
+# reads it) moves less than POP_SHARE of that
+POP_NEAR_CM = 2.0
+POP_CM = 8.0
+POP_SHARE = 0.5
 RESTING_MIN = 4                 # frames: a touch this long ...
 RESTING_SPEED = 35.0            # cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it
 LAG_WINDOW = 60                 # frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX
@@ -364,21 +375,44 @@ def arms_in(pose, body, parts, touching=None):
     return out
 
 
+LINE_TS = np.array([-0.3, 0.0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1.0])
+
+
+def source_line(pose, body, side):
+    """(the points [F, k, 3] along the line from the source's foot IK goal (and 0.3 of the foot behind it, the heel) to its
+    toe IK goal, each one's height over the floor [F, k] as the goals are over their rest heights between them, the
+    foot IK goal's world turn [F, 4])"""
+    w = pose.get([side + "足ＩＫ", side + "つま先ＩＫ"])
+    ga, qa = w[side + "足ＩＫ"]
+    gt, _ = w[side + "つま先ＩＫ"]
+    ha = ga[:, 1] - body.rest(side + "足ＩＫ")[1]
+    ht = gt[:, 1] - body.rest(side + "つま先ＩＫ")[1]
+    P = ga[:, None, :] + LINE_TS[None, :, None] * (gt - ga)[:, None, :]
+    H = ha[:, None] + LINE_TS[None, :] * (ht - ha)[:, None]
+    return P, H, qa
+
+
+def source_steps(pose, body):
+    """per side [F]: the source's foot's move to the next frame along the floor (units; the last frame 0): its line's
+    (source_line) slowest point's, so that a foot turning on its ball, toe or heel does not travel"""
+    out = {}
+    for side in SIDES:
+        P, _, _ = source_line(pose, body, side)
+        v = np.zeros(len(P))
+        if len(P) > 1:
+            v[:-1] = np.linalg.norm(np.diff(P[:, :, [0, 2]], axis=0), axis=2).min(axis=1)
+        out[side] = v
+    return out
+
+
 def source_plants(pose, body):
     """per side: [(first, last, toe)] where the source's foot stands (see the module's doc): points along the line from
     the foot IK goal (and 0.3 of the foot behind it, the heel) to the toe IK goal, each as high over the floor as the
     goals are over their rest heights between them; a frame stands when one of them is on the floor and still (a foot
     turning on its ball stands on the ball)"""
     out = {}
-    ts = np.array([-0.3, 0.0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1.0])
     for side in SIDES:
-        w = pose.get([side + "足ＩＫ", side + "つま先ＩＫ"])
-        ga, qa = w[side + "足ＩＫ"]
-        gt, _ = w[side + "つま先ＩＫ"]
-        ha = ga[:, 1] - body.rest(side + "足ＩＫ")[1]
-        ht = gt[:, 1] - body.rest(side + "つま先ＩＫ")[1]
-        P = ga[:, None, :] + ts[None, :, None] * (gt - ga)[:, None, :]
-        H = ha[:, None] + ts[None, :] * (ht - ha)[:, None]
+        P, H, qa = source_line(pose, body, side)
         v = np.zeros(H.shape)
         v[1:] = np.linalg.norm(np.diff(P[:, :, [0, 2]], axis=0), axis=2)
         still = np.minimum(v, np.concatenate([v[1:], v[-1:]], axis=0)) < STILL
@@ -387,6 +421,18 @@ def source_plants(pose, body):
         pitch = np.degrees(np.arcsin(np.clip(-fwd[:, 1], -1, 1)))
         out[side] = [(a, b, bool(np.median(pitch[a:b + 1]) > TOE_PITCH)) for a, b in runs(on, PLANT_MIN)]
     return out
+
+
+def pops(h, sl, src_step, frames):
+    """the one-frame jumps along the floor of one side (see POP_CM): h [F] the target's shoe over the floor (cm), sl [F]
+    its slowest touching vertex's move to the next frame (cm), src_step [F] the source's foot's (cm)"""
+    near = h < POP_NEAR_CM
+    rows = []
+    for t in np.flatnonzero(near[:-1] & near[1:] & (sl[:-1] > POP_CM)):
+        rows.append({"frame": int(frames[t]), "s": round(float(frames[t]) / FPS, 2), "step_cm": round(float(sl[t]), 2),
+                     "low_cm": [round(float(h[t]), 2), round(float(h[t + 1]), 2)],
+                     "source_step_cm": round(float(src_step[t]), 2), "own": bool(src_step[t] < POP_SHARE * sl[t])})
+    return {"count": len(rows), "own": int(sum(r["own"] for r in rows)), "rows": rows[:100]}
 
 
 def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
@@ -399,6 +445,7 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
         return {"error": str(exc)}
     feet = SC.shoe_track(rig, tgt_body.doc, tgt_motion, list(frames))
     found = source_plants(src_pose, src_body)
+    steps = source_steps(src_pose, src_body)
     out = {}
     for side in SIDES:
         f = feet[side]
@@ -431,7 +478,8 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
                      "toe_plants": int(sum(1 for _, _, t in found[side] if t)), "toe_float_cm": quant(np.maximum(tf, 0.0)),
                      "toe_float_over_1cm_pct": round(100.0 * float(np.mean(tf > 1.0)), 3) if len(tf) else None,
                      "sliding_runs": [[a, b, round(p, 2)] for (a, b, _), p in zip(where, paths) if p > 1.0],
-                     "floor_slide_cm_per_min": floor_slide}
+                     "floor_slide_cm_per_min": floor_slide,
+                     "pops": pops(h, sl, steps[side] * UNIT_CM, frames)}
     return out
 
 
@@ -595,6 +643,8 @@ def summary(rep):
         out["plant_under_floor_frames"] = int(sum(r["under_floor_frames"] for r in pl.values()))
         out["floor_slide_cm_per_min"] = round(float(sum(sum(r["floor_slide_cm_per_min"].values()) for r in pl.values())), 1)
         out["floor_slide_off_plants_cm_per_min"] = round(float(sum(r["floor_slide_cm_per_min"]["elsewhere"] for r in pl.values())), 1)
+        out["pops"] = int(sum(r["pops"]["count"] for r in pl.values()))
+        out["pops_not_in_source"] = int(sum(r["pops"]["own"] for r in pl.values()))
     ch = rep.get("chore", {})
     lag0 = [t["lag0_share"] for t in ch.get("timing", {}).values() if t["lag0_share"] is not None]
     out["chore_timing_lag0_share_min"] = round(min(lag0), 4) if lag0 else None

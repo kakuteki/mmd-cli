@@ -430,6 +430,57 @@ class ChoreTest(unittest.TestCase):
         self.assertEqual((new["source"], new["matched"], len(new["target_only"])), (0, 0, 1))
 
 
+def stepping(jump_at=None, dx=1.2, up=0.0, last=12):
+    """the centre down 1 unit, the right foot standing, the left foot `up` units over the floor at x 0 and, from frame
+    jump_at to the next (None: never), moved dx along x (1.2: 9.6 cm in one frame)"""
+    keys = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", last, position=(0.0, -1.0, 0.0)), key("右足ＩＫ", 0),
+            key("右足ＩＫ", last), key("左足ＩＫ", 0, position=(0.0, up, 0.0))]
+    if jump_at is None:
+        keys.append(key("左足ＩＫ", last, position=(0.0, up, 0.0)))
+    else:
+        keys += [key("左足ＩＫ", jump_at, position=(0.0, up, 0.0)), key("左足ＩＫ", jump_at + 1, position=(dx, up, 0.0)),
+                 key("左足ＩＫ", last, position=(dx, up, 0.0))]
+    return motion(*keys)
+
+
+class PopsTest(unittest.TestCase):
+    """a shoe near the floor that jumps along it in one frame where the source's foot does not (review_integ 2026-10-17:
+    the retarget gave a turning foot's hold back in one frame, the song's 128.0 s 13.7 cm with the shoe 1 cm up, and the
+    later layers put that frame on the floor)"""
+
+    def measure(self, src, tgt):
+        b = T.body(T.RIN_SHOE_DATA)
+        return check.measure(src, b, tgt, b)
+
+    def test_a_jump_along_the_floor_the_source_does_not_make_is_counted(self):
+        r = self.measure(stepping(), stepping(jump_at=5))
+        p = r["plants"]["左"]["pops"]
+        self.assertEqual(len(p["rows"]), 1)
+        row = p["rows"][0]
+        self.assertEqual(row["frame"], 5)
+        self.assertAlmostEqual(row["step_cm"], 9.6, delta=0.3)
+        self.assertLess(row["source_step_cm"], 0.1)
+        self.assertTrue(row["own"])
+        self.assertEqual((p["count"], p["own"]), (1, 1))
+        self.assertEqual(r["plants"]["右"]["pops"]["count"], 0)
+        self.assertEqual(r["summary"]["pops_not_in_source"], 1)
+
+    def test_the_sources_own_jump_is_not_the_targets(self):
+        m = stepping(jump_at=5)
+        r = self.measure(m, m)
+        p = r["plants"]["左"]["pops"]
+        self.assertEqual(p["count"], 1)
+        self.assertFalse(p["rows"][0]["own"])
+        self.assertAlmostEqual(p["rows"][0]["source_step_cm"], 9.6, delta=0.3)
+        self.assertEqual(r["summary"]["pops_not_in_source"], 0)
+
+    def test_a_jump_high_over_the_floor_or_a_short_one_is_not_a_pop(self):
+        for tgt in (stepping(jump_at=5, up=0.5), stepping(jump_at=5, dx=0.75)):       # 4 cm up; a 6 cm step
+            r = self.measure(stepping(), tgt)
+            self.assertEqual(r["plants"]["左"]["pops"]["rows"], [])
+            self.assertEqual(r["summary"]["pops_not_in_source"], 0)
+
+
 class CommandTest(unittest.TestCase):
     def test_the_command_writes_the_report(self):
         import io
