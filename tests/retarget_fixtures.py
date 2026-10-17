@@ -113,13 +113,11 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None,
             args["ik"] = {"target": index[target], "loops": loops, "angle": angle,
                           "links": [(index[l], lim) for l, lim in links]}
         if flags & FIXED_AXIS:
-            side = name[0]
             a = where(name, kw["axis"])
             b = where(name, {"腕": "ひじ", "ひじ": "手首"}[kw["axis"]])
             d = [q - p for p, q in zip(a, b)]
             n = math.sqrt(sum(v * v for v in d))
             args["axis"] = tuple(v / n for v in d)
-            del side
         built.append(w.bone(name, **args))
     verts = []
     for bone, offset, radius, n in blobs:
