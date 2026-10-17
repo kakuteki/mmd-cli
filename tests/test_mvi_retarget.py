@@ -5,9 +5,7 @@ import os
 import tempfile
 import unittest
 
-from tests import mvi_fixtures as MF  # puts tools/ on the path for mvi
-
-assert MF.TOOLS
+from tests import mvi_fixtures  # noqa: F401  (puts tools/ on the path)
 from tests import test_retarget as T
 from tests.retarget_fixtures import MIKU, RIN, key, motion
 from mvi import body, report, retarget as part, shared
