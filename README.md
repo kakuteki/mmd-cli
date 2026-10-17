@@ -1116,6 +1116,64 @@ python tools/spine_check.py dance.vmd model.pmx dance_spine.vmd model_spine.pmx 
 報告: `shares_measured`、`chest_drift_anatomical_cm`、`correction_deg`、`opposite_bend_frames` と `opposite_runs`（下と逆向きに
 曲がったコマ）、`corrected_runs`（位置を直したコマ）、`max_step_deg`。
 
+### 模型の骨組みを測り、写しで直す（`tools/rig_check.py`・`tools/rig_skin.py`・`tools/pmx_rig.py`、MMD なし）
+
+踊りの骨・モーフがモデルに届いているか、脚の IK がどう解けるか、踊りの一番きつい曲げで皮がどう崩れるか、物理の剛体がどう置かれて
+いるかを数で出し、直しはモデルの写しに処方で当てる（2026-10-17 の加賀さんの指示「リンに合わせて徹底的にリギング」。記録は
+`_spike/out/stage6/rig/NOTES.md`）。
+
+```
+python tools/rig_check.py receivers MODEL.pmx --vmd TAG=PATH ... --out r.json
+python tools/rig_check.py ik MODEL.pmx DANCE.vmd --out r.json [--alt TAG:loops=N[,angle=RAD][,least_bend=DEG]]
+python tools/rig_check.py angles MODEL.pmx DANCE.vmd --out angles.npz
+python tools/rig_check.py skin DANCE.vmd --model TAG=MODEL.pmx ... --out DIR --angles angles.npz [--pick 4] [--figures 1]
+python tools/rig_check.py physics MODEL.pmx --out r.json [--gravity 94 122.5]
+python tools/pmx_rig.py MODEL.pmx OUT.pmx --report r.json [--joint-helpers wrist,shoulder] [--inner-brow 0.1]
+                        [--leg-ik-loops 400] [--knee-least-bend DEG]
+```
+
+- `rig_skin.py`: 骨を MMD の順（変形階層・番号）で組み、付与・IK（saba の解き方: 1 軸に制限した輪は平面で、ほかは CCD、
+  近づかない回で止める）を解いて、頂点を MMD の式（BDEF1/2/4・SDEF）で皮付けする部品。脚は `tools/leg_ik.py` と 1e-6 で、
+  IK の無い鎖は `mmd_cli.fk` と一致する。物理とモーフは入れない（物理で動く骨は親のまま。`Model.physics` に名がある）。
+- `rig_check.py receivers`: VMD ごとに骨・モーフの名・キー数・モデルにあるか（VMD は 15 バイトで切るので長い名は頭で合わせる）・
+  どれだけ動かすか（回しの最大の角・移動の最大・重みの最大）。`dropped_motion`・`dropped_morphs` が MMD が黙って捨てるもの。
+  `semi_standard` は準標準の骨の有無。
+- `rig_check.py ik`: 脚の IK の外れを全コマで（届く目標か、ひざの曲がり、ひざが伸びの端のコマ、ひざの跳び、つま先 IK）。
+  `--alt` でほかの設定（回数・単位角・ひざの伸びの端）を同じ踊りで試す。
+- `rig_check.py angles` / `skin`: 踊りの全コマの物差し（上腕の捩り＝腕捩 の 腕W に対する捩り、手首の捩り、ひじ・手首・ひざ・股関節の
+  曲げ、腕の上がり）から各物差しの上位のコマ（15 コマ以上離す）を選び、模型ごとに皮を測る: 肢の断面（肢の頂点の、関節を
+  結ぶ線からの距離の休みとの比を肢に沿って区切った中央値の最小。線形の混ぜで θ 捩れた 2 骨の半々の所は cos(θ/2) になる）、
+  関節のまわりの三角形の面積の比（最小・1 % 点・半分未満・1/4 未満）と裏返り、部位の食い込み（腕が服の胴に・もも同士・
+  前腕が上腕に・ふくらはぎがももに、休みで中にあった頂点は数えない）。物理で動く部分は測らない。
+- `rig_check.py physics`: 剛体の族ごとの形・質量・減衰と速さが 1/e に落ちる時間（Bullet は 1 秒に (1 − d) を掛ける）・当たる群、
+  動く剛体を吊るジョイントからの振り子の周波数（重力ごと）、当たる組で休みから重なっているもの、動く剛体ごとに一番近い体の剛体と
+  の隙間。剛体の回しは Ry Rx Rz（リンの脚・腕・足首の剛体の向きで確かめた）。
+- `pmx_rig.py`: 写しへの処方。どれも元の骨の位置・番号・親、頂点の位置、材質、剛体は変えない（骨とモーフは末尾に足す）。
+  - `--joint-helpers wrist,shoulder[,hip]`: 関節の回しの半分を付与で受ける骨（手首補助 = 手首 x0.5 を 手捩 の子に、腕補助 = 腕W x0.5 を
+    肩 の子に、足補助 = 足D x0.5）と、その関節の線形の混ぜの重みの配り直し（上の側 u と下の側 l を持つ頂点は min(u, l) ずつを
+    補助へ。重みの回しの平均は保ち、どの 2 骨も関節の回しの半分より離れない）。SDEF の頂点は触らない。
+  - `--inner-brow U`: 眉頭右・眉頭左（眉の内の端を U 単位上げ、外の端で 0。KAZUSA 様の表情が使い、リンに無かったモーフ）。
+  - `--leg-ik-loops N`・`--knee-least-bend D`: 足ＩＫ の回数とひざの伸びの端。
+
+Sour 式リン（White_spine_v6_eyes）で分かったこと:
+
+- 受け皿: えぬた様の踊り（袖の値なし）でリンに無い骨 93 は全部動かないキー、捨てられる動きは 0。表情で落ちるのは KAZUSA 様の
+  眉頭右（214.7〜215.2 秒、最大 1.0）と、踊りの 0 フレームの ﾏﾆｷｭｱ・鼻線消し（元のモデルの見た目の切り替え）だけ。準標準の骨は
+  腕捩1〜3・手捩1〜3 のほかは揃っている。
+- 皮の作り: 上腕の皮は 腕W（捩り無し、IK で肘へ向く）と 腕捩 の SDEF、前腕の皮は ひじ と 手捩 の SDEF、ひざと足首も SDEF で、捩りの
+  骨を段に分けなくても捩りは保たれる（上腕を 120 度捩っても太さ 1.00）。線形の混ぜのまま残るのは手首の帯・肩・股関節・ひじ（ひじ補助
+  x0.6 つき）。袖口は 手捩 だけの硬い筒。
+- v10 の踊りの一番きついコマで（`skin`）: 手首の捩り（fix_twist が 45 度を越える捩りを 手首 に移す。最大 175 度）で手首の帯が
+  休みの 0.31 の太さに絞られ、袖口の口から手が細い首でつながって見える。手首と肩の補助の骨で 0.86（手首）、腕の上がり 171 度の
+  肩の三角形の裏返り 6 → 0。股関節の補助はもも同士の食い込みを 3 倍にするので使わない。
+- 脚の IK（40 回・2 rad、ひざ X −180〜0 度）: 伸びに近い脚で CCD の進みが遅く、届く目標でも足首が 4 mm 以上手前で止まるコマが
+  v10 で 218・432、最大 1.3 cm。MMD を印の写しで描いて測ると、回数を 400 にすると MMD も届く（上げ 0.25 で 14 → 1.3 mm。
+  測りの床 0.9 mm）が、上げ 0.05〜0.1 のごく伸びた所は MMD は届かない（leg_ik は届く）。足の層は 40 回の解けに合わせて
+  つま先ＩＫの目標を置くので、回数を変えたら足の層から作り直す。
+- 物理: 髪・リボン・スカート・襟の減衰は 0.999（速さが 0.145 秒で 1/e）。振り子の周波数は MMD の重力（窓 9.8 ≒ 94 単位/s²）で
+  髪 1.8〜2.9 Hz、リンの大きさの実物の重力 122.5 なら 2.1〜3.4 Hz。質量・減衰は大きさに依らない。髪の剛体は体・腕の群と
+  当たらない（後髮A・B だけ体と当たり、休みで頭の球に 0.04〜0.10 入っている）。
+
 ### 片足立ちで体重を立ち足に乗せる（`tools/balance_layer.py`、MMD なし）
 
 トレースのダンスは、片足を上げている間も体が両足の間に吊られたまま（重心の床の点が立ち足の中心から横に中央値 10.8 cm、
