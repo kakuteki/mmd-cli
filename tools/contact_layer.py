@@ -138,6 +138,20 @@ BRIDGE = 2                      # frames: a standing foot lifted this long or le
 BRIDGE_LIFT = 0.1875            # units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT)
 EASE = 4                        # frames: a foot's lowering comes and goes over this many frames each way (the foot layer's)
 TOUCH = 0.025                   # units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH)
+SWING_CLEAR = ON_FLOOR + 0.0125 # units (5 mm): a foot not standing whose touching part moves along the floor faster than
+                                # PLANT_SPEED is not brought lower than this (nor below its own height in the dance) by the
+                                # lowering eased round a standing run, nor by the body's change round a flight it goes with;
+                                # and a lift of BRIDGE frames bridges only a foot slower than that (v11feet 2026-10-17: after
+                                # the retarget, which carries a shoe as high over the floor as the source's, these put the
+                                # song's swings on the floor, where they slid: 153 cm a minute, 621 in all; 272 without)
+GLIDE_MAX = 0.2                 # units (1.6 cm): in a run of AIR_MIN frames and more with no foot standing whose pelvis does
+                                # not fall as in a flight (its parabola over the run and a frame each side slower than
+                                # FLIGHT_FIT, no frame faster than FALL_BOUND), the lower foot stands where its shoe is lower
+                                # than this (a shoe the skirt's bound already counts as standing: AIR_CLEAR): the dance's
+                                # support gliding along the floor, not a hover (v11feet 2026-10-17: after the retarget and the
+                                # swings kept off the floor, the layer made 55 of the song's hovers hops, the air 12 a minute
+                                # (mv_inspect), people's 1.3 [0, 2.9]; with the glide 2.4, the hover 4.6 -> 2.0 % (people's
+                                # 1.4 [0.55, 2.2]), the slide 272 -> 394 cm a minute)
 NEED_CM = 10.0                  # cm: the centre of mass's floor point this far outside the other foot's sole: this foot
                                 # bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wide
                                 # stances -12 to -32 cm; people's single-support ZMP margin is -4.4 cm [-6.0, -2.2])
@@ -287,12 +301,13 @@ def raise_room(hip, goal, reach):
     return np.where(ok, room, np.nan)
 
 
-def bridge(stance, low, gap=BRIDGE, lift=BRIDGE_LIFT):
+def bridge(stance, low, gap=BRIDGE, lift=BRIDGE_LIFT, speed=None):
     """stance [F] with the gaps of `gap` frames or fewer between two standing runs filled where the shoe (low [F]) stays
-    under `lift`"""
+    under `lift` and (speed [F], cm/s: its touching part along the floor, when given) slower than PLANT_SPEED: the
+    trace's jitter of a standing foot, not a quick step"""
     out = np.array(stance, dtype=bool)
     for a, b in runs(~out):
-        if a > 0 and b < len(out) - 1 and b - a + 1 <= gap and bool(np.all(low[a:b + 1] < lift)):
+        if a > 0 and b < len(out) - 1 and b - a + 1 <= gap and bool(np.all(low[a:b + 1] < lift)) and                 (speed is None or bool(np.all(np.asarray(speed)[a:b + 1] < PLANT_SPEED))):
             out[a:b + 1] = True
     return out
 
@@ -313,14 +328,17 @@ def flight_frames(on, pelvis_y, flight_acc=FLIGHT_FIT):
     return out
 
 
-def eased_lowering(dy, stance, low, ease=EASE):
+def eased_lowering(dy, stance, low, ease=EASE, speed=None):
     """the lowering [F] (units, <= 0) of a foot: dy on its standing frames, carried into the frames around with a raised
     cosine over `ease` frames from the nearest standing frame (never more than the frame's own shoe height, low [F]: not
-    into the floor)"""
+    into the floor; with speed [F] (cm/s, its touching part along the floor), a frame faster than PLANT_SPEED no lower
+    than SWING_CLEAR: a swing is not pressed onto the floor)"""
     dy = np.where(stance, np.minimum(dy, 0.0), 0.0)
     env = FL.smooth_max_envelope(-dy, ease)
-    out = np.where(stance, dy, -np.minimum(env, np.maximum(low, 0.0)))
-    return out
+    room = np.maximum(low, 0.0)
+    if speed is not None:
+        room = np.where(np.asarray(speed) > PLANT_SPEED, np.maximum(low - SWING_CLEAR, 0.0), room)
+    return np.where(stance, dy, -np.minimum(env, room))
 
 
 def swing_blend(corr, stance, F):
@@ -659,7 +677,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
 # ---- the layer -------------------------------------------------------------------------------------------------------
 
 def default_params():
-    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True}
+    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True, "glide": True}
 
 
 def body_com(model, motion, F):
@@ -1041,8 +1059,24 @@ def layer(model, rig, shoe, motion, params=None):
         for a, b in runs(cand, HOLD_MIN):
             h[a:b + 1] = True
         held[s] = h
-        stance[s] = bridge(on[s] | h, low_j[s])
+        stance[s] = bridge(on[s] | h, low_j[s], speed=speed[s])
     air = ~stance["左"] & ~stance["右"]
+    # the glide (GLIDE_MAX): a run with no foot standing under a pelvis that does not fall as in a flight stands on its
+    # lower foot where that shoe is just over the floor
+    glide = {s: np.zeros(F, dtype=bool) for s in SIDES}
+    if p.get("glide", True):
+        lower = low_j["左"] <= low_j["右"]
+        for a, b in runs(air, AIR_MIN):
+            i0, i1 = max(a - 1, 0), min(b + 1, F - 1)
+            if np.any(fall[i0:i1 + 1] > FALL_BOUND + FALL_TOL):
+                continue                                            # a hop (no floor holds that fall)
+            if i1 - i0 >= 2 and 2.0 * np.polyfit(np.arange(i0, i1 + 1) / FPS, hips_y[i0:i1 + 1], 2)[0] < -FLIGHT_FIT:
+                continue                                            # a flight
+            for s, m in (("左", lower), ("右", ~lower)):
+                glide[s][a:b + 1] = m[a:b + 1] & (low_j[s][a:b + 1] < GLIDE_MAX)
+        for s in SIDES:
+            stance[s] = stance[s] | glide[s]
+        air = ~stance["左"] & ~stance["右"]
     # the weight: the lever of the centre of mass's floor point between the standing feet's soles (share), and where a
     # standing leg cannot reach, whether the body needs that foot (the only one standing, or the centre of mass's floor
     # point more than NEED_CM outside the other foot's sole)
@@ -1170,7 +1204,7 @@ def layer(model, rig, shoe, motion, params=None):
             drop_rounds.append({"push_round": rnd, "frames_over": int(sum(int((target & stance[s] & (lows[s] > LAND_TOL)).sum()) for s in SIDES))})
             if not pushed:
                 break
-    dy_e = {s: eased_lowering(dy[s], stance[s], low[s]) for s in SIDES}
+    dy_e = {s: eased_lowering(dy[s], stance[s], low[s], speed=speed[s]) for s in SIDES}
     # (a frame the dance falls through faster than the bound is the air: the easing does not bring a shoe down into the
     # band the skirt's bound counts as standing there)
     fast_fall = fall > FALL_BOUND + FALL_TOL
@@ -1239,7 +1273,9 @@ def layer(model, rig, shoe, motion, params=None):
         cr, offs = {}, {}
         for s in SIDES:
             cr[s] = np.where(~stance[s], away[s] * ch, 0.0)
-            cr[s] = np.maximum(cr[s], -np.maximum(low[s] + dy_e[s] - FL.PEN_TOL, 0.0))
+            room = np.where(speed[s] > PLANT_SPEED, np.maximum(low[s] + dy_e[s] - SWING_CLEAR, 0.0),
+                            np.maximum(low[s] + dy_e[s] - FL.PEN_TOL, 0.0))     # (a swing is not carried onto the floor)
+            cr[s] = np.maximum(cr[s], -room)
             h = low[s] + dy_e[s] + cr[s]
             cr[s] = np.where(flying_frames & (h < AIR_CLEAR), cr[s] + (AIR_CLEAR - h), cr[s])
             offs[s] = lift[s] + np.stack([np.zeros(F), cr[s], np.zeros(F)], 1)
@@ -1293,7 +1329,8 @@ def layer(model, rig, shoe, motion, params=None):
             flight_rows.append(row)
     offsets, carry = offsets_of(change)
     centre_dy = change - drop
-    plan["sides"] = {s: {"stance": stance[s], "held": held[s], "on": on[s], "need": need[s], "share": share[s], "dy": dy_e[s],
+    plan["sides"] = {s: {"stance": stance[s], "held": held[s], "glide": glide[s], "on": on[s], "need": need[s], "share": share[s],
+                         "dy": dy_e[s],
                          "plant": corr[s], "carry": carry[s], "low": low[s], "low_judged": low_j[s], "speed": speed[s],
                          "plant_rows": plant_rows[s]} for s in SIDES}
     plan.update({"air": air, "flying": flying, "strict": strict, "drop": drop, "change": change, "drop_rows": drop_rows,
@@ -1429,6 +1466,7 @@ def report_of(plan, rig, before, after, F):
         sd = sides[s]
         rep["plan"][TAGS[s]] = {"stance_frames": int(sd["stance"].sum()), "on_frames": int(sd["on"].sum()),
                                 "held_frames": int(sd["held"].sum()), "held_runs": len(runs(sd["held"])),
+                                "glide_frames": int(sd["glide"].sum()), "glide_runs": len(runs(sd["glide"])),
                                 "need_frames": int((sd["need"] & sd["stance"]).sum())}
     st = sides["左"]["stance"].astype(int) + sides["右"]["stance"].astype(int)
     rep["plan"]["double_pct"] = _r(100.0 * float(np.mean(st == 2)), 2)
@@ -1518,6 +1556,9 @@ def main(argv=None):
     ap.add_argument("--no-drop", action="store_true", help="never lower the pelvis for a leg that cannot reach")
     ap.add_argument("--no-flight", action="store_true", help="leave the pelvis's height in the air as the dance has it")
     ap.add_argument("--no-knee", action="store_true", help="leave a knee straight for a frame or two at its reach as it is")
+    ap.add_argument("--no-glide", action="store_true",
+                    help="leave a run with no foot standing under a pelvis that does not fall as in a flight to the flight "
+                         "(the layer before v11feet) instead of standing it on its lower foot just over the floor")
     args = ap.parse_args(argv)
     if os.path.abspath(args.out) == os.path.abspath(args.dance):
         raise SystemExit("OUT.vmd is the dance itself: write the layer's dance elsewhere")
@@ -1533,14 +1574,15 @@ def main(argv=None):
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
     out, plan = layer(model, rig, shoe, motion, {"floor_y": args.floor_y, "ground": not args.no_ground,
                                                  "plant": not args.no_plant, "drop": not args.no_drop,
-                                                 "flight": not args.no_flight, "knee": not args.no_knee})
+                                                 "flight": not args.no_flight, "knee": not args.no_knee,
+                                                 "glide": not args.no_glide})
     vmd.dump(out, args.out)
     back = vmd.load(args.out)
     F = plan["F"]
     rep = report_of(plan, rig, motion, back, F)
     rep["untouched"] = untouched(motion, back, plan["written"])
     rep["params"] = {"no_ground": args.no_ground, "no_plant": args.no_plant, "no_drop": args.no_drop, "no_flight": args.no_flight,
-                     "no_knee": args.no_knee, "floor_y": plan["floor_y"]}
+                     "no_knee": args.no_knee, "no_glide": args.no_glide, "floor_y": plan["floor_y"]}
     rep["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:

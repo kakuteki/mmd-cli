@@ -303,6 +303,60 @@ class KickTest(unittest.TestCase):
         self.assertLess(float(np.abs(goal(out, F, "右") - goal(m, F, "右")).max()), 1e-5)
 
 
+def floor_steps(sh, s, a, b):
+    """the slide (cm) contact_check counts on the frames a..b of a side: the slowest touching vertex's step to the next
+    frame where the shoe is within 4 mm of the floor on both"""
+    lo, sl = sh[s]["low"], sh[s]["slide"] / FPS
+    both = (lo[a:b] < 0.4) & (lo[a + 1:b + 1] < 0.4)
+    return float(np.sum(sl[a:b][both]))
+
+
+class SwingTest(unittest.TestCase):
+    """a foot the dance moves fast just over the floor next to a standing run is not pressed onto the floor (v11feet,
+    2026-10-17: after the retarget the layer's easing into the swing, its bridge over a short lift and its carry of the
+    feet with a flight's change put such feet on the floor, where they slid: 153 cm a minute of the song's)"""
+
+    def test_a_fast_swing_before_a_held_run_is_not_eased_onto_the_floor(self):
+        # the right foot stands; the left travels 0.25 units a frame (60 cm/s) 6 mm over the floor until frame 11 and is
+        # held still 2 cm up from frame 12 (lowered onto the floor there): the swing before it keeps its height
+        F, k = 30, 12
+
+        def left(t):
+            return ((0.0, 0.075, -0.25 * t), None) if t < k else ((0.0, 0.25, -0.25 * (k - 1)), None)
+        m = dance(F, left=left)
+        out, plan = run(m)
+        a, b = shoes(m, F), shoes(out, F)
+        self.assertGreater(float(a["左"]["low"][:k].min()), 0.45)                     # the dance's swing is off the floor
+        self.assertLess(float(np.abs(b["左"]["low"][k + 2:]).max()), 0.1)             # the held run comes down
+        # the swing stays off it (its last frame, where the foot stops, comes down with the run: a landing, no slide)
+        self.assertGreater(float(b["左"]["low"][:k - 1].min()), 0.4)
+        self.assertLess(floor_steps(b, "左", 0, k), 0.5)
+
+    def test_a_short_lift_of_a_foot_moving_fast_is_not_bridged(self):
+        # the left foot stands until frame 9, travels 0.3 units a frame (72 cm/s) 1 cm up over frames 10-11, and stands
+        # from frame 12; the right foot stands: the lift is the dance's quick step, not the trace's jitter
+        F = 30
+
+        def left(t):
+            if t < 10:
+                return (0.0, 0.0, 0.0), None
+            if t < 12:
+                return (0.0, 0.125, -0.3 * (t - 9)), None
+            return (0.0, 0.0, -0.9), None
+        m = dance(F, left=left)
+        out, plan = run(m)
+        b = shoes(out, F)
+        self.assertFalse(bool(plan["sides"]["左"]["stance"][10:12].any()))
+        self.assertGreater(float(b["左"]["low"][10:12].min()), 0.4)
+
+    def test_a_still_lift_is_still_bridged(self):
+        # the same lift without the travel: the trace's jitter of a standing foot, bridged
+        F = 30
+        m = dance(F, left=lambda t: ((0.0, 0.125 if 10 <= t < 12 else 0.0, 0.0), None))
+        out, plan = run(m)
+        self.assertTrue(bool(plan["sides"]["左"]["stance"][10:12].all()))
+
+
 class PlantTest(unittest.TestCase):
     def test_a_foot_the_dance_slides_fast_along_the_floor_keeps_its_slide(self):
         # the left foot on the floor slides 0.2 units a frame (48 cm/s) over frames 10-19 while the right stands: the
@@ -472,10 +526,11 @@ class FlightTest(unittest.TestCase):
 
     def test_the_feet_of_a_flight_clear_the_floor(self):
         # a low hop: both feet 0.8 cm up over frames 20-27, travelling: in the flight both shoes are 1.6 cm and more up
-        # (under that a shoe stands as the skirt's bound counts it, and the body is falling by gravity)
+        # (under that a shoe stands as the skirt's bound counts it, and the body is falling by gravity).  (With the glide,
+        # the default since v11feet, a run so low under a level pelvis stands on its lower foot instead: the test above.)
         F, a, b = 60, 20, 27
         m = self.hop(F, a, b, lift=0.1)
-        out, plan = run(m)
+        out, plan = run(m, glide=False)
         sh = shoes(out, F)
         for s in SIDES:
             self.assertGreater(float(sh[s]["low"][a:b + 1].min()), 1.6)
@@ -575,6 +630,42 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(d).max()), 0.05)                                # under 4 mm
         for name in ("センター", "下半身"):
             self.assertLess(float(down_acc(world_y(out, F, name))[19:33].max()), 122.0 + 0.5)
+
+    def test_a_hover_with_both_feet_gliding_just_over_the_floor_stands_on_the_lower(self):
+        # both feet 1 cm (left) and 1.2 cm (right) up over frames 20-27, travelling 0.25 units a frame, the pelvis level
+        # (no fall: the dance holds the body up there).  Lower than a shoe the skirt's bound counts as standing
+        # (AIR_CLEAR): the lower foot is the dance's support gliding along the floor (v11feet 2026-10-17: after the
+        # retarget the song's hovers made hops 55 times, the air 12 a minute against people's 1.3 [0, 2.9]); no hop is made
+        F, a, b = 60, 20, 27
+
+        def foot(lift):
+            def f(t):
+                x = 0.25 * min(max(t - a + 1, 0), b - a + 1)
+                return (x, lift if a <= t <= b else 0.0, 0.0), None
+            return f
+        m = dance(F, centre=lambda t: (0.25 * min(max(t - a + 1, 0), b - a + 1), BENT, 0.0), left=foot(0.125), right=foot(0.15))
+        out, plan = run(m)
+        b_ = shoes(out, F)
+        self.assertTrue(bool(plan["sides"]["左"]["stance"][a:b + 1].all()))
+        self.assertEqual(plan["flight_rows"]["flights"], [])
+        self.assertLess(float(np.abs(b_["左"]["low"][a:b + 1]).max()), 0.1)              # the lower foot on the floor
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
+        self.assertGreater(float(b_["右"]["low"][a:b + 1].min()), 0.4)                   # the other stays up
+
+    def test_a_low_hover_whose_pelvis_falls_past_the_bound_on_a_frame_stays_a_hop(self):
+        # the same feet, the pelvis dropping 1.5 cm in one frame in the middle of the run (past the skirt's bound): a hop,
+        # not a glide (a floor frame may not fall that fast)
+        F, a, b = 60, 20, 27
+
+        def foot(lift):
+            def f(t):
+                x = 0.25 * min(max(t - a + 1, 0), b - a + 1)
+                return (x, lift if a <= t <= b else 0.0, 0.0), None
+            return f
+        m = dance(F, centre=lambda t: (0.25 * min(max(t - a + 1, 0), b - a + 1), BENT - (0.1875 if t >= 24 else 0.0), 0.0),
+                  left=foot(0.125), right=foot(0.15))
+        out, plan = run(m)
+        self.assertFalse(bool(plan["sides"]["左"]["stance"][a:b + 1].any()))
 
     def test_a_hover_with_one_foot_still_becomes_a_step_on_it(self):
         # both feet 2 cm up over frames 20-27, the left still, the right travelling 0.3 units a frame: the left is the
