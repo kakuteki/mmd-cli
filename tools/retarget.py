@@ -652,6 +652,24 @@ PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"),
          "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
          "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
 SKIRT_WORDS = ("スカート", "ｽｶｰﾄ")
+# parts that take the vertices of the bones under their bones too: the ribbon's loops and tails hang on 左リボン1..3 and
+# 右リボン1..3 under リボン親 (Sour's Rin: 299 of its 422 vertices; with リボン親's own 123 alone the part was its knot and
+# a finger in a loop went unseen), the hair's strands on the 前髮・後髮 chains under 髮親
+TREE_PARTS = ("ribbon", "hair")
+
+
+def bone_tree(body, roots):
+    """the indices of the bones `roots` and every bone under them"""
+    out = set(roots)
+    parents = [b.parent for b in body.model.bones]
+    grown = True
+    while grown:
+        grown = False
+        for i, p in enumerate(parents):
+            if p in out and i not in out:
+                out.add(i)
+                grown = True
+    return sorted(out)
 
 
 def _directions(n=98):
@@ -704,6 +722,8 @@ def part_vertices(body, part):
         idx = [b.index for b in body.model.bones if any(w in b.name for w in SKIRT_WORDS)]
     else:
         idx = [body.i(n) for n in bones if body.has(n)]
+        if part in TREE_PARTS:
+            idx = bone_tree(body, idx)
     m = np.isin(body.main_bone, idx)
     if m.sum() < 8:
         return None
@@ -1115,11 +1135,21 @@ def arm_locals(body, trk, frames, side, Es, Ws, hand_turn):
 
 
 def hand_world(body, trk, frames, side):
-    """(wrist position, hand turn, {point: world position}) of a hand"""
-    wp = world_pose(body, trk, frames, [side + "手首"])
+    """(wrist position, hand turn, {point: world position}) of a hand: the palm's middle (half way to 中指１) and the
+    middle finger's tip (中指先, or 中指３ past 中指２ by 0.6 of their bone) where the dance's finger keys put them (a
+    finger bent at its knuckle is tested where it is); a body without the finger bones: hand_offsets turned with the hand"""
+    names = [side + "手首"] + [side + n for n in ("中指１", "中指２", "中指３", "中指先") if body.has(side + n)]
+    wp = world_pose(body, trk, frames, names)
     W, R = wp[side + "手首"]
-    off = hand_offsets(body, side)
-    return W, R, {k: W + qrot(R, v) for k, v in off.items()}
+    pts = {k: W + qrot(R, v) for k, v in hand_offsets(body, side).items()}
+    if body.has(side + "中指１"):
+        pts["palm"] = W + 0.5 * (wp[side + "中指１"][0] - W)
+    if body.has(side + "中指先"):
+        pts["tip"] = wp[side + "中指先"][0]
+    elif body.has(side + "中指３") and body.has(side + "中指２"):
+        m3, m2 = wp[side + "中指３"][0], wp[side + "中指２"][0]
+        pts["tip"] = m3 + 0.6 * (m3 - m2)
+    return W, R, pts
 
 
 def contacts(src, src_trk, frames, side, src_parts, src_hand):
@@ -1181,7 +1211,9 @@ def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
         acc = np.zeros((F, 3))
         top = np.zeros(F)
         rel = contacts(src, src_trk, frames, side, src_parts, hands_src[side]) if params.get("hands", True) else {}
-        off_t = hand_offsets(tgt, side)
+        # the hand's points in the hand's frame, frame by frame (the fingers as the dance bends them; the arm's IK keeps
+        # the hand's turn, so they move with the wrist)
+        loc_t = {p: qrot(qconj(Rt), P - Wt) for p, P in pts_t.items()}
         used = {}
         for part, c in rel.items():
             w = c["w"]
@@ -1192,7 +1224,7 @@ def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
             pos, rot = tgt_parts[part]
             Q = mapped_contact(src, tgt, part, c["near"][on], c["d"][on])
             Qw = pos[on] + qrot(rot[on], Q)
-            offs = np.stack([off_t[p] for p in c["point"][on]])
+            offs = np.stack([loc_t[p][f] for p, f in zip(c["point"][on], np.flatnonzero(on))])
             want_w = Qw - qrot(Rt[on], offs)
             acc[on] += w[on, None] * want_w
             total[on] += w[on]

@@ -82,6 +82,14 @@ class ArmsInBodyTest(unittest.TestCase):
             self.assertEqual(a["source"]["左"][k], a["target"]["左"][k], k)
 
 
+class PartsTest(unittest.TestCase):
+    def test_a_ribbon_takes_the_bones_under_its_parent(self):
+        part = check.parts_of(T.body(T.RIBBON_DATA))["ribbon"]
+        loop = np.array([0.9, 19.3, -0.1]) - np.array(RIN["頭"])
+        self.assertLess(float(part.distance(loop[None, :])[0]), -0.2)
+        self.assertLess(float(part.distance((loop * np.array([-1.0, 1.0, 1.0]))[None, :])[0]), -0.2)
+
+
 class PlantsTest(unittest.TestCase):
     def pivot(self):
         ankle = np.array(MIKU["足首"])

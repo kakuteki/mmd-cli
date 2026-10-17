@@ -631,3 +631,57 @@ class ClearNearHandTest(unittest.TestCase):
         t = sphere_distance(BIG_HIPS_DATA, RIN, BIG_HIPS, "下半身", out, palm(BIG_HIPS_DATA, RIN, out, "左", [0]), [0])[0]
         self.assertGreater(t, min(hand_r, best[1] * k) - 0.03)
         self.assertLess(t, best[1] * k + 0.1)
+
+
+# ---- the parts and the fingers ----------------------------------------------------------------------------------------
+
+RIBBON = (("リボン親", "頭", (0.0, 19.0, -0.1), False), ("リボン1", "リボン親", (0.9, 19.3, -0.1), True))
+RIBBON_BLOBS = tuple(RIN_BLOBS) + (("リボン親", (0.0, 0.0, 0.0), 0.2, 40), ("左リボン1", (0.0, 0.0, 0.0), 0.4, 80))
+RIBBON_DATA = humanoid_bytes(RIN, RIBBON_BLOBS, twist_axis=True, name="rin-ribbon", extra=RIBBON)
+
+
+class PartsTest(unittest.TestCase):
+    """a ribbon whose loops hang on bones under リボン親 (Sour's Rin: 左リボン1..3, 右リボン1..3 carry 299 of its 422
+    vertices) is one part with them"""
+
+    def test_a_ribbon_takes_the_bones_under_its_parent(self):
+        s = retarget.surfaces(body(RIBBON_DATA))["ribbon"]
+        loop = np.array([0.9, 19.3, -0.1]) - np.array(RIN["頭"])      # the left loop's centre in the head's rest frame
+        self.assertLess(float(s.sdf(loop[None, :])[0]), -0.2)
+        self.assertLess(float(s.sdf((loop * np.array([-1.0, 1.0, 1.0]))[None, :])[0]), -0.2)
+
+
+def finger_tip(data, rest, m, side, frames):
+    """the middle finger's tip (中指３ past 中指２ by 0.6 of their bone) where the dance's keys put it"""
+    w = world(data, m, [side + "中指２", side + "中指３"], frames)
+    out = []
+    for f in frames:
+        m3, m2 = np.asarray(w[f][side + "中指３"][0]), np.asarray(w[f][side + "中指２"][0])
+        out.append(m3 + 0.6 * (m3 - m2))
+    return np.array(out)
+
+
+class CurledFingerTest(unittest.TestCase):
+    """a middle finger bent at its knuckle: the hand is tested where the dance's finger keys put the finger, not where
+    a straight finger would be"""
+
+    def test_a_bent_finger_kept_out_of_the_hips(self):
+        best = None
+        for a in range(-78, -41, 6):
+            for b in (-50, -30, -10):
+                for g in (30, 60, 90):
+                    for c in (-90, -60, 60, 90):
+                        keys = arm_pose_keys(a, b, g) + [key("左中指１", 0, axis_angle((0.0, 0.0, 1.0), c))]
+                        m = motion(*keys)
+                        ds = sphere_distance(MIKU_DATA, MIKU, MIKU_BLOBS, "下半身", m, finger_tip(MIKU_DATA, MIKU, m, "左", [0]), [0])[0]
+                        dp = sphere_distance(MIKU_DATA, MIKU, MIKU_BLOBS, "下半身", m, palm(MIKU_DATA, MIKU, m, "左", [0]), [0])[0]
+                        if not (0.3 <= ds <= 0.6 and dp > ds + 0.2):  # the source's finger near its hips, its palm further
+                            continue
+                        pure = retarget.layer(m, body(MIKU_DATA), body(BIG_HIPS_DATA), PURE).motion
+                        t = sphere_distance(BIG_HIPS_DATA, RIN, BIG_HIPS, "下半身", pure, finger_tip(BIG_HIPS_DATA, RIN, pure, "左", [0]), [0])[0]
+                        if best is None or t < best[0]:
+                            best = (t, ds, keys)
+        self.assertLess(best[0], -0.1)                 # the copied turns put the bent finger into the bigger hips
+        out = retarget.layer(motion(*best[2]), body(MIKU_DATA), body(BIG_HIPS_DATA), {"feet": False}).motion
+        t = sphere_distance(BIG_HIPS_DATA, RIN, BIG_HIPS, "下半身", out, finger_tip(BIG_HIPS_DATA, RIN, out, "左", [0]), [0])[0]
+        self.assertGreater(t, -0.03)

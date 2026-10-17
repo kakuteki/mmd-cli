@@ -75,6 +75,23 @@ PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"),
          "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
 
 
+TREE_PARTS = ("ribbon", "hair")
+
+
+def under(body, roots):
+    """the bones `roots` and every bone under them (by the model's parents)"""
+    out = set(roots)
+    parents = [b.parent for b in body.model.bones]
+    grown = True
+    while grown:
+        grown = False
+        for i, p in enumerate(parents):
+            if p in out and i not in out:
+                out.add(i)
+                grown = True
+    return sorted(out)
+
+
 def runs(mask, min_len=1):
     m = np.concatenate([[False], np.asarray(mask, bool), [False]]).astype(np.int8)
     d = np.diff(m)
@@ -143,6 +160,8 @@ class Part:
             idx = [b.index for b in body.model.bones if "スカート" in b.name or "ｽｶｰﾄ" in b.name]
         else:
             idx = [body.i(n) for n in bones if body.has(n)]
+            if part in TREE_PARTS:              # the ribbon's loops and the hair's strands hang on bones under them
+                idx = under(body, idx)
         m = np.isin(body.main_bone, idx) if len(body.vertices) else np.zeros(0, bool)
         self.ok = body.has(ride) and m.sum() >= 8
         if not self.ok:

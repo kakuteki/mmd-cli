@@ -57,9 +57,11 @@ def sphere(n):
     return out
 
 
-def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True):
+def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True, extra=()):
     """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x), vertex `blobs` (each
-    vertex's normal points out of its sphere) and, with `shoe`, a box of shoe vertices on each 足首"""
+    vertex's normal points out of its sphere), with `shoe` a box of shoe vertices on each 足首, and `extra` bones after
+    the others: (name, parent, rest position, sided) — sided ones on both sides as 左name and 右name (the right mirrored),
+    their parent a middle bone or the same side's"""
     w = Writer(bone=2, vertex=2)
     pos = {}
     for n, p in rest.items():
@@ -96,6 +98,11 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None,
                  (s + "ひざD", s + "足D", "ひざ", NORMAL | APPEND_ROTATE, {"layer": 2, "append": (s + "ひざ", 1.0)}),
                  (s + "足首D", s + "ひざD", "足首", NORMAL | APPEND_ROTATE, {"layer": 2, "append": (s + "足首", 1.0)}),
                  (s + "足先EX", s + "足首D", "足先EX", NORMAL, {"layer": 2})]
+    for key_, parent, p, sided in extra:
+        pos[key_] = p
+        names = [r[0] for r in rows]
+        for side in (("左", "右") if sided else ("",)):
+            rows.append((side + key_, parent if parent in names else side + parent, key_, NORMAL, {}))
     index = {r[0]: i for i, r in enumerate(rows)}
 
     def where(name, key):
