@@ -131,5 +131,84 @@ class BrowTest(unittest.TestCase):
             pmx_rig.apply(doc, {"inner_brow": 0.1})
 
 
+def wrist_model():
+    """an arm along +x: 右ひじ (x 0) -> 右手捩 (x 1, the forearm's twist) -> 右手首 (x 2) -> 右中指０ (x 2.3); rings at the wrist
+    of 12 vertices: one half and half on 右手捩 / 右手首, one 0.75 / 0.25, one 0.2 on 右ひじ, 0.6 右手捩 and 0.2 右手首; a
+    vertex on 右中指０ alone"""
+    from tests.test_rig_skin import ring
+    w = Writer(bone=2, vertex=2)
+    bones = [w.bone("右ひじ", position=(0, 0, 0)), w.bone("右手捩", parent=0, position=(1, 0, 0)),
+             w.bone("右手首", parent=1, position=(2, 0, 0)), w.bone("右中指０", parent=2, position=(2.3, 0, 0)),
+             w.bone("左ひじ", position=(0, 0, 0)), w.bone("左手捩", parent=4, position=(-1, 0, 0)),
+             w.bone("左手首", parent=5, position=(-2, 0, 0))]
+    vs = (ring(w, 2.0, 0.3, (1, 2), (0.5,), "BDEF2") + ring(w, 1.9, 0.3, (1, 2), (0.75,), "BDEF2")
+          + ring(w, 1.8, 0.3, (0, 1, 2, 2), (0.2, 0.6, 0.2, 0.0), "BDEF4") + [vertex_rec(w, (2.4, 0.1, 0.0), "BDEF1", (3,))])
+    return w.build(bones=bones, vertices=vs, frames=[w.frame("Root", "Root", special=True, items=[("bone", 0)])])
+
+
+class JointHelperTest(unittest.TestCase):
+    def setUp(self):
+        from tests.test_pmx_spine import load_tool
+        self.rig_skin = load_tool("rig_skin")
+        self.data = wrist_model()
+        self.doc = pmx_edit.loads(self.data)
+        self.rep = pmx_rig.apply(self.doc, {"joint_helpers": ["wrist"]})
+        self.out = pmx_edit.dumps(self.doc)
+
+    def test_helper_bone(self):
+        model = pmx.loads(self.out)
+        names = [b.name for b in model.bones]
+        self.assertEqual(names[:7], ["右ひじ", "右手捩", "右手首", "右中指０", "左ひじ", "左手捩", "左手首"])   # no index moved
+        h = model.bones[names.index("右手首補助")]
+        self.assertEqual(model.bones[h.parent].name, "右手捩")
+        self.assertEqual(h.position, model.bones[2].position)
+        self.assertEqual(h.append["parent"], 2)
+        self.assertAlmostEqual(h.append["ratio"], 0.5)
+        self.assertTrue(h.flags["append_rotate"])
+        self.assertFalse(h.flags["visible"])
+
+    def test_weights_keep_the_mean_turn_and_the_count(self):
+        h = [b.name for b in self.doc.bones].index("右手首補助")
+
+        class V:            # a vertex's weights merged per bone (BDEF4 pads with its first bone at weight 0)
+            def __init__(self, vertex):
+                self.vertex = vertex
+
+            def pairs(self):
+                out = {}
+                for b, w in self.vertex.pairs():
+                    out[b] = out.get(b, 0.0) + w
+                return {b: w for b, w in out.items() if w > 0.0}.items()
+        v = [V(x) for x in self.doc.vertices]
+        half = dict(v[0].pairs())
+        self.assertAlmostEqual(half.get(h, 0.0), 1.0, places=6)                      # 0.5 / 0.5: all on the helper
+        three = dict(v[12].pairs())                                                  # 0.75 手捩 / 0.25 手首
+        self.assertAlmostEqual(three.get(1, 0.0), 0.5, places=6)
+        self.assertAlmostEqual(three.get(h, 0.0), 0.5, places=6)
+        self.assertAlmostEqual(three.get(2, 0.0), 0.0, places=6)
+        four = dict(v[24].pairs())                                                   # 0.2 ひじ, 0.6 手捩, 0.2 手首
+        self.assertAlmostEqual(four.get(2, 0.0), 0.0, places=6)
+        self.assertAlmostEqual(four.get(h, 0.0), 0.4, places=6)
+        self.assertAlmostEqual(four.get(0, 0.0) + four.get(1, 0.0), 0.6, places=6)
+        self.assertAlmostEqual(four.get(0, 0.0) / four.get(1, 1.0), 0.2 / 0.6, places=5)  # the forearm side shared as it was
+        self.assertEqual(dict(v[36].pairs()), {3: 1.0})                              # off the joint: untouched
+        self.assertEqual(self.rep["helpers"][0]["vertices"], 36)
+
+    def test_a_twisted_wrist_keeps_its_girth(self):
+        RS = self.rig_skin
+        from tests.test_leg_ik import axis_angle, key, motion
+        from mmd_cli import fk
+        for data, want in ((self.data, 0.3 * math.cos(math.radians(85))), (self.out, 0.3)):
+            m = RS.Model.loads(data)
+            pose = RS.solve(m, RS.keys_at(m, fk.tracks_of(motion(key("右手首", 0, axis_angle((1, 0, 0), 170.0)))), 0))
+            p = RS.skin(m, pose)
+            r = np.linalg.norm(p[:12, 1:], axis=1)
+            self.assertTrue(np.allclose(r, want, atol=1e-5), (r[:3], want))
+
+    def test_unknown_joint_is_refused(self):
+        with self.assertRaises(ValueError):
+            pmx_rig.apply(pmx_edit.loads(self.data), {"joint_helpers": ["ankle"]})
+
+
 if __name__ == "__main__":
     unittest.main()

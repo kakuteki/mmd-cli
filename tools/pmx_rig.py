@@ -2,7 +2,7 @@
 morphs and physics.  Everything the recipe does not name is kept byte for byte (formats.pmx_edit).
 
     python tools/pmx_rig.py MODEL.pmx OUT.pmx [--report r.json] [--leg-ik-loops N] [--knee-least-bend DEG]
-                            [--inner-brow UNITS]
+                            [--inner-brow UNITS] [--joint-helpers wrist,shoulder,hip]
 
 Recipe:
   --leg-ik-loops N    the loops of the leg IKs (足ＩＫ, both sides).  MMD's leg IK is a CCD that keeps a loop only when it
@@ -19,6 +19,20 @@ Recipe:
                       brow's vertices: those hanging most on 眉1..眉3 of the side; inner and outer ends the x of 眉1 and
                       眉4), along the model's own brow-raise direction (Sour's Rin's bone morph 上 moves 眉1 by
                       (0, 0.1992, -0.0419)).  Panel 眉, added to the display frame 表情.
+  --joint-helpers J,..  a helper bone at each named joint of both sides that turns half way with the joint (an append of
+                      the lower bone's turn x 0.5, like the model's own ひじ補助 x 0.6), and the joint's linear blend
+                      shared out over it: a vertex with weight u on the upper side and l on the lower gives m = min(u, l)
+                      from each (each bone of a side in proportion) to the helper (2 m).  The weighted mean of its turns is
+                      kept (a 0.75 / 0.25 vertex becomes 0.5 upper / 0.5 helper: a quarter of the joint's turn either
+                      way), but no two of its bones are more than half the joint's turn apart: linear blending of two
+                      turns theta apart pulls the skin in to cos(theta / 2) of its girth (half and half), so a wrist
+                      twisted 170 degrees keeps 0.09 of its girth at the band's middle and keeps all of it on the helper.
+                      SDEF vertices are left alone (they blend on their own; their kind would change).  Joints:
+                        wrist     右手首補助: on 右手捩, at 右手首, x 0.5 of 右手首; upper 右手捩 (and 右ひじ), lower 右手首
+                                  (tools/fix_twist.py puts the forearm's twist past 45 degrees on 右手首: v10 up to 175)
+                        shoulder  右腕補助: on 右肩, at 右腕, x 0.5 of 右腕W (the arm's swing without its twist, by its IK;
+                                  右腕 for a model without 腕W); upper 右肩 and the trunk, lower 右腕W
+                        hip       右足補助: on 腰キャンセル右 (足D's parent), at 右足D, x 0.5 of 右足D; upper 下半身, lower 右足D
 
 The copy is for this work only and is not to be distributed (Sour's ReadMe allows editing; distribution would need the
 ReadMe and an editor's ReadMe).
@@ -34,7 +48,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mmd_cli.formats import pmx_edit  # noqa: E402
 
-KEYS = ("leg_ik_loops", "knee_least_bend", "inner_brow")
+KEYS = ("leg_ik_loops", "knee_least_bend", "inner_brow", "joint_helpers")
+TRUNK = ("上半身", "腰椎上部", "上半身2", "胸椎上部", "首")
+HELPERS = {     # joint: (helper, parent, at, append parent(s) tried in order, upper side, lower side, layer)
+    "wrist": ("{s}手首補助", "{s}手捩", "{s}手首", ("{s}手首",), ("{s}手捩", "{s}ひじ"), ("{s}手首",), 0),
+    "shoulder": ("{s}腕補助", "{s}肩", "{s}腕", ("{s}腕W", "{s}腕"), ("{s}肩",) + TRUNK, ("{s}腕W", "{s}腕"), 2),
+    "hip": ("{s}足補助", "腰キャンセル{s}", "{s}足D", ("{s}足D",), ("下半身", "腰キャンセル{s}"), ("{s}足D",), 2),
+}
+HELPER_FLAGS = 0x0002 | 0x0100          # rotatable, an append of the turn; hidden and not to be keyed (like ひじ補助)
 LEG_IKS = ("左足ＩＫ", "右足ＩＫ")
 BROW_UP = (0.0, 0.1992, -0.0419)            # Sour's Rin's 上: the brow's raise, in the face's slope
 PANEL_BROW = 1
@@ -53,6 +74,71 @@ def _check(recipe):
     brow = recipe.get("inner_brow")
     if brow is not None and not 0.0 < brow <= 0.5:
         raise ValueError("inner_brow must lie between 0 and 0.5 units")
+    joints = recipe.get("joint_helpers")
+    if joints is not None:
+        unknown = [j for j in joints if j not in HELPERS]
+        if unknown or len(set(joints)) != len(joints):
+            raise ValueError("joint_helpers takes each of %s once, not %s" % (sorted(HELPERS), joints))
+
+
+def _helpers(doc, joints):
+    """the joint helper bones and the weights shared out over them (see the module docstring); returns their report"""
+    names = {b.name: i for i, b in enumerate(doc.bones)}
+    out = []
+    for joint in joints:
+        helper, parent, at, appends, upper, lower, layer = HELPERS[joint]
+        for side, en in (("右", "R"), ("左", "L")):
+            def n(t):
+                return t.format(s=side)
+            if n(helper) in names:
+                raise ValueError("the model has a bone %s already" % n(helper))
+            for need in (parent, at):
+                if n(need) not in names:
+                    raise ValueError("the model has no bone %s (the %s helper needs it)" % (n(need), joint))
+            source = next((n(a) for a in appends if n(a) in names), None)
+            if source is None:
+                raise ValueError("the model has no bone to append the %s helper from: %s" % (joint, [n(a) for a in appends]))
+            up = {names[n(b)] for b in upper if n(b) in names}
+            lo = {names[n(b)] for b in lower if n(b) in names}
+            rec = pmx_edit.BoneRec(n(helper), "%s_helper_%s" % (joint, en), tuple(doc.bones[names[n(at)]].position),
+                                   names[n(parent)], layer, HELPER_FLAGS, append_parent=names[source], append_ratio=0.5)
+            doc.bones.append(rec)
+            hi = len(doc.bones) - 1
+            names[n(helper)] = hi
+            changed = skipped_sdef = 0
+            moved = 0.0
+            dropped = 0.0
+            for v in doc.vertices:
+                pairs = {}
+                for b, w in v.pairs():
+                    if w > 0.0:
+                        pairs[b] = pairs.get(b, 0.0) + w
+                u = sum(w for b, w in pairs.items() if b in up)
+                l = sum(w for b, w in pairs.items() if b in lo)
+                if u <= 1e-9 or l <= 1e-9:
+                    continue
+                if v.kind == "SDEF":
+                    skipped_sdef += 1
+                    continue
+                m = min(u, l)
+                new = {}
+                for b, w in pairs.items():
+                    if b in up:
+                        w *= (u - m) / u
+                    elif b in lo:
+                        w *= (l - m) / l
+                    if w > 1e-9:
+                        new[b] = w
+                new[hi] = new.get(hi, 0.0) + 2.0 * m
+                items = sorted(new.items(), key=lambda bw: -bw[1])
+                dropped = max(dropped, sum(w for _, w in items[4:]))
+                v.set_weights(items)
+                changed += 1
+                moved += 2.0 * m
+            out.append({"joint": joint, "bone": n(helper), "index": hi, "parent": n(parent), "append": source, "ratio": 0.5,
+                        "layer": layer, "vertices": changed, "weight_moved": round(moved, 4), "sdef_left": skipped_sdef,
+                        "largest_dropped": round(dropped, 6)})
+    return out
 
 
 def _morph_name(doc, m):
@@ -124,7 +210,7 @@ def _inner_brow(doc, units):
 def apply(doc, recipe):
     """change `doc` (formats.pmx_edit Document) by `recipe` (a dict of KEYS); returns the report of every change"""
     _check(recipe)
-    report = {"recipe": dict(recipe), "ik": [], "morphs": []}
+    report = {"recipe": dict(recipe), "ik": [], "morphs": [], "helpers": []}
     if recipe.get("leg_ik_loops") is not None or recipe.get("knee_least_bend") is not None:
         for name in LEG_IKS:
             b = doc.bones[doc.bone_index(name)]
@@ -150,6 +236,8 @@ def apply(doc, recipe):
             report["ik"].append({"bone": name, "old": old, "new": new})
     if recipe.get("inner_brow") is not None:
         report["morphs"] += _inner_brow(doc, recipe["inner_brow"])
+    if recipe.get("joint_helpers"):
+        report["helpers"] += _helpers(doc, recipe["joint_helpers"])
     return report
 
 
@@ -178,6 +266,7 @@ def main(argv=None):
     ap.add_argument("--leg-ik-loops", type=int)
     ap.add_argument("--knee-least-bend", type=float)
     ap.add_argument("--inner-brow", type=float)
+    ap.add_argument("--joint-helpers", type=lambda t: [x for x in t.split(",") if x])
     a = ap.parse_args(argv)
     recipe = {k: getattr(a, k) for k in KEYS if getattr(a, k) is not None}
     try:
