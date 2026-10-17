@@ -45,7 +45,7 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    its leg reaches.  A frame the input had in the air (both shoes 1.6 cm up and more, AIR_MIN frames running: the skirt's
    bound left it free) that now stands and falls faster than FALL_BOUND gets the pelvis lowered by the same solve until
    it does not (the turns of the trace's keys over a still foot: the song's 18.73, 40.13, 61.87 and 75.53 s, by 4.2,
-   2.9, 1.6 and 0.5 cm; the trace turns at up to 356 units/s^2 there, which no floor can hold).
+   2.9, 0.8 and 0.5 cm; the trace turns at up to 356 units/s^2 there, which no floor can hold).
 4. Plant: a standing foot is held where the dance puts it down (the first frame of its run on the floor; the run's
    lowest if it never is): the slow slide (under PLANT_SPEED) of its touching part is undone frame by frame from there,
    forward and back (足ＩＫ's horizontal place), so it turns on its ball or its heel as the dance has it but does not
