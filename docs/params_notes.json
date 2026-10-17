@@ -118,7 +118,7 @@
   "review": "retarget"
  },
  "hand_layer.py:CONTACT_MM.face": {
-  "from": "手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値。v11arms（10-17）: 顔の前はこのまま（目から）。頭の横・上に添えた手は目から 125〜148 mm でこの外になるので、体の面からの CONTACT_SURFACE_MM で読む",
+  "from": "手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値。v11arms（10-17）: 顔の前はこのまま（目から）。手の層が指先を部位へ 5 mm 以上入れたコマ（I7、頭 43 コマほか）は目から中央値 121 mm（右）・134 mm（左）、10 % 点 112・124 mm でこの外になり、触れの重みは 0 だった。頭の横・上に添えた手は体の面からの CONTACT_SURFACE_MM で読む",
   "review": "retarget・rig"
  },
  "face_life.py:LID_FOLLOW": {
