@@ -1010,6 +1010,7 @@ def _quant(x, qs=(50, 90, 99, 100)):
 TOUCH = 0.12                    # units (1 cm): a hand point this close to a part touches it
 NEAR = 0.8                      # units (6.4 cm): the hand's place on a part is kept within this, fading out towards it
 HAND_THICK = 0.15               # units: half a hand's thickness (the two palms' points touch at twice this)
+TOUCH_BAND = 0.08               # units (6 mm): past TOUCH, a hand on a part is tested against it by this much more
 CLEAR_ROUNDS = 4
 CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the surface
 CLEAR_TOL = 0.005               # units: an arm this little into a part is left as it is
@@ -1142,6 +1143,12 @@ def contacts(src, src_trk, frames, side, src_parts, src_hand):
     return out
 
 
+def part_scale(src, tgt, part):
+    """how much bigger the target's part is than the source's (the mean of their boxes' half sizes' ratios)"""
+    ss, st = surfaces(src)[part], surfaces(tgt)[part]
+    return float(np.mean(st.box_half / ss.box_half))
+
+
 def mapped_contact(src, tgt, part, near_src, d_src):
     """the target's point (in its part's frame) answering the source's nearest surface point and distance"""
     ss, st = surfaces(src)[part], surfaces(tgt)[part]
@@ -1149,8 +1156,7 @@ def mapped_contact(src, tgt, part, near_src, d_src):
     p0 = st.box_center + u * st.box_half
     c = st.closest(st.closest(p0))
     n = st.grad(c)
-    k = float(np.mean(st.box_half / ss.box_half))
-    return c + n * (np.maximum(d_src, 0.0) * k)[:, None]
+    return c + n * (np.maximum(d_src, 0.0) * part_scale(src, tgt, part))[:, None]
 
 
 def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
@@ -1194,7 +1200,8 @@ def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
         has = total > 0
         target[has] = Wt[has] + top[has, None] * (acc[has] / total[has, None] - Wt[has])
         want[side] = target
-        weights[side] = {part: c["w"] for part, c in rel.items()}
+        weights[side] = {part: {"w": c["w"], "d": c["d"], "want": np.maximum(c["d"], 0.0) * part_scale(src, tgt, part)}
+                         for part, c in rel.items()}
         rep[side] = {"touch_frames": used}
     # the two hands: their palms as far apart (and the same way) as the source's, scaled by the shoulders' ratio
     if params.get("hands", True) and all(s in want for s in SIDES):
@@ -1259,11 +1266,14 @@ def arm_points(body, side, ap, radii, hand):
     return np.stack(pts, axis=1), np.array(rad), np.array(share), np.array(seg)
 
 
-def penetration(tgt, side, ap, hand, parts, contact_w):
+def penetration(tgt, side, ap, hand, parts, relations):
     """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
-    point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; and the push that takes the wrist out
-    of what the forearm and the hand go into [F, 3].  The hand and the forearm's half by it are not tested against a part
-    the source's hand touches then (contact_w of that part at least 0.3): the contact sets them there."""
+    point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; the push that takes the wrist out of
+    what the forearm and the hand go into [F, 3], and the same from the hand and the forearm's half by it alone [F, 3]
+    (a held hand moves by that only).  The hand and the forearm's half by it are not tested against a part
+    the source's hand touches then (relations[part]["d"] within TOUCH: the contact sets them there); near one they come
+    as close to it as the source's hand is to its own (relations[part]["want"], the distance the hand's relation wants,
+    scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's."""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
@@ -1275,8 +1285,11 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
     push_s = np.zeros((F, 3))
     at_s = np.zeros((F, 3))
     push_w = np.zeros((F, 3))
+    best_h = np.zeros(F)
+    push_h = np.zeros((F, 3))
     near_shoulder = (seg == 0) | ((seg == 1) & (share < ELBOW_SHARE))
     lever_w = np.where(seg == 1, share, np.where(seg == 2, 1.0, 0.0)) * ~near_shoulder
+    lever_h = lever_w * ((seg == 2) | ((seg == 1) & (share >= 0.5)))
     for part, (pos, rot) in parts.items():
         if soft(part):
             continue
@@ -1290,12 +1303,16 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
             pen[:, (seg == 0) & (share < SHOULDER_SKIP)] = 0.0
         else:
             pen[:, seg == 0] = 0.0
-        if part in contact_w:
-            # the hand and the forearm by it lie on a part the source's hand touches: where they lie is the contact's
-            # (the hand set where the source's is, its turn the source's), not pushed off it here
+        if part in relations:
+            # the hand and the forearm by it as close to the part as the source's hand is to its own: their middle line
+            # no closer than that distance (their thickness where it is further than that); on a part the source's hand
+            # touches, where they lie is the contact's (the hand set where the source's is, its turn the source's)
             near_hand = (seg == 2) | ((seg == 1) & (share >= 0.5))
-            touching = (contact_w[part] >= 0.3)[:, None] & near_hand[None, :]
-            pen = np.where(touching, 0.0, pen)
+            r_eff = np.minimum(rad[None, :], relations[part]["want"][:, None])
+            pen = np.where(near_hand[None, :], pen - rad[None, :] + r_eff, pen)
+            # (the excuse fades out over TOUCH_BAND past the touch: the hand does not jump as the source's comes on)
+            excuse = smoothstep((TOUCH + TOUCH_BAND - relations[part]["d"]) / TOUCH_BAND)
+            pen = np.where(near_hand[None, :], pen * (1.0 - excuse)[:, None], pen)
         pen = np.maximum(pen, 0.0)
         if not np.any(pen > 0):
             continue
@@ -1315,11 +1332,17 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
         take = v > best_w
         push_w[take] = vec[np.arange(F), j][take] * lever_w[j][take][:, None]
         best_w[take] = v[take]
+        sc = pen * lever_h[None, :]
+        j = np.argmax(sc, axis=1)
+        v = sc[np.arange(F), j]
+        take = v > best_h
+        push_h[take] = vec[np.arange(F), j][take] * lever_h[j][take][:, None]
+        best_h[take] = v[take]
     turn_s = np.tile(IDENTITY, (F, 1))
     has = best_s > 0
     if np.any(has):
         turn_s[has] = qbetween(at_s[has] - S[has], at_s[has] + push_s[has] - S[has])
-    return deepest, turn_s, push_w
+    return deepest, turn_s, push_w, push_h
 
 
 SWIVELS = 24                    # elbow positions tried round the shoulder-wrist line when a held hand's arm goes in
@@ -1374,17 +1397,20 @@ def best_swivel(tgt, side, S, E, W, parts, touched=None):
     return best
 
 
-def clear_arms(tgt, trk, frames, contact_weights, parts, log):
+def clear_arms(tgt, trk, frames, hand_relations, parts, log):
     """push the target's arms out of its head, ribbon, trunk, hips and thighs: what the upper arm or the elbow goes into
     is cleared by turning the whole arm about the shoulder, what the forearm or the hand goes into by moving the wrist
     (arm IK, the elbow kept on its side); each change eases in and out over EASE frames around the frames that go in.
+    hand_relations: side -> part -> {"w": the hand's relation's weight [F], "d": the source's hand's distance [F],
+    "want": the distance the relation wants [F]} (fix_hands).
     Returns the report per side."""
     F = len(frames)
     rep = {}
     for side in SIDES:
         if not all(tgt.has(n) for n in arm_names(side)):
             continue
-        cw = contact_weights.get(side, {})
+        relations = hand_relations.get(side, {})
+        cw = {part: r["w"] for part, r in relations.items()}
         # the hand is held where the source's hand touches a part (its relation's weight near 1), not where it is only
         # near one: an arm clears the body by moving its hand when the hand was merely close
         hold = smoothstep((np.max(np.stack(list(cw.values())), axis=0) - HOLD_FROM) / (1.0 - HOLD_FROM)) if cw else None
@@ -1393,7 +1419,7 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
         for rnd in range(CLEAR_ROUNDS):
             ap = arm_pose(tgt, trk, frames, side)
             hand = hand_world(tgt, trk, frames, side)
-            deep, ts, pw = penetration(tgt, side, ap, hand, parts, cw)
+            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations)
             if before is None:
                 before = deep.copy()
             bad = deep > CLEAR_TOL
@@ -1403,17 +1429,21 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
             which, weight = ease_weights(F, spans)
             ts2 = np.tile(IDENTITY, (F, 1))
             pw2 = np.zeros_like(pw)
+            ph2 = np.zeros_like(ph)
             for n, (a, b) in enumerate(spans):
                 m = which == n
                 inside = np.zeros(F, bool)
                 inside[a:b + 1] = True
                 k = a + int(np.argmax(qangle(ts[a:b + 1])))
                 kw = a + int(np.argmax(np.linalg.norm(pw[a:b + 1], axis=1)))
+                kh = a + int(np.argmax(np.linalg.norm(ph[a:b + 1], axis=1)))
                 ts2[m & inside] = ts[m & inside]
                 pw2[m & inside] = pw[m & inside]
+                ph2[m & inside] = ph[m & inside]
                 ramp = m & ~inside
                 ts2[ramp] = slerp_n(np.tile(IDENTITY, (int(ramp.sum()), 1)), np.tile(ts[k], (int(ramp.sum()), 1)), weight[ramp])
                 pw2[ramp] = weight[ramp, None] * pw[kw]
+                ph2[ramp] = weight[ramp, None] * ph[kh]
             moved = weight > 0
             moved_any |= moved
             S, E, W = ap[side + "腕"][0], ap[side + "ひじ"][0], ap[side + "手首"][0]
@@ -1437,7 +1467,7 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
                     clears = upper_depth(tgt, side, S[idx], Esw, W[idx], sub, touched) <= SWIVEL_CLEARS
                     k = idx[clears]
                     h = hold[k][:, None]
-                    Wt[k] = (1 - h) * Wt[k] + h * W[k]
+                    Wt[k] = (1 - h) * (W1[k] + pw2[k]) + h * (W[k] + ph2[k])      # held: out of what the hand goes into
                     pole[k] = (1 - h) * E1[k] + h * Esw[clears]
             Es, Ws = arm_ik(S, E1, W1, Wt, pole=pole)
             Es = np.where(moved[:, None], Es, E)
@@ -1447,7 +1477,7 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
                 _fit_turns(trk, name, frames, q, moved)
         ap = arm_pose(tgt, trk, frames, side)
         hand = hand_world(tgt, trk, frames, side)
-        after, _, _ = penetration(tgt, side, ap, hand, parts, cw)
+        after = penetration(tgt, side, ap, hand, parts, relations)[0]
         rep[side] = {"in_before_frames": int(np.sum(before > CLEAR_TOL)) if before is not None else 0,
                      "in_after_frames": int(np.sum(after > CLEAR_TOL)), "in_after_over_1cm": int(np.sum(after > 0.125)),
                      "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,
@@ -1689,7 +1719,7 @@ def own_arms(body, trk, frames):
             continue
         ap = arm_pose(body, trk, frames, side)
         hands[side] = hand_world(body, trk, frames, side)
-        deep, _, _ = penetration(body, side, ap, hands[side], parts, {})
+        deep = penetration(body, side, ap, hands[side], parts, {})[0]
         out[side] = {"in_1cm_frames": int(np.sum(deep > 0.125)), "deepest_cm": round(float(deep.max()) * UNIT_CM, 3),
                      "in_1cm_runs": len(runs(deep > 0.125))}
     if len(hands) == 2:

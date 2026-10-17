@@ -20,10 +20,11 @@ uses 98 others).
 * arms in the body: the target's arm as capsules on its bones (the upper arm, the forearm, the hand; radii the 60th
   percentile of their vertices' distance from the bone), the deepest its forearm and hand go into a part (head, ribbon,
   chest, belly, hips, thighs; each the convex polytope of its vertices) and the upper arm's half by the elbow into the
-  head; a hand on a part the source's hand touches (and its forearm's half by the wrist), the hair and the skirt (soft:
-  the physics or the hull's shape) counted apart (the upper arm's half by the shoulder
-  arm not tested against the trunk, the hand not against a part the source's hand touches then).  The frames over 0.5
-  and 1 cm, the deepest, the runs.  The same for the source's arm in its own body.
+  head (the upper arm lies against the trunk at the armpit and along the side); a hand on a part the source's hand
+  touches (and its forearm's half by the wrist), the hair and the skirt (soft: the physics or the hull's shape) counted
+  apart.  The frames over 0.5
+  and 1 cm (also per part), the deepest, the runs.  The same for the source's arm in its own body, with the same rule
+  (its hand on a part it touches counted apart).
 * plants: a source foot stands where its foot IK goal or toe IK goal (forward kinematics: where the foot is meant to
   be) lies within PLANT_EPS of its rest height and moves less than STILL a frame, for PLANT_MIN frames; on its toe
   when pitched more than 4 degrees.  On those frames the target's shoe: its lowest point's height over the floor (the
@@ -244,6 +245,7 @@ def arms_in(pose, body, parts, touching=None):
         deep = np.zeros(len(S))
         touch_deep = np.zeros(len(S))
         soft_deep = {}
+        part_deep = {}
         dist = part_distances(pose, parts, {i: p for i, p in enumerate(pts)})
         for part, by in dist.items():
             for i, d in by.items():
@@ -259,8 +261,10 @@ def arms_in(pose, body, parts, touching=None):
                     touch_deep = np.maximum(touch_deep, np.where(on, pen, 0.0))
                     pen = np.where(on, 0.0, pen)
                 deep = np.maximum(deep, pen)
+                part_deep[part] = np.maximum(part_deep.get(part, 0.0), pen)
         deep = np.maximum(deep, 0.0)
         out[side] = {"frames_over_0.5cm": int(np.sum(deep > 0.0625)), "frames_over_1cm": int(np.sum(deep > 0.125)),
+                     "part_frames_over_1cm": {p: int(np.sum(v > 0.125)) for p, v in sorted(part_deep.items())},
                      "soft_frames_over_1cm": {p: int(np.sum(v > 0.125)) for p, v in soft_deep.items()},
                      "touched_part_frames_over_1cm": int(np.sum(touch_deep > 0.125)),
                      "touched_part_deepest_cm": round(float(touch_deep.max()) * UNIT_CM, 3) if len(touch_deep) else 0.0,
@@ -345,7 +349,7 @@ def measure(src_motion, src_body, tgt_motion, tgt_body, last=None):
         ds = part_distances(sp, spa, hand_points(sp, side))
         touching[side] = {part: np.minimum(v["palm"], v["tip"]) < TOUCH for part, v in ds.items()}
     t_in = arms_in(tp, tgt_body, tpa, touching)
-    s_in = arms_in(sp, src_body, spa)
+    s_in = arms_in(sp, src_body, spa, touching)                 # the same rule on the source's own body
     arrays = {}
     for tag, d in (("target", t_in), ("source", s_in)):
         for side, row in d.items():

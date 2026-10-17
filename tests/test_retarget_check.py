@@ -69,8 +69,17 @@ class ArmsInBodyTest(unittest.TestCase):
         a = check.measure(m, T.body(T.MIKU_DATA), pure, T.body(T.RIN_DATA))["arms_in_body"]
         b = check.measure(m, T.body(T.MIKU_DATA), out, T.body(T.RIN_DATA))["arms_in_body"]
         self.assertEqual(a["target"]["左"]["frames_over_1cm"], 5)
+        self.assertEqual(a["target"]["左"]["part_frames_over_1cm"]["hips"], 5)
         self.assertEqual(b["target"]["左"]["frames_over_1cm"], 0)
         self.assertEqual(a["source"]["左"]["frames_over_1cm"], 0)     # the source's own arm clears its hips
+
+    def test_the_source_is_measured_by_the_same_rule(self):
+        # a dance measured against itself: the source's hand on its head is counted apart just as the target's is
+        m = head_touch_dance()
+        a = check.measure(m, T.body(T.MIKU_DATA), m, T.body(T.MIKU_DATA))["arms_in_body"]
+        self.assertGreater(a["target"]["左"]["touched_part_frames_over_1cm"], 0)
+        for k in ("frames_over_0.5cm", "frames_over_1cm", "touched_part_frames_over_1cm", "deepest_cm"):
+            self.assertEqual(a["source"]["左"][k], a["target"]["左"][k], k)
 
 
 class PlantsTest(unittest.TestCase):

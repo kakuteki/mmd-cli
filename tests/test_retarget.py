@@ -599,3 +599,35 @@ class ClearUpperArmTest(unittest.TestCase):
         t, least, want, pose = max(cases)
         out = retarget.layer(motion(*arm_pose_keys(*pose)), body(MIKU_DATA), body(BIG_HEAD_DATA), {"feet": False}).motion
         self.assertLess(upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, out), 0.03)  # no arm through the head, even for a touch
+
+
+BIG_HIPS = tuple(RIN_BLOBS[:3]) + (("下半身", (0.0, -1.2, 0.4), 1.6, 300),)
+BIG_HIPS_DATA = humanoid_bytes(RIN, BIG_HIPS, twist_axis=True, name="rin-big-hips")
+
+
+class ClearNearHandTest(unittest.TestCase):
+    """a palm near the source's hips but not on them (2 to 3 cm off), that the hand's relation alone leaves closer to the
+    target's (bigger) hips: the hand comes no closer to them than the source's hand is to its own (scaled), as far as the
+    hand's thickness, and no further"""
+
+    def test_a_hand_near_the_hips_keeps_off_them(self):
+        k = BIG_HIPS[3][2] / MIKU_BLOBS[3][2]
+        hand_r = 0.25                                   # the tool's hand radius on a body without hand vertices
+        best = None
+        for a in range(-78, -41, 3):                 # the arm down, swung back, the elbow bent: the palm by the hips
+            for b in (-50, -40, -30, -20, -10):
+                for g in (50, 60, 70, 80, 90):
+                    m = motion(*arm_pose_keys(a, b, g))
+                    d = sphere_distance(MIKU_DATA, MIKU, MIKU_BLOBS, "下半身", m, palm(MIKU_DATA, MIKU, m, "左", [0]), [0])[0]
+                    if not 0.2 <= d <= 0.35:
+                        continue
+                    rel = retarget.layer(m, body(MIKU_DATA), body(BIG_HIPS_DATA), {"feet": False, "clear": False}).motion
+                    t = sphere_distance(BIG_HIPS_DATA, RIN, BIG_HIPS, "下半身", rel, palm(BIG_HIPS_DATA, RIN, rel, "左", [0]), [0])[0]
+                    gap = min(hand_r, d * k) - t            # how much closer than that the relation puts the palm
+                    if best is None or gap > best[0]:
+                        best = (gap, d, (a, b, g))
+        self.assertGreater(best[0], 0.06)
+        out = retarget.layer(motion(*arm_pose_keys(*best[2])), body(MIKU_DATA), body(BIG_HIPS_DATA), {"feet": False}).motion
+        t = sphere_distance(BIG_HIPS_DATA, RIN, BIG_HIPS, "下半身", out, palm(BIG_HIPS_DATA, RIN, out, "左", [0]), [0])[0]
+        self.assertGreater(t, min(hand_r, best[1] * k) - 0.03)
+        self.assertLess(t, best[1] * k + 0.1)
