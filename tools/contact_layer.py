@@ -189,9 +189,10 @@ STRICT_NEAR = 8                 # brings within the bound (strict frames) with n
 # kicks far out of reach up to 30 cm: kneepop's NOTES, 2026-10-17.)
 KNEE_NEAR = 0.05                # of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two
                                 # straighter than the frames round them are bent like them
-KNEE_POP_DEG = 6.0              # degrees: there a frame's bend comes within this of the line through its neighbours (rig_check
-                                # counts a jump at 10.  On the song: 4 moves twice the frames for 3 jumps fewer, 8 half the
-                                # frames for the same jumps but leaves them nearer 10)
+KNEE_POP_DEG = 6.0              # degrees: there a frame's bend comes within this of the line through its neighbours, and no
+                                # neighbour's further than this the other way (rig_check counts a jump at 10.  On the song's
+                                # legs' formula: 75 -> 32 jumps with the first side, 29 with both; 4 moves twice the frames
+                                # for no fewer, 8 half the frames for the same but leaves them nearer 10)
 KNEE_ROUNDS = 40                # rounds of evening out (a pop of two frames halves its gap a round)
 KNEE_PITCH_MAX = 30.0           # degrees: the most a standing foot turns onto its toes or its heel for its knee
 KNEE_PITCH_STEP = 0.25          # degrees: the turns tried
@@ -199,6 +200,8 @@ KNEE_EDGE = 3                   # frames at either end of a standing run: a turn
                                 # heel does not come down again before the foot lifts, nor rise again after it lands)
 KNEE_TOL = IK_MISS               # units (1 mm): a smaller change of the hip's distance to the goal is none (MMD's IK tells no less)
 KNEE_TOE_TOL = 1e-4             # units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it)
+KNEE_PLAN_ROUNDS = 8            # rounds of the targets on the distances the changes so far leave (a turn held on to a run's
+                                # end bends that frame more, and the frame before may then need more)
 
 
 def runs(mask, n=1):
@@ -423,22 +426,32 @@ def knee_bend(D, L1, L2, rest_deg, least_deg=0.0):
     return np.clip(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))) - rest_deg, least_deg, 180.0 - rest_deg)
 
 
-def even_pops(bend, cap, pop_deg=None, rounds=None):
+def even_pops(bend, cap, pop_deg=None, rounds=None, both=True):
     """the bends [F] (degrees) with every frame bent less than `cap` (the band at the end of the reach) and straighter than
     the line through its neighbours by more than pop_deg raised to that line less pop_deg (no further than cap, never
-    lowered), to a fixed point: a frame or two straight between bent ones come within pop_deg of the frames round them"""
+    lowered), to a fixed point: a frame or two straight between bent ones come within pop_deg of the frames round them.
+    both: also raised so that a neighbour is not more bent than the line through its own neighbours by more than pop_deg
+    (a knee snapping straight from a bend held: the frame it snaps on bends toward the frames before; rig_check counts a
+    jump either way)"""
     pop_deg = KNEE_POP_DEG if pop_deg is None else pop_deg
     rounds = KNEE_ROUNDS if rounds is None else rounds
     b = np.array(bend, dtype=float)
     if len(b) < 3:
         return b
-    for _ in range(rounds):
-        mid = b[1:-1]
-        new = np.where(mid < cap, np.maximum(mid, np.minimum(cap, 0.5 * (b[:-2] + b[2:]) - pop_deg)), mid)
-        done = float(np.max(new - mid)) < 1e-6
-        b[1:-1] = new
-        if done:
-            break
+    # the straight frames first, to their fixed point; then both ways (a frame straight between bent ones makes its
+    # neighbours look more bent than their own neighbours' line until it is raised: those are not raised for it)
+    for sides in ((False,), (False, True)) if both and len(b) >= 4 else ((False,),):
+        for _ in range(rounds):
+            need = np.full(len(b), -np.inf)
+            need[1:-1] = 0.5 * (b[:-2] + b[2:]) - pop_deg
+            if True in sides:
+                need[2:] = np.maximum(need[2:], 2.0 * (b[1:-1] - pop_deg) - b[:-2])
+                need[:-2] = np.maximum(need[:-2], 2.0 * (b[1:-1] - pop_deg) - b[2:])
+            new = np.where(b < cap, np.maximum(b, np.minimum(cap, need)), b)
+            done = float(np.max(new - b)) < 1e-6
+            b = new
+            if done:
+                break
     return b
 
 
@@ -446,8 +459,9 @@ def knee_targets(D, L1, L2, rest_deg, least_deg=0.0, near=None, pop_deg=None):
     """one leg's hip-to-goal distances D [F] (units): {"target": the distance its knee is to have [F] (never longer than D),
     "bend0": the bends of D [F], "bend": the target's [F] (degrees from rest), "even": the frames bent like the frames round
     them [F], "reach", "cap": the bend at the band's edge}.  In the band near x the reach at its end, a frame or two
-    straighter than the line through the frames round them by more than pop_deg are bent to within pop_deg of it
-    (even_pops: a knee straight for a frame, or snapping straight, at the IK's end of the reach); nothing else changes"""
+    straighter than the line through the frames round them by more than pop_deg are bent to within pop_deg of it, and so
+    are the frames round one more bent than that line (even_pops: a knee straight for a frame, or snapping straight, at the
+    IK's end of the reach); nothing else changes"""
     near = KNEE_NEAR if near is None else near
     D = np.asarray(D, dtype=float)
     L = float(knee_distance(least_deg, L1, L2, rest_deg))
@@ -775,21 +789,44 @@ def foot_turned(c, axis, angles, goal, shell):
 
 
 def carry_to_edges(turn, stance, edge=None):
-    """the turns [F] (degrees, signed) with a turn within `edge` frames of a standing run's end held on to that end where the
-    foot lifts after it (and to its start where the foot lands before it): the larger of the same sign carried over"""
+    """the turns [F] (degrees, signed) with a turn within `edge` frames of a standing run's end, and nearer its end than its
+    start, held on to that end where the foot lifts after it (and one nearer its start held back to the start where the
+    foot lands before it): the larger of the same sign carried over"""
     edge = KNEE_EDGE if edge is None else edge
     out = np.array(turn, dtype=float)
     F = len(out)
     for a, b in runs(stance):
         if b < F - 1:                                   # the foot lifts after b
             for t in range(max(a, b - edge + 1) + 1, b + 1):
-                if abs(out[t - 1]) > abs(out[t]) and out[t - 1] * out[t] >= 0.0:
-                    out[t] = out[t - 1]
+                src = t - 1
+                if b - src < src - a and abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
+                    out[t] = out[src]
         if a > 0:                                       # the foot lands at a
             for t in range(min(b, a + edge - 1) - 1, a - 1, -1):
-                if abs(out[t + 1]) > abs(out[t]) and out[t + 1] * out[t] >= 0.0:
-                    out[t] = out[t + 1]
+                src = t + 1
+                if src - a < b - src and abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
+                    out[t] = out[src]
     return out
+
+
+def knee_turn(hip, goal, target, c_front, c_back, axis, shell, sign=0.0, least=0.0, steps=None):
+    """(the least turn (degrees: + onto the toes about c_front, - onto the heel about c_back; `sign` keeps one of them) of a
+    standing foot, no smaller than `least` (degrees, of that sign), that brings the hip's distance to its goal to `target`,
+    whether one does): the turn that brings it nearest where none does, 0 where no turn brings it nearer"""
+    steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP)) if steps is None else steps
+    options = []                                # (the turn, reaches the target, the distance it brings, the sign)
+    for sg, c in ((1.0, c_front), (-1.0, c_back)):
+        if sign and sg != sign:
+            continue
+        st = steps[steps >= math.radians(abs(least)) - 1e-12] if sign else steps
+        goal_t, _ = foot_turned(c, axis, sg * st, goal, shell)
+        d = np.linalg.norm(hip - goal_t, axis=1)
+        ok = np.flatnonzero(d <= target + 1e-6)
+        j = int(ok[0]) if len(ok) else int(np.argmin(d))
+        options.append((float(st[j]), bool(len(ok)), float(d[j]), sg))
+    reached = [x for x in options if x[1]]
+    pick = min(reached, key=lambda x: x[0]) if reached else min(options, key=lambda x: x[2])
+    return pick[3] * math.degrees(pick[0]), bool(reached)
 
 
 def knee_plan(rig, shoe, sol, stance):
@@ -798,10 +835,14 @@ def knee_plan(rig, shoe, sol, stance):
     module's doc).  Per side knee_targets on the hip's distance to the goal.  A swing frame's goal moves toward the hip by
     what is too long, its toe IK's goal by as much as MMD's ankle (a goal beyond the reach moves further than the ankle: the
     foot keeps its turn).  A standing foot turns about the front of the part of its shoe that touches (onto its toes) or
-    about its back (onto its heel), by the least turn of the two (KNEE_PITCH_STEP, at most KNEE_PITCH_MAX) that brings the
-    distance down to the target (the most it can bring where none does), the shoe's lowest point kept where it was, held on
-    to the end of the run within KNEE_EDGE frames of a lift or a landing (carry_to_edges): its toes (or heel) stay on the
-    floor where they stand"""
+    about its back (onto its heel), by the least turn of the two (knee_turn) that brings the distance down to the target
+    (its last frame before it lifts onto its toes only: a push-off), the shoe's lowest point kept where it was, held on to
+    the end of the run within KNEE_EDGE frames of a lift or a landing (carry_to_edges): its toes (or heel) stay on the floor
+    where they stand.  A standing foot whose goal MMD's ankle does not reach (by IK_MISS: its foot is not where the plan
+    stands it, but short of it in the air), or that no turn brings to its target on the first or the last frame of its
+    run (it then lands a frame late, or lifts a frame early), moves as a swing foot does.  A turn held on bends that frame
+    more, so the targets are found again on the distances the changes leave, KNEE_PLAN_ROUNDS times at most (only ever
+    bending more)"""
     F = len(stance[SIDES[0]])
     offsets, turns, toes, plan = {}, {}, {}, {}
     steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP))
@@ -810,52 +851,72 @@ def knee_plan(rig, shoe, sol, stance):
         leg = sol[s]
         hip, g, t_goal = leg["hip"], leg["goal_ankle"], leg["goal_toe"]
         D = np.linalg.norm(g - hip, axis=1)
-        kt = knee_targets(D, L1, L2, rest_deg, least)
-        excess = D - kt["target"]
-        need = excess > KNEE_TOL
-        off = np.zeros((F, 3))
+        # the frames whose foot moves as a swing foot's: the swing, and a standing foot MMD leaves short of its goal
+        free = ~np.asarray(stance[s], dtype=bool) | (leg["reach"] > IK_MISS)
+        goal = g.copy()
+        deg = np.zeros(F)
+        pivots = None
+        first = None
+        rounds = 0
+        for rounds in range(1, KNEE_PLAN_ROUNDS + 1):
+            Dr = np.linalg.norm(goal - hip, axis=1)
+            kt = knee_targets(Dr, L1, L2, rest_deg, least)
+            first = kt if first is None else first
+            excess = Dr - kt["target"]
+            need = excess > KNEE_TOL
+            if not need.any():
+                break
+            on = need & ~free
+            if on.any():
+                if pivots is None:
+                    o = shoe.sides[s]
+                    w = FL.shell_world(o, leg)
+                    pivots = foot_pivots(o, w, leg["q_foot"]) + (FL.toes_down_axis(o, leg["q_foot"]), w)
+                front, back, axis, w = pivots
+                for t in np.flatnonzero(on):
+                    lifts = t < F - 1 and free[t + 1]           # (its last frame before it lifts: a push-off, onto the toes)
+                    d_t, ok = knee_turn(hip[t], g[t], kt["target"][t], front[t], back[t], axis[t], w[t],
+                                        sign=float(np.sign(deg[t])) or (1.0 if lifts else 0.0), least=abs(deg[t]),
+                                        steps=steps)
+                    edge = (t == 0 or free[t - 1]) or (t == F - 1 or free[t + 1])
+                    if not ok and edge and deg[t] == 0.0:
+                        free[t] = True      # (no turn brings it there on the frame it lifts off or lands on: it moves,
+                                            # lifting a frame early or landing a frame late)
+                    else:
+                        deg[t] = d_t
+                st = ~free
+                deg = np.where(st, carry_to_edges(deg, st), 0.0)
+                for t in np.flatnonzero(np.abs(deg) > 1e-9):
+                    goal[t] = foot_turned(front[t] if deg[t] > 0.0 else back[t], axis[t], np.array([math.radians(deg[t])]),
+                                          g[t], w[t])[0][0]
+            sw = need & free
+            goal[sw] = goal[sw] + (hip - goal)[sw] / Dr[sw, None] * excess[sw, None]
+        st = ~free
+        off = goal - g
         turn = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (F, 1))
         toe = np.full((F, 3), np.nan)
-        swing = need & ~stance[s]
-        off[swing] = (hip - g)[swing] / D[swing, None] * excess[swing, None]
         # the toe IK's goal goes where MMD's ankle goes (the new goal is in reach), not where the goal goes (つま先ＩＫ a
         # child of 足ＩＫ, as the foot layer keys it; another rig's toe goal is left to follow its own parent)
         hangs = rig.bones[rig.sides[s].toe_ik].parent == rig.sides[s].leg_ik
+        moved = np.linalg.norm(off, axis=1) > 1e-12
+        swing = moved & free
         gap = g - leg["ankle"]
         far = swing & (np.linalg.norm(gap, axis=1) > KNEE_TOE_TOL) & hangs
         toe[far] = (t_goal - g + gap)[far]
-        deg = np.zeros(F)
-        on = need & stance[s]
-        if on.any():
-            o = shoe.sides[s]
-            w = FL.shell_world(o, leg)
-            front, back = foot_pivots(o, w, leg["q_foot"])
-            axis = FL.toes_down_axis(o, leg["q_foot"])
-            idx = np.flatnonzero(on)
-            best = np.zeros(len(idx))
-            for k, t in enumerate(idx):
-                options = []                    # (the turn, reaches the target, the distance it brings, the sign)
-                for sign, c in ((1.0, front[t]), (-1.0, back[t])):
-                    goal_t, _ = foot_turned(c, axis[t], sign * steps, g[t], w[t])
-                    d = np.linalg.norm(hip[t] - goal_t, axis=1)
-                    ok = np.flatnonzero(d <= kt["target"][t] + 1e-6)
-                    j = int(ok[0]) if len(ok) else int(np.argmin(d))
-                    options.append((float(steps[j]), bool(len(ok)), float(d[j]), sign))
-                reached = [x for x in options if x[1]]
-                pick = min(reached, key=lambda x: x[0]) if reached else min(options, key=lambda x: x[2])
-                best[k] = pick[3] * math.degrees(pick[0])
-            deg[idx] = best
-            deg = np.where(stance[s], carry_to_edges(deg, stance[s]), 0.0)
-            for t in np.flatnonzero(np.abs(deg) > 1e-9):
-                goal_t, q = foot_turned(front[t] if deg[t] > 0.0 else back[t], axis[t], np.array([math.radians(deg[t])]),
-                                        g[t], w[t])
-                off[t] = goal_t[0] - g[t]
-                turn[t] = q[0]
+        standing = np.abs(deg) > 1e-9
+        if standing.any():
+            front, back, axis, w = pivots
+            for t in np.flatnonzero(standing):
+                q = IK.qaxis(axis[t], math.radians(deg[t]))
+                turn[t] = q
                 if hangs:
-                    toe[t] = qrot(q[0], t_goal[t] - g[t])
+                    toe[t] = qrot(q, t_goal[t] - g[t])
+        D_out = np.linalg.norm(goal - hip, axis=1)
         offsets[s], turns[s], toes[s] = off, turn, toe
-        plan[s] = dict(kt, excess=excess, turn_deg=deg, moved=np.linalg.norm(off, axis=1), swing=swing & (excess > KNEE_TOL),
-                       standing=np.abs(deg) > 1e-9, toe_written=np.isfinite(toe).all(axis=1))
+        plan[s] = {"target": D_out, "bend0": first["bend0"], "bend": knee_bend(D_out, L1, L2, rest_deg, least),
+                   "even": D_out < D - 1e-9, "reach": first["reach"], "cap": first["cap"], "excess": D - D_out,
+                   "turn_deg": deg, "moved": np.linalg.norm(off, axis=1), "swing": swing, "standing": standing,
+                   "toe_written": np.isfinite(toe).all(axis=1), "rounds": rounds}
     return offsets, turns, toes, plan
 
 

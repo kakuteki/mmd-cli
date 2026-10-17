@@ -832,6 +832,38 @@ class KneeTest(unittest.TestCase):
         self.assertLess(float(np.abs(sol1["右"]["goal_ankle"] - sol0["右"]["goal_ankle"]).max()), 1e-6)
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
 
+    def test_a_foot_on_its_toes_a_frame_before_it_lifts_keeps_its_heel_up_until_it_does(self):
+        # the take-off above with the push on frame 19 alone (back at 0.96 of the reach on frame 20, lifted from 21): frame
+        # 19 rises onto the toes, and frame 20, the last before the lift, stays on them (the heel does not come down for a
+        # frame between the push and the lift)
+        F = 30
+        L = rig_check.max_reach(RIG400, "左")
+        foot = rest_of(RIG400, "左足首") + np.array([2.5, 0.0, 0.0])
+        hip_xz = rest_of(RIG400, "左足") + np.array([0.5, 0.0, 0.0])
+        flat = np.hypot(foot[0] - hip_xz[0], foot[2] - hip_xz[2])
+        up = math.sqrt((0.96 * L) ** 2 - flat ** 2)
+        centre = (0.5, foot[1] + up - rest_of(RIG400, "左足")[1], 0.0)
+        push = math.sqrt(L * L - up * up - (foot[2] - hip_xz[2]) ** 2) - (foot[0] - hip_xz[0])
+
+        def left(t):
+            if t == 19:
+                return (2.5 + push, 0.0, 0.0), None
+            return (2.5, min(0.35 * max(t - 20, 0), 1.05), 0.0), None
+        m = dance(F, centre=lambda t: centre, left=left, rig=RIG400)
+        out, plan = run400(m)
+        self.assertTrue(bool(plan["sides"]["左"]["stance"][19]) and bool(plan["sides"]["左"]["stance"][20]))
+        self.assertFalse(bool(plan["sides"]["左"]["stance"][21]))                      # (as built: it lifts at 21)
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        self.assertEqual(ev1["左"], [])
+        _, sol0 = knee_jumps(RIG400, m, F)
+        turn = pitch_of(sol1, "左") - pitch_of(sol0, "左")
+        self.assertLess(float(turn[19]), -3.0)                                       # on the toes at the push ...
+        self.assertLess(float(turn[20]), float(turn[19]) + 0.01)                     # ... and still at the last frame
+        tr = sink_check.shoe_track(RIG400, DOC400, out, range(F))
+        # the toes on the floor as the layer counts it (the turn between frames 18 and 19 dips the shoe's front a little
+        # into the floor as MMD draws it in between, and 7. raises both frames by that, about a millimetre)
+        self.assertLess(float(np.abs(tr["左"]["low"][18:21] - FLOOR).max()), contact_layer.ON_FLOOR)
+
     def test_a_leg_reaching_forward_straight_onto_the_floor_lands_on_its_heel(self):
         # the right foot comes down in front of the body onto the floor at frame 20 with the leg at its reach (straight),
         # and the body comes forward over it after (the knee bends): 15 degrees off the line through its neighbours.  On
@@ -867,6 +899,78 @@ class KneeTest(unittest.TestCase):
         self.assertLess(abs(float(tr["右"]["low"][20]) - FLOOR) * CM, 0.1)            # the heel on the floor
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
 
+    def test_a_foot_landing_beyond_its_reach_moves_in_and_keeps_its_turn(self):
+        # the right foot comes down in front of the body (its leg at 0.95 of the reach in the air) onto a goal on the floor
+        # 3 % beyond the reach on frames 20 and 21 (MMD leaves the foot short of it in the air, the knee straight), and the
+        # body comes forward over it from frame 22: the plan stands the foot there (judged at its goal), but its foot is
+        # not on the floor, so the layer brings the goal in as a swing foot's (no turn of the foot, its turn in the world
+        # kept) there: no jump (frame 22, on the floor and reached, may turn a little for the frames before it)
+        F = 34
+        L = rig_check.max_reach(RIG400, "右")
+        hip0 = rest_of(RIG400, "右足") + np.array([0.0, BENT, 0.0])
+        ankle0 = rest_of(RIG400, "右足首")
+        up = hip0[1] - ankle0[1]
+        dx = ankle0[0] - hip0[0]
+        ahead = math.sqrt((1.03 * L) ** 2 - up * up - dx * dx)
+        land = (0.0, 0.0, hip0[2] - ahead - ankle0[2])
+        down = ankle0 + np.array(land) - hip0
+
+        def right(t):
+            if t < 20:
+                return goal_offset(RIG400, "右", (0.0, BENT, 0.0), 0.95, down), None
+            return land, None
+
+        def centre(t):
+            return (0.0, BENT, -0.5 * min(max(t - 21, 0), 4))
+        m = dance(F, centre=centre, right=right, rig=RIG400)
+        ev0, sol0 = knee_jumps(RIG400, m, F)
+        self.assertGreater(float(sol0["右"]["reach"][20]) * CM, 1.0)                    # (as built: short of the goal)
+        self.assertGreater(max(e["deg"] for e in ev0["右"]), 10.0)
+        out, plan = run400(m)
+        self.assertTrue(bool(plan["sides"]["右"]["stance"][20]) and bool(plan["sides"]["右"]["stance"][21]))
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        self.assertEqual(ev1["右"], [])
+        self.assertEqual([float(x) for x in plan["knee"]["右"]["turn_deg"][20:22]], [0.0, 0.0])
+        self.assertGreater(float(plan["knee"]["右"]["moved"][20:22].min()) * CM, 0.5)       # brought in on both
+        dq = np.abs(np.sum(sol1["右"]["q_foot"] * sol0["右"]["q_foot"], axis=1))
+        self.assertLess(float(np.degrees(2.0 * np.arccos(np.clip(dq, 0.0, 1.0)))[:22].max()), 1.0)
+        tr = sink_check.shoe_track(RIG400, DOC400, out, range(F))
+        self.assertGreater(float(tr["右"]["low"].min()) - FLOOR, -contact_layer.FL.PEN_TOL)   # never into the floor
+
+    def test_a_foot_ahead_of_the_body_straight_on_its_last_frame_lifts_a_frame_early(self):
+        # the right foot on the floor ahead of the body (its leg at 0.96 of the reach), pushed further ahead on frame 20 (the
+        # leg straight) and lifted from frame 21; the left foot stands under the body.  Onto its toes (the push-off) would
+        # take the ankle further from the hip, onto its heel is no push-off: the foot lifts a frame early instead (its goal
+        # brought toward the hip, its turn kept)
+        F = 30
+        L = rig_check.max_reach(RIG400, "右")
+        hip0 = rest_of(RIG400, "右足") + np.array([0.0, BENT, 0.0])
+        ankle0 = rest_of(RIG400, "右足首")
+        up = hip0[1] - ankle0[1]
+        dx = ankle0[0] - hip0[0]
+
+        def at(ratio):
+            return hip0[2] - math.sqrt((ratio * L) ** 2 - up * up - dx * dx) - ankle0[2]
+
+        def right(t):
+            if t < 20:
+                return (0.0, 0.0, at(0.96)), None
+            return (0.0, min(0.35 * (t - 20), 1.05), at(1.0)), None
+        m = dance(F, right=right, rig=RIG400)
+        ev0, sol0 = knee_jumps(RIG400, m, F)
+        self.assertGreater(max(e["deg"] for e in ev0["右"]), 10.0)                      # (as built: frame 20 straight)
+        out, plan = run400(m)
+        self.assertTrue(bool(plan["sides"]["右"]["stance"][20]))
+        self.assertFalse(bool(plan["sides"]["右"]["stance"][21]))
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        self.assertEqual(ev1["右"], [])
+        self.assertEqual(float(plan["knee"]["右"]["turn_deg"][20]), 0.0)
+        dq = np.abs(np.sum(sol1["右"]["q_foot"] * sol0["右"]["q_foot"], axis=1))
+        self.assertLess(float(np.degrees(2.0 * np.arccos(np.clip(dq, 0.0, 1.0))).max()), 1.0)
+        tr = sink_check.shoe_track(RIG400, DOC400, out, range(F))
+        self.assertGreater(float(tr["右"]["low"][20] - FLOOR) * CM, 0.4)               # lifted on frame 20
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
+
     def test_a_standing_leg_held_straight_keeps_its_foot(self):
         # both feet on the floor under a pelvis high enough that the left leg stands at 0.999 of its reach (2 degrees from
         # its end) for 30 frames: no knee pops, so the layer leaves the dance as it is (a straight standing leg is not
@@ -894,6 +998,22 @@ class KneeTest(unittest.TestCase):
         self.assertGreater(max(e["deg"] for e in ev0["右"]), 20.0)                      # (as built)
         out, plan = run400(m)
         self.assertIs(out, m)
+
+    def test_a_turn_is_held_on_to_the_nearer_end_of_its_run_only(self):
+        # carry_to_edges on standing runs with the air round them: a turn two frames before a long run's end is held on to
+        # that end (the foot lifts after it), one two frames after its start back to the start (the foot lands there); a
+        # short run's turn on its last frame (a take-off, the song's 2226 on a run of 3) is not carried back to its first
+        # frames, nor a turn in the middle of a long run anywhere
+        st = np.zeros(30, dtype=bool)
+        st[2:14] = True                     # a long run, 2..13
+        st[18:21] = True                    # a short one, 18..20
+        turn = np.zeros(30)
+        turn[11], turn[4], turn[8], turn[20] = 5.0, -3.0, 7.0, 4.0
+        out = contact_layer.carry_to_edges(turn, st, edge=3)
+        self.assertEqual([float(x) for x in out[11:14]], [5.0, 5.0, 5.0])
+        self.assertEqual([float(x) for x in out[2:5]], [-3.0, -3.0, -3.0])
+        self.assertEqual([float(x) for x in out[5:11]], [0.0, 0.0, 0.0, 7.0, 0.0, 0.0])
+        self.assertEqual([float(x) for x in out[18:21]], [0.0, 0.0, 4.0])
 
     def test_the_band_is_a_part_of_the_leg(self):
         # knee_targets on one leg and on the same leg 1.6 times as long with the distances 1.6 times as long: the same
