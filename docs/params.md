@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1681（定数 1375・引数 80・関数の既定 226。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 307（retarget 177・rig 53・踊りだけ 84）、記録の出所つき 56。
+- 数: 全部 1769（定数 1438・引数 87・関数の既定 244。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 343（retarget 209・rig 53・踊りだけ 88）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -21,14 +21,14 @@
 | 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 27 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
 | 9 | 体重（順 C の balance） | balance_layer.py | 96 | 32 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
-| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 0 | 0 | 0 | 0 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
+| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 46 | 22 | 0 | 3 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 5 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
@@ -556,9 +556,56 @@
 | AIR_RAMP | 3 | frames | 1436 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
 | AIR_MIN | 4 | frames | 1437 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
 
-## contact_layer.py（11. 接地の計画（枝 contact、査読中）、0）
+## contact_layer.py（11. 接地の計画（枝 contact、査読中）、46）
 
-（この枝にはまだ無い。枝 contact の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| UNIT_CM | 8.0 | cm | 103 |  |  | ○ |  |  |  |  |  | retarget |
+| FPS | 30.0 |  | 104 |  |  |  |  |  |  |  |  |  |
+| G | 122.5 | units/s^2 | 105 | units/s^2: gravity (9.8 m/s^2) at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
+| ON_FLOOR | 0.05 | units | 109 | units (4 mm, a05's contact): a shoe this low stands on the floor |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MAX | 0.5 | units | 110 | units (4 cm, a05 s11's band): a still shoe lower than this is held over the floor ... |  | ○ |  |  |  |  |  | retarget |
+| HOLD_SPEED | 30.0 | cm/s | 111 | cm/s: ... its touching part moving along the floor slower than this (the foot layer's TOE_SLIDE and HOVER_GLIDE: a toe on the floor stays or slides slowly, a swing skims… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_RISE | 20.0 | cm/s | 113 | cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch o… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MIN | 4 | frames | 115 | frames: a shorter hold is a foot passing by |  |  |  |  |  |  |  |  |
+| FLIGHT_FIT | 0.8 * G | units/s^2 | 116 | units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side falling faster than this is a flight even over a foot held still (people: 6 … |  | ○ | ○ |  |  | ○ |  | retarget |
+| FALL_BOUND | 122.0 | units/s^2 | 119 | units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot d… |  | ○ | ○ |  |  |  |  | retarget |
+| FALL_TOL | 0.5 | units/s^2 | 121 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
+| BRIDGE | 2 | frames | 122 | frames: a standing foot lifted this long or less stays down ... |  |  |  |  |  |  |  |  |
+| BRIDGE_LIFT | 0.1875 | units | 123 | units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT) |  | ○ |  |  |  |  |  | retarget |
+| EASE | 4 | frames | 124 | frames: a foot's lowering comes and goes over this many frames each way (the foot layer's) |  |  |  |  |  |  |  |  |
+| TOUCH | 0.025 | units | 125 | units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH) |  | ○ |  |  |  |  |  | retarget |
+| NEED_CM | 10.0 | cm | 126 | cm: the centre of mass's floor point this far outside the other foot's sole: this foot bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wi… |  | ○ |  |  |  | ○ |  | retarget |
+| SOLE_TOUCH | 0.15 | units | 129 | units (1.2 cm): the vertices of a shoe this near the floor make its sole on it |  | ○ |  |  |  |  |  | retarget |
+| KNEE_GIVE | 10.0 | deg | 130 | degrees: a held foot's knee stays within this of the leg's without the hold; further the foot slides as the dance has it (the knee change tools/sink_check.py and tools/c… |  |  |  | ○ |  |  |  | dance |
+| DROP_MAX | 1.0 | units | 135 | units (8 cm): the most the pelvis goes down to let a standing leg reach the floor |  | ○ |  |  |  |  |  | retarget |
+| REACH_MIN | 9 | frames | 136 | frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered |  |  |  |  |  |  |  |  |
+| DROP_WINDOW | 24 | frames | 137 | frames each side of a lowering over which it comes and goes (smoothly, within the bound) |  |  |  |  |  |  |  |  |
+| DROP_QP_ROUNDS | 400 |  | 138 |  |  |  |  |  |  |  |  |  |
+| JUDGE_MISS | 0.75 | units | 139 | units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); furthe… |  | ○ |  |  |  |  |  | retarget |
+| PLANT_SPEED | 30.0 | cm/s | 142 | cm/s: a standing foot's touching part moving slower than this is held in place (the trace's drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of the… |  | ○ |  | ○ |  | ○ |  | retarget |
+| AIR_MIN | 4 | frames | 145 | frames with no foot standing: a flight (the balance layer's AIR_MIN) |  |  |  |  |  |  |  |  |
+| WINDOW | 8 | frames | 146 | frames each side of a flight over which the pelvis may change |  |  |  |  |  |  |  |  |
+| SMOOTH | 30.0 |  | 147 | the weight of the change's third differences against the change itself |  |  |  |  |  |  |  |  |
+| AIR_CLEAR | 0.2 + 0.0125 | units | 148 | units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the balance layer's support, tools/sink_check.py's SUPPORT_CM) |  | ○ |  |  |  |  |  | retarget |
+| CARRY_RAMP | 2 | frames | 150 | frames: a foot leaving the floor goes with the body's change by half on its first frame off it and fully from the second (the same before a landing) |  |  |  |  |  |  |  |  |
+| LIMB_SMOOTH | (1, 4, 6, 4, 1) |  | 152 | the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz pas… |  |  |  |  |  |  |  |  |
+| PAD | 2 | frames | 154 | frames pinned to no change each side of a window of the pelvis's solves |  |  |  |  |  |  |  |  |
+| SUB_NEAR | 0.25 | units | 155 | units: the intervals checked between the frames (either end this near the floor) |  | ○ |  |  |  |  |  | retarget |
+| SUB_ROUNDS | 3 |  | 156 |  |  |  |  |  |  |  |  |  |
+| IK_MISS | 0.0125 | units | 157 | units (1 mm): MMD's ankle this far from its goal has not reached it |  | ○ |  |  |  |  |  | retarget |
+| LAND_TOL | 0.0125 | units | 158 | units (1 mm): a weight-bearing foot whose shoe MMD leaves higher than this gets more drop |  | ○ |  |  |  |  |  | retarget |
+| PUSH_ROUNDS | 4 |  | 159 | rounds of pushing the goal of a weight-bearing foot MMD leaves over the floor ... |  |  |  |  |  |  |  |  |
+| PUSH_STEP | 0.15 | units | 160 | units: ... by at most this a round (the foot layer's push) |  | ○ |  |  |  |  |  | retarget |
+| DROP_ROUNDS | 4 |  | 161 | rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short) |  |  |  |  |  |  |  |  |
+| FLIGHT_ROUNDS | 4 |  | 162 | rounds of solving the flight again on the centre of mass the changed dance moves ... |  |  |  | ○ |  |  |  | dance |
+| FLIGHT_RESID | 1.0 | units/s^2 | 163 | units/s^2: ... until it falls within this of gravity on the frames with air on both sides |  | ○ | ○ |  |  |  |  | retarget |
+| STRICT_SMOOTH | 3.0 |  | 164 | the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it |  |  |  |  |  |  |  |  |
+| STRICT_NEAR | 8 |  | 165 | brings within the bound (strict frames) with no need there: the least lowering, not a wide one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; … |  |  |  | ○ |  |  |  | dance |
+| runs(n) | 1 |  | 171 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 3 |  | 178 |  |  |  |  |  |  |  |  |  |
+| solve_qp(batch) | 1 |  | 386 |  |  |  |  |  |  |  |  |  |
+| solve_qp(rounds) | 60 |  | 386 |  |  |  |  |  |  |  |  |  |
 
 ## wb_layer.py（12. 上体の慣性、5）
 
@@ -1246,35 +1293,35 @@
 | rays(scale) | 1 |  | 106 |  |  |  |  |  |  |  |  |  |
 | truss_point(size) | (1280, 720) |  | 228 |  |  |  |  |  |  |  |  |  |
 | MMD_LIGHT | (-0.5, -1.0, 0.5) |  | 402 | where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with |  |  |  |  |  |  |  |  |
-| KEY_SHARE | 0.6 |  | 403 | of the light on the floor's plane and pool, the share of the key light (the rest is all round); tools/mme_shadow.py gives her body's shadow the same (its key_share) |  |  |  |  |  |  |  |  |
-| SHADOW_CELL | 0.08 | units | 405 | MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world | softshadow（10-17）: 床の上の影の格子 0.08 単位 | ○ |  |  |  |  |  | retarget |
-| SHADOW_GRID_MAX | 1200 |  | 406 | cells to a side at most (a grid that would be larger is coarser) |  |  |  |  |  |  |  |  |
-| CUTOFF | 8.0 |  | 407 | standard deviations of the light's spread past which a capsule keeps none of it off |  |  |  |  |  |  |  |  |
-| COARSE_STEPS | 6 |  | 408 | a capsule's shade is worked out on a grid at least this many cells to the distance it changes |  |  |  |  |  |  |  |  |
-| COARSE_LEVELS | 4 |  | 409 | over (its least blur on the floor; for the light from all round its axis's height), up to 2^4 times SHADOW_CELL coarser |  |  |  |  |  |  |  |  |
-| soft_shadow_grid(floor_y) | 0.0 |  | 592 |  |  |  |  |  |  |  |  |  |
-| _floor_top(step) | 8 |  | 717 |  |  |  |  |  |  |  |  |  |
-| FIGURE_WINDOW | 90 | frames | 854 | frames: the pool follows the centre averaged like make_camera's look-at point |  |  |  |  |  |  |  |  |
-| FIGURE_REST_PERCENTILE | 2.0 |  | 855 |  |  |  |  |  |  |  |  |  |
-| REFERENCE_HEAD | 16.24313735961914 |  | 875 | the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on | リンの頭の骨の休みの高さ 16.243。体のカプセル（BODY_PARTS、リンの頂点から測った）をほかのモデルではこの比で縮める |  |  |  | ○ |  |  | rig |
-| BODY_PARTS | ( ("上半身", (0.0, 0.0, 0.0), "上半身2", (0.0, 0.0, 0.0), 1.0), (… |  | 883 | the head and the hair the ribbon the hips the skirt: its upper part and its hem |  |  |  |  | ○ |  |  | rig |
-| LEG_PARTS | (("hip", "knee", 0.78), ("knee", "ankle", 0.68)) |  | 909 | the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with 足首: the instep from the ankle to above the ball of… |  |  |  |  |  |  |  |  |
-| INSTEP | 0.5 |  | 910 |  |  |  |  |  |  |  |  |  |
-| SOLE | 0.42 |  | 911 |  |  |  |  |  |  |  |  |  |
-| LEG_BLOCK | 256 | frames | 912 | frames the legs are solved for at a time (leg_ik is vectorised over frames) |  |  |  |  |  |  |  |  |
-| moments(shutter) | 1.0 |  | 1091 |  |  |  |  |  |  |  |  |  |
-| moments(subframes) | 1 |  | 1091 |  |  |  |  |  |  |  |  |  |
-| SHARP_ENOUGH | 1.0 | px | 1099 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
-| floor_moves(height) | 0.0 |  | 1102 |  |  |  |  |  |  |  |  |  |
-| floor_moments(height) | 0.0 |  | 1113 |  |  |  |  |  |  |  |  |  |
-| stage_image(shutter) | 1.0 |  | 1124 |  |  |  |  |  |  |  |  |  |
-| stage_image(subframes) | 1 |  | 1124 |  |  |  |  |  |  |  |  |  |
-| write_stage(jobs) | 1 |  | 1171 |  |  |  |  |  |  |  |  |  |
-| write_stage(shutter) | 1.0 |  | 1171 |  |  |  |  |  |  |  |  |  |
-| write_stage(subframes) | 1 |  | 1171 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1257 |  |  |  |  |  |  |  |  |  |
+| KEY_SHARE | 0.6 |  | 403 | of the light on the floor's plane and pool, the share of the key light (the rest is all round): the default of stage.shadow_key (the core of a shadow keeps 0.40); her bo… |  |  |  |  |  |  |  |  |
+| SHADOW_CELL | 0.08 | units | 406 | MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world | softshadow（10-17）: 床の上の影の格子 0.08 単位 | ○ |  |  |  |  |  | retarget |
+| SHADOW_GRID_MAX | 1200 |  | 407 | cells to a side at most (a grid that would be larger is coarser) |  |  |  |  |  |  |  |  |
+| CUTOFF | 8.0 |  | 408 | standard deviations of the light's spread past which a capsule keeps none of it off |  |  |  |  |  |  |  |  |
+| COARSE_STEPS | 6 |  | 409 | a capsule's shade is worked out on a grid at least this many cells to the distance it changes |  |  |  |  |  |  |  |  |
+| COARSE_LEVELS | 4 |  | 410 | over (its least blur on the floor; for the light from all round its axis's height), up to 2^4 times SHADOW_CELL coarser |  |  |  |  |  |  |  |  |
+| soft_shadow_grid(floor_y) | 0.0 |  | 593 |  |  |  |  |  |  |  |  |  |
+| _floor_top(step) | 8 |  | 721 |  |  |  |  |  |  |  |  |  |
+| FIGURE_WINDOW | 90 | frames | 858 | frames: the pool follows the centre averaged like make_camera's look-at point |  |  |  |  |  |  |  |  |
+| FIGURE_REST_PERCENTILE | 2.0 |  | 859 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEAD | 16.24313735961914 |  | 879 | the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on | リンの頭の骨の休みの高さ 16.243。体のカプセル（BODY_PARTS、リンの頂点から測った）をほかのモデルではこの比で縮める |  |  |  | ○ |  |  | rig |
+| BODY_PARTS | ( ("上半身", (0.0, 0.0, 0.0), "上半身2", (0.0, 0.0, 0.0), 1.0), (… |  | 887 | the head and the hair the ribbon the hips the skirt: its upper part and its hem |  |  |  |  | ○ |  |  | rig |
+| LEG_PARTS | (("hip", "knee", 0.78), ("knee", "ankle", 0.68)) |  | 913 | the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with 足首: the instep from the ankle to above the ball of… |  |  |  |  |  |  |  |  |
+| INSTEP | 0.5 |  | 914 |  |  |  |  |  |  |  |  |  |
+| SOLE | 0.42 |  | 915 |  |  |  |  |  |  |  |  |  |
+| LEG_BLOCK | 256 | frames | 916 | frames the legs are solved for at a time (leg_ik is vectorised over frames) |  |  |  |  |  |  |  |  |
+| moments(shutter) | 1.0 |  | 1095 |  |  |  |  |  |  |  |  |  |
+| moments(subframes) | 1 |  | 1095 |  |  |  |  |  |  |  |  |  |
+| SHARP_ENOUGH | 1.0 | px | 1103 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
+| floor_moves(height) | 0.0 |  | 1106 |  |  |  |  |  |  |  |  |  |
+| floor_moments(height) | 0.0 |  | 1117 |  |  |  |  |  |  |  |  |  |
+| stage_image(shutter) | 1.0 |  | 1128 |  |  |  |  |  |  |  |  |  |
+| stage_image(subframes) | 1 |  | 1128 |  |  |  |  |  |  |  |  |  |
+| write_stage(jobs) | 1 |  | 1175 |  |  |  |  |  |  |  |  |  |
+| write_stage(shutter) | 1.0 |  | 1175 |  |  |  |  |  |  |  |  |  |
+| write_stage(subframes) | 1 |  | 1175 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1261 |  |  |  |  |  |  |  |  |  |
 
-## mv_look.py（18. 描画と後処理、83）
+## mv_look.py（18. 描画と後処理、84）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1326,41 +1373,42 @@
 | DEFAULT_LOOK.stage.shadow_blur | 5.0 | deg | 122 | the soft shadow: the spread of the light, degrees (a standard deviation): the edge of a shadow blurs by about 2.6 x this (in radians) x the distance along the light from… | HANDOVER 2026-10-17 softshadow: 光の広がり 5 度 |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.stage.shadow_light | [-0.5, -1.0, 0.5] |  | 125 | where the light shines to (MMD's light direction; its default) |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.stage.shadow_contact | 0.9 |  | 126 | how dark the light from all round leaves the floor under her, 0 to 1 |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_share | 1 |  | 127 | the soft shadow: 1 the key light's shadow cuts its share of the plane's and the pool's light and the darkening from all round the rest, the lines keep their own (mv_worl… |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 132 |  |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 133 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 | frames | 134 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
-| FLARE_HEIGHT | 0.42 |  | 314 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 415 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 416 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 416 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 416 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 614 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 615 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 616 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 617 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 618 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 619 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 660 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 756 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 947 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 995 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 996 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 997 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1000 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1000 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1000 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1218 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1233 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1235 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1237 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1239 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1253 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1254 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1264 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1273 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1275 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1277 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_key | 0.6 |  | 127 | the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE): the core of a shadow keeps 1 - this (the rest comes from all round) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_share | 1 |  | 129 | the soft shadow: 1 the key light's shadow cuts its share of the plane's and the pool's light and the darkening from all round the rest, the lines keep their own (mv_worl… |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 134 |  |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 135 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 136 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
+| FLARE_HEIGHT | 0.42 |  | 316 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
+| ffmpeg_command(flare_frames) | 0 | frames | 417 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 418 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 418 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 418 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 616 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 617 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 618 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 619 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 620 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 621 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 662 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 758 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 949 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 997 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 998 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 999 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1002 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1002 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1002 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1220 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1235 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1237 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1239 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1241 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1255 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1256 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1266 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1275 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1277 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1279 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
@@ -1436,19 +1484,23 @@
 | --accent-every | 4 |  | 122 | every N-th line is amber and wider; 0 for none (default 4) |  |  |  |  |  |  |  |  |
 | --height | 0.0 |  | 123 | the height of the floor (its lines), in MMD units (default 0; 0.111 is where the model's soles stand) |  |  |  |  | ○ |  |  | rig |
 
-## mme_shadow.py（18. 描画と後処理、9）
+## mme_shadow.py（18. 描画と後処理、13）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| KERNEL_SIGMAS | 2.5 |  | 62 | the points lie within this many standard deviations of the Gaussian |  |  |  |  |  |  |  |  |
-| GOLDEN | math.pi * (3.0 - math.sqrt(5.0)) |  | 63 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.blur | 5.0 |  | 64 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.key_share | 0.6 |  | 64 |  | HANDOVER 2026-10-17 softshadow-mme（0.6 = mv_world.KEY_SHARE）。加賀さんは陰の濃さ D（体 0.65・床 0.40）を選んだ（10-17、枝 softshadow-mme2 で既定… |  |  |  |  |  |  |  |
-| DEFAULTS.min_blur | 0.05 |  | 64 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.search_taps | 16 |  | 64 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.taps | 32 |  | 64 |  |  |  |  |  |  |  |  |  |
-| DEBUGS | {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2} |  | 65 |  |  |  |  |  |  |  |  |  |
-| SEARCH | 1.8 | units | 66 | MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree light at 8 units: the hips above the knees) |  | ○ |  |  |  |  |  | retarget |
+| KERNEL_SIGMAS | 2.5 |  | 82 | the points lie within this many standard deviations of the Gaussian |  |  |  |  |  |  |  |  |
+| CUT_STD | math.sqrt((1.0 - (1.0 + 0.5 * KERNEL_SIGMAS ** 2) * math.ex… |  | 85 | the standard deviation of a Gaussian of 1 cut at KERNEL_SIGMAS (along an axis): the points are widened by its inverse, so that their spread is the light's (cut, an edge … |  |  |  |  |  |  |  |  |
+| GOLDEN | math.pi * (3.0 - math.sqrt(5.0)) |  | 87 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.blur | 5.0 |  | 91 | key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40, B: MMD's toon, C: the shade and the floor 0.65, D: … |  |  |  |  |  |  |  |  |
+| DEFAULTS.key_share | 0.35 |  | 91 | key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40, B: MMD's toon, C: the shade and the floor 0.65, D: … | HANDOVER 2026-10-17 softshadow-mme（0.6 = mv_world.KEY_SHARE）。加賀さんは陰の濃さ D（体 0.65・床 0.40）を選んだ（10-17、枝 softshadow-mme2 で既定… |  |  |  |  |  |  |  |
+| DEFAULTS.min_blur | 0.05 |  | 91 | key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40, B: MMD's toon, C: the shade and the floor 0.65, D: … |  |  |  |  |  |  |  |  |
+| DEFAULTS.search_taps | 64 |  | 91 | key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40, B: MMD's toon, C: the shade and the floor 0.65, D: … |  |  |  |  |  |  |  |  |
+| DEFAULTS.taps | 64 |  | 91 | key_share 0.35: the shade keeps 0.65 of the light, option D (Kaga-san's choice of 2026-10-17 among A: the shade 0.40, B: MMD's toon, C: the shade and the floor 0.65, D: … |  |  |  |  |  |  |  |  |
+| HARMONIC | 0 |  | 99 | the casters' gaps found by the search are averaged plainly (0) or harmonically (1: the nearest caster rules). Review of softshadow-mme2, against the reference of a 5 deg… |  |  |  | ○ |  |  |  | dance |
+| FACING_MIN | 0.25 |  | 100 | the receiver's normal is held at least this far towards the light (75.5 degrees from it) when the plane round the pixel is worked out: a face along the light has no dept… |  |  |  |  |  |  |  |  |
+| DEBUGS | {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2, "toon":… |  | 102 |  |  |  |  |  |  |  |  |  |
+| SEARCH_INNER | 0.03 |  | 103 | the innermost point of the search, a share of its radius (0.054 units: a caster's cone near the pixel is small, 0.38 units at 1.5 for 5 degrees) |  |  |  |  |  |  |  |  |
+| SEARCH | 1.8 | units | 105 | MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree light at 8 units: the hips above the knees) |  | ○ |  |  |  |  |  | retarget |
 
 ## pmm_gravity.py（18. 描画と後処理、8）
 
@@ -1608,9 +1660,30 @@
 | EPS_DEG | 1.0e-3 | deg | 42 | saba: a CCD step smaller than this (degrees) is skipped |  |  |  |  |  |  |  |  |
 | GAIN | 1.0e-7 | units | 43 | units: a loop that brings the target closer by less ends the solve. saba (and MMD) stop at the first loop that does not bring it closer; MMD's float32 cannot tell a gain… |  | ○ |  |  |  |  |  | retarget |
 
-### contact_check.py（確かめ・部品、0）
+### contact_check.py（確かめ・部品、20）
 
-（この枝にはまだ無い。枝 contact の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FPS | 30.0 |  | 61 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 62 |  |  | ○ |  |  |  |  |  | retarget |
+| G | 122.5 | units/s^2 | 63 | units/s^2 at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
+| CONTACT_CM | 0.4 | cm | 66 | a05's contact (4 mm) |  | ○ |  |  |  |  |  | retarget |
+| SUPPORT_CM | 1.2 | cm | 67 | the human baseline's planted foot and tools/wb_dynamics.py's contact |  | ○ |  |  |  | ○ |  | retarget |
+| SUPPORT_FALL_CM | 1.6 | cm | 68 | the balance layer's support (the frames whose pelvis is bound) |  | ○ |  |  |  |  |  | retarget |
+| HOVER_CM | 4.0 | cm | 69 | a05 s11's band |  | ○ |  |  |  |  |  | retarget |
+| HELD_LOW_CM | 0.4 | cm | 70 |  |  | ○ |  |  |  |  |  | retarget |
+| HELD_STEP_CM | 0.05 | cm | 71 | a05 s11 (1): still |  | ○ |  |  |  |  |  | retarget |
+| HELD_MIN | 9 | frames | 72 | frames (0.3 s) |  |  |  |  |  |  |  |  |
+| TOUCH_CM | 0.2 | cm | 73 | the shoe's vertices this near its lowest touch (sink_check's) |  | ○ |  |  |  |  |  | retarget |
+| AIR_MIN | 4 |  | 74 |  |  |  |  |  |  |  |  |  |
+| BOUND | 122.0 |  | 75 |  |  |  |  |  |  |  |  |  |
+| BOUND_TOL | 0.5 |  | 76 |  |  |  |  |  |  |  |  |  |
+| FAST_STAND | 30.0 | cm/s | 77 | cm/s |  | ○ |  |  |  |  |  | retarget |
+| runs(n) | 1 |  | 80 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 3 |  | 84 |  |  |  |  |  |  |  |  |  |
+| _q(qs) | (50, 90) |  | 88 |  |  |  |  |  |  |  |  |  |
+| check(first) | 0 |  | 315 |  |  |  |  |  |  |  |  |  |
+| --first | 0 |  | 346 |  |  |  |  |  |  |  |  |  |
 
 ### upper_body_check.py（確かめ・部品、17）
 
@@ -1727,47 +1800,64 @@
 | FULL | 0.05 |  | 36 |  |  |  |  |  |  |  |  |  |
 | LUMA | np.array([0.2126, 0.7152, 0.0722]) |  | 116 |  |  |  |  |  |  |  |  |  |
 
-### selfshadow_check.py（確かめ・部品、37）
+### selfshadow_check.py（確かめ・部品、54）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| LIGHT | (-0.5, -1.0, 0.5) |  | 51 | MMD's default light: where it shines to |  |  |  |  |  |  |  |  |
-| LUMA | np.array([0.2126, 0.7152, 0.0722]) |  | 52 |  |  |  |  |  |  |  |  |  |
-| FAN_ANGLES | (0.0, 20.0, 40.0, 50.0, 60.0, 65.0, 70.0, 75.0) |  | 53 |  |  |  |  |  |  |  |  |  |
-| PLATE_HALF | 1.4 |  | 54 |  |  |  |  |  |  |  |  |  |
-| PLATE_STEP | 3.5 |  | 55 |  |  |  |  |  |  |  |  |  |
-| PLATE_HEIGHT | 3.0 |  | 56 |  |  |  |  |  |  |  |  |  |
-| RAMP_FROM | -8.0 |  | 57 | the wall's foot along the row (u), from where it touches the floor to its top |  |  |  |  |  |  |  |  |
-| RAMP_TO | 6.0 |  | 57 | the wall's foot along the row (u), from where it touches the floor to its top |  |  |  |  |  |  |  |  |
-| FLOOR_U | (-12.0, 10.0) |  | 58 |  |  |  |  |  |  |  |  |  |
-| FLOOR_W | (-3.0, 12.0) |  | 58 |  |  |  |  |  |  |  |  |  |
-| FACING | math.degrees(math.atan2(math.hypot(LIGHT[0], LIGHT[2]), -LI… |  | 87 | the tilt that turns the floor to the light |  |  |  |  |  |  |  |  |
-| floor_point(tilt) | 0.0 |  | 99 |  |  |  |  |  |  |  |  |  |
-| ramp_model(tilt) | 0.0 |  | 169 |  |  |  |  |  |  |  |  |  |
-| _camera_for(down) | 50.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| _camera_for(fov) | 30.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| _camera_for(yaw) | -135.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| probe(height) | 10.0 |  | 214 |  |  |  |  |  |  |  |  |  |
-| probe(size) | (1920, 1080) |  | 214 |  |  |  |  |  |  |  |  |  |
-| contact(blur) | 5.0 |  | 305 |  |  |  |  |  |  |  |  |  |
-| contact(min_blur) | 0.05 |  | 305 |  |  |  |  |  |  |  |  |  |
-| contact(step) | 0.5 |  | 305 |  |  |  |  |  |  |  |  |  |
-| fan(margin) | 0.25 |  | 406 |  |  |  |  |  |  |  |  |  |
-| acne(far) | 60 |  | 493 |  |  |  |  |  |  |  |  |  |
-| acne_of(far) | 60 |  | 497 |  |  |  |  |  |  |  |  |  |
-| shade_ratio(min_lit) | 20.0 |  | 545 |  |  |  |  |  |  |  |  |  |
-| seen_of(shutter) | 0.5 |  | 595 |  |  |  |  |  |  |  |  |  |
-| seen_of(sub) | 16 |  | 595 |  |  |  |  |  |  |  |  |  |
-| seen(shutter) | 0.5 |  | 618 |  |  |  |  |  |  |  |  |  |
-| seen(sub) | 16 |  | 618 |  |  |  |  |  |  |  |  |  |
-| --height | 10.0 |  | 642 |  |  |  |  |  |  |  |  |  |
-| --size | "1920x1080" |  | 643 |  |  |  |  |  |  |  |  |  |
-| --part | "ramp" |  | 647 | the ramp on the level floor, or the one whose floor faces the light (ramp_tilt) |  |  |  |  |  |  |  |  |
-| --blur | 5.0 |  | 649 |  |  |  |  |  |  |  |  |  |
-| --min-blur | 0.05 |  | 650 |  |  |  |  |  |  |  |  |  |
-| --far | 60 |  | 657 |  |  |  |  |  |  |  |  |  |
-| --sub | 16 |  | 662 |  |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 663 |  |  |  |  |  |  |  |  |  |
+| LIGHT | (-0.5, -1.0, 0.5) |  | 66 | MMD's default light: where it shines to |  |  |  |  |  |  |  |  |
+| LUMA | np.array([0.2126, 0.7152, 0.0722]) |  | 67 |  |  |  |  |  |  |  |  |  |
+| FAN_ANGLES | (0.0, 20.0, 40.0, 50.0, 60.0, 65.0, 70.0, 75.0) |  | 68 |  |  |  |  |  |  |  |  |  |
+| PLATE_HALF | 1.4 |  | 69 |  |  |  |  |  |  |  |  |  |
+| PLATE_STEP | 3.5 |  | 70 |  |  |  |  |  |  |  |  |  |
+| PLATE_HEIGHT | 3.0 |  | 71 |  |  |  |  |  |  |  |  |  |
+| RAMP_FROM | -8.0 |  | 72 | the wall's foot along the row (u), from where it touches the floor to its top |  |  |  |  |  |  |  |  |
+| RAMP_TO | 6.0 |  | 72 | the wall's foot along the row (u), from where it touches the floor to its top |  |  |  |  |  |  |  |  |
+| FLOOR_U | (-12.0, 10.0) |  | 73 |  |  |  |  |  |  |  |  |  |
+| FLOOR_W | (-3.0, 12.0) |  | 73 |  |  |  |  |  |  |  |  |  |
+| FACING | math.degrees(math.atan2(math.hypot(LIGHT[0], LIGHT[2]), -LI… |  | 102 | the tilt that turns the floor to the light |  |  |  |  |  |  |  |  |
+| floor_point(tilt) | 0.0 |  | 114 |  |  |  |  |  |  |  |  |  |
+| ramp_model(tilt) | 0.0 |  | 184 |  |  |  |  |  |  |  |  |  |
+| _camera_for(down) | 50.0 |  | 205 |  |  |  |  |  |  |  |  |  |
+| _camera_for(fov) | 30.0 |  | 205 |  |  |  |  |  |  |  |  |  |
+| _camera_for(yaw) | -135.0 |  | 205 |  |  |  |  |  |  |  |  |  |
+| probe(height) | 10.0 |  | 229 |  |  |  |  |  |  |  |  |  |
+| probe(size) | (1920, 1080) |  | 229 |  |  |  |  |  |  |  |  |  |
+| contact(blur) | 5.0 |  | 320 |  |  |  |  |  |  |  |  |  |
+| contact(min_blur) | 0.05 |  | 320 |  |  |  |  |  |  |  |  |  |
+| contact(step) | 0.5 |  | 320 |  |  |  |  |  |  |  |  |  |
+| fan(margin) | 0.25 |  | 421 |  |  |  |  |  |  |  |  |  |
+| acne(far) | 60 |  | 508 |  |  |  |  |  |  |  |  |  |
+| acne_of(far) | 60 |  | 512 |  |  |  |  |  |  |  |  |  |
+| shade_ratio(min_lit) | 20.0 |  | 560 |  |  |  |  |  |  |  |  |  |
+| seen_of(shutter) | 0.5 |  | 610 |  |  |  |  |  |  |  |  |  |
+| seen_of(sub) | 16 |  | 610 |  |  |  |  |  |  |  |  |  |
+| seen(shutter) | 0.5 |  | 633 |  |  |  |  |  |  |  |  |  |
+| seen(sub) | 16 |  | 633 |  |  |  |  |  |  |  |  |  |
+| GOLDEN | math.pi * (3.0 - math.sqrt(5.0)) |  | 640 |  |  |  |  |  |  |  |  |  |
+| light_jitter(blur) | 5.0 |  | 643 |  |  |  |  |  |  |  |  |  |
+| _ripples(least) | 0.04 |  | 715 |  |  |  |  |  |  |  |  |  |
+| against(gap) | 0.25 |  | 745 |  |  |  |  |  |  |  |  |  |
+| against(tile) | 24 |  | 745 |  |  |  |  |  |  |  |  |  |
+| against(top) | 8 |  | 745 |  |  |  |  |  |  |  |  |  |
+| toggles_of(jump) | 0.25 |  | 858 |  |  |  |  |  |  |  |  |  |
+| toggles_of(shutter) | 0.5 |  | 858 |  |  |  |  |  |  |  |  |  |
+| toggles_of(sub) | 16 |  | 858 |  |  |  |  |  |  |  |  |  |
+| toggles_of(tile) | 24 |  | 858 |  |  |  |  |  |  |  |  |  |
+| toggles_of(top) | 8 |  | 858 |  |  |  |  |  |  |  |  |  |
+| --height | 10.0 |  | 892 |  |  |  |  |  |  |  |  |  |
+| --size | "1920x1080" |  | 893 |  |  |  |  |  |  |  |  |  |
+| --part | "ramp" |  | 897 | the ramp on the level floor, or the one whose floor faces the light (ramp_tilt) |  |  |  |  |  |  |  |  |
+| --blur | 5.0 |  | 899 |  |  |  |  |  |  |  |  |  |
+| --min-blur | 0.05 |  | 900 |  |  |  |  |  |  |  |  |  |
+| --far | 60 |  | 907 |  |  |  |  |  |  |  |  |  |
+| --sub | 16 |  | 912 |  |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 913 |  |  |  |  |  |  |  |  |  |
+| --blur | 5.0 |  | 917 |  |  |  |  |  |  |  |  |  |
+| --tile | 24 |  | 926 |  |  |  |  |  |  |  |  |  |
+| --top | 8 |  | 927 |  |  |  |  |  |  |  |  |  |
+| --jump | 0.25 |  | 930 |  |  |  |  |  |  |  |  |  |
+| --sub | 16 |  | 931 |  |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 932 |  |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 
