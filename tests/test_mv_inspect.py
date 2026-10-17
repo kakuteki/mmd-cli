@@ -174,6 +174,18 @@ class SyntheticTest(unittest.TestCase):
         a = {r["id"]: (r["value"], r["judge"]) for r in self.report(self.out_a)["measures"] if r["concept"] in ("feet", "balance")}
         self.assertEqual({r["id"]: (r["value"], r["judge"]) for r in rep["measures"]}, a)
 
+    def test_no_size_alignment_without_a_part_that_measures_lengths(self):
+        # --parts skirt: nothing is measured again at people's size, so the report must not print the size note and
+        # "0 measures change" as if they had been (review_adapt)
+        out = os.path.join(self.folder, "skirt_only")
+        code, res = run("measure", "--model", self.model, "--motions", self.dropping, "--label", "drop", "--out", out,
+                        "--no-figure", "--parts", "skirt", "--cache", os.path.join(self.out_a, "cache"))
+        self.assertEqual(code, 0, res)
+        rep = self.report(out)
+        self.assertIsNone(rep["size"]["by"])
+        self.assertFalse(any("size" in r for r in rep["measures"]))
+        self.assertNotIn("脚でそろえ", text(os.path.join(out, "report.md")))
+
     def test_compare_judges_the_size_aligned_values_too(self):
         out = os.path.join(self.folder, "cmp_size")
         code, res = run("compare", self.out_a, self.out_b, "--out", out)

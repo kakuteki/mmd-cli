@@ -79,7 +79,7 @@
   "review": "rig"
  },
  "wb_dynamics.py:RIN_FEET.foot_length_m": {
-  "from": "リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.90 倍（adapt 10-17）",
+  "from": "リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.91 倍（adapt 10-17、左右の平均は review_adapt）",
   "review": "rig"
  },
  "wb_layer.py:GAIN": {

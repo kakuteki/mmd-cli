@@ -1521,14 +1521,14 @@
    "above": "",
    "unit": "",
    "depends": {
-    "gravity": false,
+    "gravity": true,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "",
+   "review": "retarget",
    "step": 9
   },
   {
@@ -13297,16 +13297,16 @@
    "above": "",
    "help": "a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)",
    "value": "0.0",
-   "unit": "",
+   "unit": "cm",
    "depends": {
     "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
-    "body": false
+    "body": true
    },
-   "review": "",
+   "review": "retarget",
    "step": 8
   },
   {
@@ -18861,7 +18861,7 @@
    "help": "how far the mouth leads the voice (default %(default)s)",
    "constant": "LEAD_MS",
    "value": "50.0",
-   "unit": "",
+   "unit": "ms",
    "depends": {
     "gravity": false,
     "dance": false,
@@ -23570,7 +23570,7 @@
    "tool": "mv_inspect.py",
    "kind": "option",
    "name": "--size",
-   "line": 288,
+   "line": 291,
    "comment": "legs: the measures of lengths also measured with her body as large as people's (the module's doc)",
    "above": "",
    "help": "legs: the measures of lengths also measured with her body as large as people's (the module's doc)",
@@ -23591,7 +23591,7 @@
    "tool": "mv_inspect.py",
    "kind": "option",
    "name": "--top",
-   "line": 292,
+   "line": 295,
    "comment": "",
    "above": "",
    "help": "",
@@ -23612,7 +23612,7 @@
    "tool": "mv_inspect.py",
    "kind": "option",
    "name": "--reach",
-   "line": 320,
+   "line": 323,
    "comment": "shadow: the pixels whose ratio falls under this at some frame",
    "above": "",
    "help": "shadow: the pixels whose ratio falls under this at some frame",
@@ -27200,7 +27200,7 @@
    "kind": "const",
    "name": "FORMAT",
    "value": "1",
-   "line": 43,
+   "line": 44,
    "comment": "",
    "above": "",
    "unit": "",
@@ -27219,8 +27219,8 @@
    "tool": "param_inventory.py",
    "kind": "const",
    "name": "ORDER",
-   "value": "[ (1, \"模型の写し（rig の受け持ち）\", [\"pmx_rig.py\", \"rig_skin.py\", \"pmx_spine.py\", \"pmx_eyes.py\", \"pmx_skirt.py\"], \"骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し\", [\"skirt.floor_over122_frames\", \"skirt.floor_max\", \"pixels.pants_frames\"], [\"rig_check.py\", \"spine_check.py\", \"skirt_probe.py\"]), (2, \"踊りを体に写す（retarget の受け持ち）と手捩\", [\"retarget.py\", \"fix_twist.py\"], \"体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"motion_fk.py\"]), (3, \"平滑化と手ぶれ除去（v4s）\", [\"smooth_motion.py\"], \"キーを曲線で通し直し、密なキーのゆらぎを均す\", [\"spikes.centre_per_min\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"spikes.head_per_min\", \"arms.wrist_8hz_pct\", \"arms.wrist_3_6hz_pct\", \"upper.head_stop_ms\"], [\"motion_jerk.py\"]), (4, \"呼吸\", [\"breath_layer.py\"], \"胸と肩の呼吸、止めの間の動き\", [\"upper.head_stops_per_min\", \"upper.upper_sudden_stops_per_min\"], []), (5, \"関節の拘束\", [\"anatomy_layer.py\"], \"ひじの蝶番・上腕のねじり・胴と首の分け直し・肩甲帯・可動域\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\"], []), (6, \"運動（遅れと堅さ、--preset human --elbow-hinge on）\", [\"motor_layer.py\"], \"近位から遠位の時刻、追従の柔らかさ、ひじの蝶番\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\", \"arms.a09_elbow_wrist_L\", \"arms.a09_elbow_wrist_R\", \"upper.head_sudden_stops_per_min\", \"upper.head_stop_ms\"], []), (7, \"背骨 4 本へ配る\", [\"spine_layer.py\"], \"体幹の曲がりを解剖学の割合で腰椎上部・上半身2・胸椎上部へ\", [\"upper.upper_sudden_stops_per_min\", \"upper.chest_follow\"], [\"spine_check.py\"]), (8, \"足（最初の足の層 feet0、--landing off）\", [\"foot_layer.py\"], \"転がり・母指球・床に入れない・距骨下\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"sink_check.py\", \"leg_ik.py\"]), (9, \"体重（順 C の balance）\", [\"balance_layer.py\"], \"片足立ちの重心・XcoM の余裕・腰の下向きの加速度の上限・宙・突起のならし\", [\"gravity.centre_down_max\", \"gravity.centre_down_gt98_pct\", \"skirt.floor_over122_frames\", \"skirt.floor_max\", \"balance.com_lateral_cm\", \"balance.moving_com_lateral_cm\", \"balance.moving_mos_ml_cm\", \"balance.still_com_lateral_cm\", \"balance.touchdown_xcom_cm\", \"gravity.landing_sink_cm\", \"gravity.jump_apex_lowered\", \"gravity.beat_dips_weak\", \"spikes.centre_per_min\"], [\"sink_check.py\", \"leg_ik.py\"]), (10, \"足（着地・浮きの下げ、--landing human、既定の --hover sink）\", [\"foot_layer.py\"], \"着地のひざ・浮きを床へ・つま先\", [\"feet.slide10_per_min\", \"feet.slide3_per_min\", \"feet.slide_path_cm_per_min\", \"feet.slide_fast_share\", \"feet.knee_gain_deg\", \"feet.knee_straight_pct\", \"feet.ik_new_miss_frames\", \"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"gravity.air_per_min\"], [\"sink_check.py\"]), (11, \"接地の計画（枝 contact、査読中）\", [\"contact_layer.py\"], \"立ち足を置く・宙の放物線・体重を受ける足の浮き\", [\"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"balance.single_share_pct\", \"balance.zmp_inside_pct\", \"feet.ik_new_miss_frames\", \"gravity.jump_apex_lowered\", \"spikes.centre_per_min\"], [\"contact_check.py\"]), (12, \"上体の慣性\", [\"wb_layer.py\", \"wb_dynamics.py\"], \"骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）\", [\"upper.head_follow\", \"upper.chest_follow\", \"upper.arms_follow\", \"upper.head_follow_2_4hz\", \"balance.zmp_inside_pct\", \"balance.single_share_pct\", \"balance.zmp_margin_single_cm\", \"balance.zmp_tilt_deg_per_min\"], [\"upper_body_check.py\"]), (13, \"手と指\", [\"hand_layer.py\"], \"指の形・遅れ・触れ・受け身の指\", [\"arms.finger_speed_L\", \"arms.finger_speed_R\", \"arms.finger_wrist_ratio_L\", \"arms.finger_wrist_ratio_R\", \"arms.a09_wrist_finger_L\", \"arms.a09_wrist_finger_R\", \"arms.rests_per_min_R\"], []), (14, \"視線\", [\"eye_gaze.py\"], \"固視とサッカード・カメラ目線・手を見る\", [\"eyes.edge_pct\", \"eyes.edge_longest_s\", \"eyes.eccentric15_pct\"], []), (15, \"表情\", [\"face_life.py\"], \"KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）\", [], []), (16, \"口\", [\"lip_sync.py\", \"lip_timing.py\"], \"歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）\", [\"mouth.lag_median_ms\", \"mouth.lag_open_ms\", \"mouth.late_pct\", \"mouth.late_open_pct\", \"mouth.early_open_pct\", \"mouth.shut_singing_pct\"], [\"lip_check.py\"]), (17, \"目の光と寄り\", [\"eye_optics.py\"], \"光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔\", [], []), (18, \"描画と後処理\", [\"mv_chunks.py\", \"mv_world.py\", \"mv_look.py\", \"mv_text.py\", \"make_stage.py\", \"mme_shadow.py\", \"pmm_gravity.py\"], \"区間の描画・舞台と光・床と体の影・文字・物理の重力\", [\"pixels.pants_frames\", \"pixels.shadow_rough\", \"pixels.shadow_total_rough\"], [\"shadow_check.py\", \"shadow_measure.py\", \"selfshadow_check.py\"]), (19, \"カメラ（加賀さんの指示で後回し）\", [\"make_camera.py\"], \"ショットの切り分けと控えめに動くカメラ\", [], []), ]",
-   "line": 50,
+   "value": "[ (1, \"模型の写し（rig の受け持ち）\", [\"pmx_rig.py\", \"rig_skin.py\", \"pmx_spine.py\", \"pmx_eyes.py\", \"pmx_skirt.py\"], \"骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し\", [\"skirt.floor_over122_frames\", \"skirt.floor_max\", \"pixels.pants_frames\"], [\"rig_check.py\", \"spine_check.py\", \"skirt_probe.py\"]), (2, \"踊りを体に写す（retarget の受け持ち）と手捩\", [\"retarget.py\", \"fix_twist.py\"], \"体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"motion_fk.py\"]), (3, \"平滑化と手ぶれ除去（v4s）\", [\"smooth_motion.py\"], \"キーを曲線で通し直し、密なキーのゆらぎを均す\", [\"spikes.centre_per_min\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"spikes.head_per_min\", \"arms.wrist_8hz_pct\", \"arms.wrist_3_6hz_pct\", \"upper.head_stop_ms\"], [\"motion_jerk.py\"]), (4, \"呼吸\", [\"breath_layer.py\"], \"胸と肩の呼吸、止めの間の動き\", [\"upper.head_stops_per_min\", \"upper.upper_sudden_stops_per_min\"], []), (5, \"関節の拘束\", [\"anatomy_layer.py\"], \"ひじの蝶番・上腕のねじり・胴と首の分け直し・肩甲帯・可動域\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\"], []), (6, \"運動（遅れと堅さ、--preset human --elbow-hinge on）\", [\"motor_layer.py\"], \"近位から遠位の時刻、追従の柔らかさ、ひじの蝶番\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\", \"arms.a09_elbow_wrist_L\", \"arms.a09_elbow_wrist_R\", \"upper.head_sudden_stops_per_min\", \"upper.head_stop_ms\"], []), (7, \"背骨 4 本へ配る\", [\"spine_layer.py\"], \"体幹の曲がりを解剖学の割合で腰椎上部・上半身2・胸椎上部へ\", [\"upper.upper_sudden_stops_per_min\", \"upper.chest_follow\"], [\"spine_check.py\"]), (8, \"足（最初の足の層 feet0、--landing off）\", [\"foot_layer.py\"], \"転がり・母指球・床に入れない・距骨下\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"sink_check.py\", \"leg_ik.py\"]), (9, \"体重（順 C の balance）\", [\"balance_layer.py\"], \"片足立ちの重心・XcoM の余裕・腰の下向きの加速度の上限・宙・突起のならし\", [\"gravity.centre_down_max\", \"gravity.centre_down_gt98_pct\", \"skirt.floor_over122_frames\", \"skirt.floor_max\", \"balance.com_lateral_cm\", \"balance.moving_com_lateral_cm\", \"balance.moving_mos_ml_cm\", \"balance.still_com_lateral_cm\", \"balance.touchdown_xcom_cm\", \"gravity.landing_sink_cm\", \"gravity.jump_apex_lowered\", \"gravity.beat_dips_weak\", \"spikes.centre_per_min\"], [\"sink_check.py\", \"leg_ik.py\"]), (10, \"足（着地・浮きの下げ、--landing human、既定の --hover sink）\", [\"foot_layer.py\"], \"着地のひざ・浮きを床へ・つま先\", [\"feet.slide10_per_min\", \"feet.slide3_per_min\", \"feet.slide_path_cm_per_min\", \"feet.slide_fast_share\", \"feet.knee_gain_deg\", \"feet.knee_straight_pct\", \"feet.ik_new_miss_frames\", \"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"gravity.air_per_min\"], [\"sink_check.py\"]), (11, \"接地の計画（枝 contact、査読中）\", [\"contact_layer.py\"], \"立ち足を置く・宙の放物線・体重を受ける足の浮き\", [\"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"balance.single_share_pct\", \"balance.zmp_inside_pct\", \"feet.ik_new_miss_frames\", \"gravity.jump_apex_lowered\", \"spikes.centre_per_min\"], [\"contact_check.py\"]), (12, \"上体の慣性\", [\"wb_layer.py\", \"wb_dynamics.py\"], \"骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）\", [\"upper.head_follow\", \"upper.chest_follow\", \"upper.arms_follow\", \"upper.head_follow_2_4hz\", \"balance.zmp_inside_pct\", \"balance.single_share_pct\", \"balance.zmp_margin_single_cm\", \"balance.zmp_tilt_deg_per_min\"], [\"upper_body_check.py\"]), (13, \"手と指\", [\"hand_layer.py\"], \"指の形・遅れ・触れ・受け身の指\", [\"arms.finger_speed_L\", \"arms.finger_speed_R\", \"arms.finger_wrist_ratio_L\", \"arms.finger_wrist_ratio_R\", \"arms.a09_wrist_finger_L\", \"arms.a09_wrist_finger_R\", \"arms.rests_per_min_R\"], []), (14, \"視線\", [\"eye_gaze.py\"], \"固視とサッカード・カメラ目線・手を見る\", [\"eyes.edge_pct\", \"eyes.edge_longest_s\", \"eyes.eccentric15_pct\"], []), (15, \"表情\", [\"face_life.py\"], \"KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）\", [], []), (16, \"口\", [\"lip_sync.py\", \"lip_timing.py\"], \"歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）\", [\"mouth.lag_median_ms\", \"mouth.lag_open_ms\", \"mouth.late_pct\", \"mouth.late_open_pct\", \"mouth.early_open_pct\", \"mouth.shut_singing_pct\"], [\"lip_check.py\"]), (17, \"目の光と寄り\", [\"eye_optics.py\"], \"光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔\", [], []), (18, \"描画と後処理\", [\"mv_chunks.py\", \"mv_world.py\", \"mv_look.py\", \"mv_text.py\", \"make_stage.py\", \"mme_shadow.py\", \"pmm_gravity.py\"], \"区間の描画・舞台と光・床と体の影・文字・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す\", [\"pixels.pants_frames\", \"pixels.shadow_rough\", \"pixels.shadow_total_rough\"], [\"shadow_check.py\", \"shadow_measure.py\", \"selfshadow_check.py\"]), (19, \"カメラ（加賀さんの指示で後回し）\", [\"make_camera.py\"], \"ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す\", [], []), ]",
+   "line": 51,
    "comment": "",
    "above": "---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the measures of tools/mv_inspect.py that check it, other checks).  From the v10 build (hinata v10/NOTES.md: motor -> spine -> feet0 -> balance -> feet -> wb -> hands -> skirt -> gaze -> face -> lips -> eye_optics -> render) and its inputs (v4s -> breath -> anatomy: variants/v5a/anat_v5a.vmd; the arms opened 6 degrees and fix_twist before the smoothing); retarget and rig (other branches, 2026-10-17) go first.",
    "unit": "",
@@ -27240,7 +27240,7 @@
    "kind": "default",
    "name": "_cell(n)",
    "value": "170",
-   "line": 433,
+   "line": 442,
    "comment": "",
    "above": "",
    "function": "_cell",
@@ -30497,7 +30497,7 @@
    "above": "",
    "help": "",
    "value": "4",
-   "unit": "",
+   "unit": "frames",
    "depends": {
     "gravity": false,
     "dance": false,
@@ -31109,14 +31109,14 @@
    "above": "",
    "unit": "",
    "depends": {
-    "gravity": false,
+    "gravity": true,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "",
+   "review": "retarget",
    "step": 12
   },
   {
@@ -31419,7 +31419,7 @@
    },
    "review": "rig",
    "step": 12,
-   "from": "リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.90 倍（adapt 10-17）"
+   "from": "リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.91 倍（adapt 10-17、左右の平均は review_adapt）"
   },
   {
    "tool": "wb_dynamics.py",
@@ -32157,14 +32157,14 @@
    "above": "",
    "unit": "",
    "depends": {
-    "gravity": false,
+    "gravity": true,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "",
+   "review": "retarget",
    "step": null
   },
   {
@@ -33525,7 +33525,7 @@
    "kind": "default",
    "name": "ref_text(digits)",
    "value": "3",
-   "line": 221,
+   "line": 222,
    "comment": "",
    "above": "",
    "function": "ref_text",
@@ -33546,7 +33546,7 @@
    "kind": "default",
    "name": "_num(digits)",
    "value": "3",
-   "line": 241,
+   "line": 242,
    "comment": "",
    "above": "",
    "function": "_num",
@@ -33567,7 +33567,7 @@
    "kind": "default",
    "name": "event(side)",
    "value": "1",
-   "line": 272,
+   "line": 273,
    "comment": "",
    "above": "",
    "function": "event",
@@ -33588,7 +33588,7 @@
    "kind": "default",
    "name": "runs(min_len)",
    "value": "1",
-   "line": 298,
+   "line": 299,
    "comment": "",
    "above": "",
    "function": "runs",
@@ -33609,7 +33609,7 @@
    "kind": "default",
    "name": "round_tree(digits)",
    "value": "6",
-   "line": 323,
+   "line": 324,
    "comment": "",
    "above": "",
    "function": "round_tree",
@@ -33795,7 +33795,7 @@
    "above": "",
    "unit": "cm",
    "depends": {
-    "gravity": false,
+    "gravity": true,
     "dance": false,
     "model": false,
     "people": false,
@@ -34418,7 +34418,7 @@
    "kind": "const",
    "name": "PER_CONCEPT",
    "value": "3",
-   "line": 209,
+   "line": 210,
    "comment": "",
    "above": "",
    "unit": "",
@@ -34438,7 +34438,7 @@
    "kind": "const",
    "name": "PER_MEASURE",
    "value": "8",
-   "line": 210,
+   "line": 211,
    "comment": "one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17)",
    "above": "",
    "unit": "",
@@ -34458,7 +34458,7 @@
    "kind": "default",
    "name": "compare_md(top)",
    "value": "30",
-   "line": 356,
+   "line": 357,
    "comment": "",
    "above": "",
    "function": "compare_md",
@@ -34969,7 +34969,7 @@
     "leg_ik.py"
    ],
    "values": 75,
-   "retarget": 26,
+   "retarget": 27,
    "rig": 5,
    "dance": 2,
    "noted": 6
@@ -35001,7 +35001,7 @@
     "leg_ik.py"
    ],
    "values": 96,
-   "retarget": 31,
+   "retarget": 32,
    "rig": 1,
    "dance": 11,
    "noted": 4
@@ -35029,7 +35029,7 @@
     "sink_check.py"
    ],
    "values": 75,
-   "retarget": 26,
+   "retarget": 27,
    "rig": 5,
    "dance": 2,
    "noted": 6
@@ -35081,7 +35081,7 @@
     "upper_body_check.py"
    ],
    "values": 34,
-   "retarget": 6,
+   "retarget": 7,
    "rig": 3,
    "dance": 0,
    "noted": 6
@@ -35195,7 +35195,7 @@
     "mme_shadow.py",
     "pmm_gravity.py"
    ],
-   "what": "区間の描画・舞台と光・床と体の影・文字・物理の重力",
+   "what": "区間の描画・舞台と光・床と体の影・文字・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す",
    "measures": [
     "pixels.pants_frames",
     "pixels.shadow_rough",
@@ -35218,7 +35218,7 @@
    "tools": [
     "make_camera.py"
    ],
-   "what": "ショットの切り分けと控えめに動くカメラ",
+   "what": "ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す",
    "measures": [],
    "checks": [],
    "values": 67,
@@ -35235,8 +35235,8 @@
   "option": 80,
   "option_of_constant": 34,
   "default": 226,
-  "review": 303,
-  "retarget": 173,
+  "review": 307,
+  "retarget": 177,
   "rig": 53,
   "dance": 84,
   "noted": 56

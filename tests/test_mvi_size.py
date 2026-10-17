@@ -1,9 +1,9 @@
 """The body size in tools/mvi (base.leg_cm, base.size_scale, shared.Scaled): people's values were measured on one body,
-FineDance's standard body (every sequence retargeted to SMPL-X's neutral body, legs 78.9 cm from the hip to the ankle),
-while Sour's Rin's legs are about 71 cm.  A measure in cm, or one that counts against a threshold in cm, then compares a
-smaller body with a larger one.  The size-aligned value measures her again with her body made as large as people's
-(every position of the pack and of the rest, the timing kept).  So a body c times as large, dancing the same dance c
-times as large, gets the same size-aligned values, while its raw values in cm scale with c."""
+FineDance's standard body (every sequence retargeted to SMPL-X's neutral body, legs 78.3 cm from the hip to the ankle,
+the two sides' mean), while Sour's Rin's legs are about 71 cm.  A measure in cm, or one that counts against a threshold
+in cm, then compares a smaller body with a larger one.  The size-aligned value measures her again with her body made as
+large as people's (every position of the pack and of the rest, the timing kept).  So a body c times as large, dancing
+the same dance c times as large, gets the same size-aligned values, while its raw values in cm scale with c."""
 import unittest
 
 import numpy as np
@@ -90,6 +90,13 @@ class LegTest(unittest.TestCase):
         body = base.human()["_about"]["body"]
         self.assertAlmostEqual(base.people_leg_cm(), body["thigh_cm"] + body["shank_cm"], places=6)
         self.assertIn("SMPL-X", body["what"])
+
+    def test_peoples_leg_is_the_mean_of_their_two_legs(self):
+        # SMPL-X's rest joints are not symmetric (the left leg 78.94 cm, the right 77.70): people's leg is the two
+        # sides' mean, as leg_cm takes hers (review_adapt: the left alone made the scale 0.8 % larger)
+        body = base.human()["_about"]["body"]
+        self.assertGreater(body["legs_left_cm"] - body["legs_right_cm"], 1.0)
+        self.assertAlmostEqual(base.people_leg_cm(), 0.5 * (body["legs_left_cm"] + body["legs_right_cm"]), delta=0.011)
 
     def test_the_scale_makes_her_legs_peoples(self):
         rest = legs()

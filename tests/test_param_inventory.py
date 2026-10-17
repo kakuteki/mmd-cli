@@ -129,6 +129,29 @@ class DependsTest(unittest.TestCase):
         self.assertFalse(e["depends"]["gravity"])
         self.assertEqual(e["review"], "")
 
+    def test_gravity_by_its_value_or_its_name(self):
+        # balance_layer's and a05's G = 9.81 had no comment and no unit, and went unmarked (review_adapt)
+        es = {e["name"]: e for e in PI.scan_source("G = 9.81\nG_CM = 980.0\nHALF = 61.25\nSHARE = 0.6\nGAP = 4\n"
+                                                   "G_MIN = 160                     # the green channel at least\n"
+                                                   'STEPS = [(18, "物理の重力"), (19, "カメラ")]\n', "x.py")}
+        for n in ("G", "G_CM", "HALF"):
+            self.assertTrue(es[n]["depends"]["gravity"], n)
+            self.assertIn("retarget", es[n]["review"], n)
+        for n in ("SHARE", "GAP", "G_MIN", "STEPS"):
+            self.assertFalse(es[n]["depends"]["gravity"], n)
+            self.assertEqual(es[n]["review"], "", n)
+
+    def test_an_options_unit_from_its_name(self):
+        # an option spells the unit with hyphens (foot_layer's --toe-reach-cm went without a unit and unmarked)
+        self.assertEqual(PI.unit_of("--toe-reach-cm", ""), "cm")
+        self.assertEqual(PI.unit_of("--hover-glide-cm-s", ""), "cm/s")
+        self.assertEqual(PI.unit_of("--down-acc-max", ""), "")
+        self.assertEqual(PI.unit_of("--taps", ""), "")
+        src = 'def main(ap):\n    ap.add_argument("--toe-reach-cm", type=float, default=0.0, help="a pointed foot reaches")\n'
+        e = PI.scan_source(src, "feet_x.py")[0]
+        self.assertEqual(e["unit"], "cm")
+        self.assertIn("retarget", e["review"])
+
     def test_units_from_the_name_and_the_comment(self):
         self.assertEqual(PI.unit_of("REACH_TOL_CM", ""), "cm")
         self.assertEqual(PI.unit_of("X", "cm: the band"), "cm")
@@ -175,6 +198,20 @@ class RealCodeTest(unittest.TestCase):
 
     def test_the_notes_name_values_that_exist(self):
         self.assertEqual(self.inv["stale_notes"], [])
+
+    def test_the_steps_that_read_a_later_steps_files_say_so(self):
+        # eye_gaze and eye_optics read the camera (step 19) and eye_optics the look's flares (step 18): the order cannot
+        # be from upstream there, so those steps name the redo (review_adapt)
+        camera = [s for s in self.inv["order"] if "make_camera.py" in s["tools"]][0]
+        render = [s for s in self.inv["order"] if "mv_look.py" in s["tools"]][0]
+        gaze = [s for s in self.inv["order"] if "eye_gaze.py" in s["tools"]][0]
+        optics = [s for s in self.inv["order"] if "eye_optics.py" in s["tools"]][0]
+        for later in (camera, render):
+            self.assertGreater(later["step"], gaze["step"])
+        self.assertIn("eye_gaze", camera["what"])
+        self.assertIn("eye_optics", camera["what"])
+        self.assertIn("eye_optics", render["what"])
+        self.assertIn(str(optics["step"]), camera["what"])
 
     def test_the_review_order_runs_from_upstream(self):
         steps = [s["step"] for s in self.inv["order"]]

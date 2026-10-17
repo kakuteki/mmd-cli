@@ -1,11 +1,11 @@
 # 調整した値の一覧（tools/param_inventory.py が作る。手で直さない）
 
 - 作り方: `python tools/param_inventory.py`（コードの構文木から。走らせない）。確かめ: `python tools/param_inventory.py --check`。
-- 何を拾うか: 大文字の名の定数で数を持つもの（辞書はキーごと）、コマンドの引数の既定、関数の数の既定。注釈はその行と続きの行、すぐ上の注釈の塊から。
-- 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
+- 何を拾うか: 大文字の名の定数で数を持つもの（辞書はキーごと）、コマンドの引数の既定、関数の数の既定。注釈はその行と続きの行、すぐ上の注釈の塊から。拾わないもの: 関数の中に書いた数（比べの閾値など。a05 の浮きの 4 cm、fq の拍の窓 13 コマ）、クラスの属性、look・cues の JSON（hinata の look_v8.json など、リポジトリの外）。
+- 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1681（定数 1375・引数 80・関数の既定 226。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 303（retarget 173・rig 53・踊りだけ 84）、記録の出所つき 56。
+- 数: 全部 1681（定数 1375・引数 80・関数の既定 226。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 307（retarget 177・rig 53・踊りだけ 84）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -18,11 +18,11 @@
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
 | 6 | 運動（遅れと堅さ、--preset human --elbow-hinge on） | motor_layer.py | 103 | 15 | 3 | 3 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R、arms.a09_elbow_wrist_L、arms.a09_elbow_wrist_R、upper.head_sudden_stops_per_min、upper.head_stop_ms | - |
 | 7 | 背骨 4 本へ配る | spine_layer.py | 9 | 1 | 0 | 0 | upper.upper_sudden_stops_per_min、upper.chest_follow | spine_check.py |
-| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 26 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
-| 9 | 体重（順 C の balance） | balance_layer.py | 96 | 31 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
-| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 26 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
+| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 27 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
+| 9 | 体重（順 C の balance） | balance_layer.py | 96 | 32 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
+| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 0 | 0 | 0 | 0 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
-| 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 6 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
+| 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
@@ -31,7 +31,7 @@
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 5 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
-各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
+各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
 
 ## pmx_rig.py（1. 模型の写し（rig の受け持ち）、0）
 
@@ -453,7 +453,7 @@
 | measure_report(toe_extra) | 0.0 |  | 1748 |  |  |  |  |  |  |  |  |  |
 | --trace-toe-cm | 0.0 | cm | 1776 | how much further the trace's model's foot reached from the ankle to the toe (cm): its pointed toe touched the floor where this model's stops short; the report's trace_to… |  | ○ |  | ○ |  |  |  | retarget |
 | --toes | "anatomical" |  | 1780 | the toes (足先EX): anatomical (the floor bends them, a foot on its ball stays on it until it leaves, they return over TOE_RELEASE_TAU after it, nothing bent in the air) or… |  |  |  |  |  |  |  |  |
-| --toe-reach-cm | 0.0 |  | 1784 | a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is… |  |  |  |  |  |  |  |  |
+| --toe-reach-cm | 0.0 | cm | 1784 | a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is… |  | ○ |  |  |  |  |  | retarget |
 
 ## balance_layer.py（9. 体重（順 C の balance）、96）
 
@@ -463,7 +463,7 @@
 | DT | 1.0 / FPS |  | 131 |  |  |  |  |  |  |  |  |  |
 | UNIT_M | 0.08 | m | 132 | one model unit is 8 cm (the analysis pack) |  | ○ |  |  |  |  |  | retarget |
 | CM | 8.0 | cm | 133 | cm per unit |  | ○ |  |  |  |  |  | retarget |
-| G | 9.81 |  | 134 |  |  |  |  |  |  |  |  |  |
+| G | 9.81 |  | 134 |  |  |  | ○ |  |  |  |  | retarget |
 | SUPPORT_H | 0.2 | units | 139 | units (1.6 cm, a05's FLY): a foot this low carries weight |  | ○ |  |  |  |  |  | retarget |
 | CONTACT_EPS | 0.05 | units | 140 | units (4 mm, a05): a foot on the floor (the a05 measure, the landings) |  | ○ |  |  |  |  |  | retarget |
 | CLEAR_CM | 5.0 | cm | 141 | the other foot this high: the full pull (a05's single support: 5 cm) |  | ○ |  |  |  |  |  | retarget |
@@ -576,7 +576,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FPS | 30.0 |  | 57 |  |  |  |  |  |  |  |  |  |
 | UNIT_M | 0.08 | m | 58 | metres a model unit (the analysis pack) | 解析の資料の 8 cm/単位 | ○ |  |  |  |  |  | retarget |
-| G | 9.81 |  | 59 |  |  |  |  |  |  |  |  |  |
+| G | 9.81 |  | 59 |  |  |  | ○ |  |  |  |  | retarget |
 | HAND_TIP_SHARE | 0.88 |  | 67 | Rin: 手首 -> 中指３ 12.0 cm of about 13.6 to the tip; SMPL-X: 16.4 cm of about 18.7 |  |  |  |  | ○ |  |  | rig |
 | HEEL_BACK | 0.3 |  | 82 | the foot segment's heel this share of the ankle -> toe line behind the ankle (a05) |  |  |  |  |  |  |  |  |
 | ZMP_MIN_G | 0.2 |  | 84 | the ZMP is read where the floor pushes up at least this share of g |  |  | ○ |  |  |  |  | retarget |
@@ -591,7 +591,7 @@
 | RIN_FEET.ankle_rest_y | 1.7452 |  | 105 |  |  |  |  |  |  |  |  |  |
 | RIN_FEET.contact | 0.15 |  | 105 |  |  |  |  |  |  |  |  |  |
 | RIN_FEET.floor_y | 0.111 |  | 105 |  |  |  |  |  |  |  |  |  |
-| RIN_FEET.foot_length_m | 0.1672 | m | 105 |  | リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.90 倍（adapt 10-17） | ○ |  |  |  |  |  | rig |
+| RIN_FEET.foot_length_m | 0.1672 | m | 105 |  | リンの靴の頂点から（16.7 cm）。人の体（SMPL-X の中立）の足は約 26 cm（足首→母指球 12.7 cm / 0.49）で 0.64 倍、脚は 0.91 倍（adapt 10-17、左右の平均は review_adapt） | ○ |  |  |  |  |  | rig |
 | RIN_FEET.toe_rest_y | 0.1 |  | 105 |  |  |  |  |  |  |  |  |  |
 | RIN_FEET.stature_m | (18.7663 - 0.111) * UNIT_M | m | 106 |  | リンの頭先の骨 18.7663 − 床 0.111（8 cm/単位で 1.49 m）。髪の上までなら 19.086 単位（adapt 10-17） | ○ |  |  |  |  |  | rig |
 | human_feet(contact) | 0.15 |  | 109 |  |  |  |  |  |  |  |  |  |
@@ -1545,7 +1545,7 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| --frames | 4 |  | 156 |  |  |  |  |  |  |  |  |  |
+| --frames | 4 | frames | 156 |  |  |  |  |  |  |  |  |  |
 
 ### skirt_probe.py（確かめ・部品、20）
 
@@ -1773,17 +1773,17 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| --size | "legs" |  | 288 | legs: the measures of lengths also measured with her body as large as people's (the module's doc) |  |  |  |  |  | ○ |  |  |
-| --top | 40 |  | 292 |  |  |  |  |  |  |  |  |  |
-| --reach | 0.95 |  | 320 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
+| --size | "legs" |  | 291 | legs: the measures of lengths also measured with her body as large as people's (the module's doc) |  |  |  |  |  | ○ |  |  |
+| --top | 40 |  | 295 |  |  |  |  |  |  |  |  |  |
+| --reach | 0.95 |  | 323 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
 
 ### param_inventory.py（確かめ・部品、3）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FORMAT | 1 |  | 43 |  |  |  |  |  |  |  |  |  |
-| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 50 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 433 |  |  |  |  |  |  |  |  |  |
+| FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
+| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
+| _cell(n) | 170 |  | 442 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 
@@ -1829,7 +1829,7 @@
 | runs(min_len) | 1 |  | 74 |  |  |  |  |  |  |  |  |  |
 | R | 0.5 | units | 84 | units: half the width of a shoe sole (4 cm), an inference | a05 の推定（靴底の幅の半分 4 cm）。人の資料にも同じ値（human_baseline） | ○ |  |  |  |  |  | retarget |
 | FLY | 0.2 | units | 85 | units: both feet at least this high = in the air (1.6 cm) |  | ○ |  |  |  |  |  | retarget |
-| G | 9.81 |  | 86 |  |  |  |  |  |  |  |  |  |
+| G | 9.81 |  | 86 |  |  |  | ○ |  |  |  |  | retarget |
 | M_PER_UNIT | CM / 100.0 |  | 87 |  |  |  |  |  |  |  |  |  |
 | SH.foot | .0145 |  | 88 |  |  |  |  |  |  |  |  |  |
 | SH.fore | .016 |  | 88 |  |  |  |  |  |  |  |  |  |
@@ -1915,11 +1915,11 @@
 | G_UNITS | 122.5 | m/s^2 | 40 | 9.8 m/s^2 in her units (8 cm a unit) | 9.8 m/s² を 8 cm/単位で（122.5）。リンの大きさの幅 7.96〜8.15 cm/単位なら 120.4〜123.1（adapt 10-17） | ○ | ○ |  |  |  |  | retarget |
 | MV_SECONDS | 246.0 |  | 41 | the MV's dance range (p31_table's resolution) | human_baseline の p31_table の分解能（踊りの範囲 246 秒） |  |  | ○ |  |  |  | dance |
 | SIDE_WORDS | {0: "中", 1: "上へ外", -1: "下へ外"} |  | 45 |  |  |  |  |  |  |  |  |  |
-| ref_text(digits) | 3 |  | 221 |  |  |  |  |  |  |  |  |  |
-| _num(digits) | 3 |  | 241 |  |  |  |  |  |  |  |  |  |
-| event(side) | 1 |  | 272 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 298 |  |  |  |  |  |  |  |  |  |
-| round_tree(digits) | 6 |  | 323 |  |  |  |  |  |  |  |  |  |
+| ref_text(digits) | 3 |  | 222 |  |  |  |  |  |  |  |  |  |
+| _num(digits) | 3 |  | 242 |  |  |  |  |  |  |  |  |  |
+| event(side) | 1 |  | 273 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 299 |  |  |  |  |  |  |  |  |  |
+| round_tree(digits) | 6 |  | 324 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/body.py（確かめ・部品、1）
 
@@ -1948,7 +1948,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FPS | 30.0 |  | 18 |  |  |  |  |  |  |  |  |  |
 | DT | 1.0 / FPS |  | 19 |  |  |  |  |  |  |  |  |  |
-| G_CM | 980.0 | cm | 20 |  |  | ○ |  |  |  |  |  | retarget |
+| G_CM | 980.0 | cm | 20 |  |  | ○ | ○ |  |  |  |  | retarget |
 | U | 8.0 |  | 21 |  |  |  |  |  |  |  |  |  |
 | CONTACT_CM | 2.5 | cm | 26 |  |  | ○ |  |  |  |  |  | retarget |
 | DROP_CM | 3.0 | cm | 27 |  |  | ○ |  |  |  |  |  | retarget |
@@ -2012,9 +2012,9 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TOP_MD | 60 |  | 23 |  |  |  |  |  |  |  |  |  |
 | FORMAT | 2 |  | 24 | 2: which places are listed changed (toward / also / extreme, the review of 10-17) |  |  |  |  |  |  |  |  |
-| PER_CONCEPT | 3 |  | 209 |  |  |  |  |  |  |  |  |  |
-| PER_MEASURE | 8 |  | 210 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
-| compare_md(top) | 30 |  | 356 |  |  |  |  |  |  |  |  |  |
+| PER_CONCEPT | 3 |  | 210 |  |  |  |  |  |  |  |  |  |
+| PER_MEASURE | 8 |  | 211 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
+| compare_md(top) | 30 |  | 357 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/shared.py（確かめ・部品、2）
 

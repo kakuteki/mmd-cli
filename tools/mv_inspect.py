@@ -26,7 +26,7 @@ MMD's IK, the shoes) are kept in --cache (default DIR/cache) by the inputs' md5 
 (tools/mvi/body.py CACHE_CODE).
 
 size (--size legs, the default): people's values were measured on one body (FineDance's: SMPL-X's neutral body, legs
-78.9 cm), larger than Sour's Rin (legs 71.2 cm).  The measures of lengths (tools/mvi/base.SIZE_ALIGNED: the hover, the
+78.3 cm, the two sides' mean), longer in the legs than Sour's Rin (71.2 cm).  The measures of lengths (tools/mvi/base.SIZE_ALIGNED: the hover, the
 slides, the COM over the standing foot, the pelvis's sink and bob) are measured again with her body made as large as
 people's by the legs (tools/mvi/shared.Scaled, the timing kept) and judged too: each such row gets "size" {value,
 judge} beside its own value and judgement, which stay what they were; report.json's "size" says by how much
@@ -97,11 +97,14 @@ def size_aligned(m, rep, parts=None):
     if s is None:
         rep["size"] = {"by": None, "why": "the model's legs (足・ひざ・足首) are missing"}
         return rep
+    todo = [(name, part) for name, part in PARTS
+            if name in SIZE_PARTS and not (parts and name not in parts) and name not in rep["failed"]]
+    if not todo:                                             # (--parts skirt: nothing to measure again, say nothing)
+        rep["size"] = {"by": None, "why": "no part with measures of lengths (%s) was measured" % ", ".join(SIZE_PARTS)}
+        return rep
     ms = m.scaled(s)
     by = {r["id"]: r for r in rep["measures"]}
-    for name, part in PARTS:
-        if name not in SIZE_PARTS or (parts and name not in parts) or name in rep["failed"]:
-            continue
+    for name, part in todo:
         t = time.time()
         try:
             res = part.measure(ms)

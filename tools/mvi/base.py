@@ -85,14 +85,15 @@ def reference(mid, path=HUMAN_PATH):
 
 # ---- the body's size -----------------------------------------------------------------------------------------------
 # People's values were measured on one body: FineDance retargets every sequence to SMPL-X's neutral body (human.json's
-# "_about" "body": legs 78.9 cm from the hip to the ankle, about 1.7 m tall), while Sour's Rin's legs are 71.2 cm
-# (adapt, 2026-10-17: thigh + shank 0.90 of people's; her stature 152.7 cm at 8 cm a unit, 0.90).  A measure in cm, or
+# "_about" "body": legs 78.3 cm from the hip to the ankle, the two sides' mean as for hers (its rest joints are not
+# symmetric: left 78.9, right 77.7; review_adapt), about 1.7 m tall), while Sour's Rin's legs are 71.2 cm (adapt,
+# 2026-10-17: thigh + shank 0.91 of people's; her stature 152.7 cm at 8 cm a unit, 0.90).  A measure in cm, or
 # one that counts against a threshold in cm, then compares a smaller body with a larger one.  The size-aligned value
 # measures her again with her body made as large as people's by the legs (shared.Scaled: every position of the pack and
 # of the legs' rest times size_scale, the timing kept, so that lengths, speeds and the thresholds in cm all compare one
 # size).  Only the measures of a05 and fq that count lengths: not those tied to gravity (the fall's acceleration, the
 # flight, the drop against free fall: the same g for every body), not the skirt's rule (in her own units), not the ZMP
-# and the support (her shoes, 16.7 cm, are 0.64 of people's feet, 26 cm, against 0.90 of their legs: another shape, not
+# and the support (her shoes, 16.7 cm, are 0.64 of people's feet, 26 cm, against 0.91 of their legs: another shape, not
 # a size), not the upper body and the arms (her trunk and arms are 0.5 to 0.75 of people's; the human baseline's
 # rin_proportions).
 SIZE_ALIGNED = frozenset([

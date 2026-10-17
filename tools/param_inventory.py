@@ -16,9 +16,10 @@ Each with its comment: the comment on its line(s) and the comment-only lines rig
 The unit is read from the name's end (_CM, _MM, _M, _DEG, _S, _MS, _HZ, _PX, _DEG_S, _MM_S ...) and the comment's start
 ("units/s^2:", "cm:", "(4 mm)" ...).  What a value depends on, read from the unit and the words of its comment (an
 estimate, written as such in the table): body (a length, speed or acceleration in cm, mm, m or model units: the size
-of the body and of the dance's moves), gravity (an acceleration or a word of gravity), dance (measured on the song, the
-dance, its trace, its beats or a version), model (measured on Sour's Rin's model: White.pmx, her bones, morphs,
-materials, physics), people (from people's measures) and literature (a cited study).  review: "retarget" for body and
+of the body and of the dance's moves), gravity (an acceleration, a word of gravity, a value of g such as 9.81 or a name
+G / G_...), dance (measured on the song, the dance, its trace, its beats or a version), model (measured on Sour's Rin's
+model: White.pmx, her bones, morphs, materials, physics), people (from people's measures) and literature (a cited
+study).  An option's unit is read from its name too (--toe-reach-cm as _CM).  review: "retarget" for body and
 gravity, "rig" for model, "dance" for the dance alone (to measure again after the rebuild).
 docs/params_notes.json adds where a value was decided in the records (HANDOVER's items, the reviews) by "tool:NAME";
 a note whose value is gone is stale (--check fails).  ORDER is the rebuild's order (from upstream: what a later layer
@@ -93,9 +94,12 @@ ORDER = [
       "mouth.shut_singing_pct"], ["lip_check.py"]),
     (17, "目の光と寄り", ["eye_optics.py"], "光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔", [], []),
     (18, "描画と後処理", ["mv_chunks.py", "mv_world.py", "mv_look.py", "mv_text.py", "make_stage.py", "mme_shadow.py", "pmm_gravity.py"],
-     "区間の描画・舞台と光・床と体の影・文字・物理の重力", ["pixels.pants_frames", "pixels.shadow_rough", "pixels.shadow_total_rough"],
+     "区間の描画・舞台と光・床と体の影・文字・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す",
+     ["pixels.pants_frames", "pixels.shadow_rough", "pixels.shadow_total_rough"],
      ["shadow_check.py", "shadow_measure.py", "selfshadow_check.py"]),
-    (19, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"], "ショットの切り分けと控えめに動くカメラ", [], []),
+    (19, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"],
+     "ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す",
+     [], []),
 ]
 # tools the sibling branches add (2026-10-17): placed above, taken from the code once they are merged
 EXPECTED = {"pmx_rig.py": "rig", "rig_skin.py": "rig", "rig_check.py": "rig", "retarget.py": "retarget",
@@ -168,7 +172,7 @@ _ANYWHERE = [(r"degrees? (?:per|a) second|deg(?:rees)?/s\b", "deg/s"), (r"(?:MMD
 def unit_of(name, comment):
     """the unit of a value from its name's end, else from its comment's start, else from a unit the comment names (in
     brackets or after a comma: "(model units)", ", cm (0 keeps it)") ("" when none says)"""
-    parts = name.upper().split("(")[-1].rstrip(")").split(".")
+    parts = name.upper().replace("-", "_").split("(")[-1].rstrip(")").split(".")     # --toe-reach-cm: as _CM
     for n in reversed(parts):                         # CONTACT_MM.waist: the dict's name says it
         for suffix, unit in _NAME_UNITS:
             if n.endswith(suffix) and len(n) > len(suffix):
@@ -194,7 +198,12 @@ def depends(entry):
     unit = entry.get("unit", "")
     d = {k: bool(re.search(p, text)) for k, p in WORDS.items()}
     d["body"] = unit in LENGTH_UNITS
-    d["gravity"] = unit in ACCEL_UNITS or d["gravity"]
+    # gravity also by a value of numbers (G = 9.81 without a comment; not a table of words such as ORDER) or the name G,
+    # G_CM, G_UNITS ... (not G_MIN, a green channel)
+    value = entry.get("value") or ""
+    d["gravity"] = unit in ACCEL_UNITS or d["gravity"] or \
+        ('"' not in value and "'" not in value and bool(re.search(WORDS["gravity"], value))) or \
+        bool(re.match(r"(?:G(?:_(?:CM|MM|M|UNITS?|MMD))?|GRAVITY\w*)$", entry["name"].split("(")[-1].rstrip(")").split(".")[-1]))
     if entry["name"] in ("FPS", "SONG_FPS", "DT"):
         d = {k: False for k in d}
     return d
@@ -444,8 +453,11 @@ def markdown(inv):
     lines = ["# 調整した値の一覧（tools/param_inventory.py が作る。手で直さない）", "",
              "- 作り方: `python tools/param_inventory.py`（コードの構文木から。走らせない）。確かめ: `python tools/param_inventory.py --check`。",
              "- 何を拾うか: 大文字の名の定数で数を持つもの（辞書はキーごと）、コマンドの引数の既定、関数の数の既定。"
-             "注釈はその行と続きの行、すぐ上の注釈の塊から。",
-             "- 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。「記録」の欄は `docs/params_notes.json`"
+             "注釈はその行と続きの行、すぐ上の注釈の塊から。"
+             "拾わないもの: 関数の中に書いた数（比べの閾値など。a05 の浮きの 4 cm、fq の拍の窓 13 コマ）、クラスの属性、"
+             "look・cues の JSON（hinata の look_v8.json など、リポジトリの外）。",
+             "- 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には"
+             "印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`"
              "（HANDOVER などの記録から手で付けた出所）。",
              "- 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／"
              "模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。",
@@ -468,7 +480,8 @@ def markdown(inv):
         lines.append("| %d | %s | %s | %d | %d | %d | %d | %s | %s |" % (
             s["step"], _cell(s["title"], 60), "・".join(names), s["values"], s["retarget"], s["rig"], s["dance"],
             "、".join(s["measures"]) or "（物差しなし）", "・".join(s["checks"]) or "-"))
-    lines += ["", "各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。物差しは `mv_inspect.py measure`"
+    lines += ["", "各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は"
+              "視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`"
               "（--size legs の「脚でそろえた」値も見る）と `compare`。", ""]
     by_tool = {}
     for e in inv["entries"]:

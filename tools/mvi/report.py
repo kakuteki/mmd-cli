@@ -152,10 +152,11 @@ def measures_md(report):
     if _sized(report):
         z = report["size"]
         lines[-1:-1] = ["- 体の大きさ: 人の値は FineDance の標準の体（SMPL-X の中立の体、脚 %.1f cm）で測ったもの。リンの脚は %.1f cm"
-                        "（股関節→ひざ→足首、8 cm/単位）。「脚でそろえた」値はリンを %.3f 倍に大きくして同じ時刻で測り直した値で、"
+                        "（股関節→ひざ→足首、どちらも左右の平均、8 cm/単位）。「脚でそろえた」値はリンを %.3f 倍に大きくして同じ時刻で測り直した値で、"
                         "長さと長さの閾値を数える物差しだけ（tools/mvi/base.SIZE_ALIGNED。重力に結んだ物差し・スカートの決まり・ZMP・上体はそろえない）。"
-                        "判定と外れた所の表は元の値のまま。股関節の床からの高さでそろえると（リンは厚い靴底で人とほぼ同じ）"
-                        "判定はほぼ変わらない（README）。" % (z["people_leg_cm"], z["leg_cm"], z["scale"])]
+                        "判定と外れた所の表は元の値のまま。何の長さでそろえるかで判定は変わる: 股関節の床からの高さ（リンは足首の骨が靴底から"
+                        "約 13 cm と高く、股関節の高さは人とほぼ同じ）でそろえると、v10 では判定の変わる物差しは 0（README）。"
+                        % (z["people_leg_cm"], z["leg_cm"], z["scale"])]
     if report.get("failed"):
         lines += ["**測れなかった部品**: " + "、".join("%s（%s）" % (k, v.splitlines()[-1][:120]) for k, v in report["failed"].items()), ""]
     out_people = [r for r in report["measures"] if r.get("judge") and r["judge"]["side"] != 0 and (r.get("ref") or {}).get("kind") == "people"]
