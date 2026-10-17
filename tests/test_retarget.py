@@ -282,11 +282,15 @@ class FeetTest(unittest.TestCase):
         ball = np.array([MIKU["足先EX"][0], MIKU["つま先"][1], MIKU["足先EX"][2]])
         turns = [axis_angle((0.0, 1.0, 0.0), 4.0 * f) for f in range(0, 11)]
         goals = [ball - leg_ik.qrot(np.array(q), ball - ankle) for q in turns]
-        for _ in range(4):                       # the source's own ball held still as MMD's IK turns its foot
+        heel = [(0.0, 0.0, 0.0, 1.0)] * 11
+        for _ in range(5):                       # the source's own foot flat and turning on its ball, as MMD's IK puts it
             keys = [key("左足ＩＫ", f, q, position=tuple(g - ankle)) for f, (q, g) in enumerate(zip(turns, goals))]
+            keys += [key("左足首", f, k) for f, k in enumerate(heel)]
             m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), *keys, key("右足ＩＫ", 0))
-            b = foot_point(legs(MIKU_DATA, m, range(0, 11))["左"], ball - ankle)
+            sol = legs(MIKU_DATA, m, range(0, 11))["左"]
+            b = foot_point(sol, ball - ankle)
             goals = [g + np.array([ball[0] - p[0], 0.0, ball[2] - p[2]]) for g, p in zip(goals, b)]
+            heel = [tuple(retarget.qmul(retarget.qconj(sol["q_shin"][f]), np.array(q))) for f, q in enumerate(turns)]
         self.assertLess(float(np.linalg.norm(b[:, [0, 2]] - ball[[0, 2]], axis=1).max()), 0.005)
         ball_t = np.array([RIN["足先EX"][0], RIN_SHOE["sole"], RIN["足先EX"][2]]) - np.array(RIN["足首"])
         pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)

@@ -426,7 +426,9 @@ class Body:
         model = pmx.loads(data)
         doc = pmx_edit.loads(data)
         P, N, main = _pmx_vertices(doc)
-        return cls(model, LI.ik_limits(doc), P, main, name, N)
+        out = cls(model, LI.ik_limits(doc), P, main, name, N)
+        out.doc = doc
+        return out
 
     @classmethod
     def load(cls, path):
@@ -921,10 +923,12 @@ FEET_ROUNDS = 2
 
 
 def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
-    """the target's foot IK keys for the source's plants: the touching sole point held still on the floor; a foot on its
-    toe or heel pitched about its own side axis (the ankle where the mapping put it) until that point reaches the floor;
-    a flat foot's ankle moved up or down (at most FLAT_LIFT_MAX) until its sole does.  The hips are never lowered.
-    Returns the report."""
+    """the target's foot keys for the source's plants (the foot IK's goal and turn, the ankle's key): the foot takes the
+    source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
+    by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it) until
+    that point reaches the floor; a flat foot's ankle moves up or down (at most FLAT_LIFT_MAX) until its sole does; the
+    touching point is held still.  The hips are never lowered.  The changes ease in and out over EASE frames.  Returns
+    the report."""
     F = len(frames)
     rep = {}
     found = {side: plants(src, src_legs, side) for side in SIDES}
@@ -935,9 +939,11 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             pts_t, floor_t = sole_points(tgt, side)
             leg = tgt_legs[side]
             A, Q = leg["ankle"], leg["q_foot"]
+            Qs = src_legs[side]["q_foot"]
             which, weight = ease_weights(F, [(a, b) for a, b, _ in spans])
-            d_pitch = np.zeros(F)
+            want_turn = Q.copy()
             shift = np.zeros((F, 3))
+            d_all = np.zeros(F)
             left_over = np.full(F, np.nan)
             kinds = {"flat": 0, "toe": 0, "heel": 0}
             for n, (a, b, kind) in enumerate(spans):
@@ -946,10 +952,11 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 if not len(idx):
                     continue
                 point = pts_t["toe" if kind == "toe" else ("heel" if kind == "heel" else "ball")]
-                p0 = foot_pitch(Q[idx])
+                base = Qs[idx]
+                p0 = foot_pitch(base)
                 if kind == "flat":
                     d = np.zeros(len(idx))
-                    low = np.min(np.stack([A[idx, 1] + qrot(Q[idx], v)[:, 1] for v in pts_t.values()], axis=1), axis=1) - floor_t
+                    low = np.min(np.stack([A[idx, 1] + qrot(base, v)[:, 1] for v in pts_t.values()], axis=1), axis=1) - floor_t
                     lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
                     left_over[idx] = low + lift
                 else:
@@ -957,10 +964,10 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -np.maximum(p0, 0.0), MAX_PITCH_DEG - p0
                     else:
                         lo, hi = -MAX_PITCH_DEG - p0, -np.minimum(p0, 0.0)
-                    d, rest_h = solve_pitch(A[idx], Q[idx], point, floor_t, lo, hi)
+                    d, rest_h = solve_pitch(A[idx], base, point, floor_t, lo, hi)
                     lift = np.zeros(len(idx))
                     left_over[idx] = rest_h
-                Qn = qmul(pitch_turn(Q[idx], d), Q[idx])
+                Qn = qmul(pitch_turn(base, d), base)
                 C = A[idx] + qrot(Qn, point)
                 inside = (idx >= a) & (idx <= b)
                 lock = np.mean(C[inside][:, [0, 2]], axis=0) if np.any(inside) else np.mean(C[:, [0, 2]], axis=0)
@@ -968,31 +975,46 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 sh[:, 0] = lock[0] - C[:, 0]
                 sh[:, 2] = lock[1] - C[:, 2]
                 sh[:, 1] = lift
-                w = weight[idx]
-                d_pitch[idx] = w * d
-                shift[idx] = w[:, None] * sh
-            ik = side + "足ＩＫ"
-            tr = tgt_trk.get(ik)
-            if tr is None:
-                tgt_trk[ik] = tr = Track([vmd.BoneKey(ik, 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))])
-            par = tgt.model.bones[tgt.i(ik)].parent
-            pname = tgt.model.bones[par].name if par is not None else None
-            Wp = world_pose(tgt, tgt_trk, frames, [pname])[pname][1] if pname else np.tile(IDENTITY, (F, 1))
-            pos, rot = tr.sample(frames)
-            new_rot = qmul(qconj(Wp), qmul(pitch_turn(Q, d_pitch), qmul(Wp, rot)))
-            new_pos = pos + qrot(qconj(Wp), shift)
+                want_turn[idx] = Qn
+                shift[idx] = sh
+                d_all[idx] = d
             moved = np.flatnonzero(weight > 0)
-            added = tr.fit(frames[moved], want_rot=new_rot[moved], want_pos=new_pos[moved], tol_deg=0.25, tol_pos=0.005) if len(moved) else 0
             r = rep.setdefault(side, {"plants": len(spans), "kinds": kinds, "plant_frames": int(sum(b - a + 1 for a, b, _ in spans)),
                                       "keys_added": 0})
-            r["keys_added"] += added
+            if len(moved):
+                w = weight[moved]
+                # the foot IK: its world turn towards the wanted foot turn, its goal shifted (both in its parent's frame)
+                ik = side + "足ＩＫ"
+                tr = tgt_trk.get(ik)
+                if tr is None:
+                    tgt_trk[ik] = tr = Track([vmd.BoneKey(ik, 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))])
+                par = tgt.model.bones[tgt.i(ik)].parent
+                pname = tgt.model.bones[par].name if par is not None else None
+                Wp = world_pose(tgt, tgt_trk, frames, [pname])[pname][1] if pname else np.tile(IDENTITY, (F, 1))
+                pos, rot = tr.sample(frames)
+                Wik = qmul(Wp, rot)
+                new_ik = qmul(qconj(Wp[moved]), slerp_n(Wik[moved], want_turn[moved], w))
+                new_pos = pos[moved] + qrot(qconj(Wp[moved]), w[:, None] * shift[moved])
+                added = tr.fit(frames[moved], want_rot=new_ik, want_pos=new_pos, tol_deg=0.25, tol_pos=0.005)
+                # the ankle's key: the foot's world turn through the solved shin (the toe IK then has nothing to turn)
+                ank = side + "足首"
+                tr2 = tgt_trk.get(ank)
+                if tr2 is None:
+                    tgt_trk[ank] = tr2 = Track([vmd.BoneKey(ank, 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))])
+                _, krot = tr2.sample(frames)
+                want_key = qmul(qconj(leg["q_shin"][moved]), want_turn[moved])
+                new_key = slerp_n(krot[moved], want_key, w)
+                added += tr2.fit(frames[moved], want_rot=new_key, tol_deg=0.25)
+                r["keys_added"] += added
             if rnd == 0:
-                r["pitch_change_deg"] = _quant(np.abs(d_pitch[weight >= 1.0]))
-                r["shift_cm"] = _quant(np.linalg.norm(shift[weight >= 1.0], axis=1) * UNIT_CM)
+                full = weight >= 1.0
+                r["pitch_change_deg"] = _quant(np.abs(d_all[full]))
+                r["shift_cm"] = _quant(np.linalg.norm(shift[full], axis=1) * UNIT_CM)
+                r["turn_change_deg"] = _quant(np.degrees(qangle(qmul(qconj(Q[full]), want_turn[full]))))
             inside_toe = np.isin(which, [n for n, s in enumerate(spans) if s[2] != "flat"]) & (weight >= 1.0)
             r["toe_left_over_cm"] = _quant(np.abs(left_over[inside_toe & ~np.isnan(left_over)]) * UNIT_CM)
             r["toe_unreached_frames"] = int(np.sum(inside_toe & (np.abs(np.nan_to_num(left_over)) > 0.0125)))
-            log("feet %s round %d: %d plants (%s), %d keys added" % (side, rnd, len(spans), kinds, added))
+            log("feet %s round %d: %d plants (%s), %d keys added" % (side, rnd, len(spans), kinds, r["keys_added"]))
     return rep
 
 
@@ -1010,7 +1032,7 @@ NEAR = 0.8                      # units (6.4 cm): the hand's place on a part is 
 HAND_THICK = 0.15               # units: half a hand's thickness (the two palms' points touch at twice this)
 CLEAR_ROUNDS = 3
 CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the surface
-SHOULDER_SKIP = 0.35            # the upper arm's first share lies in the trunk at rest: not tested against it
+SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder lies against the trunk (the armpit): not tested against it
 TOL_DEG = 0.3                   # the keys meet the wanted turns this closely
 
 
