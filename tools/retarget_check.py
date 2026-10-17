@@ -20,7 +20,8 @@ uses 98 others).
 * arms in the body: the target's arm as capsules on its bones (the upper arm, the forearm, the hand; radii the 60th
   percentile of their vertices' distance from the bone), the deepest its forearm and hand go into a part (head, ribbon,
   chest, belly, hips, thighs; each the convex polytope of its vertices) and the upper arm's half by the elbow into the
-  head; the hair and the skirt (soft: the physics or the hull's shape) counted apart (the upper arm's half by the shoulder
+  head (a hand on a part the source's hand touches, and its forearm's half by the wrist, counted at most 4 mm into it);
+  the hair and the skirt (soft: the physics or the hull's shape) counted apart (the upper arm's half by the shoulder
   arm not tested against the trunk, the hand not against a part the source's hand touches then).  The frames over 0.5
   and 1 cm, the deepest, the runs.  The same for the source's arm in its own body.
 * plants: a source foot stands where its foot IK goal or toe IK goal (forward kinematics: where the foot is meant to
@@ -67,6 +68,7 @@ STILL = 0.025                   # units a frame
 PLANT_MIN = 3
 TOE_PITCH = 4.0
 SKIP_SHOULDER = 0.5
+TOUCH_ALLOW = 0.05              # units: a hand (and the forearm by it) on a part the source's hand touches may lie this deep
 PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"), True), "ribbon": ("頭", ("リボン親",), False),
          "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
          "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
@@ -251,8 +253,9 @@ def arms_in(pose, body, parts, touching=None):
                     soft_deep[part] = np.maximum(soft_deep.get(part, 0.0), rad[i] - d)
                     continue
                 pen = rad[i] - d
-                if seg[i] == 2 and touching is not None and part in touching.get(side, {}):
-                    pen = np.where(touching[side][part], 0.0, pen)
+                near_hand = seg[i] == 2 or (seg[i] == 1 and share[i] >= 0.5)
+                if near_hand and touching is not None and part in touching.get(side, {}):
+                    pen = np.where(touching[side][part], np.minimum(pen, TOUCH_ALLOW), pen)
                 deep = np.maximum(deep, pen)
         deep = np.maximum(deep, 0.0)
         out[side] = {"frames_over_0.5cm": int(np.sum(deep > 0.0625)), "frames_over_1cm": int(np.sum(deep > 0.125)),
