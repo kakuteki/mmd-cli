@@ -378,6 +378,59 @@ class TurnLiftTest(unittest.TestCase):
             self.assertGreater(float(after[f]), min(float(src_low[f]), cap) - 0.0125, f)
 
 
+def turn_then_stand(rise, rate=24.0, n=15, gap=1, stand=15):
+    """pivot_motion's turn on the left toe over n frames, then the figure still, the foot lifted 1.6 cm for `gap` frames
+    and set down again for `stand` frames, its toe on the source's floor (the song's 128.0 s right foot: a turn on the
+    floor, a lift of a frame, a stand)"""
+    pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+    last = n + gap + stand - 1
+    base = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", last, position=(0.0, -1.0, 0.0)),
+            key("右足ＩＫ", 0), key("右足ＩＫ", last)]
+    foot = [key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", n - 1, pitch, position=(0.0, rise, 0.0))]
+    toe = foot_point(legs(MIKU_DATA, motion(*base, *foot), [0])["左"], np.subtract(MIKU["つま先"], MIKU["足首"]))[0]
+    turn = []
+    for f in range(n):
+        q = axis_angle((0.0, 1.0, 0.0), rate * f)
+        p = toe - leg_ik.qrot(np.array(q), toe)
+        turn.append(key("全ての親", f, q, position=(float(p[0]), 0.0, float(p[2]))))
+    lift = [key("左足ＩＫ", n + g, pitch, position=(0.0, rise + 0.2, 0.0)) for g in range(gap)]
+    down = [key("左足ＩＫ", n + gap, pitch, position=(0.0, TOE_RISE_10, 0.0)),
+            key("左足ＩＫ", last, pitch, position=(0.0, TOE_RISE_10, 0.0))]
+    return motion(*turn, *base, *foot, *lift, *down), last
+
+
+class HoldBackTest(unittest.TestCase):
+    """a turning foot's hold given back between two spans a frame apart (review_integ 2026-10-17: the song's 128.0 s right
+    foot turned on the floor, lifted 1 cm for a frame and stood again, and the hold went back in that frame, 13.7 cm; on
+    Rin's other proportions the mapping alone sweeps the toe round, so a held pivot leaves that much to give back): the
+    frames round the gap take it, every step of the shoe near the floor stays short, the stand after it is held"""
+
+    def test_a_hold_is_not_given_back_in_one_frame(self):
+        m, last = turn_then_stand(TOE_RISE_10 + 0.12)
+        frames = range(0, last + 1)
+        toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
+        out = {}
+        for tag, rate in (("before", None), ("after", retarget.JUMP_RATE)):
+            res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False, "jump_rate": rate})
+            rep = res.report["feet"]["左"]
+            self.assertEqual((rep["plants"], rep["on_floor_moving"]), (1, 1))
+            toe = foot_point(legs(RIN_SHOE_DATA, res.motion, frames)["左"], toe_off)
+            low = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res.motion, frames)
+            step = np.linalg.norm(np.diff(toe[:, [0, 2]], axis=0), axis=1) * 8.0          # cm a frame
+            near = (low[:-1] < 0.25) | (low[1:] < 0.25)                                    # either frame under 2 cm
+            out[tag] = (float(step[near].max()), toe, rep["jumps_spread"])
+        self.assertGreater(out["before"][0], 10.0)              # the hold went back in the frame of air (13 cm)
+        self.assertEqual(out["before"][2], 0)
+        self.assertLess(out["after"][0], 5.0)                   # now over the frames round it
+        self.assertGreater(out["after"][2], 0)
+        held = out["after"][1][22:last + 1, [0, 2]]
+        self.assertLess(float(np.linalg.norm(held - held.mean(axis=0), axis=1).max()), 0.0125)   # the stand is held ...
+        # ... where it was within 1 cm (the second round of the feet takes its hold again from the first round's track, whose
+        # stand begins with the spread's last shares)
+        self.assertLess(float(np.linalg.norm(held.mean(axis=0) - out["before"][1][22:last + 1, [0, 2]].mean(axis=0))),
+                        0.125)
+
+
 class CarriedTest(unittest.TestCase):
     """a foot carried low and fast along the floor while the other foot is up (a step: the trace's 198.9-199.3 s carries
     the right foot 1-2 cm over the floor) is left as the mapping puts it, not pressed onto the floor and dragged along it"""
