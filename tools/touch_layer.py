@@ -145,9 +145,9 @@ def smoothed(body, trk, frames, before, sigma, hold=None, anchors=None, ramp=0.0
     elbow's moves), the arm put through the smoothed wrist with its elbow toward the smoothed elbow and the hand's world
     turn as before.  hold (side -> 0 .. 1 per frame): where the source's hand touches a part (1), the change as it was
     (the touch's place kept), blended toward the smoothed one where the hand is only near.  anchors (side -> bool per
-    frame, the frames where the source's hand touches) and ramp (model units a frame): first the change is let in and out
-    of the anchors at no more than ramp a frame (ramped).  Returns per side the frames changed and the largest step taken
-    off the wrist (cm)"""
+    frame, the touching frames) and ramp (model units a frame): first the change is let in and out of the anchors at no
+    more than ramp a frame (ramped; what the clearance added at a touching frame comes in as slowly).  Returns per side
+    the frames changed and the largest step taken off the wrist (cm)"""
     out = {}
     for side, (S0, E0, W0, R0) in before.items():
         S, E1, W1, _ = arm_points(body, trk, frames, side)
@@ -259,6 +259,11 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         want["左"] = want["左"] + 0.5 * need
         want["右"] = want["右"] - 0.5 * need
         rep["hands_together_frames"] = int(np.sum(w >= 1.0))
+    ramp = p.get("ramp_cm", 0.0) / UNIT_CM
+    if ramp > 0:
+        for side in want:
+            Wt = hands_tgt[side][0]
+            want[side] = Wt + ramped(want[side] - Wt, touching[side], ramp)
     for side in list(want):
         Wt, Rt, _ = hands_tgt[side]
         moved = np.linalg.norm(want[side] - Wt, axis=1) > 1e-6
@@ -276,10 +281,9 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         clr = RT.clear_arms(tgt, tgt_trk, frames, weights, tgt_all, log)
         for side in SIDES:
             rep.setdefault(side, {})["clear"] = clr.get(side)
-    if p.get("smooth_frames", 0.0) > 0 or p.get("ramp_cm", 0.0) > 0:
+    if p.get("smooth_frames", 0.0) > 0 or ramp > 0:
         hold = holds if p.get("smooth_keep_touch", True) else None
-        for side, row in smoothed(tgt, tgt_trk, frames, before, p.get("smooth_frames", 0.0), hold, touching,
-                                  p.get("ramp_cm", 0.0) / UNIT_CM).items():
+        for side, row in smoothed(tgt, tgt_trk, frames, before, p.get("smooth_frames", 0.0), hold, touching, ramp).items():
             rep.setdefault(side, {})["smoothed"] = row
     return rep
 
