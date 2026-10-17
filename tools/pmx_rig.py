@@ -19,6 +19,11 @@ Recipe:
                       brow's vertices: those hanging most on 眉1..眉3 of the side; inner and outer ends the x of 眉1 and
                       眉4), along the model's own brow-raise direction (Sour's Rin's bone morph 上 moves 眉1 by
                       (0, 0.1992, -0.0419)).  Panel 眉, added to the display frame 表情.
+                      Not the meaning of KAZUSA's key: that face was made for Tda式ミク・アペンド (its VMD's header), and on
+                      the Tda-style model at hand (Tda式重音テトAP) 眉頭右 / 眉頭左 move 12 vertices of the brow's inner end
+                      0.05 units forward (-Z) and not up at all (review 2026-10-17).  Raised, the key gives Rin one inner
+                      brow 8 mm higher than the other while 困る is on (214.7-215.2 s), a face the source does not have:
+                      the work's recipe leaves this out
   --joint-helpers J,..  a helper bone at each named joint of both sides that turns half way with the joint (an append of
                       the lower bone's turn x 0.5, like the model's own ひじ補助 x 0.6), and the joint's linear blend
                       shared out over it: a vertex with weight u on the upper side and l on the lower gives m = min(u, l)
