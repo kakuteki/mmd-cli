@@ -11,8 +11,8 @@
 
 | 順 | 段 | 道具 | 値 | retarget | rig | 踊り | 確かめの物差し（tools/mv_inspect.py） | ほかの確かめ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 模型の写し（rig の受け持ち） | pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 19 | 2 | 6 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | spine_check.py・skirt_probe.py |
-| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | fix_twist.py | 6 | 0 | 0 | 0 | feet.under_floor_frames、feet.ik_miss_floor_frames | motion_fk.py |
+| 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 19 | 2 | 6 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
+| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 6 | 0 | 0 | 0 | feet.under_floor_frames、feet.ik_miss_floor_frames | motion_fk.py |
 | 3 | 平滑化と手ぶれ除去（v4s） | smooth_motion.py | 18 | 1 | 0 | 0 | spikes.centre_per_min、spikes.wrist_R_per_min、spikes.wrist_L_per_min、spikes.head_per_min、arms.wrist_8hz_pct、arms.wrist_3_6hz_pct、upper.head_stop_ms | motion_jerk.py |
 | 4 | 呼吸 | breath_layer.py | 60 | 6 | 0 | 3 | upper.head_stops_per_min、upper.upper_sudden_stops_per_min | - |
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
@@ -21,16 +21,25 @@
 | 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 25 | 5 | 3 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
 | 9 | 体重（順 C の balance） | balance_layer.py | 96 | 31 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 25 | 5 | 3 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
-| 11 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 6 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
-| 12 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
-| 13 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
-| 14 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
-| 15 | 口 | lip_sync.py・lip_timing.py | 81 | 5 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
-| 16 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
-| 17 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 11 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
-| 18 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
+| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 0 | 0 | 0 | 0 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
+| 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 6 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
+| 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
+| 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
+| 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
+| 16 | 口 | lip_sync.py・lip_timing.py | 81 | 5 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
+| 17 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 11 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
+| 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
+
+## pmx_rig.py（1. 模型の写し（rig の受け持ち）、0）
+
+（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+
+## rig_skin.py（1. 模型の写し（rig の受け持ち）、0）
+
+（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
 
 ## pmx_spine.py（1. 模型の写し（rig の受け持ち）、4）
 
@@ -65,6 +74,10 @@
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FREE | 100.0 | units | 50 | a translation range never reached (model units) |  | ○ |  |  |  |  |  | retarget |
+
+## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、0）
+
+（この枝にはまだ無い。枝 retarget の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
 
 ## fix_twist.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、6）
 
@@ -543,7 +556,11 @@
 | AIR_RAMP | 3 | frames | 1436 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
 | AIR_MIN | 4 | frames | 1437 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
 
-## wb_layer.py（11. 上体の慣性、5）
+## contact_layer.py（11. 接地の計画（枝 contact、査読中）、0）
+
+（この枝にはまだ無い。枝 contact の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+
+## wb_layer.py（12. 上体の慣性、5）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -553,7 +570,7 @@
 | MAX_BEND_DEG（引数 --max-bend） | 10.0 | deg | 79 | the whole bend of the spine at most (the sum over its joints) | HANDOVER 2026-10-17 wbbalance（曲げの合計 10 度まで） |  |  |  |  |  |  |  |
 | UPRIGHT_SHARE | (0.3, 0.6) |  | 80 | the levers' height over their length: no tilt under the first, the whole over the second |  |  |  |  |  |  |  |  |
 
-## wb_dynamics.py（11. 上体の慣性、29）
+## wb_dynamics.py（12. 上体の慣性、29）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -587,7 +604,7 @@
 | BANDS.4-8Hz | (4.0, 8.0) |  | 716 |  |  |  |  |  |  |  |  |  |
 | WELCH_N | 60 | frames | 717 | frames (2 s Hann windows, half overlap) |  |  |  |  |  |  |  |  |
 
-## hand_layer.py（12. 手と指、149）
+## hand_layer.py（13. 手と指、149）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -741,7 +758,7 @@
 | --order-mode | "centre" |  | 2040 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
 | --transit-scale | 1.0 |  | 2051 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
 
-## eye_gaze.py（13. 視線、103）
+## eye_gaze.py（14. 視線、103）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -849,7 +866,7 @@
 | --aim | "finger" |  | 1854 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
 | --hand-still | "wrist" |  | 1858 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
 
-## face_life.py（14. 表情、147）
+## face_life.py（15. 表情、147）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1001,7 +1018,7 @@
 | --seed | 0 |  | 2142 | the random draws (default 0) |  |  |  |  |  |  |  |  |
 | --style | "human" |  | 2146 | human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; v7: the face of the MV v7 again, byte for byte |  |  |  | ○ |  | ○ |  | dance |
 
-## lip_sync.py（15. 口、70）
+## lip_sync.py（16. 口、70）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1076,7 +1093,7 @@
 | SHORTEST.V | 5 |  | 321 |  |  |  |  |  |  |  |  |  |
 | face_rows_of(lag) | 0.0 |  | 704 |  |  |  |  |  |  |  |  |  |
 
-## lip_timing.py（15. 口、11）
+## lip_timing.py（16. 口、11）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1092,7 +1109,7 @@
 | run(errors) | 0 |  | 260 |  |  |  |  |  |  |  |  |  |
 | --errors | 0 |  | 310 | with --search: vowels of a line that may be missing, extra or different (default 0) |  |  |  |  |  |  |  |  |
 
-## eye_optics.py（16. 目の光と寄り、89）
+## eye_optics.py（17. 目の光と寄り、89）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1186,7 +1203,7 @@
 | run(seed) | 0 |  | 1986 |  |  |  |  |  |  |  |  |  |
 | --seed | 0 |  | 2078 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
 
-## mv_chunks.py（17. 描画と後処理、19）
+## mv_chunks.py（18. 描画と後処理、19）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1210,7 +1227,7 @@
 | --workers | 1 |  | 892 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
 | --encoder | "x264" |  | 894 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
-## mv_world.py（17. 描画と後処理、42）
+## mv_world.py（18. 描画と後処理、42）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1257,7 +1274,7 @@
 | write_stage(subframes) | 1 |  | 1171 |  |  |  |  |  |  |  |  |  |
 | --size | "1280x720" |  | 1257 |  |  |  |  |  |  |  |  |  |
 
-## mv_look.py（17. 描画と後処理、83）
+## mv_look.py（18. 描画と後処理、83）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1345,7 +1362,7 @@
 | --subframes | 1 |  | 1275 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
 | --shutter | 0.5 |  | 1277 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
-## mv_text.py（17. 描画と後処理、51）
+## mv_text.py（18. 描画と後処理、51）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1401,7 +1418,7 @@
 | text(dx) | 0 |  | 880 |  |  |  |  |  |  |  |  |  |
 | text(dy) | 0 |  | 880 |  |  |  |  |  |  |  |  |  |
 
-## make_stage.py（17. 描画と後処理、13）
+## make_stage.py（18. 描画と後処理、13）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1419,7 +1436,7 @@
 | --accent-every | 4 |  | 122 | every N-th line is amber and wider; 0 for none (default 4) |  |  |  |  |  |  |  |  |
 | --height | 0.0 |  | 123 | the height of the floor (its lines), in MMD units (default 0; 0.111 is where the model's soles stand) |  |  |  |  | ○ |  |  | rig |
 
-## mme_shadow.py（17. 描画と後処理、9）
+## mme_shadow.py（18. 描画と後処理、9）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1433,7 +1450,7 @@
 | DEBUGS | {False: 0, None: 0, True: 1, "shadow": 1, "lit": 2} |  | 65 |  |  |  |  |  |  |  |  |  |
 | SEARCH | 1.8 | units | 66 | MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree light at 8 units: the hips above the knees) |  | ○ |  |  |  |  |  | retarget |
 
-## pmm_gravity.py（17. 描画と後処理、8）
+## pmm_gravity.py（18. 描画と後処理、8）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1446,7 +1463,7 @@
 | KEY.noise | 1 |  | 27 |  |  |  |  |  |  |  |  |  |
 | KEY.noise_enabled | 0 |  | 27 |  |  |  |  |  |  |  |  |  |
 
-## make_camera.py（18. カメラ（加賀さんの指示で後回し）、67）
+## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1520,6 +1537,10 @@
 
 ## 確かめの道具と部品（物差しの決め）
 
+### rig_check.py（確かめ・部品、0）
+
+（この枝にはまだ無い。枝 rig の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
+
 ### spine_check.py（確かめ・部品、1）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
@@ -1586,6 +1607,10 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | EPS_DEG | 1.0e-3 | deg | 42 | saba: a CCD step smaller than this (degrees) is skipped |  |  |  |  |  |  |  |  |
 | GAIN | 1.0e-7 | units | 43 | units: a loop that brings the target closer by less ends the solve. saba (and MMD) stop at the first loop that does not bring it closer; MMD's float32 cannot tell a gain… |  | ○ |  |  |  |  |  | retarget |
+
+### contact_check.py（確かめ・部品、0）
+
+（この枝にはまだ無い。枝 contact の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）
 
 ### upper_body_check.py（確かめ・部品、17）
 
@@ -1757,8 +1782,8 @@
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 43 |  |  |  |  |  |  |  |  |  |
-| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_spine.py", "pmx_eyes.py", "… |  | 50 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 427 |  |  |  |  |  |  |  |  |  |
+| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 50 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
+| _cell(n) | 170 |  | 433 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 

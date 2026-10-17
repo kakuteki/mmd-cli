@@ -2296,9 +2296,10 @@ python tools/param_inventory.py --check         # 表がコードと違う・古
   推した目安。見直しの印: retarget（長さ・速さ・加速度）、rig（リンのモデルで測った値）、dance（踊りで測った値だけ）。
 - 記録の出所は `docs/params_notes.json`（`"道具:名": {"from": ..., "unit"・"review" の置き換え}`、HANDOVER などから手で付ける）。値が消えた注は
   古い注として `--check` が落とす。
-- 組み直しの順番（`ORDER`、上流から 18 段: 模型の写し → 踊りを体に写す → 平滑化 → 呼吸 → 関節 → 運動 → 背骨 → 足 → 体重 → 足 → 上体の慣性 →
-  手と指 → 視線 → 表情 → 口 → 目の光 → 描画 → カメラ）と、各段を確かめる `mv_inspect.py` の物差しの id。道具の置き場所が無いと試験が落ちる
-  （新しい道具は `ORDER` か `CHECKERS` に足す）。
+- 組み直しの順番（`ORDER`、上流から 19 段: 模型の写し（rig）→ 踊りを体に写す（retarget）→ 平滑化 → 呼吸 → 関節 → 運動 → 背骨 → 足 → 体重 →
+  足 → 接地の計画（contact）→ 上体の慣性 → 手と指 → 視線 → 表情 → 口 → 目の光 → 描画 → カメラ）と、各段を確かめる `mv_inspect.py` の物差しの id。
+  道具の置き場所が無いと試験が落ちる（新しい道具は `ORDER` か `CHECKERS` に足す）。並行の枝が足す道具（retarget.py・pmx_rig.py・rig_skin.py・
+  rig_check.py・contact_layer.py・contact_check.py）は `EXPECTED` に置き場所だけ先に書いてあり、取り込んだ後に作り直せば表に入る。
 
 ## 出力
 

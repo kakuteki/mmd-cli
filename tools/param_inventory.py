@@ -48,10 +48,10 @@ FORMAT = 1
 # lips -> eye_optics -> render) and its inputs (v4s -> breath -> anatomy: variants/v5a/anat_v5a.vmd; the arms opened 6
 # degrees and fix_twist before the smoothing); retarget and rig (other branches, 2026-10-17) go first.
 ORDER = [
-    (1, "模型の写し（rig の受け持ち）", ["pmx_spine.py", "pmx_eyes.py", "pmx_skirt.py"],
-     "背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し",
-     ["skirt.floor_over122_frames", "skirt.floor_max", "pixels.pants_frames"], ["spine_check.py", "skirt_probe.py"]),
-    (2, "踊りを体に写す（retarget の受け持ち）と手捩", ["fix_twist.py"],
+    (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pmx_spine.py", "pmx_eyes.py", "pmx_skirt.py"],
+     "骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し",
+     ["skirt.floor_over122_frames", "skirt.floor_max", "pixels.pants_frames"], ["rig_check.py", "spine_check.py", "skirt_probe.py"]),
+    (2, "踊りを体に写す（retarget の受け持ち）と手捩", ["retarget.py", "fix_twist.py"],
      "体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ",
      ["feet.under_floor_frames", "feet.ik_miss_floor_frames"], ["motion_fk.py"]),
     (3, "平滑化と手ぶれ除去（v4s）", ["smooth_motion.py"], "キーを曲線で通し直し、密なキーのゆらぎを均す",
@@ -76,24 +76,30 @@ ORDER = [
      ["feet.slide10_per_min", "feet.slide3_per_min", "feet.slide_path_cm_per_min", "feet.slide_fast_share", "feet.knee_gain_deg",
       "feet.knee_straight_pct", "feet.ik_new_miss_frames", "gravity.hover_pct", "gravity.hover_runs6_per_min",
       "gravity.air_per_min"], ["sink_check.py"]),
-    (11, "上体の慣性", ["wb_layer.py", "wb_dynamics.py"], "骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）",
+    (11, "接地の計画（枝 contact、査読中）", ["contact_layer.py"], "立ち足を置く・宙の放物線・体重を受ける足の浮き",
+     ["gravity.hover_pct", "gravity.hover_runs6_per_min", "balance.single_share_pct", "balance.zmp_inside_pct",
+      "feet.ik_new_miss_frames", "gravity.jump_apex_lowered", "spikes.centre_per_min"], ["contact_check.py"]),
+    (12, "上体の慣性", ["wb_layer.py", "wb_dynamics.py"], "骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）",
      ["upper.head_follow", "upper.chest_follow", "upper.arms_follow", "upper.head_follow_2_4hz", "balance.zmp_inside_pct",
       "balance.single_share_pct", "balance.zmp_margin_single_cm", "balance.zmp_tilt_deg_per_min"], ["upper_body_check.py"]),
-    (12, "手と指", ["hand_layer.py"], "指の形・遅れ・触れ・受け身の指", ["arms.finger_speed_L", "arms.finger_speed_R",
+    (13, "手と指", ["hand_layer.py"], "指の形・遅れ・触れ・受け身の指", ["arms.finger_speed_L", "arms.finger_speed_R",
                                                                      "arms.finger_wrist_ratio_L", "arms.finger_wrist_ratio_R",
                                                                      "arms.a09_wrist_finger_L", "arms.a09_wrist_finger_R",
                                                                      "arms.rests_per_min_R"], []),
-    (13, "視線", ["eye_gaze.py"], "固視とサッカード・カメラ目線・手を見る", ["eyes.edge_pct", "eyes.edge_longest_s", "eyes.eccentric15_pct"], []),
-    (14, "表情", ["face_life.py"], "KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）", [], []),
-    (15, "口", ["lip_sync.py", "lip_timing.py"], "歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）",
+    (14, "視線", ["eye_gaze.py"], "固視とサッカード・カメラ目線・手を見る", ["eyes.edge_pct", "eyes.edge_longest_s", "eyes.eccentric15_pct"], []),
+    (15, "表情", ["face_life.py"], "KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）", [], []),
+    (16, "口", ["lip_sync.py", "lip_timing.py"], "歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）",
      ["mouth.lag_median_ms", "mouth.lag_open_ms", "mouth.late_pct", "mouth.late_open_pct", "mouth.early_open_pct",
       "mouth.shut_singing_pct"], ["lip_check.py"]),
-    (16, "目の光と寄り", ["eye_optics.py"], "光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔", [], []),
-    (17, "描画と後処理", ["mv_chunks.py", "mv_world.py", "mv_look.py", "mv_text.py", "make_stage.py", "mme_shadow.py", "pmm_gravity.py"],
+    (17, "目の光と寄り", ["eye_optics.py"], "光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔", [], []),
+    (18, "描画と後処理", ["mv_chunks.py", "mv_world.py", "mv_look.py", "mv_text.py", "make_stage.py", "mme_shadow.py", "pmm_gravity.py"],
      "区間の描画・舞台と光・床と体の影・文字・物理の重力", ["pixels.pants_frames", "pixels.shadow_rough", "pixels.shadow_total_rough"],
      ["shadow_check.py", "shadow_measure.py", "selfshadow_check.py"]),
-    (18, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"], "ショットの切り分けと控えめに動くカメラ", [], []),
+    (19, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"], "ショットの切り分けと控えめに動くカメラ", [], []),
 ]
+# tools the sibling branches add (2026-10-17): placed above, taken from the code once they are merged
+EXPECTED = {"pmx_rig.py": "rig", "rig_skin.py": "rig", "rig_check.py": "rig", "retarget.py": "retarget",
+            "contact_layer.py": "contact", "contact_check.py": "contact"}
 # the tools that measure, check or serve (their thresholds are the measures' rules, looked at with the measures)
 CHECKERS = ["mv_inspect.py", "param_inventory.py", "spine_check.py", "skirt_probe.py", "motion_fk.py", "motion_jerk.py",
             "sink_check.py", "leg_ik.py", "upper_body_check.py", "lip_check.py", "shadow_check.py", "shadow_measure.py",
@@ -484,6 +490,8 @@ def markdown(inv):
 
 def _tool_section(tool, entries, where, level="##"):
     head = ["%s %s（%s、%d）" % (level, tool, where, len(entries)), ""]
+    if not entries and tool in EXPECTED and not os.path.isfile(os.path.join(HERE, tool)):
+        return head + ["（この枝にはまだ無い。枝 %s の取り込みで入る。取り込んだら `python tools/param_inventory.py` で作り直す）" % EXPECTED[tool], ""]
     if not entries:
         return head + ["（数を持つ定数・引数の既定なし）", ""]
     rows = ["| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |",

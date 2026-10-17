@@ -165,7 +165,8 @@ class RealCodeTest(unittest.TestCase):
             sorted("mvi/" + f for f in os.listdir(os.path.join(here, "mvi")) if f.endswith(".py") and f != "__init__.py")
         placed = PI.placed_tools()
         self.assertEqual([f for f in files if f not in placed], [])
-        self.assertEqual([f for f in placed if f not in files], [])
+        # a placed tool is here, or one a sibling branch brings (retarget, rig, contact)
+        self.assertEqual([f for f in placed if f not in files and f not in PI.EXPECTED], [])
 
     def test_the_notes_name_values_that_exist(self):
         self.assertEqual(self.inv["stale_notes"], [])
