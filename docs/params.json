@@ -1420,7 +1420,7 @@
    "value": "4.0",
    "unit": "cm",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
@@ -13052,14 +13052,14 @@
    "above": "---- the landing (feet-landing, 2026-10-16) --------------------------------------------------------------------------- The sources and the measures are in _spike/out/stage6/feet_landing/NOTES.md and _spike/out/stage6/feet/RESEARCH.md (5). The human baseline (FineDance, the K-pop / choreography / jazz sequences, 62, the per-sequence medians' median): at a touchdown the ankle stands 3.1 cm [2.6, 3.5] over a flat foot's (96 % land toes first), comes down 2.0 cm [1.4, 2.5] in the next 0.2 s while the pelvis sinks 1.17 cm, so the hip joint's distance to the ankle hardly changes (-0.05 cm [-0.44, 0]) and the knee bends 0.3 degrees more; the heel is down a median 3 frames (0.1 s) after the touch, 61 % of them within 6 frames.  The research: in an ordinary landing the heel comes down some 40 ms after the forefoot (Puddle & Maulder 2013), the ankle dorsiflexing 9.8 degrees from the toe's touch to the heel's and 10 more by 150 ms (Fukano & Fukubayashi 2014); 7 of 11 landers put the heel down after the metatarsal heads, 4 absorbed the landing on the forefoot alone (Gross & Nelson 1988).  The MV's dance lands with the foot IK stopped on the floor, so the whole sink goes into the knee (7 degrees in 0.2 s).",
    "unit": "frames",
    "depends": {
-    "gravity": false,
+    "gravity": true,
     "dance": true,
     "model": false,
     "people": true,
     "literature": true,
     "body": false
    },
-   "review": "dance",
+   "review": "retarget",
    "step": 8
   },
   {
@@ -16283,14 +16283,14 @@
    "value": "0.25",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 13,
    "same_as": "RELAX_GAIN"
   },
@@ -16306,14 +16306,14 @@
    "value": "1900.0",
    "unit": "deg",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 13,
    "same_as": "SPEED_MAX_DEG_S"
   },
@@ -16350,14 +16350,14 @@
    "value": "1.5",
    "unit": "frames",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 13,
    "same_as": "ORDER_MAX"
   },
@@ -16373,14 +16373,14 @@
    "value": "0.5",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 13,
    "same_as": "FOLLOW_SCALE"
   },
@@ -17838,14 +17838,14 @@
    "above": "consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the tongue tip (s z t d n), less for r k g h; y passes through い, w through う.",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -17858,14 +17858,14 @@
    "above": "consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the tongue tip (s z t d n), less for r k g h; y passes through い, w through う.",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -17878,14 +17878,14 @@
    "above": "consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the tongue tip (s z t d n), less for r k g h; y passes through い, w through う.",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -17898,14 +17898,14 @@
    "above": "consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the tongue tip (s z t d n), less for r k g h; y passes through い, w through う.",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -17918,14 +17918,14 @@
    "above": "consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the tongue tip (s z t d n), less for r k g h; y passes through い, w through う.",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 16
   },
   {
@@ -20649,14 +20649,14 @@
    "above": "diffuse r g b a, power, specular r g b, emissive r g b",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -23639,14 +23639,14 @@
    "above": "colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -23659,14 +23659,14 @@
    "above": "colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -23679,14 +23679,14 @@
    "above": "colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -23699,14 +23699,14 @@
    "above": "colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -23719,14 +23719,14 @@
    "above": "colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom)",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 18
   },
   {
@@ -27713,14 +27713,14 @@
    "value": "0.008",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": 1,
    "same_as": "MARGIN"
   },
@@ -30113,14 +30113,14 @@
    "value": "0.1",
    "unit": "",
    "depends": {
-    "gravity": true,
+    "gravity": false,
     "dance": false,
     "model": false,
     "people": false,
     "literature": false,
     "body": false
    },
-   "review": "retarget",
+   "review": "",
    "step": null,
    "same_as": "MAX_GAP"
   },
@@ -34418,7 +34418,7 @@
    "kind": "const",
    "name": "PER_CONCEPT",
    "value": "3",
-   "line": 208,
+   "line": 209,
    "comment": "",
    "above": "",
    "unit": "",
@@ -34438,7 +34438,7 @@
    "kind": "const",
    "name": "PER_MEASURE",
    "value": "8",
-   "line": 209,
+   "line": 210,
    "comment": "one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17)",
    "above": "",
    "unit": "",
@@ -34458,7 +34458,7 @@
    "kind": "default",
    "name": "compare_md(top)",
    "value": "30",
-   "line": 355,
+   "line": 356,
    "comment": "",
    "above": "",
    "function": "compare_md",
@@ -34969,9 +34969,9 @@
     "leg_ik.py"
    ],
    "values": 75,
-   "retarget": 25,
+   "retarget": 26,
    "rig": 5,
-   "dance": 3,
+   "dance": 2,
    "noted": 6
   },
   {
@@ -35029,9 +35029,9 @@
     "sink_check.py"
    ],
    "values": 75,
-   "retarget": 25,
+   "retarget": 26,
    "rig": 5,
-   "dance": 3,
+   "dance": 2,
    "noted": 6
   },
   {
@@ -35163,7 +35163,7 @@
     "lip_check.py"
    ],
    "values": 81,
-   "retarget": 5,
+   "retarget": 0,
    "rig": 2,
    "dance": 1,
    "noted": 3
@@ -35207,7 +35207,7 @@
     "selfshadow_check.py"
    ],
    "values": 225,
-   "retarget": 11,
+   "retarget": 5,
    "rig": 8,
    "dance": 18,
    "noted": 10
@@ -35235,10 +35235,10 @@
   "option": 80,
   "option_of_constant": 34,
   "default": 226,
-  "review": 314,
-  "retarget": 183,
+  "review": 303,
+  "retarget": 173,
   "rig": 53,
-  "dance": 85,
+  "dance": 84,
   "noted": 56
  }
 }

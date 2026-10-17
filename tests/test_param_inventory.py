@@ -124,6 +124,11 @@ class DependsTest(unittest.TestCase):
         self.assertFalse(es["FPS"]["depends"]["body"])
         self.assertEqual(es["FPS"]["review"], "")
 
+    def test_a_colour_is_not_gravity(self):
+        e = PI.scan_source('PLATE = [10, 12, 20]   # colours are r, g, b of 255\n', "look_x.py")[0]
+        self.assertFalse(e["depends"]["gravity"])
+        self.assertEqual(e["review"], "")
+
     def test_units_from_the_name_and_the_comment(self):
         self.assertEqual(PI.unit_of("REACH_TOL_CM", ""), "cm")
         self.assertEqual(PI.unit_of("X", "cm: the band"), "cm")

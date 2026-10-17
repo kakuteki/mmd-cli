@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1681（定数 1375・引数 80・関数の既定 226。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 314（retarget 183・rig 53・踊りだけ 85）、記録の出所つき 56。
+- 数: 全部 1681（定数 1375・引数 80・関数の既定 226。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 303（retarget 173・rig 53・踊りだけ 84）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -18,17 +18,17 @@
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
 | 6 | 運動（遅れと堅さ、--preset human --elbow-hinge on） | motor_layer.py | 103 | 15 | 3 | 3 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R、arms.a09_elbow_wrist_L、arms.a09_elbow_wrist_R、upper.head_sudden_stops_per_min、upper.head_stop_ms | - |
 | 7 | 背骨 4 本へ配る | spine_layer.py | 9 | 1 | 0 | 0 | upper.upper_sudden_stops_per_min、upper.chest_follow | spine_check.py |
-| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 25 | 5 | 3 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
+| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 26 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
 | 9 | 体重（順 C の balance） | balance_layer.py | 96 | 31 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
-| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 25 | 5 | 3 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
+| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 26 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 0 | 0 | 0 | 0 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 6 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
-| 16 | 口 | lip_sync.py・lip_timing.py | 81 | 5 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
+| 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 11 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 225 | 5 | 8 | 18 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。物差しは `mv_inspect.py measure`（--size legs の「脚でそろえた」値も見る）と `compare`。
@@ -441,7 +441,7 @@
 | HOVER_ACC_TOL | 0.5 | units/s^2 | 720 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
 | HOVER_TOUCH | 0.025 | units | 721 | units (2 mm): the shoe's vertices this close to its lowest are the part that would touch |  | ○ |  |  |  |  |  | retarget |
 | HOVER_GLIDE（引数 --hover-glide） | TOE_SLIDE[0] | cm/s | 722 | cm/s (30): a frame whose lower shoe's lowest part moves along the floor faster than this is a step's swing skimming the floor, not a foot held over it: the speed under w… | HANDOVER 2026-10-17 floaty: 協調役の決め「--hover-glide は既定 30 のまま」（1000 にすると浮き 4.12 % だが 10 cm 以上の滑りが 27.9 回/分） | ○ |  | ○ |  | ○ |  | retarget |
-| LANDING_WINDOW | 6 | frames | 900 | frames (0.2 s) after a touchdown over which the heel comes down with the pelvis |  |  |  | ○ |  | ○ | ○ | dance |
+| LANDING_WINDOW | 6 | frames | 900 | frames (0.2 s) after a touchdown over which the heel comes down with the pelvis |  |  | ○ | ○ |  | ○ | ○ | retarget |
 | LANDING_GAP | 4 | frames | 901 | frames off the floor before a touchdown (the human baseline's a05) |  |  |  |  |  | ○ |  |  |
 | REACH_KNEE_DEG | 5.5 | deg | 907 | The human baseline found no frame of a planted human leg straighter than 5 degrees (a05's knee: the hip joint's distance to the ankle, the law of cosines); the MV's are … |  |  |  | ○ | ○ | ○ |  | rig |
 | SKIM_SPEED | (5.0, 15.0) | cm | 911 | A foot that the dance moves over the floor faster than the first speed (cm/s) is less and less, faster than the second not at all, put onto the floor where the dance has… |  | ○ |  | ○ |  |  |  | retarget |
@@ -1041,11 +1041,11 @@
 | SHAPES.o.お | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
 | SHAPES.u.う | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
 | SHAPES.u.お | 0.2 |  | 98 |  | HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ） |  |  |  |  |  |  | rig |
-| CONSONANTS.f | (0.25, "u") |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  | ○ |  |  |  |  | retarget |
-| CONSONANTS.m | (0.0, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  | ○ |  |  |  |  | retarget |
-| CONSONANTS.n | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  | ○ |  |  |  |  | retarget |
-| CONSONANTS.s | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  | ○ |  |  |  |  | retarget |
-| CONSONANTS.v | (0.12, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  | ○ |  |  |  |  | retarget |
+| CONSONANTS.f | (0.25, "u") |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.m | (0.0, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.n | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.s | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.v | (0.12, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
 | CONSONANTS.h | (0.6, None) |  | 103 |  |  |  |  |  |  |  |  |  |
 | CONSONANTS.k | (0.5, None) |  | 103 |  |  |  |  |  |  |  |  |  |
 | CONSONANTS.r | (0.55, None) |  | 103 |  |  |  |  |  |  |  |  |  |
@@ -1278,11 +1278,11 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DEFAULT_LOOK.plate.base | [10, 12, 20] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  | ○ |  |  |  |  | retarget |
-| DEFAULT_LOOK.plate.haze | [34, 44, 78] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  | ○ |  |  |  |  | retarget |
-| DEFAULT_LOOK.plate.horizon | 0.68 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  | ○ |  |  |  |  | retarget |
-| DEFAULT_LOOK.plate.pool | [70, 86, 140] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  | ○ |  |  |  |  | retarget |
-| DEFAULT_LOOK.plate.vignette | 0.45 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  | ○ |  |  |  |  | retarget |
+| DEFAULT_LOOK.plate.base | [10, 12, 20] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.haze | [34, 44, 78] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.horizon | 0.68 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.pool | [70, 86, 140] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.vignette | 0.45 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.beams.count | 6 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.beams.cycles | [1, 2] |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.beams.loop_seconds | 12 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
@@ -1424,7 +1424,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FILE_UNITS_PER_MMD_UNIT | 0.1 |  | 32 |  |  |  |  |  |  |  |  |  |
 | PLANE_DEPTH | -0.02 |  | 33 |  |  |  |  |  |  |  |  |  |
-| MATERIALS | ( ((0.0, 0.0, 0.0, 0.92), 5.0, (0.0, 0.0, 0.0), (0.03, 0.04… |  | 35 | 0 the plane: blue-black 1 a line: cool white 2 an accent line: amber |  |  | ○ |  |  |  |  | retarget |
+| MATERIALS | ( ((0.0, 0.0, 0.0, 0.92), 5.0, (0.0, 0.0, 0.0), (0.03, 0.04… |  | 35 | 0 the plane: blue-black 1 a line: cool white 2 an accent line: amber |  |  |  |  |  |  |  |  |
 | floor(accent_every) | 4 |  | 56 |  |  |  |  |  |  |  |  |  |
 | floor(half) | 60.0 |  | 56 |  |  |  |  |  |  |  |  |  |
 | floor(height) | 0.0 |  | 56 |  |  |  |  |  |  |  |  |  |
@@ -2012,9 +2012,9 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | TOP_MD | 60 |  | 23 |  |  |  |  |  |  |  |  |  |
 | FORMAT | 2 |  | 24 | 2: which places are listed changed (toward / also / extreme, the review of 10-17) |  |  |  |  |  |  |  |  |
-| PER_CONCEPT | 3 |  | 208 |  |  |  |  |  |  |  |  |  |
-| PER_MEASURE | 8 |  | 209 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
-| compare_md(top) | 30 |  | 355 |  |  |  |  |  |  |  |  |  |
+| PER_CONCEPT | 3 |  | 209 |  |  |  |  |  |  |  |  |  |
+| PER_MEASURE | 8 |  | 210 | one measure's places in the heaviest-first table at most (the ZMP's stretches, whose tilts run to 80 of their scale, would fill it: the review of 10-17) |  |  |  |  |  |  |  |  |
+| compare_md(top) | 30 |  | 356 |  |  |  |  |  |  |  |  |  |
 
 ### mvi/shared.py（確かめ・部品、2）
 

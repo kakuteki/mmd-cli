@@ -148,7 +148,7 @@ _COMMENT_UNITS = [(r"units?/s\^?2|units/s²|u/s\^?2|u/s²", "units/s^2"), (r"m/s
 LENGTH_UNITS = {"cm", "mm", "m", "units", "units/s", "units/s^2", "cm/s", "mm/s", "m/s", "m/s^2", "cm/s^2"}
 ACCEL_UNITS = {"units/s^2", "m/s^2", "cm/s^2"}
 WORDS = {
-    "gravity": r"\bgravity\b|重力|\bg\b(?! of)|free fall|自由落下",
+    "gravity": r"\bgravity\b|重力|free fall|自由落下|\b9\.8\d*\b|\b122\.5\b|\b61\.25\b|\breal g\b|\bof g\b|\bg at\b|\bthe g\b",
     "dance": r"\b(?:song|dance|dancer|dances|trace|traced|tracer|choreograph\w*|beats?|Hibikase|enuta|KAZUSA)\b|踊り|曲|ヒビカセ|"
              r"\bv(?:[2-9]|1[0-9])[a-z]?\b",
     "model": r"\bRin\b|Sour|White(?:_spine\w*)?\.pmx|\.pmx\b|\bmorphs?\b|モーフ|\bmaterials?\b|材質|\brigid\b|剛体|\bjoints? of the model|"
