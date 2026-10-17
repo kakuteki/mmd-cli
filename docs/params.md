@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1920（定数 1548・引数 92・関数の既定 280。定数を既定にする引数 35 は定数の行に書き、数えない）、見直しの印 388（retarget 247・rig 60・踊りだけ 91）、記録の出所つき 58。
+- 数: 全部 1922（定数 1549・引数 92・関数の既定 281。定数を既定にする引数 36 は定数の行に書き、数えない）、見直しの印 389（retarget 248・rig 60・踊りだけ 91）、記録の出所つき 59。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -23,7 +23,7 @@
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
-| 13 | 手と指、触れの層（v11arms） | hand_layer.py・touch_layer.py | 151 | 12 | 10 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.contacts_lost_runs、spikes.wrist_R_per_min、spikes.wrist_L_per_min、arms.wrist_8hz_pct | retarget_check.py |
+| 13 | 手と指、触れの層（v11arms） | hand_layer.py・touch_layer.py | 153 | 13 | 10 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.contacts_lost_runs、spikes.wrist_R_per_min、spikes.wrist_L_per_min、arms.wrist_8hz_pct | retarget_check.py |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
@@ -899,11 +899,13 @@
 | --order-mode | "centre" |  | 2112 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
 | --transit-scale | 1.0 |  | 2123 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
 
-## touch_layer.py（13. 手と指、触れの層（v11arms）、1）
+## touch_layer.py（13. 手と指、触れの層（v11arms）、3）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SMOOTH_FRAMES（引数 --smooth-frames） | 1.0 | frames | 81 | the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a Gaussian of this many frames (its standard deviation; … | v11arms（10-17）: 触れの層の直しを時間でならす（元の手が触れるコマはそのまま）。σ 0 / 1.0 / 1.5 / 2.5 コマ: 右手首の 8 Hz 超 0.97 / 0.71 / 0.72 / -（前の段 0.60、人 … |  |  | ○ | ○ | ○ |  | rig |
+| SMOOTH_FRAMES（引数 --smooth-frames） | 1.0 | frames | 82 | the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a Gaussian of this many frames (its standard deviation; … | v11arms（10-17）: 触れの層の直しを時間でならす（元の手が触れるコマはそのまま）。σ 0 / 1.0 / 1.5 / 2.5 コマ: 右手首の 8 Hz 超 0.97 / 0.71 / 0.72 / -（前の段 0.60、人 … |  |  | ○ | ○ | ○ |  | rig |
+| RAMP_CM（引数 --ramp-cm） | 2.0 | cm | 95 | cm a frame: where the source's hand touches a part only for a frame or two (a hand brushing a thigh in a swing) the change that puts it back can be large (the later laye… | v11arms（10-17）: 一瞬だけの触れ（20.2 秒、元の右手が振りの途中で右ももを 1 コマかすめる）を戻す直しが 1 コマで 9.0 cm 跳んでいた（右手首の 1 コマの落ちと跳ね 3.08・2.78 m/s）。入れ抜きの上… | ○ |  | ○ |  | ○ |  | retarget |
+| smoothed(ramp) | 0.0 |  | 150 |  |  |  |  |  |  |  |  |  |
 
 ## eye_gaze.py（14. 視線、103）
 

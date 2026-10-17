@@ -84,7 +84,14 @@ SMOOTH_FRAMES = 1.0
 # change that puts it back can be large (the later layers took the swing 10 cm off) and come and go in a frame, a jump of
 # the wrist; the change at each touching frame (the hold 0.5 or more: on Hibikase's 20.2 s the source's hand passes 1.15 cm
 # off the thigh, fix_hands' weight 0.996) is kept and the frames around it are moved toward it, no further from it than
-# this many cm a frame away (a cone from each touching frame: the change comes in and goes out at this speed, 0.6 m/s)
+# this many cm a frame away (a cone from each touching frame: the change comes in and goes out at this speed, 0.6 m/s),
+# on the hands' places before the arms are cleared (the frames let in are cleared too) and on the arms' change after.
+# On Hibikase (v11's hands; mv_inspect's arms, spikes and retarget parts; the arms in the body with the thighs by the leg
+# IK): 0, the right wrist above 8 Hz 0.71 % and the wrists' one-frame spikes 22.4 / 16.3 a minute (the hands before the
+# layer 0.60 %, 21.5 / 15.6; people 0.15 %, 9.4 / 7.4), the change's steps over 2 cm a frame 13 / 16 frames (the largest
+# 9.0 cm, 20.2 s), 12 frames of an arm over 1 cm in; 1 cm: 0.64 %, 21.2 / 15.6, 4 / 9, 13 and the deepest 2.4 -> 3.5 cm;
+# 1.5: 0.65 %, 21.5 / 15.6, 5 / 9, 11; 2: 0.65 %, 21.5 / 15.6, 9 / 12 (the largest 4.2 cm), 11; the touches kept 140 ->
+# 139 of 163 with the ramp at 1.5 or 2 (0.859 by retarget_check's reading at all four)
 RAMP_CM = 2.0
 
 

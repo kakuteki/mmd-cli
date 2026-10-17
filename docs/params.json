@@ -35546,7 +35546,7 @@
    "kind": "const",
    "name": "SMOOTH_FRAMES",
    "value": "1.0",
-   "line": 81,
+   "line": 82,
    "comment": "",
    "above": "the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a Gaussian of this many frames (its standard deviation; 0: not smoothed), the arm put through the smoothed points with the hand's world turn kept; where the source's hand touches a part (fix_hands' relation's weight from HOLD_FROM to 1) the change is kept as it is (the touch's place), blended toward the smoothed one where the hand is only near.  The source the hands are put back on is the trace before the smoothing layers (its keys joined by MMD's curves) and fix_hands sets every frame on its own.  On Hibikase (the new hand layer's output, mv_inspect's arms, spikes and retarget parts): not smoothed, the right wrist's velocity above 8 Hz 0.60 -> 0.97 % (people 0.15) and its one-frame spikes 21.5 -> 26.1 a minute (people 9.4); smoothed everywhere by 1.0, 0.61 % and 21.2 but the touches kept 0.86 -> 0.82 (a short touch's change thinned); smoothed but where it touches, 0.71 % and 22.4 with the touches kept 0.86 (1.5: 0.72 %, 22.7, 0.86). With the thighs read by the leg IK, the frames of an arm over 1 cm in Rin's hard parts 13 (not smoothed), 12 (1.0), 15 (1.5), 23 (2.5)",
    "option": "--smooth-frames",
@@ -35565,9 +35565,52 @@
   },
   {
    "tool": "touch_layer.py",
+   "kind": "const",
+   "name": "RAMP_CM",
+   "value": "2.0",
+   "line": 95,
+   "comment": "",
+   "above": "cm a frame: where the source's hand touches a part only for a frame or two (a hand brushing a thigh in a swing) the change that puts it back can be large (the later layers took the swing 10 cm off) and come and go in a frame, a jump of the wrist; the change at each touching frame (the hold 0.5 or more: on Hibikase's 20.2 s the source's hand passes 1.15 cm off the thigh, fix_hands' weight 0.996) is kept and the frames around it are moved toward it, no further from it than this many cm a frame away (a cone from each touching frame: the change comes in and goes out at this speed, 0.6 m/s), on the hands' places before the arms are cleared (the frames let in are cleared too) and on the arms' change after. On Hibikase (v11's hands; mv_inspect's arms, spikes and retarget parts; the arms in the body with the thighs by the leg IK): 0, the right wrist above 8 Hz 0.71 % and the wrists' one-frame spikes 22.4 / 16.3 a minute (the hands before the layer 0.60 %, 21.5 / 15.6; people 0.15 %, 9.4 / 7.4), the change's steps over 2 cm a frame 13 / 16 frames (the largest 9.0 cm, 20.2 s), 12 frames of an arm over 1 cm in; 1 cm: 0.64 %, 21.2 / 15.6, 4 / 9, 13 and the deepest 2.4 -> 3.5 cm; 1.5: 0.65 %, 21.5 / 15.6, 5 / 9, 11; 2: 0.65 %, 21.5 / 15.6, 9 / 12 (the largest 4.2 cm), 11; the touches kept 140 -> 139 of 163 with the ramp at 1.5 or 2 (0.859 by retarget_check's reading at all four)",
+   "option": "--ramp-cm",
+   "unit": "cm",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": true,
+    "literature": false,
+    "body": true
+   },
+   "review": "retarget",
+   "step": 13,
+   "from": "v11arms（10-17）: 一瞬だけの触れ（20.2 秒、元の右手が振りの途中で右ももを 1 コマかすめる）を戻す直しが 1 コマで 9.0 cm 跳んでいた（右手首の 1 コマの落ちと跳ね 3.08・2.78 m/s）。入れ抜きの上限 0 / 1 / 1.5 / 2 cm/コマ: 右手首の 8 Hz 超 0.71 / 0.64 / 0.65 / 0.65 %、突起 右 22.4 / 21.2 / 21.5 / 21.5 回/分（触れの層の前 0.60・21.5、人 0.15・9.4）、IK で読んだ 1 cm 超 12 / 13 / 11 / 11 コマ、最深 2.35 / 3.51 / 2.43 / 2.35 cm、触れを保つコマ 140 / 140 / 139 / 139（163 のうち）"
+  },
+  {
+   "tool": "touch_layer.py",
+   "kind": "default",
+   "name": "smoothed(ramp)",
+   "value": "0.0",
+   "line": 150,
+   "comment": "",
+   "above": "",
+   "function": "smoothed",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 13
+  },
+  {
+   "tool": "touch_layer.py",
    "kind": "option",
    "name": "--smooth-frames",
-   "line": 316,
+   "line": 370,
    "comment": "\"the Gaussian (frames) the arm's change is smoothed by (default %g; 0 leaves it as fix_hands sets it)\" % SMOOTH_FRAMES",
    "above": "",
    "help": "\"the Gaussian (frames) the arm's change is smoothed by (default %g; 0 leaves it as fix_hands sets it)\" % SMOOTH_FRAMES",
@@ -35585,6 +35628,29 @@
    "review": "",
    "step": 13,
    "same_as": "SMOOTH_FRAMES"
+  },
+  {
+   "tool": "touch_layer.py",
+   "kind": "option",
+   "name": "--ramp-cm",
+   "line": 373,
+   "comment": "\"cm a frame the change comes in and goes out of a touching frame at, at most (default %g; 0: as it is)\" % RAMP_CM",
+   "above": "",
+   "help": "\"cm a frame the change comes in and goes out of a touching frame at, at most (default %g; 0: as it is)\" % RAMP_CM",
+   "constant": "RAMP_CM",
+   "value": "2.0",
+   "unit": "cm",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": true
+   },
+   "review": "retarget",
+   "step": 13,
+   "same_as": "RAMP_CM"
   },
   {
    "tool": "upper_body_check.py",
@@ -39988,11 +40054,11 @@
    "checks": [
     "retarget_check.py"
    ],
-   "values": 151,
-   "retarget": 12,
+   "values": 153,
+   "retarget": 13,
    "rig": 10,
    "dance": 29,
-   "noted": 4
+   "noted": 5
   },
   {
    "step": 14,
@@ -40115,15 +40181,15 @@
  ],
  "stale_notes": [],
  "counts": {
-  "entries": 1920,
-  "const": 1548,
+  "entries": 1922,
+  "const": 1549,
   "option": 92,
-  "option_of_constant": 35,
-  "default": 280,
-  "review": 388,
-  "retarget": 247,
+  "option_of_constant": 36,
+  "default": 281,
+  "review": 389,
+  "retarget": 248,
   "rig": 60,
   "dance": 91,
-  "noted": 58
+  "noted": 59
  }
 }
