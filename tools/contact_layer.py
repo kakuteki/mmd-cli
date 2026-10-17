@@ -2,7 +2,7 @@
 held where they stand, and where no foot stands the body flying by gravity.
 
     python tools/contact_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--no-ground] [--no-plant]
-        [--no-drop] [--no-flight]
+        [--no-drop] [--no-flight] [--no-knee]
 
 Why (2026-10-17, _spike/out/stage6/contact/NOTES.md): the trace's dance keeps feet just over the floor that a person would
 stand on.  People (FineDance's K-pop, choreography and jazz sequences, 62, the human baseline's a05 with their 1.2 cm
@@ -63,13 +63,28 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    limb's quick move (the trace's one-frame jumps) stays the dance's instead of the pelvis taking it up as a jolt.  A foot in the air goes with the body
    (the leg keeps the dance's shape: people's feet clear the floor more in longer flights, 3.3 cm the median of the
    highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP frames from the floor.
-6. The frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input (a push that
+6. The knee at the end of its reach, on the dance as 1.-5. leave it (kneepop, 2026-10-17): near the end of a leg's reach
+   (the hip's distance to the goal within KNEE_NEAR of rig_check's max_reach) a converged leg IK (v7's 400 loops) puts the
+   knee straight on a frame whose goal is a centimetre or two further than its neighbours' (the trace's take-offs and
+   landings, the snap into a kick).  There, on the legs' formula (a two-bone leg's bend from the distance), round each
+   frame that jumps as rig_check counts it (more than KNEE_JUMP_DEG off the line through its neighbours; a smaller kink is
+   left: a standing foot turned for it is a jump of the foot instead) every frame straighter than the line through its
+   neighbours by more than KNEE_POP_DEG is bent to within it (even_pops, to a fixed
+   point; never past the band's edge, never straighter): a swing leg's goal comes toward the hip by what is too long (its
+   toe IK's goal with MMD's ankle: a goal beyond the reach moves further than the ankle, and the foot keeps its turn); a
+   standing foot turns onto its toes about the front of its shoe's touching part, or onto its heel about its back
+   (whichever needs the lesser turn, at most KNEE_PITCH_MAX), the shoe's lowest point where it was (the toes stay on the
+   floor; a take-off rises onto them, a leg reaching forward lands on its heel), held on to the run's end within
+   KNEE_EDGE frames of a lift or a landing, and only there (edge_turns: a turn in the middle of a stand would raise the heel
+   for a frame and set it down again; such a knee is left).  The pelvis does not move.
+7. The frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input (a push that
    overshoots) is raised by the excess; MMD draws 240 fps and interpolates the keys, so where a shoe would dip into the
    floor between two frames further than the input's did, both are raised by the dip (the foot layer's sub-frame check).
 
 Written: 足ＩＫ (both feet, its place) and センター (its height), a key on every frame (a linear curve, the physics bytes of
-the input's key in force); nothing else (the report's `untouched` reads it back).  With nothing to do the input comes
-back as it is.  Coordinates are MMD's (Y up, the model facing -Z), units are MMD units (UNIT_CM centimetres).
+the input's key in force), 足首 (the foot's turn kept or turned), and つま先ＩＫ (its place) where 6. turns a standing foot
+or brings a goal in from beyond the reach; nothing else (the report's `untouched` reads it back).  With nothing to do the
+input comes back as it is.  Coordinates are MMD's (Y up, the model facing -Z), units are MMD units (UNIT_CM centimetres).
 """
 import argparse
 import importlib.util
@@ -166,6 +181,37 @@ STRICT_NEAR = 8                 # brings within the bound (strict frames) with n
                                 # one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; mv_inspect
                                 # counts a jump's top 2 cm and more under the dance's).  Per frame, not per window: a need
                                 # nearby merges the windows
+# 6. the knee at the end of its reach (the review of rig, 2026-10-17: with the leg IK's 400 loops of v7's recipe MMD's leg
+# reaches its goal, and the knee jumps on main's chain went 45 -> 70, rig_check's count of a frame more than 10 degrees off
+# the line through its neighbours: the song's 2226 a left knee 23 -> 4 -> 37 degrees.  Near the end of the reach the knee's
+# bend is most sensitive to the hip's distance to the goal (Sour's Rin: 32 degrees a centimetre at the end, 7 at 20
+# degrees), so a goal a centimetre or two further for a frame straightens it for that frame).  The band is a part of the
+# leg's reach (rig_check's max_reach: the knee at the least bend of its IK limit), so that it holds for any body and dance.
+# (Drawing every goal softly into the reach from 2 cm short of it, the review's other proposal, took the song's jumps on the
+# legs' formula 75 -> 47 against this step's 32, and with this step to 30, moving some 270 frames of the swinging legs and
+# kicks far out of reach up to 30 cm: kneepop's NOTES, 2026-10-17.)
+KNEE_NEAR = 0.05                # of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two
+                                # straighter than the frames round them are bent like them
+KNEE_POP_DEG = 6.0              # degrees: there a frame's bend comes within this of the line through its neighbours, and no
+                                # neighbour's further than this the other way (rig_check counts a jump at 10.  On the song's
+                                # legs' formula: 75 -> 32 jumps with the first side, 29 with both; 4 moves twice the frames
+                                # for no fewer, 8 half the frames for the same but leaves them nearer 10)
+KNEE_JUMP_DEG = 10.0            # degrees: rig_check ik's jump, a frame further than this off the line through its neighbours.
+                                # Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the review of kneepop,
+                                # 2026-10-17: bending every kink past KNEE_POP_DEG changed 56 of the song's 99 places where
+                                # no knee jumped, and a standing foot turned for one became the foot's own jump: 249.9 s, a
+                                # right foot 13 degrees onto its toes for a knee 8.7 degrees off its line, the foot's pitch
+                                # then 13 degrees off the line through its neighbours)
+KNEE_JUMP_NEAR = 1              # frames
+KNEE_ROUNDS = 40                # rounds of evening out (a pop of two frames halves its gap a round)
+KNEE_PITCH_MAX = 30.0           # degrees: the most a standing foot turns onto its toes or its heel for its knee
+KNEE_PITCH_STEP = 0.25          # degrees: the turns tried
+KNEE_EDGE = 3                   # frames at either end of a standing run: a turn there is held on to the end of the run (the
+                                # heel does not come down again before the foot lifts, nor rise again after it lands)
+KNEE_TOL = IK_MISS               # units (1 mm): a smaller change of the hip's distance to the goal is none (MMD's IK tells no less)
+KNEE_TOE_TOL = 1e-4             # units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it)
+KNEE_PLAN_ROUNDS = 8            # rounds of the targets on the distances the changes so far leave (a turn held on to a run's
+                                # end bends that frame more, and the frame before may then need more)
 
 
 def runs(mask, n=1):
@@ -365,6 +411,93 @@ def limb_smoothed(com_y, pelvis_y, weights=LIMB_SMOOTH):
     return pelvis_y + np.convolve(kp, w, mode="valid")
 
 
+# ---- the knee at the end of its reach ---------------------------------------------------------------------------------
+
+def knee_geometry(rig, side):
+    """(thigh, shank, the knee's bend at rest between them, the least bend of its IK limit) of one leg (units, degrees): a
+    bend is the knee's turn from rest, as rig_check ik counts it (Sour's Rin: 4.43, 4.51, 5.7 and 0)"""
+    sd = rig.sides[side]
+    h0, k0, a0 = (np.array(rig.bones[i].position, dtype=float) for i in (sd.thigh, sd.knee, sd.ankle))
+    u, v = k0 - h0, a0 - k0
+    c = float(np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v)))
+    return (float(np.linalg.norm(u)), float(np.linalg.norm(v)), math.degrees(math.acos(min(max(c, -1.0), 1.0))),
+            max(0.0, -math.degrees(sd.knee_hi)))
+
+
+def knee_distance(bend, L1, L2, rest_deg):
+    """the hip's distance to the ankle of a two-bone leg whose knee is turned `bend` degrees from its rest bend"""
+    return np.sqrt(L1 * L1 + L2 * L2 + 2.0 * L1 * L2 * np.cos(np.radians(rest_deg + np.asarray(bend, dtype=float))))
+
+
+def knee_bend(D, L1, L2, rest_deg, least_deg=0.0):
+    """the knee's bend from rest (degrees) of a two-bone leg whose IK reaches the hip's distance D to its goal (the least
+    bend at the reach and beyond)"""
+    c = (np.asarray(D, dtype=float) ** 2 - L1 * L1 - L2 * L2) / (2.0 * L1 * L2)
+    return np.clip(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))) - rest_deg, least_deg, 180.0 - rest_deg)
+
+
+def even_pops(bend, cap, pop_deg=None, rounds=None, both=True, only=None):
+    """the bends [F] (degrees) with every frame bent less than `cap` (the band at the end of the reach) and straighter than
+    the line through its neighbours by more than pop_deg raised to that line less pop_deg (no further than cap, never
+    lowered), to a fixed point: a frame or two straight between bent ones come within pop_deg of the frames round them.
+    both: also raised so that a neighbour is not more bent than the line through its own neighbours by more than pop_deg
+    (a knee snapping straight from a bend held: the frame it snaps on bends toward the frames before; rig_check counts a
+    jump either way).  only [F]: the frames that may be raised (None: all), and with them the frames that the raising
+    makes jump in turn (near_jumps of the bends so far: a frame raised next to a straight one leaves that one a jump)"""
+    pop_deg = KNEE_POP_DEG if pop_deg is None else pop_deg
+    rounds = KNEE_ROUNDS if rounds is None else rounds
+    b = np.array(bend, dtype=float)
+    if len(b) < 3:
+        return b
+    may = np.ones(len(b), dtype=bool) if only is None else np.array(only, dtype=bool)
+    # the straight frames first, to their fixed point; then both ways (a frame straight between bent ones makes its
+    # neighbours look more bent than their own neighbours' line until it is raised: those are not raised for it)
+    for sides in ((False,), (False, True)) if both and len(b) >= 4 else ((False,),):
+        for _ in range(rounds):
+            if only is not None:
+                may |= near_jumps(b)
+            need = np.full(len(b), -np.inf)
+            need[1:-1] = 0.5 * (b[:-2] + b[2:]) - pop_deg
+            if True in sides:
+                need[2:] = np.maximum(need[2:], 2.0 * (b[1:-1] - pop_deg) - b[:-2])
+                need[:-2] = np.maximum(need[:-2], 2.0 * (b[1:-1] - pop_deg) - b[2:])
+            new = np.where((b < cap) & may, np.maximum(b, np.minimum(cap, need)), b)
+            done = float(np.max(new - b)) < 1e-6
+            b = new
+            if done:
+                break
+    return b
+
+
+def near_jumps(bend, deg=None, near=None):
+    """[F] the frames of a knee's jumps as rig_check ik counts them (more than `deg` off the line through their
+    neighbours) and the frames `near` round them: the frames the knee step may bend"""
+    deg = KNEE_JUMP_DEG if deg is None else deg
+    near = KNEE_JUMP_NEAR if near is None else near
+    out = np.zeros(len(bend), dtype=bool)
+    for f in knee_jump_frames(bend, deg):
+        out[max(0, f - near):f + near + 1] = True
+    return out
+
+
+def knee_targets(D, L1, L2, rest_deg, least_deg=0.0, near=None, pop_deg=None, only=None):
+    """one leg's hip-to-goal distances D [F] (units): {"target": the distance its knee is to have [F] (never longer than D),
+    "bend0": the bends of D [F], "bend": the target's [F] (degrees from rest), "even": the frames bent like the frames round
+    them [F], "reach", "cap": the bend at the band's edge}.  In the band near x the reach at its end, a frame or two
+    straighter than the line through the frames round them by more than pop_deg are bent to within pop_deg of it, and so
+    are the frames round one more bent than that line (even_pops: a knee straight for a frame, or snapping straight, at the
+    IK's end of the reach); nothing else changes.  only [F]: the frames that may be bent (None: all)"""
+    near = KNEE_NEAR if near is None else near
+    D = np.asarray(D, dtype=float)
+    L = float(knee_distance(least_deg, L1, L2, rest_deg))
+    bend0 = knee_bend(D, L1, L2, rest_deg, least_deg)
+    cap = float(knee_bend(L * (1.0 - near), L1, L2, rest_deg, least_deg))
+    b = even_pops(bend0, cap, pop_deg, only=only)
+    raised = b > bend0 + 1e-9
+    target = np.minimum(np.where(raised, knee_distance(b, L1, L2, rest_deg), D), D)
+    return {"target": target, "bend0": bend0, "bend": np.where(raised, b, bend0), "even": raised, "reach": L, "cap": cap}
+
+
 # ---- the pelvis in the air: a small quadratic programme -------------------------------------------------------------
 
 def _diff_matrix(n, order, first=None, F=None):
@@ -526,7 +659,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
 # ---- the layer -------------------------------------------------------------------------------------------------------
 
 def default_params():
-    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True}
+    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True}
 
 
 def body_com(model, motion, F):
@@ -594,7 +727,8 @@ def outside(p, poly):
 class Composer:
     """the layer's keys on top of a dance's (keys: IK.sample's; sol: its solve): 足ＩＫ moved by world offsets [F, 3] per
     side, センター by a world height [F], and 足首 turned on the frames where a leg moved so that its foot keeps the input's
-    turn in the world (the toe IK starts on its goal, as the foot layer keys it): the foot moves as one piece"""
+    turn in the world (the toe IK starts on its goal, as the foot layer keys it): the foot moves as one piece.  The knee
+    step also turns a standing foot (its world turn) and puts つま先ＩＫ's goal at a given place from 足ＩＫ's"""
 
     def __init__(self, rig, motion, keys, sol, F):
         self.rig, self.motion, self.keys, self.sol, self.F = rig, motion, keys, sol, F
@@ -602,35 +736,253 @@ class Composer:
         self.ci = rig.by_name["センター"]
         self.legs = [rig.sides[s].leg_ik for s in SIDES]
         self.ankles = [rig.sides[s].ankle for s in SIDES]
+        self.toe_iks = [rig.sides[s].toe_ik for s in SIDES]
+        self.with_toes = False
         self.parent_c = FL._parent_world_turn(rig, keys, self.ci)
         self.parent_ik = {}
         for s in SIDES:
             rot = keys[rig.sides[s].leg_ik][1]
             self.parent_ik[s] = qmul(sol[s]["q_ik"], qconj(FL.qnormalize_rows(np.asarray(rot, dtype=float))))
 
-    def compose(self, offsets, centre_dy):
-        """(the new keys, their solve)"""
+    def compose(self, offsets, centre_dy, turns=None, toes=None):
+        """(the new keys, their solve).  turns: side -> world turns [F, 4] of the foot (the identity where none); toes: side
+        -> つま先ＩＫ's goal less 足ＩＫ's [F, 3] in the world (NaN rows: つま先ＩＫ's key as it was, its goal moving with
+        足ＩＫ)"""
         F = self.F
         new = dict(self.keys)
         for s in SIDES:
-            pos, rot = self.keys[self.rig.sides[s].leg_ik]
-            new[self.rig.sides[s].leg_ik] = (pos + qrot(qconj(self.parent_ik[s]), offsets[s]), rot)
+            sd = self.rig.sides[s]
+            pos, rot = self.keys[sd.leg_ik]
+            new[sd.leg_ik] = (pos + qrot(qconj(self.parent_ik[s]), offsets[s]), rot)
+            t = None if toes is None else toes.get(s)
+            if t is not None and np.isfinite(t).all(axis=1).any():
+                put = np.isfinite(t).all(axis=1)
+                d0 = np.array(self.rig.bones[sd.toe_ik].position) - np.array(self.rig.bones[sd.leg_ik].position)
+                key = qrot(qconj(self.sol[s]["q_ik"]), np.where(put[:, None], t, 0.0)) - d0
+                tpos, trot = self.keys[sd.toe_ik]
+                new[sd.toe_ik] = (np.where(put[:, None], key, tpos), trot)
+                self.with_toes = True
         pos_c, rot_c = self.keys[self.ci]
         new[self.ci] = (pos_c + qrot(qconj(self.parent_c), np.stack([np.zeros(F), centre_dy, np.zeros(F)], 1)), rot_c)
         moved = IK.solve(self.rig, self.motion, self.frames, new)
         for s in SIDES:
             sd = self.rig.sides[s]
             pos, rot = self.keys[sd.ankle]
-            changed = (np.abs(offsets[s]).max(axis=1) > 1e-9) | (np.abs(centre_dy) > 1e-9)
-            local = FL.qnormalize_rows(qmul(qconj(moved[s]["q_shin"]), self.sol[s]["q_foot"]))
+            t = None if turns is None else turns.get(s)
+            turned = np.zeros(F, dtype=bool) if t is None else (np.abs(np.asarray(t)[:, :3]).max(axis=1) > 1e-12)
+            changed = (np.abs(offsets[s]).max(axis=1) > 1e-9) | (np.abs(centre_dy) > 1e-9) | turned
+            foot = self.sol[s]["q_foot"]
+            if turned.any():
+                foot = np.where(turned[:, None], qmul(t, foot), foot)
+            local = FL.qnormalize_rows(qmul(qconj(moved[s]["q_shin"]), foot))
             new[sd.ankle] = (pos, np.where(changed[:, None], local, np.asarray(rot, dtype=float)))
         return new, IK.solve(self.rig, self.motion, self.frames, new)
 
     def written(self):
-        return self.legs + [self.ci] + self.ankles
+        return self.legs + [self.ci] + self.ankles + (self.toe_iks if self.with_toes else [])
 
     def build(self, new):
         return FL.build(self.motion, {self.rig.bones[i].name: new[i] for i in self.written()}, self.F)
+
+
+def foot_pivots(o, w, q_foot, touch=TOUCH):
+    """(the front, the back [F, 3]) of the part of the shoe that touches (its lower shell's vertices w [F, N, 3] within
+    `touch` of its lowest) along the foot's forward axis on the floor (q_foot [F, 4]: the foot's world turns)"""
+    a = qrot(q_foot, o.a0)
+    a = a * np.array([1.0, 0.0, 1.0])
+    a = a / np.maximum(np.linalg.norm(a, axis=1, keepdims=True), 1e-9)
+    y = w[:, :, 1]
+    near = y <= y.min(axis=1, keepdims=True) + touch
+    along = np.einsum("fnk,fk->fn", w, a)
+    idx = np.arange(len(w))
+    front = np.where(near, along, -np.inf).argmax(axis=1)
+    back = np.where(near, along, np.inf).argmin(axis=1)
+    return w[idx, front], w[idx, back]
+
+
+def foot_turned(c, axis, angles, goal, shell):
+    """(the goals [n, 3], the turns [n, 4]) of a standing foot turned by each of `angles` (radians, + onto the toes) about
+    `axis` through the point c, its goal (足ＩＫ) at `goal` and its shoe's lower shell at `shell` [N, 3] before: the foot
+    then lowered or raised so that the shoe's lowest point stays where it was (the toes or the heel on the floor)"""
+    q = IK.qaxis(np.broadcast_to(np.asarray(axis, dtype=float), (len(angles), 3)), np.asarray(angles, dtype=float))
+    low0 = float(shell[:, 1].min())
+    rel = shell - c
+    low = c[1] + qrot(q[:, None, :], rel[None, :, :])[:, :, 1].min(axis=1)
+    goals = c + qrot(q, goal - c)
+    goals[:, 1] += low0 - low
+    return goals, q
+
+
+def carry_to_edges(turn, stance, edge=None, allow=None):
+    """the turns [F] (degrees, signed) with a turn within `edge` frames of a standing run's end, and nearer its end than its
+    start, held on to that end where the foot lifts after it (and one nearer its start held back to the start where the
+    foot lands before it): the larger of the same sign carried over, as far as allow(frame, turn) lets it (a frame that
+    does not take it stops the carry)"""
+    edge = KNEE_EDGE if edge is None else edge
+    out = np.array(turn, dtype=float)
+    F = len(out)
+
+    def take(t, src):
+        if abs(out[src]) > abs(out[t]) and out[src] * out[t] >= 0.0:
+            if allow is not None and not allow(t, out[src]):
+                return False
+            out[t] = out[src]
+        return True
+    for a, b in runs(stance):
+        if b < F - 1:                                   # the foot lifts after b
+            for t in range(max(a, b - edge + 1) + 1, b + 1):
+                src = t - 1
+                if b - src < src - a and not take(t, src):
+                    break
+        if a > 0:                                       # the foot lands at a
+            for t in range(min(b, a + edge - 1) - 1, a - 1, -1):
+                src = t + 1
+                if src - a < b - src and not take(t, src):
+                    break
+    return out
+
+
+def edge_turns(turn, stance, edge=None):
+    """the turns [F] of a standing foot kept only as a block that reaches the end of its run where it lifts (a push-off
+    holds the heel up until the foot leaves the floor) or its start where it lands (a heel strike keeps the toes up from
+    the landing), within `edge` frames of it; a turn in the middle of a run, or one cut off from the run's end, would raise
+    the heel (or the toes) for a frame and set it down again, a flick of the foot, and is left out (the review of kneepop,
+    2026-10-17: retarget's 251.0 s, a heel up 8 and 10 degrees on every other frame of a stand)"""
+    edge = KNEE_EDGE if edge is None else edge
+    turn = np.asarray(turn, dtype=float)
+    F = len(turn)
+    out = np.zeros(F)
+    for a, b in runs(stance):
+        if b < F - 1:                                   # the foot lifts after b
+            t = b
+            while t >= max(a, b - edge + 1) and abs(turn[t]) > 1e-9:
+                out[t] = turn[t]
+                t -= 1
+        if a > 0:                                       # the foot lands at a
+            t = a
+            while t <= min(b, a + edge - 1) and abs(turn[t]) > 1e-9:
+                out[t] = turn[t]
+                t += 1
+    return out
+
+
+def knee_turn(hip, goal, target, c_front, c_back, axis, shell, sign=0.0, least=0.0, steps=None):
+    """(the least turn (degrees: + onto the toes about c_front, - onto the heel about c_back; `sign` keeps one of them) of a
+    standing foot, no smaller than `least` (degrees, of that sign), that brings the hip's distance to its goal to `target`,
+    whether one does): the turn that brings it nearest where none does, 0 where no turn brings it nearer"""
+    steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP)) if steps is None else steps
+    options = []                                # (the turn, reaches the target, the distance it brings, the sign)
+    for sg, c in ((1.0, c_front), (-1.0, c_back)):
+        if sign and sg != sign:
+            continue
+        st = steps[steps >= math.radians(abs(least)) - 1e-12] if sign else steps
+        goal_t, _ = foot_turned(c, axis, sg * st, goal, shell)
+        d = np.linalg.norm(hip - goal_t, axis=1)
+        ok = np.flatnonzero(d <= target + 1e-6)
+        j = int(ok[0]) if len(ok) else int(np.argmin(d))
+        options.append((float(st[j]), bool(len(ok)), float(d[j]), sg))
+    reached = [x for x in options if x[1]]
+    pick = min(reached, key=lambda x: x[0]) if reached else min(options, key=lambda x: x[2])
+    return pick[3] * math.degrees(pick[0]), bool(reached)
+
+
+def knee_plan(rig, shoe, sol, stance):
+    """(side -> world offsets [F, 3] to add to its 足ＩＫ, side -> world turns [F, 4] of its foot, side -> つま先ＩＫ's goal
+    less 足ＩＫ's [F, 3] (NaN: as it was), the plan) of the knee step on `sol`, the solve of the composed dance (6. in the
+    module's doc).  Per side knee_targets on the hip's distance to the goal.  A swing frame's goal moves toward the hip by
+    what is too long, its toe IK's goal by as much as MMD's ankle (a goal beyond the reach moves further than the ankle: the
+    foot keeps its turn).  A standing foot turns about the front of the part of its shoe that touches (onto its toes) or
+    about its back (onto its heel), by the least turn of the two (knee_turn) that brings the distance down to the target
+    (its last frame before it lifts onto its toes only: a push-off), the shoe's lowest point kept where it was, held on to
+    the end of the run within KNEE_EDGE frames of a lift or a landing (carry_to_edges) as long as it does not straighten the
+    knee there: its toes (or heel) stay on the floor where they stand.  A standing foot whose goal MMD's ankle does not reach (by IK_MISS: its foot is not where the plan
+    stands it, but short of it in the air), or that no turn brings to its target on the first or the last frame of its
+    run (it then lands a frame late, or lifts a frame early), moves as a swing foot does.  A turn held on bends that frame
+    more, so the targets are found again on the distances the changes leave, KNEE_PLAN_ROUNDS times at most (only ever
+    bending more).  Only the frames of the knee's jumps on the dance as it comes (near_jumps: rig_check's count) and the
+    frames KNEE_JUMP_NEAR round them are bent, and a standing foot is turned only within KNEE_EDGE frames of a lift or a
+    landing (edge_turns; a standing frame whose turn is left out keeps its own goal)"""
+    F = len(stance[SIDES[0]])
+    offsets, turns, toes, plan = {}, {}, {}, {}
+    steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP))
+    for s in SIDES:
+        L1, L2, rest_deg, least = knee_geometry(rig, s)
+        leg = sol[s]
+        hip, g, t_goal = leg["hip"], leg["goal_ankle"], leg["goal_toe"]
+        D = np.linalg.norm(g - hip, axis=1)
+        only = near_jumps(knee_bend(D, L1, L2, rest_deg, least))
+        # the frames whose foot moves as a swing foot's: the swing, and a standing foot MMD leaves short of its goal
+        free = ~np.asarray(stance[s], dtype=bool) | (leg["reach"] > IK_MISS)
+        goal = g.copy()
+        deg = np.zeros(F)
+        pivots = None
+        first = None
+        rounds = 0
+        for rounds in range(1, KNEE_PLAN_ROUNDS + 1):
+            Dr = np.linalg.norm(goal - hip, axis=1)
+            kt = knee_targets(Dr, L1, L2, rest_deg, least, only=only)
+            first = kt if first is None else first
+            excess = Dr - kt["target"]
+            need = excess > KNEE_TOL
+            if not need.any():
+                break
+            on = need & ~free
+            if on.any():
+                if pivots is None:
+                    o = shoe.sides[s]
+                    w = FL.shell_world(o, leg)
+                    pivots = foot_pivots(o, w, leg["q_foot"]) + (FL.toes_down_axis(o, leg["q_foot"]), w)
+                front, back, axis, w = pivots
+                for t in np.flatnonzero(on):
+                    lifts = t < F - 1 and free[t + 1]           # (its last frame before it lifts: a push-off, onto the toes)
+                    d_t, ok = knee_turn(hip[t], g[t], kt["target"][t], front[t], back[t], axis[t], w[t],
+                                        sign=float(np.sign(deg[t])) or (1.0 if lifts else 0.0), least=abs(deg[t]),
+                                        steps=steps)
+                    edge = (t == 0 or free[t - 1]) or (t == F - 1 or free[t + 1])
+                    if not ok and edge and deg[t] == 0.0:
+                        free[t] = True      # (no turn brings it there on the frame it lifts off or lands on: it moves,
+                                            # lifting a frame early or landing a frame late)
+                    else:
+                        deg[t] = d_t
+                st = ~free
+
+                def straighter(t, d, Dr=Dr):        # (a turn held on that would take the ankle further from the hip there)
+                    c = front[t] if d > 0.0 else back[t]
+                    return np.linalg.norm(hip[t] - foot_turned(c, axis[t], np.array([math.radians(d)]), g[t], w[t])[0][0]) <= Dr[t] + 1e-9
+                deg = edge_turns(np.where(st, carry_to_edges(deg, st, allow=straighter), 0.0), st)
+                goal[st] = g[st]                    # (a standing foot's goal is where its turn puts it, or its own)
+                for t in np.flatnonzero(np.abs(deg) > 1e-9):
+                    goal[t] = foot_turned(front[t] if deg[t] > 0.0 else back[t], axis[t], np.array([math.radians(deg[t])]),
+                                          g[t], w[t])[0][0]
+            sw = need & free
+            goal[sw] = goal[sw] + (hip - goal)[sw] / Dr[sw, None] * excess[sw, None]
+        st = ~free
+        off = goal - g
+        turn = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (F, 1))
+        toe = np.full((F, 3), np.nan)
+        # the toe IK's goal goes where MMD's ankle goes (the new goal is in reach), not where the goal goes (つま先ＩＫ a
+        # child of 足ＩＫ, as the foot layer keys it; another rig's toe goal is left to follow its own parent)
+        hangs = rig.bones[rig.sides[s].toe_ik].parent == rig.sides[s].leg_ik
+        moved = np.linalg.norm(off, axis=1) > 1e-12
+        swing = moved & free
+        gap = g - leg["ankle"]
+        far = swing & (np.linalg.norm(gap, axis=1) > KNEE_TOE_TOL) & hangs
+        toe[far] = (t_goal - g + gap)[far]
+        standing = np.abs(deg) > 1e-9
+        if standing.any():
+            front, back, axis, w = pivots
+            for t in np.flatnonzero(standing):
+                q = IK.qaxis(axis[t], math.radians(deg[t]))
+                turn[t] = q
+                if hangs:
+                    toe[t] = qrot(q, t_goal[t] - g[t])
+        D_out = np.linalg.norm(goal - hip, axis=1)
+        offsets[s], turns[s], toes[s] = off, turn, toe
+        plan[s] = {"target": D_out, "bend0": first["bend0"], "bend": knee_bend(D_out, L1, L2, rest_deg, least),
+                   "even": D_out < D - 1e-9, "reach": first["reach"], "cap": first["cap"], "excess": D - D_out,
+                   "turn_deg": deg, "moved": np.linalg.norm(off, axis=1), "swing": swing, "standing": standing,
+                   "toe_written": np.isfinite(toe).all(axis=1), "rounds": rounds}
+    return offsets, turns, toes, plan
 
 
 def layer(model, rig, shoe, motion, params=None):
@@ -949,12 +1301,23 @@ def layer(model, rig, shoe, motion, params=None):
                  "flight_rows": {"flights": flight_rows, "windows": wrows, "rounds_resid": resid}, "fall_in": fall,
                  "com": com})
     moved = any(float(np.abs(offsets[s]).max()) > 1e-9 for s in SIDES) or float(np.abs(centre_dy).max()) > 1e-9
+    # 6. the knee at the end of its reach, on the dance as the steps above leave it (the hip's distance to the goal is
+    # final there: the knee step moves no pelvis)
+    turns = toes = None
+    plan["knee"] = {}
+    if p["knee"]:
+        before = comp.compose(offsets, centre_dy)[1] if moved else sol
+        k_off, k_turn, k_toe, plan["knee"] = knee_plan(rig, shoe, before, stance)
+        if any(float(np.abs(k_off[s]).max()) > 1e-9 for s in SIDES):
+            offsets = {s: offsets[s] + k_off[s] for s in SIDES}
+            turns, toes = k_turn, k_toe
+            moved = True
     if not moved:
         plan["sub_raise"] = {s: np.zeros(F) for s in SIDES}
         plan["written"] = []
         return motion, plan
-    new, out_sol = comp.compose(offsets, centre_dy)
-    # 6. the frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input's (a push that
+    new, out_sol = comp.compose(offsets, centre_dy, turns, toes)
+    # 7. the frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input's (a push that
     # overshoots) is raised by the excess, and both frames of an interval whose shoe dips into the floor further than the
     # input's did between them
     sub = {s: np.zeros(F) for s in SIDES}
@@ -969,7 +1332,7 @@ def layer(model, rig, shoe, motion, params=None):
                 sub[s] += up
                 offsets[s][:, 1] += up
         if framed:
-            new, out_sol = comp.compose(offsets, centre_dy)
+            new, out_sol = comp.compose(offsets, centre_dy, turns, toes)
         near = np.zeros(F - 1, dtype=bool)
         for s in SIDES:
             lo_ = FL.shell_world(shoe.sides[s], out_sol[s])[:, :, 1].min(axis=1)
@@ -1001,7 +1364,7 @@ def layer(model, rig, shoe, motion, params=None):
             if framed:
                 continue
             break
-        new, out_sol = comp.compose(offsets, centre_dy)
+        new, out_sol = comp.compose(offsets, centre_dy, turns, toes)
     plan["sub_raise"] = sub
     plan["written"] = sorted(rig.bones[i].name for i in written_idx)
     return comp.build(new), plan
@@ -1107,7 +1470,39 @@ def report_of(plan, rig, before, after, F):
     rep["pelvis"] = pelvis_report(rig, before, after, stance, F, plan["drop"], plan["change"])
     rep["between_frames"] = {TAGS[s]: {"raised_frames": int((plan["sub_raise"][s] > 0.0).sum()),
                                        "max_raise_cm": _r(float(plan["sub_raise"][s].max()) * UNIT_CM, 2)} for s in SIDES}
+    rep["knee"] = knee_report(plan.get("knee") or {})
     return rep
+
+
+def knee_jump_frames(bend, deg=10.0):
+    """the frames [k] of bends [F] more than `deg` off the line through their neighbours (rig_check ik's jump frames)"""
+    b = np.asarray(bend, dtype=float)
+    if len(b) < 3:
+        return np.zeros(0, dtype=int)
+    return np.flatnonzero(np.abs(b[1:-1] - 0.5 * (b[:-2] + b[2:])) > deg) + 1
+
+
+def knee_report(kp):
+    """the knee step's plan per side: the frames bent like the frames round them, the swing goals moved, the standing feet
+    turned (onto the toes +, the heel -), the toe IK goals put, the jump frames of the legs' formula before and after"""
+    out = {}
+    for s, k in kp.items():
+        ev = np.asarray(k["even"])
+        rows = []
+        for a, b in runs(ev):
+            rows.append({"s": [round(a / FPS, 2), round((b + 1) / FPS, 2)], "frames": [int(a), int(b)],
+                         "bend_before": [_r(float(x), 1) for x in k["bend0"][max(a - 1, 0):b + 2]],
+                         "bend_after": [_r(float(x), 1) for x in k["bend"][max(a - 1, 0):b + 2]],
+                         "goal_cm": _r(float(np.max(k["moved"][a:b + 1])) * UNIT_CM, 2),
+                         "turn_deg": _r(float(k["turn_deg"][a:b + 1][np.argmax(np.abs(k["turn_deg"][a:b + 1]))]), 2)})
+        out[TAGS[s]] = {"evened_frames": int(ev.sum()), "swing_frames": int(np.sum(k["swing"])),
+                        "standing_frames": int(np.sum(k["standing"])), "toe_frames": int(np.sum(k["toe_written"])),
+                        "goal_cm_max": _r(float(np.max(k["moved"])) * UNIT_CM, 2),
+                        "turn_deg_max": _r(float(np.max(np.abs(k["turn_deg"]))), 2),
+                        "jump_frames_before": int(len(knee_jump_frames(k["bend0"]))),
+                        "jump_frames_after": int(len(knee_jump_frames(k["bend"]))),
+                        "bend_at_reach_edge_deg": _r(k["cap"], 2), "runs": rows[:200]}
+    return out
 
 
 def main(argv=None):
@@ -1122,6 +1517,7 @@ def main(argv=None):
     ap.add_argument("--no-plant", action="store_true", help="let the standing feet slide as the dance has them")
     ap.add_argument("--no-drop", action="store_true", help="never lower the pelvis for a leg that cannot reach")
     ap.add_argument("--no-flight", action="store_true", help="leave the pelvis's height in the air as the dance has it")
+    ap.add_argument("--no-knee", action="store_true", help="leave a knee straight for a frame or two at its reach as it is")
     args = ap.parse_args(argv)
     if os.path.abspath(args.out) == os.path.abspath(args.dance):
         raise SystemExit("OUT.vmd is the dance itself: write the layer's dance elsewhere")
@@ -1137,14 +1533,14 @@ def main(argv=None):
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
     out, plan = layer(model, rig, shoe, motion, {"floor_y": args.floor_y, "ground": not args.no_ground,
                                                  "plant": not args.no_plant, "drop": not args.no_drop,
-                                                 "flight": not args.no_flight})
+                                                 "flight": not args.no_flight, "knee": not args.no_knee})
     vmd.dump(out, args.out)
     back = vmd.load(args.out)
     F = plan["F"]
     rep = report_of(plan, rig, motion, back, F)
     rep["untouched"] = untouched(motion, back, plan["written"])
     rep["params"] = {"no_ground": args.no_ground, "no_plant": args.no_plant, "no_drop": args.no_drop, "no_flight": args.no_flight,
-                     "floor_y": plan["floor_y"]}
+                     "no_knee": args.no_knee, "floor_y": plan["floor_y"]}
     rep["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:
@@ -1153,6 +1549,7 @@ def main(argv=None):
                       "lowered_frames": {k: v["lowered_frames"] for k, v in rep["ground"].items() if k in ("L", "R")},
                       "drop_max_cm": rep["ground"]["drop"]["max_cm"], "flights": rep["flight"]["count"],
                       "floor_past_bound_after": rep["pelvis"]["floor_past_bound_after"],
+                      "knee_evened": {k: v["evened_frames"] for k, v in rep["knee"].items()},
                       "untouched": rep["untouched"]["identical"], "seconds": rep["seconds"]}, ensure_ascii=True))
     return 0
 

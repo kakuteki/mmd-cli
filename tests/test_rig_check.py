@@ -253,6 +253,42 @@ class IkReportTest(unittest.TestCase):
             self.assertAlmostEqual(ev["ankle_up_cm"], -0.3 * rig_check.UNIT_CM, places=3)
             self.assertEqual(rep["loops400"]["右"]["knee_jump_event_count"], 0)
 
+    def test_a_one_frame_flick_of_the_foot_is_an_ankle_and_a_foot_pitch_event(self):
+        # the left toe goal lifted 0.8 for one frame (frame 2): the toe IK turns the foot toe up for that frame and back,
+        # the leg where it was.  The ankle's bend (the shank against the foot) and the foot's pitch (against the floor)
+        # each jump once at frame 2, more than ANKLE_JUMP_DEG off the line through the neighbours; the knee does not; the
+        # right foot has none; the same lift ramped over the frames is no jump
+        data = rin_legs_bytes()
+        rig = leg_ik.LegRig.loads(data)
+        flick = motion(*[key("左つま先ＩＫ", f, position=(0.0, 0.8 if f == 2 else 0.0, 0.0)) for f in range(5)])
+        rep = rig_check.ik_report(rig, flick, range(5))["model"]
+        left = rep["左"]
+        for name in ("ankle", "foot_pitch"):
+            self.assertEqual(left[name + "_jump_event_count"], 1, name)
+            ev = left[name + "_jump_events"][0]
+            self.assertEqual((ev["first"], ev["peak"]), (2, 2), name)
+            self.assertGreater(ev["deg"], rig_check.ANKLE_JUMP_DEG, name)
+            self.assertEqual(left[name + "_jumps"], len(left[name + "_jump_frames"]))
+        pitch = left["foot_pitch_jump_events"][0]["angles"]
+        self.assertGreater(pitch[1] - pitch[0], rig_check.ANKLE_JUMP_DEG)               # toe up at the flick
+        self.assertEqual(left["knee_jump_event_count"], 0)
+        self.assertEqual((rep["右"]["ankle_jump_event_count"], rep["右"]["foot_pitch_jump_event_count"]), (0, 0))
+        ramp = motion(*[key("左つま先ＩＫ", f, position=(0.0, 0.2 * f, 0.0)) for f in range(5)])
+        left = rig_check.ik_report(rig, ramp, range(5))["model"]["左"]
+        self.assertEqual((left["ankle_jump_event_count"], left["foot_pitch_jump_event_count"]), (0, 0))
+
+    def test_the_ankle_angles_of_a_foot_turned_about_the_ankle(self):
+        # ankle_angles on a solved leg: the foot's pitch is the angle of 足首 -> つま先 to the floor, and turning the foot
+        # IK 20 degrees toe up about X (the toe goal a child of it) raises the pitch by 20 and opens the ankle by 20
+        data = rin_legs_bytes()
+        rig = leg_ik.LegRig.loads(data)
+        sol = leg_ik.solve(rig, motion(key("左足ＩＫ", 0), key("左足ＩＫ", 1, q=axis_angle((1.0, 0.0, 0.0), 20.0))), [0, 1])
+        bend, pitch = rig_check.ankle_angles(sol["左"])
+        foot = sol["左"]["toe"][0] - sol["左"]["ankle"][0]
+        self.assertAlmostEqual(float(pitch[0]), math.degrees(math.asin(foot[1] / np.linalg.norm(foot))), places=6)
+        self.assertLess(abs(float(pitch[1] - pitch[0]) - 20.0), 0.1)                     # (the foot is nearly across X)
+        self.assertLess(abs(abs(float(bend[1] - bend[0])) - 20.0), 1.0)
+
 
 class PhysicsTest(unittest.TestCase):
     def body(self, shape, size, pos, rot=(0.0, 0.0, 0.0), group=0, mask=0xFFFF, mode=1, damping=0.999):
