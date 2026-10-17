@@ -2202,7 +2202,7 @@ python tools/pmm_gravity.py empty_98.pmm empty_1225.pmm --acceleration 12.25
 道具が指した所を確かめるときだけにする。重い計算なので hinata で走らせる（v9 の全曲で約 40 秒）。
 
 ```
-python tools/mv_inspect.py measure SPEC.json --out DIR [--cache DIR] [--parts gravity,feet,...] [--no-figure]
+python tools/mv_inspect.py measure SPEC.json --out DIR [--cache DIR] [--parts gravity,feet,...] [--no-figure] [--size legs|none]
 python tools/mv_inspect.py measure --model M.pmx --motions DANCE.vmd FACE.vmd GAZE.vmd EYE.vmd [--reference SPINE.vmd]
                                    [--camera CAM.vmd] [--vocal VOCALS.flac] [--lines LINES.tsv] [--label v9] --out DIR
 python tools/mv_inspect.py outliers DIR [--top 40] [--concept gravity]
@@ -2271,6 +2271,34 @@ python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 
 - 使い方の例（v9 と v10、hinata `stage6/inspect/scripts/example.bat`）: `compare runs/v9 runs/v10 --out cmp` で物差しごとの判定と新しく外れた所・
   消えた所、`timeline runs/v9 --from 18 --to 31` で時間の図、`mark runs/v9 --camera cam_front.vmd --video fv9_00.mp4 --start 0 --at 19.9 26.4`
   で、時刻表が指したコマ（着地のひざ・浮きの続き）の正面の絵に印を描いて確かめる。
+- 体の大きさ（`--size legs`、既定。`--size none` で前と同じ）: 人の値は FineDance の標準の体（全部の列を SMPL-X の中立の体へリターゲットした
+  もの。太もも 38.3 cm・すね 40.7 cm、背は約 1.7 m。寸法は human.json の `_about` の `body`）で測ったもので、リンより大きい（リンの太もも＋すね
+  71.2 cm、8 cm/単位。人の 0.90 倍）。長さと長さの閾値を数える物差し（`tools/mvi/base.SIZE_ALIGNED` の 19: 浮き・宙・滑り・着地のひざ・立ち足の
+  上の重心と XcoM・腰の沈みと上下）は、リンを脚の比だけ大きく（1.109 倍、時刻はそのまま）して測り直し、report.json の行の `size`
+  （value・judge）と report.md の「脚でそろえた値（判定）」の欄に並べる。判定・外れた所・時刻表は元の値のまま。重力に結んだ物差し（腰の下向きの
+  加速度・宙の放物線・自由落下との比）・スカートの決まり（リンの単位）・ZMP と支持基底面（リンの靴は人の足の 0.64 倍で脚の 0.90 倍と違う形）・
+  上体と腕（リンの胴と腕は人の 0.5〜0.75 倍）はそろえない。`compare` には両方の版の「脚でそろえた判定」も出る。v10 で判定が変わるのは 4 つ
+  （着地後の骨盤の沈み −1.39 → −1.62 cm で中 → 下へ外、着地の XcoM 下へ外 → 中、動きながらの XcoM の余裕 中 → 下へ外、止まった片足立ちの
+  重心 中 → 上へ外 0.02）。ほかの外れはどれもさらに遠くなる（腰の上下の幅 0.66 → 1.07、上下の速さ 0.90 → 1.41、滑りの道のり 1.05 → 1.43）。
+
+### 調整した値の一覧を作る（`tools/param_inventory.py`、MMD なし）
+
+v11 の組み直し（retarget・rig の後）で見直す値の表を、手で書かずにコードから作る（2026-10-17、adapt）。
+
+```
+python tools/param_inventory.py                 # docs/params.json と docs/params.md を書く
+python tools/param_inventory.py --check         # 表がコードと違う・古い注があると終了の値 1
+```
+
+- 拾うもの: `tools/*.py` と `tools/mvi/*.py` の構文木から（走らせない）、大文字の名の定数で数を持つもの（辞書はキーごと）、コマンドの引数の
+  既定（定数を既定にする引数は定数の行に書く）、関数の数の既定。注釈は、その行・続きの行（深く字下げした注釈だけの行）・すぐ上の注釈の塊から。
+- 単位（名の末尾 `_CM` `_DEG_S` …、注釈の頭 `units/s^2:` …）と依存（体の大きさ・重力・踊り・モデル・人の測り・文献）は、名と注釈の言葉から
+  推した目安。見直しの印: retarget（長さ・速さ・加速度）、rig（リンのモデルで測った値）、dance（踊りで測った値だけ）。
+- 記録の出所は `docs/params_notes.json`（`"道具:名": {"from": ..., "unit"・"review" の置き換え}`、HANDOVER などから手で付ける）。値が消えた注は
+  古い注として `--check` が落とす。
+- 組み直しの順番（`ORDER`、上流から 18 段: 模型の写し → 踊りを体に写す → 平滑化 → 呼吸 → 関節 → 運動 → 背骨 → 足 → 体重 → 足 → 上体の慣性 →
+  手と指 → 視線 → 表情 → 口 → 目の光 → 描画 → カメラ）と、各段を確かめる `mv_inspect.py` の物差しの id。道具の置き場所が無いと試験が落ちる
+  （新しい道具は `ORDER` か `CHECKERS` に足す）。
 
 ## 出力
 
