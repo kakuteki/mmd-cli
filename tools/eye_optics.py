@@ -138,8 +138,9 @@ The vergence (keys on 右目 and 左目, after their append from 両目; RESEARC
 * Looks split by up to vergence.gap_frames frames, with no frame on the camera between, are one look.
 * The demand during a run on a hand is gain x atan((ipd / 2) / distance) per eye, the distance the run's median of the
   distances from the eyes to the point they aim at (the report's aim: the tip of her finger furthest from the wrist,
-  or where her hand will stop until it does) but not nearer than angle_near_m (ipd 61.5 mm, Murray 2017; gain 1: the
-  geometric angle, RESEARCH 3.2 and the coordinator's probe; 15 cm: 11.6 degrees an eye at most); elsewhere 0.  The
+  or where her hand will stop until it does) but not nearer than angle_near_m (ipd: the model's own, its eye bones'
+  distance, 65.6 mm on Sour's Rin; gain 1: the geometric angle, RESEARCH 3.2 and the coordinator's probe; 15 cm: 12.3
+  degrees an eye at most on her); elsewhere 0.  The
   eyes meet on the point at that distance along the gaze (the gaze may fall short of the aim: at 52 s of the MV the
   raised finger's tip is above the eyes' reach).
 * It is in phase with the look and timed as a person's (look_timing, vergence_in_time): the eyes start to converge as
@@ -227,10 +228,14 @@ PARAMS = {
                                              # the eyeball: beside the iris the eye white lies up to 0.2 behind its rim)
     },
     "vergence": {
-        "ipd_mm": 61.5,                      # women's mean (Murray 2017)
+        "ipd_mm": None,                      # None: the model's own, its eye bones' distance at rest x unit_mm (Sour's
+                                             # Rin: 0.8202 units, 65.6 mm; a woman's mean is 61.5, Murray 2017). The
+                                             # lines of sight must cross on the point from where the eyes are: with
+                                             # 61.5 hers crossed 7 % beyond it (v11 face review, 2026-10-17)
         "unit_mm": 80.0,                     # one model unit
         "gain": 1.0,                         # the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe)
-        "angle_near_m": 0.15,                # the angle is at most that of a point this near (11.6 degrees an eye)
+        "angle_near_m": 0.15,                # the angle is at most that of a point this near (12.3 degrees an eye on
+                                             # Sour's Rin, 11.6 with a person's 61.5 mm)
         "gap_frames": 6,                     # looks at a hand this many frames apart or fewer are one look
         "camera_deg": 4.0,                   # tools/eye_gaze.py counts a gaze this near the camera as eye contact
         "camera_frames": 3,
@@ -342,6 +347,12 @@ def eye_rotation(yaw, pitch):
 
 
 # ---- vergence -------------------------------------------------------------------------------
+
+def eye_separation(model, eye_idx):
+    """model units between the two eye bones at rest (where each eye turns about)"""
+    a, b = (model.bones[i].position for i in eye_idx)
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
 
 def vergence_degrees(distance_m, ipd_mm):
     """the turn of each eye toward a point straight ahead: atan((ipd / 2) / distance)"""
@@ -1456,7 +1467,11 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
     cam_keys = fk.camera_keys(camera)
     cam_frames = [k.frame for k in cam_keys]
     unit_m = vp["unit_mm"] / 1000.0
-    half = vp["ipd_mm"] / 2.0 / vp["unit_mm"]
+    ipd_mm, ipd_source = vp["ipd_mm"], "params"
+    if ipd_mm is None:
+        ipd_mm, ipd_source = eye_separation(model, eye_idx) * vp["unit_mm"], "model"
+    vp = dict(vp, ipd_mm=ipd_mm)
+    half = ipd_mm / 2.0 / vp["unit_mm"]
     head_world, gaze_head, gaze_world, centres, rows, cameras = [], [], [], [], [], []
     for i in range(n):
         hp, hr = track[head][i]
@@ -1869,7 +1884,7 @@ def optics(model_bytes, dance, gaze, camera, params=None, flares=(), arousal=Non
                   "catchlights": [{k: c[k] for k in ("name", "eye", "share", "depth")} for c in lights],
                   "iris_radius": [_r(v, 5) for v in geo0["iris"]],
                   "pupil_scales": {k: _r(v, 4) for k, v in scales.items()},
-                  "pupil_mm": _r(mm0, 3), "half_ipd_units": _r(half, 5)},
+                  "pupil_mm": _r(mm0, 3), "half_ipd_units": _r(half, 5), "ipd_mm": _r(ipd_mm, 4), "ipd_source": ipd_source},
         "vergence": {"source": "gaze report" if looks is not None else "none", "looks": len(given["looks"]),
                      "contacts": len(given["contacts"]), "labels": counts, "hand_runs": hand_runs,
                      "degrees": summary(angle), "demand": summary(demand), "step": step_stats(angle), "share": share,
