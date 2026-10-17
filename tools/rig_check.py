@@ -5,7 +5,7 @@ another), as numbers and pictures.  No MMD: the pose and the skinning are MMD's 
 (tools/leg_ik.py).
 
     python tools/rig_check.py receivers MODEL.pmx --vmd TAG=PATH ... --out r.json
-    python tools/rig_check.py ik MODEL.pmx DANCE.vmd --out r.json [--alt TAG:loops=N[,angle=RAD]] ...
+    python tools/rig_check.py ik MODEL.pmx DANCE.vmd --out r.json [--alt TAG:loops=N[,angle=RAD][,least_bend=DEG]] ...
     python tools/rig_check.py angles MODEL.pmx DANCE.vmd --out angles.npz
     python tools/rig_check.py skin DANCE.vmd --model TAG=MODEL.pmx ... --out DIR [--angles angles.npz] [--pick N]
                                    [--frames F ...] [--figures N]
@@ -16,10 +16,11 @@ receivers: per VMD, every bone and morph it keys, with the key count, whether th
   what MMD throws away without a word: names the model lacks whose keys move.  `semi_standard`: which of the usual
   semi-standard bones (準標準ボーン) the model has.
 ik: the leg IK over a dance as MMD solves it: per side the frames whose ankle stays off its goal by more than 1 mm,
-  4 mm and 1 cm (Sour's Rin: 8 cm a unit), split into goals within the leg's length (the IK could reach them) and
-  beyond it; the knee's bend where a reachable goal is missed; the knee's jumps (a frame whose knee angle differs from
-  the line through its neighbours by more than KNEE_JUMP_DEG); the toe IK's misses.  --alt runs the same with other
-  settings (more loops, another unit angle) to see what a change of the model would do.
+  4 mm and 1 cm (Sour's Rin: 8 cm a unit), split into goals the IK could reach (within the hip-to-ankle distance of
+  the knee at its limit's least bend, max_reach) and beyond; the knee's bend where a reachable goal is missed; the frames
+  whose knee sits at its least bend; the knee's jumps (a frame whose knee angle differs from the line through its
+  neighbours by more than KNEE_JUMP_DEG); the toe IK's misses.  --alt runs the same with other settings (more loops,
+  another unit angle, a knee that keeps a least bend) to see what a change of the model would do.
 angles: the yardsticks of the hard frames over the whole dance (forward kinematics, the legs by MMD's IK): per side the
   upper arm's twist (腕捩 against 腕W, or 腕 when there is no 腕W), the hand's twist against the elbow, the wrist's
   against 手捩, the elbow's bend, the arm's lift (the angle between the upper arm and the chest's down), the wrist's
@@ -316,7 +317,9 @@ def receivers(doc, motions):
 
 # ---- the leg IK ---------------------------------------------------------------------------------------------------------
 
-def _with_settings(rig, loops=None, angle=None):
+def _with_settings(rig, loops=None, angle=None, least_bend=None):
+    """a copy of the leg rig with other leg IK settings: loops, unit angle (radians), and the knee's least bend
+    (degrees: the IK limit's upper end becomes -least_bend; 0 is the model's rest bend)"""
     import copy
     r = copy.copy(rig)
     r.sides = {}
@@ -326,20 +329,33 @@ def _with_settings(rig, loops=None, angle=None):
             n.leg_loops = int(loops)
         if angle is not None:
             n.leg_limit = float(angle)
+        if least_bend is not None:
+            n.knee_hi = -math.radians(float(least_bend))
         r.sides[s] = n
     return r
+
+
+def max_reach(rig, side):
+    """the farthest the leg IK can put the ankle from the hip: the knee turned from rest by its limit's upper end (the
+    least bend it allows) about its X axis"""
+    sd = rig.sides[side]
+    hip = np.array(rig.bones[sd.thigh].position, dtype=float)
+    knee = np.array(rig.bones[sd.knee].position, dtype=float)
+    ankle = np.array(rig.bones[sd.ankle].position, dtype=float)
+    shin = IK.qrot(IK.qaxis(np.array([1.0, 0.0, 0.0]), sd.knee_hi), ankle - knee)
+    return float(np.linalg.norm(knee - hip + shin))
 
 
 def _ik_numbers(rig, sol):
     out = {}
     for s in rig.sides:
         d = sol[s]
-        hip, knee, ankle, goal = d["hip"], d["knee"], d["ankle"], d["goal_ankle"]
-        L = np.linalg.norm(knee - hip, axis=1) + np.linalg.norm(ankle - knee, axis=1)
+        hip, goal = d["hip"], d["goal_ankle"]
         D = np.linalg.norm(goal - hip, axis=1)
-        reachable = D <= L * (1.0 - 1e-6)
+        reachable = D <= max_reach(rig, s) - 1e-6
         miss = d["reach"] * UNIT_CM
         bend = np.degrees(-d["knee_angle"])
+        at_limit = bend <= math.degrees(-rig.sides[s].knee_hi) + 0.5
         r_miss = reachable & (miss > 0.4)
         jumps = np.zeros(len(bend), dtype=bool)
         if len(bend) >= 3:
@@ -352,15 +368,16 @@ def _ik_numbers(rig, sol):
                   "reachable_miss_cm_p99": round(float(np.percentile(miss[reachable], 99)), 4) if reachable.any() else None,
                   "knee_bend_at_reachable_miss_deg": ([round(float(np.percentile(bend[r_miss], q)), 2) for q in (0, 50, 100)]
                                                       if r_miss.any() else None),
+                  "knee_at_least_bend": int(at_limit.sum()),
                   "knee_jumps": int(jumps.sum()), "knee_jump_frames": np.flatnonzero(jumps).tolist()[:50],
                   "toe_miss_gt_1mm": int((toe > 0.1).sum()), "toe_miss_cm_max": round(float(toe.max()), 4),
-                  "reachable_miss_frames": np.flatnonzero(r_miss).tolist()[:200]}
+                  "reachable_miss_frames": np.flatnonzero(r_miss).tolist()[:200], "max_reach": round(max_reach(rig, s), 5)}
     return out
 
 
 def ik_report(rig, motion, frames, alternatives=None):
     """the leg IK's misses over `frames` with the model's settings ("model") and with each alternative ({tag: {"loops":
-    N, "angle": rad}})"""
+    N, "angle": rad, "least_bend": deg}})"""
     frames = list(frames)
     keys = IK.sample(rig, motion, frames)
     out = {"settings": {s: {"leg_loops": side.leg_loops, "leg_unit_angle_deg": round(math.degrees(side.leg_limit), 4),
@@ -370,7 +387,7 @@ def ik_report(rig, motion, frames, alternatives=None):
     sols = {"model": IK.solve(rig, motion, frames, keys=keys)}
     out["model"] = _ik_numbers(rig, sols["model"])
     for tag, kw in (alternatives or {}).items():
-        r = _with_settings(rig, kw.get("loops"), kw.get("angle"))
+        r = _with_settings(rig, kw.get("loops"), kw.get("angle"), kw.get("least_bend"))
         sols[tag] = IK.solve(r, motion, frames, keys=keys)
         out[tag] = _ik_numbers(r, sols[tag])
         for s in rig.sides:
@@ -472,16 +489,16 @@ def dance_angles(model_path, motion, first=0, last=None):
 
 TRUNK = ("上半身", "腰椎上部", "上半身2", "胸椎上部")
 LIMBS = {      # name: (from bone, to bone, bones the limb's skin hangs on, t range)
-    "upper_arm": ("腕", "ひじ", ("腕W", "腕", "腕捩", "腕捩1", "腕捩2", "腕捩3"), (0.08, 0.92)),
-    "forearm": ("ひじ", "手首", ("ひじ", "ひじ補助", "ひじ補助+", "手捩", "手捩1", "手捩2", "手捩3", "手首"), (0.08, 1.06)),
-    "thigh": ("足", "ひざ", ("足D", "足"), (0.15, 0.9)),
+    "upper_arm": ("腕", "ひじ", ("腕W", "腕", "腕補助", "腕捩", "腕捩1", "腕捩2", "腕捩3"), (0.08, 0.92)),
+    "forearm": ("ひじ", "手首", ("ひじ", "ひじ補助", "ひじ補助+", "手捩", "手捩1", "手捩2", "手捩3", "手首", "手首補助"), (0.08, 1.06)),
+    "thigh": ("足", "ひざ", ("足D", "足", "足補助"), (0.15, 0.9)),
     "shin": ("ひざ", "足首", ("ひざD", "ひざ"), (0.1, 0.9)),
 }
 JOINTS = {     # name: (centre bone, radius units, bones on either side)
-    "shoulder": ("腕", 0.75, ("肩", "腕W", "腕", "腕捩", "腕捩1", "腕捩2", "腕捩3")),
+    "shoulder": ("腕", 0.75, ("肩", "腕W", "腕", "腕補助", "腕捩", "腕捩1", "腕捩2", "腕捩3")),
     "elbow": ("ひじ", 0.6, ("腕捩", "腕捩1", "腕捩2", "腕捩3", "腕W", "ひじ", "ひじ補助", "ひじ補助+", "手捩", "手捩1", "手捩2", "手捩3")),
-    "wrist": ("手首", 0.45, ("手捩", "手捩1", "手捩2", "手捩3", "手首")),
-    "hip": ("足", 1.1, ("足D", "足")),
+    "wrist": ("手首", 0.45, ("手捩", "手捩1", "手捩2", "手捩3", "手首", "手首補助")),
+    "hip": ("足", 1.1, ("足D", "足", "足補助")),
     "knee": ("ひざ", 0.8, ("足D", "ひざD", "足", "ひざ")),
     "ankle": ("足首", 0.6, ("ひざD", "足首D", "足先EX", "ひざ", "足首")),
 }
@@ -570,18 +587,18 @@ def measure_frame(m, parts, pose, pts, nrm, rest_nrm):
     trunk_f = m.faces[parts.faces_of(trunk_v, DRESS)]
     for s in SIDES:
         t = TAGS[s]
-        fore = parts.vertices(_sided(("ひじ", "ひじ補助+", "手捩", "手捩1", "手捩2", "手捩3", "手首"), s) + [
+        fore = parts.vertices(_sided(("ひじ", "ひじ補助+", "手捩", "手捩1", "手捩2", "手捩3", "手首", "手首補助"), s) + [
             s + n for n in ("親指０", "親指１", "親指２", "人指０", "人指１", "人指２", "人指３", "中指０", "中指１", "中指２", "中指３",
                             "薬指０", "薬指１", "薬指２", "薬指３", "小指０", "小指１", "小指２", "小指３")], materials=("skin", "nail", "White"))
-        upper = parts.vertices(_sided(("腕W", "腕捩", "腕捩1", "腕捩2", "腕捩3"), s), materials=("skin",))
+        upper = parts.vertices(_sided(("腕W", "腕補助", "腕捩", "腕捩1", "腕捩2", "腕捩3"), s), materials=("skin",))
         if len(trunk_f) and len(fore):
             rec["penetration"]["forearm_hand_in_dress_" + t] = _pen(m, fore, trunk_f, pts, nrm, rest_nrm)
         if len(upper):
             uf = m.faces[parts.faces_of(upper, ("skin",))]
             if len(uf) and len(fore):
                 rec["penetration"]["forearm_in_upper_arm_" + t] = _pen(m, parts.vertices(_sided(("手捩", "手捩1", "手捩2", "手捩3"), s), materials=("skin",)), uf, pts, nrm, rest_nrm)
-        thigh = parts.vertices(_sided(("足D",), s), materials=("skin",))
-        other = parts.vertices(_sided(("足D",), "左" if s == "右" else "右"), materials=("skin",))
+        thigh = parts.vertices(_sided(("足D", "足補助"), s), materials=("skin",))
+        other = parts.vertices(_sided(("足D", "足補助"), "左" if s == "右" else "右"), materials=("skin",))
         of = m.faces[parts.faces_of(other, ("skin",))]
         if len(thigh) and len(of):
             rec["penetration"]["thigh_in_other_thigh_" + t] = _pen(m, thigh, of, pts, nrm, rest_nrm)
@@ -735,7 +752,7 @@ def main(argv=None):
     b.add_argument("model")
     b.add_argument("dance")
     b.add_argument("--out", required=True)
-    b.add_argument("--alt", action="append", default=[], help="TAG:loops=N[,angle=RAD]")
+    b.add_argument("--alt", action="append", default=[], help="TAG:loops=N[,angle=RAD][,least_bend=DEG]")
     c = sub.add_parser("angles")
     c.add_argument("model")
     c.add_argument("dance")
@@ -771,7 +788,8 @@ def main(argv=None):
         rep = ik_report(rig, mo, range(fk.last_frame(mo) + 1), alts)
         rep["model_path"] = os.path.abspath(args.model)
         _json(args.out, rep)
-        print(json.dumps({t: {s: {k: v[k] for k in ("reachable_miss_gt_4mm", "reachable_miss_cm_max", "unreachable", "knee_jumps")}
+        print(json.dumps({t: {s: {k: v[k] for k in ("reachable_miss_gt_4mm", "reachable_miss_cm_max", "unreachable", "knee_jumps",
+                                                     "knee_at_least_bend")}
                               for s, v in rep[t].items()} for t in ["model"] + list(alts)}, ensure_ascii=True))
         return 0
     if args.cmd == "angles":
