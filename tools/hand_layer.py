@@ -591,6 +591,16 @@ FIST_WRIST = {"flexion": 0.73 * 77.6, "ulnar": 0.89 * 33.4}
 # of the other forearm or hand, fully; none past the second.  Padded by CONTACT_PAD frames each way
 CONTACT_MM = {"face": (70.0, 100.0), "chest": (60.0, 90.0), "waist": (80.0, 110.0), "other": (35.0, 60.0)}
 CONTACT_PAD = 4
+# and where a fingertip or the palm's middle lies within the first distance (mm) of one of Rin's hard parts, fully, none
+# past the second: the parts' own surfaces (tools/retarget.py's: the convex polytope of each part's vertices, the head with
+# its face, the ribbon, the chest, the belly, the hips, the thighs where the leg IK puts them).  The face rule above reads
+# the distance from the eyes, which fits a hand on the face; on Rin a hand laid on the side or the top of the head has its
+# fingertips 125 - 148 mm from the eyes (her head reaches that far from them), past the rule, and the curl and the lag
+# then took the fingers into the head (the v11 review: the head 25 -> 101 frames of an arm more than 1 cm in, all at
+# fingertips 0 - 16 mm from the head's surface before this layer).  20 mm: the tips nearer than that before this layer
+# went into a part (the right hand -11 .. +10 mm, the left -5 .. +16, the median 5 mm); 40 mm: the curl and the lag move a
+# fingertip 1 - 2 cm (the review: the middle finger's tip 1.4 cm at the median), so a tip further than that stays out
+CONTACT_SURFACE_MM = (20.0, 40.0)
 # the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive
 # body's spring and damper (its omega and zeta between the open and the held hand), so a change comes 2 zeta / omega
 # (= B / K) late.  --follow-scale multiplies that time (omega divided by it).  When on, the scale keeps half of the
@@ -621,6 +631,7 @@ def default_params():
     p = {s: True for s in STEPS}
     p["follow"] = False             # off unless asked (--follow): see FOLLOW_SCALE and the module docstring, step 8
     p["contact"] = True
+    p["contact_surface"] = True     # the surface rule (CONTACT_SURFACE_MM) where the layer is given the body's mesh
     p.update(relax_gain=RELAX_GAIN, speed_max=SPEED_MAX_DEG_S, order_max=ORDER_MAX, order_scale=1.0, gravity=False,
              stiffness=dict(STIFFNESS), zeta=dict(ZETA), passive_cap=PASSIVE_CAP, enslave_share=ENSLAVE,
              follow_scale=FOLLOW_SCALE, kime_stiffness=KIME_STIFFNESS, order_mode="centre", zeta_open=dict(ZETA_OPEN),
@@ -1657,12 +1668,54 @@ def contact_weights(model, motion, F, sides):
             for a, b in ((o + "ひじ", o + "手首"), (o + "手首", o + "中指１")):
                 if a in W and b in W:
                     c = np.maximum(c, 1.0 - smoothstep(to_line(p, W[a], W[b]), *CONTACT_MM["other"]))
-        padded = c.copy()
-        for k in range(1, CONTACT_PAD + 1):
-            padded[k:] = np.maximum(padded[k:], c[:-k])
-            padded[:-k] = np.maximum(padded[:-k], c[k:])
-        out[s] = np.convolve(np.pad(padded, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
+        out[s] = padded(c)
     return out
+
+
+def padded(c):
+    """a touch's weights [F] spread CONTACT_PAD frames each way and smoothed over 5"""
+    out = np.array(c, dtype=np.float64, copy=True)
+    for k in range(1, CONTACT_PAD + 1):
+        out[k:] = np.maximum(out[k:], c[:-k])
+        out[:-k] = np.maximum(out[:-k], c[k:])
+    return np.convolve(np.pad(out, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
+
+
+def surface_weights(body, motion, F, sides):
+    """(side -> 0 .. 1 per frame: a long fingertip or the palm's middle of the hand within CONTACT_SURFACE_MM of one of
+    the body's hard parts, padded and smoothed as contact_weights; side -> the nearest distance, mm, per frame) under the
+    input.  body: tools/retarget.py's Body with the model's mesh; the parts as tools/touch_layer.py reads them (the
+    thighs where the leg IK puts them)"""
+    TL = _tool("touch_layer")
+    RT = TL.RT
+    surf = RT.surfaces(body)
+    hard = [q for q in surf if not RT.soft(q)]
+    out = {s: np.zeros(F) for s in sides}
+    near = {s: np.full(F, np.inf) for s in sides}
+    if not hard:
+        return out, near
+    frames = np.arange(F)
+    trk = RT.tracks_of(motion.bones)
+    parts = TL.part_frames(body, trk, frames)
+    mm = UNIT_M * 1000.0
+    for s in sides:
+        tips = [s + f + "３先" for f in LONG if body.has(s + f + "３先")]
+        palm = [s + n for n in ("手首", "中指１") if body.has(s + n)]
+        if not tips and len(palm) < 2:
+            continue
+        wp = RT.world_pose(body, trk, frames, tips + palm)
+        points = [wp[t][0] for t in tips]
+        if len(palm) == 2:
+            points.append(0.5 * (wp[palm[0]][0] + wp[palm[1]][0]))
+        d = np.full(F, np.inf)
+        for q in hard:
+            pos, rot = parts[q]
+            inv = RT.qconj(rot)
+            for P in points:
+                d = np.minimum(d, surf[q].sdf(RT.qrot(inv, P - pos)))
+        near[s] = d * mm
+        out[s] = padded(1.0 - smoothstep(near[s], *CONTACT_SURFACE_MM))
+    return out, near
 
 
 def wrist_angles(model, loc, F):
@@ -1698,9 +1751,11 @@ class Result:
     report: dict
 
 
-def layer(model, motion, params=None, pulp=None, log=None, beats=None):
+def layer(model, motion, params=None, pulp=None, log=None, beats=None, body=None):
     """the hands of `motion` made anatomical (see the module docstring); pulp: side -> the thumb's pulp side (from the
-    mesh: pulp_from_mesh), else the palm's normal; beats: (the first beat's seconds, the period) for the beat holds"""
+    mesh: pulp_from_mesh), else the palm's normal; beats: (the first beat's seconds, the period) for the beat holds;
+    body: tools/retarget.py's Body of the model (with its mesh), for the touches read from the body's surfaces
+    (surface_weights; without it only contact_weights' rules)"""
     p = default_params()
     p.update(params or {})
     if not motion.bones:
@@ -1737,6 +1792,12 @@ def layer(model, motion, params=None, pulp=None, log=None, beats=None):
     if p.get("contact", True) and (p["relax"] or p["passive"] or p["follow"] or p.get("pace") or p.get("transit")):
         touch = contact_weights(model, motion, F, [s for s in hands])
         report["steps"]["contact_frames"] = {s: int((c > 0.5).sum()) for s, c in touch.items()}
+        if body is not None and p.get("contact_surface", True):
+            sw, _ = surface_weights(body, motion, F, [s for s in hands])
+            report["steps"]["contact_frames_rules"] = dict(report["steps"]["contact_frames"])
+            report["steps"]["contact_frames_surface"] = {s: int((c > 0.5).sum()) for s, c in sw.items()}
+            touch = {s: np.maximum(c, sw[s]) for s, c in touch.items()}
+            report["steps"]["contact_frames"] = {s: int((c > 0.5).sum()) for s, c in touch.items()}
     if p["relax"]:
         ext = {s: (-w[0] if w is not None else np.zeros(F)) for s, w in wrist.items()}
         report["steps"]["relax_frames"] = {s: int((r > 0.5).sum()) for s, r in
@@ -1994,7 +2055,10 @@ def run(dance_path, model_path, out_path, report_path=None, params=None, log=Non
     model = load_model(model_path)
     beats = read_beats(beats_path) if beats_path else None
     pulp = pulp_from_mesh(model_path) if model_path.lower().endswith(".pmx") else {}
-    result = layer(model, dance, params, pulp=pulp, log=log, beats=beats)
+    body = None
+    if (params or {}).get("contact_surface", True) and (params or {}).get("contact", True):
+        body = _tool("touch_layer").RT.Body.load(model_path)
+    result = layer(model, dance, params, pulp=pulp, log=log, beats=beats, body=body)
     A.write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
     report = dict({"in": os.path.abspath(dance_path), "model": os.path.abspath(model_path),
                    "out": os.path.abspath(out_path), "beats_file": beats_path and os.path.abspath(beats_path)},
@@ -2030,6 +2094,9 @@ def main(argv=None):
                     help="the longest lag of a joint within a change, frames (default %g)" % ORDER_MAX)
     ap.add_argument("--no-contact", action="store_true", help="relax and lag the fingers of a hand that touches the face, "
                                                                "the body or the other arm too")
+    ap.add_argument("--no-contact-surface", action="store_true",
+                    help="read the touches by the distances to the eyes and the bones' lines only, not by the body's "
+                         "surfaces (CONTACT_SURFACE_MM)")
     ap.add_argument("--follow-scale", type=float, default=FOLLOW_SCALE,
                     help="with --follow, its lag (2 zeta / omega of each finger's spring and damper) times this (default "
                          "%g)" % FOLLOW_SCALE)
@@ -2059,7 +2126,8 @@ def main(argv=None):
     params = default_params()
     params.update({s: not getattr(a, "no_" + s) for s in STEPS if s != "follow"})
     params.update(relax_gain=a.relax_gain, speed_max=a.speed_max, order_scale=a.order_scale, order_max=a.order_max,
-                  gravity=a.gravity, contact=not a.no_contact, follow=a.follow, follow_scale=a.follow_scale,
+                  gravity=a.gravity, contact=not a.no_contact, contact_surface=not a.no_contact_surface,
+                  follow=a.follow, follow_scale=a.follow_scale,
                   order_mode=a.order_mode, transit_scale=a.transit_scale, passive_lead=a.passive_lead)
     if a.zeta_open is not None:
         params["zeta_open"] = {f: a.zeta_open for f in LONG}
