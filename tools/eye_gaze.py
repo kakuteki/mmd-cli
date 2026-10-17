@@ -755,6 +755,24 @@ def keep_off(angles, camera, degrees, limits):
     return best[1]
 
 
+def pursuit_step(full, goal, origin, limits):
+    """the eye angles of a frame of the pursuit of a hand: from `full` (the gaze of the frame before, held by the
+    reflex) toward `goal` at most PURSUIT_SPEED, held in the contact zone and inside() the eccentric wall (a head that
+    turns faster than the pursuit carries `full` beyond it), at most MAX_STEP from `origin` (the angles of the frame
+    before)"""
+    dy, dp = goal[0] - full[0], goal[1] - full[1]
+    d, most = math.hypot(dy, dp), PURSUIT_SPEED / FPS
+    if d > most:
+        dy, dp = dy * most / d, dp * most / d
+    zone = contact_zone(limits)
+    base = inside((min(max(full[0] + dy, -zone.yaw), zone.yaw), min(max(full[1] + dp, -zone.down), zone.up)))
+    sy, sp = base[0] - origin[0], base[1] - origin[1]
+    moved = math.hypot(sy, sp)
+    if moved > MAX_STEP:
+        base = (origin[0] + sy * MAX_STEP / moved, origin[1] + sp * MAX_STEP / moved)
+    return base
+
+
 def _profile(t):
     """minimum jerk: the share of a saccade done at the time t in 0..1"""
     return t * t * t * (10.0 + t * (6.0 * t - 15.0))
@@ -1272,18 +1290,7 @@ def plan(seen, forward, limits=Limits(), seed=0, life=True, anchors=(), min_fixa
             # smooth pursuit of her own hand: the reflex holds the gaze of the frame before, and the gaze follows the
             # hand from there at most PURSUIT_SPEED (a person tracks the hand she moves with a gain near 1)
             full, _ = _head_angles(s, point, rest)
-            goal = hand_goal(i, hand_run)
-            dy, dp = goal[0] - full[0], goal[1] - full[1]
-            d, most = math.hypot(dy, dp), PURSUIT_SPEED / FPS
-            if d > most:
-                dy, dp = dy * most / d, dp * most / d
-            zone = contact_zone(limits)
-            base = inside((min(max(full[0] + dy, -zone.yaw), zone.yaw), min(max(full[1] + dp, -zone.down), zone.up)))
-            sy, sp = base[0] - origin[0], base[1] - origin[1]
-            moved = math.hypot(sy, sp)
-            if moved > MAX_STEP:
-                base = (origin[0] + sy * MAX_STEP / moved, origin[1] + sp * MAX_STEP / moved)
-            state = "hand"
+            base, state = pursuit_step(full, hand_goal(i, hand_run), origin, limits), "hand"
             eye, point = base, _world(s, base, rest)
         elif mode == "camera":
             base, state = contact_angles(cameras[i][0], limits), "contact"

@@ -1526,6 +1526,31 @@ class EccentricTest(unittest.TestCase):
             m = eye_gaze.eye_measures([(look.yaw, look.pitch) for look in result.looks], LIMITS)
             self.assertEqual(m["eccentric_15_share"], 0.0, seed)
 
+    def test_a_hand_held_off_to_the_side_and_below_is_followed_from_inside_the_wall(self):
+        # the tip of her middle finger 30 cm away, 14.5 degrees to her right and 9 below (17 off the middle): within
+        # reach of a look (4 degrees beyond the free zone), and the pursuit holds the eyes inside the wall
+        self.assertGreater(eccentricity(-14.5, -9.0), 16.5)
+        point = ahead(-14.5, -9.0, 0.30)
+        result = run_hands(hand_dance({0: None, 39: None, 40: point, 79: point, 80: None}, at=hand_aim_rest))
+        self.assertEqual(len(result.report["hands"]["list"]), 1, result.report["hands"])
+        held = [look for look in result.looks if look.state == "hand"]
+        self.assertGreater(len(held), 20)
+        self.assertLessEqual(max(eccentricity(look.yaw, look.pitch) for look in held), eye_gaze.ECCENTRIC_WALL + 1e-6)
+        self.assertLess(max(eccentricity(look.yaw, look.pitch) for look in result.looks), 15.0)
+
+    def test_the_pursuit_of_a_hand_stays_inside_the_wall_when_the_head_outruns_it(self):
+        # the head turns faster than the pursuit (100 deg/s): the reflex carries the gaze of the frame before 5 degrees
+        # on, beyond the wall; the step toward the hand brings back 3.3 and the wall holds the rest (the front camera's
+        # set had 2 frames of a look at a hand 15 degrees or more off the middle)
+        origin = (-13.0, -6.0)
+        base = eye_gaze.pursuit_step((-18.0, -8.0), origin, origin, LIMITS)
+        self.assertLessEqual(math.hypot(*base), eye_gaze.ECCENTRIC_WALL + 1e-9)
+        self.assertLess(math.hypot(base[0] - origin[0], base[1] - origin[1]), eye_gaze.MAX_STEP)
+        # inside the wall the step is as before: toward the hand at most PURSUIT_SPEED a frame
+        step = eye_gaze.pursuit_step((-5.0, 0.0), (5.0, 0.0), (-5.0, 0.0), LIMITS)
+        self.assertAlmostEqual(step[0], -5.0 + eye_gaze.PURSUIT_SPEED / eye_gaze.FPS, places=9)
+        self.assertAlmostEqual(step[1], 0.0, places=9)
+
     def test_restless_heads_and_cuts_keep_the_eyes_under_15_degrees(self):
         for seed in (1, 5, 9):
             dance, cams = restless(seed, last=300)

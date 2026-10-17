@@ -999,14 +999,14 @@
 | REACH_STEPS | 24 |  | 529 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
 | REACH_SAMPLES | 16 |  | 530 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
 | hand_fingers(first) | 0 |  | 533 |  |  |  |  |  |  |  |  |  |
-| plan(seed) | 0 |  | 999 |  |  |  |  |  |  |  |  |  |
-| world_measures(rest) | (0.0, 0.0) |  | 1471 |  |  |  |  |  |  |  |  |  |
-| gaze(seed) | 0 |  | 1655 |  |  |  |  |  |  |  |  |  |
-| write_json(indent) | 1 |  | 1783 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 1826 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 1895 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
-| --aim | "finger" |  | 1901 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
-| --hand-still | "wrist" |  | 1905 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
+| plan(seed) | 0 |  | 1017 |  |  |  |  |  |  |  |  |  |
+| world_measures(rest) | (0.0, 0.0) |  | 1478 |  |  |  |  |  |  |  |  |  |
+| gaze(seed) | 0 |  | 1662 |  |  |  |  |  |  |  |  |  |
+| write_json(indent) | 1 |  | 1790 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1833 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1902 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
+| --aim | "finger" |  | 1908 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
+| --hand-still | "wrist" |  | 1912 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
 
 ## face_life.py（15. 表情、147）
 
