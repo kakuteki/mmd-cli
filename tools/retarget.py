@@ -30,9 +30,9 @@ up, the model faces -Z; a key turns its bone in its parent's frame, mmd_cli/fk.p
 
 Then the corrections, measured on both bodies frame by frame (fix_feet, fix_hands, clear_arms; the hips are never moved):
 
-* feet: where the source's foot stands still on the floor (a plant) the target's takes the source's foot's world turn,
-  its toe or heel pitched (a flat foot's ankle up or down) until the shoe's lowest vertex is on the floor and its
-  touching point held; where the source's foot is on the floor but moving (turning on its toe) and the other foot does
+* feet: where the source's foot stands still on the floor (a plant) the target's takes the source's foot's world turn
+  (a flat foot level across), its toe or heel pitched (a flat foot's ankle up or down) until the shoe's lowest vertex
+  is on the floor and its touching point held; where the source's foot is on the floor but moving (turning on its toe) and the other foot does
   not stand, the target's shoe is put on the floor the same way, not held.
 * hands: a hand near a part of the source's body (head, chest, belly, hips, thighs, within NEAR) is put at the same
   place of the target's part (scaled by the parts' sizes), and the two hands as far apart as the shoulders' ratio says;
@@ -864,6 +864,16 @@ def foot_pitch(q_foot):
     return np.degrees(np.arcsin(np.clip(-fwd[..., 1], -1.0, 1.0)))
 
 
+def unroll(q_foot):
+    """(the foot's world turn turned about its own front until its side axis is level, the roll taken out in degrees):
+    its heading and pitch kept, the sole level across"""
+    fwd = unit(qrot(q_foot, np.array([0.0, 0.0, -1.0])))
+    side = qrot(q_foot, np.array([1.0, 0.0, 0.0]))
+    up = qrot(q_foot, np.array([0.0, 1.0, 0.0]))
+    phi = np.arctan2(side[..., 1], up[..., 1])
+    return qnorm(qmul(qaxis(fwd, phi), q_foot)), np.degrees(phi)
+
+
 def runs(mask, min_len=1):
     m = np.concatenate([[False], np.asarray(mask, bool), [False]]).astype(np.int8)
     d = np.diff(m)
@@ -992,10 +1002,10 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     """the target's foot keys for the source's plants (the foot IK's goal and turn, the ankle's key): the foot takes the
     source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
     by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it) until
-    the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot's ankle moves up or down (at most FLAT_LIFT_MAX)
-    until it does (a foot rolled sideways stands on its lower edge: Hibikase's flat feet roll 7 degrees in the median,
-    and with the sole's middle on the floor the edge was 3 mm under it in the median, 1.4 cm at most); the touching point
-    is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the same way, frame
+    the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot stands level across (the source's roll taken out:
+    Hibikase's flat feet roll 7 degrees in the median, and with the sole's middle on the floor the edge was 3 mm under it
+    in the median, 1.4 cm at most) and its ankle moves up or down (at most FLAT_LIFT_MAX) until the shoe is on the floor;
+    the touching point is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the same way, frame
     by frame, and not held.  The hips are never lowered.  The changes ease in and out over EASE frames.
     Returns the report."""
     F = len(frames)
@@ -1018,6 +1028,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             d_all = np.zeros(F)
             left_over = np.full(F, np.nan)
             kinds = {"flat": 0, "toe": 0, "heel": 0}
+            roll_out = []
             for n, (a, b, kind) in enumerate(spans):
                 kinds[kind] += 1
                 idx = np.flatnonzero(which == n)
@@ -1027,6 +1038,11 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 base = Qs[idx]
                 p0 = foot_pitch(base)
                 if kind == "flat":
+                    # a flat foot stands level across (the trace's flat feet roll 7 degrees in the median, 21 at the 90 %
+                    # point: on its edge the shoe stood 3 mm under the floor, lifted onto it the ankle stood over its
+                    # rest height, which the analysis pack's a05 reads as a hovering foot)
+                    base, rolled = unroll(base)
+                    roll_out.append(np.abs(rolled[(idx >= a) & (idx <= b)]))
                     d = np.zeros(len(idx))
                     low = A[idx, 1] + np.min(qrot(base[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
                     lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
@@ -1112,6 +1128,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 r["pitch_change_deg"] = _quant(np.abs(d_all[full]))
                 r["shift_cm"] = _quant(np.linalg.norm(shift[full], axis=1) * UNIT_CM)
                 r["turn_change_deg"] = _quant(np.degrees(qangle(qmul(qconj(Q[full]), want_turn[full]))))
+                r["flat_roll_removed_deg"] = _quant(np.concatenate(roll_out)) if roll_out else None
             inside_toe = np.isin(which, [n for n, s in enumerate(spans) if s[2] != "flat"]) & (weight >= 1.0)
             r["toe_left_over_cm"] = _quant(np.abs(left_over[inside_toe & ~np.isnan(left_over)]) * UNIT_CM)
             r["toe_unreached_frames"] = int(np.sum(inside_toe & (np.abs(np.nan_to_num(left_over)) > 0.0125)))

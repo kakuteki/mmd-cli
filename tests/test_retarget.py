@@ -441,11 +441,39 @@ class PlantShellTest(unittest.TestCase):
         res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
         self.assertEqual(res.report["feet"]["左"]["kinds"]["flat"], 1)
         low = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res.motion, range(0, 21))
-        self.assertLess(float(np.abs(low).max()), 0.0125)                          # the edge on the floor within 1 mm
+        self.assertLess(float(np.abs(low).max()), 0.0125)                          # the shoe on the floor within 1 mm
         out = {(k.name, k.frame): k for k in res.motion.bones}
         ref = {(k.name, k.frame): k for k in pure.motion.bones}
         for f in (0, 20):
             np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
+
+    def test_a_rolled_flat_foot_stands_level_on_its_sole(self):
+        # the sole flat on the floor, as a foot standing at rest: its side axis level, its ankle at the rest height (the
+        # analysis pack's a05 reads the floor from the ankle's and the toe's heights over their rest: a foot lifted onto
+        # its rolled edge is a hovering foot there), every vertex of the sole on the floor; the foot's heading kept
+        roll = axis_angle((0.0, 0.0, 1.0), -8.0)
+        yaw = axis_angle((0.0, 1.0, 0.0), 30.0)
+        turn = tuple(retarget.qmul(np.array(yaw), np.array(roll)))
+        base = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                key("左足ＩＫ", 0, turn), key("左足ＩＫ", 20, turn), key("右足ＩＫ", 0), key("右足ＩＫ", 20)]
+        shin = legs(MIKU_DATA, motion(*base), [0])["左"]["q_shin"][0]
+        ankle_key = tuple(retarget.qmul(retarget.qconj(shin), np.array(turn)))
+        m = motion(*base, key("左足首", 0, ankle_key), key("左足首", 20, ankle_key))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        leg = legs(RIN_SHOE_DATA, res.motion, range(0, 21))["左"]
+        side = leg_ik.qrot(leg["q_foot"], np.array([1.0, 0.0, 0.0]))
+        fwd = leg_ik.qrot(leg["q_foot"], np.array([0.0, 0.0, -1.0]))
+        self.assertLess(float(np.abs(side[:, 1]).max()), math.sin(math.radians(0.5)))           # level across
+        heading = np.degrees(np.arctan2(-fwd[:, 0], -fwd[:, 2]))
+        np.testing.assert_allclose(heading, 30.0, atol=0.5)                                       # the heading kept
+        self.assertLess(float(np.abs(leg["ankle"][:, 1] - RIN["足首"][1]).max()), 0.0125)          # the ankle at rest height
+        offs = [np.array([RIN["足首"][0] + RIN_SHOE["half_width"] * (k - 1), RIN_SHOE["sole"],
+                          RIN["足首"][2] + RIN_SHOE["heel_back"] - (RIN_SHOE["heel_back"] + RIN_SHOE["toe_ahead"]) * i / 11.0])
+                - np.array(RIN["足首"]) for i in range(12) for k in range(3)]
+        sole = (np.stack([foot_point(leg, o)[:, 1] for o in offs], axis=1) - RIN_SHOE["sole"]).reshape(21, 12, 3)
+        self.assertLess(float(np.abs(sole.min(axis=(1, 2))).max()), 0.0125)                      # the shoe on the floor
+        self.assertLess(float(np.abs(sole[:, :, 0] - sole[:, :, 2]).max()), 0.0125)               # its two edges level
+        # (along the foot the source's own pitch is kept: -0.3 degrees here, the toe IK's)
 
     def test_a_toe_stand_on_a_turned_up_toe_stands_on_the_shoe(self):
         l = MIKU["足首"][2] - MIKU["つま先"][2]
