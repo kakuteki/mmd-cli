@@ -157,6 +157,19 @@ class PickTest(unittest.TestCase):
         self.assertEqual([f for f, _ in picked["elbow"]], [50, 120, 180])
 
 
+class SummaryTest(unittest.TestCase):
+    def test_the_worst_of_the_picked_frames(self):
+        # per yardstick and model: the lowest section, the lowest area, the most triangles under half, the most flipped
+        rep = {"m": {10: {"sections": {"forearm_R": {"min": 0.9}}, "joints": {"wrist_R": {"area_min": 0.3, "under_half": 2, "flipped": 0}}},
+                     20: {"sections": {"forearm_R": {"min": 0.4}}, "joints": {"wrist_R": {"area_min": 0.6, "under_half": 7, "flipped": 3}}}}}
+        picked = {"hand_twist_R": [(10, 170.0), (20, 160.0)], "wrist_bend_R": [(10, 88.0), (20, 80.0)]}
+        rows = {(r["yardstick"], r["measure"]): r["value"] for r in rig_check.summary(rep, picked)}
+        self.assertEqual(rows[("hand_twist_R", "section_min")], 0.4)
+        self.assertEqual(rows[("wrist_bend_R", "area_min")], 0.3)
+        self.assertEqual(rows[("wrist_bend_R", "under_half")], 7)
+        self.assertEqual(rows[("wrist_bend_R", "flipped")], 3)
+
+
 class ReceiversTest(unittest.TestCase):
     def test_names_the_model_lacks_and_what_they_carry(self):
         doc = pmx_edit.loads(rin_legs_bytes())
@@ -218,6 +231,28 @@ class IkReportTest(unittest.TestCase):
         self.assertLess(r0 - r5, 0.035)                    # 0.028 units (2.2 mm) on these legs
         self.assertLess(float(soft["reach"][1]), 0.002)                          # the lifted foot is reached
 
+    def test_a_one_frame_pop_of_the_knee_is_one_event(self):
+        # the foot lifted 0.2 (the knee bent some 19 degrees) and, for one frame, pulled 0.3 past the leg's reach: the
+        # knee straightens for that frame and bends again.  Lifted 0.3 (some 25 degrees) the frames before and after
+        # count as jumps too (each is more than 10 degrees off the line through its neighbours): still one event
+        data = rin_legs_bytes()
+        rig = leg_ik.LegRig.loads(data)
+        for lift, frames in ((0.2, [2]), (0.3, [1, 2, 3])):
+            mo = motion(*[key("左足ＩＫ", f, position=(0.0, lift if f != 2 else -0.3, 0.0)) for f in range(5)])
+            rep = rig_check.ik_report(rig, mo, range(5), alternatives={"loops400": {"loops": 400}})
+            left = rep["loops400"]["左"]
+            self.assertEqual(left["knee_jump_frames"], frames, lift)
+            self.assertEqual(left["knee_jumps"], len(frames))
+            self.assertEqual(left["knee_jump_event_count"], 1)
+            ev = left["knee_jump_events"][0]
+            self.assertEqual((ev["first"], ev["last"], ev["peak"]), (frames[0], frames[-1], 2))
+            self.assertLess(ev["bends"][1], 0.5)                         # straight at the pop (the rest bend: 0)
+            self.assertGreater(ev["bends"][0], 15.0)
+            self.assertGreater(ev["deg"], 15.0)
+            self.assertGreater(ev["reach_ratio"], 1.0)                   # the goal past the leg's reach
+            self.assertAlmostEqual(ev["ankle_up_cm"], -0.3 * rig_check.UNIT_CM, places=3)
+            self.assertEqual(rep["loops400"]["右"]["knee_jump_event_count"], 0)
+
 
 class PhysicsTest(unittest.TestCase):
     def body(self, shape, size, pos, rot=(0.0, 0.0, 0.0), group=0, mask=0xFFFF, mode=1, damping=0.999):
@@ -230,6 +265,9 @@ class PhysicsTest(unittest.TestCase):
         self.assertTrue(np.allclose(R @ [0, 1, 0], [1, 0, 0], atol=1e-12))
         _, R2 = rig_check.body_frame(self.body(2, (0.5, 2, 0), (0, 0, 0), (0, 90, -90)))
         self.assertTrue(np.allclose(R2 @ [0, 1, 0], [0, 0, -1], atol=1e-12))    # then yaw 90 swings +X to -Z
+        # pitch before yaw: pitch 30 tips Y towards +Z (0, cos 30, sin 30), then yaw 90 swings that +Z to +X
+        _, R3 = rig_check.body_frame(self.body(2, (0.5, 2, 0), (0, 0, 0), (30, 90, 0)))
+        self.assertTrue(np.allclose(R3 @ [0, 1, 0], [0.5, math.cos(math.radians(30)), 0.0], atol=1e-12))
 
     def test_gaps(self):
         a = self.body(0, (1, 0, 0), (0, 0, 0))
@@ -455,6 +493,24 @@ class SourRinTest(unittest.TestCase):
     def test_upper_arm_skin_holds_a_twist(self):
         rec = self.measure(key("右腕捩", 0, axis_angle(self.arm_axis, 120.0)))
         self.assertGreater(rec["sections"]["upper_arm_R"]["min"], 0.99)
+
+    def test_angles_of_a_known_pose(self):
+        # the right wrist twisted 120 degrees about the forearm and the left elbow bent 90 degrees from rest in the arm's
+        # plane: the yardsticks read them back (the hand's twist against the elbow, the wrist's against 手捩)
+        import tempfile
+        from tests.test_leg_ik import rin_path
+        B = {b.name: b for b in self.m.bones}
+        rest_l = np.array(B["左手首"].position) - np.array(B["左ひじ"].position)
+        rest_u = np.array(B["左ひじ"].position) - np.array(B["左腕"].position)
+        n = np.cross(rest_u, rest_l)
+        n = n / np.linalg.norm(n) if np.linalg.norm(n) > 1e-9 else np.array([0.0, 0.0, 1.0])
+        bend0 = math.degrees(math.acos(np.dot(rest_u, rest_l) / np.linalg.norm(rest_u) / np.linalg.norm(rest_l)))
+        mo = motion(key("右手首", 0, axis_angle(self.fore_axis, 120.0)), key("左ひじ", 0, axis_angle(tuple(n), 90.0)))
+        ang = rig_check.dance_angles(rin_path(), mo)
+        self.assertAlmostEqual(float(ang["hand_twist_R"][0]), 120.0, delta=0.5)
+        self.assertAlmostEqual(float(ang["wrist_twist_R"][0]), 120.0, delta=0.5)
+        self.assertLess(float(ang["hand_twist_L"][0]), 0.5)
+        self.assertAlmostEqual(float(ang["elbow_bend_L"][0]), bend0 + 90.0, delta=1.0)
 
     def test_wrist_twist_wrings_the_wrist(self):
         rec = self.measure(key("右手首", 0, axis_angle(self.fore_axis, 170.0)))

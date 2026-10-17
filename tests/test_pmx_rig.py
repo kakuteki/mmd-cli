@@ -120,9 +120,12 @@ class BrowTest(unittest.TestCase):
             self.assertAlmostEqual(a[0], -b[0], places=6)
             self.assertAlmostEqual(a[1], b[1], places=6)
         self.assertEqual([m["name"] for m in rep["morphs"]], ["眉頭右", "眉頭左"])
-        # the old morph and the vertices are as they were
-        self.assertEqual(pmx_edit.dumps(pmx_edit.loads(data)), data)
-        self.assertEqual(out[:len(out)], out)
+        # the old morph and the vertices are as they were (a morph moves vertices only while it is keyed)
+        before = pmx_edit.loads(data)
+        after = pmx_edit.loads(out)
+        self.assertEqual([v.head for v in after.vertices], [v.head for v in before.vertices])
+        self.assertEqual((after.morphs[0].head, after.morphs[0].body), (before.morphs[0].head, before.morphs[0].body))
+        self.assertEqual([b.name for b in after.bones], [b.name for b in before.bones])
 
     def test_a_model_with_the_morph_already_is_refused(self):
         doc = pmx_edit.loads(brow_model())
@@ -204,6 +207,22 @@ class JointHelperTest(unittest.TestCase):
             p = RS.skin(m, pose)
             r = np.linalg.norm(p[:12, 1:], axis=1)
             self.assertTrue(np.allclose(r, want, atol=1e-5), (r[:3], want))
+
+    def test_sdef_vertices_are_left_alone(self):
+        # an SDEF vertex half on 右手捩 and half on 右手首 keeps its kind, bones, weight and SDEF points; the report counts it
+        from tests.test_rig_skin import vertex_rec
+        w = Writer(bone=2, vertex=2)
+        bones = [w.bone("右ひじ", position=(0, 0, 0)), w.bone("右手捩", parent=0, position=(1, 0, 0)),
+                 w.bone("右手首", parent=1, position=(2, 0, 0)), w.bone("左ひじ", position=(0, 0, 0)),
+                 w.bone("左手捩", parent=3, position=(-1, 0, 0)), w.bone("左手首", parent=4, position=(-2, 0, 0))]
+        vs = [vertex_rec(w, (2.0, 0.3, 0.0), "SDEF", (1, 2), (0.5,), sdef=((2.0, 0, 0), (2.0, 0, 0), (2.0, 0, 0))),
+              vertex_rec(w, (2.0, -0.3, 0.0), "BDEF2", (1, 2), (0.5,))]
+        doc = pmx_edit.loads(w.build(bones=bones, vertices=vs))
+        before = [(v.kind, list(v.bones), list(v.weights), v.sdef) for v in doc.vertices]
+        rep = pmx_rig.apply(doc, {"joint_helpers": ["wrist"]})
+        self.assertEqual((doc.vertices[0].kind, list(doc.vertices[0].bones), list(doc.vertices[0].weights), doc.vertices[0].sdef), before[0])
+        self.assertNotEqual((doc.vertices[1].kind, list(doc.vertices[1].bones)), before[1][:2])      # the BDEF2 one is shared out
+        self.assertEqual((rep["helpers"][0]["sdef_left"], rep["helpers"][0]["vertices"]), (1, 1))
 
     def test_unknown_joint_is_refused(self):
         with self.assertRaises(ValueError):

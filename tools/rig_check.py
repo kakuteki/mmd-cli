@@ -23,8 +23,11 @@ ik: the leg IK over a dance as MMD solves it: per side the frames whose ankle st
   4 mm and 1 cm (Sour's Rin: 8 cm a unit), split into goals the IK could reach (within the hip-to-ankle distance of
   the knee at its limit's least bend, max_reach) and beyond; the knee's bend where a reachable goal is missed; the frames
   whose knee sits at its least bend; the knee's jumps (a frame whose knee angle differs from the line through its
-  neighbours by more than KNEE_JUMP_DEG); the toe IK's misses.  --alt runs the same with other settings (more loops,
-  another unit angle, a knee that keeps a least bend) to see what a change of the model would do.
+  neighbours by more than KNEE_JUMP_DEG) and their events (jump frames at most a frame apart are one event: a one-frame
+  pop of 25 degrees counts as three jump frames; per event its peak, the size, the bends around it, the goal's distance
+  from the hip over the leg's reach and the goal's height above the ankle's rest height); the toe IK's misses.  --alt runs
+  the same with other settings (more loops, another unit angle, a knee that keeps a least bend) to see what a change of
+  the model would do.
 angles: the yardsticks of the hard frames over the whole dance (forward kinematics, the legs by MMD's IK): per side the
   upper arm's twist (腕捩 against 腕W, or 腕 when there is no 腕W), the hand's twist against the elbow, the wrist's
   against 手捩, the elbow's bend, the arm's lift (the angle between the upper arm and the chest's down), the wrist's
@@ -383,8 +386,25 @@ def _ik_numbers(rig, sol):
         at_limit = bend <= math.degrees(-rig.sides[s].knee_hi) + 0.5
         r_miss = reachable & (miss > 0.4)
         jumps = np.zeros(len(bend), dtype=bool)
+        off = np.zeros(len(bend))
         if len(bend) >= 3:
-            jumps[1:-1] = np.abs(bend[1:-1] - 0.5 * (bend[:-2] + bend[2:])) > KNEE_JUMP_DEG
+            off[1:-1] = np.abs(bend[1:-1] - 0.5 * (bend[:-2] + bend[2:]))
+            jumps[1:-1] = off[1:-1] > KNEE_JUMP_DEG
+        events = []
+        rest_ankle_y = float(rig.bones[rig.sides[s].ankle].position[1])
+        for f in np.flatnonzero(jumps):
+            if events and f - events[-1]["last"] <= 1:
+                events[-1]["last"] = int(f)
+                if off[f] > events[-1]["deg"]:
+                    events[-1]["deg"], events[-1]["peak"] = float(off[f]), int(f)
+            else:
+                events.append({"first": int(f), "last": int(f), "peak": int(f), "deg": float(off[f])})
+        for e in events:
+            p = e["peak"]
+            e["deg"] = round(e["deg"], 2)
+            e["bends"] = [round(float(bend[p + k]), 2) for k in (-1, 0, 1)]
+            e["reach_ratio"] = round(float(D[p] / max_reach(rig, s)), 4)
+            e["ankle_up_cm"] = round((float(goal[p, 1]) - rest_ankle_y) * UNIT_CM, 3)
         toe = d["toe_reach"] * UNIT_CM
         out[s] = {"frames": int(len(miss)), "miss_gt_1mm": int((miss > 0.1).sum()), "miss_gt_4mm": int((miss > 0.4).sum()),
                   "miss_gt_1cm": int((miss > 1.0).sum()), "unreachable": int((~reachable).sum()),
@@ -395,6 +415,7 @@ def _ik_numbers(rig, sol):
                                                       if r_miss.any() else None),
                   "knee_at_least_bend": int(at_limit.sum()),
                   "knee_jumps": int(jumps.sum()), "knee_jump_frames": np.flatnonzero(jumps).tolist()[:50],
+                  "knee_jump_event_count": len(events), "knee_jump_events": events,
                   "toe_miss_gt_1mm": int((toe > 0.1).sum()), "toe_miss_cm_max": round(float(toe.max()), 4),
                   "reachable_miss_frames": np.flatnonzero(r_miss).tolist()[:200], "max_reach": round(max_reach(rig, s), 5)}
     return out

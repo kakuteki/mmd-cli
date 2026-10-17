@@ -277,6 +277,18 @@ class SkinTest(unittest.TestCase):
         self.assertTrue(np.allclose(m.w[0], (0.1, 0.2, 0.3, 0.4), atol=1e-7))
         self.assertLess(length(got - want), 1e-9)
 
+    def test_sdef_turns_by_its_weights(self):
+        # SDEF 0.25 on the elbow, 0.75 on the wrist, the centre on the axis; the wrist twisted 120 degrees: the ring turns by
+        # 0.75 x 120 = 90 degrees (the blend runs from the first bone's turn to the second's by the second's weight) and
+        # keeps its radius
+        def vs(w):
+            return ring(w, 3.0, 0.4, (2, 4), (0.25,), "SDEF", sdef=((3.0, 0, 0), (3.0, 0, 0), (3.0, 0, 0)))
+        m = rig_skin.Model.loads(arm_bytes(vertices=vs))
+        pose = rig_skin.solve(m, rig_skin.keys_at(m, fk.tracks_of(motion(key("wrist", 0, axis_angle((1, 0, 0), 120.0)))), 0))
+        p = rig_skin.skin(m, pose)
+        self.assertTrue(np.allclose(np.linalg.norm(p[:, 1:], axis=1), 0.4, atol=1e-9))
+        self.assertAlmostEqual(math.degrees(math.atan2(p[0, 2], p[0, 1])), 90.0, places=5)
+
     def test_sdef_bend_keeps_the_far_side(self):
         # an elbow ring with SDEF around the joint: bending 90 degrees about z, the vertices stay at the radius from the
         # joint's centre (linear blending pulls the inner side in)
