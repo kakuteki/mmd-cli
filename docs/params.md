@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1885（定数 1518・引数 92・関数の既定 275。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 374（retarget 237・rig 57・踊りだけ 89）、記録の出所つき 56。
+- 数: 全部 1895（定数 1528・引数 92・関数の既定 275。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 378（retarget 241・rig 57・踊りだけ 89）、記録の出所つき 56。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -1736,22 +1736,32 @@
 
 （数を持つ定数・引数の既定なし）
 
-### retarget_check.py（確かめ・部品、12）
+### retarget_check.py（確かめ・部品、22）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNIT_CM | 8.0 | cm | 63 |  |  | ○ |  |  |  |  |  | retarget |
-| TOUCH | 0.15 | units | 64 | units (1.2 cm): a source hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
-| KEEP | 0.125 | units | 65 | units (1 cm): the target's point within this of the source's distance keeps the touch |  | ○ |  |  |  |  |  | retarget |
-| LOST | 0.25 | units | 66 | units (2 cm): more than this off (or inside) loses it |  | ○ |  |  |  |  |  | retarget |
-| PLANT_EPS | 0.05 | units | 67 | units (4 mm, a05's contact): a goal this close to its rest height is on the floor |  | ○ |  |  |  |  |  | retarget |
-| STILL | 0.025 | units | 68 | units a frame |  | ○ |  |  |  |  |  | retarget |
-| PLANT_MIN | 3 |  | 69 |  |  |  |  |  |  |  |  |  |
-| TOE_PITCH | 4.0 |  | 70 |  |  |  |  |  |  |  |  |  |
-| SKIP_SHOULDER | 0.5 |  | 71 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 95 |  |  |  |  |  |  |  |  |  |
-| quant(qs) | (50, 90, 99, 100) |  | 101 |  |  |  |  |  |  |  |  |  |
-| _cube_directions(n) | 4 |  | 133 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 78 |  |  | ○ |  |  |  |  |  | retarget |
+| TOUCH | 0.15 | units | 79 | units (1.2 cm): a source hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| KEEP | 0.125 | units | 80 | units (1 cm): the target's point within this of the source's distance keeps the touch |  | ○ |  |  |  |  |  | retarget |
+| LOST | 0.25 | units | 81 | units (2 cm): more than this off (or inside) loses it |  | ○ |  |  |  |  |  | retarget |
+| PLANT_EPS | 0.05 | units | 82 | units (4 mm, a05's contact): a goal this close to its rest height is on the floor |  | ○ |  |  |  |  |  | retarget |
+| STILL | 0.025 | units | 83 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| PLANT_MIN | 3 |  | 84 |  |  |  |  |  |  |  |  |  |
+| TOE_PITCH | 4.0 |  | 85 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 86 |  |  |  |  |  |  |  |  |  |
+| FLOOR_CM | 0.4 | cm | 87 | cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it |  | ○ |  |  |  |  |  | retarget |
+| RESTING_MIN | 4 | frames | 88 | frames: a touch this long ... |  |  |  |  |  |  |  |  |
+| RESTING_SPEED | 35.0 | cm/s | 89 | cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it |  | ○ |  |  |  |  |  | retarget |
+| LAG_WINDOW | 60 | frames | 90 | frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX |  |  |  |  |  |  |  |  |
+| LAG_HOP | 30 |  | 91 |  |  |  |  |  |  |  |  |  |
+| LAG_MAX | 5 |  | 92 |  |  |  |  |  |  |  |  |  |
+| STEP_MIN_CM | 10.0 | cm | 93 | cm: the source's steps between plants this long and longer are compared |  | ○ |  |  |  |  |  | retarget |
+| JUMP_CM | 2.5 | cm | 94 | cm (mv_inspect's 宙): both feet this high over their rest heights ... |  | ○ |  |  |  |  |  | retarget |
+| JUMP_MIN | 4 | frames | 95 | frames: ... this long is a jump |  |  |  |  |  |  |  |  |
+| SKIP_SHOULDER | 0.5 |  | 97 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 121 |  |  |  |  |  |  |  |  |  |
+| quant(qs) | (50, 90, 99, 100) |  | 127 |  |  |  |  |  |  |  |  |  |
+| _cube_directions(n) | 4 |  | 159 |  |  |  |  |  |  |  |  |  |
 
 ### motion_jerk.py（確かめ・部品、0）
 

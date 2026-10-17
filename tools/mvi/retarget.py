@@ -1,8 +1,9 @@
 """体の触れ (retarget): a dance moved from the body it was traced on keeps that body's relations (tools/retarget.py), and
 tools/retarget_check.py measures them from what the viewer sees.
 
-* 腕の食い込み: the version's arms as capsules on its bones against its own head, trunk, hips and thighs (the nearest of
-  their vertices, signed by its normal): the frames an arm goes in more than 1 cm.  No source needed.  Places: the runs.
+* 腕の食い込み: the version's arms as capsules on its bones against its own head, ribbon, trunk, hips and thighs (each the
+  convex polytope of its vertices along 96 directions, tools/retarget_check.py): the frames an arm goes in more than 1 cm.
+  No source needed.  Places: the runs.
 * with a source ({"source": {"dance": VMD, "body": model or .json body}} in the spec, the dance the version came from and
   the body it was traced on): the source's hand touches (palm or fingertip within 1.2 cm of a part) the version keeps on
   the same part (within 1 cm of the source's distance) and loses (2 cm off); the source's plants (its foot meant to stand
@@ -43,7 +44,7 @@ def measure(m):
                 ds = RC.part_distances(sp, spa, RC.hand_points(sp, side))
                 touching[side] = {part: np.minimum(d["palm"], d["tip"]) < RC.TOUCH for part, d in ds.items()}
     arms = RC.arms_in(pose, tgt, parts, touching)
-    src = "tools/retarget_check.py（腕を骨の上のカプセル、体を頂点の近さと法線で。肩寄りの上腕の半分は胴と比べない）"
+    src = "tools/retarget_check.py（腕を骨の上のカプセル、体を部位ごとの頂点の凸な多面体で。肩寄りの上腕の半分は胴と比べない）"
     total = 0
     deepest = 0.0
     for side, r in arms.items():

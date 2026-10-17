@@ -29,6 +29,21 @@ uses 98 others).
   be) lies within PLANT_EPS of its rest height and moves less than STILL a frame, for PLANT_MIN frames; on its toe
   when pitched more than 4 degrees.  On those frames the target's shoe: its lowest point's height over the floor (the
   shoes' lowest point at rest) and its slide (sink_check's: the slowest touching vertex's move), per plant the path.
+  Over the whole dance, the path the target's shoe slides while it is on the floor (within FLOOR_CM; the slowest touching
+  vertex, so a foot turning on its ball, toe or heel does not travel), on the source's plants and elsewhere, a minute:
+  a foot the source turns or moves near the floor and the target puts on it slides there.
+* touch runs (in contacts): each run of the source's touch with its frames, the source's distance, the hand point's
+  speed in the part's frame (a hand resting on a part moves with it: a run of RESTING_MIN frames and more slower than
+  RESTING_SPEED rests; a short or fast one passes by), the distance to the part's nearest vertex on both bodies (the
+  convex polytope fills a part's hollows: a hand on the chest under its ribbon lies centimetres inside the polytope and
+  on the mesh), and the frames kept.
+* choreography (chore): what the retarget must not change, the source on its body against the target on its own, by
+  forward kinematics: the timing (per point, the lag of the best correlation of the speeds in LAG_WINDOW windows), the
+  hands' directions from the shoulders in the chest's frame (the angle between the source's and the target's), the
+  head's and the chest's world turns, the steps between the source's plants (the length's ratio, to read against the
+  bodies' legs' ratio, and the direction), and the jumps (both feet's IK goals and toe goals over their rest heights by
+  JUMP_CM, the target's by JUMP_CM times the legs' ratio, for JUMP_MIN frames: matched, the peak's frame and height, and
+  the target's airborne runs the source does not have).
 """
 import argparse
 import importlib.util
@@ -68,6 +83,17 @@ PLANT_EPS = 0.05                # units (4 mm, a05's contact): a goal this close
 STILL = 0.025                   # units a frame
 PLANT_MIN = 3
 TOE_PITCH = 4.0
+FPS = 30.0
+FLOOR_CM = 0.4                  # cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it
+RESTING_MIN = 4                 # frames: a touch this long ...
+RESTING_SPEED = 35.0            # cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it
+LAG_WINDOW = 60                 # frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX
+LAG_HOP = 30
+LAG_MAX = 5
+STEP_MIN_CM = 10.0              # cm: the source's steps between plants this long and longer are compared
+JUMP_CM = 2.5                   # cm (mv_inspect's 宙): both feet this high over their rest heights ...
+JUMP_MIN = 4                    # frames: ... this long is a jump
+CHORE_POINTS = ("センター", "頭", "左手首", "右手首", "左足ＩＫ", "右足ＩＫ")
 SKIP_SHOULDER = 0.5
 PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"), True), "ribbon": ("頭", ("リボン親",), False),
          "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
@@ -169,10 +195,19 @@ class Part:
         self.ride = ride
         P = body.vertices[m] - body.rest(ride)
         self.d = np.max(P @ CUBE.T, axis=0)
+        self.points = P
 
     def distance(self, q):
         """signed distances of points q [n, 3] (in the part's frame)"""
         return np.max(np.asarray(q, dtype=np.float64) @ CUBE.T - self.d, axis=-1)
+
+    def mesh_distance(self, q):
+        """distances of points q [n, 3] (in the part's frame) to the part's nearest vertex (unsigned)"""
+        q = np.asarray(q, dtype=np.float64).reshape(-1, 3)
+        out = np.empty(len(q))
+        for a in range(0, len(q), 64):
+            out[a:a + 64] = np.min(np.linalg.norm(q[a:a + 64, None, :] - self.points[None, :, :], axis=2), axis=1)
+        return out
 
 
 def parts_of(body):
@@ -196,14 +231,31 @@ def hand_points(pose, side):
     return {"palm": palm, "tip": tip}
 
 
-def part_distances(pose, parts, points):
-    """part -> point -> signed distances [F]"""
+def part_locals(pose, parts, points):
+    """part -> point -> the points in the part's frame [F, 3]"""
     rides = pose.get(sorted({p.ride for p in parts.values()}))
     out = {}
     for name, part in parts.items():
         pos, rot = rides[part.ride]
-        out[name] = {k: part.distance(ML.qrot(ML.qconj(rot), P - pos)) for k, P in points.items()}
+        out[name] = {k: ML.qrot(ML.qconj(rot), P - pos) for k, P in points.items()}
     return out
+
+
+def part_distances(pose, parts, points):
+    """part -> point -> signed distances [F]"""
+    return {name: {k: parts[name].distance(q) for k, q in by.items()} for name, by in part_locals(pose, parts, points).items()}
+
+
+def run_speed(local, a, b):
+    """the median speed (cm/s) of a point [F, 3] in a part's frame over the frames a..b (and the step into it)"""
+    lo = max(0, a - 1)
+    v = np.linalg.norm(np.diff(local[lo:b + 1], axis=0), axis=1) * UNIT_CM * FPS
+    return float(np.median(v)) if len(v) else 0.0
+
+
+def resting(frames, speed):
+    """a touch run of `frames` frames whose hand point moves `speed` cm/s in the part's frame rests on the part"""
+    return bool(frames >= RESTING_MIN and speed < RESTING_SPEED)
 
 
 def contacts(src_pose, src_parts, tgt_pose, tgt_parts):
@@ -211,23 +263,38 @@ def contacts(src_pose, src_parts, tgt_pose, tgt_parts):
     for side in SIDES:
         if not all(src_pose.sk.has(side + n) for n in ("手首", "中指１", "中指２", "中指３")):
             continue
-        ds = part_distances(src_pose, src_parts, hand_points(src_pose, side))
-        dt = part_distances(tgt_pose, tgt_parts, hand_points(tgt_pose, side))
+        ls = part_locals(src_pose, src_parts, hand_points(src_pose, side))
+        lt = part_locals(tgt_pose, tgt_parts, hand_points(tgt_pose, side))
         rows = {}
-        for part in ds:
-            if part not in dt or src_parts[part].soft:
+        for part in ls:
+            if part not in lt or src_parts[part].soft:
                 continue
-            point = np.where(ds[part]["palm"] <= ds[part]["tip"], "palm", "tip")
-            d_s = np.where(point == "palm", ds[part]["palm"], ds[part]["tip"])
-            d_t = np.where(point == "palm", dt[part]["palm"], dt[part]["tip"])
+            ds = {k: src_parts[part].distance(q) for k, q in ls[part].items()}
+            dt = {k: tgt_parts[part].distance(q) for k, q in lt[part].items()}
+            point = np.where(ds["palm"] <= ds["tip"], "palm", "tip")
+            d_s = np.where(point == "palm", ds["palm"], ds["tip"])
+            d_t = np.where(point == "palm", dt["palm"], dt["tip"])
             touch = d_s < TOUCH
             want = np.maximum(d_s, 0.0)
             kept = touch & (np.abs(d_t - want) <= KEEP)
             lost = touch & ((d_t - want > LOST) | (d_t < -LOST))
+            touch_runs = []
+            for a, b in runs(touch):
+                main = "palm" if np.sum(point[a:b + 1] == "palm") >= np.sum(point[a:b + 1] == "tip") else "tip"
+                speed = run_speed(ls[part][main], a, b)
+                touch_runs.append({
+                    "first": a, "last": b, "frames": b - a + 1, "point": main,
+                    "source_cm": {"min": round(float(d_s[a:b + 1].min()) * UNIT_CM, 2), "p50": round(float(np.median(d_s[a:b + 1])) * UNIT_CM, 2)},
+                    "speed_cm_s": round(speed, 1), "resting": resting(b - a + 1, speed),
+                    "source_mesh_cm": round(float(np.median(src_parts[part].mesh_distance(ls[part][main][a:b + 1]))) * UNIT_CM, 2),
+                    "target_cm": round(float(np.median(d_t[a:b + 1])) * UNIT_CM, 2),
+                    "target_mesh_cm": round(float(np.median(tgt_parts[part].mesh_distance(lt[part][main][a:b + 1]))) * UNIT_CM, 2),
+                    "kept_frames": int(kept[a:b + 1].sum())})
             rows[part] = {"source_touch_frames": int(touch.sum()), "kept_frames": int(kept.sum()),
                           "kept_share": round(float(kept.sum() / touch.sum()), 4) if touch.any() else None,
                           "lost_runs": [[a, b] for a, b in runs(lost)],
-                          "source_cm": quant(d_s[touch] * UNIT_CM, (50,)), "target_cm": quant(d_t[touch] * UNIT_CM, (50, 90))}
+                          "source_cm": quant(d_s[touch] * UNIT_CM, (50,)), "target_cm": quant(d_t[touch] * UNIT_CM, (50, 90)),
+                          "runs": touch_runs}
         out[side] = rows
     return out
 
@@ -337,6 +404,17 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
         f = feet[side]
         h = (f["low"] - floor) * UNIT_CM
         sl = f["slide"] * UNIT_CM
+        # the shoe on the floor over two frames, its slowest touching vertex's step, on the source's plants and elsewhere
+        on = h < FLOOR_CM
+        both = np.zeros(len(h), bool)
+        both[:-1] = on[:-1] & on[1:]
+        in_plant = np.zeros(len(h), bool)
+        for a, b, _ in found[side]:
+            in_plant[a:b] = True
+        step = np.where(both, sl, 0.0)
+        minutes = max(len(h) / FPS / 60.0, 1e-9)
+        floor_slide = {"in_source_plants": round(float(step[in_plant].sum()) / minutes, 1),
+                       "elsewhere": round(float(step[~in_plant].sum()) / minutes, 1)}
         fl, paths, toe_fl, where = [], [], [], []
         for a, b, toe in found[side]:
             fl.append(h[a:b + 1])
@@ -352,7 +430,106 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
                      "slide_path_cm": quant(paths), "plants_sliding_over_1cm": int(np.sum(np.array(paths) > 1.0)),
                      "toe_plants": int(sum(1 for _, _, t in found[side] if t)), "toe_float_cm": quant(np.maximum(tf, 0.0)),
                      "toe_float_over_1cm_pct": round(100.0 * float(np.mean(tf > 1.0)), 3) if len(tf) else None,
-                     "sliding_runs": [[a, b, round(p, 2)] for (a, b, _), p in zip(where, paths) if p > 1.0]}
+                     "sliding_runs": [[a, b, round(p, 2)] for (a, b, _), p in zip(where, paths) if p > 1.0],
+                     "floor_slide_cm_per_min": floor_slide}
+    return out
+
+
+def best_lags(vs, vt):
+    """per window of LAG_WINDOW frames (LAG_HOP apart) where the source's speeds vs move, the lag (frames, + the target
+    later) within LAG_MAX at which the target's speeds vt correlate best"""
+    out = []
+    for a in range(LAG_MAX, len(vs) - LAG_WINDOW - LAG_MAX, LAG_HOP):
+        x = vs[a:a + LAG_WINDOW]
+        if x.std() < 1e-4:
+            continue
+        best, lag = -2.0, 0
+        for L in range(-LAG_MAX, LAG_MAX + 1):
+            y = vt[a + L:a + L + LAG_WINDOW]
+            if y.std() < 1e-4:
+                continue
+            c = float(np.corrcoef(x, y)[0, 1])
+            if c > best:
+                best, lag = c, L
+        out.append(lag)
+    return np.array(out, dtype=int)
+
+
+def turn_deg(a, b):
+    """the angle (degrees) between world turns a and b [F, 4]"""
+    d = np.abs(np.sum(np.asarray(a) * np.asarray(b), axis=-1))
+    return np.degrees(2.0 * np.arccos(np.clip(d, -1.0, 1.0)))
+
+
+def hip_height(body):
+    """the hip joints' height over the ankles at rest (the mean of the sides): the legs' size"""
+    return float(np.mean([body.rest(s + "足")[1] - body.rest(s + "足首")[1] for s in SIDES]))
+
+
+def chore(src_pose, src_body, tgt_pose, tgt_body, found):
+    """the choreography the target keeps (see the module's doc); found: the source's plants (source_plants)"""
+    out = {}
+    names = [n for n in CHORE_POINTS if src_pose.sk.has(n) and tgt_pose.sk.has(n)]
+    ws, wt = src_pose.get(names), tgt_pose.get(names)
+    timing = {}
+    for n in names:
+        vs = np.linalg.norm(np.diff(ws[n][0], axis=0), axis=1)
+        vt = np.linalg.norm(np.diff(wt[n][0], axis=0), axis=1)
+        lags = best_lags(vs, vt)
+        timing[n] = {"windows": int(len(lags)), "lag0_share": round(float(np.mean(lags == 0)), 4) if len(lags) else None,
+                     "lag_ge2_share": round(float(np.mean(np.abs(lags) >= 2)), 4) if len(lags) else None,
+                     "lag_p50": float(np.median(lags)) if len(lags) else None}
+    out["timing"] = timing
+    hands = {}
+    for side in SIDES:
+        need = ["上半身2", side + "腕", side + "手首"]
+        if not all(src_pose.sk.has(n) and tgt_pose.sk.has(n) for n in need):
+            continue
+        a_s, a_t = src_pose.get(need), tgt_pose.get(need)
+        u = ML.qrot(ML.qconj(a_s["上半身2"][1]), a_s[side + "手首"][0] - a_s[side + "腕"][0])
+        v = ML.qrot(ML.qconj(a_t["上半身2"][1]), a_t[side + "手首"][0] - a_t[side + "腕"][0])
+        ang = np.degrees(np.arccos(np.clip(np.sum(unit(u) * unit(v), axis=1), -1.0, 1.0)))
+        hands[side] = {"deg": quant(ang), "frames_over_10deg": int(np.sum(ang > 10.0)), "frames_over_20deg": int(np.sum(ang > 20.0)),
+                       "runs_over_20deg": [[a, b] for a, b in runs(ang > 20.0, 3)][:40]}
+    out["hand_directions"] = hands
+    for n, key in (("頭", "head_turn_deg"), ("上半身2", "chest_turn_deg")):
+        if src_pose.sk.has(n) and tgt_pose.sk.has(n):
+            out[key] = quant(turn_deg(src_pose.get([n])[n][1], tgt_pose.get([n])[n][1]))
+    scale = hip_height(tgt_body) / hip_height(src_body)
+    out["legs_ratio"] = round(scale, 4)
+    steps = {}
+    for side in SIDES:
+        ik = side + "足ＩＫ"
+        if ik not in ws or ik not in wt:
+            continue
+        cs = np.array([ws[ik][0][a:b + 1][:, [0, 2]].mean(axis=0) for a, b, _ in found.get(side, [])]).reshape(-1, 2)
+        ct = np.array([wt[ik][0][a:b + 1][:, [0, 2]].mean(axis=0) for a, b, _ in found.get(side, [])]).reshape(-1, 2)
+        ds, dt = np.diff(cs, axis=0), np.diff(ct, axis=0)
+        ls, lt = np.linalg.norm(ds, axis=1), np.linalg.norm(dt, axis=1)
+        big = ls * UNIT_CM >= STEP_MIN_CM
+        ang = np.degrees(np.abs(np.arctan2(ds[:, 0] * dt[:, 1] - ds[:, 1] * dt[:, 0], np.sum(ds * dt, axis=1))))
+        steps[side] = {"steps": int(big.sum()), "length_ratio": quant(lt[big] / ls[big]) if big.any() else None,
+                       "direction_deg": quant(ang[big]) if big.any() else None}
+    out["steps"] = steps
+    feet = [s + n for s in SIDES for n in ("足ＩＫ", "つま先ＩＫ")]
+    if all(src_pose.sk.has(n) and tgt_pose.sk.has(n) for n in feet):
+        def low(pose, body):
+            w = pose.get(feet)
+            return np.min(np.stack([(w[n][0][:, 1] - body.rest(n)[1]) * UNIT_CM for n in feet]), axis=0)
+        hs, ht = low(src_pose, src_body), low(tgt_pose, tgt_body)
+        js, jt = runs(hs > JUMP_CM, JUMP_MIN), runs(ht > JUMP_CM * scale, JUMP_MIN)
+        rows = []
+        for a, b in js:
+            k = a + int(np.argmax(hs[a:b + 1]))
+            row = {"first": a, "last": b, "peak": k, "peak_cm": round(float(hs[k]), 2)}
+            match = [(c, d) for c, d in jt if c <= b and d >= a]
+            if match:
+                c, d = match[0][0], match[-1][1]
+                k2 = c + int(np.argmax(ht[c:d + 1]))
+                row.update(target=[c, d], target_peak_shift=int(k2 - k), target_peak_cm=round(float(ht[k2]), 2))
+            rows.append(row)
+        out["jumps"] = {"source": len(js), "matched": int(sum(1 for r in rows if "target" in r)), "rows": rows[:100],
+                        "target_only": [[c, d] for c, d in jt if not any(c <= b and d >= a for a, b in js)][:100]}
     return out
 
 
@@ -380,6 +557,7 @@ def measure(src_motion, src_body, tgt_motion, tgt_body, last=None):
             arrays["arm_in_%s_%s" % (tag, {"左": "left", "右": "right"}[side])] = row.pop("_deep")
     rep["arms_in_body"] = {"target": t_in, "source": s_in}
     rep["plants"] = plants(sp, src_body, tgt_motion, tgt_body, frames)
+    rep["chore"] = chore(sp, src_body, tp, tgt_body, source_plants(sp, src_body))
     rep["summary"] = summary(rep)
     rep["_arrays"] = arrays
     return rep
@@ -388,12 +566,20 @@ def measure(src_motion, src_body, tgt_motion, tgt_body, last=None):
 def summary(rep):
     touch = kept = 0
     lost = 0
+    n_runs = resting = kept_resting = 0
     for side, parts in rep["contacts"].items():
         for r in parts.values():
             touch += r["source_touch_frames"]
             kept += r["kept_frames"]
             lost += len(r["lost_runs"])
-    out = {"contact_frames": touch, "contacts_kept_share": round(kept / touch, 4) if touch else None, "contacts_lost_runs": lost}
+            for run in r.get("runs", ()):
+                n_runs += 1
+                if run["resting"]:
+                    resting += run["frames"]
+                    kept_resting += run["kept_frames"]
+    out = {"contact_frames": touch, "contacts_kept_share": round(kept / touch, 4) if touch else None, "contacts_lost_runs": lost,
+           "contact_runs": n_runs, "contact_frames_resting": resting,
+           "contacts_kept_share_resting": round(kept_resting / resting, 4) if resting else None}
     for tag in ("target", "source"):
         rows = rep["arms_in_body"][tag].values()
         out["arms_in_body_%s_frames_over_1cm" % tag] = int(sum(r["frames_over_1cm"] for r in rows))
@@ -407,6 +593,22 @@ def summary(rep):
         tf = [r["toe_float_over_1cm_pct"] for r in pl.values() if r["toe_float_over_1cm_pct"] is not None]
         out["toe_float_over_1cm_pct"] = round(float(np.mean(tf)), 3) if tf else None
         out["plant_under_floor_frames"] = int(sum(r["under_floor_frames"] for r in pl.values()))
+        out["floor_slide_cm_per_min"] = round(float(sum(sum(r["floor_slide_cm_per_min"].values()) for r in pl.values())), 1)
+        out["floor_slide_off_plants_cm_per_min"] = round(float(sum(r["floor_slide_cm_per_min"]["elsewhere"] for r in pl.values())), 1)
+    ch = rep.get("chore", {})
+    lag0 = [t["lag0_share"] for t in ch.get("timing", {}).values() if t["lag0_share"] is not None]
+    out["chore_timing_lag0_share_min"] = round(min(lag0), 4) if lag0 else None
+    hd = [h["deg"]["p90"] for h in ch.get("hand_directions", {}).values() if h["deg"]]
+    out["chore_hand_direction_p90_deg"] = round(max(hd), 3) if hd else None
+    out["chore_hand_direction_over_20deg_frames"] = int(sum(h["frames_over_20deg"] for h in ch.get("hand_directions", {}).values()))
+    out["chore_head_turn_p99_deg"] = ch["head_turn_deg"]["p99"] if ch.get("head_turn_deg") else None
+    ratios = [s["length_ratio"]["p50"] for s in ch.get("steps", {}).values() if s["length_ratio"]]
+    out["chore_step_length_ratio_p50"] = round(float(np.mean(ratios)), 4) if ratios else None
+    out["chore_legs_ratio"] = ch.get("legs_ratio")
+    if "jumps" in ch:
+        out["chore_jumps_source"] = ch["jumps"]["source"]
+        out["chore_jumps_matched"] = ch["jumps"]["matched"]
+        out["chore_airborne_target_only"] = len(ch["jumps"]["target_only"])
     return out
 
 
