@@ -5,29 +5,29 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1936（定数 1562・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 385（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 59。
+- 数: 全部 1934（定数 1560・引数 94・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 398（retarget 256・rig 58・踊りだけ 93）、記録の出所つき 72。
 
 ## v11 の組み直しで見直す順番（上流から）
 
 | 順 | 段 | 道具 | 値 | retarget | rig | 踊り | 確かめの物差し（tools/mv_inspect.py） | ほかの確かめ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 38 | 2 | 7 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
-| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 62 | 22 | 1 | 1 | feet.under_floor_frames、feet.ik_miss_floor_frames、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.toe_float_pct | motion_fk.py・retarget_check.py |
+| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 66 | 25 | 1 | 1 | feet.under_floor_frames、feet.ik_miss_floor_frames、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.toe_float_pct | motion_fk.py・retarget_check.py |
 | 3 | 平滑化と手ぶれ除去（v4s） | smooth_motion.py | 18 | 1 | 0 | 0 | spikes.centre_per_min、spikes.wrist_R_per_min、spikes.wrist_L_per_min、spikes.head_per_min、arms.wrist_8hz_pct、arms.wrist_3_6hz_pct、upper.head_stop_ms | motion_jerk.py |
 | 4 | 呼吸 | breath_layer.py | 60 | 6 | 0 | 3 | upper.head_stops_per_min、upper.upper_sudden_stops_per_min | - |
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
 | 6 | 運動（遅れと堅さ、--preset human --elbow-hinge on） | motor_layer.py | 103 | 15 | 3 | 3 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R、arms.a09_elbow_wrist_L、arms.a09_elbow_wrist_R、upper.head_sudden_stops_per_min、upper.head_stop_ms | - |
 | 7 | 背骨 4 本へ配る | spine_layer.py | 9 | 1 | 0 | 0 | upper.upper_sudden_stops_per_min、upper.chest_follow | spine_check.py |
-| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 27 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
+| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 78 | 28 | 5 | 3 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
 | 9 | 体重（順 C の balance） | balance_layer.py | 96 | 32 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
-| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
-| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
+| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 78 | 28 | 5 | 3 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
+| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 66 | 27 | 1 | 6 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
-| 14 | 視線 | eye_gaze.py | 105 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
+| 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
-| 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
-| 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
+| 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
+| 17 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
@@ -96,7 +96,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FREE | 100.0 | units | 50 | a translation range never reached (model units) |  | ○ |  |  |  |  |  | retarget |
 
-## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、56）
+## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、60）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -107,55 +107,59 @@
 | fit(tol_pos) | 0.01 |  | 344 |  |  |  |  |  |  |  |  |  |
 | fit_rotations(tol_deg) | 0.5 | deg | 375 |  |  |  |  |  |  |  |  |  |
 | fit_positions(tol) | 0.01 |  | 378 |  |  |  |  |  |  |  |  |  |
-| place(depth) | 0 |  | 569 |  |  |  |  |  |  |  |  |  |
-| _directions(n) | 98 |  | 692 |  |  |  |  |  |  |  |  |  |
-| FLOOR_EPS | 0.06 | units | 798 | units (5 mm): a sole point this close to the floor touches it |  | ○ |  |  |  |  |  | retarget |
-| STILL | 0.025 | units | 799 | units a frame (6 cm/s): a touching point slower than this stands |  | ○ |  |  |  |  |  | retarget |
-| PLANT_MIN | 3 | frames | 800 | frames: standing this long is a plant |  |  |  |  |  |  |  |  |
-| PITCH_FLAT_DEG | 4.0 | deg | 801 | a foot pitched less than this stands flat; toe down more: on the toe; toe up more: on the heel |  |  |  |  |  |  |  |  |
-| MAX_PITCH_DEG | 75.0 | deg | 802 | the foot's pitch from flat at most (toe down) |  |  |  |  |  |  |  |  |
-| EASE | 3 | frames | 803 | frames a correction takes to come in and to go out |  |  |  |  |  |  |  |  |
-| TOUCH_FLOOR | 0.25 | units | 813 | units (2 cm) |  | ○ |  | ○ |  |  |  | retarget |
-| TOUCH_RISE | 0.03 | units | 814 | units a frame (7 cm/s) |  | ○ |  |  |  |  |  | retarget |
-| TOUCH_SPEED | 20.0 / UNIT_CM / FPS | units | 815 | units a frame (20 cm/s) |  | ○ |  |  |  |  |  | retarget |
-| TURN_MIN | math.radians(60.0) / FPS | deg/s | 816 | radians a frame (60 degrees a second) |  |  |  |  |  |  |  |  |
-| TURN_NEAR | 18.0 / UNIT_CM | units | 817 | units (18 cm): how far the turn's centre may lie from the sole's slowest point (the song's 127.9 s right foot turns 320-460 degrees a second about a point 15-17 cm off i… |  | ○ |  | ○ |  |  |  | retarget |
-| LINE_T | np.linspace(-0.3, 1.0, 27) |  | 820 | the sole's line: shares of the way from the heel point to the toe point |  |  |  |  |  |  |  |  |
-| TOUCH_MIN | 3 |  | 821 |  |  |  |  |  |  |  |  |  |
-| AIR_H | 0.05 | units | 827 | units (4 mm) |  | ○ |  | ○ |  |  |  | retarget |
-| HOLD_AIR | 6 | frames | 828 | frames |  |  |  |  |  |  |  |  |
-| CLEAR_TO | 0.125 | units | 829 | units (1 cm): a carried shoe is kept as high over the floor as the source's, up to this (over main's contact_check's floor, 4 mm; under the review's 1.2 cm, within which… |  | ○ |  |  |  |  |  | retarget |
-| TOUCH_PITCH_MAX | 20.0 | deg | 833 | degrees: the most a foot's pitch is changed from the source's to reach the floor, on the floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing o… |  |  |  | ○ |  |  |  | dance |
-| HEEL_BACK | 0.3 |  | 837 | without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle |  |  |  |  |  |  |  |  |
-| sole_shell(cap) | 256 |  | 869 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 904 |  |  |  |  |  |  |  |  |  |
-| PITCH_ON_FLOOR | 0.0125 | units | 996 | units (1 mm): a point this close to the floor is on it (solve_pitch takes it as found) |  | ○ |  |  |  |  |  | retarget |
-| solve_pitch(step) | 0.5 |  | 999 |  |  |  |  |  |  |  |  |  |
-| FLAT_LIFT_MAX | 0.15 | units | 1043 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
-| FEET_ROUNDS | 2 |  | 1044 |  |  |  |  |  |  |  |  |  |
-| _quant(qs) | (50, 90, 99, 100) |  | 1339 |  |  |  |  |  |  |  |  |  |
-| TOUCH | 0.12 | units | 1348 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
-| NEAR | 0.8 | units | 1349 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
-| HAND_THICK | 0.15 | units | 1350 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
-| TOUCH_BAND | 0.08 | units | 1351 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_ROUNDS | 4 |  | 1352 |  |  |  |  |  |  |  |  |  |
-| CLEAR_MARGIN | 0.02 | units | 1353 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_TOL | 0.005 | units | 1354 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
-| ELBOW_SHARE | 0.25 |  | 1355 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
-| HOLD_FROM | 0.6 |  | 1356 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
-| SHOULDER_SKIP | 0.5 |  | 1357 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
-| TOL_DEG | 0.3 | deg | 1358 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
-| SWIVELS | 24 |  | 1698 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
-| SWIVEL_COST | 0.02 | units | 1699 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
-| SWIVEL_CLEARS | 0.03 | units | 1700 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
-| of(depth) | 0 |  | 1876 |  |  |  |  |  |  |  |  |  |
-| STANCE_LOW | 0.1 | units | 1991 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
-| STANCE_SLOW | 0.05 | units | 1992 | units a frame |  | ○ |  |  |  |  |  | retarget |
-| TOE_STILL | 0.03 | units | 1993 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
-| TOE_PITCH | (6.0, 45.0) | deg | 1994 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
-| lower_envelope(q) | 10.0 |  | 2019 |  |  |  |  |  |  |  |  |  |
-| lower_envelope(width) | 6.0 |  | 2019 |  |  |  |  |  |  |  |  |  |
-| --stance | "legs" |  | 2210 |  |  |  |  |  |  |  |  |  |
+| place(depth) | 0 |  | 571 |  |  |  |  |  |  |  |  |  |
+| _directions(n) | 98 |  | 694 |  |  |  |  |  |  |  |  |  |
+| FLOOR_EPS | 0.06 | units | 800 | units (5 mm): a sole point this close to the floor touches it |  | ○ |  |  |  |  |  | retarget |
+| STILL | 0.025 | units | 801 | units a frame (6 cm/s): a touching point slower than this stands |  | ○ |  |  |  |  |  | retarget |
+| PLANT_MIN | 3 | frames | 802 | frames: standing this long is a plant |  |  |  |  |  |  |  |  |
+| PITCH_FLAT_DEG | 4.0 | deg | 803 | a foot pitched less than this stands flat; toe down more: on the toe; toe up more: on the heel |  |  |  |  |  |  |  |  |
+| MAX_PITCH_DEG | 75.0 | deg | 804 | the foot's pitch from flat at most (toe down) |  |  |  |  |  |  |  |  |
+| EASE | 3 | frames | 805 | frames a correction takes to come in and to go out |  |  |  |  |  |  |  |  |
+| TOUCH_FLOOR | 0.25 | units | 815 | units (2 cm) |  | ○ |  | ○ |  |  |  | retarget |
+| TOUCH_RISE | 0.03 | units | 816 | units a frame (7 cm/s) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_SPEED | 20.0 / UNIT_CM / FPS | units | 817 | units a frame (20 cm/s) |  | ○ |  |  |  |  |  | retarget |
+| TURN_MIN | math.radians(60.0) / FPS | deg/s | 818 | radians a frame (60 degrees a second) |  |  |  |  |  |  |  |  |
+| TURN_NEAR | 18.0 / UNIT_CM | units | 819 | units (18 cm): how far the turn's centre may lie from the sole's slowest point (the song's 127.9 s right foot turns 320-460 degrees a second about a point 15-17 cm off i… |  | ○ |  | ○ |  |  |  | retarget |
+| LINE_T | np.linspace(-0.3, 1.0, 27) |  | 822 | the sole's line: shares of the way from the heel point to the toe point |  |  |  |  |  |  |  |  |
+| TOUCH_MIN | 3 |  | 823 |  |  |  |  |  |  |  |  |  |
+| AIR_H | 0.05 | units | 829 | units (4 mm) |  | ○ |  | ○ |  |  |  | retarget |
+| HOLD_AIR | 6 | frames | 830 | frames |  |  |  |  |  |  |  |  |
+| CLEAR_TO | 0.125 | units | 831 | units (1 cm): a carried shoe is kept as high over the floor as the source's, up to this (over main's contact_check's floor, 4 mm; under the review's 1.2 cm, within which… |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_PITCH_MAX | 20.0 | deg | 835 | degrees: the most a foot's pitch is changed from the source's to reach the floor, on the floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing o… |  |  |  | ○ |  |  |  | dance |
+| HEEL_BACK | 0.3 |  | 839 | without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle |  |  |  |  |  |  |  |  |
+| sole_shell(cap) | 256 |  | 871 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 906 |  |  |  |  |  |  |  |  |  |
+| PITCH_ON_FLOOR | 0.0125 | units | 998 | units (1 mm): a point this close to the floor is on it (solve_pitch takes it as found) |  | ○ |  |  |  |  |  | retarget |
+| solve_pitch(step) | 0.5 |  | 1001 |  |  |  |  |  |  |  |  |  |
+| FLAT_LIFT_MAX | 0.15 | units | 1045 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
+| FEET_ROUNDS | 2 |  | 1046 |  |  |  |  |  |  |  |  |  |
+| JUMP_NEAR | 0.25 | units | 1057 | units (2 cm) | v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ） | ○ |  | ○ |  |  |  | retarget |
+| JUMP_RATE | 2.5 / UNIT_CM | units | 1058 | units a frame (2.5 cm: 75 cm/s) | v11feet 2026-10-17: 新設 2.5 cm/コマ。床の近くで止めの分を 1 コマで返す跳び（128.0 秒の 13.7 cm）を、元の足より 2.5 cm/コマ以上速く動かないように前後へ配る | ○ |  |  |  |  |  | retarget |
+| JUMP_SPREAD | 6 | frames | 1059 | frames each way at most | v11feet 2026-10-17: 新設 6 コマ（各側） |  |  |  |  |  |  |  |
+| JUMP_TOUCH | 0.025 | units | 1060 | units (2 mm): a shoe's vertices this near its lowest touch (tools/sink_check.py's) | v11feet 2026-10-17: 新設 2 mm（tools/sink_check.py の触れる頂点、retarget_check の pops と同じ読み方）。底の線では 104.4 秒の着地の 9 cm を見落とした | ○ |  |  |  |  |  | retarget |
+| _quant(qs) | (50, 90, 99, 100) |  | 1426 |  |  |  |  |  |  |  |  |  |
+| TOUCH | 0.12 | units | 1435 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| NEAR | 0.8 | units | 1436 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
+| HAND_THICK | 0.15 | units | 1437 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_BAND | 0.08 | units | 1438 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_ROUNDS | 4 |  | 1439 |  |  |  |  |  |  |  |  |  |
+| CLEAR_MARGIN | 0.02 | units | 1440 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_TOL | 0.005 | units | 1441 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
+| ELBOW_SHARE | 0.25 |  | 1442 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
+| HOLD_FROM | 0.6 |  | 1443 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
+| SHOULDER_SKIP | 0.5 |  | 1444 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
+| TOL_DEG | 0.3 | deg | 1445 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
+| SWIVELS | 24 |  | 1785 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
+| SWIVEL_COST | 0.02 | units | 1786 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
+| SWIVEL_CLEARS | 0.03 | units | 1787 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
+| of(depth) | 0 |  | 1963 |  |  |  |  |  |  |  |  |  |
+| STANCE_LOW | 0.1 | units | 2078 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
+| STANCE_SLOW | 0.05 | units | 2079 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| TOE_STILL | 0.03 | units | 2080 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
+| TOE_PITCH | (6.0, 45.0) | deg | 2081 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
+| lower_envelope(q) | 10.0 |  | 2106 |  |  |  |  |  |  |  |  |  |
+| lower_envelope(width) | 6.0 |  | 2106 |  |  |  |  |  |  |  |  |  |
+| --stance | "legs" |  | 2297 |  |  |  |  |  |  |  |  |  |
 
 ## fix_twist.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、6）
 
@@ -453,7 +457,7 @@
 | DAMP | 1e-6 |  | 109 |  |  |  |  |  |  |  |  |  |
 | frame_runs(gap) | 5 |  | 142 |  |  |  |  |  |  |  |  |  |
 
-## foot_layer.py（8. 足（最初の足の層 feet0、--landing off）、75）
+## foot_layer.py（8. 足（最初の足の層 feet0、--landing off）、78）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -519,19 +523,22 @@
 | HOVER_ACC_TOL | 0.5 | units/s^2 | 720 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
 | HOVER_TOUCH | 0.025 | units | 721 | units (2 mm): the shoe's vertices this close to its lowest are the part that would touch |  | ○ |  |  |  |  |  | retarget |
 | HOVER_GLIDE（引数 --hover-glide） | TOE_SLIDE[0] | cm/s | 722 | cm/s (30): a frame whose lower shoe's lowest part moves along the floor faster than this is a step's swing skimming the floor, not a foot held over it: the speed under w… | HANDOVER 2026-10-17 floaty: 協調役の決め「--hover-glide は既定 30 のまま」（1000 にすると浮き 4.12 % だが 10 cm 以上の滑りが 27.9 回/分） | ○ |  | ○ |  | ○ |  | retarget |
-| LANDING_WINDOW | 6 | frames | 900 | frames (0.2 s) after a touchdown over which the heel comes down with the pelvis |  |  | ○ | ○ |  | ○ | ○ | retarget |
-| LANDING_GAP | 4 | frames | 901 | frames off the floor before a touchdown (the human baseline's a05) |  |  |  |  |  | ○ |  |  |
-| REACH_KNEE_DEG | 5.5 | deg | 907 | The human baseline found no frame of a planted human leg straighter than 5 degrees (a05's knee: the hip joint's distance to the ankle, the law of cosines); the MV's are … |  |  |  | ○ | ○ | ○ |  | rig |
-| SKIM_SPEED | (5.0, 15.0) | cm | 911 | A foot that the dance moves over the floor faster than the first speed (cm/s) is less and less, faster than the second not at all, put onto the floor where the dance has… |  | ○ |  | ○ |  |  |  | retarget |
-| HEEL_DROP_DEG | 5.0 | deg | 914 | The most the landing's heel comes down in a frame (degrees): the cap (some 25 degrees) over 5 frames, about the humans' 0.1 s median from the touch to the heel down and … |  |  |  |  |  |  |  |  |
-| SKIM_LIFT | (CONTACT_EXIT, CONTACT_EXIT + 0.005) |  | 915 | (over the contact's hysteresis: a foot the dance keeps on the floor is not taken for a skimming one; the review's hovers, 2026-10-16) |  |  |  | ○ |  |  |  | dance |
-| least_turn(rounds) | 30 |  | 932 |  |  |  |  |  |  |  |  |  |
-| damped_up(substeps) | 8 |  | 1165 |  |  |  |  |  |  |  |  |  |
-| toes_touching(rounds) | 30 |  | 1215 |  |  |  |  |  |  |  |  |  |
-| measure_report(toe_extra) | 0.0 |  | 1748 |  |  |  |  |  |  |  |  |  |
-| --trace-toe-cm | 0.0 | cm | 1776 | how much further the trace's model's foot reached from the ankle to the toe (cm): its pointed toe touched the floor where this model's stops short; the report's trace_to… |  | ○ |  | ○ |  |  |  | retarget |
-| --toes | "anatomical" |  | 1780 | the toes (足先EX): anatomical (the floor bends them, a foot on its ball stays on it until it leaves, they return over TOE_RELEASE_TAU after it, nothing bent in the air) or… |  |  |  |  |  |  |  |  |
-| --toe-reach-cm | 0.0 | cm | 1784 | a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is… |  | ○ |  |  |  |  |  | retarget |
+| LANDING_WINDOW | 6 | frames | 901 | frames (0.2 s) after a touchdown over which the heel comes down with the pelvis |  |  | ○ | ○ |  | ○ | ○ | retarget |
+| LANDING_GAP | 4 | frames | 902 | frames off the floor before a touchdown (the human baseline's a05) |  |  |  |  |  | ○ |  |  |
+| REACH_KNEE_DEG | 5.5 | deg | 908 | The human baseline found no frame of a planted human leg straighter than 5 degrees (a05's knee: the hip joint's distance to the ankle, the law of cosines); the MV's are … |  |  |  | ○ | ○ | ○ |  | rig |
+| SKIM_SPEED | (5.0, 15.0) | cm | 912 | A foot that the dance moves over the floor faster than the first speed (cm/s) is less and less, faster than the second not at all, put onto the floor where the dance has… |  | ○ |  | ○ |  |  |  | retarget |
+| HEEL_DROP_DEG | 5.0 | deg | 915 | The most the landing's heel comes down in a frame (degrees): the cap (some 25 degrees) over 5 frames, about the humans' 0.1 s median from the touch to the heel down and … |  |  |  |  |  |  |  |  |
+| SKIM_LIFT | (0.0, 0.005) | units | 916 | units over the trace's floor (the flat sole): a foot moving faster than SKIM_SPEED higher than 0.4 mm over it is not put onto it. (CONTACT_EXIT's 4.8 to 5.2 mm before v1… | v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 4.8〜5.2 mm → 0〜0.4 mm。retarget が元の高さで運ぶ足を足の層が床へ下ろして滑らせていた（足の層 1… | ○ |  | ○ |  |  |  | retarget |
+| SKIM_LIFT_BEFORE | (CONTACT_EXIT, CONTACT_EXIT + 0.005) |  | 923 | (--skim off: the band before v11feet) | v11feet 2026-10-17: --skim off で前の作り（landing human だけ、CONTACT_EXIT の 4.8〜5.2 mm） |  |  |  |  |  |  |  |
+| least_turn(rounds) | 30 |  | 939 |  |  |  |  |  |  |  |  |  |
+| damped_up(substeps) | 8 |  | 1172 |  |  |  |  |  |  |  |  |  |
+| toes_touching(rounds) | 30 |  | 1222 |  |  |  |  |  |  |  |  |  |
+| measure_report(toe_extra) | 0.0 |  | 1755 |  |  |  |  |  |  |  |  |  |
+| --trace-toe-cm | 0.0 | cm | 1783 | how much further the trace's model's foot reached from the ankle to the toe (cm): its pointed toe touched the floor where this model's stops short; the report's trace_to… |  | ○ |  | ○ |  |  |  | retarget |
+| --toes | "anatomical" |  | 1787 | the toes (足先EX): anatomical (the floor bends them, a foot on its ball stays on it until it leaves, they return over TOE_RELEASE_TAU after it, nothing bent in the air) or… |  |  |  |  |  |  |  |  |
+| --toe-reach-cm | 0.0 | cm | 1791 | a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is… |  | ○ |  |  |  |  |  | retarget |
+| --skim | "on" |  | 1798 | on (the default, with any --landing): a foot the dance moves faster than SKIM_SPEED over the floor (its flat sole higher than SKIM_LIFT) is not pressed onto it; off: as … | v11feet 2026-10-17: 新設、既定 on（--landing off の 1 回目にも）。--landing off --skim off で c012c32 とバイト同じ |  |  | ○ |  | ○ |  | dance |
+| --hover | "off" |  | 1802 | sink: where no foot is on the floor but the lower shoe hovers under HOVER_MAX over it and the pelvis does not fall as in a flight, the whole figure (centre and leg IKs) … | v11feet 2026-10-17: 既定 sink（--landing human）→ off。retarget の後は 2 回目の足の層の下げが 1 か所 23 コマ・最大 1.3 cm だけで、off でも鎖の最後の数が同じ（靴の… |  |  | ○ |  |  |  | dance |
 
 ## balance_layer.py（9. 体重（順 C の balance）、96）
 
@@ -634,71 +641,76 @@
 | AIR_RAMP | 3 | frames | 1436 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
 | AIR_MIN | 4 | frames | 1437 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
 
-## contact_layer.py（11. 接地の計画（枝 contact、査読中）、61）
+## contact_layer.py（11. 接地の計画（枝 contact、査読中）、66）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNIT_CM | 8.0 | cm | 118 |  |  | ○ |  |  |  |  |  | retarget |
-| FPS | 30.0 |  | 119 |  |  |  |  |  |  |  |  |  |
-| G | 122.5 | units/s^2 | 120 | units/s^2: gravity (9.8 m/s^2) at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
-| ON_FLOOR | 0.05 | units | 124 | units (4 mm, a05's contact): a shoe this low stands on the floor |  | ○ |  |  |  |  |  | retarget |
-| HOLD_MAX | 0.5 | units | 125 | units (4 cm, a05 s11's band): a still shoe lower than this is held over the floor ... |  | ○ |  |  |  |  |  | retarget |
-| HOLD_SPEED | 30.0 | cm/s | 126 | cm/s: ... its touching part moving along the floor slower than this (the foot layer's TOE_SLIDE and HOVER_GLIDE: a toe on the floor stays or slides slowly, a swing skims… |  | ○ |  |  |  |  |  | retarget |
-| HOLD_RISE | 20.0 | cm/s | 128 | cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch o… |  | ○ |  |  |  |  |  | retarget |
-| HOLD_MIN | 4 | frames | 130 | frames: a shorter hold is a foot passing by |  |  |  |  |  |  |  |  |
-| FLIGHT_FIT | 0.8 * G | units/s^2 | 131 | units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side falling faster than this is a flight even over a foot held still (people: 6 … |  | ○ | ○ |  |  | ○ |  | retarget |
-| FALL_BOUND | 122.0 | units/s^2 | 134 | units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot d… |  | ○ | ○ |  |  |  |  | retarget |
-| FALL_TOL | 0.5 | units/s^2 | 136 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
-| BRIDGE | 2 | frames | 137 | frames: a standing foot lifted this long or less stays down ... |  |  |  |  |  |  |  |  |
-| BRIDGE_LIFT | 0.1875 | units | 138 | units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT) |  | ○ |  |  |  |  |  | retarget |
-| EASE | 4 | frames | 139 | frames: a foot's lowering comes and goes over this many frames each way (the foot layer's) |  |  |  |  |  |  |  |  |
-| TOUCH | 0.025 | units | 140 | units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH) |  | ○ |  |  |  |  |  | retarget |
-| NEED_CM | 10.0 | cm | 141 | cm: the centre of mass's floor point this far outside the other foot's sole: this foot bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wi… |  | ○ |  |  |  | ○ |  | retarget |
-| SOLE_TOUCH | 0.15 | units | 144 | units (1.2 cm): the vertices of a shoe this near the floor make its sole on it |  | ○ |  |  |  |  |  | retarget |
-| KNEE_GIVE | 10.0 | deg | 145 | degrees: a held foot's knee stays within this of the leg's without the hold; further the foot slides as the dance has it (the knee change tools/sink_check.py and tools/c… |  |  |  | ○ |  |  |  | dance |
-| DROP_MAX | 1.0 | units | 150 | units (8 cm): the most the pelvis goes down to let a standing leg reach the floor |  | ○ |  |  |  |  |  | retarget |
-| REACH_MIN | 9 | frames | 151 | frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered |  |  |  |  |  |  |  |  |
-| DROP_WINDOW | 24 | frames | 152 | frames each side of a lowering over which it comes and goes (smoothly, within the bound) |  |  |  |  |  |  |  |  |
-| DROP_QP_ROUNDS | 400 |  | 153 |  |  |  |  |  |  |  |  |  |
-| JUDGE_MISS | 0.75 | units | 154 | units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); furthe… |  | ○ |  |  |  |  |  | retarget |
-| PLANT_SPEED | 30.0 | cm/s | 157 | cm/s: a standing foot's touching part moving slower than this is held in place (the trace's drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of the… |  | ○ |  | ○ |  | ○ |  | retarget |
-| AIR_MIN | 4 | frames | 160 | frames with no foot standing: a flight (the balance layer's AIR_MIN) |  |  |  |  |  |  |  |  |
-| WINDOW | 8 | frames | 161 | frames each side of a flight over which the pelvis may change |  |  |  |  |  |  |  |  |
-| SMOOTH | 30.0 |  | 162 | the weight of the change's third differences against the change itself |  |  |  |  |  |  |  |  |
-| AIR_CLEAR | 0.2 + 0.0125 | units | 163 | units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the balance layer's support, tools/sink_check.py's SUPPORT_CM) |  | ○ |  |  |  |  |  | retarget |
-| CARRY_RAMP | 2 | frames | 165 | frames: a foot leaving the floor goes with the body's change by half on its first frame off it and fully from the second (the same before a landing) |  |  |  |  |  |  |  |  |
-| LIMB_SMOOTH | (1, 4, 6, 4, 1) |  | 167 | the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz pas… |  |  |  |  |  |  |  |  |
-| PAD | 2 | frames | 169 | frames pinned to no change each side of a window of the pelvis's solves |  |  |  |  |  |  |  |  |
-| SUB_NEAR | 0.25 | units | 170 | units: the intervals checked between the frames (either end this near the floor) |  | ○ |  |  |  |  |  | retarget |
-| SUB_ROUNDS | 3 |  | 171 |  |  |  |  |  |  |  |  |  |
-| IK_MISS | 0.0125 | units | 172 | units (1 mm): MMD's ankle this far from its goal has not reached it |  | ○ |  |  |  |  |  | retarget |
-| LAND_TOL | 0.0125 | units | 173 | units (1 mm): a weight-bearing foot whose shoe MMD leaves higher than this gets more drop |  | ○ |  |  |  |  |  | retarget |
-| PUSH_ROUNDS | 4 |  | 174 | rounds of pushing the goal of a weight-bearing foot MMD leaves over the floor ... |  |  |  |  |  |  |  |  |
-| PUSH_STEP | 0.15 | units | 175 | units: ... by at most this a round (the foot layer's push) |  | ○ |  |  |  |  |  | retarget |
-| DROP_ROUNDS | 4 |  | 176 | rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short) |  |  |  |  |  |  |  |  |
-| FLIGHT_ROUNDS | 4 |  | 177 | rounds of solving the flight again on the centre of mass the changed dance moves ... |  |  |  | ○ |  |  |  | dance |
-| FLIGHT_RESID | 1.0 | units/s^2 | 178 | units/s^2: ... until it falls within this of gravity on the frames with air on both sides |  | ○ | ○ |  |  |  |  | retarget |
-| STRICT_SMOOTH | 3.0 |  | 179 | the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it |  |  |  |  |  |  |  |  |
-| STRICT_NEAR | 8 |  | 180 | brings within the bound (strict frames) with no need there: the least lowering, not a wide one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; … |  |  |  | ○ |  |  |  | dance |
-| KNEE_NEAR | 0.05 |  | 193 | of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two straighter than the frames round them are bent like them |  |  |  | ○ | ○ |  | ○ | rig |
-| KNEE_POP_DEG | 6.0 | deg | 195 | degrees: there a frame's bend comes within this of the line through its neighbours, and no neighbour's further than this the other way (rig_check counts a jump at 10. On… |  |  |  | ○ |  |  |  | dance |
-| KNEE_JUMP_DEG | 10.0 | deg | 199 | degrees: rig_check ik's jump, a frame further than this off the line through its neighbours. Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the revie… |  |  |  | ○ |  |  |  | dance |
-| KNEE_JUMP_NEAR | 1 | frames | 205 | frames |  |  |  |  |  |  |  |  |
-| KNEE_ROUNDS | 40 |  | 206 | rounds of evening out (a pop of two frames halves its gap a round) |  |  |  |  |  |  |  |  |
-| KNEE_PITCH_MAX | 30.0 | deg | 207 | degrees: the most a standing foot turns onto its toes or its heel for its knee |  |  |  |  |  |  |  |  |
-| KNEE_PITCH_STEP | 0.25 | deg | 208 | degrees: the turns tried |  |  |  |  |  |  |  |  |
-| KNEE_EDGE | 3 | frames | 209 | frames at either end of a standing run: a turn there is held on to the end of the run (the heel does not come down again before the foot lifts, nor rise again after it l… |  |  |  |  |  |  |  |  |
-| KNEE_TOE_TOL | 1e-4 | units | 212 | units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it) |  | ○ |  |  |  |  |  | retarget |
-| KNEE_PLAN_ROUNDS | 8 |  | 213 | rounds of the targets on the distances the changes so far leave (a turn held on to a run's end bends that frame more, and the frame before may then need more) |  |  |  |  |  |  |  |  |
-| runs(n) | 1 |  | 217 |  |  |  |  |  |  |  |  |  |
-| _r(n) | 3 |  | 224 |  |  |  |  |  |  |  |  |  |
-| knee_bend(least_deg) | 0.0 | deg | 432 |  |  |  |  |  |  |  |  |  |
-| knee_targets(least_deg) | 0.0 | deg | 483 |  |  |  |  |  |  |  |  |  |
-| solve_qp(batch) | 1 |  | 519 |  |  |  |  |  |  |  |  |  |
-| solve_qp(rounds) | 60 |  | 519 |  |  |  |  |  |  |  |  |  |
-| knee_turn(least) | 0.0 |  | 869 |  |  |  |  |  |  |  |  |  |
-| knee_turn(sign) | 0.0 |  | 869 |  |  |  |  |  |  |  |  |  |
-| knee_jump_frames(deg) | 10.0 |  | 1477 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 119 |  |  | ○ |  |  |  |  |  | retarget |
+| FPS | 30.0 |  | 120 |  |  |  |  |  |  |  |  |  |
+| G | 122.5 | units/s^2 | 121 | units/s^2: gravity (9.8 m/s^2) at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
+| ON_FLOOR | 0.05 | units | 125 | units (4 mm, a05's contact): a shoe this low stands on the floor |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MAX | 0.5 | units | 126 | units (4 cm, a05 s11's band): a still shoe lower than this is held over the floor ... |  | ○ |  |  |  |  |  | retarget |
+| HOLD_SPEED | 30.0 | cm/s | 127 | cm/s: ... its touching part moving along the floor slower than this (the foot layer's TOE_SLIDE and HOVER_GLIDE: a toe on the floor stays or slides slowly, a swing skims… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_RISE | 20.0 | cm/s | 129 | cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch o… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MIN | 4 | frames | 131 | frames: a shorter hold is a foot passing by |  |  |  |  |  |  |  |  |
+| FLIGHT_FIT | 0.8 * G | units/s^2 | 132 | units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side falling faster than this is a flight even over a foot held still (people: 6 … |  | ○ | ○ |  |  | ○ |  | retarget |
+| FLIGHT_BAND | (FLIGHT_FIT, 1.0 * G) | units/s^2 | 135 | units/s^2 down: a flight's centre of mass falls at the dance's own rate (its parabola over the flight) kept within this: slower comes to FLIGHT_FIT, faster (no body fall… | v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 新設（FLIGHT_FIT 0.8 G 〜 G）。宙の重心は踊りの落ち方（宙の区間の放物線）をこの中で保つ（遅いものは 0.8… | ○ | ○ | ○ |  | ○ |  | retarget |
+| FALL_BOUND | 122.0 | units/s^2 | 145 | units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot d… |  | ○ | ○ |  |  |  |  | retarget |
+| FALL_TOL | 0.5 | units/s^2 | 147 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
+| BRIDGE | 2 | frames | 148 | frames: a standing foot lifted this long or less stays down ... |  |  |  |  |  |  |  |  |
+| BRIDGE_LIFT | 0.1875 | units | 149 | units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT) |  | ○ |  |  |  |  |  | retarget |
+| EASE | 4 | frames | 150 | frames: a foot's lowering comes and goes over this many frames each way (the foot layer's) |  |  |  |  |  |  |  |  |
+| TOUCH | 0.025 | units | 151 | units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH) |  | ○ |  |  |  |  |  | retarget |
+| SWING_CLEAR | ON_FLOOR + 0.0125 | units | 152 | units (5 mm): a foot not standing whose touching part moves along the floor faster than PLANT_SPEED is not brought lower than this (nor below its own height in the dance… | v11feet 2026-10-17: 新設 5 mm（ON_FLOOR + 1 mm）。立ちの回りへの下げの馴らし・宙の体の変化に連れる下げで、30 cm/s より速い振りの足を床へ下ろしていた（曲の 22 + 15 cm/分） | ○ |  | ○ |  |  |  | retarget |
+| GLIDE_MAX | 0.25 | units | 158 | units (2 cm): in a run of AIR_MIN frames and more with no foot standing whose pelvis does not fall as in a flight (its parabola over the run and a frame each side slower… | v11feet 2026-10-17: 新設 2 cm（retarget の TOUCH_FLOOR）。立つ足の無い 4 コマ以上で腰が宙のように落ちない所を低い方の足で支える。1.6 cm（AIR_CLEAR）では宙 4.63 回/分・… | ○ |  | ○ |  | ○ |  | retarget |
+| NEED_CM | 10.0 | cm | 168 | cm: the centre of mass's floor point this far outside the other foot's sole: this foot bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wi… |  | ○ |  |  |  | ○ |  | retarget |
+| SOLE_TOUCH | 0.15 | units | 171 | units (1.2 cm): the vertices of a shoe this near the floor make its sole on it |  | ○ |  |  |  |  |  | retarget |
+| KNEE_GIVE | 10.0 | deg | 172 | degrees: a held foot's knee stays within this of the leg's without the hold; further the foot slides as the dance has it (the knee change tools/sink_check.py and tools/c… |  |  |  | ○ |  |  |  | dance |
+| DROP_MAX | 1.0 | units | 177 | units (8 cm): the most the pelvis goes down to let a standing leg reach the floor |  | ○ |  |  |  |  |  | retarget |
+| REACH_MIN | 9 | frames | 178 | frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered |  |  |  |  |  |  |  |  |
+| DROP_WINDOW | 24 | frames | 179 | frames each side of a lowering over which it comes and goes (smoothly, within the bound) |  |  |  |  |  |  |  |  |
+| DROP_QP_ROUNDS | 400 |  | 180 |  |  |  |  |  |  |  |  |  |
+| JUDGE_MISS | 0.75 | units | 181 | units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); furthe… |  | ○ |  |  |  |  |  | retarget |
+| PLANT_SPEED | 30.0 | cm/s | 184 | cm/s: a standing foot's touching part moving slower than this is held in place (the trace's drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of the… |  | ○ |  | ○ |  | ○ |  | retarget |
+| PLANT_POP | 2 |  | 187 | steps: a standing foot's moves faster than PLANT_SPEED in a run of this many or fewer, with a slower step of the same stand on each side, are a jump, not a slide, and ar… | v11feet 2026-10-17: 新設 2 歩。立つ足の 1〜2 歩の跳び（前後は遅い）は踊りの滑りでなく止める |  |  | ○ |  |  |  | dance |
+| PLANT_SPIKE | (2.0, 5.0) | cm | 191 | (times, cm): and a standing foot's step longer than the first times the longer of its two neighbours and than the second is a jump inside a slide: it is brought to the n… | v11feet 2026-10-17: 新設（2 倍、5 cm）。滑りの中の 1 歩の跳び（曲の 242.1 秒、前後 1.7・1.9 cm の間の 11.35 cm）を前後の速さへ | ○ |  | ○ |  |  |  | retarget |
+| AIR_MIN | 4 | frames | 194 | frames with no foot standing: a flight (the balance layer's AIR_MIN) |  |  |  |  |  |  |  |  |
+| WINDOW | 8 | frames | 195 | frames each side of a flight over which the pelvis may change |  |  |  |  |  |  |  |  |
+| SMOOTH | 30.0 |  | 196 | the weight of the change's third differences against the change itself |  |  |  |  |  |  |  |  |
+| AIR_CLEAR | 0.2 + 0.0125 | units | 197 | units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the balance layer's support, tools/sink_check.py's SUPPORT_CM) |  | ○ |  |  |  |  |  | retarget |
+| CARRY_RAMP | 2 | frames | 199 | frames: a foot leaving the floor goes with the body's change by half on its first frame off it and fully from the second (the same before a landing) |  |  |  |  |  |  |  |  |
+| LIMB_SMOOTH | (1, 4, 6, 4, 1) |  | 201 | the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz pas… |  |  |  |  |  |  |  |  |
+| PAD | 2 | frames | 203 | frames pinned to no change each side of a window of the pelvis's solves |  |  |  |  |  |  |  |  |
+| SUB_NEAR | 0.25 | units | 204 | units: the intervals checked between the frames (either end this near the floor) |  | ○ |  |  |  |  |  | retarget |
+| SUB_ROUNDS | 3 |  | 205 |  |  |  |  |  |  |  |  |  |
+| IK_MISS | 0.0125 | units | 206 | units (1 mm): MMD's ankle this far from its goal has not reached it |  | ○ |  |  |  |  |  | retarget |
+| LAND_TOL | 0.0125 | units | 207 | units (1 mm): a weight-bearing foot whose shoe MMD leaves higher than this gets more drop |  | ○ |  |  |  |  |  | retarget |
+| PUSH_ROUNDS | 4 |  | 208 | rounds of pushing the goal of a weight-bearing foot MMD leaves over the floor ... |  |  |  |  |  |  |  |  |
+| PUSH_STEP | 0.15 | units | 209 | units: ... by at most this a round (the foot layer's push) |  | ○ |  |  |  |  |  | retarget |
+| DROP_ROUNDS | 4 |  | 210 | rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short) |  |  |  |  |  |  |  |  |
+| FLIGHT_ROUNDS | 4 |  | 211 | rounds of solving the flight again on the centre of mass the changed dance moves ... |  |  |  | ○ |  |  |  | dance |
+| FLIGHT_RESID | 1.0 | units/s^2 | 212 | units/s^2: ... until it falls within this of its flight's fall (FLIGHT_BAND) on the frames with air on both sides |  | ○ | ○ |  |  |  |  | retarget |
+| STRICT_SMOOTH | 3.0 |  | 214 | the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it |  |  |  |  |  |  |  |  |
+| STRICT_NEAR | 8 |  | 215 | brings within the bound (strict frames) with no need there: the least lowering, not a wide one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; … |  |  |  | ○ |  |  |  | dance |
+| KNEE_NEAR | 0.05 |  | 228 | of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two straighter than the frames round them are bent like them |  |  |  | ○ | ○ |  | ○ | rig |
+| KNEE_POP_DEG | 6.0 | deg | 230 | degrees: there a frame's bend comes within this of the line through its neighbours, and no neighbour's further than this the other way (rig_check counts a jump at 10. On… |  |  |  | ○ |  |  |  | dance |
+| KNEE_JUMP_DEG | 10.0 | deg | 234 | degrees: rig_check ik's jump, a frame further than this off the line through its neighbours. Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the revie… |  |  |  | ○ |  |  |  | dance |
+| KNEE_JUMP_NEAR | 1 | frames | 240 | frames |  |  |  |  |  |  |  |  |
+| KNEE_ROUNDS | 40 |  | 241 | rounds of evening out (a pop of two frames halves its gap a round) |  |  |  |  |  |  |  |  |
+| KNEE_PITCH_MAX | 30.0 | deg | 242 | degrees: the most a standing foot turns onto its toes or its heel for its knee |  |  |  |  |  |  |  |  |
+| KNEE_PITCH_STEP | 0.25 | deg | 243 | degrees: the turns tried |  |  |  |  |  |  |  |  |
+| KNEE_EDGE | 3 | frames | 244 | frames at either end of a standing run: a turn there is held on to the end of the run (the heel does not come down again before the foot lifts, nor rise again after it l… |  |  |  |  |  |  |  |  |
+| KNEE_TOE_TOL | 1e-4 | units | 247 | units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it) |  | ○ |  |  |  |  |  | retarget |
+| KNEE_PLAN_ROUNDS | 8 |  | 248 | rounds of the targets on the distances the changes so far leave (a turn held on to a run's end bends that frame more, and the frame before may then need more) |  |  |  |  |  |  |  |  |
+| runs(n) | 1 |  | 252 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 3 |  | 259 |  |  |  |  |  |  |  |  |  |
+| knee_bend(least_deg) | 0.0 | deg | 505 |  |  |  |  |  |  |  |  |  |
+| knee_targets(least_deg) | 0.0 | deg | 556 |  |  |  |  |  |  |  |  |  |
+| solve_qp(batch) | 1 |  | 592 |  |  |  |  |  |  |  |  |  |
+| solve_qp(rounds) | 60 |  | 592 |  |  |  |  |  |  |  |  |  |
+| knee_turn(least) | 0.0 |  | 943 |  |  |  |  |  |  |  |  |  |
+| knee_turn(sign) | 0.0 |  | 943 |  |  |  |  |  |  |  |  |  |
+| knee_jump_frames(deg) | 10.0 |  | 1579 |  |  |  |  |  |  |  |  |  |
 
 ## wb_layer.py（12. 上体の慣性、5）
 
@@ -898,115 +910,113 @@
 | --order-mode | "centre" |  | 2040 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
 | --transit-scale | 1.0 |  | 2051 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
 
-## eye_gaze.py（14. 視線、105）
+## eye_gaze.py（14. 視線、103）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 221 |  |  |  |  |  |  |  |  |  |
-| MAX_YAW | 18.0 | deg | 222 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
-| MAX_DOWN | 10.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| MAX_UP | 6.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| LIMIT_MAX | 45.0 | deg | 225 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
-| SOFT_FROM | 0.6 |  | 226 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
-| EDGE | 0.9 |  | 227 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
-| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 228 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
-| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 229 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
-| CONTACT_ERROR | 4.0 | deg | 230 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
-| CONTACT_GAP | 2 | frames | 232 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
-| CONTACT_MIN | 48 | frames | 233 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
-| CONTACT_MID | 30 | frames | 234 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
-| CONTACT_SPARE | 2 |  | 235 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
-| CONTACT_MAX | 150 | frames | 236 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
-| ANCHOR_NEAR | 30 | frames | 237 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
-| CUT_CLEAR | 6 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| END_CLEAR | 2 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| LOOK_AHEAD | 2 | frames | 239 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
-| GAP | 8.0 | deg | 240 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
-| SUSTAIN | 6 | frames | 241 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
-| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 242 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
-| FIXATION_SPREAD | 5 | frames | 243 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
-| GLANCE | (45, 120) | frames | 244 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
-| VOR_GAIN | (1.0, 1.0) |  | 245 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
-| GATE_TURN | 20.0 | deg | 246 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
-| QUICK_AFTER | 5 | frames | 247 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
-| QUICK_SPREAD | 3 |  | 248 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
-| QUICK_SUSTAIN | 6 | frames | 249 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
-| QUICK_AHEAD | 3 | frames | 250 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
-| FACE_AHEAD | 12 |  | 252 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
-| WALL | 0.85 |  | 253 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
-| WALL_SEEN | 0.84 |  | 254 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
-| ECCENTRIC_FROM | 13.9 | deg | 255 | degrees off the middle, yaw and pitch together, from which a fixation, a saccade's goal or a lead is pressed along tanh toward ECCENTRIC_WALL (just beyond the free zone'… | v11face 2026-10-17: 自由な範囲の一番遠い角（横 12・下 7 は正面から 13.87 度）のすぐ外。ここから ECCENTRIC_WALL へ tanh で押す（自由な範囲の中は前のまま） |  |  |  |  |  |  |  |
-| ECCENTRIC_WALL | 14.5 | deg | 258 | degrees off the middle that no angle the plan holds goes beyond (people keep the eyes within 15 degrees of it 99 % of the time, a13; 15 less the drift's 0.42) | v11face 2026-10-17: 人は目を正面から 15 度以内に置く（目の動きの 99 %、a13・mv_inspect eyes.eccentric15_pct の決まり 1 % 以下）。15 から目の揺れ（drift）の最大 … |  |  |  |  | ○ |  |  |
-| MAX_STEP | 8.0 | deg | 261 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
-| FLIP_STEP | 4.0 | deg | 262 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
-| LONG_SACCADE | 35.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| SHORT_SACCADE | 15.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 265 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
-| AVOID | 6.0 | deg | 266 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
-| KEEP_OFF | 5.0 | deg | 267 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
-| TURN_SPEED | 150.0 | deg/s | 268 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
-| LEAD | (2, 4) | frames | 269 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
-| LEAD_SHARE | 13.0 / 18.0 |  | 270 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
-| LEAD_STEP | 6.0 | deg | 271 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
-| QUIET | 8 | frames | 272 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
-| GUARD | 3 | frames | 273 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
-| MIN_SACCADE | 0.5 | deg | 274 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
-| CUT_JUMP | 1.0 | units | 275 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
-| CUT_TURN | 5.0 | deg | 276 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
-| DRIFT_STEP | 0.03 | deg | 277 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
-| DRIFT_LIMIT | 0.3 | deg | 278 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
-| MICRO_INTERVAL | (15, 45) | frames | 279 | frames between microsaccades |  |  |  |  |  |  |  |  |
-| MICRO_SIZE | 0.15 | deg | 280 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
-| FORWARD_TOLERANCE | 20.0 | deg | 281 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
-| WALL_GAP | 3.0 | deg | 282 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
-| UNIT_M | 0.08 | m | 288 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
-| HAND_FAR | 0.60 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_NEAR | 0.18 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_REACH | 4.0 |  | 292 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
-| HAND_CAMERA | 10.0 | deg | 293 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_FAST | 300.0 | deg/s | 294 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
-| HAND_SLOW | 100.0 | deg/s | 295 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
-| HAND_MIN | 9 | frames | 296 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
-| HAND_PALM | 45.0 | deg | 298 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_JOIN | 2 | frames | 299 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
-| HAND_AHEAD | 1 | frames | 300 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
-| PURSUIT_SPEED | 100.0 | deg/s | 301 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
-| CATCH_UP | 3.0 | deg | 302 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
-| CATCH_UP_AFTER | 4 | frames | 303 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
-| DEBUG_STEP | 30 |  | 304 |  |  |  |  |  |  |  |  |  |
-| REVERSAL | 3.0 | deg | 307 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
-| REVERSAL_WITHIN | 10 |  | 308 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
-| STEADY_GAZE | 10.0 | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_HEAD | (15.0, 120.0) | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 313 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
-| STILL_FLOW | 0.1 |  | 314 |  |  |  |  |  |  |  |  |  |
-| STILL_HEAD | 20.0 |  | 314 |  |  |  |  |  |  |  |  |  |
-| CONTACT_SEEN | 4.0 | deg | 316 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
-| CONTACT_JOIN | 2 | frames | 317 | frames: gaps it joins |  |  |  |  |  |  |  |  |
-| LARGE_CHANGE | 20.0 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LARGE_WINDOW | 15 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LEAD_MIN_FRAMES | 3 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_SEEN | 3.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_TURN | 200.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_MARGINS | (330, 172) |  | 320 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
-| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 322 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
-| _r(places) | 4 |  | 326 |  |  |  |  |  |  |  |  |  |
-| _vec(places) | 4 |  | 330 |  |  |  |  |  |  |  |  |  |
-| sights(first) | 0 |  | 429 |  |  |  |  |  |  |  |  |  |
-| hand_points(first) | 0 |  | 454 |  |  |  |  |  |  |  |  |  |
-| hand_palms(first) | 0 |  | 469 |  |  |  |  |  |  |  |  |  |
-| hand_aims(first) | 0 |  | 499 |  |  |  |  |  |  |  |  |  |
-| REACH_STEPS | 24 |  | 529 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
-| REACH_SAMPLES | 16 |  | 530 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
-| hand_fingers(first) | 0 |  | 533 |  |  |  |  |  |  |  |  |  |
-| plan(seed) | 0 |  | 1017 |  |  |  |  |  |  |  |  |  |
-| world_measures(rest) | (0.0, 0.0) |  | 1478 |  |  |  |  |  |  |  |  |  |
-| gaze(seed) | 0 |  | 1662 |  |  |  |  |  |  |  |  |  |
-| write_json(indent) | 1 |  | 1790 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 1833 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 1902 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
-| --aim | "finger" |  | 1908 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
-| --hand-still | "wrist" |  | 1912 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
+| FPS | 30.0 |  | 213 |  |  |  |  |  |  |  |  |  |
+| MAX_YAW | 18.0 | deg | 214 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
+| MAX_DOWN | 10.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| MAX_UP | 6.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| LIMIT_MAX | 45.0 | deg | 217 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
+| SOFT_FROM | 0.6 |  | 218 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
+| EDGE | 0.9 |  | 219 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
+| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 220 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
+| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 221 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
+| CONTACT_ERROR | 4.0 | deg | 222 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
+| CONTACT_GAP | 2 | frames | 224 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
+| CONTACT_MIN | 48 | frames | 225 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
+| CONTACT_MID | 30 | frames | 226 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
+| CONTACT_SPARE | 2 |  | 227 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
+| CONTACT_MAX | 150 | frames | 228 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
+| ANCHOR_NEAR | 30 | frames | 229 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
+| CUT_CLEAR | 6 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| END_CLEAR | 2 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| LOOK_AHEAD | 2 | frames | 231 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
+| GAP | 8.0 | deg | 232 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
+| SUSTAIN | 6 | frames | 233 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
+| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 234 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
+| FIXATION_SPREAD | 5 | frames | 235 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
+| GLANCE | (45, 120) | frames | 236 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
+| VOR_GAIN | (1.0, 1.0) |  | 237 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
+| GATE_TURN | 20.0 | deg | 238 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
+| QUICK_AFTER | 5 | frames | 239 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
+| QUICK_SPREAD | 3 |  | 240 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
+| QUICK_SUSTAIN | 6 | frames | 241 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
+| QUICK_AHEAD | 3 | frames | 242 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
+| FACE_AHEAD | 12 |  | 244 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
+| WALL | 0.85 |  | 245 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
+| WALL_SEEN | 0.84 |  | 246 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
+| MAX_STEP | 8.0 | deg | 247 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
+| FLIP_STEP | 4.0 | deg | 248 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
+| LONG_SACCADE | 35.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| SHORT_SACCADE | 15.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 251 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
+| AVOID | 6.0 | deg | 252 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
+| KEEP_OFF | 5.0 | deg | 253 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
+| TURN_SPEED | 150.0 | deg/s | 254 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
+| LEAD | (2, 4) | frames | 255 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
+| LEAD_SHARE | 13.0 / 18.0 |  | 256 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
+| LEAD_STEP | 6.0 | deg | 257 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
+| QUIET | 8 | frames | 258 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
+| GUARD | 3 | frames | 259 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
+| MIN_SACCADE | 0.5 | deg | 260 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
+| CUT_JUMP | 1.0 | units | 261 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
+| CUT_TURN | 5.0 | deg | 262 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
+| DRIFT_STEP | 0.03 | deg | 263 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
+| DRIFT_LIMIT | 0.3 | deg | 264 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
+| MICRO_INTERVAL | (15, 45) | frames | 265 | frames between microsaccades |  |  |  |  |  |  |  |  |
+| MICRO_SIZE | 0.15 | deg | 266 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
+| FORWARD_TOLERANCE | 20.0 | deg | 267 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
+| WALL_GAP | 3.0 | deg | 268 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
+| UNIT_M | 0.08 | m | 274 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
+| HAND_FAR | 0.60 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_NEAR | 0.18 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_REACH | 4.0 |  | 278 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
+| HAND_CAMERA | 10.0 | deg | 279 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_FAST | 300.0 | deg/s | 280 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
+| HAND_SLOW | 100.0 | deg/s | 281 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
+| HAND_MIN | 9 | frames | 282 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
+| HAND_PALM | 45.0 | deg | 284 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_JOIN | 2 | frames | 285 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
+| HAND_AHEAD | 1 | frames | 286 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
+| PURSUIT_SPEED | 100.0 | deg/s | 287 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
+| CATCH_UP | 3.0 | deg | 288 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
+| CATCH_UP_AFTER | 4 | frames | 289 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
+| DEBUG_STEP | 30 |  | 290 |  |  |  |  |  |  |  |  |  |
+| REVERSAL | 3.0 | deg | 293 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
+| REVERSAL_WITHIN | 10 |  | 294 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
+| STEADY_GAZE | 10.0 | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_HEAD | (15.0, 120.0) | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 299 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
+| STILL_FLOW | 0.1 |  | 300 |  |  |  |  |  |  |  |  |  |
+| STILL_HEAD | 20.0 |  | 300 |  |  |  |  |  |  |  |  |  |
+| CONTACT_SEEN | 4.0 | deg | 302 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
+| CONTACT_JOIN | 2 | frames | 303 | frames: gaps it joins |  |  |  |  |  |  |  |  |
+| LARGE_CHANGE | 20.0 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LARGE_WINDOW | 15 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LEAD_MIN_FRAMES | 3 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_SEEN | 3.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_TURN | 200.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_MARGINS | (330, 172) |  | 306 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
+| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 308 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 312 |  |  |  |  |  |  |  |  |  |
+| _vec(places) | 4 |  | 316 |  |  |  |  |  |  |  |  |  |
+| sights(first) | 0 |  | 415 |  |  |  |  |  |  |  |  |  |
+| hand_points(first) | 0 |  | 440 |  |  |  |  |  |  |  |  |  |
+| hand_palms(first) | 0 |  | 455 |  |  |  |  |  |  |  |  |  |
+| hand_aims(first) | 0 |  | 485 |  |  |  |  |  |  |  |  |  |
+| REACH_STEPS | 24 |  | 515 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
+| REACH_SAMPLES | 16 |  | 516 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
+| hand_fingers(first) | 0 |  | 519 |  |  |  |  |  |  |  |  |  |
+| plan(seed) | 0 |  | 957 |  |  |  |  |  |  |  |  |  |
+| world_measures(rest) | (0.0, 0.0) |  | 1429 |  |  |  |  |  |  |  |  |  |
+| gaze(seed) | 0 |  | 1610 |  |  |  |  |  |  |  |  |  |
+| write_json(indent) | 1 |  | 1737 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1780 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1848 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
+| --aim | "finger" |  | 1854 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
+| --hand-still | "wrist" |  | 1858 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
 
 ## face_life.py（15. 表情、147）
 
@@ -1160,83 +1170,80 @@
 | --seed | 0 |  | 2142 | the random draws (default 0) |  |  |  |  |  |  |  |  |
 | --style | "human" |  | 2146 | human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; v7: the face of the MV v7 again, byte for byte |  |  |  | ○ |  | ○ |  | dance |
 
-## lip_sync.py（16. 口、73）
+## lip_sync.py（16. 口、70）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 101 |  |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 102 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
-| SR | 16000 |  | 103 |  |  |  |  |  |  |  |  |  |
-| HOP | 160 | ms | 104 | 10 ms |  |  |  |  |  |  |  |  |
-| WIN | 400 | ms | 105 | 25 ms |  |  |  |  |  |  |  |  |
-| NFFT | 512 |  | 106 |  |  |  |  |  |  |  |  |  |
-| AC_FFT | 1024 |  | 107 |  |  |  |  |  |  |  |  |  |
-| N_MELS | 40 |  | 108 |  |  |  |  |  |  |  |  |  |
-| MEL_RANGE | (80.0, 7600.0) |  | 109 |  |  |  |  |  |  |  |  |  |
-| N_MFCC | 12 |  | 110 |  |  |  |  |  |  |  |  |  |
-| BAND | (250.0, 4000.0) |  | 111 |  |  |  |  |  |  |  |  |  |
-| F0_RANGE | (150.0, 1300.0) |  | 112 |  |  |  |  |  |  |  |  |  |
-| SHAPES.a.あ | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
-| SHAPES.e.え | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
-| SHAPES.i.あ | 0.3 |  | 116 |  | v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて… |  |  |  |  |  |  | rig |
-| SHAPES.i.い | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
-| SHAPES.o.お | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
-| SHAPES.u.う | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.f | (0.25, "u") |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.m | (0.0, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.n | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.s | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.v | (0.12, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.h | (0.6, None) |  | 121 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.k | (0.5, None) |  | 121 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.r | (0.55, None) |  | 121 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.w | (0.45, "u") |  | 121 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.y | (0.5, "i") |  | 121 |  |  |  |  |  |  |  |  |  |
-| N_OPEN | 0.15 |  | 122 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
-| BREAK_SHARE | 0.6 |  | 123 | a break before a vowel alone keeps this share of its opening where the voice sounds (chosen as for h: the jaw stays, nothing closes it) | v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた） |  |  |  |  |  |  |  |
-| CONSONANT_LONGEST | 0.10 | s | 125 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
-| GAIN | (0.5, -24.0, -6.0) |  | 126 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
-| GAIN_SMOOTH | 0.05 | s | 127 | s |  |  |  |  |  |  |  |  |
-| INHALE | 0.22 |  | 128 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
-| INHALE_REST | 0.45 | s | 129 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
-| INHALE_SPAN | (0.40, 0.12) | s | 130 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
-| COARTICULATION | 30.0 | ms | 131 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
-| CLOSURE_MOVE | 0.16 | s | 132 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
-| CLOSURE_HOLD | 0.04 | s | 136 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
-| CLOSURE_RAMP | 0.10 | s | 137 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
-| RELEASE | 0.12 | s | 138 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
-| REST_OPEN | 0.15 |  | 139 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
-| HOLD_DB | -20.0 |  | 140 | outside the lines, FACE's last vowel is held while the voice stays above this (e: the voice clearly sings, tools/lip_check.py's LOUD_DB) | v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり） |  |  |  |  |  |  |  |
-| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 142 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
-| KEY_TOLERANCE | 0.025 |  | 143 |  |  |  |  |  |  |  |  |  |
-| SIL_DB | -30.0 |  | 144 | e below this: quiet |  |  |  |  |  |  |  |  |
-| FILLER | -2.5 |  | 145 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
-| BLOCK_GAP | 2.0 | s | 148 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
-| LINE_SLACK | (1.0, 1.5) | s | 149 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
-| MARGIN | (1.2, 1.6) | s | 150 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
-| ITERATIONS | 6 |  | 151 |  |  |  |  |  |  |  |  |  |
-| STAY.BR | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.C | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.N | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.Q | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.SIL | 0.95 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.SP | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
-| STAY.V | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
-| SP_PENALTY | (4.0, 1.5) |  | 153 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
-| SPECTRAL_WEIGHT | 0.5 |  | 154 |  |  |  |  |  |  |  |  |  |
-| GUIDE | (2.0, -1.0) |  | 155 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
-| GUIDE_OPEN | 0.3 |  | 156 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
-| GUIDE_LAG | 0.07 | s | 157 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
-| POSTERIOR_FLOOR | -6.0 |  | 158 |  |  |  |  |  |  |  |  |  |
-| NEG | -1e9 |  | 160 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.BR | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.C | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.N | 4 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.Q | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SIL | 1 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SP | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.V | 5 |  | 343 |  |  |  |  |  |  |  |  |  |
-| face_rows_of(lag) | 0.0 |  | 759 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 83 |  |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 84 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
+| SR | 16000 |  | 85 |  |  |  |  |  |  |  |  |  |
+| HOP | 160 | ms | 86 | 10 ms |  |  |  |  |  |  |  |  |
+| WIN | 400 | ms | 87 | 25 ms |  |  |  |  |  |  |  |  |
+| NFFT | 512 |  | 88 |  |  |  |  |  |  |  |  |  |
+| AC_FFT | 1024 |  | 89 |  |  |  |  |  |  |  |  |  |
+| N_MELS | 40 |  | 90 |  |  |  |  |  |  |  |  |  |
+| MEL_RANGE | (80.0, 7600.0) |  | 91 |  |  |  |  |  |  |  |  |  |
+| N_MFCC | 12 |  | 92 |  |  |  |  |  |  |  |  |  |
+| BAND | (250.0, 4000.0) |  | 93 |  |  |  |  |  |  |  |  |  |
+| F0_RANGE | (150.0, 1300.0) |  | 94 |  |  |  |  |  |  |  |  |  |
+| SHAPES.a.あ | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
+| SHAPES.e.え | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
+| SHAPES.i.あ | 0.3 |  | 98 |  | HANDOVER 2026-10-17 lipsync: い＝い＋あ 0.3（リンの描いた試しで選んだ） |  |  |  |  |  |  | rig |
+| SHAPES.i.い | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
+| SHAPES.o.お | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
+| SHAPES.u.う | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
+| SHAPES.u.お | 0.2 |  | 98 |  | HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ） |  |  |  |  |  |  | rig |
+| CONSONANTS.f | (0.25, "u") |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.m | (0.0, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.n | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.s | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.v | (0.12, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.h | (0.6, None) |  | 103 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.k | (0.5, None) |  | 103 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.r | (0.55, None) |  | 103 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.w | (0.45, "u") |  | 103 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.y | (0.5, "i") |  | 103 |  |  |  |  |  |  |  |  |  |
+| N_OPEN | 0.15 |  | 104 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
+| CONSONANT_LONGEST | 0.10 | s | 105 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
+| GAIN | (0.5, -24.0, -6.0) |  | 106 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
+| GAIN_SMOOTH | 0.05 | s | 107 | s |  |  |  |  |  |  |  |  |
+| INHALE | 0.22 |  | 108 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
+| INHALE_REST | 0.45 | s | 109 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
+| INHALE_SPAN | (0.40, 0.12) | s | 110 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
+| COARTICULATION | 30.0 | ms | 111 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
+| CLOSURE_MOVE | 0.16 | s | 112 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
+| CLOSURE_HOLD | 0.04 | s | 116 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
+| CLOSURE_RAMP | 0.10 | s | 117 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
+| RELEASE | 0.12 | s | 118 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
+| REST_OPEN | 0.15 |  | 119 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
+| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 120 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
+| KEY_TOLERANCE | 0.025 |  | 121 |  |  |  |  |  |  |  |  |  |
+| SIL_DB | -30.0 |  | 122 | e below this: quiet |  |  |  |  |  |  |  |  |
+| FILLER | -2.5 |  | 123 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
+| BLOCK_GAP | 2.0 | s | 126 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
+| LINE_SLACK | (1.0, 1.5) | s | 127 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
+| MARGIN | (1.2, 1.6) | s | 128 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
+| ITERATIONS | 6 |  | 129 |  |  |  |  |  |  |  |  |  |
+| STAY.C | 0.6 |  | 130 |  |  |  |  |  |  |  |  |  |
+| STAY.N | 0.85 |  | 130 |  |  |  |  |  |  |  |  |  |
+| STAY.Q | 0.85 |  | 130 |  |  |  |  |  |  |  |  |  |
+| STAY.SIL | 0.95 |  | 130 |  |  |  |  |  |  |  |  |  |
+| STAY.SP | 0.9 |  | 130 |  |  |  |  |  |  |  |  |  |
+| STAY.V | 0.9 |  | 130 |  |  |  |  |  |  |  |  |  |
+| SP_PENALTY | (4.0, 1.5) |  | 131 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
+| SPECTRAL_WEIGHT | 0.5 |  | 132 |  |  |  |  |  |  |  |  |  |
+| GUIDE | (2.0, -1.0) |  | 133 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
+| GUIDE_OPEN | 0.3 |  | 134 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
+| GUIDE_LAG | 0.07 | s | 135 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
+| POSTERIOR_FLOOR | -6.0 |  | 136 |  |  |  |  |  |  |  |  |  |
+| NEG | -1e9 |  | 138 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.C | 2 |  | 321 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.N | 4 |  | 321 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.Q | 3 |  | 321 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SIL | 1 |  | 321 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SP | 3 |  | 321 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.V | 5 |  | 321 |  |  |  |  |  |  |  |  |  |
+| face_rows_of(lag) | 0.0 |  | 704 |  |  |  |  |  |  |  |  |  |
 
 ## lip_timing.py（16. 口、11）
 
@@ -1254,98 +1261,99 @@
 | run(errors) | 0 |  | 260 |  |  |  |  |  |  |  |  |  |
 | --errors | 0 |  | 310 | with --search: vowels of a line that may be missing, extra or different (default 0) |  |  |  |  |  |  |  |  |
 
-## eye_optics.py（17. 目の光と寄り、88）
+## eye_optics.py（17. 目の光と寄り、89）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 195 |  |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 196 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py; tools/face_life.py) |  |  |  |  |  |  |  |  |
-| FORWARD | (0.0, 0.0, -1.0) |  | 197 |  |  |  |  |  |  |  |  |  |
-| UP | (0.0, 1.0, 0.0) |  | 198 |  |  |  |  |  |  |  |  |  |
-| CUT_JUMP | 1.0 | units | 200 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
-| CUT_TURN | 5.0 | units | 200 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
-| TAIL | 5.0 |  | 201 | time constants after which a first-order vergence move ends (0.7 % was left) |  |  |  |  |  |  |  |  |
-| X90 | -math.log(1.0 - 0.9 * (1.0 - math.exp(-TAIL))) |  | 202 | 2.2437: where such a move (ended at TAIL) is 90 % done |  |  |  |  |  |  |  |  |
-| MAX_SPAN | 120 | frames | 203 | frames between two keys at most |  |  |  |  |  |  |  |  |
-| OPEN_LID | 0.45 |  | 204 | an eye whose closing morphs are at this or less is open (the report's open-eye measures) |  |  |  |  | ○ |  |  | rig |
-| PARAMS.light.cornea_radius_mm | 7.72 | mm | 208 | R (Navarro, via Barsingerhorn 2017) |  | ○ |  |  |  |  | ○ | retarget |
-| PARAMS.light.pupil_to_centre_mm | 4.67 | mm | 209 | K: entrance pupil to the cornea's centre of curvature (RESEARCH 1.1) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.iris_radius_mm | 5.91 | mm | 210 | the visible iris (Aguirre 2019) |  | ○ |  |  |  |  | ○ | retarget |
-| PARAMS.light.direction | [-0.5, -1.0, 0.5] |  | 211 | MMD's light, as its window shows it (where the light goes) |  |  |  |  |  |  |  |  |
-| PARAMS.light.hide | [90.0, 100.0] | deg | 212 | degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6) |  |  |  |  |  |  |  |  |
-| PARAMS.light.cap | 1.0 |  | 213 | iris radii the light moves off its drawn place at most (soft) |  |  |  |  |  |  |  |  |
-| PARAMS.light.side | [72.0, 84.0] | deg | 214 | degrees an iris is seen off its forward: its light gives way to its drawn place |  |  |  |  |  |  |  |  |
-| PARAMS.light.ride_cap | 0.3 | units | 216 | model units a light's bone moves at most |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.damping | 0.15 |  | 217 | light_turn's damping, a share of the bone's depth |  |  |  |  |  |  |  |  |
-| PARAMS.light.key_cap | 45.0 | deg | 218 | degrees a light bone's key turns at most (soft from 60 % of it) |  |  |  |  |  |  |  |  |
-| PARAMS.light.reach | 0.9 |  | 219 | iris radii from the iris' centre a light's centre goes at most (soft) |  |  |  |  |  |  |  |  |
-| PARAMS.light.lid_margin | 0.05 |  | 222 | iris radii a light keeps off where the lids cover its iris |  |  |  |  |  |  |  |  |
-| PARAMS.light.lid_slide | 0.15 |  | 223 | iris radii a light slides off them at most (further, it stays under) |  |  |  |  |  |  |  |  |
-| PARAMS.light.guard_margin | 0.01 | units | 225 | model units about a light's centre the guard also looks |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.hug_height | 0.002 | units | 226 | model units in front of its iris a light under them is brought down to |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.hide_depth | 0.2 | units | 227 | model units behind its iris a light is put when that is not enough (into the eyeball: beside the iris the eye white lies up to 0.2 behind its rim) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.vergence.unit_mm | 80.0 | mm | 235 | one model unit |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.vergence.gain | 1.0 |  | 236 | the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe) |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.angle_near_m | 0.15 | m | 237 | the angle is at most that of a point this near (12.3 degrees an eye on Sour's Rin, 11.6 with a person's 61.5 mm) |  | ○ |  |  | ○ | ○ |  | retarget・rig |
-| PARAMS.vergence.gap_frames | 6 | frames | 239 | looks at a hand this many frames apart or fewer are one look |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.camera_deg | 4.0 | deg | 240 | tools/eye_gaze.py counts a gaze this near the camera as eye contact |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.camera_frames | 3 | frames | 241 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.lead | 0.07 | s | 242 | seconds the eyes start before a look the report names no saccade onto (Erkelens 1989: they lead a target the hand moves by about 90 ms) |  |  |  |  |  |  | ○ |  |
-| PARAMS.vergence.max_speed | 60.0 | deg/s | 244 | degrees a second an eye (natural gaze shifts reach 50 to 200 with both eyes together, Erkelens 1989) |  |  |  |  |  |  | ○ |  |
-| PARAMS.vergence.d90.versions | [0.0, 10.0, 20.0, 40.0] |  | 251 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.sizes | [5.0, 10.0, 15.0, 20.0] |  | 252 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.convergence | [[227.0, 328.0, 372.0, 418.0], [180.0, 310.0, 310.0, 360.0]… |  | 253 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.divergence | [[280.0, 370.0, 395.0, 435.0], [170.0, 220.0, 340.0, 360.0]… |  | 255 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.iris_mm | 11.82 | mm | 260 | the visible iris' diameter, to give the pupil in mm |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.pupil.reflex.constrict | 0.3 |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.hold | 0.75 |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.latency | 0.25 |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.peak | 0.12 |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.redilate | 2.4 |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.amplitude | 0.015 |  | 262 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.fall | 3.0 |  | 262 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.high | 90.0 |  | 262 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.low | 10.0 |  | 262 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.rise | 1.0 |  | 262 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.amplitude | 0.015 |  | 263 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.n | 10.1 |  | 263 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.peak | 0.93 |  | 263 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.near.per_dioptre | 0.01 |  | 264 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.amplitude | 0.01 |  | 265 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.high_hz | 0.7 | Hz | 265 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.low_hz | 0.1 | Hz | 265 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.waves | 6 |  | 265 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.range | [-0.35, 0.5] |  | 266 |  |  |  |  |  |  |  |  |  |
-| PARAMS.keys.bone_deg | 0.05 | deg | 269 | a bone's keys: straight lines between them miss no frame by more |  |  |  |  |  |  |  |  |
-| PARAMS.keys.morph | 0.001 |  | 270 | a morph's keys: the same in weight |  |  |  |  | ○ |  |  | rig |
-| PARAMS.keys.position | 0.0005 | units | 271 | a light bone's keys: the same in place (model units) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.keys.limit | 20000 |  | 272 | MMD's registered points for a model: loading stops past them |  |  |  |  |  |  |  |  |
-| PARAMS.keys.reserve | 1000 |  | 273 | refused this near the limit (a later touch to the face would cross it) |  |  |  |  |  |  |  |  |
-| light_turn(damping) | 0.15 |  | 638 |  |  |  |  |  |  |  |  |  |
-| light_turn(steps) | 4 |  | 638 |  |  |  |  |  |  |  |  |  |
-| SOFT_FROM | 0.6 |  | 682 | share of a cap up to which soft_cap passes values unchanged |  |  |  |  |  |  |  |  |
-| SEEN_COS | 0.1 |  | 720 | a disc seen more than about 84 degrees off its normal (or from behind) is not seen |  |  |  |  |  |  |  |  |
-| pupil_track(seed) | 0 |  | 789 |  |  |  |  |  |  |  |  |  |
-| iris_heights(cells) | 32 |  | 872 |  |  |  |  |  |  |  |  |  |
-| ride_on_iris(steps) | 4 |  | 907 |  |  |  |  |  |  |  |  |  |
-| iris_hit(halvings) | 14 |  | 936 |  |  |  |  |  |  |  |  |  |
-| iris_hit(step) | 0.01 |  | 936 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(across) | 3.0 |  | 995 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(back) | 0.4 |  | 995 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(front) | 0.6 |  | 995 |  |  |  |  |  |  |  |  |  |
-| slide_off_lids(steps) | 8 |  | 1106 |  |  |  |  |  |  |  |  |  |
-| _r(places) | 4 |  | 1256 |  |  |  |  |  |  |  |  |  |
-| _bone_keys(reach) | 0.0005 |  | 1335 |  |  |  |  |  |  |  |  |  |
-| _bone_keys(tolerance) | 0.05 |  | 1335 |  |  |  |  |  |  |  |  |  |
-| _morph_keys(tolerance) | 0.001 |  | 1373 |  |  |  |  |  |  |  |  |  |
-| optics(seed) | 0 |  | 1432 |  |  |  |  |  |  |  |  |  |
-| loudness(high) | 90.0 |  | 1948 |  |  |  |  |  |  |  |  |  |
-| loudness(low) | 10.0 |  | 1948 |  |  |  |  |  |  |  |  |  |
-| loudness(rate) | 8000 |  | 1948 |  |  |  |  |  |  |  |  |  |
-| loudness(smooth) | 0.5 |  | 1948 |  |  |  |  |  |  |  |  |  |
-| loudness(window) | 0.2 |  | 1948 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 2001 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2093 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 194 |  |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 195 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py; tools/face_life.py) |  |  |  |  |  |  |  |  |
+| FORWARD | (0.0, 0.0, -1.0) |  | 196 |  |  |  |  |  |  |  |  |  |
+| UP | (0.0, 1.0, 0.0) |  | 197 |  |  |  |  |  |  |  |  |  |
+| CUT_JUMP | 1.0 | units | 199 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
+| CUT_TURN | 5.0 | units | 199 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
+| TAIL | 5.0 |  | 200 | time constants after which a first-order vergence move ends (0.7 % was left) |  |  |  |  |  |  |  |  |
+| X90 | -math.log(1.0 - 0.9 * (1.0 - math.exp(-TAIL))) |  | 201 | 2.2437: where such a move (ended at TAIL) is 90 % done |  |  |  |  |  |  |  |  |
+| MAX_SPAN | 120 | frames | 202 | frames between two keys at most |  |  |  |  |  |  |  |  |
+| OPEN_LID | 0.45 |  | 203 | an eye whose closing morphs are at this or less is open (the report's open-eye measures) |  |  |  |  | ○ |  |  | rig |
+| PARAMS.light.cornea_radius_mm | 7.72 | mm | 207 | R (Navarro, via Barsingerhorn 2017) |  | ○ |  |  |  |  | ○ | retarget |
+| PARAMS.light.pupil_to_centre_mm | 4.67 | mm | 208 | K: entrance pupil to the cornea's centre of curvature (RESEARCH 1.1) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.iris_radius_mm | 5.91 | mm | 209 | the visible iris (Aguirre 2019) |  | ○ |  |  |  |  | ○ | retarget |
+| PARAMS.light.direction | [-0.5, -1.0, 0.5] |  | 210 | MMD's light, as its window shows it (where the light goes) |  |  |  |  |  |  |  |  |
+| PARAMS.light.hide | [90.0, 100.0] | deg | 211 | degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6) |  |  |  |  |  |  |  |  |
+| PARAMS.light.cap | 1.0 |  | 212 | iris radii the light moves off its drawn place at most (soft) |  |  |  |  |  |  |  |  |
+| PARAMS.light.side | [72.0, 84.0] | deg | 213 | degrees an iris is seen off its forward: its light gives way to its drawn place |  |  |  |  |  |  |  |  |
+| PARAMS.light.ride_cap | 0.3 | units | 215 | model units a light's bone moves at most |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.damping | 0.15 |  | 216 | light_turn's damping, a share of the bone's depth |  |  |  |  |  |  |  |  |
+| PARAMS.light.key_cap | 45.0 | deg | 217 | degrees a light bone's key turns at most (soft from 60 % of it) |  |  |  |  |  |  |  |  |
+| PARAMS.light.reach | 0.9 |  | 218 | iris radii from the iris' centre a light's centre goes at most (soft) |  |  |  |  |  |  |  |  |
+| PARAMS.light.lid_margin | 0.05 |  | 221 | iris radii a light keeps off where the lids cover its iris |  |  |  |  |  |  |  |  |
+| PARAMS.light.lid_slide | 0.15 |  | 222 | iris radii a light slides off them at most (further, it stays under) |  |  |  |  |  |  |  |  |
+| PARAMS.light.guard_margin | 0.01 | units | 224 | model units about a light's centre the guard also looks |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.hug_height | 0.002 | units | 225 | model units in front of its iris a light under them is brought down to |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.hide_depth | 0.2 | units | 226 | model units behind its iris a light is put when that is not enough (into the eyeball: beside the iris the eye white lies up to 0.2 behind its rim) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.vergence.ipd_mm | 61.5 | mm | 230 | women's mean (Murray 2017) | 女性の平均 61.5 mm（Murray 2017）。リンのモデルの目の骨の間は 0.82 単位（8 cm/単位で 65.6 mm、adapt 10-17）: 寄り目の角は人の値で、モデルの目の位置とは 6.7 % 違う（MV のカメラで… | ○ |  |  |  |  | ○ | rig |
+| PARAMS.vergence.unit_mm | 80.0 | mm | 231 | one model unit |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.vergence.gain | 1.0 |  | 232 | the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe) |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.angle_near_m | 0.15 | m | 233 | the angle is at most that of a point this near (11.6 degrees an eye) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.vergence.gap_frames | 6 | frames | 234 | looks at a hand this many frames apart or fewer are one look |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.camera_deg | 4.0 | deg | 235 | tools/eye_gaze.py counts a gaze this near the camera as eye contact |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.camera_frames | 3 | frames | 236 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.lead | 0.07 | s | 237 | seconds the eyes start before a look the report names no saccade onto (Erkelens 1989: they lead a target the hand moves by about 90 ms) |  |  |  |  |  |  | ○ |  |
+| PARAMS.vergence.max_speed | 60.0 | deg/s | 239 | degrees a second an eye (natural gaze shifts reach 50 to 200 with both eyes together, Erkelens 1989) |  |  |  |  |  |  | ○ |  |
+| PARAMS.vergence.d90.versions | [0.0, 10.0, 20.0, 40.0] |  | 246 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.sizes | [5.0, 10.0, 15.0, 20.0] |  | 247 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.convergence | [[227.0, 328.0, 372.0, 418.0], [180.0, 310.0, 310.0, 360.0]… |  | 248 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.divergence | [[280.0, 370.0, 395.0, 435.0], [170.0, 220.0, 340.0, 360.0]… |  | 250 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.iris_mm | 11.82 | mm | 255 | the visible iris' diameter, to give the pupil in mm |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.pupil.reflex.constrict | 0.3 |  | 256 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.hold | 0.75 |  | 256 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.latency | 0.25 |  | 256 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.peak | 0.12 |  | 256 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.redilate | 2.4 |  | 256 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.amplitude | 0.015 |  | 257 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.fall | 3.0 |  | 257 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.high | 90.0 |  | 257 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.low | 10.0 |  | 257 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.rise | 1.0 |  | 257 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.amplitude | 0.015 |  | 258 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.n | 10.1 |  | 258 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.peak | 0.93 |  | 258 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.near.per_dioptre | 0.01 |  | 259 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.amplitude | 0.01 |  | 260 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.high_hz | 0.7 | Hz | 260 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.low_hz | 0.1 | Hz | 260 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.waves | 6 |  | 260 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.range | [-0.35, 0.5] |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.keys.bone_deg | 0.05 | deg | 264 | a bone's keys: straight lines between them miss no frame by more |  |  |  |  |  |  |  |  |
+| PARAMS.keys.morph | 0.001 |  | 265 | a morph's keys: the same in weight |  |  |  |  | ○ |  |  | rig |
+| PARAMS.keys.position | 0.0005 | units | 266 | a light bone's keys: the same in place (model units) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.keys.limit | 20000 |  | 267 | MMD's registered points for a model: loading stops past them |  |  |  |  |  |  |  |  |
+| PARAMS.keys.reserve | 1000 |  | 268 | refused this near the limit (a later touch to the face would cross it) |  |  |  |  |  |  |  |  |
+| light_turn(damping) | 0.15 |  | 627 |  |  |  |  |  |  |  |  |  |
+| light_turn(steps) | 4 |  | 627 |  |  |  |  |  |  |  |  |  |
+| SOFT_FROM | 0.6 |  | 671 | share of a cap up to which soft_cap passes values unchanged |  |  |  |  |  |  |  |  |
+| SEEN_COS | 0.1 |  | 709 | a disc seen more than about 84 degrees off its normal (or from behind) is not seen |  |  |  |  |  |  |  |  |
+| pupil_track(seed) | 0 |  | 778 |  |  |  |  |  |  |  |  |  |
+| iris_heights(cells) | 32 |  | 861 |  |  |  |  |  |  |  |  |  |
+| ride_on_iris(steps) | 4 |  | 896 |  |  |  |  |  |  |  |  |  |
+| iris_hit(halvings) | 14 |  | 925 |  |  |  |  |  |  |  |  |  |
+| iris_hit(step) | 0.01 |  | 925 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(across) | 3.0 |  | 984 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(back) | 0.4 |  | 984 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(front) | 0.6 |  | 984 |  |  |  |  |  |  |  |  |  |
+| slide_off_lids(steps) | 8 |  | 1095 |  |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 1245 |  |  |  |  |  |  |  |  |  |
+| _bone_keys(reach) | 0.0005 |  | 1324 |  |  |  |  |  |  |  |  |  |
+| _bone_keys(tolerance) | 0.05 |  | 1324 |  |  |  |  |  |  |  |  |  |
+| _morph_keys(tolerance) | 0.001 |  | 1362 |  |  |  |  |  |  |  |  |  |
+| optics(seed) | 0 |  | 1421 |  |  |  |  |  |  |  |  |  |
+| loudness(high) | 90.0 |  | 1933 |  |  |  |  |  |  |  |  |  |
+| loudness(low) | 10.0 |  | 1933 |  |  |  |  |  |  |  |  |  |
+| loudness(rate) | 8000 |  | 1933 |  |  |  |  |  |  |  |  |  |
+| loudness(smooth) | 0.5 |  | 1933 |  |  |  |  |  |  |  |  |  |
+| loudness(window) | 0.2 |  | 1933 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1986 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2078 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
 
 ## mv_chunks.py（18. 描画と後処理、19）
 
@@ -1763,32 +1771,36 @@
 
 （数を持つ定数・引数の既定なし）
 
-### retarget_check.py（確かめ・部品、22）
+### retarget_check.py（確かめ・部品、26）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNIT_CM | 8.0 | cm | 78 |  |  | ○ |  |  |  |  |  | retarget |
-| TOUCH | 0.15 | units | 79 | units (1.2 cm): a source hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
-| KEEP | 0.125 | units | 80 | units (1 cm): the target's point within this of the source's distance keeps the touch |  | ○ |  |  |  |  |  | retarget |
-| LOST | 0.25 | units | 81 | units (2 cm): more than this off (or inside) loses it |  | ○ |  |  |  |  |  | retarget |
-| PLANT_EPS | 0.05 | units | 82 | units (4 mm, a05's contact): a goal this close to its rest height is on the floor |  | ○ |  |  |  |  |  | retarget |
-| STILL | 0.025 | units | 83 | units a frame |  | ○ |  |  |  |  |  | retarget |
-| PLANT_MIN | 3 |  | 84 |  |  |  |  |  |  |  |  |  |
-| TOE_PITCH | 4.0 |  | 85 |  |  |  |  |  |  |  |  |  |
-| FPS | 30.0 |  | 86 |  |  |  |  |  |  |  |  |  |
-| FLOOR_CM | 0.4 | cm | 87 | cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it |  | ○ |  |  |  |  |  | retarget |
-| RESTING_MIN | 4 | frames | 88 | frames: a touch this long ... |  |  |  |  |  |  |  |  |
-| RESTING_SPEED | 35.0 | cm/s | 89 | cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it |  | ○ |  |  |  |  |  | retarget |
-| LAG_WINDOW | 60 | frames | 90 | frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX |  |  |  |  |  |  |  |  |
-| LAG_HOP | 30 |  | 91 |  |  |  |  |  |  |  |  |  |
-| LAG_MAX | 5 |  | 92 |  |  |  |  |  |  |  |  |  |
-| STEP_MIN_CM | 10.0 | cm | 93 | cm: the source's steps between plants this long and longer are compared |  | ○ |  |  |  |  |  | retarget |
-| JUMP_CM | 2.5 | cm | 94 | cm (mv_inspect's 宙): both feet this high over their rest heights ... |  | ○ |  |  |  |  |  | retarget |
-| JUMP_MIN | 4 | frames | 95 | frames: ... this long is a jump |  |  |  |  |  |  |  |  |
-| SKIP_SHOULDER | 0.5 |  | 97 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 121 |  |  |  |  |  |  |  |  |  |
-| quant(qs) | (50, 90, 99, 100) |  | 127 |  |  |  |  |  |  |  |  |  |
-| _cube_directions(n) | 4 |  | 159 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 82 |  |  | ○ |  |  |  |  |  | retarget |
+| TOUCH | 0.15 | units | 83 | units (1.2 cm): a source hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| KEEP | 0.125 | units | 84 | units (1 cm): the target's point within this of the source's distance keeps the touch |  | ○ |  |  |  |  |  | retarget |
+| LOST | 0.25 | units | 85 | units (2 cm): more than this off (or inside) loses it |  | ○ |  |  |  |  |  | retarget |
+| PLANT_EPS | 0.05 | units | 86 | units (4 mm, a05's contact): a goal this close to its rest height is on the floor |  | ○ |  |  |  |  |  | retarget |
+| STILL | 0.025 | units | 87 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| PLANT_MIN | 3 |  | 88 |  |  |  |  |  |  |  |  |  |
+| TOE_PITCH | 4.0 |  | 89 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 90 |  |  |  |  |  |  |  |  |  |
+| FLOOR_CM | 0.4 | cm | 91 | cm (a05's 4 mm): a shoe whose lowest point is this close to the floor is on it |  | ○ |  |  |  |  |  | retarget |
+| POP_NEAR_CM | 2.0 | cm | 97 | a one-frame jump along the floor the source does not make (review_integ 2026-10-17, its scripts/pops.py: the retarget gave a turning foot's hold back in one frame, the s… | v11feet 2026-10-17: review_integ の pops.py と同じ 2 cm | ○ |  | ○ |  |  |  | retarget |
+| POP_CM | 8.0 | cm | 98 |  | v11feet 2026-10-17: review_integ の pops.py と同じ 8 cm | ○ |  |  |  |  |  | retarget |
+| POP_SHARE | 0.5 |  | 99 |  | v11feet 2026-10-17: review_integ の pops.py と同じ（元の動きがその半分未満なら元に無い跳び） |  |  |  |  |  |  |  |
+| RESTING_MIN | 4 | frames | 100 | frames: a touch this long ... |  |  |  |  |  |  |  |  |
+| RESTING_SPEED | 35.0 | cm/s | 101 | cm/s: ... whose hand point moves slower than this in the part's frame (median) rests on it |  | ○ |  |  |  |  |  | retarget |
+| LAG_WINDOW | 60 | frames | 102 | frames (2 s): the timing's windows, LAG_HOP apart, lags within LAG_MAX |  |  |  |  |  |  |  |  |
+| LAG_HOP | 30 |  | 103 |  |  |  |  |  |  |  |  |  |
+| LAG_MAX | 5 |  | 104 |  |  |  |  |  |  |  |  |  |
+| STEP_MIN_CM | 10.0 | cm | 105 | cm: the source's steps between plants this long and longer are compared |  | ○ |  |  |  |  |  | retarget |
+| JUMP_CM | 2.5 | cm | 106 | cm (mv_inspect's 宙): both feet this high over their rest heights ... |  | ○ |  |  |  |  |  | retarget |
+| JUMP_MIN | 4 | frames | 107 | frames: ... this long is a jump |  |  |  |  |  |  |  |  |
+| SKIP_SHOULDER | 0.5 |  | 109 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 133 |  |  |  |  |  |  |  |  |  |
+| quant(qs) | (50, 90, 99, 100) |  | 139 |  |  |  |  |  |  |  |  |  |
+| _cube_directions(n) | 4 |  | 171 |  |  |  |  |  |  |  |  |  |
+| LINE_TS | np.array([-0.3, 0.0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6, 1.0… |  | 379 |  |  |  |  |  |  |  |  |  |
 
 ### motion_jerk.py（確かめ・部品、0）
 
@@ -2036,25 +2048,6 @@
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
 | ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
 | _cell(n) | 170 |  | 444 |  |  |  |  |  |  |  |  |  |
-
-### mouth_shape.py（確かめ・部品、14）
-
-| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| KEY_TEETH | (0, 255, 0) |  | 51 |  |  |  |  |  |  |  |  |  |
-| KEY_INSIDE | (0, 255, 255) |  | 52 | cyan: the model's outlines are purple and its irises light blue (a magenta key took the hair's outline for the inside, 2026-10-17) |  |  |  |  | ○ |  |  | rig |
-| TEETH_LIGHT | 200 |  | 54 | the teeth: every channel of the texture this light or more ... |  |  |  |  |  |  |  |  |
-| TEETH_GREY | 40 |  | 55 | ... and the channels this close (the gums and the tongue are pink: 60 or more apart) | v11face 2026-10-17: リンの skin.png の歯の帯は (246, 220, 220) 前後、歯ぐき・舌は (240, 176, 178) 前後（色の差 60 以上） |  |  |  |  |  |  |  |
-| KEY_MARGIN | 80 |  | 56 | a key pixel: its key channels this much above the others |  |  |  |  |  |  |  |  |
-| WINDOW | (0.5, 0.7) |  | 57 | the share of the picture's height and width about its middle where the mouth is |  |  |  |  |  |  |  |  |
-| MID_BAND | 5 |  | 58 | columns at the opening's middle for its height |  |  |  |  |  |  |  |  |
-| CORNER_COLUMNS | 3 |  | 59 | columns at each end of the opening for its corners |  |  |  |  |  |  |  |  |
-| SIZE（引数 --size） | 720 |  | 60 |  |  |  |  |  |  |  |  |  |
-| DISTANCE（引数 --distance） | 3.5 |  | 61 |  |  |  |  |  |  |  |  |  |
-| FOV（引数 --fov） | 20 |  | 62 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_COMBOS | [ ("neutral", {}), ("a", {"あ": 1.0}), ("i", {"い": 1.0}), ("… |  | 64 |  |  |  |  |  |  |  |  |  |
-| _sheet(size) | 240 |  | 300 |  |  |  |  |  |  |  |  |  |
-| --reference | "a" |  | 371 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 

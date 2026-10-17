@@ -470,6 +470,8 @@ class Body:
         out = base.edited(spec.get("add", ()), spec.get("rest", {}), name=spec.get("name"))
         out.foot_from_mesh = spec.get("foot", "mesh") != "bones"
         out.spec = spec
+        if getattr(base, "doc", None) is not None:
+            out.doc = base.doc              # (the model's mesh: the added bones come after its own, whose indices it keeps)
         return out
 
     def edited(self, add=(), rest=None, name=None):
@@ -1042,6 +1044,84 @@ def solve_pitch(A, Q, offset, floor, lo, hi, step=0.5):
 
 FLAT_LIFT_MAX = 0.15            # units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor
 FEET_ROUNDS = 2
+# a hold given back near the floor in a frame (review_integ 2026-10-17: the song's 128.0 s right foot turned on the floor
+# 3834-3840, lifted 1 cm for a frame and stood again; the hold, 13.7 cm, went back in that one frame of air, and the later
+# layers put that frame on the floor; 104.4 s landed with 9 cm in its last frame): where the shoe, under JUMP_NEAR on
+# either frame, moves along the floor (the slowest of its vertices touching, within JUMP_TOUCH of its lowest, as
+# tools/retarget_check.py's pops read it) more than JUMP_RATE further than the source's shoe does (the same of its own, by
+# the legs' ratio), that frame's move of the correction (the holds,
+# and the offsets between them) is spread over the frames round it (a raised cosine over 2k + 1 of them, the least k up to
+# JUMP_SPREAD that keeps the shoe within JUMP_RATE of the source's foot there, else the k that comes nearest), the
+# correction's own moves there kept: the foot skids into its next hold over a few frames instead of jumping; a hold that
+# keeps a point still is no jump
+JUMP_NEAR = 0.25                # units (2 cm)
+JUMP_RATE = 2.5 / UNIT_CM       # units a frame (2.5 cm: 75 cm/s)
+JUMP_SPREAD = 6                 # frames each way at most
+JUMP_TOUCH = 0.025              # units (2 mm): a shoe's vertices this near its lowest touch (tools/sink_check.py's)
+
+
+def touch_steps(P, touch=JUMP_TOUCH):
+    """[F - 1] the move along the floor (units) to the next frame of the slowest of a shoe's vertices touching (within
+    `touch` of its lowest) at each frame, P [F, k, 3] the shoe's vertices in the world"""
+    P = np.asarray(P, dtype=np.float64)
+    if len(P) < 2:
+        return np.zeros(0)
+    near = P[:-1, :, 1] <= P[:-1, :, 1].min(axis=1, keepdims=True) + touch
+    d = np.linalg.norm(np.diff(P[:, :, [0, 2]], axis=0), axis=2)
+    return np.where(near, d, np.inf).min(axis=1)
+
+
+def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD):
+    """(H [F, 2] (the correction along the floor, x and z) with its jumps spread, the rows [frame, the shoe's step past the
+    source's (cm), what is left of it in the frames that take it (cm), k]) (see JUMP_RATE); low [F]: the shoe's lowest
+    point over the floor (units); P0 [F, k, 3]: the shoe's vertices as the mapping puts them (without the correction along
+    the floor); src [F - 1]: the source's shoe's move a frame (touch_steps, units, by the legs' ratio).  rate None: H as
+    it is"""
+    H = np.array(H, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    P0 = np.asarray(P0, dtype=np.float64)
+    src = np.asarray(src, dtype=np.float64)
+    F = len(H)
+    rows, done = [], set()
+    if F < 2 or rate is None:
+        return H, rows
+    d0 = np.diff(P0[:, :, [0, 2]], axis=0)                     # [F - 1, k, 2]
+    touching = P0[:-1, :, 1] <= P0[:-1, :, 1].min(axis=1, keepdims=True) + JUMP_TOUCH
+
+    def slowest(dd, rows):
+        return np.where(touching[rows], np.linalg.norm(d0[rows] + dd[:, None, :], axis=2), np.inf).min(axis=1)
+    lowish = (low[:-1] < near) | (low[1:] < near)
+    everything = np.arange(F - 1)
+    for _ in range(F):
+        d = np.diff(H, axis=0)
+        excess = slowest(d, everything) - src
+        bad = [t for t in np.flatnonzero((excess > rate * (1.0 + 1e-6)) & lowish) if int(t) not in done]
+        if not bad:
+            break
+        t = int(max(bad, key=lambda i: excess[i]))
+        done.add(t)
+        J = d[t].copy()
+        best = None
+        for k in range(1, spread + 1):
+            a, b = t - k, t + k                                 # the moves (frame i to i + 1) that take the jump
+            if a < 0 or b > F - 2:
+                break
+            w = np.hanning(2 * k + 3)[1:-1]
+            w = w / w.sum()
+            dd = d[a:b + 1].copy()
+            dd[k] -= J
+            dd += w[:, None] * J[None, :]
+            left = float((slowest(dd, np.arange(a, b + 1)) - src[a:b + 1]).max())
+            if best is None or left < best[3] - 1e-9:
+                best = (k, a, dd, left)
+            if left <= rate * (1.0 + 1e-6):
+                break
+        if best is None or best[3] >= float(excess[t]) - 1e-9:
+            continue
+        k, a, dd, left = best
+        H[a + 1:a + 1 + len(dd)] = H[a] + np.cumsum(dd, axis=0)
+        rows.append([t, round(float(excess[t]) * UNIT_CM, 2), round(left * UNIT_CM, 2), k])
+    return H, rows
 
 
 def hold_offsets(F, spans, hold, edges, mapped, on_floor, src_on_floor, ease_air=HOLD_AIR):
@@ -1262,6 +1342,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             # that one frame and the 99.6 s right shoe went to 1.3-1.5 cm between two turns)
             Qw = slerp_n(Q, want_turn, weight)
             low_now = A[:, 1] + weight * lift + np.min(qrot(Qw[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
+            shell_mapped = A[:, None, :] + qrot(Qw[:, None, :], shell_t[None, :, :])        # (the shoe, the turn easing)
             shell_s = sole_shell(src, side, mesh=True)
             src_low = (src_legs[side]["ankle"][:, 1] + np.min(qrot(Qs[:, None, :], shell_s[None, :, :])[:, :, 1], axis=1)
                        - float(src.rest(side + "足首")[1] + shell_s[:, 1].min()))
@@ -1282,6 +1363,10 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 pk = np.stack([points[k] for k in which[easing]])
                 Qw = slerp_n(Q[easing], want_turn[easing], weight[easing])
                 H[easing] += (qrot(Q[easing], pk) - qrot(Qw, pk))[:, [0, 2]]
+            # a hold given back near the floor in a frame is spread over the frames round it (spread_jumps)
+            src_shell = src_legs[side]["ankle"][:, None, :] + qrot(Qs[:, None, :], shell_s[None, :, :])
+            H, jumps = spread_jumps(H, shoe_low, shell_mapped, touch_steps(src_shell) * scale_of(src, tgt),
+                                    rate=params.get("jump_rate", JUMP_RATE))
             shift = np.zeros((F, 3))
             shift[:, 0], shift[:, 2] = H[:, 0], H[:, 1]
             shift[:, 1] = weight * lift + clear
@@ -1289,6 +1374,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             r = rep.setdefault(side, {"plants": len(spans), "kinds": kinds, "plant_frames": int(sum(b - a + 1 for a, b, _ in spans)),
                                       "on_floor_moving": len(moving), "on_floor_moving_frames": int(sum(b - a + 1 for a, b in moving)),
                                       "turned_on": turned_on, "keys_added": 0})
+            r["jumps_spread"] = len(jumps)
+            r["jumps_spread_rows [frame, cm, cm after, k]"] = jumps[:40]
             if len(moved):
                 w = weight[moved]
                 # the foot IK: its world turn towards the wanted foot turn, its goal shifted (both in its parent's frame)
@@ -1903,7 +1990,7 @@ class Result:
 
 
 def params_default():
-    return {"feet": True, "hands": True, "clear": True, "stance": "legs"}
+    return {"feet": True, "hands": True, "clear": True, "stance": "legs", "jump_rate": JUMP_RATE}
 
 
 def pure_keys(motion, src, tgt, s, shift, corr):
