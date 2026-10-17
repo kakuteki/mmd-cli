@@ -33,8 +33,9 @@ uses 98 others).
   vertex, so a foot turning on its ball, toe or heel does not travel), on the source's plants and elsewhere, a minute:
   a foot the source turns or moves near the floor and the target puts on it slides there.  And the one-frame jumps
   along the floor (pops): the target's shoe under POP_NEAR_CM on both frames moving more than POP_CM to the next, with
-  the source's foot's move there (the slowest point of its heel-to-toe line); a jump the source does not make (it moves
-  less than POP_SHARE of that) is the target's own (the summary's pops_not_in_source).
+  the source's foot's move there (its own shoe's slowest touching vertex, or without a shoe mesh the slowest point of
+  its heel-to-toe line); a jump the source does not make (it moves less than POP_SHARE of that) is the target's own
+  (the summary's pops_not_in_source).
 * touch runs (in contacts): each run of the source's touch with its frames, the source's distance, the hand point's
   speed in the part's frame (a hand resting on a part moves with it: a run of RESTING_MIN frames and more slower than
   RESTING_SPEED rests; a short or fast one passes by), the distance to the part's nearest vertex on both bodies (the
@@ -425,7 +426,8 @@ def source_plants(pose, body):
 
 def pops(h, sl, src_step, frames):
     """the one-frame jumps along the floor of one side (see POP_CM): h [F] the target's shoe over the floor (cm), sl [F]
-    its slowest touching vertex's move to the next frame (cm), src_step [F] the source's foot's (cm)"""
+    its slowest touching vertex's move to the next frame (cm), src_step [F] the source's foot's (cm: its shoe's slowest
+    touching vertex where the source body has a shoe, else its heel-to-toe line's slowest point)"""
     near = h < POP_NEAR_CM
     rows = []
     for t in np.flatnonzero(near[:-1] & near[1:] & (sl[:-1] > POP_CM)):
@@ -446,6 +448,13 @@ def plants(src_pose, src_body, tgt_motion, tgt_body, frames):
     feet = SC.shoe_track(rig, tgt_body.doc, tgt_motion, list(frames))
     found = source_plants(src_pose, src_body)
     steps = source_steps(src_pose, src_body)
+    if getattr(src_body, "doc", None) is not None:
+        # the source's own shoe as MMD's IK puts it, read as the target's (its slowest touching vertex), where it has one
+        try:
+            src_feet = SC.shoe_track(src_body.rig(), src_body.doc, src_pose.motion, list(frames))
+            steps = {side: src_feet[side]["slide"] for side in SIDES}
+        except ValueError:
+            pass
     out = {}
     for side in SIDES:
         f = feet[side]

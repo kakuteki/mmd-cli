@@ -470,6 +470,8 @@ class Body:
         out = base.edited(spec.get("add", ()), spec.get("rest", {}), name=spec.get("name"))
         out.foot_from_mesh = spec.get("foot", "mesh") != "bones"
         out.spec = spec
+        if getattr(base, "doc", None) is not None:
+            out.doc = base.doc              # (the model's mesh: the added bones come after its own, whose indices it keeps)
         return out
 
     def edited(self, add=(), rest=None, name=None):

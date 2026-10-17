@@ -474,6 +474,25 @@ class PopsTest(unittest.TestCase):
         self.assertAlmostEqual(p["rows"][0]["source_step_cm"], 9.6, delta=0.3)
         self.assertEqual(r["summary"]["pops_not_in_source"], 0)
 
+    def test_a_source_body_made_from_a_spec_reads_its_own_shoe(self):
+        # the song's source body is a .json spec on a model (tools/retarget.Body.from_spec): it keeps the model's mesh, so
+        # the source's move is its own shoe's, as the target's is
+        import json
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "rin.pmx"), "wb") as f:
+                f.write(T.RIN_SHOE_DATA)
+            with open(os.path.join(d, "body.json"), "w", encoding="utf-8") as f:
+                json.dump({"model": "rin.pmx", "rest": {}}, f)
+            src = check.RT.Body.load(os.path.join(d, "body.json"))
+            self.assertIsNotNone(getattr(src, "doc", None))
+            m = stepping(jump_at=5)
+            r = check.measure(m, src, m, T.body(T.RIN_SHOE_DATA))
+            row = r["plants"]["左"]["pops"]["rows"][0]
+            self.assertAlmostEqual(row["source_step_cm"], row["step_cm"], delta=0.05)
+            self.assertFalse(row["own"])
+
     def test_a_jump_high_over_the_floor_or_a_short_one_is_not_a_pop(self):
         for tgt in (stepping(jump_at=5, up=0.5), stepping(jump_at=5, dx=0.75)):       # 4 cm up; a 6 cm step
             r = self.measure(stepping(), tgt)
