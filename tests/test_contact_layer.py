@@ -416,6 +416,19 @@ class PlantTest(unittest.TestCase):
         self.assertLess(float(np.abs(b["右"]["low"][down:]).max()), 0.4)               # (on the floor as the dance has it)
         self.assertLess(float(b["右"]["slide"][12:F - 1].max()), 0.5)                  # ... without sliding (cm/s)
 
+    def test_a_standing_foots_jump_of_a_frame_is_held(self):
+        # the left foot stands still on the floor but its goal jumps 0.75 units (6 cm) along x from frame 15 to 16 and
+        # stays (the song's 242.1 s: a foot turned 90 degrees in a frame by the trace, its shoe jumping 11 cm along the
+        # floor after the foot layers; v11feet 2026-10-17): no dance slides a standing foot so; the jump is held, the
+        # frames round it still; a slide of several frames as fast is the dance's and is kept (the test above)
+        F = 30
+        m = dance(F, left=lambda t: ((0.75 if t >= 16 else 0.0, 0.0, 0.0), None))
+        out, plan = run(m)
+        a, b = shoes(m, F), shoes(out, F)
+        self.assertGreater(float(a["左"]["slide"][15]) / FPS, 5.0)                     # cm: the dance's jump
+        self.assertLess(float(b["左"]["slide"][15]) / FPS, 0.5)                        # held
+        self.assertLess(float(b["左"]["slide"][:F - 1].max()) / FPS, 0.5)
+
     def test_a_standing_foot_the_body_moves_away_from_slides_before_its_knee_changes_much(self):
         # single support on the left foot, which the dance slides slowly (0.08 units a frame, 19 cm/s) along -z for 40
         # frames together with the body: held where it first stood, the leg would straighten some 19 degrees as the body
@@ -502,6 +515,32 @@ class FlightTest(unittest.TestCase):
             off = np.ones(F, bool)
             off[a:b + 1] = False
             self.assertLess(float(acc[off][1:-1].max()), 122.0 + 0.5)
+
+    def test_two_hops_whose_windows_nearly_meet_keep_the_bound_between(self):
+        # two hops (frames 20-27 and 45-52, both feet 2 cm up and travelling, the pelvis level): their windows (8 frames
+        # each side) end at 35 and begin at 37, so the second one's pinned frames lay over the first one's last (the song's
+        # 63.2 s, v11feet 2026-10-17: the second window wrote naught over the first's change at 1896, which then fell at
+        # 136 units/s^2 on the floor): solved together, no floor frame falls faster than the bound
+        F = 80
+        hops = ((20, 27), (45, 52))
+
+        def x(t):
+            return 0.25 * sum(min(max(t - a + 1, 0), b - a + 1) for a, b in hops)
+
+        def foot(t):
+            return (x(t), 0.25 if any(a <= t <= b for a, b in hops) else 0.0, 0.0), None
+
+        def pelvis(t):              # (the dance's pelvis falling at 121.5 units/s^2 on frame 35, the bound's edge)
+            return BENT - 0.135 * min(max(t - 35, 0), 2)
+        m = dance(F, centre=lambda t: (x(t), pelvis(t), 0.0), left=foot, right=foot)
+        out, plan = run(m)
+        self.assertEqual(len(plan["flight_rows"]["flights"]), 2)
+        floor = np.ones(F, bool)
+        for a, b in hops:
+            floor[a:b + 1] = False
+        for name in ("センター", "下半身"):
+            acc = down_acc(world_y(out, F, name))
+            self.assertLess(float(acc[floor].max()), 122.0 + 0.5, name)
 
     def test_a_hop_that_already_falls_by_gravity_is_left_alone(self):
         # the pelvis pushed up (+80 units/s^2 for 6 frames), flying at -g over frames 20-27 and caught: in the air the

@@ -171,6 +171,10 @@ JUDGE_MISS = 0.75               # units (6 cm): a foot MMD leaves this far or le
 PLANT_SPEED = 30.0              # cm/s: a standing foot's touching part moving slower than this is held in place (the trace's
                                 # drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of their frames,
                                 # people's 7.9); faster is the dance sliding the foot (kept)
+PLANT_POP = 2                   # steps: a standing foot's moves faster than PLANT_SPEED in a run of this many or fewer, with a
+                                # slower step of the same stand on each side, are a jump, not a slide, and are held too (v11feet
+                                # 2026-10-17: the song's 242.1 s right foot, turned some 90 degrees in a frame by the trace, came
+                                # out of the foot layers with its shoe 11 cm along the floor in that frame)
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
@@ -365,6 +369,21 @@ def swing_blend(corr, stance, F):
         for t in range(b + 1, min(nxt, F)):
             u = float(smoothstep((t - b) / float(n)))
             out[t] = end * (1.0 - u) + start * u
+    return out
+
+
+def lone_pops(fast, stance, n=PLANT_POP):
+    """[F] the steps (frame t to t + 1) of a standing foot (stance [F]) that are fast (fast [F]) in a run of n or fewer
+    with a slow step of the same stand on each side: a jump of a frame or two, not the dance sliding the foot"""
+    fast = np.asarray(fast, dtype=bool)
+    stance = np.asarray(stance, dtype=bool)
+    F = len(fast)
+    on = np.zeros(F, dtype=bool)
+    on[:-1] = stance[:-1] & stance[1:]
+    out = np.zeros(F, dtype=bool)
+    for a, b in runs(fast & on):
+        if b - a + 1 <= n and a >= 1 and b + 1 < F and on[a - 1] and on[b + 1] and not fast[a - 1] and not fast[b + 1]:
+            out[a:b + 1] = True
     return out
 
 
@@ -591,8 +610,8 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=
     wins = []
     for a, b in runs((need > 0.0) | strict):
         w0, w1 = max(0, a - window), min(F - 1, b + window)
-        if wins and w0 <= wins[-1][1] + 1:
-            wins[-1] = (wins[-1][0], w1)
+        if wins and w0 - PAD <= wins[-1][1] + PAD + 1:     # (padded ranges that meet are solved together: each window's
+            wins[-1] = (wins[-1][0], w1)                    # pinned frames would write naught over the other's own)
         else:
             wins.append((w0, w1))
     for w0, w1 in wins:
@@ -1221,6 +1240,7 @@ def layer(model, rig, shoe, motion, params=None):
         rows = []
         if p["plant"]:
             slow = np.linalg.norm(slip[s], axis=1) * UNIT_CM * FPS < PLANT_SPEED
+            slow = slow | lone_pops(~slow, stance[s])                  # (a jump of a frame or two is held too: PLANT_POP)
             e = hips_low[s] - (sol[s]["goal_ankle"] + np.stack([np.zeros(F), dy_e[s], np.zeros(F)], 1))
             r_lo, r_hi = plant_band(e, *lengths[s])
             for a, b in runs(stance[s]):
@@ -1285,7 +1305,9 @@ def layer(model, rig, shoe, motion, params=None):
         wins = []
         for a, b in flights:
             w0, w1 = max(1, a - WINDOW), min(F - 2, b + WINDOW)
-            if wins and w0 <= wins[-1][1] + 1:
+            # (windows whose padded ranges meet are solved together: one window's pinned frames written over the other's
+            # own change broke the bound on the floor between them, the song's 63.2 s at 136 units/s^2, v11feet)
+            if wins and w0 - PAD <= wins[-1][1] + PAD + 1:
                 wins[-1] = (wins[-1][0], w1)
             else:
                 wins.append((w0, w1))
