@@ -2,6 +2,7 @@
 and debug with them instead of looking each time").  Nothing here starts MMD.
 
     python tools/mv_inspect.py measure SPEC.json --out DIR [--cache DIR] [--parts gravity,feet,...] [--no-figure]
+                                       [--size legs|none]
     python tools/mv_inspect.py measure --model M.pmx --motions DANCE.vmd FACE.vmd GAZE.vmd EYE.vmd [--dance D.vmd]
                                        [--reference SPINE.vmd] [--camera CAM.vmd] [--vocal V.flac] [--lines L.tsv]
                                        [--label v9] --out DIR
@@ -23,6 +24,13 @@ events.csv (every place, listed or not), series.npz (the per-frame curves), mark
 support per frame, for `mark`) and timeline.png (the curves along the song).  The heavy arrays (the forward kinematics,
 MMD's IK, the shoes) are kept in --cache (default DIR/cache) by the inputs' md5 and the md5 of the code they come from
 (tools/mvi/body.py CACHE_CODE).
+
+size (--size legs, the default): people's values were measured on one body (FineDance's: SMPL-X's neutral body, legs
+78.9 cm), larger than Sour's Rin (legs 71.2 cm).  The measures of lengths (tools/mvi/base.SIZE_ALIGNED: the hover, the
+slides, the COM over the standing foot, the pelvis's sink and bob) are measured again with her body made as large as
+people's by the legs (tools/mvi/shared.Scaled, the timing kept) and judged too: each such row gets "size" {value,
+judge} beside its own value and judgement, which stay what they were; report.json's "size" says by how much
+(--size none: neither).  The places, the timeline and the judgement that lists them stay the raw ones.
 
 compare: two measured versions in one table, judged 入った / 中のまま / 近づいた / 遠ざかった / 直しすぎ / 変わらず with
 the distances outside people (A -> B), and the places outside that are new in B and gone from A (a place B still has,
@@ -74,7 +82,48 @@ def spec_of(args):
     return spec
 
 
-def measure(spec, out_dir, cache=None, parts=None, figure=True):
+SIZE_PARTS = ("gravity", "feet", "balance")       # the parts with measures in base.SIZE_ALIGNED
+
+
+def size_aligned(m, rep, parts=None):
+    """the size-aligned values (the module's doc): rep's rows of base.SIZE_ALIGNED get "size" {value, judge} from the
+    parts measured again on m.scaled(base.size_scale(...)); rep["size"] says by how much, or why not"""
+    try:
+        rest = m.rest()[0]
+    except Exception as e:                                   # a model without the legs a05 reads
+        rep["size"] = {"by": None, "why": str(e)}
+        return rep
+    leg, s = base.leg_cm(rest), base.size_scale(rest)
+    if s is None:
+        rep["size"] = {"by": None, "why": "the model's legs (足・ひざ・足首) are missing"}
+        return rep
+    ms = m.scaled(s)
+    by = {r["id"]: r for r in rep["measures"]}
+    for name, part in PARTS:
+        if name not in SIZE_PARTS or (parts and name not in parts) or name in rep["failed"]:
+            continue
+        t = time.time()
+        try:
+            res = part.measure(ms)
+        except Exception:
+            rep["failed"]["size " + name] = traceback.format_exc()
+            log("size", name, "FAILED")
+            log(rep["failed"]["size " + name])
+            continue
+        n = 0
+        for r2 in res["rows"]:
+            r = by.get(r2["id"])
+            if r is not None and r2["id"] in base.SIZE_ALIGNED and r.get("value") is not None:
+                r["size"] = {"value": r2["value"], "judge": r2["judge"]}
+                n += 1
+        log("size", name, "%.1f s" % (time.time() - t), n, "measures")
+    rep["size"] = {"by": "legs", "leg_cm": round(leg, 3), "people_leg_cm": round(base.people_leg_cm(), 3), "scale": round(s, 5),
+                   "what": "her body made %.4f times as large (people's legs %.2f cm / hers %.2f cm), the timing kept: "
+                           "the measures of lengths (base.SIZE_ALIGNED) measured again" % (s, base.people_leg_cm(), leg)}
+    return rep
+
+
+def measure(spec, out_dir, cache=None, parts=None, figure=True, size="legs"):
     """measure one version; returns (report, failed)"""
     ver = body.Version(spec, cache=cache or os.path.join(out_dir, "cache"))
     m = shared.Measured(ver)
@@ -103,6 +152,8 @@ def measure(spec, out_dir, cache=None, parts=None, figure=True):
             if "air" in s:
                 arrays["air"] = np.asarray(s["air"], dtype=bool)
         log("part", name, "%.1f s" % (time.time() - t), len(res["rows"]), "measures", len(res["events"]), "places")
+    if size == "legs":
+        size_aligned(m, rep, parts)
     RP.mark_listed(rep)
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, "series.npz"), **arrays)
@@ -129,7 +180,7 @@ def cmd_measure(args):
     unknown = [p for p in (parts or []) if p not in dict(PARTS)]
     if unknown:
         raise ValueError("unknown parts: %s (the parts: %s)" % (", ".join(unknown), ", ".join(p for p, _ in PARTS)))
-    rep, paths = measure(spec, args.out, args.cache, parts, figure=not args.no_figure)
+    rep, paths = measure(spec, args.out, args.cache, parts, figure=not args.no_figure, size=args.size)
     listed = sum(1 for e in rep["events"] if e.get("listed"))
     outside = sum(1 for r in rep["measures"] if r.get("judge") and r["judge"]["side"] != 0)
     print(json.dumps({"ok": not rep["failed"], "label": rep["label"], "measures": len(rep["measures"]), "outside": outside,
@@ -234,6 +285,8 @@ def main(argv=None):
     p.add_argument("--cache")
     p.add_argument("--parts", help="comma-separated parts (default: all)")
     p.add_argument("--no-figure", action="store_true")
+    p.add_argument("--size", choices=("legs", "none"), default="legs",
+                   help="legs: the measures of lengths also measured with her body as large as people's (the module's doc)")
     p = sub.add_parser("outliers", help="the places outside of a measured version")
     p.add_argument("report")
     p.add_argument("--top", type=int, default=40)

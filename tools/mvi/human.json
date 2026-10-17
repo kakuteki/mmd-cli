@@ -3,7 +3,21 @@
   "what": "people's values for tools/mv_inspect.py: one value per sequence, the 10/25/50/75/90 % points over the sequences (n), and the rules the project set where people's data cannot say",
   "people": "FineDance K-pop・振付・jazz（人の基準値の「近い種類」62 列、光学式）",
   "collected": "C:/work/hibikase/stage6/inspect/scripts/collect_human.py (hinata, 2026-10-17): the outputs of the human baseline, floaty, review_floaty, wbbalance, review_wbbalance and review_fingers_lag; the data stay on hinata",
-  "kinds": "people: median/q1/q3/p10/p90/n; limit: max or min with a scale; window: lo..hi; info: not judged"
+  "kinds": "people: median/q1/q3/p10/p90/n; limit: max or min with a scale; window: lo..hi; info: not judged",
+  "body": {
+   "what": "the body people's values were measured on: FineDance retargets every sequence to SMPL-X's neutral body (betas 0; the FineDance repository's data/code/pre_motion.py), whose rest joints (smplx_neu_J_1.npy) the human baseline's skeleton uses (hbpack.py). Lengths between joint centres; the heights from the ball of the foot's joint (the people's floor: the 1 % point of that joint's height in each sequence); foot_cm = ankle_to_ball_cm (on the floor) / 0.49 (tools/wb_dynamics.human_feet's rule)",
+   "thigh_cm": 38.28,
+   "shank_cm": 40.66,
+   "hip_width_cm": 12.15,
+   "shoulder_width_cm": 31.59,
+   "upper_arm_cm": 26.76,
+   "forearm_cm": 25.31,
+   "ankle_to_ball_cm": 12.73,
+   "foot_cm": 25.98,
+   "hip_above_ball_cm": 83.98,
+   "eye_above_ball_cm": 159.48,
+   "source": "adapt m01_bodies.py (hinata C:/work/hibikase/stage6/adapt, 2026-10-17) on stage6/human_baseline/data/smplx_neu_J_1.npy"
+  }
  },
  "gravity.centre_down_max": {
   "kind": "people",

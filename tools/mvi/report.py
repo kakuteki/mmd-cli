@@ -121,12 +121,40 @@ def _judge_text(r):
     return "%s %.1f" % (j["word"], j["dist"])
 
 
+def _size_text(r):
+    """the size-aligned value and judgement of a row (mv_inspect's --size legs), or """""
+    z = r.get("size")
+    if not z:
+        return ""
+    return "%s（%s）" % (_value(dict(r, value=z["value"])), _judge_text(dict(r, judge=z["judge"])))
+
+
+def _sized(report):
+    return (report.get("size") or {}).get("by") == "legs"
+
+
+def size_flips(report):
+    """the rows whose judgement changes when they are measured at people's size: [(row, raw word, size-aligned word)]"""
+    out = []
+    for r in report["measures"]:
+        z, j = r.get("size"), r.get("judge")
+        if z and j and z.get("judge") and z["judge"]["side"] != j["side"]:
+            out.append((r, j["word"], z["judge"]["word"]))
+    return out
+
+
 def measures_md(report):
     lines = ["# %s の測り（tools/mv_inspect.py）" % report["label"], "",
              "- 作成: %s、コマ %d（%d〜%d）" % (report["made"], report["frames"], report["first"], report["last"]),
              "- 人の値: %s（中央値 [四分位]。列の組が違う物差しは report.json の ref.group）。決まり・目安のものはその旨。"
              "判定は 中 / 上へ外 / 下へ外（外の数は人の幅を単位にした距離）。" % base.human().get("_about", {}).get("people", ""),
              "- 単位: u は MMD の 1 単位（8 cm）、重力は 122.5 u/s²。加速度の符号は物差しの名に書いた向き（「+ 上」の値は負が下向き）。", ""]
+    if _sized(report):
+        z = report["size"]
+        lines[-1:-1] = ["- 体の大きさ: 人の値は FineDance の標準の体（SMPL-X の中立の体、脚 %.1f cm）で測ったもの。リンの脚は %.1f cm"
+                        "（股関節→ひざ→足首、8 cm/単位）。「脚でそろえた」値はリンを %.3f 倍に大きくして同じ時刻で測り直した値で、"
+                        "長さと長さの閾値を数える物差しだけ（tools/mvi/base.SIZE_ALIGNED。重力に結んだ物差し・スカートの決まり・ZMP・上体はそろえない）。"
+                        "判定と外れた所の表は元の値のまま。" % (z["people_leg_cm"], z["leg_cm"], z["scale"])]
     if report.get("failed"):
         lines += ["**測れなかった部品**: " + "、".join("%s（%s）" % (k, v.splitlines()[-1][:120]) for k, v in report["failed"].items()), ""]
     out_people = [r for r in report["measures"] if r.get("judge") and r["judge"]["side"] != 0 and (r.get("ref") or {}).get("kind") == "people"]
@@ -141,6 +169,11 @@ def measures_md(report):
     broken = [r for r in report["measures"] if r.get("judge") and r["judge"]["side"] != 0 and (r.get("ref") or {}).get("kind") in ("limit", "window")]
     if broken:
         lines += ["決まり・目安を外れた物差し: " + "、".join("%s %s（%s）" % (r["name"], _value(r), base.ref_text(r.get("ref"))) for r in broken), ""]
+    if _sized(report):
+        flips = size_flips(report)
+        lines += ["脚でそろえると判定が変わる物差し（%d）: " % len(flips) +
+                  ("、".join("%s %s → %s（%s → %s）" % (r["name"], _value(r), _value(dict(r, value=r["size"]["value"])), a, b)
+                            for r, a, b in flips) if flips else "なし"), ""]
     by_c = {}
     for r in report["measures"]:
         by_c.setdefault(r["concept"], []).append(r)
@@ -152,10 +185,18 @@ def measures_md(report):
         rs = by_c.get(c)
         if not rs:
             continue
-        lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | 外れた所 |", "| --- | --- | --- | --- | --- |"]
+        if _sized(report):
+            lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | 脚でそろえた値（判定） | 外れた所 |",
+                      "| --- | --- | --- | --- | --- | --- |"]
+        else:
+            lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | 外れた所 |", "| --- | --- | --- | --- | --- |"]
         for r in rs:
             n = len(ev_by.get(r["id"], []))
-            lines.append("| %s | %s | %s | %s | %s |" % (r["name"], _value(r), base.ref_text(r.get("ref")), _judge_text(r), n if n else ""))
+            if _sized(report):
+                lines.append("| %s | %s | %s | %s | %s | %s |" % (r["name"], _value(r), base.ref_text(r.get("ref")), _judge_text(r),
+                                                              _size_text(r), n if n else ""))
+            else:
+                lines.append("| %s | %s | %s | %s | %s |" % (r["name"], _value(r), base.ref_text(r.get("ref")), _judge_text(r), n if n else ""))
         lines.append("")
     lines += ["## 出所", ""]
     for r in report["measures"]:
@@ -269,9 +310,14 @@ def compare(a, b):
         ref = rb.get("ref") or (r0 or {}).get("ref")
         va = None if r0 is None else r0.get("value")
         vb = rb.get("value")
-        rows.append({"id": rb["id"], "concept": rb["concept"], "name": rb["name"], "unit": rb.get("unit", ""), "a": va, "b": vb,
-                     "ref": ref, "judge_a": None if r0 is None else r0.get("judge"), "judge_b": rb.get("judge"),
-                     "word": base.compare(ref, va, vb, rb.get("unit", ""))})
+        row = {"id": rb["id"], "concept": rb["concept"], "name": rb["name"], "unit": rb.get("unit", ""), "a": va, "b": vb,
+               "ref": ref, "judge_a": None if r0 is None else r0.get("judge"), "judge_b": rb.get("judge"),
+               "word": base.compare(ref, va, vb, rb.get("unit", ""))}
+        za, zb = (r0 or {}).get("size"), rb.get("size")
+        if za and zb:
+            row["a_size"], row["b_size"] = za["value"], zb["value"]
+            row["word_size"] = base.compare(ref, za["value"], zb["value"], rb.get("unit", ""))
+        rows.append(row)
     for r0 in a["measures"]:
         if r0["id"] not in {r["id"] for r in rows}:
             rows.append({"id": r0["id"], "concept": r0["concept"], "name": r0["name"], "unit": r0.get("unit", ""), "a": r0.get("value"),
@@ -326,10 +372,18 @@ def compare_md(c, top=30):
         rs = by_c.get(cc)
         if not rs:
             continue
-        lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 |" % (c["a"], c["b"]), "| --- | --- | --- | --- | --- | --- |"]
+        sized = any("word_size" in r for r in c["rows"])
+        if sized:
+            lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 | 脚でそろえた判定 |" % (c["a"], c["b"]),
+                      "| --- | --- | --- | --- | --- | --- | --- |"]
+        else:
+            lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 |" % (c["a"], c["b"]), "| --- | --- | --- | --- | --- | --- |"]
         for r in rs:
-            lines.append("| %s | %s | %s | %s | %s | %s |" % (r["name"], _unit(r.get("unit")) or "-", base.ref_text(r.get("ref")), base.num(r["a"]),
-                                                         base.num(r["b"]), word_text(r.get("word"))))
+            cells = (r["name"], _unit(r.get("unit")) or "-", base.ref_text(r.get("ref")), base.num(r["a"]), base.num(r["b"]),
+                     word_text(r.get("word")))
+            if sized:
+                cells += (word_text(r["word_size"]) if r.get("word_size") else "",)
+            lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
     for key, title in (("new", "%s で新しく外れた所" % c["b"]), ("gone", "%s で消えた所" % c["b"])):
         evs = c[key]

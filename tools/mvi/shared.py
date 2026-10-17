@@ -9,6 +9,8 @@ part asks for).
     m.wb()        -> (report, arrays) of tools/wb_dynamics.measure as wbbalance ran it on the MV (the body of
                      tools/balance_layer.Body, the shoes as MMD bends them for the support, contact 1.2 cm, 6 Hz)
     m.shoes()     -> tools/sink_check.measure's curves of the dance (and m.shoes("reference"))
+    m.rest()      -> a05's rest of the model's legs (a05.rest_of)
+    m.scaled(s)   -> Scaled: the same version with her body s times as large, for the size-aligned values (base.SIZE_ALIGNED)
 """
 import time
 
@@ -43,11 +45,17 @@ class Measured:
             return HB.measure(names, pos, rot)
         return self._once("hb", build)
 
+    def rest(self):
+        return self._once("rest", lambda: A05.rest_of(self.v.model))
+
     def a05(self):
         def build():
             names, pos, rot = self.v.pack()
-            return A05.run(names, pos, rot, self.v.model)
+            return A05.run(names, pos, rot, rest=self.rest())
         return self._once("a05", build)
+
+    def scaled(self, s):
+        return Scaled(self, s)
 
     def fq(self):
         def build():
@@ -107,3 +115,57 @@ class Measured:
             arr["floor_y"] = sole_floor
             return rep, arr
         return self._once("wb", build)
+
+
+class Scaled:
+    """the version of `parent` (a Measured, or anything with its face) with her body s times as large: every position of
+    the pack and of the legs' rest times s about the origin (the floor y 0 stays), the timing kept, so that the lengths,
+    the speeds and the thresholds in cm of a05 and fq compare her at people's size (base.SIZE_ALIGNED).  a05 and fq are
+    measured again on it (fq on the version's own frames); every other engine is the version's own, unscaled."""
+
+    def __init__(self, parent, s):
+        self.parent, self.v, self.s, self._c = parent, parent.v, float(s), {}
+
+    def _once(self, key, build):
+        if key not in self._c:
+            t = time.time()
+            self._c[key] = build()
+            log(key, self.v.label, "x%.4f" % self.s, "%.1f s" % (time.time() - t))
+        return self._c[key]
+
+    def pack(self):
+        names, pos, rot = self.v.pack()
+        return names, np.asarray(pos, dtype=np.float64) * self.s, rot
+
+    def rest(self):
+        rest, ankle_y, toe_y = self.parent.rest()
+        return {k: np.asarray(v, dtype=np.float64) * self.s for k, v in rest.items()}, ankle_y * self.s, toe_y * self.s
+
+    def a05(self):
+        def build():
+            names, pos, rot = self.pack()
+            return A05.run(names, pos, rot, rest=self.rest())
+        return self._once("a05", build)
+
+    def fq(self):
+        def build():
+            own = self.parent.fq()
+            if own is None:
+                return None
+            _, pos, _ = self.pack()
+            r = FQ.measure(pos, *own["range"], events=True)
+            r["range"] = list(own["range"])
+            return r
+        return self._once("fq", build)
+
+    def hb(self):
+        return self.parent.hb()
+
+    def wb(self):
+        return self.parent.wb()
+
+    def shoes(self, which="dance"):
+        return self.parent.shoes(which)
+
+    def vertical(self):
+        return self.parent.vertical()

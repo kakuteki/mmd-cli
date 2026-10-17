@@ -83,6 +83,53 @@ def reference(mid, path=HUMAN_PATH):
     return human(path).get(mid)
 
 
+# ---- the body's size -----------------------------------------------------------------------------------------------
+# People's values were measured on one body: FineDance retargets every sequence to SMPL-X's neutral body (human.json's
+# "_about" "body": legs 78.9 cm from the hip to the ankle, about 1.7 m tall), while Sour's Rin's legs are 71.2 cm
+# (adapt, 2026-10-17: thigh + shank 0.90 of people's; her stature 152.7 cm at 8 cm a unit, 0.90).  A measure in cm, or
+# one that counts against a threshold in cm, then compares a smaller body with a larger one.  The size-aligned value
+# measures her again with her body made as large as people's by the legs (shared.Scaled: every position of the pack and
+# of the legs' rest times size_scale, the timing kept, so that lengths, speeds and the thresholds in cm all compare one
+# size).  Only the measures of a05 and fq that count lengths: not those tied to gravity (the fall's acceleration, the
+# flight, the drop against free fall: the same g for every body), not the skirt's rule (in her own units), not the ZMP
+# and the support (her shoes, 16.7 cm, are 0.64 of people's feet, 26 cm, against 0.90 of their legs: another shape, not
+# a size), not the upper body and the arms (her trunk and arms are 0.5 to 0.75 of people's; the human baseline's
+# rin_proportions).
+SIZE_ALIGNED = frozenset([
+    "gravity.hover_pct", "gravity.hover_runs6_per_min", "gravity.landing_sink_cm", "gravity.air_per_min",
+    "gravity.beat_range_cm", "gravity.vy_p95",
+    "feet.slide10_per_min", "feet.slide3_per_min", "feet.slide_path_cm_per_min", "feet.slide_fast_share",
+    "feet.knee_gain_deg", "feet.knee_straight_pct",
+    "balance.com_lateral_cm", "balance.touchdown_xcom_cm", "balance.com_outside_2cm_pct", "balance.held_outside_per_min",
+    "balance.moving_com_lateral_cm", "balance.moving_mos_ml_cm", "balance.still_com_lateral_cm"])
+LEG_SIDES = ("左", "右")
+
+
+def leg_cm(rest):
+    """the legs' length in cm (UNIT_CM a unit): the hip (足) to the knee (ひざ) to the ankle (足首) of each side, from a rest
+    {bone: position} (a05.rest_of's first item), the two sides' mean; None when a bone is missing"""
+    lengths = []
+    for s in LEG_SIDES:
+        try:
+            hip, knee, ankle = (np.asarray(rest[s + n], dtype=np.float64) for n in ("足", "ひざ", "足首"))
+        except (KeyError, TypeError):
+            return None
+        lengths.append(float(np.linalg.norm(knee - hip) + np.linalg.norm(ankle - knee)))
+    return float(np.mean(lengths)) * UNIT_CM
+
+
+def people_leg_cm(path=None):
+    """the legs of the body people's values were measured on (human.json's "_about" "body"), cm"""
+    body = human(path or HUMAN_PATH)["_about"]["body"]
+    return float(body["thigh_cm"]) + float(body["shank_cm"])
+
+
+def size_scale(rest, path=None):
+    """how many times as large her body is made to have people's legs (people_leg_cm / leg_cm), None without legs"""
+    leg = leg_cm(rest) if rest else None
+    return people_leg_cm(path) / leg if leg else None
+
+
 def resolution(unit, seconds=MV_SECONDS):
     """the value of one frame or one event in the MV's dance (p31_table.resolution)"""
     if unit == "%":
