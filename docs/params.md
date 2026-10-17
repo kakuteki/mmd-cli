@@ -121,33 +121,33 @@
 | TOUCH_PITCH_MAX | 20.0 | deg | 810 | degrees: the most such a foot's pitch is changed from the source's to reach the floor (the ankle comes down the rest, within FLAT_LIFT_MAX): a foot lifting off is not fl… |  |  |  | ○ |  |  |  | dance |
 | HEEL_BACK | 0.3 |  | 813 | without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle |  |  |  |  |  |  |  |  |
 | sole_shell(cap) | 256 |  | 844 |  |  |  |  |  |  |  |  |  |
-| runs(min_len) | 1 |  | 867 |  |  |  |  |  |  |  |  |  |
-| solve_pitch(step) | 0.5 |  | 943 |  |  |  |  |  |  |  |  |  |
-| FLAT_LIFT_MAX | 0.15 | units | 987 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
-| FEET_ROUNDS | 2 |  | 988 |  |  |  |  |  |  |  |  |  |
-| _quant(qs) | (50, 90, 99, 100) |  | 1125 |  |  |  |  |  |  |  |  |  |
-| TOUCH | 0.12 | units | 1134 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
-| NEAR | 0.8 | units | 1135 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
-| HAND_THICK | 0.15 | units | 1136 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
-| TOUCH_BAND | 0.08 | units | 1137 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_ROUNDS | 4 |  | 1138 |  |  |  |  |  |  |  |  |  |
-| CLEAR_MARGIN | 0.02 | units | 1139 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_TOL | 0.005 | units | 1140 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
-| ELBOW_SHARE | 0.25 |  | 1141 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
-| HOLD_FROM | 0.6 |  | 1142 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
-| SHOULDER_SKIP | 0.5 |  | 1143 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
-| TOL_DEG | 0.3 | deg | 1144 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
-| SWIVELS | 24 |  | 1484 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
-| SWIVEL_COST | 0.02 | units | 1485 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
-| SWIVEL_CLEARS | 0.03 | units | 1486 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
-| of(depth) | 0 |  | 1662 |  |  |  |  |  |  |  |  |  |
-| STANCE_LOW | 0.1 | units | 1777 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
-| STANCE_SLOW | 0.05 | units | 1778 | units a frame |  | ○ |  |  |  |  |  | retarget |
-| TOE_STILL | 0.03 | units | 1779 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
-| TOE_PITCH | (6.0, 45.0) | deg | 1780 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
-| lower_envelope(q) | 10.0 |  | 1805 |  |  |  |  |  |  |  |  |  |
-| lower_envelope(width) | 6.0 |  | 1805 |  |  |  |  |  |  |  |  |  |
-| --stance | "legs" |  | 1996 |  |  |  |  |  |  |  |  |  |
+| runs(min_len) | 1 |  | 877 |  |  |  |  |  |  |  |  |  |
+| solve_pitch(step) | 0.5 |  | 953 |  |  |  |  |  |  |  |  |  |
+| FLAT_LIFT_MAX | 0.15 | units | 997 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
+| FEET_ROUNDS | 2 |  | 998 |  |  |  |  |  |  |  |  |  |
+| _quant(qs) | (50, 90, 99, 100) |  | 1142 |  |  |  |  |  |  |  |  |  |
+| TOUCH | 0.12 | units | 1151 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| NEAR | 0.8 | units | 1152 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
+| HAND_THICK | 0.15 | units | 1153 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_BAND | 0.08 | units | 1154 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_ROUNDS | 4 |  | 1155 |  |  |  |  |  |  |  |  |  |
+| CLEAR_MARGIN | 0.02 | units | 1156 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_TOL | 0.005 | units | 1157 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
+| ELBOW_SHARE | 0.25 |  | 1158 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
+| HOLD_FROM | 0.6 |  | 1159 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
+| SHOULDER_SKIP | 0.5 |  | 1160 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
+| TOL_DEG | 0.3 | deg | 1161 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
+| SWIVELS | 24 |  | 1501 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
+| SWIVEL_COST | 0.02 | units | 1502 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
+| SWIVEL_CLEARS | 0.03 | units | 1503 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
+| of(depth) | 0 |  | 1679 |  |  |  |  |  |  |  |  |  |
+| STANCE_LOW | 0.1 | units | 1794 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
+| STANCE_SLOW | 0.05 | units | 1795 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| TOE_STILL | 0.03 | units | 1796 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
+| TOE_PITCH | (6.0, 45.0) | deg | 1797 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
+| lower_envelope(q) | 10.0 |  | 1822 |  |  |  |  |  |  |  |  |  |
+| lower_envelope(width) | 6.0 |  | 1822 |  |  |  |  |  |  |  |  |  |
+| --stance | "legs" |  | 2013 |  |  |  |  |  |  |  |  |  |
 
 ## fix_twist.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、6）
 
