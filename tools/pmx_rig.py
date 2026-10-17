@@ -1,7 +1,8 @@
 """Change the rig of a PMX model in a copy: the leg IK's loops, and (as the recipe grows) twist bones with their weights,
 morphs and physics.  Everything the recipe does not name is kept byte for byte (formats.pmx_edit).
 
-    python tools/pmx_rig.py MODEL.pmx OUT.pmx [--report r.json] [--leg-ik-loops N]
+    python tools/pmx_rig.py MODEL.pmx OUT.pmx [--report r.json] [--leg-ik-loops N] [--knee-least-bend DEG]
+                            [--inner-brow UNITS]
 
 Recipe:
   --leg-ik-loops N    the loops of the leg IKs (足ＩＫ, both sides).  MMD's leg IK is a CCD that keeps a loop only when it
@@ -9,21 +10,34 @@ Recipe:
                       loop, so 40 loops (Sour's Rin, most models) leave the ankle short of a goal the leg could reach
                       (v10: 4 mm or more on 228 + 439 frames, up to 1.3 cm, tools/rig_check.py ik).  More loops let it
                       get there; a frame that converges sooner stops sooner, so they cost only where they help.
+  --knee-least-bend D the knee's IK limit (ひざ, the leg IK's first link, a turn about X) ends D degrees short of the
+                      model's rest bend instead of at it: where the dance asks for the whole leg's length the knee keeps
+                      D degrees more than at rest (Sour's Rin rests at 5.7 degrees) instead of locking there.  It costs a
+                      goal at the very end of the reach at most the difference of the two reaches (Rin, 5 degrees: 2.2 mm).
+  --inner-brow UNITS  morphs 眉頭右 / 眉頭左 (KAZUSA's singing face keys 眉頭右, Sour's Rin has no such morph: its keys were
+                      dropped): the brow's inner end raised by UNITS, falling linearly to nothing at its outer end (the
+                      brow's vertices: those hanging most on 眉1..眉3 of the side; inner and outer ends the x of 眉1 and
+                      眉4), along the model's own brow-raise direction (Sour's Rin's bone morph 上 moves 眉1 by
+                      (0, 0.1992, -0.0419)).  Panel 眉, added to the display frame 表情.
 
 The copy is for this work only and is not to be distributed (Sour's ReadMe allows editing; distribution would need the
 ReadMe and an editor's ReadMe).
 """
 import argparse
 import json
+import math
 import os
+import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mmd_cli.formats import pmx_edit  # noqa: E402
 
-KEYS = ("leg_ik_loops",)
+KEYS = ("leg_ik_loops", "knee_least_bend", "inner_brow")
 LEG_IKS = ("左足ＩＫ", "右足ＩＫ")
+BROW_UP = (0.0, 0.1992, -0.0419)            # Sour's Rin's 上: the brow's raise, in the face's slope
+PANEL_BROW = 1
 
 
 def _check(recipe):
@@ -33,19 +47,109 @@ def _check(recipe):
     loops = recipe.get("leg_ik_loops")
     if loops is not None and not (isinstance(loops, int) and 1 <= loops <= 10000):
         raise ValueError("leg_ik_loops must be a whole number from 1 to 10000")
+    bend = recipe.get("knee_least_bend")
+    if bend is not None and not 0.0 <= bend <= 20.0:
+        raise ValueError("knee_least_bend must lie between 0 and 20 degrees")
+    brow = recipe.get("inner_brow")
+    if brow is not None and not 0.0 < brow <= 0.5:
+        raise ValueError("inner_brow must lie between 0 and 0.5 units")
+
+
+def _morph_name(doc, m):
+    r = pmx_edit._Reader(m.head, doc.encoding)
+    return r.text()
+
+
+def vertex_morph_offsets(doc, index):
+    """{vertex: (dx, dy, dz)} of the vertex morph `index` of `doc`"""
+    m = doc.morphs[index]
+    if m.kind != 1:
+        raise ValueError("morph %d is not a vertex morph" % index)
+    size = doc.sizes["vertex"]
+    fmt = "<" + {1: "B", 2: "H", 4: "i"}[size]
+    out = {}
+    for k in range(m.count):
+        at = k * (size + 12)
+        out[struct.unpack_from(fmt, m.body, at)[0]] = struct.unpack_from("<3f", m.body, at + size)
+    return out
+
+
+def _new_vertex_morph(doc, name, name_en, panel, offsets):
+    size = doc.sizes["vertex"]
+    fmt = "<" + {1: "B", 2: "H", 4: "i"}[size]
+    head = pmx_edit._pack_text(name, doc.encoding) + pmx_edit._pack_text(name_en, doc.encoding) + bytes([panel, 1])
+    body = b"".join(struct.pack(fmt, v) + struct.pack("<3f", *d) for v, d in sorted(offsets.items()))
+    return pmx_edit.Morph(head, 1, len(offsets), body)
+
+
+def _inner_brow(doc, units):
+    """the morphs 眉頭右 / 眉頭左 (see the module docstring); returns their report"""
+    names = [_morph_name(doc, m) for m in doc.morphs]
+    for n in ("眉頭右", "眉頭左"):
+        if n in names:
+            raise ValueError("the model has a morph %s already" % n)
+    up = BROW_UP
+    norm = math.sqrt(sum(v * v for v in up))
+    up = tuple(v / norm for v in up)
+    out = []
+    for side, en in (("右", "R"), ("左", "L")):
+        try:
+            bones = [doc.bone_index(side + "眉%d" % k) for k in (1, 2, 3)]
+            inner = doc.bones[doc.bone_index(side + "眉1")].position[0]
+            outer = doc.bones[doc.bone_index(side + "眉4")].position[0]
+        except KeyError as exc:
+            raise ValueError("the model has no brow bone %s" % exc) from None
+        offsets = {}
+        for vi, v in enumerate(doc.vertices):
+            pairs = sorted(v.pairs(), key=lambda bw: -bw[1])
+            if pairs[0][0] not in bones:
+                continue
+            x = struct.unpack_from("<f", v.head, 0)[0]
+            s = (x - inner) / (outer - inner)
+            f = 1.0 - min(1.0, max(0.0, s))
+            if f > 1e-6:
+                offsets[vi] = tuple(units * f * c for c in up)
+        if not offsets:
+            raise ValueError("no vertex hangs on the %s brow's bones" % side)
+        doc.morphs.append(_new_vertex_morph(doc, "眉頭" + side, "inner_brow_up_" + en, PANEL_BROW, offsets))
+        out.append({"name": "眉頭" + side, "index": len(doc.morphs) - 1, "vertices": len(offsets),
+                    "largest": round(max(math.sqrt(sum(c * c for c in d)) for d in offsets.values()), 6)})
+    frame = [f for f in doc.frames if pmx_edit._Reader(f.names, doc.encoding).text() == "表情"]
+    if frame:
+        for m in out:
+            frame[0].items.append((1, m["index"]))
+    return out
 
 
 def apply(doc, recipe):
     """change `doc` (formats.pmx_edit Document) by `recipe` (a dict of KEYS); returns the report of every change"""
     _check(recipe)
-    report = {"recipe": dict(recipe), "ik": []}
-    if recipe.get("leg_ik_loops") is not None:
+    report = {"recipe": dict(recipe), "ik": [], "morphs": []}
+    if recipe.get("leg_ik_loops") is not None or recipe.get("knee_least_bend") is not None:
         for name in LEG_IKS:
             b = doc.bones[doc.bone_index(name)]
-            if not b.flags & 0x0020:
-                raise ValueError("%s is not an IK bone" % name)
-            report["ik"].append({"bone": name, "old": {"loops": b.ik_loops}, "new": {"loops": recipe["leg_ik_loops"]}})
-            b.ik_loops = recipe["leg_ik_loops"]
+            if not b.flags & 0x0020 or not b.ik_links:
+                raise ValueError("%s is not an IK bone with links" % name)
+            old, new = {"loops": b.ik_loops}, {}
+            if recipe.get("leg_ik_loops") is not None:
+                b.ik_loops = recipe["leg_ik_loops"]
+                new["loops"] = b.ik_loops
+            if recipe.get("knee_least_bend") is not None:
+                link, raw = b.ik_links[0]
+                if raw is None:
+                    raise ValueError("%s's first link has no limit" % name)
+                lo, hi = list(struct.unpack("<3f", raw[:12])), list(struct.unpack("<3f", raw[12:]))
+                if any(abs(v) > 1e-9 for v in lo[1:] + hi[1:]) or not lo[0] < hi[0]:
+                    raise ValueError("%s's first link is not limited to a turn about X" % name)
+                old["knee_deg"] = [round(math.degrees(lo[0]), 4), round(math.degrees(hi[0]), 4)]
+                hi[0] = -math.radians(recipe["knee_least_bend"])
+                if not lo[0] < hi[0]:
+                    raise ValueError("the knee's limit would be empty")
+                b.ik_links[0] = (link, struct.pack("<3f", *lo) + struct.pack("<3f", *hi))
+                new["knee_deg"] = [round(math.degrees(lo[0]), 4), round(math.degrees(hi[0]), 4)]
+            report["ik"].append({"bone": name, "old": old, "new": new})
+    if recipe.get("inner_brow") is not None:
+        report["morphs"] += _inner_brow(doc, recipe["inner_brow"])
     return report
 
 
@@ -72,6 +176,8 @@ def main(argv=None):
     ap.add_argument("out", help="the copy to write (.pmx): in a folder with the model's textures")
     ap.add_argument("--report", help="write every change to this JSON")
     ap.add_argument("--leg-ik-loops", type=int)
+    ap.add_argument("--knee-least-bend", type=float)
+    ap.add_argument("--inner-brow", type=float)
     a = ap.parse_args(argv)
     recipe = {k: getattr(a, k) for k in KEYS if getattr(a, k) is not None}
     try:
