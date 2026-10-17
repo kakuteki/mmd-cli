@@ -25,7 +25,10 @@ ik: the leg IK over a dance as MMD solves it: per side the frames whose ankle st
   whose knee sits at its least bend; the knee's jumps (a frame whose knee angle differs from the line through its
   neighbours by more than KNEE_JUMP_DEG) and their events (jump frames at most a frame apart are one event: a one-frame
   pop of 25 degrees counts as three jump frames; per event its peak, the size, the bends around it, the goal's distance
-  from the hip over the leg's reach and the goal's height above the ankle's rest height); the toe IK's misses.  --alt runs
+  from the hip over the leg's reach and the goal's height above the ankle's rest height); the ankle's and the foot's
+  jumps counted the same way (ANKLE_JUMP_DEG) on the ankle's bend (the shank against the foot, 足首 to つま先) and the
+  foot's pitch against the floor, so that a knee's jump taken away by turning the foot does not come back as a flick of
+  the foot; the toe IK's misses.  --alt runs
   the same with other settings (more loops, another unit angle, a knee that keeps a least bend) to see what a change of
   the model would do.
 angles: the yardsticks of the hard frames over the whole dance (forward kinematics, the legs by MMD's IK): per side the
@@ -98,6 +101,8 @@ MOVE_DEG = 0.01                 # a key turned less than this from rest does not
 MOVE_UNITS = 1e-4               # nor one slid less than this
 MORPH_W = 1e-4                  # a morph key below this weight does nothing
 KNEE_JUMP_DEG = 10.0
+ANKLE_JUMP_DEG = 10.0           # the ankle's bend and the foot's pitch jump as the knee's: a frame this far off the line
+                                # through its neighbours (degrees)
 DEPTH = 0.02                    # units (1.6 mm): a vertex this far inside another part is pushed into it
 GAP = 15                        # frames between two picked frames of one yardstick
 SEMI_STANDARD = ["全ての親", "操作中心", "センター", "グルーブ", "腰", "上半身", "上半身2", "首", "頭", "両目", "下半身"] + [
@@ -374,6 +379,37 @@ def max_reach(rig, side):
     return float(np.linalg.norm(knee - hip + shin))
 
 
+def jumps_of(series, deg):
+    """(the jump frames [F] as a mask, each frame's distance from the line through its neighbours [F], the events) of an
+    angle per frame (degrees): a frame more than `deg` off that line jumps, and jump frames at most a frame apart are one
+    event ({"first", "last", "peak", "deg": the largest distance})"""
+    x = np.asarray(series, dtype=float)
+    jumps = np.zeros(len(x), dtype=bool)
+    off = np.zeros(len(x))
+    if len(x) >= 3:
+        off[1:-1] = np.abs(x[1:-1] - 0.5 * (x[:-2] + x[2:]))
+        jumps[1:-1] = off[1:-1] > deg
+    events = []
+    for f in np.flatnonzero(jumps):
+        if events and f - events[-1]["last"] <= 1:
+            events[-1]["last"] = int(f)
+            if off[f] > events[-1]["deg"]:
+                events[-1]["deg"], events[-1]["peak"] = float(off[f]), int(f)
+        else:
+            events.append({"first": int(f), "last": int(f), "peak": int(f), "deg": float(off[f])})
+    return jumps, off, events
+
+
+def ankle_angles(leg):
+    """(the ankle's bend [F]: the angle between the shank (ひざ to 足首) and the foot (足首 to つま先), the foot's pitch [F]: the
+    angle of the foot to the floor, + its toe up), degrees, of one side of leg_ik.solve"""
+    shank = leg["ankle"] - leg["knee"]
+    foot = leg["toe"] - leg["ankle"]
+    c = np.sum(shank * foot, axis=1) / np.maximum(np.linalg.norm(shank, axis=1) * np.linalg.norm(foot, axis=1), 1e-12)
+    pitch = np.arcsin(np.clip(foot[:, 1] / np.maximum(np.linalg.norm(foot, axis=1), 1e-12), -1.0, 1.0))
+    return np.degrees(np.arccos(np.clip(c, -1.0, 1.0))), np.degrees(pitch)
+
+
 def _ik_numbers(rig, sol):
     out = {}
     for s in rig.sides:
@@ -385,20 +421,8 @@ def _ik_numbers(rig, sol):
         bend = np.degrees(-d["knee_angle"])
         at_limit = bend <= math.degrees(-rig.sides[s].knee_hi) + 0.5
         r_miss = reachable & (miss > 0.4)
-        jumps = np.zeros(len(bend), dtype=bool)
-        off = np.zeros(len(bend))
-        if len(bend) >= 3:
-            off[1:-1] = np.abs(bend[1:-1] - 0.5 * (bend[:-2] + bend[2:]))
-            jumps[1:-1] = off[1:-1] > KNEE_JUMP_DEG
-        events = []
+        jumps, off, events = jumps_of(bend, KNEE_JUMP_DEG)
         rest_ankle_y = float(rig.bones[rig.sides[s].ankle].position[1])
-        for f in np.flatnonzero(jumps):
-            if events and f - events[-1]["last"] <= 1:
-                events[-1]["last"] = int(f)
-                if off[f] > events[-1]["deg"]:
-                    events[-1]["deg"], events[-1]["peak"] = float(off[f]), int(f)
-            else:
-                events.append({"first": int(f), "last": int(f), "peak": int(f), "deg": float(off[f])})
         for e in events:
             p = e["peak"]
             e["deg"] = round(e["deg"], 2)
@@ -418,6 +442,16 @@ def _ik_numbers(rig, sol):
                   "knee_jump_event_count": len(events), "knee_jump_events": events,
                   "toe_miss_gt_1mm": int((toe > 0.1).sum()), "toe_miss_cm_max": round(float(toe.max()), 4),
                   "reachable_miss_frames": np.flatnonzero(r_miss).tolist()[:200], "max_reach": round(max_reach(rig, s), 5)}
+        # the ankle's and the foot's jumps, counted as the knee's (a knee's jump bent away by turning the foot must not
+        # come back as the foot's: kneepop's review, 2026-10-17)
+        for name, series in zip(("ankle", "foot_pitch"), ankle_angles(d)):
+            j, _, ev = jumps_of(series, ANKLE_JUMP_DEG)
+            for e in ev:
+                p = e["peak"]
+                e["deg"] = round(e["deg"], 2)
+                e["angles"] = [round(float(series[p + k]), 2) for k in (-1, 0, 1)]
+            out[s].update({name + "_jumps": int(j.sum()), name + "_jump_frames": np.flatnonzero(j).tolist()[:200],
+                           name + "_jump_event_count": len(ev), name + "_jump_events": ev})
     return out
 
 
@@ -1371,7 +1405,8 @@ def main(argv=None):
         rep["model_path"] = os.path.abspath(args.model)
         _json(args.out, rep)
         print(json.dumps({t: {s: {k: v[k] for k in ("reachable_miss_gt_4mm", "reachable_miss_cm_max", "unreachable", "knee_jumps",
-                                                     "knee_at_least_bend")}
+                                                     "knee_at_least_bend", "ankle_jump_event_count",
+                                                     "foot_pitch_jump_event_count")}
                               for s, v in rep[t].items()} for t in ["model"] + list(alts)}, ensure_ascii=True))
         return 0
     if args.cmd == "angles":
