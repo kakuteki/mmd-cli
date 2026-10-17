@@ -822,6 +822,23 @@ def sole_points(body, side):
     return {"heel": heel - ankle, "ball": ball - ankle, "toe": tip - ankle}, floor
 
 
+def sole_shell(body, side, cap=256):
+    """the shoe's vertices within 2 cm of its lowest point (the sole as it is, a raised toe and heel included), relative
+    to the ankle at rest, at most `cap` of them spread along the foot; a body without a shoe mesh: its sole points"""
+    ankle = body.rest(side + "足首")
+    idx = [body.i(side + n) for n in SHOE if body.has(side + n)]
+    m = np.isin(body.main_bone, idx) if (len(body.vertices) and getattr(body, "foot_from_mesh", True)) else np.zeros(0, bool)
+    if m.sum() >= 20:
+        P = body.vertices[m]
+        low = P[P[:, 1] < float(P[:, 1].min()) + 0.25]
+        low = low[np.argsort(low[:, 2], kind="stable")]
+        if len(low) > cap:
+            low = low[np.unique(np.linspace(0, len(low) - 1, cap).round().astype(int))]
+        return low - ankle
+    pts, _ = sole_points(body, side)
+    return np.stack([pts[k] for k in ("heel", "ball", "toe")])
+
+
 def foot_pitch(q_foot):
     """degrees the foot's front (-Z turned by the foot) points below level (+ toe down)"""
     fwd = qrot(q_foot, np.array([0.0, 0.0, -1.0]))
@@ -902,16 +919,20 @@ def pitch_turn(q_foot, degrees):
 
 def solve_pitch(A, Q, offset, floor, lo, hi, step=0.5):
     """per frame the pitch change (degrees, in lo..hi) nearest 0 that puts the point `offset` (rel. the ankle A, turned by
-    the foot Q) on the floor; where no pitch in the range reaches it, the one that brings it nearest.  Returns (change,
-    the point's height above the floor left over)."""
+    the foot Q; or the lowest of the points `offset` [k, 3]) on the floor; where no pitch in the range reaches it, the one
+    that brings it nearest.  Returns (change, the point's height above the floor left over)."""
     lo = np.asarray(lo, dtype=np.float64)
     hi = np.asarray(hi, dtype=np.float64)
+    off = np.asarray(offset, dtype=np.float64)
     n = len(A)
     if not n:
         return np.zeros(0), np.zeros(0)
 
     def height(d):
-        return A[:, 1] + qrot(qmul(pitch_turn(Q, d), Q), offset)[:, 1] - floor
+        R = qmul(pitch_turn(Q, d), Q)
+        if off.ndim == 1:
+            return A[:, 1] + qrot(R, off)[:, 1] - floor
+        return A[:, 1] + np.min(qrot(R[:, None, :], off[None, :, :])[:, :, 1], axis=1) - floor
     steps = int(np.ceil(np.max(hi - lo) / step)) + 1
     grid = lo[:, None] + (hi - lo)[:, None] * np.linspace(0.0, 1.0, steps)[None, :]
     H = np.stack([height(grid[:, j]) for j in range(steps)], axis=1)
@@ -962,6 +983,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             spans, _ = found[side]
             moving = on_floor[side]
             pts_t, floor_t = sole_points(tgt, side)
+            shell_t = sole_shell(tgt, side)
             leg = tgt_legs[side]
             A, Q = leg["ankle"], leg["q_foot"]
             Qs = src_legs[side]["q_foot"]
@@ -1004,15 +1026,16 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 shift[idx] = sh
                 d_all[idx] = d
             for n, (a, b) in enumerate(moving, start=len(spans)):
-                # on the floor but moving: the point the source's foot is on (by its pitch, frame by frame) onto the floor,
-                # no hold along it
+                # on the floor but moving: the shoe's lowest point onto the floor by the foot's pitch (toe down or heel
+                # down as the source's foot is, frame by frame), what the pitch leaves by the ankle up or down (at most
+                # FLAT_LIFT_MAX); no hold along the floor
                 idx = np.flatnonzero(which == n)
                 if not len(idx):
                     continue
                 base = Qs[idx]
                 p0 = foot_pitch(base)
                 d = np.zeros(len(idx))
-                lift = np.zeros(len(idx))
+                low = np.zeros(len(idx))
                 for kind, sel in (("toe", p0 > PITCH_FLAT_DEG), ("heel", p0 < -PITCH_FLAT_DEG)):
                     if not np.any(sel):
                         continue
@@ -1020,12 +1043,12 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -np.maximum(p0[sel], 0.0), MAX_PITCH_DEG - p0[sel]
                     else:
                         lo, hi = -MAX_PITCH_DEG - p0[sel], -np.minimum(p0[sel], 0.0)
-                    d[sel], left_over[idx[sel]] = solve_pitch(A[idx[sel]], base[sel], pts_t[kind], floor_t, lo, hi)
+                    d[sel], low[sel] = solve_pitch(A[idx[sel]], base[sel], shell_t, floor_t, lo, hi)
                 flat = np.abs(p0) <= PITCH_FLAT_DEG
                 if np.any(flat):
-                    low = np.min(np.stack([A[idx[flat], 1] + qrot(base[flat], v)[:, 1] for v in pts_t.values()], axis=1), axis=1) - floor_t
-                    lift[flat] = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
-                    left_over[idx[flat]] = low + lift[flat]
+                    low[flat] = A[idx[flat], 1] + np.min(qrot(base[flat][:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
+                lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
+                left_over[idx] = low + lift
                 want_turn[idx] = qmul(pitch_turn(base, d), base)
                 shift[idx, 1] = lift
                 d_all[idx] = d

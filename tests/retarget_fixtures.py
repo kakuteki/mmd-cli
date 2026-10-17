@@ -143,6 +143,8 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None,
                     for k in range(3):
                         z = az + shoe["heel_back"] - (shoe["heel_back"] + shoe["toe_ahead"]) * i / 11.0
                         y = shoe["sole"] + (shoe["top"] - shoe["sole"]) * j / 3.0
+                        if j == 0 and shoe.get("spring"):             # the sole's front turned up (toe spring)
+                            y += shoe["spring"] * max(0.0, (i - 7) / 4.0) ** 2
                         x = ax + shoe["half_width"] * (k - 1)
                         raw = w.vertex("BDEF1", (index[s + "足首"],))
                         verts.append(struct.pack("<3f", x, y, z) + struct.pack("<3f", 0.0, -1.0 if j == 0 else 0.0, 0.0) + raw[24:])

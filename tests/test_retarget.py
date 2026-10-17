@@ -340,6 +340,43 @@ class SpinTest(unittest.TestCase):
         np.testing.assert_allclose(ik_out[:, [0, 2]], ik_ref[:, [0, 2]], atol=1e-4)                     # the foot's path
 
 
+RIN_SPRING = dict(RIN_SHOE, spring=0.15)          # the sole's front 4 of 12 rows turned up, the toe 1.2 cm
+RIN_SPRING_DATA = humanoid_bytes(RIN, RIN_BLOBS, twist_axis=True, name="rin-spring", shoe=RIN_SPRING)
+
+
+def lowest_sole(data, shoe, m, frames):
+    """the lowest of the shoe's bottom vertices (the fixture's box, its toe spring) over the floor, per frame"""
+    ax, ay, az = RIN["足首"]
+    offs = []
+    for i in range(12):
+        for k in range(3):
+            z = az + shoe["heel_back"] - (shoe["heel_back"] + shoe["toe_ahead"]) * i / 11.0
+            y = shoe["sole"] + shoe.get("spring", 0.0) * max(0.0, (i - 7) / 4.0) ** 2
+            offs.append(np.array([ax + shoe["half_width"] * (k - 1), y, z]) - np.array(RIN["足首"]))
+    leg = legs(data, m, frames)["左"]
+    return np.min(np.stack([foot_point(leg, o)[:, 1] for o in offs], axis=1), axis=1) - shoe["sole"]
+
+
+class SpinShellTest(unittest.TestCase):
+    """the spinning toe of SpinTest on a shoe whose sole turns up at the toe: the shoe's lowest vertex goes onto the
+    floor (not a point of the toe's tip at the floor's height, under which the turned-up sole would stay over it)"""
+
+    def test_the_shoe_itself_reaches_the_floor(self):
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        th = math.radians(10.0)
+        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.12
+        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+        spin = [key("全ての親", f, axis_angle((0.0, 1.0, 0.0), 24.0 * f)) for f in range(0, 21)]
+        m = motion(*spin, key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(0.0, rise, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), PURE).motion
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), {"hands": False, "clear": False}).motion
+        self.assertGreater(float(lowest_sole(RIN_SPRING_DATA, RIN_SPRING, pure, range(0, 21)).min()), 0.03)
+        self.assertLess(float(np.abs(lowest_sole(RIN_SPRING_DATA, RIN_SPRING, res, range(0, 21))).max()), 0.0125)
+
+
 def palm(data, rest, m, side, frames):
     w = world(data, m, [side + "手首", side + "中指１"], frames)
     return np.array([np.asarray(w[f][side + "手首"][0]) + 0.5 * (np.asarray(w[f][side + "中指１"][0]) - np.asarray(w[f][side + "手首"][0]))
