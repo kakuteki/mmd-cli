@@ -1047,8 +1047,9 @@ FEET_ROUNDS = 2
 # a hold given back near the floor in a frame (review_integ 2026-10-17: the song's 128.0 s right foot turned on the floor
 # 3834-3840, lifted 1 cm for a frame and stood again; the hold, 13.7 cm, went back in that one frame of air, and the later
 # layers put that frame on the floor; 104.4 s landed with 9 cm in its last frame): where the shoe, under JUMP_NEAR on
-# either frame, moves along the floor (the slowest point of its sole's line, LINE_T) more than JUMP_RATE further than the
-# source's foot does (its own line's slowest point, by the legs' ratio), that frame's move of the correction (the holds,
+# either frame, moves along the floor (the slowest of its vertices touching, within JUMP_TOUCH of its lowest, as
+# tools/retarget_check.py's pops read it) more than JUMP_RATE further than the source's shoe does (the same of its own, by
+# the legs' ratio), that frame's move of the correction (the holds,
 # and the offsets between them) is spread over the frames round it (a raised cosine over 2k + 1 of them, the least k up to
 # JUMP_SPREAD that keeps the shoe within JUMP_RATE of the source's foot there, else the k that comes nearest), the
 # correction's own moves there kept: the foot skids into its next hold over a few frames instead of jumping; a hold that
@@ -1056,24 +1057,26 @@ FEET_ROUNDS = 2
 JUMP_NEAR = 0.25                # units (2 cm)
 JUMP_RATE = 2.5 / UNIT_CM       # units a frame (2.5 cm: 75 cm/s)
 JUMP_SPREAD = 6                 # frames each way at most
+JUMP_TOUCH = 0.025              # units (2 mm): a shoe's vertices this near its lowest touch (tools/sink_check.py's)
 
 
-def line_steps(body, legs, side):
-    """[F - 1] the move along the floor (units) to the next frame of the slowest point of a foot's sole line (LINE_T,
-    from behind its heel point to its toe point) as the solved legs carry it"""
-    pts, _ = sole_points(body, side)
-    line = pts["heel"][None, :] + LINE_T[:, None] * (pts["toe"] - pts["heel"])[None, :]
-    W = legs[side]["ankle"][:, None, :] + qrot(legs[side]["q_foot"][:, None, :], line[None, :, :])
-    if len(W) < 2:
+def touch_steps(P, touch=JUMP_TOUCH):
+    """[F - 1] the move along the floor (units) to the next frame of the slowest of a shoe's vertices touching (within
+    `touch` of its lowest) at each frame, P [F, k, 3] the shoe's vertices in the world"""
+    P = np.asarray(P, dtype=np.float64)
+    if len(P) < 2:
         return np.zeros(0)
-    return np.linalg.norm(np.diff(W[:, :, [0, 2]], axis=0), axis=2).min(axis=1)
+    near = P[:-1, :, 1] <= P[:-1, :, 1].min(axis=1, keepdims=True) + touch
+    d = np.linalg.norm(np.diff(P[:, :, [0, 2]], axis=0), axis=2)
+    return np.where(near, d, np.inf).min(axis=1)
 
 
 def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD):
     """(H [F, 2] (the correction along the floor, x and z) with its jumps spread, the rows [frame, the shoe's step past the
     source's (cm), what is left of it in the frames that take it (cm), k]) (see JUMP_RATE); low [F]: the shoe's lowest
-    point over the floor (units); P0 [F, k, 2]: the sole's line's points along the floor as the mapping puts them (without
-    the correction); src [F - 1]: the source's foot's move a frame (units, by the legs' ratio).  rate None: H as it is"""
+    point over the floor (units); P0 [F, k, 3]: the shoe's vertices as the mapping puts them (without the correction along
+    the floor); src [F - 1]: the source's shoe's move a frame (touch_steps, units, by the legs' ratio).  rate None: H as
+    it is"""
     H = np.array(H, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     P0 = np.asarray(P0, dtype=np.float64)
@@ -1082,11 +1085,16 @@ def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SP
     rows, done = [], set()
     if F < 2 or rate is None:
         return H, rows
-    d0 = np.diff(P0, axis=0)                                   # [F - 1, k, 2]
+    d0 = np.diff(P0[:, :, [0, 2]], axis=0)                     # [F - 1, k, 2]
+    touching = P0[:-1, :, 1] <= P0[:-1, :, 1].min(axis=1, keepdims=True) + JUMP_TOUCH
+
+    def slowest(dd, rows):
+        return np.where(touching[rows], np.linalg.norm(d0[rows] + dd[:, None, :], axis=2), np.inf).min(axis=1)
     lowish = (low[:-1] < near) | (low[1:] < near)
+    everything = np.arange(F - 1)
     for _ in range(F):
         d = np.diff(H, axis=0)
-        excess = np.linalg.norm(d0 + d[:, None, :], axis=2).min(axis=1) - src
+        excess = slowest(d, everything) - src
         bad = [t for t in np.flatnonzero((excess > rate * (1.0 + 1e-6)) & lowish) if int(t) not in done]
         if not bad:
             break
@@ -1103,7 +1111,7 @@ def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SP
             dd = d[a:b + 1].copy()
             dd[k] -= J
             dd += w[:, None] * J[None, :]
-            left = float((np.linalg.norm(d0[a:b + 1] + dd[:, None, :], axis=2).min(axis=1) - src[a:b + 1]).max())
+            left = float((slowest(dd, np.arange(a, b + 1)) - src[a:b + 1]).max())
             if best is None or left < best[3] - 1e-9:
                 best = (k, a, dd, left)
             if left <= rate * (1.0 + 1e-6):
@@ -1334,8 +1342,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             # that one frame and the 99.6 s right shoe went to 1.3-1.5 cm between two turns)
             Qw = slerp_n(Q, want_turn, weight)
             low_now = A[:, 1] + weight * lift + np.min(qrot(Qw[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
-            sole_line = pts_t["heel"][None, :] + LINE_T[:, None] * (pts_t["toe"] - pts_t["heel"])[None, :]
-            line_mapped = (A[:, None, :] + qrot(Qw[:, None, :], sole_line[None, :, :]))[:, :, [0, 2]]
+            shell_mapped = A[:, None, :] + qrot(Qw[:, None, :], shell_t[None, :, :])        # (the shoe, the turn easing)
             shell_s = sole_shell(src, side, mesh=True)
             src_low = (src_legs[side]["ankle"][:, 1] + np.min(qrot(Qs[:, None, :], shell_s[None, :, :])[:, :, 1], axis=1)
                        - float(src.rest(side + "足首")[1] + shell_s[:, 1].min()))
@@ -1357,7 +1364,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 Qw = slerp_n(Q[easing], want_turn[easing], weight[easing])
                 H[easing] += (qrot(Q[easing], pk) - qrot(Qw, pk))[:, [0, 2]]
             # a hold given back near the floor in a frame is spread over the frames round it (spread_jumps)
-            H, jumps = spread_jumps(H, shoe_low, line_mapped, line_steps(src, src_legs, side) * scale_of(src, tgt),
+            src_shell = src_legs[side]["ankle"][:, None, :] + qrot(Qs[:, None, :], shell_s[None, :, :])
+            H, jumps = spread_jumps(H, shoe_low, shell_mapped, touch_steps(src_shell) * scale_of(src, tgt),
                                     rate=params.get("jump_rate", JUMP_RATE))
             shift = np.zeros((F, 3))
             shift[:, 0], shift[:, 2] = H[:, 0], H[:, 1]
