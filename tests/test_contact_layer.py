@@ -1047,6 +1047,162 @@ class KneeTest(unittest.TestCase):
         self.assertLess(float(np.abs(b["target"] - 1.6 * a["target"]).max()), 1e-9)
         self.assertLess(float(np.abs(b["bend"] - a["bend"]).max()), 1e-6)
 
+    # (the review of kneepop, 2026-10-17: what the step's doc promises and no test held: the band's edge, the bend no
+    # further than it, the lesser of the two turns, the plan on the dance as 1.-5. leave it)
+
+    def test_a_quick_bend_just_short_of_the_band_is_left_as_the_dance_has_it(self):
+        # the right leg in the air at 0.90 of its reach, at 0.94 on frame 20: the knee unbends some 12 degrees for a frame
+        # (a jump as rig_check counts it), but the leg stays short of the band at the end of its reach (the last 5 % of
+        # it): a quick move of the dance, not the IK's snap, left as it is
+        F = 40
+        centre = (0.0, BENT, 0.0)
+        ahead = (-0.25, -0.6, -0.76)
+        m = dance(F, centre=lambda t: centre,
+                  right=lambda t: (goal_offset(RIG400, "右", centre, 0.94 if t == 20 else 0.90, ahead), None), rig=RIG400)
+        ev0, _ = knee_jumps(RIG400, m, F)
+        self.assertGreater(max(e["deg"] for e in ev0["右"]), 10.0)                      # (as built)
+        out, plan = run400(m)
+        self.assertIs(out, m)
+
+    def test_a_straight_frame_is_bent_no_further_than_the_band_edge(self):
+        # the right leg in the air at 0.90 of its reach (the knee bent some 46 degrees), at the reach on frame 20 (straight):
+        # the layer bends that frame only as far as the knee's bend at the band's edge (its goal brought to 0.95 of the
+        # reach, no nearer the hip), so a jump stays there; the other frames are the dance's
+        F = 40
+        centre = (0.0, BENT, 0.0)
+        ahead = (-0.25, -0.6, -0.76)
+        L = rig_check.max_reach(RIG400, "右")
+        m = dance(F, centre=lambda t: centre,
+                  right=lambda t: (goal_offset(RIG400, "右", centre, 1.0 if t == 20 else 0.90, ahead), None), rig=RIG400)
+        out, plan = run400(m)
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        D = np.linalg.norm(sol1["右"]["goal_ankle"] - sol1["右"]["hip"], axis=1)
+        self.assertLess(abs(float(D[20]) / L - 0.95), 0.001)                           # to the band's edge, no further
+        self.assertGreater(max(e["deg"] for e in ev1["右"]), 10.0)                      # (so the jump stays, smaller)
+        _, sol0 = knee_jumps(RIG400, m, F)
+        other = np.arange(F) != 20
+        self.assertLess(float(np.abs(sol1["右"]["goal_ankle"] - sol0["右"]["goal_ankle"])[other].max()), 1e-6)
+
+    def test_the_lesser_of_the_two_turns_is_taken(self):
+        # knee_turn on a flat sole along -Z (its front at z -1, its back at +1), the ankle 1 over it and 0.5 behind its
+        # middle, the hip 8 over the ankle: 0.0625 nearer needs some 2.4 degrees onto the toes (the ankle rises 1.5 a
+        # radian about the front) or 7.2 onto the heel (0.5 a radian about the back), and the toes are taken.  The hip 6
+        # over and 5.3 behind instead: some 7.7 onto the toes (the ankle goes forward, away from it) or 3.5 onto the heel,
+        # and the heel is taken
+        shell = np.array([[x, 0.0, z] for x in (-0.3, 0.3) for z in (-1.0, -0.5, 0.0, 0.5, 1.0)])
+        front, back = np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, 1.0])
+        axis = np.array([-1.0, 0.0, 0.0])                       # (+ about it lowers the toes: the heel at +z goes up)
+        goal = np.array([0.0, 1.0, 0.5])
+        up_toes = contact_layer.foot_turned(front, axis, np.array([math.radians(5.0)]), goal, shell)[0][0]
+        self.assertGreater(float(up_toes[1]), float(goal[1]))                         # (as built: the ankle rises onto the toes)
+        d, ok = contact_layer.knee_turn(goal + np.array([0.0, 8.0, 0.0]), goal, 8.0 - 0.0625, front, back, axis, shell)
+        self.assertTrue(ok)
+        self.assertGreater(d, 1.5)
+        self.assertLess(d, 3.5)
+        d, ok = contact_layer.knee_turn(goal + np.array([0.0, 6.0, 5.3]), goal, 8.0 - 0.0625, front, back, axis, shell)
+        self.assertTrue(ok)
+        self.assertLess(d, -2.5)
+        self.assertGreater(d, -4.5)
+
+    def test_a_knee_a_little_straighter_than_its_neighbours_is_no_jump_and_is_left_alone(self):
+        # the take-off of test_a_standing_leg_straight_on_its_last_frame_before_it_lifts_rises_onto_its_toes with a
+        # smaller push on frame 20 (the leg at 0.968 of its reach, not at it): the knee there is some 8.5 degrees
+        # straighter than the line through its neighbours, which rig_check does not count as a jump.  The knee step
+        # leaves it: turning the foot onto its toes for it would flick the foot where no knee jumps (the review of
+        # kneepop: the song's 249.9 s, a right foot turned 13 degrees for an 8.7-degree kink, the foot's pitch then 13
+        # degrees off the line through its neighbours)
+        F = 30
+        L = rig_check.max_reach(RIG400, "左")
+        foot = rest_of(RIG400, "左足首") + np.array([2.5, 0.0, 0.0])
+        hip_xz = rest_of(RIG400, "左足") + np.array([0.5, 0.0, 0.0])
+        flat = np.hypot(foot[0] - hip_xz[0], foot[2] - hip_xz[2])
+        up = math.sqrt((0.96 * L) ** 2 - flat ** 2)
+        centre = (0.5, foot[1] + up - rest_of(RIG400, "左足")[1], 0.0)
+        push = math.sqrt((0.968 * L) ** 2 - up * up - (foot[2] - hip_xz[2]) ** 2) - (foot[0] - hip_xz[0])
+
+        def left(t):
+            if t < 20:
+                return (2.5, 0.0, 0.0), None
+            return (2.5 + push, min(0.35 * (t - 20), 1.05), 0.0), None
+        m = dance(F, centre=lambda t: centre, left=left, rig=RIG400)
+        ev0, sol0 = knee_jumps(RIG400, m, F)
+        k = bend_of(sol0, "左")
+        self.assertGreater(0.5 * (k[19] + k[21]) - k[20], contact_layer.KNEE_POP_DEG + 1.0)   # (as built: a kink ...)
+        self.assertEqual(ev0["左"], [])                                                       # (... no jump)
+        out, plan = run400(m)
+        out_nk, _ = run400(m, knee=False)
+        self.assertEqual(float(np.abs(plan["knee"]["左"]["turn_deg"]).max()), 0.0)
+        self.assertEqual(vmd.dumps(out), vmd.dumps(out_nk))
+
+    def test_a_frame_left_straight_next_to_a_bent_one_is_bent_too(self):
+        # the right leg in the air unbending fast into a reach it then holds beyond (0.87, 0.89, 0.98 of the reach, then
+        # 1.03: the knee 54, 49, 18, then straight): the jump is frame 18, bent more than the line through its neighbours.
+        # Bending frame 19 for it leaves frame 20 straight between a bent frame and straight ones, a jump the input did not
+        # have (the song's 196.97 s); the step bends the frames such a bending makes jump too, and leaves no jump
+        F = 40
+        ratios = [0.87] * 18 + [0.89, 0.98] + [1.03] * 20
+        centre = (0.0, BENT, 0.0)
+        ahead = (-0.25, -0.6, -0.76)
+        m = dance(F, centre=lambda t: centre, right=lambda t: (goal_offset(RIG400, "右", centre, ratios[t], ahead), None),
+                  rig=RIG400)
+        ev0, _ = knee_jumps(RIG400, m, F)
+        self.assertEqual([e["peak"] for e in ev0["右"]], [18])                       # (as built: the jump is frame 18)
+        out, plan = run400(m)
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        self.assertEqual(ev1["右"], [])
+        self.assertGreater(float(bend_of(sol1, "右")[20]), 1.0)                        # (frame 20 bent too)
+
+    def test_a_standing_foot_in_the_middle_of_its_run_is_not_turned_for_one_frame(self):
+        # the take-off's stance without the lift: the left foot pushed out to the leg's reach on frame 20 alone and back
+        # on the floor where it was from 21 (a frame of the trace's jitter in the middle of a stand): the knee straight for
+        # that frame, a jump.  Turning the foot onto its toes or its heel there would raise the heel (or the toes) for one
+        # frame and set it down again, a flick of the foot in the middle of a stand (the review of kneepop: retarget's
+        # 251.0 s, a right foot's heel up 8 and 10 degrees on every other frame); the knee step turns a standing foot only
+        # by a lift or a landing, and leaves this one
+        F = 40
+        L = rig_check.max_reach(RIG400, "左")
+        foot = rest_of(RIG400, "左足首") + np.array([2.5, 0.0, 0.0])
+        hip_xz = rest_of(RIG400, "左足") + np.array([0.5, 0.0, 0.0])
+        flat = np.hypot(foot[0] - hip_xz[0], foot[2] - hip_xz[2])
+        up = math.sqrt((0.96 * L) ** 2 - flat ** 2)
+        centre = (0.5, foot[1] + up - rest_of(RIG400, "左足")[1], 0.0)
+        push = math.sqrt(L * L - up * up - (foot[2] - hip_xz[2]) ** 2) - (foot[0] - hip_xz[0])
+        m = dance(F, centre=lambda t: centre, left=lambda t: ((2.5 + (push if t == 20 else 0.0), 0.0, 0.0), None),
+                  rig=RIG400)
+        ev0, _ = knee_jumps(RIG400, m, F)
+        self.assertGreater(max(e["deg"] for e in ev0["左"]), 10.0)                      # (as built: a jump)
+        out, plan = run400(m)
+        self.assertTrue(bool(plan["sides"]["左"]["stance"][15:26].all()))             # (standing round it)
+        self.assertEqual(float(np.abs(plan["knee"]["左"]["turn_deg"]).max()), 0.0)
+        _, sol0 = knee_jumps(RIG400, m, F)
+        _, sol1 = knee_jumps(RIG400, out, F)
+        self.assertLess(float(np.abs(pitch_of(sol1, "左") - pitch_of(sol0, "左")).max()), 0.1)
+
+    def test_the_knee_step_reads_the_dance_as_the_steps_before_leave_it(self):
+        # the wide stance of GroundTest whose pelvis rises until the left leg cannot reach its goal on the floor, with v7's
+        # leg IK: the layer lowers the pelvis (3.) so that the leg reaches its goal, and its knee straightens over more
+        # frames than the input's (some 5 degrees apart on frames 18-21).  The knee step reads the legs as 1.-5. leave them
+        # (the bends its report starts from are those of the layer's dance without the step, not the input's) and finds
+        # nothing to do
+        F = 60
+
+        def centre(t):
+            u = min(max((t - 10) / 15.0, 0.0), 1.0)
+            return (1.0, BENT + 0.9 * u * u * (3.0 - 2.0 * u), 0.0)
+        m = dance(F, centre=centre, left=lambda t: ((4.0, 0.0, 0.0), None), rig=RIG400)
+        geo = contact_layer.knee_geometry(RIG400, "左")
+
+        def bends(mo):
+            sol = leg_ik.solve(RIG400, mo, range(F))
+            return contact_layer.knee_bend(np.linalg.norm(sol["左"]["goal_ankle"] - sol["左"]["hip"], axis=1), *geo)
+        out_nk, _ = run400(m, knee=False)
+        k_in, k_nk = bends(m), bends(out_nk)
+        self.assertGreater(float(np.abs(k_nk - k_in).max()), 3.0)                       # (as built: 3. bends the leg)
+        out, plan = run400(m)
+        self.assertLess(float(np.abs(np.asarray(plan["knee"]["左"]["bend0"]) - k_nk).max()), 0.05)
+        self.assertEqual(int(np.sum(plan["knee"]["左"]["even"])), 0)
+        self.assertEqual(vmd.dumps(out), vmd.dumps(out_nk))
+
 
 class WholeTest(unittest.TestCase):
     def test_nothing_to_do_gives_the_dance_back(self):

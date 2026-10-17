@@ -66,8 +66,10 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
 6. The knee at the end of its reach, on the dance as 1.-5. leave it (kneepop, 2026-10-17): near the end of a leg's reach
    (the hip's distance to the goal within KNEE_NEAR of rig_check's max_reach) a converged leg IK (v7's 400 loops) puts the
    knee straight on a frame whose goal is a centimetre or two further than its neighbours' (the trace's take-offs and
-   landings, the snap into a kick).  There, on the legs' formula (a two-bone leg's bend from the distance), every frame
-   straighter than the line through its neighbours by more than KNEE_POP_DEG is bent to within it (even_pops, to a fixed
+   landings, the snap into a kick).  There, on the legs' formula (a two-bone leg's bend from the distance), round each
+   frame that jumps as rig_check counts it (more than KNEE_JUMP_DEG off the line through its neighbours; a smaller kink is
+   left: a standing foot turned for it is a jump of the foot instead) every frame straighter than the line through its
+   neighbours by more than KNEE_POP_DEG is bent to within it (even_pops, to a fixed
    point; never past the band's edge, never straighter): a swing leg's goal comes toward the hip by what is too long (its
    toe IK's goal with MMD's ankle: a goal beyond the reach moves further than the ankle, and the foot keeps its turn); a
    standing foot turns onto its toes about the front of its shoe's touching part, or onto its heel about its back
@@ -193,6 +195,13 @@ KNEE_POP_DEG = 6.0              # degrees: there a frame's bend comes within thi
                                 # neighbour's further than this the other way (rig_check counts a jump at 10.  On the song's
                                 # legs' formula: 75 -> 32 jumps with the first side, 29 with both; 4 moves twice the frames
                                 # for no fewer, 8 half the frames for the same but leaves them nearer 10)
+KNEE_JUMP_DEG = 10.0            # degrees: rig_check ik's jump, a frame further than this off the line through its neighbours.
+                                # Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the review of kneepop,
+                                # 2026-10-17: bending every kink past KNEE_POP_DEG changed 56 of the song's 99 places where
+                                # no knee jumped, and a standing foot turned for one became the foot's own jump: 249.9 s, a
+                                # right foot 13 degrees onto its toes for a knee 8.7 degrees off its line, the foot's pitch
+                                # then 13 degrees off the line through its neighbours)
+KNEE_JUMP_NEAR = 1              # frames
 KNEE_ROUNDS = 40                # rounds of evening out (a pop of two frames halves its gap a round)
 KNEE_PITCH_MAX = 30.0           # degrees: the most a standing foot turns onto its toes or its heel for its knee
 KNEE_PITCH_STEP = 0.25          # degrees: the turns tried
@@ -426,28 +435,32 @@ def knee_bend(D, L1, L2, rest_deg, least_deg=0.0):
     return np.clip(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))) - rest_deg, least_deg, 180.0 - rest_deg)
 
 
-def even_pops(bend, cap, pop_deg=None, rounds=None, both=True):
+def even_pops(bend, cap, pop_deg=None, rounds=None, both=True, only=None):
     """the bends [F] (degrees) with every frame bent less than `cap` (the band at the end of the reach) and straighter than
     the line through its neighbours by more than pop_deg raised to that line less pop_deg (no further than cap, never
     lowered), to a fixed point: a frame or two straight between bent ones come within pop_deg of the frames round them.
     both: also raised so that a neighbour is not more bent than the line through its own neighbours by more than pop_deg
     (a knee snapping straight from a bend held: the frame it snaps on bends toward the frames before; rig_check counts a
-    jump either way)"""
+    jump either way).  only [F]: the frames that may be raised (None: all), and with them the frames that the raising
+    makes jump in turn (near_jumps of the bends so far: a frame raised next to a straight one leaves that one a jump)"""
     pop_deg = KNEE_POP_DEG if pop_deg is None else pop_deg
     rounds = KNEE_ROUNDS if rounds is None else rounds
     b = np.array(bend, dtype=float)
     if len(b) < 3:
         return b
+    may = np.ones(len(b), dtype=bool) if only is None else np.array(only, dtype=bool)
     # the straight frames first, to their fixed point; then both ways (a frame straight between bent ones makes its
     # neighbours look more bent than their own neighbours' line until it is raised: those are not raised for it)
     for sides in ((False,), (False, True)) if both and len(b) >= 4 else ((False,),):
         for _ in range(rounds):
+            if only is not None:
+                may |= near_jumps(b)
             need = np.full(len(b), -np.inf)
             need[1:-1] = 0.5 * (b[:-2] + b[2:]) - pop_deg
             if True in sides:
                 need[2:] = np.maximum(need[2:], 2.0 * (b[1:-1] - pop_deg) - b[:-2])
                 need[:-2] = np.maximum(need[:-2], 2.0 * (b[1:-1] - pop_deg) - b[2:])
-            new = np.where(b < cap, np.maximum(b, np.minimum(cap, need)), b)
+            new = np.where((b < cap) & may, np.maximum(b, np.minimum(cap, need)), b)
             done = float(np.max(new - b)) < 1e-6
             b = new
             if done:
@@ -455,19 +468,30 @@ def even_pops(bend, cap, pop_deg=None, rounds=None, both=True):
     return b
 
 
-def knee_targets(D, L1, L2, rest_deg, least_deg=0.0, near=None, pop_deg=None):
+def near_jumps(bend, deg=None, near=None):
+    """[F] the frames of a knee's jumps as rig_check ik counts them (more than `deg` off the line through their
+    neighbours) and the frames `near` round them: the frames the knee step may bend"""
+    deg = KNEE_JUMP_DEG if deg is None else deg
+    near = KNEE_JUMP_NEAR if near is None else near
+    out = np.zeros(len(bend), dtype=bool)
+    for f in knee_jump_frames(bend, deg):
+        out[max(0, f - near):f + near + 1] = True
+    return out
+
+
+def knee_targets(D, L1, L2, rest_deg, least_deg=0.0, near=None, pop_deg=None, only=None):
     """one leg's hip-to-goal distances D [F] (units): {"target": the distance its knee is to have [F] (never longer than D),
     "bend0": the bends of D [F], "bend": the target's [F] (degrees from rest), "even": the frames bent like the frames round
     them [F], "reach", "cap": the bend at the band's edge}.  In the band near x the reach at its end, a frame or two
     straighter than the line through the frames round them by more than pop_deg are bent to within pop_deg of it, and so
     are the frames round one more bent than that line (even_pops: a knee straight for a frame, or snapping straight, at the
-    IK's end of the reach); nothing else changes"""
+    IK's end of the reach); nothing else changes.  only [F]: the frames that may be bent (None: all)"""
     near = KNEE_NEAR if near is None else near
     D = np.asarray(D, dtype=float)
     L = float(knee_distance(least_deg, L1, L2, rest_deg))
     bend0 = knee_bend(D, L1, L2, rest_deg, least_deg)
     cap = float(knee_bend(L * (1.0 - near), L1, L2, rest_deg, least_deg))
-    b = even_pops(bend0, cap, pop_deg)
+    b = even_pops(bend0, cap, pop_deg, only=only)
     raised = b > bend0 + 1e-9
     target = np.minimum(np.where(raised, knee_distance(b, L1, L2, rest_deg), D), D)
     return {"target": target, "bend0": bend0, "bend": np.where(raised, b, bend0), "even": raised, "reach": L, "cap": cap}
@@ -817,6 +841,30 @@ def carry_to_edges(turn, stance, edge=None, allow=None):
     return out
 
 
+def edge_turns(turn, stance, edge=None):
+    """the turns [F] of a standing foot kept only as a block that reaches the end of its run where it lifts (a push-off
+    holds the heel up until the foot leaves the floor) or its start where it lands (a heel strike keeps the toes up from
+    the landing), within `edge` frames of it; a turn in the middle of a run, or one cut off from the run's end, would raise
+    the heel (or the toes) for a frame and set it down again, a flick of the foot, and is left out (the review of kneepop,
+    2026-10-17: retarget's 251.0 s, a heel up 8 and 10 degrees on every other frame of a stand)"""
+    edge = KNEE_EDGE if edge is None else edge
+    turn = np.asarray(turn, dtype=float)
+    F = len(turn)
+    out = np.zeros(F)
+    for a, b in runs(stance):
+        if b < F - 1:                                   # the foot lifts after b
+            t = b
+            while t >= max(a, b - edge + 1) and abs(turn[t]) > 1e-9:
+                out[t] = turn[t]
+                t -= 1
+        if a > 0:                                       # the foot lands at a
+            t = a
+            while t <= min(b, a + edge - 1) and abs(turn[t]) > 1e-9:
+                out[t] = turn[t]
+                t += 1
+    return out
+
+
 def knee_turn(hip, goal, target, c_front, c_back, axis, shell, sign=0.0, least=0.0, steps=None):
     """(the least turn (degrees: + onto the toes about c_front, - onto the heel about c_back; `sign` keeps one of them) of a
     standing foot, no smaller than `least` (degrees, of that sign), that brings the hip's distance to its goal to `target`,
@@ -850,7 +898,8 @@ def knee_plan(rig, shoe, sol, stance):
     stands it, but short of it in the air), or that no turn brings to its target on the first or the last frame of its
     run (it then lands a frame late, or lifts a frame early), moves as a swing foot does.  A turn held on bends that frame
     more, so the targets are found again on the distances the changes leave, KNEE_PLAN_ROUNDS times at most (only ever
-    bending more)"""
+    bending more).  Only the frames of the knee's jumps on the dance as it comes (near_jumps: rig_check's count) and the
+    frames KNEE_JUMP_NEAR round them are bent"""
     F = len(stance[SIDES[0]])
     offsets, turns, toes, plan = {}, {}, {}, {}
     steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP))
@@ -859,6 +908,7 @@ def knee_plan(rig, shoe, sol, stance):
         leg = sol[s]
         hip, g, t_goal = leg["hip"], leg["goal_ankle"], leg["goal_toe"]
         D = np.linalg.norm(g - hip, axis=1)
+        only = near_jumps(knee_bend(D, L1, L2, rest_deg, least))
         # the frames whose foot moves as a swing foot's: the swing, and a standing foot MMD leaves short of its goal
         free = ~np.asarray(stance[s], dtype=bool) | (leg["reach"] > IK_MISS)
         goal = g.copy()
@@ -868,7 +918,7 @@ def knee_plan(rig, shoe, sol, stance):
         rounds = 0
         for rounds in range(1, KNEE_PLAN_ROUNDS + 1):
             Dr = np.linalg.norm(goal - hip, axis=1)
-            kt = knee_targets(Dr, L1, L2, rest_deg, least)
+            kt = knee_targets(Dr, L1, L2, rest_deg, least, only=only)
             first = kt if first is None else first
             excess = Dr - kt["target"]
             need = excess > KNEE_TOL
@@ -897,7 +947,8 @@ def knee_plan(rig, shoe, sol, stance):
                 def straighter(t, d, Dr=Dr):        # (a turn held on that would take the ankle further from the hip there)
                     c = front[t] if d > 0.0 else back[t]
                     return np.linalg.norm(hip[t] - foot_turned(c, axis[t], np.array([math.radians(d)]), g[t], w[t])[0][0]) <= Dr[t] + 1e-9
-                deg = np.where(st, carry_to_edges(deg, st, allow=straighter), 0.0)
+                deg = edge_turns(np.where(st, carry_to_edges(deg, st, allow=straighter), 0.0), st)
+                goal[st] = g[st]                    # (a standing foot's goal is where its turn puts it, or its own)
                 for t in np.flatnonzero(np.abs(deg) > 1e-9):
                     goal[t] = foot_turned(front[t] if deg[t] > 0.0 else back[t], axis[t], np.array([math.radians(deg[t])]),
                                           g[t], w[t])[0][0]
