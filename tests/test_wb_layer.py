@@ -176,6 +176,41 @@ class ShimmyTest(unittest.TestCase):
         json.dumps(rep)
 
 
+class KeepTouchesTest(unittest.TestCase):
+    """the bend carries the arms with the chest: a hand that lies on the hips would move on them with every quick move of
+    the pelvis; given the body (tools/retarget.py's, with the mesh), the layer keeps it where the input has it"""
+
+    def test_a_hand_on_the_hips_stays_on_them_while_the_hips_shimmy(self):
+        from tests import test_touch_layer as T
+        from mmd_cli.formats import pmx_edit
+        spec = importlib.util.spec_from_file_location("_wb_test_spine", os.path.join(ROOT, "tools", "pmx_spine.py"))
+        ps = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ps)
+        doc = pmx_edit.loads(T.RIN_DATA)
+        ps.build(doc)
+        data = pmx_edit.dumps(doc)
+        model = pmx.loads(data)
+        found = T.hips_pose()
+        self.assertIsNotNone(found)
+        d, pose = found
+        last = 119
+        t = np.arange(last + 1) / FPS
+        x = 0.19 * np.sin(2 * math.pi * 3.0 * t)                      # the hips shimmy sideways at 3 Hz by 1.5 cm
+        bones = [key("センター", f, (float(x[f]), 0.0, 0.0)) for f in range(last + 1)]
+        bones += [key("左足ＩＫ", 0), key("右足ＩＫ", 0)] + T.arm_pose_keys(*pose)
+        m = vmd.Motion(model_name="dancer", bones=bones)
+        frames = list(range(30, last - 30))
+
+        def gap(motion):
+            return T.sphere_distance(data, T.RIN, T.RIN_LEGS, "下半身", motion, T.palm(data, motion, "左", frames), frames)
+        g0 = gap(m)
+        plain = wl.layer(model, m).motion
+        self.assertGreater(float(np.abs(gap(plain) - g0).max()), 0.08)      # the hand rides the steadier chest over the hips
+        res = wl.layer(model, m, body=T.touch_layer.RT.Body.loads(data))
+        self.assertLess(float(np.abs(gap(res.motion) - g0).max()), 0.04)
+        self.assertIn("touches", res.report)
+
+
 class SlowSwayTest(unittest.TestCase):
     def test_slow_sway_carries_the_upper_body(self):
         last = 239

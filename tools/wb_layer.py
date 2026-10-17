@@ -72,6 +72,7 @@ def _tool(name):
 
 B = _tool("balance_layer")
 D = _tool("wb_dynamics")
+KEEP_TOUCHES = True             # the hands that lie on (or near) a part keep their place on it (tools/touch_layer.keep_layer)
 
 FPS = 30.0
 GAIN = 0.9                      # the head's pivot moves back by this share of the pelvis's quick part (see the doc)
@@ -178,12 +179,14 @@ def response(body, joints=None):
     return out
 
 
-def layer(model, motion, params=None, log=None):
-    """the dance with the upper body steadier than the hips (Result: motion, report)"""
+def layer(model, motion, params=None, log=None, body=None):
+    """the dance with the upper body steadier than the hips (Result: motion, report); body: tools/retarget.py's Body of
+    the model, with its mesh: the hands near a part of the body keep their place on it (KEEP_TOUCHES; none: as before)"""
     log = log or (lambda *_: None)
     p = {"gain": GAIN, "cutoff_hz": CUTOFF_HZ, "max_bend_deg": MAX_BEND_DEG}
     p.update(params or {})
     t0 = time.time()
+    mesh = body
     body = B.Body(model, motion)
     joints = SPINE if all(body.sk.has(n) for n in SPINE) else SPINE_PLAIN
     phi, brep = bend(body, joints, p["gain"], p["cutoff_hz"], p["max_bend_deg"])
@@ -210,6 +213,10 @@ def layer(model, motion, params=None, log=None):
             local[j] = qmul(qmul(qmul(qconj(Wp), delta), Wp), Lj)
             n += 1
     out = write_bones(motion, body, local)
+    if mesh is not None and KEEP_TOUCHES:
+        # the bend carries the arms with the chest: a hand on a thigh, the hips or the head would go into it or leave it
+        # (the v11 review: the thighs 18 -> 30 frames of an arm over 1 cm in, the wrists 2.0 cm at the median)
+        out, report["touches"] = _tool("touch_layer").keep_layer(mesh, motion, mesh, out, log=log)
     after_body = B.Body(model, out)
     after = response(after_body, joints)
     dq = np.abs(np.sum(after_body.q(HEAD) * body.q(HEAD), axis=1))
@@ -230,12 +237,15 @@ def main(argv=None):
     ap.add_argument("--cutoff", type=float, default=CUTOFF_HZ, help="Hz: the pelvis's slower part, which the upper body follows")
     ap.add_argument("--max-bend", type=float, default=MAX_BEND_DEG, help="degrees: the whole bend of the spine at most")
     ap.add_argument("--arrays", help="write the per-frame curves (.npz): the bend, the pelvis's quick part, the head's target")
+    ap.add_argument("--no-keep-touches", action="store_true",
+                    help="let the bend carry a hand that lies on a thigh, the hips or the head (as before v11)")
     args = ap.parse_args(argv)
     try:
         B.check_distinct(args.dance, args.model, args.out, args.report, args.arrays)
         motion = vmd.load(args.dance)
         model = (pmd if args.model.lower().endswith(".pmd") else pmx).load(args.model)
-        result = layer(model, motion, {"gain": args.gain, "cutoff_hz": args.cutoff, "max_bend_deg": args.max_bend})
+        mesh = None if args.no_keep_touches else _tool("touch_layer").RT.Body.load(args.model)
+        result = layer(model, motion, {"gain": args.gain, "cutoff_hz": args.cutoff, "max_bend_deg": args.max_bend}, body=mesh)
         B.write_bytes(os.path.abspath(args.out), vmd.dumps(result.motion))
         report = dict(result.report, dance=os.path.abspath(args.dance), model=os.path.abspath(args.model),
                       out=os.path.abspath(args.out))

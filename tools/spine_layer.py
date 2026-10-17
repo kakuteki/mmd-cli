@@ -57,6 +57,7 @@ def _tool(name):
 
 A = _tool("anatomy_layer")
 S = _tool("pmx_spine")
+KEEP_TOUCHES = True             # the hands that lie on (or near) a part keep their place on it (tools/touch_layer.keep_layer)
 
 WAIST, PELVIS, LO, UP = "腰", "下半身", "上半身", "上半身2"
 CHAIN = (LO, S.LUMBAR, UP, S.THORACIC)
@@ -170,11 +171,12 @@ def _rest(model, name):
     raise ValueError("the model has no bone named %r" % name)
 
 
-def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
+def layer(old_model, new_model, motion, place_cap_cm=None, log=None, bodies=None):
+    """(the motion for new_model, a report); bodies: (tools/retarget.py's Body of old_model, of new_model), with their
+    meshes: the hands near a part of the body keep their place on it (KEEP_TOUCHES; none: as before)"""
     place_cap_cm = PLACE_CAP_CM if place_cap_cm is None else place_cap_cm
     if place_cap_cm < 0:
         place_cap_cm = None                                       # no correction at all
-    """(the motion for new_model, a report)"""
     F = fk.last_frame(motion) + 1
     pos, rot = _track(old_model, motion, [WAIST, PELVIS, LO, UP], F)
     q_waist, q_pelvis, q_lo_in, q_chest = rot[:, 0], rot[:, 1], rot[:, 2], rot[:, 3]
@@ -275,6 +277,10 @@ def layer(old_model, new_model, motion, place_cap_cm=None, log=None):
               "chest_residual_cm_max": round(float(np.max(residual)) * A.UNIT_CM, 5),
               "max_step_deg": {"in": round(max_step([A.qmul(A.qconj(q_pelvis), q_lo_in), q_up_in]), 3),
                                "out": round(max_step([rel[0]] + rel[1:]), 3)}}
+    if bodies is not None and KEEP_TOUCHES:
+        # the chest's drift carries the arms (they keep their world turns): a hand on the belly, the hips or a thigh
+        # would go into it or leave it (the v11 review: the belly 35 -> 54 frames of an arm over 1 cm in)
+        out, report["touches"] = _tool("touch_layer").keep_layer(bodies[0], motion, bodies[1], out, log=log)
     if log:
         log("spine: chest residual %.5f cm, correction p50 %.2f deg" % (report["chest_residual_cm_max"], report["correction_deg"]["p50"]))
     return out, report
@@ -289,10 +295,17 @@ def main(argv=None):
     ap.add_argument("--report")
     ap.add_argument("--place-cap-cm", type=float, default=PLACE_CAP_CM,
                     help="how far the chest may move from its old place, cm (0 keeps it; negative: no correction)")
+    ap.add_argument("--no-keep-touches", action="store_true",
+                    help="let the chest's drift carry a hand that lies on the belly, the hips or a thigh (as before v11)")
     a = ap.parse_args(argv)
     if os.path.abspath(a.out) in (os.path.abspath(a.dance), os.path.abspath(a.model), os.path.abspath(a.spine_model)):
         raise SystemExit("the output would overwrite an input")
-    out, report = layer(pmx.load(a.model), pmx.load(a.spine_model), vmd.load(a.dance), place_cap_cm=a.place_cap_cm, log=print)
+    bodies = None
+    if not a.no_keep_touches:
+        RT = _tool("touch_layer").RT
+        bodies = (RT.Body.load(a.model), RT.Body.load(a.spine_model))
+    out, report = layer(pmx.load(a.model), pmx.load(a.spine_model), vmd.load(a.dance), place_cap_cm=a.place_cap_cm, log=print,
+                        bodies=bodies)
     vmd.dump(out, a.out)
     if a.report:
         with open(a.report, "w", encoding="utf-8") as f:
