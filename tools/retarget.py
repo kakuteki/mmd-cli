@@ -1497,3 +1497,235 @@ def layer(motion, src, tgt, params=None, log=None):
     report["keys_out"] = len(out.bones)
     report["seconds"] = round(time.time() - t0, 2)
     return Result(out, report)
+
+
+# ---- the source body: how well a candidate fits the dance -----------------------------------------------------------------
+
+STANCE_LOW = 0.1                # units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach)
+STANCE_SLOW = 0.05              # units a frame
+TOE_STILL = 0.03                # units a frame: the toe goal this slow (and pitched) stands on the toe
+TOE_PITCH = (6.0, 45.0)         # degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball)
+SEMI_STANDARD = ("全ての親", "グルーブ", "上半身2")
+
+
+def foot_goals(body, trk, frames, side):
+    """(the foot IK's goal [F, 3], its world turn [F, 4], the toe IK's goal [F, 3]) by forward kinematics (no IK)"""
+    wp = world_pose(body, trk, frames, [side + "足ＩＫ", side + "つま先ＩＫ"])
+    return wp[side + "足ＩＫ"][0], wp[side + "足ＩＫ"][1], wp[side + "つま先ＩＫ"][0]
+
+
+def toe_relation(body, trk, frames):
+    """per side: the frames where the toe goal stands still pitched 6..45 degrees (the toe on the floor), the pitch, the
+    foot IK's rise over its rest and the toe goal's height over the body's floor"""
+    out = {}
+    for side in SIDES:
+        goal, turn, toe = foot_goals(body, trk, frames, side)
+        pitch = foot_pitch(turn)
+        v = np.zeros(len(frames))
+        v[1:] = np.linalg.norm(np.diff(toe[:, [0, 2]], axis=0), axis=1)
+        still = (np.minimum(v, np.concatenate([v[1:], v[-1:]])) < TOE_STILL) & (pitch > TOE_PITCH[0]) & (pitch < TOE_PITCH[1])
+        rise = goal[:, 1] - body.rest(side + "足ＩＫ")[1]
+        out[side] = {"still": still, "pitch": pitch, "rise": rise, "toe_height": toe[:, 1] - body.rest(side + "つま先ＩＫ")[1]}
+    return out
+
+
+def lower_envelope(pitch, rise, width=6.0, q=10.0):
+    """(pitch, rise) of the lower envelope: per bin of `width` degrees the q-th percentile of the rise (a toe on the floor
+    lies on it; a foot held in the air lies above)"""
+    out = []
+    for a in np.arange(TOE_PITCH[0], TOE_PITCH[1], width):
+        m = (pitch >= a) & (pitch < a + width)
+        if m.sum() >= 3:
+            out.append((float(np.median(pitch[m])), float(np.percentile(rise[m], q)), int(m.sum())))
+    return out
+
+
+def fit_toe(points):
+    """least squares of rise = l sin(p) - h (1 - cos(p)) over (pitch, rise, n) points (weighted by sqrt n): (l, h)"""
+    if len(points) < 2:
+        return None
+    p = np.radians([x[0] for x in points])
+    r = np.array([x[1] for x in points])
+    w = np.sqrt([x[2] for x in points])
+    A = np.stack([np.sin(p), -(1 - np.cos(p))], axis=1) * w[:, None]
+    sol, *_ = np.linalg.lstsq(A, r * w, rcond=None)
+    resid = r - np.stack([np.sin(p), -(1 - np.cos(p))], axis=1) @ sol
+    return {"l": float(sol[0]), "h": float(sol[1]), "rms": float(np.sqrt(np.mean(resid ** 2)))}
+
+
+def stance_reach(body, trk, frames):
+    """per side: the share of the standing frames (foot IK goal low and slow) whose goal lies more than 5 mm past the
+    leg's length from the hip (the two-bone leg), and the 99th percentile of goal distance / leg length"""
+    out = {}
+    for side in SIDES:
+        wp = world_pose(body, trk, frames, [side + "足", side + "足ＩＫ"])
+        hip, goal = wp[side + "足"][0], wp[side + "足ＩＫ"][0]
+        L = float(np.linalg.norm(body.rest(side + "ひざ") - body.rest(side + "足")) + np.linalg.norm(body.rest(side + "足首") - body.rest(side + "ひざ")))
+        d = np.linalg.norm(goal - hip, axis=1)
+        v = np.zeros(len(frames))
+        v[1:] = np.linalg.norm(np.diff(goal, axis=0), axis=1)
+        st = (goal[:, 1] - body.rest(side + "足ＩＫ")[1] < STANCE_LOW) & (np.maximum(v, np.concatenate([v[1:], v[-1:]])) < STANCE_SLOW)
+        out[side] = {"stance_frames": int(st.sum()), "over_5mm_pct": round(100.0 * float(np.mean(d[st] - L > 0.0625)), 3) if st.any() else None,
+                     "d_over_L_p99": round(float(np.percentile(d[st] / L, 99)), 4) if st.any() else None, "leg": round(L, 4)}
+    return out
+
+
+def own_arms(body, trk, frames):
+    """per side: how the dance's arms sit in the candidate's own body (no mapping): the frames the arm goes more than
+    1 cm into its head, trunk, hips or thighs, the deepest (cm), and the two palms' least distance (cm, less the hands'
+    thickness)"""
+    parts = part_frames(body, trk, frames)
+    out = {}
+    hands = {}
+    for side in SIDES:
+        if not all(body.has(n) for n in arm_names(side)):
+            continue
+        ap = arm_pose(body, trk, frames, side)
+        hands[side] = hand_world(body, trk, frames, side)
+        deep, _, _ = penetration(body, side, ap, hands[side], parts, {})
+        out[side] = {"in_1cm_frames": int(np.sum(deep > 0.125)), "deepest_cm": round(float(deep.max()) * UNIT_CM, 3),
+                     "in_1cm_runs": len(runs(deep > 0.125))}
+    if len(hands) == 2:
+        gap = np.linalg.norm(hands["左"][2]["palm"] - hands["右"][2]["palm"], axis=1) - 2 * HAND_THICK
+        out["palms_gap_min_cm"] = round(float(gap.min()) * UNIT_CM, 3)
+        out["palms_gap_min_frame"] = int(np.argmin(gap))
+    return out
+
+
+def with_semi_standard(body):
+    """the body with 全ての親, グルーブ and 上半身2 added when it lacks them (as PMXEditor's semi-standard bones: 全ての親 at
+    the origin over everything, グルーブ 0.2 above センター, 上半身2 at 40 % from 上半身 to 首 with the trunk's upper
+    vertices), so that a dance keyed on them moves it; the spec of what was added"""
+    add = []
+    names = {b.name for b in body.model.bones}
+    if "全ての親" not in names:
+        roots = [b.name for b in body.model.bones if b.parent is None]
+        add.append({"name": "全ての親", "parent": None, "at": [0.0, 0.0, 0.0], "children": roots, "translate": True})
+    if "グルーブ" not in names and body.has("センター"):
+        c = body.rest("センター")
+        kids = [b.name for b in body.model.bones if b.parent == body.i("センター")]
+        add.append({"name": "グルーブ", "parent": "センター", "at": [float(c[0]), float(c[1]) + 0.2, float(c[2])], "children": kids,
+                    "translate": True})
+    if "上半身2" not in names and body.has("上半身") and body.has("首"):
+        a, b = body.rest("上半身"), body.rest("首")
+        at = a + 0.4 * (b - a)
+        kids = [x.name for x in body.model.bones if x.parent == body.i("上半身")]
+        add.append({"name": "上半身2", "parent": "上半身", "at": [float(v) for v in at], "children": kids,
+                    "vertices_above": ["上半身", float(at[1])]})
+    return add
+
+
+def fit(dance, candidates, log=None):
+    """the candidates' fit to the dance (see the module's doc): per candidate the toe's floor relation (the height left
+    over where the dance stands on its toes, and the foot (l, h) the dance's own envelope asks for), the standing legs'
+    reach, the arms in the candidate's own body and the palms' gap"""
+    log = log or (lambda *_: None)
+    out = {}
+    for path, body in candidates:
+        t0 = time.time()
+        add = with_semi_standard(body)
+        b = body.edited(add) if add else body
+        trk = tracks_of(dance.bones)
+        frames = np.arange(0, max(k.frame for k in dance.bones) + 1)
+        row = {"name": body.name, "added": [a["name"] for a in add]}
+        rel = toe_relation(b, trk, frames)
+        toe = {}
+        for side, r in rel.items():
+            m = r["still"]
+            env = lower_envelope(r["pitch"][m], r["rise"][m])
+            toe[side] = {"frames": int(m.sum()), "height_left_cm": _quant(np.abs(r["toe_height"][m]) * UNIT_CM, (25, 50, 75)),
+                         "height_signed_median_cm": round(float(np.median(r["toe_height"][m])) * UNIT_CM, 3) if m.any() else None,
+                         "envelope": [[round(p, 2), round(v, 4), n] for p, v, n in env], "fit": fit_toe(env)}
+            ank, toe_r = b.rest(side + "足首"), b.rest(side + "つま先")
+            toe[side]["own"] = {"l": round(float(ank[2] - toe_r[2]), 4), "h": round(float(ank[1] - toe_r[1]), 4)}
+        row["toe"] = toe
+        row["stance"] = stance_reach(b, trk, frames)
+        row["arms"] = own_arms(b, trk, frames)
+        row["seconds"] = round(time.time() - t0, 1)
+        log("fit", body.name, json.dumps({k: row[k] for k in ("stance", "arms")}, ensure_ascii=True))
+        out[path] = row
+    return out
+
+
+# ---- the command ------------------------------------------------------------------------------------------------------------
+
+def write_bytes(path, data):
+    """write through a temporary name, then replace (a reader never sees half a file)"""
+    tmp = path + ".part"
+    with open(tmp, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+def check_distinct(*paths):
+    seen = {}
+    for p in paths:
+        if not p:
+            continue
+        key = os.path.normcase(os.path.abspath(p))
+        if key in seen:
+            raise ValueError("%s is given twice (%s)" % (p, seen[key]))
+        seen[key] = p
+
+
+def _log(*a):
+    print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
+
+
+def cmd_run(args):
+    check_distinct(args.dance, args.out, args.report)
+    for p in (args.dance, args.source, args.target):
+        if not os.path.isfile(p):
+            raise ValueError("no file %s" % p)
+    motion = vmd.load(args.dance)
+    src = Body.load(args.source)
+    tgt = Body.load(args.target)
+    params = {"feet": not args.no_feet, "hands": not args.no_hands, "clear": not args.no_clear, "stance": args.stance}
+    res = layer(motion, src, tgt, params, log=_log)
+    write_bytes(os.path.abspath(args.out), vmd.dumps(res.motion))
+    report = dict(res.report, dance=os.path.abspath(args.dance), source_path=os.path.abspath(args.source),
+                  target_path=os.path.abspath(args.target), out=os.path.abspath(args.out))
+    if args.report:
+        write_bytes(os.path.abspath(args.report), (json.dumps(report, ensure_ascii=False, indent=1, default=float) + "\n").encode("utf-8"))
+    print(json.dumps({"ok": True, "out": os.path.abspath(args.out), "scale": round(res.report["scale"], 5),
+                      "keys_in": res.report["keys_in"], "keys_out": res.report["keys_out"],
+                      "missing_bones": len(res.report["missing_bones"]), "seconds": res.report["seconds"]}, ensure_ascii=True))
+    return 0
+
+
+def cmd_fit(args):
+    dance = vmd.load(args.dance)
+    cands = [(p, Body.load(p)) for p in args.candidates]
+    res = fit(dance, cands, log=_log)
+    write_bytes(os.path.abspath(args.out), (json.dumps(res, ensure_ascii=False, indent=1, default=float) + "\n").encode("utf-8"))
+    print(json.dumps({"ok": True, "out": os.path.abspath(args.out), "candidates": len(res)}, ensure_ascii=True))
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("run", help="move the dance onto the target body")
+    p.add_argument("dance")
+    p.add_argument("source", help="the body the dance was made for (.pmx / .pmd / .json body)")
+    p.add_argument("target", help="the body to move it onto (.pmx)")
+    p.add_argument("out")
+    p.add_argument("--report")
+    p.add_argument("--no-feet", action="store_true")
+    p.add_argument("--no-hands", action="store_true")
+    p.add_argument("--no-clear", action="store_true")
+    p.add_argument("--stance", choices=("legs", "offsets"), default="legs")
+    p = sub.add_parser("fit", help="how candidate bodies fit the dance")
+    p.add_argument("dance")
+    p.add_argument("--candidates", nargs="+", required=True)
+    p.add_argument("--out", required=True)
+    args = ap.parse_args(argv)
+    try:
+        return {"run": cmd_run, "fit": cmd_fit}[args.cmd](args)
+    except (ValueError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -395,3 +395,87 @@ class ClearTest(unittest.TestCase):
         m = motion(*arm_pose_keys(found[0], found[1], 0))
         res = retarget.layer(m, body(MIKU_DATA), body(RIN_DATA), {"feet": False, "hands": False})
         self.assertLess(arm_penetration(RIN_DATA, RIN, RIN_BLOBS, res.motion, [0]), 0.03)
+
+
+# ---- the command and the source's fit ----------------------------------------------------------------------------------
+
+import io  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+from contextlib import redirect_stdout  # noqa: E402
+
+
+def toe_dance(rest, pitches=(0, 6, 12, 18, 24, 30, 36, 42), hold=6):
+    """the left foot standing on its toe at each pitch for `hold` frames (the rise its own toe needs), the knees bent"""
+    l = rest["足首"][2] - rest["つま先"][2]
+    h = rest["足首"][1] - rest["つま先"][1]
+    keys = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("右足ＩＫ", 0)]
+    f = 0
+    for p in pitches:
+        th = math.radians(p)
+        rise = l * math.sin(th) - h * (1 - math.cos(th))
+        q = axis_angle((1.0, 0.0, 0.0), -p)
+        keys.append(key("左足ＩＫ", f, q, position=(0.0, rise, 0.0)))
+        keys.append(key("左足ＩＫ", f + hold - 1, q, position=(0.0, rise, 0.0)))
+        f += hold
+    return motion(*keys)
+
+
+class CommandTest(unittest.TestCase):
+    def files(self, d):
+        paths = {}
+        for name, data in (("miku.pmx", MIKU_DATA), ("rin.pmx", RIN_SHOE_DATA)):
+            paths[name] = os.path.join(d, name)
+            with open(paths[name], "wb") as f:
+                f.write(data)
+        return paths
+
+    def test_run_writes_the_dance_and_its_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self.files(d)
+            dance = os.path.join(d, "dance.vmd")
+            vmd.dump(dance_with_toes(), dance)
+            out, rep = os.path.join(d, "out.vmd"), os.path.join(d, "r.json")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = retarget.main(["run", dance, p["miku.pmx"], p["rin.pmx"], out, "--report", rep])
+            self.assertEqual(code, 0, buf.getvalue())
+            self.assertTrue(json.loads(buf.getvalue())["ok"])
+            m = vmd.load(out)
+            self.assertTrue(any(k.name == "左腕" for k in m.bones))
+            with open(rep, encoding="utf-8") as f:
+                r = json.load(f)
+            self.assertAlmostEqual(r["scale"], (RIN["足"][1] - RIN["足首"][1]) / (MIKU["足"][1] - MIKU["足首"][1]), places=6)
+            self.assertIn("feet", r)
+
+    def test_run_refuses_writing_over_its_input(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self.files(d)
+            dance = os.path.join(d, "dance.vmd")
+            vmd.dump(dance_with_toes(), dance)
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = retarget.main(["run", dance, p["miku.pmx"], p["rin.pmx"], dance])
+            self.assertEqual(code, 2)
+
+    def test_fit_tells_the_foot_the_dance_was_made_on(self):
+        m = toe_dance(MIKU)
+        res = retarget.fit(m, [("miku", body(MIKU_DATA)), ("rin", body(RIN_SHOE_DATA))])
+        own = res["miku"]["toe"]["左"]
+        other = res["rin"]["toe"]["左"]
+        self.assertGreater(own["frames"], 20)
+        self.assertLess(abs(own["height_signed_median_cm"]), 0.1)            # on its own floor where it stands on the toe
+        self.assertGreater(abs(other["height_signed_median_cm"]), 1.0)       # Rin's shorter foot leaves its toe up
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        for row in (own, other):                                            # either body reads the same foot off the dance
+            self.assertAlmostEqual(row["fit"]["l"], l, delta=0.05)
+            self.assertAlmostEqual(row["fit"]["h"], h, delta=0.15)
+
+
+def dance_with_toes():
+    """the arms and centre of dance(), the left foot of toe_dance()"""
+    m = dance()
+    m.bones = [k for k in m.bones if k.name != "左足ＩＫ"] + [k for k in toe_dance(MIKU).bones if k.name == "左足ＩＫ"]
+    return m
