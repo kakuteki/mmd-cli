@@ -140,6 +140,9 @@ def bone(name):
     return next(b for b in MODEL.bones if b.name == name)
 
 
+TOY_IPD_MM = 80.0 * (bone("左目").position[0] - bone("右目").position[0])     # the toy's eyes, as Sour's Rin's: 65.6 mm
+
+
 def light_on_screen(motion_list, frame, light_name, eye_name, side, morphs=None):
     """the light's centre minus the pupil's centre, seen from the front (X right, Y up), in model units; `morphs`
     {name: weight} move the light's quad before its bone turns it (the mean offset of its vertices)"""
@@ -292,7 +295,7 @@ class TargetTest(unittest.TestCase):
     where the gaze meets it or on the report's eye contacts, and nothing near elsewhere (stage 6: eye_optics found its
     own looks where a hand lay within 12 degrees of the gaze, and 96 % of the vergence of the MV v8 fell outside the
     gaze's looks, review gaze-v8 4.2)"""
-    P = eye_optics.PARAMS["vergence"]
+    P = dict(eye_optics.PARAMS["vergence"], ipd_mm=61.5)        # a person's (the default is the model's own)
 
     def rows(self, n, camera=(30.0, 2.0)):
         return [{"camera": camera} for _ in range(n)]
@@ -736,7 +739,7 @@ class OpticsTest(unittest.TestCase):
         def value(f):
             return yaw_of(fk.applied(fk.sample(keys, f, frames)[1]))
         p = eye_optics.PARAMS["vergence"]
-        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))           # the hand 30 cm in front: the geometric angle
+        want = math.degrees(math.atan(TOY_IPD_MM / 2.0 / 300.0))           # the hand 30 cm in front: the geometric angle
         # (the report names no saccade onto this look: the eyes start vergence.lead before it)
         self.assertAlmostEqual(value(30 - 3), 0.0, delta=0.05)      # keys within 0.05 degrees
         self.assertGreater(value(31), 0.3)                          # already on its way as the hand arrives
@@ -770,8 +773,9 @@ class OpticsTest(unittest.TestCase):
                 self.assertAlmostEqual(yaw_of(fk.applied(k.rotation)), 0.0, 9)
 
     def test_the_eyes_start_to_converge_with_the_saccade_onto_the_hand(self):
-        """the report's saccade onto the look (frame 26, 2 frames, 10 degrees) starts the vergence, and its 11.7
-        degrees (both eyes) with a 10-degree saccade take a person 0.31 s to 90 % (Collewijn 1995 Fig. 17 C)"""
+        """the report's saccade onto the look (frame 26, 2 frames, 10 degrees) starts the vergence, and its 12.5
+        degrees (both eyes, the toy's 65.6 mm; 11.7 with a person's 61.5) with a 10-degree saccade take a person 0.31 s
+        to 90 % (Collewijn 1995 Fig. 17 C: 10 to 15 degrees alike)"""
         away = tuple(f - r for f, r in zip(FAR, HAND_REST))
         hand = {0: away, 27: away, 28: (0.0, 0.0, 0.0), 89: (0.0, 0.0, 0.0), 90: away, 150: away}
         rep = gaze_report(look(28, 89))
@@ -780,7 +784,7 @@ class OpticsTest(unittest.TestCase):
         result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150),
                      looks=eye_optics.gaze_looks(rep))
         verg = result.trace["vergence"]
-        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        want = math.degrees(math.atan(TOY_IPD_MM / 2.0 / 300.0))
         self.assertEqual(max(verg[:26]), 0.0)
         self.assertGreater(verg[26], 0.5)                           # on its way within the saccade
         self.assertGreater(verg[27] / want, 0.3)                    # at its landing a third of the way
@@ -801,7 +805,7 @@ class OpticsTest(unittest.TestCase):
         result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150),
                      looks=eye_optics.gaze_looks(rep))
         verg = result.trace["vergence"]
-        want = math.degrees(math.atan(61.5 / 2.0 / 300.0))
+        want = math.degrees(math.atan(TOY_IPD_MM / 2.0 / 300.0))
         self.assertGreater(min(verg[60:92]), 0.99 * want)         # together until the saccade away starts
         self.assertLess(verg[93], 0.9 * verg[91])                 # opening with it
         self.assertEqual(result.report["vergence"]["hand_runs"][0]["fall_at"], 91.0)
@@ -814,7 +818,7 @@ class OpticsTest(unittest.TestCase):
         aim = (-0.05, 17.214, EYE_Z - 0.5 / 0.08)
         result = run(d=dance(150, hand=hand), g=gaze(150), c=camera(2.5, yaw=30.0, last=150),
                      looks=looks_of(look(30, 89, aim=aim)))
-        want = math.degrees(math.atan(61.5 / 2.0 / 500.0))
+        want = math.degrees(math.atan(TOY_IPD_MM / 2.0 / 500.0))
         self.assertAlmostEqual(result.trace["vergence"][60], want, delta=0.01)
         self.assertAlmostEqual(result.report["vergence"]["hand_runs"][0]["median_m"], 0.5, delta=0.002)
 
@@ -851,6 +855,60 @@ class OpticsTest(unittest.TestCase):
         rep = run().report
         self.assertAlmostEqual(rep["light"]["cornea"], 7.72 / 5.91, 6)
         self.assertAlmostEqual(rep["light"]["lag"], 4.67 / 5.91, 6)
+
+
+def lines_meet(result, d, g, frame):
+    """where the two lines of sight of the eyes cross on `frame` (the dance, the gaze and the result loaded one after
+    another): (the gap between the lines at their closest, the distance of the crossing from the eyes' centre), in
+    model units"""
+    motion = eye_optics.merge(d, g, result.motion)
+    track = fk.world_track(MODEL, motion, ["右目", "左目"], frame, frame)
+    (pr, qr), (pl, ql) = track["右目"][0], track["左目"][0]
+    vr, vl = fk.rotate(qr, (0.0, 0.0, -1.0)), fk.rotate(ql, (0.0, 0.0, -1.0))
+    dot = lambda x, y: sum(p * q for p, q in zip(x, y))  # noqa: E731
+    w0 = tuple(p - q for p, q in zip(pr, pl))
+    a, b, c, dd, e = dot(vr, vr), dot(vr, vl), dot(vl, vl), dot(vr, w0), dot(vl, w0)
+    den = a * c - b * b
+    s, t = (b * e - c * dd) / den, (a * e - b * dd) / den
+    on_r = tuple(p + s * v for p, v in zip(pr, vr))
+    on_l = tuple(p + t * v for p, v in zip(pl, vl))
+    gap = math.sqrt(sum((x - y) ** 2 for x, y in zip(on_r, on_l)))
+    mid = tuple((x + y) / 2.0 for x, y in zip(on_r, on_l))
+    centre = tuple((x + y) / 2.0 for x, y in zip(pr, pl))
+    return gap, math.sqrt(sum((x - y) ** 2 for x, y in zip(mid, centre)))
+
+
+class VergenceFromTheModelTest(unittest.TestCase):
+    """the eyes turn onto the point they aim at from where the model's eyes are (v11 face review, 2026-10-17: the
+    vergence was made for a person's 61.5 mm between the eyes, Murray 2017; Sour's Rin's eye bones, like the toy's, are
+    0.82 units = 65.6 mm apart, so her eyes turned too little and her lines of sight crossed 7 % beyond the hand: 2 cm
+    behind a hand 30 cm away)"""
+    AIM = (0.0, 17.214, EYE_Z - 3.75)              # 30 cm straight ahead of the eyes
+
+    def look_at_the_hand(self, params=None):
+        last = 90
+        away = tuple(f - r for f, r in zip(FAR, HAND_REST))
+        here = tuple(a - r for a, r in zip(self.AIM, HAND_REST))
+        d = dance(last, hand={0: away, 19: away, 20: here, 79: here, 80: away, last: away})
+        g = gaze(last)
+        result = run(d=d, g=g, c=camera(1.0, yaw=40.0), params=params, looks=looks_of(look(20, 79, aim=self.AIM)))
+        return result, d, g
+
+    def test_by_default_the_lines_of_sight_cross_on_the_aimed_point(self):
+        result, d, g = self.look_at_the_hand()
+        self.assertAlmostEqual(result.report["model"]["ipd_mm"], 0.82 * 80.0, 3)
+        self.assertEqual(result.report["model"]["ipd_source"], "model")
+        gap, far = lines_meet(result, d, g, 60)
+        self.assertLess(gap, 0.0125)                             # within a millimetre of each other
+        self.assertAlmostEqual(far, 3.75, delta=0.05)           # 30 cm from the eyes, within 4 mm
+        self.assertAlmostEqual(result.trace["vergence"][60], math.degrees(math.atan(32.8 / 300.0)), delta=0.02)
+
+    def test_a_given_ipd_is_used_as_given(self):
+        result, d, g = self.look_at_the_hand(dict(QUIET, vergence={"ipd_mm": 61.5}))
+        self.assertEqual(result.report["model"]["ipd_mm"], 61.5)
+        self.assertEqual(result.report["model"]["ipd_source"], "params")
+        gap, far = lines_meet(result, d, g, 60)
+        self.assertAlmostEqual(far, 3.75 * 65.6 / 61.5, delta=0.05)    # beyond the hand: the old fault
 
 
 class KeyTest(unittest.TestCase):

@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1922（定数 1549・引数 92・関数の既定 281。定数を既定にする引数 36 は定数の行に書き、数えない）、見直しの印 389（retarget 248・rig 60・踊りだけ 91）、記録の出所つき 59。
+- 数: 全部 1936（定数 1562・引数 93・関数の既定 281。定数を既定にする引数 37 は定数の行に書き、数えない）、見直しの印 385（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 59。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -23,11 +23,11 @@
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
-| 13 | 手と指、触れの層（v11arms） | hand_layer.py・touch_layer.py | 153 | 13 | 10 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.contacts_lost_runs、spikes.wrist_R_per_min、spikes.wrist_L_per_min、arms.wrist_8hz_pct | retarget_check.py |
-| 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
+| 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
+| 14 | 視線 | eye_gaze.py | 105 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
-| 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
-| 17 | 目の光と寄り | eye_optics.py | 89 | 13 | 3 | 0 | （物差しなし） | - |
+| 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
+| 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
@@ -744,7 +744,7 @@
 | BANDS.4-8Hz | (4.0, 8.0) |  | 716 |  |  |  |  |  |  |  |  |  |
 | WELCH_N | 60 | frames | 717 | frames (2 s Hann windows, half overlap) |  |  |  |  |  |  |  |  |
 
-## hand_layer.py（13. 手と指、触れの層（v11arms）、150）
+## hand_layer.py（13. 手と指、149）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -862,158 +862,151 @@
 | FIST_WRIST.flexion | 0.73 * 77.6 |  | 587 | a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free hand's active palmar flexion and ulnar deviation (Gracia… |  |  |  |  |  |  | ○ |  |
 | FIST_WRIST.ulnar | 0.89 * 33.4 |  | 587 | a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free hand's active palmar flexion and ulnar deviation (Gracia… |  |  |  |  |  |  | ○ |  |
 | CONTACT_MM.chest | (60.0, 90.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
-| CONTACT_MM.face | (70.0, 100.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … | 手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値。v11arms（10-17）: 顔の前はこのまま（目から）。手の層が指先を部位へ 5 mm 以上入れたコマ（I7、頭… | ○ |  |  |  |  | ○ | retarget・rig |
+| CONTACT_MM.face | (70.0, 100.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … | 手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値 | ○ |  |  |  |  | ○ | retarget・rig |
 | CONTACT_MM.other | (35.0, 60.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
 | CONTACT_MM.waist | (80.0, 110.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
 | CONTACT_PAD | 4 |  | 593 |  |  |  |  |  |  |  |  |  |
-| CONTACT_SURFACE_MM | (10.0, 25.0) | mm | 605 | and where a fingertip or the palm's middle lies within the first distance (mm) of one of Rin's hard parts, fully, none past the second: the parts' own surfaces (tools/re… | v11arms（10-17）: 手の層が指先・手のひらの中を部位へ 5 mm 以上入れたコマ（I7、54 コマ、頭 43）の入力は面から −11〜+16 mm（中央値 5）。帯 10〜25 mm でその全部を捕まえ、20〜40 mm より… | ○ |  | ○ | ○ | ○ |  | retarget・rig |
-| FOLLOW_SCALE（引数 --follow-scale） | 0.5 |  | 619 | the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive body's spring and damper (its omega and zeta between the … |  |  |  | ○ | ○ | ○ | ○ | rig |
-| HOLD_DEG_S | 5.0 | deg/s | 627 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
-| HOLD_MIN | 4 |  | 627 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
-| HOLD_EXIT | 2 |  | 628 |  |  |  |  |  |  |  |  |  |
-| HOLD_RAMP | 3 |  | 628 |  |  |  |  |  |  |  |  |  |
-| KIME_BEAT | 2 |  | 628 |  |  |  |  |  |  |  |  |  |
-| KIME_LEAD | 3 |  | 628 |  |  |  |  |  |  |  |  |  |
-| KIME_RAMP | 4 |  | 628 |  |  |  |  |  |  |  |  |  |
-| KIME_STIFFNESS | 4.0 |  | 629 |  |  |  |  |  |  |  |  |  |
-| _r(n) | 2 |  | 674 |  |  |  |  |  |  |  |  |  |
-| REACH.band | 5.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.damping | 1e-6 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.h | 0.01 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.iterations | 16 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.reg | 0.05 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.rom | 1.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.step_max | 15.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| MM_PER_UNIT | UNIT_M * 1000.0 |  | 818 |  |  |  |  |  |  |  |  |  |
-| order(scale) | 1.0 |  | 1018 |  |  |  |  |  |  |  |  |  |
-| transit(scale) | 1.0 |  | 1253 |  |  |  |  |  |  |  |  |  |
-| transit(seed) | 0 |  | 1253 |  |  |  |  |  |  |  |  |  |
-| a09_lags(maxlag) | 6 |  | 1584 |  |  |  |  |  |  |  |  |  |
-| a09_lags(step) | 15 |  | 1584 |  |  |  |  |  |  |  |  |  |
-| a09_lags(win) | 60 |  | 1584 |  |  |  |  |  |  |  |  |  |
-| shape_changes(min_change) | 20.0 |  | 1954 |  |  |  |  |  |  |  |  |  |
-| shape_changes(still) | 1.0 |  | 1954 |  |  |  |  |  |  |  |  |  |
-| onset(share) | 0.1 |  | 1965 |  |  |  |  |  |  |  |  |  |
-| HELD_REACH | 4 | frames | 1977 | frames each way the input's joint must be still for a frame to count as a held shape |  |  |  |  |  |  |  |  |
-| --order-scale | 1.0 |  | 2096 | the joints' lags within a change of shape times this (default 1; 0 moves them together) |  |  |  |  |  |  |  |  |
-| --order-mode | "centre" |  | 2112 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
-| --transit-scale | 1.0 |  | 2123 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
+| FOLLOW_SCALE（引数 --follow-scale） | 0.5 |  | 607 | the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive body's spring and damper (its omega and zeta between the … |  |  |  | ○ | ○ | ○ | ○ | rig |
+| HOLD_DEG_S | 5.0 | deg/s | 615 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
+| HOLD_MIN | 4 |  | 615 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
+| HOLD_EXIT | 2 |  | 616 |  |  |  |  |  |  |  |  |  |
+| HOLD_RAMP | 3 |  | 616 |  |  |  |  |  |  |  |  |  |
+| KIME_BEAT | 2 |  | 616 |  |  |  |  |  |  |  |  |  |
+| KIME_LEAD | 3 |  | 616 |  |  |  |  |  |  |  |  |  |
+| KIME_RAMP | 4 |  | 616 |  |  |  |  |  |  |  |  |  |
+| KIME_STIFFNESS | 4.0 |  | 617 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 2 |  | 661 |  |  |  |  |  |  |  |  |  |
+| REACH.band | 5.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.damping | 1e-6 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.h | 0.01 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.iterations | 16 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.reg | 0.05 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.rom | 1.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.step_max | 15.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| MM_PER_UNIT | UNIT_M * 1000.0 |  | 805 |  |  |  |  |  |  |  |  |  |
+| order(scale) | 1.0 |  | 1005 |  |  |  |  |  |  |  |  |  |
+| transit(scale) | 1.0 |  | 1240 |  |  |  |  |  |  |  |  |  |
+| transit(seed) | 0 |  | 1240 |  |  |  |  |  |  |  |  |  |
+| a09_lags(maxlag) | 6 |  | 1571 |  |  |  |  |  |  |  |  |  |
+| a09_lags(step) | 15 |  | 1571 |  |  |  |  |  |  |  |  |  |
+| a09_lags(win) | 60 |  | 1571 |  |  |  |  |  |  |  |  |  |
+| shape_changes(min_change) | 20.0 |  | 1888 |  |  |  |  |  |  |  |  |  |
+| shape_changes(still) | 1.0 |  | 1888 |  |  |  |  |  |  |  |  |  |
+| onset(share) | 0.1 |  | 1899 |  |  |  |  |  |  |  |  |  |
+| HELD_REACH | 4 | frames | 1911 | frames each way the input's joint must be still for a frame to count as a held shape |  |  |  |  |  |  |  |  |
+| --order-scale | 1.0 |  | 2027 | the joints' lags within a change of shape times this (default 1; 0 moves them together) |  |  |  |  |  |  |  |  |
+| --order-mode | "centre" |  | 2040 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
+| --transit-scale | 1.0 |  | 2051 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
 
-## touch_layer.py（13. 手と指、触れの層（v11arms）、3）
-
-| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SMOOTH_FRAMES（引数 --smooth-frames） | 1.0 | frames | 82 | the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a Gaussian of this many frames (its standard deviation; … | v11arms（10-17）: 触れの層の直しを時間でならす（元の手が触れるコマはそのまま）。σ 0 / 1.0 / 1.5 / 2.5 コマ: 右手首の 8 Hz 超 0.97 / 0.71 / 0.72 / -（前の段 0.60、人 … |  |  | ○ | ○ | ○ |  | rig |
-| RAMP_CM（引数 --ramp-cm） | 2.0 | cm | 95 | cm a frame: where the source's hand touches a part only for a frame or two (a hand brushing a thigh in a swing) the change that puts it back can be large (the later laye… | v11arms（10-17）: 一瞬だけの触れ（20.2 秒、元の右手が振りの途中で右ももを 1 コマかすめる）を戻す直しが 1 コマで 9.0 cm 跳んでいた（右手首の 1 コマの落ちと跳ね 3.08・2.78 m/s）。入れ抜きの上… | ○ |  | ○ |  | ○ |  | retarget |
-| smoothed(ramp) | 0.0 |  | 150 |  |  |  |  |  |  |  |  |  |
-
-## eye_gaze.py（14. 視線、103）
+## eye_gaze.py（14. 視線、105）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 213 |  |  |  |  |  |  |  |  |  |
-| MAX_YAW | 18.0 | deg | 214 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
-| MAX_DOWN | 10.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| MAX_UP | 6.0 | deg | 215 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
-| LIMIT_MAX | 45.0 | deg | 217 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
-| SOFT_FROM | 0.6 |  | 218 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
-| EDGE | 0.9 |  | 219 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
-| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 220 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
-| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 221 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
-| CONTACT_ERROR | 4.0 | deg | 222 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
-| CONTACT_GAP | 2 | frames | 224 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
-| CONTACT_MIN | 48 | frames | 225 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
-| CONTACT_MID | 30 | frames | 226 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
-| CONTACT_SPARE | 2 |  | 227 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
-| CONTACT_MAX | 150 | frames | 228 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
-| ANCHOR_NEAR | 30 | frames | 229 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
-| CUT_CLEAR | 6 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| END_CLEAR | 2 | frames | 230 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
-| LOOK_AHEAD | 2 | frames | 231 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
-| GAP | 8.0 | deg | 232 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
-| SUSTAIN | 6 | frames | 233 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
-| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 234 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
-| FIXATION_SPREAD | 5 | frames | 235 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
-| GLANCE | (45, 120) | frames | 236 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
-| VOR_GAIN | (1.0, 1.0) |  | 237 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
-| GATE_TURN | 20.0 | deg | 238 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
-| QUICK_AFTER | 5 | frames | 239 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
-| QUICK_SPREAD | 3 |  | 240 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
-| QUICK_SUSTAIN | 6 | frames | 241 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
-| QUICK_AHEAD | 3 | frames | 242 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
-| FACE_AHEAD | 12 |  | 244 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
-| WALL | 0.85 |  | 245 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
-| WALL_SEEN | 0.84 |  | 246 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
-| MAX_STEP | 8.0 | deg | 247 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
-| FLIP_STEP | 4.0 | deg | 248 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
-| LONG_SACCADE | 35.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| SHORT_SACCADE | 15.0 | deg | 250 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
-| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 251 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
-| AVOID | 6.0 | deg | 252 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
-| KEEP_OFF | 5.0 | deg | 253 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
-| TURN_SPEED | 150.0 | deg/s | 254 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
-| LEAD | (2, 4) | frames | 255 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
-| LEAD_SHARE | 13.0 / 18.0 |  | 256 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
-| LEAD_STEP | 6.0 | deg | 257 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
-| QUIET | 8 | frames | 258 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
-| GUARD | 3 | frames | 259 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
-| MIN_SACCADE | 0.5 | deg | 260 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
-| CUT_JUMP | 1.0 | units | 261 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
-| CUT_TURN | 5.0 | deg | 262 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
-| DRIFT_STEP | 0.03 | deg | 263 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
-| DRIFT_LIMIT | 0.3 | deg | 264 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
-| MICRO_INTERVAL | (15, 45) | frames | 265 | frames between microsaccades |  |  |  |  |  |  |  |  |
-| MICRO_SIZE | 0.15 | deg | 266 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
-| FORWARD_TOLERANCE | 20.0 | deg | 267 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
-| WALL_GAP | 3.0 | deg | 268 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
-| UNIT_M | 0.08 | m | 274 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
-| HAND_FAR | 0.60 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_NEAR | 0.18 | m | 275 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
-| HAND_REACH | 4.0 |  | 278 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
-| HAND_CAMERA | 10.0 | deg | 279 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_FAST | 300.0 | deg/s | 280 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
-| HAND_SLOW | 100.0 | deg/s | 281 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
-| HAND_MIN | 9 | frames | 282 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
-| HAND_PALM | 45.0 | deg | 284 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
-| HAND_JOIN | 2 | frames | 285 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
-| HAND_AHEAD | 1 | frames | 286 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
-| PURSUIT_SPEED | 100.0 | deg/s | 287 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
-| CATCH_UP | 3.0 | deg | 288 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
-| CATCH_UP_AFTER | 4 | frames | 289 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
-| DEBUG_STEP | 30 |  | 290 |  |  |  |  |  |  |  |  |  |
-| REVERSAL | 3.0 | deg | 293 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
-| REVERSAL_WITHIN | 10 |  | 294 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
-| STEADY_GAZE | 10.0 | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_HEAD | (15.0, 120.0) | deg/s | 298 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
-| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 299 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
-| STILL_FLOW | 0.1 |  | 300 |  |  |  |  |  |  |  |  |  |
-| STILL_HEAD | 20.0 |  | 300 |  |  |  |  |  |  |  |  |  |
-| CONTACT_SEEN | 4.0 | deg | 302 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
-| CONTACT_JOIN | 2 | frames | 303 | frames: gaps it joins |  |  |  |  |  |  |  |  |
-| LARGE_CHANGE | 20.0 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LARGE_WINDOW | 15 |  | 304 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
-| LEAD_MIN_FRAMES | 3 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_SEEN | 3.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_TURN | 200.0 | frames | 305 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
-| LEAD_MARGINS | (330, 172) |  | 306 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
-| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 308 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
-| _r(places) | 4 |  | 312 |  |  |  |  |  |  |  |  |  |
-| _vec(places) | 4 |  | 316 |  |  |  |  |  |  |  |  |  |
-| sights(first) | 0 |  | 415 |  |  |  |  |  |  |  |  |  |
-| hand_points(first) | 0 |  | 440 |  |  |  |  |  |  |  |  |  |
-| hand_palms(first) | 0 |  | 455 |  |  |  |  |  |  |  |  |  |
-| hand_aims(first) | 0 |  | 485 |  |  |  |  |  |  |  |  |  |
-| REACH_STEPS | 24 |  | 515 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
-| REACH_SAMPLES | 16 |  | 516 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
-| hand_fingers(first) | 0 |  | 519 |  |  |  |  |  |  |  |  |  |
-| plan(seed) | 0 |  | 957 |  |  |  |  |  |  |  |  |  |
-| world_measures(rest) | (0.0, 0.0) |  | 1429 |  |  |  |  |  |  |  |  |  |
-| gaze(seed) | 0 |  | 1610 |  |  |  |  |  |  |  |  |  |
-| write_json(indent) | 1 |  | 1737 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 1780 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 1848 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
-| --aim | "finger" |  | 1854 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
-| --hand-still | "wrist" |  | 1858 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
+| FPS | 30.0 |  | 221 |  |  |  |  |  |  |  |  |  |
+| MAX_YAW | 18.0 | deg | 222 | degrees the eyes turn sideways (default of --max-yaw) |  |  |  |  |  |  |  |  |
+| MAX_DOWN | 10.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| MAX_UP | 6.0 | deg | 223 | degrees they turn up and down (--max-up, --max-down; review 8, R1: at +10 the upper lid of Sour's Rin covers 17 % more of the iris) |  |  |  |  | ○ |  |  | rig |
+| LIMIT_MAX | 45.0 | deg | 225 | degrees: the most a limit may be |  |  |  |  |  |  |  |  |
+| SOFT_FROM | 0.6 |  | 226 | share of a limit up to which the eyes follow exactly; beyond, tanh towards it |  |  |  |  |  |  |  |  |
+| EDGE | 0.9 |  | 227 | share of a limit from which the analysis counts the eyes as at the edge |  |  |  |  |  |  |  |  |
+| FREE_SHARE | (2.0 / 3.0, 2.0 / 3.0, 0.7) |  | 228 | the free zone, shares of the yaw, up and down limits (12, 4, 7) |  |  |  |  |  |  |  |  |
+| CONTACT_SHARE | (0.889, 0.883, 0.89) |  | 229 | the contact zone (16, 5.3, 8.9: inside the EDGE lines) |  |  |  |  |  |  |  |  |
+| CONTACT_ERROR | 4.0 | deg | 230 | degrees off the camera at most for a frame to be within reach (a13 counts 4; 3.5 gave 8 contacts and none at the first chorus, 4.0 gives 13: review eye) |  |  |  |  |  |  |  |  |
+| CONTACT_GAP | 2 | frames | 232 | frames out of reach that do not break a run (a13 joins gaps of 2) |  |  |  |  |  |  |  |  |
+| CONTACT_MIN | 48 | frames | 233 | frames: a run this long is always a contact (1.6 s) |  |  |  |  |  |  |  |  |
+| CONTACT_MID | 30 | frames | 234 | frames: a run this long is a contact near an anchor of the song |  |  |  | ○ |  |  |  | dance |
+| CONTACT_SPARE | 2 |  | 235 | the shorter contacts are this many fewer than the long ones |  |  |  |  |  |  |  |  |
+| CONTACT_MAX | 150 | frames | 236 | frames: a contact lasts at most this (5 s) |  |  |  |  |  |  |  |  |
+| ANCHOR_NEAR | 30 | frames | 237 | frames from a run within which an anchor counts (1 s) |  |  |  |  |  |  |  |  |
+| CUT_CLEAR | 6 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| END_CLEAR | 2 | frames | 238 | frames before and after a cut without a contact |  |  |  |  |  |  |  |  |
+| LOOK_AHEAD | 2 | frames | 239 | frames ahead from which a fixation is checked against the face's way |  |  |  |  |  |  |  |  |
+| GAP | 8.0 | deg | 240 | degrees off the face's way the eyes may stay before a recentre |  |  |  |  |  |  |  |  |
+| SUSTAIN | 6 | frames | 241 | frames past LOOK_AHEAD the gap must last (a nod with the beat comes back) |  |  |  | ○ |  |  |  | dance |
+| MIN_FIXATION（引数 --min-fixation） | 10 | frames | 242 | frames from the landing of a saccade to the earliest recentre or glance (333 ms) |  |  |  |  |  |  |  |  |
+| FIXATION_SPREAD | 5 | frames | 243 | frames: each fixation's earliest is MIN_FIXATION plus 0 to this (the seed) |  |  |  |  |  |  |  |  |
+| GLANCE | (45, 120) | frames | 244 | frames of one fixation before a glance (both included) |  |  |  |  |  |  |  |  |
+| VOR_GAIN | (1.0, 1.0) |  | 245 | share of the counter-rotation the eyes make sideways and up and down |  |  |  |  |  |  |  |  |
+| GATE_TURN | 20.0 | deg | 246 | degrees a fast turn goes its way for a lead before it and quick phases in it |  |  |  |  |  |  |  |  |
+| QUICK_AFTER | 5 | frames | 247 | frames after a landing before a quick phase or a saccade off the wall, plus |  |  |  |  |  |  |  |  |
+| QUICK_SPREAD | 3 |  | 248 | 0 to this drawn for each fixation (its own stream of the seed) |  |  |  |  |  |  |  |  |
+| QUICK_SUSTAIN | 6 | frames | 249 | frames a press against the wall must last, from the frame on, for one |  |  |  |  |  |  |  |  |
+| QUICK_AHEAD | 3 | frames | 250 | frames: a quick phase goes toward where the head will be this many frames on (at 150 to 600 deg/s, 15 to 60 degrees ahead: never behind her in a spin) |  |  |  |  |  |  |  |  |
+| FACE_AHEAD | 12 |  | 252 | the face's way: the head's forward averaged over the frame and the next 12 |  |  |  |  |  |  |  |  |
+| WALL | 0.85 |  | 253 | share of each limit a fixation is pressed softly against beyond the free zone |  |  |  |  |  |  |  |  |
+| WALL_SEEN | 0.84 |  | 254 | share of each limit from which the measures count the eyes as at the wall |  |  |  |  |  |  |  |  |
+| ECCENTRIC_FROM | 13.9 | deg | 255 | degrees off the middle, yaw and pitch together, from which a fixation, a saccade's goal or a lead is pressed along tanh toward ECCENTRIC_WALL (just beyond the free zone'… | v11face 2026-10-17: 自由な範囲の一番遠い角（横 12・下 7 は正面から 13.87 度）のすぐ外。ここから ECCENTRIC_WALL へ tanh で押す（自由な範囲の中は前のまま） |  |  |  |  |  |  |  |
+| ECCENTRIC_WALL | 14.5 | deg | 258 | degrees off the middle that no angle the plan holds goes beyond (people keep the eyes within 15 degrees of it 99 % of the time, a13; 15 less the drift's 0.42) | v11face 2026-10-17: 人は目を正面から 15 度以内に置く（目の動きの 99 %、a13・mv_inspect eyes.eccentric15_pct の決まり 1 % 以下）。15 から目の揺れ（drift）の最大 … |  |  |  |  | ○ |  |  |
+| MAX_STEP | 8.0 | deg | 261 | degrees the eyes turn in the head a frame at most outside saccades |  |  |  |  |  |  |  |  |
+| FLIP_STEP | 4.0 | deg | 262 | degrees the kept-off gaze may move beyond the gaze's own move before it is a saccade (the keep-off flipping to the other side of the camera) |  |  |  |  |  |  |  |  |
+| LONG_SACCADE | 35.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| SHORT_SACCADE | 15.0 | deg | 264 | degrees: saccades of 2 frames below the first, 3 up to the second, then 4 |  |  |  |  |  |  |  |  |
+| GLANCE_OFF | ((-4.0, 4.0), (-3.0, 1.5)) | deg | 265 | degrees off the face's way of a glance or a look away: yaw, pitch |  |  |  |  |  |  |  |  |
+| AVOID | 6.0 | deg | 266 | degrees off the camera the face target keeps |  |  |  |  |  |  |  |  |
+| KEEP_OFF | 5.0 | deg | 267 | degrees off the camera the gaze keeps outside the contacts |  |  |  |  |  |  |  |  |
+| TURN_SPEED | 150.0 | deg/s | 268 | deg/s of the head's yaw that make a fast turn |  |  |  |  |  |  |  |  |
+| LEAD | (2, 4) | frames | 269 | frames before a fast turn's onset on which the eyes land (both included) |  |  |  |  |  |  |  |  |
+| LEAD_SHARE | 13.0 / 18.0 |  | 270 | a lead lands at most this share of the yaw limit off the middle |  |  |  |  |  |  |  |  |
+| LEAD_STEP | 6.0 | deg | 271 | degrees beyond where the eyes are that a lead goes at least |  |  |  |  |  |  |  |  |
+| QUIET | 8 | frames | 272 | frames before a lead in which no other saccade starts |  |  |  |  |  |  |  |  |
+| GUARD | 3 | frames | 273 | frames after a fast turn's onset without a recentre |  |  |  |  |  |  |  |  |
+| MIN_SACCADE | 0.5 | deg | 274 | degrees: a smaller move is no saccade, only the fixation moves |  |  |  |  |  |  |  |  |
+| CUT_JUMP | 1.0 | units | 275 | model units the camera moves in one frame on a cut |  | ○ |  |  |  |  |  | retarget |
+| CUT_TURN | 5.0 | deg | 276 | degrees the camera's line of sight turns in one frame on a cut |  |  |  |  |  |  |  |  |
+| DRIFT_STEP | 0.03 | deg | 277 | degrees per frame and axis, at most, of the fixation drift |  |  |  |  |  |  |  |  |
+| DRIFT_LIMIT | 0.3 | deg | 278 | degrees: the drift stays within this on each axis |  |  |  |  |  |  |  |  |
+| MICRO_INTERVAL | (15, 45) | frames | 279 | frames between microsaccades |  |  |  |  |  |  |  |  |
+| MICRO_SIZE | 0.15 | deg | 280 | degrees: a microsaccade lands within this of the center |  |  |  |  |  |  |  |  |
+| FORWARD_TOLERANCE | 20.0 | deg | 281 | degrees off -Z within which 両目 -> 両目先 is taken as the rest gaze |  |  |  |  |  |  |  |  |
+| WALL_GAP | 3.0 | deg | 282 | degrees the face's way lies back toward the middle of a fixation pressed beyond the free zone, on that axis, for a quick phase or a saccade off the wall |  |  |  |  |  |  |  |  |
+| UNIT_M | 0.08 | m | 288 | metres in a unit of the model (Sour's Rin; tools/eye_optics.py unit_mm 80) | eye_optics の unit_mm 80（8 cm/単位） | ○ |  |  | ○ |  |  | retarget |
+| HAND_FAR | 0.60 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_NEAR | 0.18 | m | 289 | metres from the eyes: nearer, the hand covers or touches the face; further, beyond an arm's reach |  | ○ |  |  |  |  |  | retarget |
+| HAND_REACH | 4.0 |  | 292 | before her face: the face turned to it, the eyes resting near the middle |  |  |  |  |  |  |  |  |
+| HAND_CAMERA | 10.0 | deg | 293 | degrees: a hand nearer the camera's line is held out to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_FAST | 300.0 | deg/s | 294 | deg/s: a hand moving faster, seen from the eyes in the world, is not followed |  |  |  |  |  |  |  |  |
+| HAND_SLOW | 100.0 | deg/s | 295 | deg/s: a look at a hand needs it this slow on one frame of it at least |  |  |  |  |  |  |  |  |
+| HAND_MIN | 9 | frames | 296 | frames a look at a hand lasts at least (0.3 s: a person's look at a gesture lasts 0.46 s on average, Gullberg & Holmqvist 2006; shorter, the eyes only pass) |  |  |  |  |  | ○ | ○ |  |
+| HAND_PALM | 45.0 | deg | 298 | degrees: a palm turned this near the camera is shown to the viewer, not looked at |  |  |  |  |  |  |  |  |
+| HAND_JOIN | 2 | frames | 299 | frames between two runs of the hand that make one |  |  |  |  |  |  |  |  |
+| HAND_AHEAD | 1 | frames | 300 | frames: the eyes follow the hand where it will be (a self-moved target is led) |  |  |  |  |  |  |  |  |
+| PURSUIT_SPEED | 100.0 | deg/s | 301 | deg/s: the gaze follows a hand at most this fast in the world |  |  |  |  |  |  |  |  |
+| CATCH_UP | 3.0 | deg | 302 | degrees the eyes may trail the hand before a saccade catches up |  |  |  |  |  |  |  |  |
+| CATCH_UP_AFTER | 4 | frames | 303 | frames after a landing before a saccade catches up with the hand |  |  |  |  |  |  |  |  |
+| DEBUG_STEP | 30 |  | 304 |  |  |  |  |  |  |  |  |  |
+| REVERSAL | 3.0 | deg | 307 | degrees: a saccade above this followed, within REVERSAL_WITHIN frames of its |  |  |  |  |  |  |  |  |
+| REVERSAL_WITHIN | 10 |  | 308 | landing, by one above this the opposite way is a reversal (restless eyes) |  |  |  |  |  |  |  |  |
+| STEADY_GAZE | 10.0 | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_HEAD | (15.0, 120.0) | deg/s | 312 | the world gaze (review gaze-smooth 1.3 to 1.6), on the steps outside saccades: with the head at STEADY_HEAD deg/s (what it would carry a resting eye) the gaze is steady … |  |  |  |  |  |  |  |  |
+| STEADY_BANDS | ((15.0, 60.0), (60.0, 120.0)) | deg/s | 313 | the head's deg/s by which the remeasure of stage 6 splits W2 |  |  |  |  |  |  |  |  |
+| STILL_FLOW | 0.1 |  | 314 |  |  |  |  |  |  |  |  |  |
+| STILL_HEAD | 20.0 |  | 314 |  |  |  |  |  |  |  |  |  |
+| CONTACT_SEEN | 4.0 | deg | 316 | degrees: the analysis counts the gaze within this of the camera as eye contact |  |  |  |  |  |  |  |  |
+| CONTACT_JOIN | 2 | frames | 317 | frames: gaps it joins |  |  |  |  |  |  |  |  |
+| LARGE_CHANGE | 20.0 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LARGE_WINDOW | 15 |  | 318 | a large gaze change: more than 20 degrees in the world within 15 frames |  |  |  |  |  |  |  |  |
+| LEAD_MIN_FRAMES | 3 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_SEEN | 3.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_TURN | 200.0 | frames | 319 | a20: yaw rate, frames, degrees of the eyes ahead |  |  |  |  |  |  |  |  |
+| LEAD_MARGINS | (330, 172) |  | 320 | a20 left out turns in the first 330 and the last 172 frames of the song |  |  |  | ○ |  |  |  | dance |
+| PROBE | ((0, 29, (0.0, 0.0, 0.0)), (30, 59, (0.0, 15.0, 0.0)), (60,… |  | 322 | (first frame, last frame, window angles of 両目): the probe |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 326 |  |  |  |  |  |  |  |  |  |
+| _vec(places) | 4 |  | 330 |  |  |  |  |  |  |  |  |  |
+| sights(first) | 0 |  | 429 |  |  |  |  |  |  |  |  |  |
+| hand_points(first) | 0 |  | 454 |  |  |  |  |  |  |  |  |  |
+| hand_palms(first) | 0 |  | 469 |  |  |  |  |  |  |  |  |  |
+| hand_aims(first) | 0 |  | 499 |  |  |  |  |  |  |  |  |  |
+| REACH_STEPS | 24 |  | 529 | bisection steps for the point of a finger where the eyes' reach ends |  |  |  |  |  |  |  |  |
+| REACH_SAMPLES | 16 |  | 530 | points a segment of the finger is walked in, from the tip back |  |  |  |  |  |  |  |  |
+| hand_fingers(first) | 0 |  | 533 |  |  |  |  |  |  |  |  |  |
+| plan(seed) | 0 |  | 1017 |  |  |  |  |  |  |  |  |  |
+| world_measures(rest) | (0.0, 0.0) |  | 1478 |  |  |  |  |  |  |  |  |  |
+| gaze(seed) | 0 |  | 1662 |  |  |  |  |  |  |  |  |  |
+| write_json(indent) | 1 |  | 1790 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1833 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1902 | the drift, the microsaccades, the glances, the leads (default 0) |  |  |  |  |  |  |  |  |
+| --aim | "finger" |  | 1908 | where the eyes aim on a hand: the point of the aimed finger nearest its tip that they reach (finger, default) or the tip itself, in reach or not (tip: the gaze of 2026-1… |  |  |  |  |  |  |  |  |
+| --hand-still | "wrist" |  | 1912 | where whether a hand moves or rests is judged: the wrist (default) or the hand's look point (look: before fingers-v3, with --aim tip the gaze of main c012c32 byte for by… |  |  |  | ○ |  |  |  | dance |
 
 ## face_life.py（15. 表情、147）
 
@@ -1167,80 +1160,83 @@
 | --seed | 0 |  | 2142 | the random draws (default 0) |  |  |  |  |  |  |  |  |
 | --style | "human" |  | 2146 | human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; v7: the face of the MV v7 again, byte for byte |  |  |  | ○ |  | ○ |  | dance |
 
-## lip_sync.py（16. 口、70）
+## lip_sync.py（16. 口、73）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 83 |  |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 84 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
-| SR | 16000 |  | 85 |  |  |  |  |  |  |  |  |  |
-| HOP | 160 | ms | 86 | 10 ms |  |  |  |  |  |  |  |  |
-| WIN | 400 | ms | 87 | 25 ms |  |  |  |  |  |  |  |  |
-| NFFT | 512 |  | 88 |  |  |  |  |  |  |  |  |  |
-| AC_FFT | 1024 |  | 89 |  |  |  |  |  |  |  |  |  |
-| N_MELS | 40 |  | 90 |  |  |  |  |  |  |  |  |  |
-| MEL_RANGE | (80.0, 7600.0) |  | 91 |  |  |  |  |  |  |  |  |  |
-| N_MFCC | 12 |  | 92 |  |  |  |  |  |  |  |  |  |
-| BAND | (250.0, 4000.0) |  | 93 |  |  |  |  |  |  |  |  |  |
-| F0_RANGE | (150.0, 1300.0) |  | 94 |  |  |  |  |  |  |  |  |  |
-| SHAPES.a.あ | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
-| SHAPES.e.え | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
-| SHAPES.i.あ | 0.3 |  | 98 |  | HANDOVER 2026-10-17 lipsync: い＝い＋あ 0.3（リンの描いた試しで選んだ） |  |  |  |  |  |  | rig |
-| SHAPES.i.い | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
-| SHAPES.o.お | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
-| SHAPES.u.う | 1.0 |  | 98 |  |  |  |  |  |  |  |  |  |
-| SHAPES.u.お | 0.2 |  | 98 |  | HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ） |  |  |  |  |  |  | rig |
-| CONSONANTS.f | (0.25, "u") |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.m | (0.0, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.n | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.s | (0.35, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.v | (0.12, None) |  | 102 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
-| CONSONANTS.h | (0.6, None) |  | 103 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.k | (0.5, None) |  | 103 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.r | (0.55, None) |  | 103 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.w | (0.45, "u") |  | 103 |  |  |  |  |  |  |  |  |  |
-| CONSONANTS.y | (0.5, "i") |  | 103 |  |  |  |  |  |  |  |  |  |
-| N_OPEN | 0.15 |  | 104 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
-| CONSONANT_LONGEST | 0.10 | s | 105 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
-| GAIN | (0.5, -24.0, -6.0) |  | 106 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
-| GAIN_SMOOTH | 0.05 | s | 107 | s |  |  |  |  |  |  |  |  |
-| INHALE | 0.22 |  | 108 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
-| INHALE_REST | 0.45 | s | 109 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
-| INHALE_SPAN | (0.40, 0.12) | s | 110 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
-| COARTICULATION | 30.0 | ms | 111 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
-| CLOSURE_MOVE | 0.16 | s | 112 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
-| CLOSURE_HOLD | 0.04 | s | 116 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
-| CLOSURE_RAMP | 0.10 | s | 117 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
-| RELEASE | 0.12 | s | 118 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
-| REST_OPEN | 0.15 |  | 119 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
-| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 120 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
-| KEY_TOLERANCE | 0.025 |  | 121 |  |  |  |  |  |  |  |  |  |
-| SIL_DB | -30.0 |  | 122 | e below this: quiet |  |  |  |  |  |  |  |  |
-| FILLER | -2.5 |  | 123 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
-| BLOCK_GAP | 2.0 | s | 126 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
-| LINE_SLACK | (1.0, 1.5) | s | 127 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
-| MARGIN | (1.2, 1.6) | s | 128 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
-| ITERATIONS | 6 |  | 129 |  |  |  |  |  |  |  |  |  |
-| STAY.C | 0.6 |  | 130 |  |  |  |  |  |  |  |  |  |
-| STAY.N | 0.85 |  | 130 |  |  |  |  |  |  |  |  |  |
-| STAY.Q | 0.85 |  | 130 |  |  |  |  |  |  |  |  |  |
-| STAY.SIL | 0.95 |  | 130 |  |  |  |  |  |  |  |  |  |
-| STAY.SP | 0.9 |  | 130 |  |  |  |  |  |  |  |  |  |
-| STAY.V | 0.9 |  | 130 |  |  |  |  |  |  |  |  |  |
-| SP_PENALTY | (4.0, 1.5) |  | 131 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
-| SPECTRAL_WEIGHT | 0.5 |  | 132 |  |  |  |  |  |  |  |  |  |
-| GUIDE | (2.0, -1.0) |  | 133 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
-| GUIDE_OPEN | 0.3 |  | 134 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
-| GUIDE_LAG | 0.07 | s | 135 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
-| POSTERIOR_FLOOR | -6.0 |  | 136 |  |  |  |  |  |  |  |  |  |
-| NEG | -1e9 |  | 138 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.C | 2 |  | 321 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.N | 4 |  | 321 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.Q | 3 |  | 321 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SIL | 1 |  | 321 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.SP | 3 |  | 321 |  |  |  |  |  |  |  |  |  |
-| SHORTEST.V | 5 |  | 321 |  |  |  |  |  |  |  |  |  |
-| face_rows_of(lag) | 0.0 |  | 704 |  |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 101 |  |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 102 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py) |  |  |  |  |  |  |  |  |
+| SR | 16000 |  | 103 |  |  |  |  |  |  |  |  |  |
+| HOP | 160 | ms | 104 | 10 ms |  |  |  |  |  |  |  |  |
+| WIN | 400 | ms | 105 | 25 ms |  |  |  |  |  |  |  |  |
+| NFFT | 512 |  | 106 |  |  |  |  |  |  |  |  |  |
+| AC_FFT | 1024 |  | 107 |  |  |  |  |  |  |  |  |  |
+| N_MELS | 40 |  | 108 |  |  |  |  |  |  |  |  |  |
+| MEL_RANGE | (80.0, 7600.0) |  | 109 |  |  |  |  |  |  |  |  |  |
+| N_MFCC | 12 |  | 110 |  |  |  |  |  |  |  |  |  |
+| BAND | (250.0, 4000.0) |  | 111 |  |  |  |  |  |  |  |  |  |
+| F0_RANGE | (150.0, 1300.0) |  | 112 |  |  |  |  |  |  |  |  |  |
+| SHAPES.a.あ | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.e.え | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.i.あ | 0.3 |  | 116 |  | v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて… |  |  |  |  |  |  | rig |
+| SHAPES.i.い | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.o.お | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| SHAPES.u.う | 1.0 |  | 116 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.f | (0.25, "u") |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.m | (0.0, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.n | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.s | (0.35, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.v | (0.12, None) |  | 120 | consonant class -> (share of its vowel's opening kept, a shape of its own or None). The shares are chosen, not measured: the lips shut for m b p, nearly for v f (the low… |  |  |  |  |  |  |  |  |
+| CONSONANTS.h | (0.6, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.k | (0.5, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.r | (0.55, None) |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.w | (0.45, "u") |  | 121 |  |  |  |  |  |  |  |  |  |
+| CONSONANTS.y | (0.5, "i") |  | 121 |  |  |  |  |  |  |  |  |  |
+| N_OPEN | 0.15 |  | 122 | ん, not before the lips shut: nearly closed |  |  |  |  |  |  |  |  |
+| BREAK_SHARE | 0.6 |  | 123 | a break before a vowel alone keeps this share of its opening where the voice sounds (chosen as for h: the jaw stays, nothing closes it) | v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた） |  |  |  |  |  |  |  |
+| CONSONANT_LONGEST | 0.10 | s | 125 | s: a consonant shapes the mouth over this much before its vowel at most |  |  |  |  |  |  |  |  |
+| GAIN | (0.5, -24.0, -6.0) |  | 126 | the gain at the soft level, the soft level and the loud level (dB, e) |  |  |  |  |  |  |  |  |
+| GAIN_SMOOTH | 0.05 | s | 127 | s |  |  |  |  |  |  |  |  |
+| INHALE | 0.22 |  | 128 | あ of the breath before a phrase |  |  |  |  |  |  |  |  |
+| INHALE_REST | 0.45 | s | 129 | s of silence before a phrase that let her breathe in |  |  |  |  |  |  |  |  |
+| INHALE_SPAN | (0.40, 0.12) | s | 130 | s before the phrase's first sound: the breath starts and is gone |  |  |  |  |  |  |  |  |
+| COARTICULATION | 30.0 | ms | 131 | ms: the sigma of the Gaussian that smooths the shapes (10 to 90 % in 77 ms) |  |  |  |  |  |  |  |  |
+| CLOSURE_MOVE | 0.16 | s | 132 | s: the lips shut over this much centred on a closure's start and open over this much centred on its end (the sound of the vowel starts as they part); a closure shorter t… |  |  |  |  |  |  | ○ |  |
+| CLOSURE_HOLD | 0.04 | s | 136 | s: the lips stay shut at least this long (a frame of the MV at least) |  |  |  |  |  |  |  |  |
+| CLOSURE_RAMP | 0.10 | s | 137 | s: shutting and parting take at least this long each |  |  |  |  |  |  |  |  |
+| RELEASE | 0.12 | s | 138 | s: after the last vowel of a phrase the singing ends here |  |  |  |  |  |  |  |  |
+| REST_OPEN | 0.15 |  | 139 | outside the singing, where the voice is silent, the mouth opens at most this |  |  |  |  |  |  |  |  |
+| HOLD_DB | -20.0 |  | 140 | outside the lines, FACE's last vowel is held while the voice stays above this (e: the voice clearly sings, tools/lip_check.py's LOUD_DB) | v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり） |  |  |  |  |  |  |  |
+| LEAD_MS（引数 --lead-ms） | 50.0 | ms | 142 |  | HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中） |  |  |  |  |  |  |  |
+| KEY_TOLERANCE | 0.025 |  | 143 |  |  |  |  |  |  |  |  |  |
+| SIL_DB | -30.0 |  | 144 | e below this: quiet |  |  |  |  |  |  |  |  |
+| FILLER | -2.5 |  | 145 | log a row: the silence between lines may hold a sound that is no lyric (an ad lib, a breath, a vocal chop, the echo of the line before) at this cost; a vowel of the line… |  |  |  |  |  |  |  |  |
+| BLOCK_GAP | 2.0 | s | 148 | s between lines that are aligned apart |  |  |  |  |  |  |  |  |
+| LINE_SLACK | (1.0, 1.5) | s | 149 | s a line may begin before its given start, end after its given end |  |  |  |  |  |  |  |  |
+| MARGIN | (1.2, 1.6) | s | 150 | s of the voice taken before and after a block |  |  |  |  |  |  |  |  |
+| ITERATIONS | 6 |  | 151 |  |  |  |  |  |  |  |  |  |
+| STAY.BR | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.C | 0.6 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.N | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.Q | 0.85 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.SIL | 0.95 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.SP | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
+| STAY.V | 0.9 |  | 152 |  |  |  |  |  |  |  |  |  |
+| SP_PENALTY | (4.0, 1.5) |  | 153 | log: a short pause inside a word, between words |  |  |  |  |  |  |  |  |
+| SPECTRAL_WEIGHT | 0.5 |  | 154 |  |  |  |  |  |  |  |  |  |
+| GUIDE | (2.0, -1.0) |  | 155 | log a row added to a vowel where the guide's mouth shows that vowel, another vowel |  |  |  |  |  |  |  |  |
+| GUIDE_OPEN | 0.3 |  | 156 | the guide's mouth shows a vowel where its mixes add up to more than this |  |  |  |  |  |  |  |  |
+| GUIDE_LAG | 0.07 | s | 157 | s: the guide's mouth leads the voice by this much (KAZUSA's keys, analysis a12) |  |  |  | ○ |  |  |  | dance |
+| POSTERIOR_FLOOR | -6.0 |  | 158 |  |  |  |  |  |  |  |  |  |
+| NEG | -1e9 |  | 160 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.BR | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.C | 2 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.N | 4 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.Q | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SIL | 1 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.SP | 3 |  | 343 |  |  |  |  |  |  |  |  |  |
+| SHORTEST.V | 5 |  | 343 |  |  |  |  |  |  |  |  |  |
+| face_rows_of(lag) | 0.0 |  | 759 |  |  |  |  |  |  |  |  |  |
 
 ## lip_timing.py（16. 口、11）
 
@@ -1258,99 +1254,98 @@
 | run(errors) | 0 |  | 260 |  |  |  |  |  |  |  |  |  |
 | --errors | 0 |  | 310 | with --search: vowels of a line that may be missing, extra or different (default 0) |  |  |  |  |  |  |  |  |
 
-## eye_optics.py（17. 目の光と寄り、89）
+## eye_optics.py（17. 目の光と寄り、88）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 194 |  |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 195 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py; tools/face_life.py) |  |  |  |  |  |  |  |  |
-| FORWARD | (0.0, 0.0, -1.0) |  | 196 |  |  |  |  |  |  |  |  |  |
-| UP | (0.0, 1.0, 0.0) |  | 197 |  |  |  |  |  |  |  |  |  |
-| CUT_JUMP | 1.0 | units | 199 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
-| CUT_TURN | 5.0 | units | 199 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
-| TAIL | 5.0 |  | 200 | time constants after which a first-order vergence move ends (0.7 % was left) |  |  |  |  |  |  |  |  |
-| X90 | -math.log(1.0 - 0.9 * (1.0 - math.exp(-TAIL))) |  | 201 | 2.2437: where such a move (ended at TAIL) is 90 % done |  |  |  |  |  |  |  |  |
-| MAX_SPAN | 120 | frames | 202 | frames between two keys at most |  |  |  |  |  |  |  |  |
-| OPEN_LID | 0.45 |  | 203 | an eye whose closing morphs are at this or less is open (the report's open-eye measures) |  |  |  |  | ○ |  |  | rig |
-| PARAMS.light.cornea_radius_mm | 7.72 | mm | 207 | R (Navarro, via Barsingerhorn 2017) |  | ○ |  |  |  |  | ○ | retarget |
-| PARAMS.light.pupil_to_centre_mm | 4.67 | mm | 208 | K: entrance pupil to the cornea's centre of curvature (RESEARCH 1.1) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.iris_radius_mm | 5.91 | mm | 209 | the visible iris (Aguirre 2019) |  | ○ |  |  |  |  | ○ | retarget |
-| PARAMS.light.direction | [-0.5, -1.0, 0.5] |  | 210 | MMD's light, as its window shows it (where the light goes) |  |  |  |  |  |  |  |  |
-| PARAMS.light.hide | [90.0, 100.0] | deg | 211 | degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6) |  |  |  |  |  |  |  |  |
-| PARAMS.light.cap | 1.0 |  | 212 | iris radii the light moves off its drawn place at most (soft) |  |  |  |  |  |  |  |  |
-| PARAMS.light.side | [72.0, 84.0] | deg | 213 | degrees an iris is seen off its forward: its light gives way to its drawn place |  |  |  |  |  |  |  |  |
-| PARAMS.light.ride_cap | 0.3 | units | 215 | model units a light's bone moves at most |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.damping | 0.15 |  | 216 | light_turn's damping, a share of the bone's depth |  |  |  |  |  |  |  |  |
-| PARAMS.light.key_cap | 45.0 | deg | 217 | degrees a light bone's key turns at most (soft from 60 % of it) |  |  |  |  |  |  |  |  |
-| PARAMS.light.reach | 0.9 |  | 218 | iris radii from the iris' centre a light's centre goes at most (soft) |  |  |  |  |  |  |  |  |
-| PARAMS.light.lid_margin | 0.05 |  | 221 | iris radii a light keeps off where the lids cover its iris |  |  |  |  |  |  |  |  |
-| PARAMS.light.lid_slide | 0.15 |  | 222 | iris radii a light slides off them at most (further, it stays under) |  |  |  |  |  |  |  |  |
-| PARAMS.light.guard_margin | 0.01 | units | 224 | model units about a light's centre the guard also looks |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.hug_height | 0.002 | units | 225 | model units in front of its iris a light under them is brought down to |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.light.hide_depth | 0.2 | units | 226 | model units behind its iris a light is put when that is not enough (into the eyeball: beside the iris the eye white lies up to 0.2 behind its rim) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.vergence.ipd_mm | 61.5 | mm | 230 | women's mean (Murray 2017) | 女性の平均 61.5 mm（Murray 2017）。リンのモデルの目の骨の間は 0.82 単位（8 cm/単位で 65.6 mm、adapt 10-17）: 寄り目の角は人の値で、モデルの目の位置とは 6.7 % 違う（MV のカメラで… | ○ |  |  |  |  | ○ | rig |
-| PARAMS.vergence.unit_mm | 80.0 | mm | 231 | one model unit |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.vergence.gain | 1.0 |  | 232 | the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe) |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.angle_near_m | 0.15 | m | 233 | the angle is at most that of a point this near (11.6 degrees an eye) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.vergence.gap_frames | 6 | frames | 234 | looks at a hand this many frames apart or fewer are one look |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.camera_deg | 4.0 | deg | 235 | tools/eye_gaze.py counts a gaze this near the camera as eye contact |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.camera_frames | 3 | frames | 236 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.lead | 0.07 | s | 237 | seconds the eyes start before a look the report names no saccade onto (Erkelens 1989: they lead a target the hand moves by about 90 ms) |  |  |  |  |  |  | ○ |  |
-| PARAMS.vergence.max_speed | 60.0 | deg/s | 239 | degrees a second an eye (natural gaze shifts reach 50 to 200 with both eyes together, Erkelens 1989) |  |  |  |  |  |  | ○ |  |
-| PARAMS.vergence.d90.versions | [0.0, 10.0, 20.0, 40.0] |  | 246 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.sizes | [5.0, 10.0, 15.0, 20.0] |  | 247 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.convergence | [[227.0, 328.0, 372.0, 418.0], [180.0, 310.0, 310.0, 360.0]… |  | 248 |  |  |  |  |  |  |  |  |  |
-| PARAMS.vergence.d90.divergence | [[280.0, 370.0, 395.0, 435.0], [170.0, 220.0, 340.0, 360.0]… |  | 250 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.iris_mm | 11.82 | mm | 255 | the visible iris' diameter, to give the pupil in mm |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.pupil.reflex.constrict | 0.3 |  | 256 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.hold | 0.75 |  | 256 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.latency | 0.25 |  | 256 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.peak | 0.12 |  | 256 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.reflex.redilate | 2.4 |  | 256 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.amplitude | 0.015 |  | 257 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.fall | 3.0 |  | 257 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.high | 90.0 |  | 257 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.low | 10.0 |  | 257 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.arousal.rise | 1.0 |  | 257 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.amplitude | 0.015 |  | 258 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.n | 10.1 |  | 258 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.chorus.peak | 0.93 |  | 258 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.near.per_dioptre | 0.01 |  | 259 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.amplitude | 0.01 |  | 260 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.high_hz | 0.7 | Hz | 260 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.low_hz | 0.1 | Hz | 260 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.unrest.waves | 6 |  | 260 |  |  |  |  |  |  |  |  |  |
-| PARAMS.pupil.range | [-0.35, 0.5] |  | 261 |  |  |  |  |  |  |  |  |  |
-| PARAMS.keys.bone_deg | 0.05 | deg | 264 | a bone's keys: straight lines between them miss no frame by more |  |  |  |  |  |  |  |  |
-| PARAMS.keys.morph | 0.001 |  | 265 | a morph's keys: the same in weight |  |  |  |  | ○ |  |  | rig |
-| PARAMS.keys.position | 0.0005 | units | 266 | a light bone's keys: the same in place (model units) |  | ○ |  |  |  |  |  | retarget |
-| PARAMS.keys.limit | 20000 |  | 267 | MMD's registered points for a model: loading stops past them |  |  |  |  |  |  |  |  |
-| PARAMS.keys.reserve | 1000 |  | 268 | refused this near the limit (a later touch to the face would cross it) |  |  |  |  |  |  |  |  |
-| light_turn(damping) | 0.15 |  | 627 |  |  |  |  |  |  |  |  |  |
-| light_turn(steps) | 4 |  | 627 |  |  |  |  |  |  |  |  |  |
-| SOFT_FROM | 0.6 |  | 671 | share of a cap up to which soft_cap passes values unchanged |  |  |  |  |  |  |  |  |
-| SEEN_COS | 0.1 |  | 709 | a disc seen more than about 84 degrees off its normal (or from behind) is not seen |  |  |  |  |  |  |  |  |
-| pupil_track(seed) | 0 |  | 778 |  |  |  |  |  |  |  |  |  |
-| iris_heights(cells) | 32 |  | 861 |  |  |  |  |  |  |  |  |  |
-| ride_on_iris(steps) | 4 |  | 896 |  |  |  |  |  |  |  |  |  |
-| iris_hit(halvings) | 14 |  | 925 |  |  |  |  |  |  |  |  |  |
-| iris_hit(step) | 0.01 |  | 925 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(across) | 3.0 |  | 984 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(back) | 0.4 |  | 984 |  |  |  |  |  |  |  |  |  |
-| lid_mesh(front) | 0.6 |  | 984 |  |  |  |  |  |  |  |  |  |
-| slide_off_lids(steps) | 8 |  | 1095 |  |  |  |  |  |  |  |  |  |
-| _r(places) | 4 |  | 1245 |  |  |  |  |  |  |  |  |  |
-| _bone_keys(reach) | 0.0005 |  | 1324 |  |  |  |  |  |  |  |  |  |
-| _bone_keys(tolerance) | 0.05 |  | 1324 |  |  |  |  |  |  |  |  |  |
-| _morph_keys(tolerance) | 0.001 |  | 1362 |  |  |  |  |  |  |  |  |  |
-| optics(seed) | 0 |  | 1421 |  |  |  |  |  |  |  |  |  |
-| loudness(high) | 90.0 |  | 1933 |  |  |  |  |  |  |  |  |  |
-| loudness(low) | 10.0 |  | 1933 |  |  |  |  |  |  |  |  |  |
-| loudness(rate) | 8000 |  | 1933 |  |  |  |  |  |  |  |  |  |
-| loudness(smooth) | 0.5 |  | 1933 |  |  |  |  |  |  |  |  |  |
-| loudness(window) | 0.2 |  | 1933 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 1986 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2078 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
+| FPS | 30.0 |  | 195 |  |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 196 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py; tools/face_life.py) |  |  |  |  |  |  |  |  |
+| FORWARD | (0.0, 0.0, -1.0) |  | 197 |  |  |  |  |  |  |  |  |  |
+| UP | (0.0, 1.0, 0.0) |  | 198 |  |  |  |  |  |  |  |  |  |
+| CUT_JUMP | 1.0 | units | 200 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
+| CUT_TURN | 5.0 | units | 200 | a camera cut: it moves more than this (units) or turns more (degrees) in a frame |  | ○ |  |  |  |  |  | retarget |
+| TAIL | 5.0 |  | 201 | time constants after which a first-order vergence move ends (0.7 % was left) |  |  |  |  |  |  |  |  |
+| X90 | -math.log(1.0 - 0.9 * (1.0 - math.exp(-TAIL))) |  | 202 | 2.2437: where such a move (ended at TAIL) is 90 % done |  |  |  |  |  |  |  |  |
+| MAX_SPAN | 120 | frames | 203 | frames between two keys at most |  |  |  |  |  |  |  |  |
+| OPEN_LID | 0.45 |  | 204 | an eye whose closing morphs are at this or less is open (the report's open-eye measures) |  |  |  |  | ○ |  |  | rig |
+| PARAMS.light.cornea_radius_mm | 7.72 | mm | 208 | R (Navarro, via Barsingerhorn 2017) |  | ○ |  |  |  |  | ○ | retarget |
+| PARAMS.light.pupil_to_centre_mm | 4.67 | mm | 209 | K: entrance pupil to the cornea's centre of curvature (RESEARCH 1.1) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.iris_radius_mm | 5.91 | mm | 210 | the visible iris (Aguirre 2019) |  | ○ |  |  |  |  | ○ | retarget |
+| PARAMS.light.direction | [-0.5, -1.0, 0.5] |  | 211 | MMD's light, as its window shows it (where the light goes) |  |  |  |  |  |  |  |  |
+| PARAMS.light.hide | [90.0, 100.0] | deg | 212 | degrees between the light and the camera: HL消 0 .. 1 (RESEARCH 1.6) |  |  |  |  |  |  |  |  |
+| PARAMS.light.cap | 1.0 |  | 213 | iris radii the light moves off its drawn place at most (soft) |  |  |  |  |  |  |  |  |
+| PARAMS.light.side | [72.0, 84.0] | deg | 214 | degrees an iris is seen off its forward: its light gives way to its drawn place |  |  |  |  |  |  |  |  |
+| PARAMS.light.ride_cap | 0.3 | units | 216 | model units a light's bone moves at most |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.damping | 0.15 |  | 217 | light_turn's damping, a share of the bone's depth |  |  |  |  |  |  |  |  |
+| PARAMS.light.key_cap | 45.0 | deg | 218 | degrees a light bone's key turns at most (soft from 60 % of it) |  |  |  |  |  |  |  |  |
+| PARAMS.light.reach | 0.9 |  | 219 | iris radii from the iris' centre a light's centre goes at most (soft) |  |  |  |  |  |  |  |  |
+| PARAMS.light.lid_margin | 0.05 |  | 222 | iris radii a light keeps off where the lids cover its iris |  |  |  |  |  |  |  |  |
+| PARAMS.light.lid_slide | 0.15 |  | 223 | iris radii a light slides off them at most (further, it stays under) |  |  |  |  |  |  |  |  |
+| PARAMS.light.guard_margin | 0.01 | units | 225 | model units about a light's centre the guard also looks |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.hug_height | 0.002 | units | 226 | model units in front of its iris a light under them is brought down to |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.light.hide_depth | 0.2 | units | 227 | model units behind its iris a light is put when that is not enough (into the eyeball: beside the iris the eye white lies up to 0.2 behind its rim) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.vergence.unit_mm | 80.0 | mm | 235 | one model unit |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.vergence.gain | 1.0 |  | 236 | the geometric angle (RESEARCH 0.1 and 3.2, the coordinator's probe) |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.angle_near_m | 0.15 | m | 237 | the angle is at most that of a point this near (12.3 degrees an eye on Sour's Rin, 11.6 with a person's 61.5 mm) |  | ○ |  |  | ○ | ○ |  | retarget・rig |
+| PARAMS.vergence.gap_frames | 6 | frames | 239 | looks at a hand this many frames apart or fewer are one look |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.camera_deg | 4.0 | deg | 240 | tools/eye_gaze.py counts a gaze this near the camera as eye contact |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.camera_frames | 3 | frames | 241 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.lead | 0.07 | s | 242 | seconds the eyes start before a look the report names no saccade onto (Erkelens 1989: they lead a target the hand moves by about 90 ms) |  |  |  |  |  |  | ○ |  |
+| PARAMS.vergence.max_speed | 60.0 | deg/s | 244 | degrees a second an eye (natural gaze shifts reach 50 to 200 with both eyes together, Erkelens 1989) |  |  |  |  |  |  | ○ |  |
+| PARAMS.vergence.d90.versions | [0.0, 10.0, 20.0, 40.0] |  | 251 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.sizes | [5.0, 10.0, 15.0, 20.0] |  | 252 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.convergence | [[227.0, 328.0, 372.0, 418.0], [180.0, 310.0, 310.0, 360.0]… |  | 253 |  |  |  |  |  |  |  |  |  |
+| PARAMS.vergence.d90.divergence | [[280.0, 370.0, 395.0, 435.0], [170.0, 220.0, 340.0, 360.0]… |  | 255 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.iris_mm | 11.82 | mm | 260 | the visible iris' diameter, to give the pupil in mm |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.pupil.reflex.constrict | 0.3 |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.hold | 0.75 |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.latency | 0.25 |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.peak | 0.12 |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.reflex.redilate | 2.4 |  | 261 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.amplitude | 0.015 |  | 262 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.fall | 3.0 |  | 262 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.high | 90.0 |  | 262 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.low | 10.0 |  | 262 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.arousal.rise | 1.0 |  | 262 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.amplitude | 0.015 |  | 263 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.n | 10.1 |  | 263 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.chorus.peak | 0.93 |  | 263 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.near.per_dioptre | 0.01 |  | 264 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.amplitude | 0.01 |  | 265 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.high_hz | 0.7 | Hz | 265 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.low_hz | 0.1 | Hz | 265 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.unrest.waves | 6 |  | 265 |  |  |  |  |  |  |  |  |  |
+| PARAMS.pupil.range | [-0.35, 0.5] |  | 266 |  |  |  |  |  |  |  |  |  |
+| PARAMS.keys.bone_deg | 0.05 | deg | 269 | a bone's keys: straight lines between them miss no frame by more |  |  |  |  |  |  |  |  |
+| PARAMS.keys.morph | 0.001 |  | 270 | a morph's keys: the same in weight |  |  |  |  | ○ |  |  | rig |
+| PARAMS.keys.position | 0.0005 | units | 271 | a light bone's keys: the same in place (model units) |  | ○ |  |  |  |  |  | retarget |
+| PARAMS.keys.limit | 20000 |  | 272 | MMD's registered points for a model: loading stops past them |  |  |  |  |  |  |  |  |
+| PARAMS.keys.reserve | 1000 |  | 273 | refused this near the limit (a later touch to the face would cross it) |  |  |  |  |  |  |  |  |
+| light_turn(damping) | 0.15 |  | 638 |  |  |  |  |  |  |  |  |  |
+| light_turn(steps) | 4 |  | 638 |  |  |  |  |  |  |  |  |  |
+| SOFT_FROM | 0.6 |  | 682 | share of a cap up to which soft_cap passes values unchanged |  |  |  |  |  |  |  |  |
+| SEEN_COS | 0.1 |  | 720 | a disc seen more than about 84 degrees off its normal (or from behind) is not seen |  |  |  |  |  |  |  |  |
+| pupil_track(seed) | 0 |  | 789 |  |  |  |  |  |  |  |  |  |
+| iris_heights(cells) | 32 |  | 872 |  |  |  |  |  |  |  |  |  |
+| ride_on_iris(steps) | 4 |  | 907 |  |  |  |  |  |  |  |  |  |
+| iris_hit(halvings) | 14 |  | 936 |  |  |  |  |  |  |  |  |  |
+| iris_hit(step) | 0.01 |  | 936 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(across) | 3.0 |  | 995 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(back) | 0.4 |  | 995 |  |  |  |  |  |  |  |  |  |
+| lid_mesh(front) | 0.6 |  | 995 |  |  |  |  |  |  |  |  |  |
+| slide_off_lids(steps) | 8 |  | 1106 |  |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 1256 |  |  |  |  |  |  |  |  |  |
+| _bone_keys(reach) | 0.0005 |  | 1335 |  |  |  |  |  |  |  |  |  |
+| _bone_keys(tolerance) | 0.05 |  | 1335 |  |  |  |  |  |  |  |  |  |
+| _morph_keys(tolerance) | 0.001 |  | 1373 |  |  |  |  |  |  |  |  |  |
+| optics(seed) | 0 |  | 1432 |  |  |  |  |  |  |  |  |  |
+| loudness(high) | 90.0 |  | 1948 |  |  |  |  |  |  |  |  |  |
+| loudness(low) | 10.0 |  | 1948 |  |  |  |  |  |  |  |  |  |
+| loudness(rate) | 8000 |  | 1948 |  |  |  |  |  |  |  |  |  |
+| loudness(smooth) | 0.5 |  | 1948 |  |  |  |  |  |  |  |  |  |
+| loudness(window) | 0.2 |  | 1948 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 2001 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2093 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
 
 ## mv_chunks.py（18. 描画と後処理、19）
 
@@ -2040,7 +2035,26 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
 | ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 445 |  |  |  |  |  |  |  |  |  |
+| _cell(n) | 170 |  | 444 |  |  |  |  |  |  |  |  |  |
+
+### mouth_shape.py（確かめ・部品、14）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| KEY_TEETH | (0, 255, 0) |  | 51 |  |  |  |  |  |  |  |  |  |
+| KEY_INSIDE | (0, 255, 255) |  | 52 | cyan: the model's outlines are purple and its irises light blue (a magenta key took the hair's outline for the inside, 2026-10-17) |  |  |  |  | ○ |  |  | rig |
+| TEETH_LIGHT | 200 |  | 54 | the teeth: every channel of the texture this light or more ... |  |  |  |  |  |  |  |  |
+| TEETH_GREY | 40 |  | 55 | ... and the channels this close (the gums and the tongue are pink: 60 or more apart) | v11face 2026-10-17: リンの skin.png の歯の帯は (246, 220, 220) 前後、歯ぐき・舌は (240, 176, 178) 前後（色の差 60 以上） |  |  |  |  |  |  |  |
+| KEY_MARGIN | 80 |  | 56 | a key pixel: its key channels this much above the others |  |  |  |  |  |  |  |  |
+| WINDOW | (0.5, 0.7) |  | 57 | the share of the picture's height and width about its middle where the mouth is |  |  |  |  |  |  |  |  |
+| MID_BAND | 5 |  | 58 | columns at the opening's middle for its height |  |  |  |  |  |  |  |  |
+| CORNER_COLUMNS | 3 |  | 59 | columns at each end of the opening for its corners |  |  |  |  |  |  |  |  |
+| SIZE（引数 --size） | 720 |  | 60 |  |  |  |  |  |  |  |  |  |
+| DISTANCE（引数 --distance） | 3.5 |  | 61 |  |  |  |  |  |  |  |  |  |
+| FOV（引数 --fov） | 20 |  | 62 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_COMBOS | [ ("neutral", {}), ("a", {"あ": 1.0}), ("i", {"い": 1.0}), ("… |  | 64 |  |  |  |  |  |  |  |  |  |
+| _sheet(size) | 240 |  | 300 |  |  |  |  |  |  |  |  |  |
+| --reference | "a" |  | 371 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 
