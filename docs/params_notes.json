@@ -226,6 +226,9 @@
  "contact_layer.py:PLANT_SPIKE": {
   "from": "v11feet 2026-10-17: 新設（2 倍、5 cm）。滑りの中の 1 歩の跳び（曲の 242.1 秒、前後 1.7・1.9 cm の間の 11.35 cm）を前後の速さへ"
  },
+ "contact_layer.py:FLIGHT_BAND": {
+  "from": "v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 新設（FLIGHT_FIT 0.8 G 〜 G）。宙の重心は踊りの落ち方（宙の区間の放物線）をこの中で保つ（遅いものは 0.8 G、速いものは G）。前はすべての宙を G に。人の宙の重心は −109 [−118, −103]、腰 −108 [−119, −94.6]（FineDance の近い種類、mv_inspect の宙と同じ数え方、scripts/air_com.py・air_com2.py）。曲の宙の腰の加速度（mv_inspect）−132 → −114（土台 −124）、重心 −121 → −104。--exact-gravity で前の作り"
+ },
  "retarget.py:JUMP_NEAR": {
   "from": "v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ）"
  },

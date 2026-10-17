@@ -132,15 +132,16 @@ HOLD_MIN = 4                    # frames: a shorter hold is a foot passing by
 FLIGHT_FIT = 0.8 * G            # units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side
                                 # falling faster than this is a flight even over a foot held still (people: 6 % of their runs
                                 # with a held foot, 67 % of those without; scripts/c03_lowhops.py)
-FLIGHT_BAND = (FLIGHT_FIT, G)   # units/s^2 down: a flight's centre of mass falls at the dance's own rate (its parabola over
-                                # the flight) kept within this: slower comes to FLIGHT_FIT, faster (no body falls through the
-                                # air faster) to G.  People's centre of mass in their air runs (floaty's: both feet 2.5 cm
-                                # up for 4 frames and more; de Leva on the SMPL-X joints) falls at 109 [103, 118] units/s^2
-                                # (FineDance's near kinds, 43 with air; 110 in the middle frames of runs of 10 to 14), their
-                                # pelvis at 108 [95, 119], mv_inspect's gravity.air_acc_median.  (v11feet 2026-10-17: with G
-                                # for every flight the song's pelvis fell at 132 there, its centre of mass at 121, the dance's
-                                # limbs rising over its pelvis in the air by 11, people's by 0; _spike/out/stage6/v11feet/
-                                # scripts/air_com.py, air_com2.py)
+FLIGHT_BAND = (FLIGHT_FIT, 1.0 * G)  # units/s^2 down: a flight's centre of mass falls at the dance's own rate (its
+                                # parabola over the flight) kept within this: slower comes to FLIGHT_FIT, faster (no body
+                                # falls through the air faster) to G.  People's centre of mass in their air runs (floaty's:
+                                # both feet 2.5 cm up for 4 frames and more; de Leva on the SMPL-X joints) falls at 109
+                                # [103, 118] units/s^2 (FineDance's near kinds, 43 with air; 110 in the middle frames of runs
+                                # of 10 to 14), their pelvis at 108 [95, 119], mv_inspect's gravity.air_acc_median.
+                                # (v11feet 2026-10-17: with G for every flight the song's pelvis fell at 132 there, its
+                                # centre of mass at 121, the dance's limbs rising over its pelvis in the air by 11, people's
+                                # by 0; with this band 114 and 104.  _spike/out/stage6/v11feet/scripts/air_com.py and
+                                # air_com2.py)
 FALL_BOUND = 122.0             # units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance
                                 # layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot down is a hop
 FALL_TOL = 0.5                  # units/s^2: past a bound by more than this (as the balance layer's report counts)
