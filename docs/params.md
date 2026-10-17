@@ -5,14 +5,14 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1932（定数 1558・引数 94・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 396（retarget 254・rig 58・踊りだけ 93）、記録の出所つき 70。
+- 数: 全部 1933（定数 1559・引数 94・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 397（retarget 255・rig 58・踊りだけ 93）、記録の出所つき 71。
 
 ## v11 の組み直しで見直す順番（上流から）
 
 | 順 | 段 | 道具 | 値 | retarget | rig | 踊り | 確かめの物差し（tools/mv_inspect.py） | ほかの確かめ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 模型の写し（rig の受け持ち） | pmx_rig.py・rig_skin.py・pmx_spine.py・pmx_eyes.py・pmx_skirt.py | 38 | 2 | 7 | 0 | skirt.floor_over122_frames、skirt.floor_max、pixels.pants_frames | rig_check.py・spine_check.py・skirt_probe.py |
-| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 65 | 24 | 1 | 1 | feet.under_floor_frames、feet.ik_miss_floor_frames、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.toe_float_pct | motion_fk.py・retarget_check.py |
+| 2 | 踊りを体に写す（retarget の受け持ち）と手捩 | retarget.py・fix_twist.py | 66 | 25 | 1 | 1 | feet.under_floor_frames、feet.ik_miss_floor_frames、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.toe_float_pct | motion_fk.py・retarget_check.py |
 | 3 | 平滑化と手ぶれ除去（v4s） | smooth_motion.py | 18 | 1 | 0 | 0 | spikes.centre_per_min、spikes.wrist_R_per_min、spikes.wrist_L_per_min、spikes.head_per_min、arms.wrist_8hz_pct、arms.wrist_3_6hz_pct、upper.head_stop_ms | motion_jerk.py |
 | 4 | 呼吸 | breath_layer.py | 60 | 6 | 0 | 3 | upper.head_stops_per_min、upper.upper_sudden_stops_per_min | - |
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
@@ -96,7 +96,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FREE | 100.0 | units | 50 | a translation range never reached (model units) |  | ○ |  |  |  |  |  | retarget |
 
-## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、59）
+## retarget.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、60）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -133,32 +133,33 @@
 | solve_pitch(step) | 0.5 |  | 1001 |  |  |  |  |  |  |  |  |  |
 | FLAT_LIFT_MAX | 0.15 | units | 1045 | units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor |  | ○ |  |  |  |  |  | retarget |
 | FEET_ROUNDS | 2 |  | 1046 |  |  |  |  |  |  |  |  |  |
-| JUMP_NEAR | 0.25 | units | 1056 | units (2 cm) | v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ） | ○ |  | ○ |  |  |  | retarget |
-| JUMP_RATE | 2.5 / UNIT_CM | units | 1057 | units a frame (2.5 cm: 75 cm/s) | v11feet 2026-10-17: 新設 2.5 cm/コマ。床の近くで止めの分を 1 コマで返す跳び（128.0 秒の 13.7 cm）を、元の足より 2.5 cm/コマ以上速く動かないように前後へ配る | ○ |  |  |  |  |  | retarget |
-| JUMP_SPREAD | 6 | frames | 1058 | frames each way at most | v11feet 2026-10-17: 新設 6 コマ（各側） |  |  |  |  |  |  |  |
-| _quant(qs) | (50, 90, 99, 100) |  | 1418 |  |  |  |  |  |  |  |  |  |
-| TOUCH | 0.12 | units | 1427 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
-| NEAR | 0.8 | units | 1428 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
-| HAND_THICK | 0.15 | units | 1429 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
-| TOUCH_BAND | 0.08 | units | 1430 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_ROUNDS | 4 |  | 1431 |  |  |  |  |  |  |  |  |  |
-| CLEAR_MARGIN | 0.02 | units | 1432 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_TOL | 0.005 | units | 1433 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
-| ELBOW_SHARE | 0.25 |  | 1434 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
-| HOLD_FROM | 0.6 |  | 1435 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
-| SHOULDER_SKIP | 0.5 |  | 1436 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
-| TOL_DEG | 0.3 | deg | 1437 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
-| SWIVELS | 24 |  | 1777 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
-| SWIVEL_COST | 0.02 | units | 1778 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
-| SWIVEL_CLEARS | 0.03 | units | 1779 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
-| of(depth) | 0 |  | 1955 |  |  |  |  |  |  |  |  |  |
-| STANCE_LOW | 0.1 | units | 2070 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
-| STANCE_SLOW | 0.05 | units | 2071 | units a frame |  | ○ |  |  |  |  |  | retarget |
-| TOE_STILL | 0.03 | units | 2072 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
-| TOE_PITCH | (6.0, 45.0) | deg | 2073 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
-| lower_envelope(q) | 10.0 |  | 2098 |  |  |  |  |  |  |  |  |  |
-| lower_envelope(width) | 6.0 |  | 2098 |  |  |  |  |  |  |  |  |  |
-| --stance | "legs" |  | 2289 |  |  |  |  |  |  |  |  |  |
+| JUMP_NEAR | 0.25 | units | 1057 | units (2 cm) | v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ） | ○ |  | ○ |  |  |  | retarget |
+| JUMP_RATE | 2.5 / UNIT_CM | units | 1058 | units a frame (2.5 cm: 75 cm/s) | v11feet 2026-10-17: 新設 2.5 cm/コマ。床の近くで止めの分を 1 コマで返す跳び（128.0 秒の 13.7 cm）を、元の足より 2.5 cm/コマ以上速く動かないように前後へ配る | ○ |  |  |  |  |  | retarget |
+| JUMP_SPREAD | 6 | frames | 1059 | frames each way at most | v11feet 2026-10-17: 新設 6 コマ（各側） |  |  |  |  |  |  |  |
+| JUMP_TOUCH | 0.025 | units | 1060 | units (2 mm): a shoe's vertices this near its lowest touch (tools/sink_check.py's) | v11feet 2026-10-17: 新設 2 mm（tools/sink_check.py の触れる頂点、retarget_check の pops と同じ読み方）。底の線では 104.4 秒の着地の 9 cm を見落とした | ○ |  |  |  |  |  | retarget |
+| _quant(qs) | (50, 90, 99, 100) |  | 1426 |  |  |  |  |  |  |  |  |  |
+| TOUCH | 0.12 | units | 1435 | units (1 cm): a hand point this close to a part touches it |  | ○ |  |  |  |  |  | retarget |
+| NEAR | 0.8 | units | 1436 | units (6.4 cm): the hand's place on a part is kept within this, fading out towards it |  | ○ |  |  |  |  |  | retarget |
+| HAND_THICK | 0.15 | units | 1437 | units: half a hand's thickness (the two palms' points touch at twice this) |  | ○ |  |  |  |  |  | retarget |
+| TOUCH_BAND | 0.08 | units | 1438 | units (6 mm): past TOUCH, a hand on a part is tested against it by this much more |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_ROUNDS | 4 |  | 1439 |  |  |  |  |  |  |  |  |  |
+| CLEAR_MARGIN | 0.02 | units | 1440 | units: the arm is pushed this much past the surface |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_TOL | 0.005 | units | 1441 | units: an arm this little into a part is left as it is |  | ○ |  |  |  |  |  | retarget |
+| ELBOW_SHARE | 0.25 |  | 1442 | the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder) |  |  |  |  |  |  |  |  |
+| HOLD_FROM | 0.6 |  | 1443 | the relation's weight from which the clearance keeps the hand where it is (1 at a touch) |  |  |  |  |  |  |  |  |
+| SHOULDER_SKIP | 0.5 |  | 1444 | the upper arm's half by the shoulder is not tested against the head (the shoulder is under it) |  |  |  |  |  |  |  |  |
+| TOL_DEG | 0.3 | deg | 1445 | the keys meet the wanted turns this closely |  |  |  |  |  |  |  |  |
+| SWIVELS | 24 |  | 1785 | elbow positions tried round the shoulder-wrist line when a held hand's arm goes in |  |  |  |  |  |  |  |  |
+| SWIVEL_COST | 0.02 | units | 1786 | units of depth one radian of swivel away from the dance's elbow is worth |  | ○ |  | ○ |  |  |  | retarget |
+| SWIVEL_CLEARS | 0.03 | units | 1787 | units: a held hand's elbow position that leaves at most this keeps the hand where it is |  | ○ |  |  |  |  |  | retarget |
+| of(depth) | 0 |  | 1963 |  |  |  |  |  |  |  |  |  |
+| STANCE_LOW | 0.1 | units | 2078 | units: a foot IK goal this close to its rest height (and slow) stands (the stance's reach) |  | ○ |  |  |  |  |  | retarget |
+| STANCE_SLOW | 0.05 | units | 2079 | units a frame |  | ○ |  |  |  |  |  | retarget |
+| TOE_STILL | 0.03 | units | 2080 | units a frame: the toe goal this slow (and pitched) stands on the toe |  | ○ |  |  |  |  |  | retarget |
+| TOE_PITCH | (6.0, 45.0) | deg | 2081 | degrees: the pitches the toe's floor relation is read over (above, the foot is on its ball) |  |  |  |  |  |  |  |  |
+| lower_envelope(q) | 10.0 |  | 2106 |  |  |  |  |  |  |  |  |  |
+| lower_envelope(width) | 6.0 |  | 2106 |  |  |  |  |  |  |  |  |  |
+| --stance | "legs" |  | 2297 |  |  |  |  |  |  |  |  |  |
 
 ## fix_twist.py（2. 踊りを体に写す（retarget の受け持ち）と手捩、6）
 

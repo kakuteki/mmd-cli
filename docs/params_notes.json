@@ -243,5 +243,8 @@
  },
  "retarget_check.py:POP_SHARE": {
   "from": "v11feet 2026-10-17: review_integ の pops.py と同じ（元の動きがその半分未満なら元に無い跳び）"
+ },
+ "retarget.py:JUMP_TOUCH": {
+  "from": "v11feet 2026-10-17: 新設 2 mm（tools/sink_check.py の触れる頂点、retarget_check の pops と同じ読み方）。底の線では 104.4 秒の着地の 9 cm を見落とした"
  }
 }
