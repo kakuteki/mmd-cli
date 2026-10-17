@@ -55,11 +55,12 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    the body is going away from it as the dance has it, and the foot slides with it (the song's 70.4-71.2 s held a foot
    11 cm from the dance's, the knee 35 degrees straighter and MMD's leg 2.3 cm short).  Between its runs the correction
    goes from one run's to the next's over the swing (a smoothstep), so that it lands where the dance puts it.
-5. Flight: where no foot stands for AIR_MIN frames or more, the body's centre of mass falls by gravity (G): the pelvis's
-   height (センター) changes over the flight and WINDOW frames each side (the push and the catch) by the least change, with
-   its third differences weighed SMOOTH, that makes the second differences of the centre of mass -G on the frames with
-   air on both sides, keeps every frame on the floor no faster falling than FALL_BOUND (or the input) and every standing
-   leg in reach.  The centre of mass there is the pelvis's height and its limbs' part over it smoothed (LIMB_SMOOTH): a
+5. Flight: where no foot stands for AIR_MIN frames or more, the body's centre of mass falls as a body in the air does,
+   at one rate over the flight: the dance's own (its parabola there) kept within FLIGHT_BAND (FLIGHT_FIT to gravity G:
+   slower comes to FLIGHT_FIT, faster to G).  The pelvis's height (センター) changes over the flight and WINDOW frames
+   each side (the push and the catch) by the least change, with its third differences weighed SMOOTH, that makes the
+   second differences of the centre of mass that fall on the frames with air on both sides, keeps every frame on the
+   floor no faster falling than FALL_BOUND (or the input) and every standing leg in reach.  The centre of mass there is the pelvis's height and its limbs' part over it smoothed (LIMB_SMOOTH): a
    limb's quick move (the trace's one-frame jumps) stays the dance's instead of the pelvis taking it up as a jolt.  A foot in the air goes with the body
    (the leg keeps the dance's shape: people's feet clear the floor more in longer flights, 3.3 cm the median of the
    highest in runs of 4 to 6 frames, 5.2 in 7 to 12), easing in over CARRY_RAMP frames from the floor.
@@ -131,7 +132,16 @@ HOLD_MIN = 4                    # frames: a shorter hold is a foot passing by
 FLIGHT_FIT = 0.8 * G            # units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side
                                 # falling faster than this is a flight even over a foot held still (people: 6 % of their runs
                                 # with a held foot, 67 % of those without; scripts/c03_lowhops.py)
-FALL_BOUND = 122.0              # units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance
+FLIGHT_BAND = (FLIGHT_FIT, G)   # units/s^2 down: a flight's centre of mass falls at the dance's own rate (its parabola over
+                                # the flight) kept within this: slower comes to FLIGHT_FIT, faster (no body falls through the
+                                # air faster) to G.  People's centre of mass in their air runs (floaty's: both feet 2.5 cm
+                                # up for 4 frames and more; de Leva on the SMPL-X joints) falls at 109 [103, 118] units/s^2
+                                # (FineDance's near kinds, 43 with air; 110 in the middle frames of runs of 10 to 14), their
+                                # pelvis at 108 [95, 119], mv_inspect's gravity.air_acc_median.  (v11feet 2026-10-17: with G
+                                # for every flight the song's pelvis fell at 132 there, its centre of mass at 121, the dance's
+                                # limbs rising over its pelvis in the air by 11, people's by 0; _spike/out/stage6/v11feet/
+                                # scripts/air_com.py, air_com2.py)
+FALL_BOUND = 122.0             # units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance
                                 # layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot down is a hop
 FALL_TOL = 0.5                  # units/s^2: past a bound by more than this (as the balance layer's report counts)
 BRIDGE = 2                      # frames: a standing foot lifted this long or less stays down ...
@@ -198,7 +208,8 @@ PUSH_ROUNDS = 4                 # rounds of pushing the goal of a weight-bearing
 PUSH_STEP = 0.15                # units: ... by at most this a round (the foot layer's push)
 DROP_ROUNDS = 4                 # rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short)
 FLIGHT_ROUNDS = 4               # rounds of solving the flight again on the centre of mass the changed dance moves ...
-FLIGHT_RESID = 1.0              # units/s^2: ... until it falls within this of gravity on the frames with air on both sides
+FLIGHT_RESID = 1.0              # units/s^2: ... until it falls within this of its flight's fall (FLIGHT_BAND) on the frames
+                                # with air on both sides
 STRICT_SMOOTH = 3.0             # the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it
 STRICT_NEAR = 8                 # brings within the bound (strict frames) with no need there: the least lowering, not a wide
                                 # one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; mv_inspect
@@ -668,12 +679,12 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=
     return z, rows
 
 
-def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F):
+def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F, target=None):
     """the pelvis's change [F] (units) and per window its rows: the least change over each window (first, last) that makes
-    the centre of mass's heights com_y [F] fall by gravity on the air frames with air on both sides (air [F]), keeps
-    every frame on the floor (floor_frames [F]) of every height in pelvis_ys falling no faster than FALL_BOUND (or
-    fall_in [F], the input's, where it is faster) and under `room` [F] (how far the pelvis may rise there, NaN for no
-    bound), weighted SMOOTH on the third differences"""
+    the centre of mass's heights com_y [F] fall at target [F] (units/s^2 down; gravity where None) on the air frames with
+    air on both sides (air [F]), keeps every frame on the floor (floor_frames [F]) of every height in pelvis_ys falling no
+    faster than FALL_BOUND (or fall_in [F], the input's, where it is faster) and under `room` [F] (how far the pelvis may
+    rise there, NaN for no bound), weighted SMOOTH on the third differences"""
     change = np.zeros(F)
     rows = []
     for w0, w1 in windows:
@@ -683,8 +694,8 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
         D2, D3 = _diff_matrix(n, 2, p0, F), _diff_matrix(n, 3, p0, F)
         H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
         eq_rows, eq_b, in_rows, in_b = [], [], [], []
-        g = G / (FPS * FPS)
         for k, t in enumerate(idx):
+            g = (G if target is None else float(target[t])) / (FPS * FPS)
             if t < w0 or t > w1:                # (pinned: the frames just outside the window, bound below)
                 e = np.zeros(n)
                 e[k] = 1.0
@@ -720,7 +731,8 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
 # ---- the layer -------------------------------------------------------------------------------------------------------
 
 def default_params():
-    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True, "glide": True}
+    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True, "glide": True,
+            "flight_band": True}
 
 
 def body_com(model, motion, F):
@@ -1348,16 +1360,22 @@ def layer(model, rig, shoe, motion, params=None):
         interior[1:-1] = in_flight[1:-1] & in_flight[:-2] & in_flight[2:]
         ref = pelvis_ys[0]                          # the pelvis's height (lowered by the drop)
         base = limb_smoothed(com[:, 1] - drop, ref)
+        target = np.full(F, G)                      # each flight's fall: the dance's own within FLIGHT_BAND
+        if p.get("flight_band", True):
+            for a, b in flights:
+                if b - a + 1 >= 3:
+                    own = -2.0 * np.polyfit(np.arange(a, b + 1) / FPS, base[a:b + 1], 2)[0]
+                    target[a:b + 1] = min(max(own, FLIGHT_BAND[0]), FLIGHT_BAND[1])
         com_out = None
         for it in range(FLIGHT_ROUNDS):
-            change, wrows = flight_change(wins, in_flight, floor_frames, base, pelvis_ys, fall_in, room, F)
+            change, wrows = flight_change(wins, in_flight, floor_frames, base, pelvis_ys, fall_in, room, F, target=target)
             offs, _ = offsets_of(change)
             new, _ = comp.compose(offs, change - drop)
             com_out = body_com(model, comp.build(new), F)
             if com_out is None:                     # (no body: the hips stand for the centre of mass, moved with the pelvis)
                 break
             smooth_out = limb_smoothed(com_out[:, 1], ref + change)
-            r = down_acc(smooth_out)[interior] - G
+            r = down_acc(smooth_out)[interior] - target[interior]
             resid.append(_r(float(np.abs(r).max()) if len(r) else 0.0, 2))
             if not len(r) or np.abs(r).max() < FLIGHT_RESID:
                 break
@@ -1365,7 +1383,7 @@ def layer(model, rig, shoe, motion, params=None):
         for a, b in flights:
             row = {"s": [round(a / FPS, 2), round((b + 1) / FPS, 2)], "frames": b - a + 1,
                    "rise_cm": _r(float(change[a:b + 1].max()) * UNIT_CM, 2),
-                   "fall_cm": _r(float(-change[a:b + 1].min()) * UNIT_CM, 2)}
+                   "fall_cm": _r(float(-change[a:b + 1].min()) * UNIT_CM, 2), "com_acc_target": _r(-float(target[a]), 1)}
             if a >= 1 and b + 2 <= F and b - a + 1 >= 3:
                 tt = np.arange(b - a + 3) / FPS
                 row["com_acc_before"] = _r(2.0 * np.polyfit(tt, com[a - 1:b + 2, 1] - drop[a - 1:b + 2], 2)[0], 1)
@@ -1604,6 +1622,9 @@ def main(argv=None):
     ap.add_argument("--no-glide", action="store_true",
                     help="leave a run with no foot standing under a pelvis that does not fall as in a flight to the flight "
                          "(the layer before v11feet) instead of standing it on its lower foot just over the floor")
+    ap.add_argument("--exact-gravity", action="store_true",
+                    help="make every flight's centre of mass fall by gravity (the layer before v11feet) instead of at the "
+                         "dance's own rate kept within FLIGHT_BAND (0.8 of gravity to gravity)")
     args = ap.parse_args(argv)
     if os.path.abspath(args.out) == os.path.abspath(args.dance):
         raise SystemExit("OUT.vmd is the dance itself: write the layer's dance elsewhere")
@@ -1620,14 +1641,15 @@ def main(argv=None):
     out, plan = layer(model, rig, shoe, motion, {"floor_y": args.floor_y, "ground": not args.no_ground,
                                                  "plant": not args.no_plant, "drop": not args.no_drop,
                                                  "flight": not args.no_flight, "knee": not args.no_knee,
-                                                 "glide": not args.no_glide})
+                                                 "glide": not args.no_glide, "flight_band": not args.exact_gravity})
     vmd.dump(out, args.out)
     back = vmd.load(args.out)
     F = plan["F"]
     rep = report_of(plan, rig, motion, back, F)
     rep["untouched"] = untouched(motion, back, plan["written"])
     rep["params"] = {"no_ground": args.no_ground, "no_plant": args.no_plant, "no_drop": args.no_drop, "no_flight": args.no_flight,
-                     "no_knee": args.no_knee, "no_glide": args.no_glide, "floor_y": plan["floor_y"]}
+                     "no_knee": args.no_knee, "no_glide": args.no_glide, "exact_gravity": args.exact_gravity,
+                     "floor_y": plan["floor_y"]}
     rep["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:

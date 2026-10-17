@@ -495,14 +495,33 @@ class FlightTest(unittest.TestCase):
             return (x(t), lift if a <= t <= b else 0.0, 0.0), None
         return dance(F, centre=lambda t: (x(t), BENT + (pelvis(t) if pelvis else 0.0), 0.0), left=foot, right=foot)
 
-    def test_a_hover_with_both_feet_moving_becomes_a_hop_that_falls_by_gravity(self):
+    def falling_hop(self, F, a, b, fall, lift=0.3):
+        """the pelvis pushed up over 6 frames, falling at `fall` units/s^2 over frames a..b and caught over 6 frames
+        (landing as high as it took off); in the air the feet go up and down with the body `lift` units over the floor
+        (the legs keep their shape, so the centre of mass falls as the pelvis does), slow over the floor (a hop in place)"""
+        push = (b - a + 1) * fall / 12.0
+        acc = np.zeros(F)
+        acc[a - 6:a] = push
+        acc[a:b + 1] = -fall
+        acc[b + 1:b + 7] = ((b - a + 1) * fall - 6 * push) / 6.0
+        y = np.zeros(F)
+        for t in range(2, F):                       # the second difference centred on t - 1 is acc[t - 1] / FPS^2
+            y[t] = 2.0 * y[t - 1] - y[t - 2] + acc[t - 1] / (FPS * FPS)
+
+        def foot(t):
+            return (0.0, (y[t] - y[a - 1] + lift) if a <= t <= b else 0.0, 0.0), None
+        return dance(F, centre=lambda t: (0.0, BENT + float(y[t]), 0.0), left=foot, right=foot)
+
+    def test_a_hover_with_both_feet_moving_becomes_a_hop_that_falls_as_a_flight(self):
         # (both feet 2.4 cm up: over GLIDE_MAX, so no glide; lower, the lower foot stands: the glide tests below)
+        # the dance's centre of mass does not fall there at all: it falls at the slow edge of FLIGHT_BAND (FLIGHT_FIT, 0.8
+        # of gravity), the least change that reads as a flight
         F, a, b = 60, 20, 27
         m = self.hop(F, a, b, lift=0.3)
         out, plan = run(m)
         y = com_y(out, F)
         air = down_acc(y)[a + 1:b]                                                    # the frames with air on both sides
-        self.assertLess(float(np.abs(air - G).max()), 4.0)                            # the centre of mass falls by gravity
+        self.assertLess(float(np.abs(air - contact_layer.FLIGHT_FIT).max()), 4.0)
         y0 = com_y(m, F)
         self.assertLess(float(np.abs(down_acc(y0)[a + 1:b]).max()), 2.0)              # the dance's did not
         for name in ("センター", "下半身"):
@@ -519,6 +538,36 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(d[:a - 12]).max()), 1e-6)                        # the window of the push and the catch
         self.assertLess(float(np.abs(d[b + 13:]).max()), 1e-6)
         self.assertGreater(float(d[a:b + 1].max()), 0.2)                              # the body rises in the hop
+
+    def test_exact_gravity_brings_every_flight_to_gravity(self):
+        # flight_band=False (--exact-gravity, the layer before v11feet): the same hover falls by gravity itself
+        F, a, b = 60, 20, 27
+        m = self.hop(F, a, b, lift=0.3)
+        out, plan = run(m, flight_band=False)
+        air = down_acc(com_y(out, F))[a + 1:b]
+        self.assertLess(float(np.abs(air - G).max()), 4.0)
+
+    def test_a_hop_falling_slower_than_gravity_as_people_do_is_left_alone(self):
+        # the hop below falling at 0.85 of gravity (inside FLIGHT_BAND: people's centre of mass in their air runs falls at
+        # 0.89 [0.84, 0.97] of gravity, FineDance's near kinds, v11feet's air_com2.py): the dance's own fall is kept
+        # (before v11feet it was brought to gravity, raising the hop 1.3 cm)
+        F, a, b = 60, 20, 27
+        m = self.falling_hop(F, a, b, 0.85 * G)
+        self.assertLess(float(np.abs(down_acc(com_y(m, F))[a + 1:b] - 0.85 * G).max()), 0.5)   # (the dance as built)
+        out, plan = run(m)
+        d = world_y(out, F, "センター") - world_y(m, F, "センター")
+        self.assertLess(float(np.abs(d).max()), 0.05)                                 # under 4 mm
+
+    def test_a_hop_falling_faster_than_gravity_falls_by_gravity(self):
+        # the trace's keys drop the pelvis at 1.3 of gravity over the flight (no body falls through the air faster): the
+        # centre of mass falls by gravity there (FLIGHT_BAND's fast edge)
+        F, a, b = 60, 20, 27
+        m = self.falling_hop(F, a, b, 1.3 * G)
+        out, plan = run(m)
+        y = com_y(out, F)
+        self.assertLess(float(np.abs(down_acc(y)[a + 2:b - 1] - G).max()), 4.0)     # (the frames a step in: the limbs'
+        acc = 2.0 * np.polyfit(np.arange(a, b + 1) / FPS, y[a:b + 1], 2)[0]          # part is smoothed over the push)
+        self.assertLess(abs(-acc - G), 0.02 * G)
 
     def test_the_frames_round_a_flight_keep_the_bound(self):
         # the dance's pelvis bobs 4 mm at 8 Hz, falling at the bound (122 units/s^2) every few frames, and a hover with
@@ -621,8 +670,9 @@ class FlightTest(unittest.TestCase):
 
     def test_a_leg_kicked_for_a_frame_in_a_flight_does_not_jolt_the_pelvis(self):
         # the hop above with the left foot kicked up 2.4 units on frame 23 only (a trace's one-frame jump of a limb): the
-        # centre of mass falls by gravity over the flight, and the pelvis does not take the kick up (no step of its
-        # height's speed above or below both neighbours by more than 0.15 m/s inside the flight: a08's one-frame spike)
+        # centre of mass falls as a flight over it (the level dance's: FLIGHT_FIT), and the pelvis does not take the kick
+        # up (no step of its height's speed above or below both neighbours by more than 0.15 m/s inside the flight: a08's
+        # one-frame spike)
         F, a, b = 60, 20, 27
 
         def x(t):
@@ -641,7 +691,7 @@ class FlightTest(unittest.TestCase):
             self.assertFalse(up * dn > 0.0 and min(abs(up), abs(dn)) > 0.15, "a one-frame spike at step %d" % i)
         y = com_y(out, F)
         acc = 2.0 * np.polyfit(np.arange(a, b + 1) / FPS, y[a:b + 1], 2)[0]
-        self.assertLess(abs(-acc - G), 0.1 * G)
+        self.assertLess(abs(-acc - contact_layer.FLIGHT_FIT), 0.1 * G)
 
     def test_a_still_foot_just_over_the_floor_while_the_body_sinks_fast_is_a_standing_foot(self):
         # the right foot held still 2 cm up over frames 20-24 while the left is up in the air and the pelvis sinks at 70
@@ -829,6 +879,18 @@ class FlightChangeTest(unittest.TestCase):
         after = down_acc(pel + ch)
         off = ~air
         self.assertLess(float(after[off][1:-1].max()), 122.0 + 0.5)                   # off it, nowhere faster than the bound
+
+    def test_the_air_falls_at_its_target(self):
+        # the same flight with a target fall of 100 units/s^2 (the layer's per flight, FLIGHT_BAND): the air falls at it
+        F = 40
+        air = np.zeros(F, bool)
+        air[18:23] = True
+        pel, com = np.zeros(F), np.zeros(F)
+        ch, rows = contact_layer.flight_change([(15, 25)], air, ~air, com, [pel], np.full(F, 122.0), np.full(F, np.nan), F,
+                                               target=np.full(F, 100.0))
+        self.assertTrue(all(r["solved"] for r in rows))
+        d2 = np.r_[0.0, (ch[2:] - 2.0 * ch[1:-1] + ch[:-2]) * FPS * FPS, 0.0]
+        self.assertLess(float(np.abs(d2[19:22] + 100.0).max()), 1e-6)
 
 
 def run400(m, **params):
@@ -1434,8 +1496,30 @@ class WholeTest(unittest.TestCase):
                 self.assertIn(k, r)
             self.assertTrue(r["untouched"]["identical"])
             self.assertEqual(r["pelvis"]["floor_past_bound_after"], 0)
+            self.assertFalse(r["params"]["exact_gravity"])
             with self.assertRaises(SystemExit):
                 contact_layer.main([src, model, src])
+        finally:
+            shutil.rmtree(d)
+
+    def test_exact_gravity_option(self):
+        # --exact-gravity: every flight's centre of mass falls by gravity (FLIGHT_BAND off), as the report records
+        d = tempfile.mkdtemp()
+        try:
+            F, a, b = 60, 20, 27
+            m = FlightTest().hop(F, a, b, lift=0.3)
+            src, model, dst, rep = (os.path.join(d, n) for n in ("in.vmd", "m.pmx", "out.vmd", "r.json"))
+            vmd.dump(m, src)
+            with open(model, "wb") as f:
+                f.write(DATA)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = contact_layer.main([src, model, dst, "--report", rep, "--exact-gravity"])
+            self.assertEqual(rc, 0)
+            with open(rep, encoding="utf-8") as f:
+                r = json.load(f)
+            self.assertTrue(r["params"]["exact_gravity"])
+            air = down_acc(com_y(vmd.load(dst), F))[a + 1:b]
+            self.assertLess(float(np.abs(air - G).max()), 4.0)
         finally:
             shutil.rmtree(d)
 
