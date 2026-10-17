@@ -2,7 +2,7 @@
 held where they stand, and where no foot stands the body flying by gravity.
 
     python tools/contact_layer.py DANCE.vmd MODEL.pmx OUT.vmd --report r.json [--floor-y Y] [--no-ground] [--no-plant]
-        [--no-drop] [--no-flight]
+        [--no-drop] [--no-flight] [--no-reach]
 
 Why (2026-10-17, _spike/out/stage6/contact/NOTES.md): the trace's dance keeps feet just over the floor that a person would
 stand on.  People (FineDance's K-pop, choreography and jazz sequences, 62, the human baseline's a05 with their 1.2 cm
@@ -64,6 +64,16 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
 6. The frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input (a push that
    overshoots) is raised by the excess; MMD draws 240 fps and interpolates the keys, so where a shoe would dip into the
    floor between two frames further than the input's did, both are raised by the dip (the foot layer's sub-frame check).
+7. MMD's IK, checked on the whole output (REACH_ROUNDS): it stops a leg short of a goal the leg reaches on paper (the
+   song's feet this layer lowered or held were left 0.5-0.9 cm short with the knee bent some 20 degrees: 146 new misses as
+   tools/mv_inspect.py counts them, review 2026-10-17).  Where a supporting shoe's ankle is left more than REACH_MISS from
+   its goal and REACH_WORSE further than in the input, a foot that bears the weight (3.) and is left over the floor
+   keeps the layer's move (standing REACH_MIN frames and more and not within REACH_EDGE frames of its landing or take-off
+   it gets the pelvis REACH_STEP lower there; within those frames it stays as it is), any other foot gives back
+   GIVE_STEP more of the layer's own move of it there (its lowering and its hold, eased over EASE frames), until MMD
+   follows.  Near a turn brought within the bound (3.) the lowering is the least one
+   (STRICT_SMOOTH within STRICT_NEAR frames): the song's turn at 40.13 s lowered the jump's top 2.9 cm with the
+   weight-bearing lowering's smoothness.
 
 Written: 足ＩＫ (both feet, its place) and センター (its height), a key on every frame (a linear curve, the physics bytes of
 the input's key in force); nothing else (the report's `untouched` reads it back).  With nothing to do the input comes
@@ -159,6 +169,20 @@ PUSH_STEP = 0.15                # units: ... by at most this a round (the foot l
 DROP_ROUNDS = 4                 # rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short)
 FLIGHT_ROUNDS = 4               # rounds of solving the flight again on the centre of mass the changed dance moves ...
 FLIGHT_RESID = 1.0              # units/s^2: ... until it falls within this of gravity on the frames with air on both sides
+STRICT_SMOOTH = 3.0             # the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it
+STRICT_NEAR = 8                 # brings within the bound (strict frames) with no need there: the least lowering, not a wide
+                                # one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; mv_inspect
+                                # counts a jump's top 2 cm and more under the dance's).  Per frame, not per window: a need
+                                # nearby (41.7 s) merged the window and brought back 2.85 cm
+REACH_ROUNDS = 4                # rounds of checking the whole output on MMD's IK (layer()): where a supporting shoe ...
+REACH_MISS = 0.05               # units (4 mm): ... has its ankle further than this from its goal (the balance layer's IK_MISS)
+REACH_WORSE = 0.0125            # units (1 mm): ... and this much further than in the input (its IK_WORSE: mv_inspect's new miss),
+GIVE_STEP = 0.25                # the foot gives back this share more of the layer's own move of it (its lowering and hold) a
+                                # round, eased over EASE frames each side; a weight-bearing foot standing REACH_MIN frames ...
+REACH_STEP = 0.0625             # units (5 mm): ... gets the pelvis this much lower a round instead, where it is left over the
+REACH_EDGE = 5                  # floor and not in this many frames of its landing or take-off (the song's 18.87-19.0 s: a
+                                # landing's lagging leg took the pelvis 7.9 cm down; 245.4-247.1 s: a goal the foot layer
+                                # pushed under a shoe on the floor took it 6 cm down)
 
 
 def runs(mask, n=1):
@@ -413,16 +437,21 @@ def solve_qp(H, A_eq, b_eq, A_in, b_in, rounds=60, batch=1):
     return x, active, rounds, ok
 
 
-def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=None):
+def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=None, strict_smooth=None):
     """the pelvis's lowering z [F] (units, >= 0) and per window its rows: over each run of need [F] > 0 or of strict [F]
     and `window` frames each side (merged where they meet), the least and smoothest z (z^2 plus SMOOTH times its third
-    differences squared) that is at least `need`, never negative, and keeps the pelvis's downward acceleration (fall_down
-    [F], units/s^2, + down) within `allowed` [F]: z's second difference at most (allowed - fall_down) / FPS^2 (a lowered
-    pelvis falls faster where z bends up), or 0 where the input is past it already, except on the strict frames, which
-    it brings within (z bends down there).  A window that has no such z keeps the least violation the solve reached
-    (solved False)"""
+    differences squared; strict_smooth times those within STRICT_NEAR frames of a strict frame with no need there, SMOOTH
+    when not given) that is at least `need`, never negative, and keeps the pelvis's downward acceleration (fall_down [F],
+    units/s^2, + down) within `allowed` [F]: z's second difference at most (allowed - fall_down) / FPS^2 (a lowered pelvis
+    falls faster where z bends up), or 0 where the input is past it already, except on the strict frames, which it brings
+    within (z bends down there).  A window that has no such z keeps the least violation the solve reached (solved False)"""
     window = DROP_WINDOW if window is None else window
     strict = np.zeros(F, dtype=bool) if strict is None else np.asarray(strict, dtype=bool)
+    weight_of = np.full(F, SMOOTH)
+    if strict_smooth is not None and strict.any():
+        near = np.convolve(strict.astype(float), np.ones(2 * STRICT_NEAR + 1), mode="same") > 0.5
+        needy = np.convolve((np.asarray(need) > 0.0).astype(float), np.ones(2 * STRICT_NEAR + 1), mode="same") > 0.5
+        weight_of = np.where(near & ~needy, float(strict_smooth), SMOOTH)
     z = np.zeros(F)
     rows = []
     wins = []
@@ -438,7 +467,8 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=
         p0, p1 = max(0, w0 - PAD), min(F - 1, w1 + PAD)
         n = p1 - p0 + 1
         D2, D3 = _diff_matrix(n, 2, p0, F), _diff_matrix(n, 3, p0, F)
-        H = 2.0 * (np.eye(n) + SMOOTH * D3.T @ D3)
+        w = weight_of[p0:p1 + 1]
+        H = 2.0 * (np.eye(n) + D3.T @ (w[:, None] * D3))
         A_eq, b_eq, A_in, b_in = [], [], [], []
         for k in range(n):
             t = p0 + k
@@ -457,7 +487,8 @@ def drop_profile(need, floor_frames, fall_down, allowed, F, window=None, strict=
         x, act, rounds, ok = solve_qp(H, np.array(A_eq) if A_eq else np.zeros((0, n)), np.array(b_eq), np.array(A_in),
                                       np.array(b_in), rounds=DROP_QP_ROUNDS, batch=16)
         z[p0:p1 + 1] = np.maximum(x, 0.0)
-        rows.append({"window": [int(w0), int(w1)], "active": len(act), "rounds": rounds, "solved": bool(ok)})
+        rows.append({"window": [int(w0), int(w1)], "active": len(act), "rounds": rounds, "solved": bool(ok),
+                     "smooth_min": float(w.min())})
     return z, rows
 
 
@@ -513,7 +544,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
 # ---- the layer -------------------------------------------------------------------------------------------------------
 
 def default_params():
-    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True}
+    return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "reach": True}
 
 
 def body_com(model, motion, F):
@@ -622,9 +653,68 @@ class Composer:
 
 def layer(model, rig, shoe, motion, params=None):
     """(the output motion, the plan) of the contact layer on `motion` (see the module's doc).  model: formats.pmx Model
-    (the body for the centre of mass; None: the hips stand for it), rig: leg_ik.LegRig, shoe: foot_layer.Shoe"""
+    (the body for the centre of mass; None: the hips stand for it), rig: leg_ik.LegRig, shoe: foot_layer.Shoe.
+
+    The whole output is checked on MMD's IK (REACH_ROUNDS, params "reach"): MMD's IK stops a leg short of a goal the leg
+    reaches on paper (the song's feet the layer lowered or held: 0.5-0.9 cm short with the knee bent some 20 degrees,
+    review 2026-10-17).  Where a supporting shoe's ankle is left more than REACH_MISS from its goal and REACH_WORSE further
+    than in the input, a foot that bears the weight (step 3's judge) and is left over the floor keeps the layer's move of
+    it: standing REACH_MIN frames and more and not within REACH_EDGE frames of its landing or take-off it gets the pelvis
+    REACH_STEP lower there (as step 3 lowers it; the song's 160.2-161.0 s: giving the left foot back left it 2 cm up
+    where the body leans on it), within those frames it stays as it is; any other foot gives back GIVE_STEP more of the
+    layer's own move of it (its lowering and its hold, eased over EASE frames each side) there, until MMD follows"""
     p = default_params()
     p.update(params or {})
+    F = fk.last_frame(motion) + 1
+    give = {s: np.zeros(F) for s in SIDES}
+    extra = np.zeros(F)
+    rounds = []
+    sol_in = None
+    for rnd in range(REACH_ROUNDS + 1):
+        out, plan = _layer_once(model, rig, shoe, motion, p, give, extra)
+        if not p["reach"] or out is motion:
+            break
+        if sol_in is None:
+            sol_in = IK.solve(rig, motion, range(F))
+        sol_out = IK.solve(rig, out, range(F))
+        row = {"round": rnd}
+        bear_any = np.zeros(F, dtype=bool)
+        for s in SIDES:
+            sd = plan["sides"][s]
+            low_out = FL.shell_world(shoe.sides[s], sol_out[s])[:, :, 1].min(axis=1) - plan["floor_y"]
+            miss = ((low_out < AIR_CLEAR) & (sol_out[s]["reach"] > REACH_MISS)
+                    & (sol_out[s]["reach"] > sol_in[s]["reach"] + REACH_WORSE))
+            # a foot that bears the weight (3.'s judge) left over the floor keeps the layer's move: standing REACH_MIN
+            # frames and more and not in the REACH_EDGE frames of its landing or take-off, it gets the pelvis lower; in
+            # those frames it stays as it is (the dance's leg reaching a frame or two late: 3.).  Any other foot gives back
+            # the layer's move of it (a shoe on the floor whose goal lies under it: the hold given back; a free foot: the
+            # lowering, as far as MMD follows)
+            long_stance = np.zeros(F, dtype=bool)
+            for a, b in runs(sd["stance"], REACH_MIN):
+                long_stance[a + REACH_EDGE:b - REACH_EDGE + 1] = True
+            above = miss & sd["stance"] & (low_out > ON_FLOOR)
+            nd = plan["needed"](s, np.flatnonzero(above)) if above.any() else np.zeros(F, dtype=bool)
+            bearing = above & (nd | (plan["need_drop"] > 0.0))
+            bear = bearing & long_stance & p["drop"]
+            free = miss & ~bearing
+            row[TAGS[s]] = {"bear": int(bear.sum()), "kept": int((bearing & ~bear).sum()), "free": int(free.sum())}
+            bear_any |= bear
+            if free.any():
+                step = np.where(free, np.minimum(give[s] + GIVE_STEP, 1.0), 0.0)
+                give[s] = np.maximum(give[s], FL.smooth_max_envelope(step, EASE))
+        rounds.append(row)
+        if not any(row[TAGS[s]]["bear"] + row[TAGS[s]]["free"] for s in SIDES) or rnd == REACH_ROUNDS:
+            break                       # (the kept frames are left as they are: nothing more to do for them)
+        if bear_any.any():
+            extra = np.where(bear_any, np.maximum(extra, plan["drop"]) + REACH_STEP, extra)
+    plan["reach_rounds"] = rounds
+    plan["give"] = give
+    return out, plan
+
+
+def _layer_once(model, rig, shoe, motion, p, give, extra):
+    """one pass of the layer (layer()'s doc) with the feet's give {side: [F] in 0..1} (the share of the layer's own move of
+    each foot given back) and the extra lowering [F] (units) for the weight-bearing feet MMD leaves short"""
     floor_y = FL.trace_floor(shoe) if p["floor_y"] is None else float(p["floor_y"])
     F = fk.last_frame(motion) + 1
     frames = list(range(F))
@@ -737,6 +827,9 @@ def layer(model, rig, shoe, motion, params=None):
             need_drop = np.maximum(need_drop, np.minimum(r, DROP_MAX))
         elif bear.any():
             as_far_as_it_reaches(s, bear & (dy[s] < 0.0))
+    if p["drop"]:
+        # (layer()'s check on MMD's IK: the weight-bearing feet it still leaves short get the pelvis lower there)
+        need_drop = np.maximum(need_drop, np.minimum(np.asarray(extra, dtype=float), DROP_MAX))
     comp = Composer(rig, motion, keys, sol, F)
     floor_frames = stance["左"] | stance["右"]
     allowed = np.maximum(FALL_BOUND, fall) + FALL_TOL * 0.5          # (the input's own where it is past the bound already)
@@ -756,7 +849,8 @@ def layer(model, rig, shoe, motion, params=None):
         # slack), so a weight-bearing foot still over the floor gets that much more
         target = need_drop > 0.0                # (the weight-bearing feet standing out of reach REACH_MIN frames and more)
         for rnd in range(DROP_ROUNDS):
-            drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F, strict=strict)
+            drop, drop_windows = drop_profile(np.minimum(need_drop, DROP_MAX), floor_frames, fall, allowed, F, strict=strict,
+                                              strict_smooth=STRICT_SMOOTH)
             offs = {s: np.stack([np.zeros(F), dy[s], np.zeros(F)], 1) for s in SIDES}
             _, trial = comp.compose(offs, -drop)
             more = np.zeros(F)
@@ -842,6 +936,12 @@ def layer(model, rig, shoe, motion, params=None):
             c = swing_blend(c, stance[s], F)
         corr[s] = c
         plant_rows[s] = rows
+    # (layer()'s check on MMD's IK: a foot gives back that share of the layer's own move of it, its lowering and its hold,
+    # where MMD's IK does not follow it)
+    for s in SIDES:
+        kept = 1.0 - np.clip(np.asarray(give[s], dtype=float), 0.0, 1.0)
+        dy_e[s] = dy_e[s] * kept
+        corr[s] = corr[s] * kept[:, None]
     # 5. flight: the pelvis's change, solved on the body's centre of mass as the changed dance moves it (the legs
     # straighten or fold where the feet do not go with the body: the centre of mass follows the pelvis by less than one)
     pelvis_ys = [y - drop for y in pel.values()]
@@ -933,7 +1033,7 @@ def layer(model, rig, shoe, motion, params=None):
     plan.update({"air": air, "flying": flying, "strict": strict, "drop": drop, "change": change, "drop_rows": drop_rows,
                  "drop_rounds": drop_rounds, "drop_windows": drop_windows,
                  "flight_rows": {"flights": flight_rows, "windows": wrows, "rounds_resid": resid}, "fall_in": fall,
-                 "com": com})
+                 "com": com, "need_drop": need_drop, "needed": needed})
     moved = any(float(np.abs(offsets[s]).max()) > 1e-9 for s in SIDES) or float(np.abs(centre_dy).max()) > 1e-9
     if not moved:
         plan["sub_raise"] = {s: np.zeros(F) for s in SIDES}
@@ -1093,6 +1193,9 @@ def report_of(plan, rig, before, after, F):
     rep["pelvis"] = pelvis_report(rig, before, after, stance, F, plan["drop"], plan["change"])
     rep["between_frames"] = {TAGS[s]: {"raised_frames": int((plan["sub_raise"][s] > 0.0).sum()),
                                        "max_raise_cm": _r(float(plan["sub_raise"][s].max()) * UNIT_CM, 2)} for s in SIDES}
+    give = plan.get("give") or {s: np.zeros(F) for s in SIDES}
+    rep["reach"] = {"rounds": plan.get("reach_rounds", []),
+                    "give": {TAGS[s]: {"frames": int((give[s] > 1e-9).sum()), "max": _r(float(give[s].max()), 2)} for s in SIDES}}
     return rep
 
 
@@ -1108,6 +1211,7 @@ def main(argv=None):
     ap.add_argument("--no-plant", action="store_true", help="let the standing feet slide as the dance has them")
     ap.add_argument("--no-drop", action="store_true", help="never lower the pelvis for a leg that cannot reach")
     ap.add_argument("--no-flight", action="store_true", help="leave the pelvis's height in the air as the dance has it")
+    ap.add_argument("--no-reach", action="store_true", help="do not check the output on MMD's IK (layer()'s REACH_ROUNDS)")
     args = ap.parse_args(argv)
     if os.path.abspath(args.out) == os.path.abspath(args.dance):
         raise SystemExit("OUT.vmd is the dance itself: write the layer's dance elsewhere")
@@ -1123,14 +1227,14 @@ def main(argv=None):
         raise SystemExit("the dance switches off %s: this layer solves them as on" % ", ".join(off))
     out, plan = layer(model, rig, shoe, motion, {"floor_y": args.floor_y, "ground": not args.no_ground,
                                                  "plant": not args.no_plant, "drop": not args.no_drop,
-                                                 "flight": not args.no_flight})
+                                                 "flight": not args.no_flight, "reach": not args.no_reach})
     vmd.dump(out, args.out)
     back = vmd.load(args.out)
     F = plan["F"]
     rep = report_of(plan, rig, motion, back, F)
     rep["untouched"] = untouched(motion, back, plan["written"])
     rep["params"] = {"no_ground": args.no_ground, "no_plant": args.no_plant, "no_drop": args.no_drop, "no_flight": args.no_flight,
-                     "floor_y": plan["floor_y"]}
+                     "no_reach": args.no_reach, "floor_y": plan["floor_y"]}
     rep["seconds"] = round(time.time() - t0, 1)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as f:

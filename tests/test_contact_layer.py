@@ -578,6 +578,78 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
         self.assertLess(float(np.abs(goal(out, F, "右") - goal(m, F, "右")).max()), 1e-5)
 
+    def test_a_turn_over_still_feet_is_brought_within_the_bound_by_a_small_lowering(self):
+        # the trace's pelvis at 40.0-40.4 s of Hibikase (16.6 cm up in 7 frames, turned in one frame at 281 units/s^2)
+        # over both feet held still 3 cm up: the feet stand and the turn comes within the skirt's bound by a lowering
+        # at the turn of under 2 cm (mv_inspect counts a jump's top 2 cm and more under the dance's; the lowering as
+        # smooth as a weight-bearing one was 2.88 cm, the least the bound needs some 1.3)
+        Y = [83.2, 85.8, 88.2, 90.5, 92.9, 95.5, 98.1, 99.8, 99.0, 97.2, 95.4, 93.7, 93.0]
+        F, a = 56, 18
+        m = dance(F, centre=lambda t: (0.0, -0.6 + (Y[min(max(t - a, 0), 12)] - 99.8) / CM, 0.0),
+                  left=lambda t: ((0.0, 0.375, 0.0), None), right=lambda t: ((0.0, 0.375, 0.0), None))
+        self.assertGreater(float(down_acc(world_y(m, F, "センター")).max()), 250.0)    # (as built: the turn)
+        self.assertGreater(float(shoes(m, F)["左"]["low"][10:46].min()), 2.5)          # (and the feet 3 cm up)
+        out, plan = run(m)
+        st = plan["sides"]["左"]["stance"] & plan["sides"]["右"]["stance"]
+        self.assertTrue(bool(st[a:a + 13].all()))                                     # a step on both feet
+        for name in ("センター", "下半身"):
+            self.assertLess(float(down_acc(world_y(out, F, name))[st].max()), 122.0 + 0.5)
+        d = (world_y(m, F, "センター") - world_y(out, F, "センター")) * CM
+        self.assertLess(float(d.max()), 2.0)
+        self.assertGreater(float(d.min()), -1e-6)
+
+
+class ReachTest(unittest.TestCase):
+    """the layer's own moves of a foot stay where MMD's IK follows them: no new miss as tools/mv_inspect.py counts it (a
+    supporting shoe whose ankle MMD leaves more than 4 mm from its 足ＩＫ goal and 1 mm further than in the input)"""
+
+    @staticmethod
+    def new_misses(m, out, F):
+        sa, sb = leg_ik.solve(RIG, m, range(F)), leg_ik.solve(RIG, out, range(F))
+        sh = shoes(out, F)
+        return {s: int(np.sum((sh[s]["low"] < 1.6) & (sb[s]["reach"] > 0.05) & (sb[s]["reach"] > sa[s]["reach"] + 0.0125)))
+                for s in SIDES}
+
+    def test_a_free_foot_mmds_leg_stops_short_of_comes_down_only_as_far_as_mmd_follows(self):
+        # the body over the right foot, the left foot held still 1.2 cm up 1.7 units out: its leg reaches the floor on
+        # paper (the knee bent 5.5 degrees), but MMD's IK stops the ankle short of a goal there (4.9 mm, the dance 1.9 mm;
+        # the song's free feet: 0.5-0.9 cm with the knee bent some 20 degrees).  The layer gives back what MMD does not
+        # follow: no new miss, the pelvis as it was, the shoe no higher than the dance's and never into the floor
+        F = 30
+        m = dance(F, centre=lambda t: (-1.12, BENT + 0.6, 0.0), left=lambda t: ((1.7, 0.15, 0.0), None))
+        out, plan = run(m)
+        self.assertEqual(self.new_misses(m, out, F), {"左": 0, "右": 0})
+        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
+        a, b = shoes(m, F), shoes(out, F)
+        self.assertLess(float((b["左"]["low"] - a["左"]["low"]).max()), 0.01)
+        self.assertGreater(float(b["左"]["low"].min()), -0.05)
+
+    def test_a_weight_bearing_foot_mmds_leg_stops_short_of_gets_the_pelvis_lowered(self):
+        # a wide stance with the body leaning over the left foot (the centre of mass 13 cm outside the right foot's sole),
+        # the left foot held still 1.4 cm up 3 units out: its leg reaches the floor on paper, MMD's stops short.  Given
+        # back, the foot the body leans on would stay up (1.1 cm; the song's 160.2-161.0 s: 2 cm); it stays on the floor
+        # and the pelvis comes down a little instead, within the skirt's bound (in the first and last REACH_EDGE frames
+        # of the stance, a landing's and a take-off's, the foot stays as the layer put it: no higher than there)
+        F, e = 40, contact_layer.REACH_EDGE
+        m = dance(F, centre=lambda t: (0.9, BENT + 0.9, 0.0), left=lambda t: ((3.0, 0.15, 0.0), None))
+        a = shoes(m, F)["左"]["low"]
+        self.assertGreater(float(a.min()), 1.2)                                       # (as built: the foot 1.4 cm up)
+        out, plan = run(m)
+        sa, sb = leg_ik.solve(RIG, m, range(F)), leg_ik.solve(RIG, out, range(F))
+        b = shoes(out, F)["左"]["low"]
+        new = (b < 1.6) & (sb["左"]["reach"] > 0.05) & (sb["左"]["reach"] > sa["左"]["reach"] + 0.0125)
+        self.assertEqual(int(new[e:F - e].sum()), 0)                                  # no new miss but at the edges
+        k = e + contact_layer.EASE
+        self.assertLess(float(b[k:F - k].max()), 0.1)                                 # on the floor
+        self.assertLess(float(b[e:F - e].max()), 0.4)                                 # (a05's 4 mm where the lowering eases in)
+        self.assertLess(float(b.max()), 1.0)                                          # nowhere given back up
+        self.assertEqual(self.new_misses(m, out, F)["右"], 0)
+        d = (world_y(m, F, "センター") - world_y(out, F, "センター")) * CM
+        self.assertGreater(float(d.max()), 0.3)                                       # the pelvis lowered ...
+        self.assertLess(float(d.max()), 2.5)                                          # ... a little
+        for name in ("センター", "下半身"):
+            self.assertLess(float(down_acc(world_y(out, F, name)).max()), 122.0 + 0.5)
+
 
 class DropProfileTest(unittest.TestCase):
     def test_the_lowering_keeps_the_bound_on_the_frames_just_outside_its_window(self):
