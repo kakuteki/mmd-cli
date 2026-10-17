@@ -1203,6 +1203,60 @@ class KneeTest(unittest.TestCase):
         self.assertEqual(int(np.sum(plan["knee"]["左"]["even"])), 0)
         self.assertEqual(vmd.dumps(out), vmd.dumps(out_nk))
 
+    # (the review of integ, 2026-10-17: what the step's doc says and no test held: a snap is bent to 6 degrees off the
+    # line through its neighbours and no further, and a change of the hip's distance to the goal under a millimetre is
+    # none.  KNEE_POP_DEG 3 and KNEE_TOL 0 passed every test before these two)
+
+    def test_a_snap_is_bent_to_six_degrees_off_its_neighbours_line_and_no_further(self):
+        # the one-frame snap of test_a_swing_leg_straight_for_one_frame_bends_like_the_frames_round_it (the right leg in the
+        # air at 0.95 of its reach, at the reach on frame 20: some 30 degrees off the line through its neighbours).  The
+        # layer bends that frame to 6 degrees off that line, 4 under rig_check's count of a jump, and no further: the least
+        # change of the dance (the frame stays straighter than its neighbours by those 6 degrees), neither laid onto the line
+        # nor left near 10 degrees, where a later layer's centimetre would make it a jump again
+        F = 40
+        centre = (0.0, BENT, 0.0)
+        ahead = (-0.25, -0.6, -0.76)
+        m = dance(F, centre=lambda t: centre,
+                  right=lambda t: (goal_offset(RIG400, "右", centre, 1.0 if t == 20 else 0.95, ahead), None), rig=RIG400)
+        _, sol0 = knee_jumps(RIG400, m, F)
+        k = bend_of(sol0, "右")
+        self.assertGreater(0.5 * (k[19] + k[21]) - k[20], 20.0)                        # (as built: a snap)
+        out, plan = run400(m)
+        _, sol1 = knee_jumps(RIG400, out, F)
+        k = bend_of(sol1, "右")
+        off = 0.5 * (k[19] + k[21]) - k[20]
+        self.assertGreater(off, 5.5)
+        self.assertLess(off, 6.5)
+
+    def test_a_change_of_the_reach_under_a_millimetre_is_not_made(self):
+        # the right leg in the air with its knee bent 19 degrees, unbending to 6 on frame 18 and to its reach on frame 19
+        # (straight: 11 degrees off the line through its neighbours, a jump), bent 19 again from frame 20.  Bending frame 19
+        # to 6 degrees off its neighbours' line leaves frame 18 7 degrees straighter than its own, which would bend it 1
+        # degree more: 0.7 mm of the hip's distance to the goal, less than MMD's IK tells (1 mm).  The layer moves frame
+        # 19's goal (some 3.5 mm) and leaves frame 18's and every other frame's as the dance has them
+        F = 40
+        centre = (0.0, BENT, 0.0)
+        ahead = (-0.25, -0.6, -0.76)
+        L1, L2, rest_deg, _ = contact_layer.knee_geometry(RIG400, "右")
+        L = rig_check.max_reach(RIG400, "右")
+        bends = [19.0] * 18 + [6.0, 0.0] + [19.0] * 20
+
+        def ratio(b):
+            return float(contact_layer.knee_distance(b, L1, L2, rest_deg)) / L
+        m = dance(F, centre=lambda t: centre,
+                  right=lambda t: (goal_offset(RIG400, "右", centre, ratio(bends[t]), ahead), None), rig=RIG400)
+        ev0, sol0 = knee_jumps(RIG400, m, F)
+        self.assertEqual([e["peak"] for e in ev0["右"]], [19])                          # (as built: the jump is frame 19)
+        need = float(contact_layer.knee_distance(6.0, L1, L2, rest_deg) - contact_layer.knee_distance(7.0, L1, L2, rest_deg))
+        self.assertGreater(need * CM * 10.0, 0.3)                                        # (as built: frame 18's, in mm: some ...
+        self.assertLess(need * CM * 10.0, 0.9)                                           # ... and under a millimetre)
+        out, plan = run400(m)
+        ev1, sol1 = knee_jumps(RIG400, out, F)
+        self.assertEqual(ev1["右"], [])
+        moved = np.linalg.norm(sol1["右"]["goal_ankle"] - sol0["右"]["goal_ankle"], axis=1) * CM * 10.0   # (mm)
+        self.assertGreater(float(moved[19]), 2.0)
+        self.assertLess(float(np.delete(moved, 19).max()), 1e-4)
+
 
 class WholeTest(unittest.TestCase):
     def test_nothing_to_do_gives_the_dance_back(self):
