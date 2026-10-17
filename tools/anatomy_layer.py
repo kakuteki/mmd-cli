@@ -67,14 +67,6 @@ The steps, in the research's order (5 章: first what does not change the pose, 
    path continuous (refine), with the elbow offset's acceleration costed too (steep past ACCEL_CAP: no new one-frame
    jumps of the elbow, the review's H2), and it stays exactly the split where nothing is beyond.  Where the arm is
    nearly straight the hinge plane is undefined, and the same program keeps the roll continuous.
-   Given the model's mesh (run() reads it; layer()'s body), the program sees the body too: a swivel that puts the
-   forearm (or the upper arm's half by the elbow, against the head) deeper into one of the body's hard parts than the
-   split's own elbow does by more than BODY_TOL_CM costs ((the depth beyond that) / BODY_SIGMA_CM)^2, 1 mm as much as
-   10 degrees past a joint's cap (the parts: tools/retarget.py's
-   surfaces, the head, the ribbon, the chest and the belly where the split puts them, the hips, the thighs where the leg
-   IK puts them; the arm as capsules of its mesh's radii).  The v11 review: without it the program swung elbows a
-   median 5.4 cm round the shoulder-wrist line into the belly (the forearm more than 1 cm in on 35 frames where the
-   input had none).
    Not fixed, listed: what would need the elbow moved further (the report's beyond_cap_stretches_out names the angles),
    an elbow bent beyond its cap (the wrist would have to move) and the neck and the trunk (beyond the research's caps on
    0 to 0.1 % of the frames; fixing them would turn the face or the chest).  --key-frames: the trace's keys (左腕 /
@@ -110,7 +102,6 @@ from mmd_cli import fk  # noqa: E402
 from mmd_cli.formats import pmd, pmx, vmd  # noqa: E402
 
 UNIT_CM = 8.0                   # one model unit is 8 cm (the analysis pack's README)
-HERE = os.path.dirname(os.path.abspath(__file__))
 SIDES = (("左", 1.0), ("右", -1.0))
 X_ = np.array([1.0, 0.0, 0.0])
 U_ = np.array([0.0, 1.0, 0.0])
@@ -176,26 +167,10 @@ SIGMA_ACCEL, ACCEL_CAP = 1.0, 1.5   # degrees per frame^2 of the elbow's offset 
 BRANCH_SWITCH_DEG = 1.0         # a change of reading costs (bend / this)^2: only through a nearly straight arm
 GIRDLE_HAND_SLACK_CM = 4.0      # how far a hand may slide along a straight arm so that the girdle can come back
 RHYTHM_HAND_CM = 1.0            # how far the rhythm may move a hand more than the trunk's split and the cap do (the bend kept)
-# the body (step 3 with the mesh): past BODY_TOL_CM deeper than the split's own elbow (not seen), 1 mm more costs
-# (0.1 / 0.01)^2 = 100, as 10 degrees past a joint's cap, 5 mm 2,500: an arm in the body is seen at once, a forearm
-# turned past its range hardly (Rin's forearm is bare skin), so the program leaves a joint past its range (listed)
-# rather than put the forearm into the body (0.2 cm at 400, 0.05 cm at 1,600 still swung it in where the range asked)
-BODY_SIGMA_CM = 0.01
-BODY_TOL_CM = 0.25
-BODY_FOREARM = (0.0, 0.25, 0.5, 0.75)   # shares along the forearm from the elbow (its end at the wrist does not move)
-BODY_UPPER = (0.5, 0.75, 1.0)           # the upper arm's half by the elbow, tested against the head only (as retarget)
-
-
-def _tool(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_anatomy_" + name, os.path.join(HERE, name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def default_params():
-    return {"body": True, "split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "share",
+    return {"split": True, "girdle": True, "rom": True, "tenodesis": False, "forearm_twist": "share",
             "upper_twist_share": 1.0, "trunk_shares": dict(TRUNK_TO_UPPER), "neck_shares": dict(HEAD_TO_NECK),
             "arm_limits": {k: v for k, v in ARM_LIMITS.items()}, "girdle_limits": dict(GIRDLE_LIMITS),
             "rhythm_gain": 1.0, "girdle_hand_slack_cm": GIRDLE_HAND_SLACK_CM, "rhythm_hand_cm": RHYTHM_HAND_CM,
@@ -855,28 +830,8 @@ def accel_cost(acc_deg):
     return (acc_deg / SIGMA_ACCEL) ** 2 + (np.maximum(acc_deg - ACCEL_CAP, 0.0) / STEP_HARD) ** 2
 
 
-def body_depth(A, side_body, pe, idx):
-    """the deepest (units, >= 0) the forearm, from elbows pe [n, K, 3] to the wrist A.pw, goes into one of the body's
-    hard parts, and the upper arm's half by the elbow into the head, on the frames idx [n] (side_body: (parts: part ->
-    (world positions [F, 3], world turns [F, 4]), surfaces, (upper arm, forearm) radii))"""
-    parts, surf, radii = side_body
-    pw = A.pw[idx][:, None, :]
-    ps = A.ps[idx][:, None, :]
-    out = np.zeros(pe.shape[:2])
-    for q, (pos, rot) in parts.items():
-        inv = qconj(rot[idx])[:, None, :]
-        c = pos[idx][:, None, :]
-        points = [(pe + t * (pw - pe), radii[1]) for t in BODY_FOREARM]
-        if q == "head":
-            points += [(ps + t * (pe - ps), radii[0]) for t in BODY_UPPER]
-        for P, r in points:
-            out = np.maximum(out, r - surf[q].sdf(qrot(inv, P - c)))
-    return np.maximum(out, 0.0)
-
-
-def solve_arm(S, A, params, log=None, side_body=None):
-    """the swivel and the reading per frame (see the module docstring, step 3) and the final arm; side_body (see
-    body_depth): the arm kept out of the body as well"""
+def solve_arm(S, A, params, log=None):
+    """the swivel and the reading per frame (see the module docstring, step 3) and the final arm"""
     F = len(A.ps)
     a, D, q0 = swivel_base(A.ps, A.pw, A.pe0)
     K2 = int(round(360.0 / SWIVEL_STEP))
@@ -890,11 +845,6 @@ def solve_arm(S, A, params, log=None, side_body=None):
     # the split's own arm (no swivel), both readings: the reference
     ref = arm_states(S, A, a, D, q0, np.zeros((F, 2)), np.tile([1.0, -1.0], (F, 1)))
     ref_pe = ref["pe"][:, 0]
-    ref_depth = None
-    if side_body is not None and side_body[0]:
-        ref_depth = np.concatenate([body_depth(A, side_body, ref_pe[c0:c0 + 1024][:, None, :], np.arange(c0, min(F, c0 + 1024)))[:, 0]
-                                    for c0 in range(0, F, 1024)])
-        sigma, tol = BODY_SIGMA_CM / UNIT_CM, BODY_TOL_CM / UNIT_CM
 
     def unary_of(st, idx, br):
         off = (st["pe"] - ref_pe[idx][:, None]) / S.L_u
@@ -906,9 +856,6 @@ def solve_arm(S, A, params, log=None, side_body=None):
             # read bent to the front wherever it is clearly bent
             cost = (move / SIGMA_MOVE) ** 2 + 1e3 * np.maximum(-st["elbow"] - 0.5, 0.0) ** 2 * \
                 (np.degrees(st["beta"]) > 10.0)
-        if ref_depth is not None:
-            deeper = np.maximum(body_depth(A, side_body, st["pe"], idx) - ref_depth[idx][:, None] - tol, 0.0)
-            cost = cost + (deeper / sigma) ** 2
         return cost + FLEX_PREFERENCE * (br < 0), off
 
     R_all = np.zeros((F, K, 4))
@@ -968,10 +915,6 @@ def solve_arm(S, A, params, log=None, side_body=None):
     final["branch"] = br
     final["elbow_split"] = ref["pe"][:, 0]
     final["unreachable"] = ~ref["reach"]
-    if ref_depth is not None:
-        final["body_depth_split"] = ref_depth
-        final["body_depth"] = np.concatenate([body_depth(A, side_body, final["pe"][c0:c0 + 1024][:, None, :],
-                                                         np.arange(c0, min(F, c0 + 1024)))[:, 0] for c0 in range(0, F, 1024)])
     return final, reading_in
 
 
@@ -1094,29 +1037,7 @@ def key_frames_of(motion):
     return out
 
 
-def body_frames(body, motion, world, W, F):
-    """(part -> (world positions [F, 3], world turns [F, 4]) of the body's hard parts under the layer's trunk, the parts'
-    surfaces): the head (and the ribbon on it), the chest and the belly where the split puts them, the hips as the input
-    has them, the thighs where the leg IK puts them (tools/touch_layer.part_frames); body: tools/retarget.py's Body"""
-    TL = _tool("touch_layer")
-    RT = TL.RT
-    surf = RT.surfaces(body)
-    if not any(not RT.soft(q) for q in surf):
-        return {}, surf
-    base = TL.part_frames(body, RT.tracks_of(motion.bones), np.arange(F))
-    split = {HEAD: HEAD, TRUNK_UP: TRUNK_UP, TRUNK_LO: TRUNK_LO}
-    out = {}
-    for q, (pos, rot) in base.items():
-        if RT.soft(q):
-            continue
-        bone = RT.PARTS[q][0]
-        out[q] = world[split[bone]] if bone in split and split[bone] in world else (pos, rot)
-    return out, surf
-
-
-def layer(model, motion, params=None, key_frames=None, log=None, body=None):
-    """the dance with the anatomical joints (Result); body: tools/retarget.py's Body of the model (with its mesh), for
-    the arm kept out of the body in step 3 (none: as before)"""
+def layer(model, motion, params=None, key_frames=None, log=None):
     p = default_params()
     p.update(params or {})
     if p["forearm_twist"] not in ("share", "keep", "handtw"):
@@ -1146,9 +1067,6 @@ def layer(model, motion, params=None, key_frames=None, log=None, body=None):
     loc.update(new)
     world = run_chain(W, axial, loc, keypos, {})
     T = world[TRUNK_UP][1]
-    body_parts = None
-    if body is not None and p.get("body", True) and p["rom"]:
-        body_parts = body_frames(body, motion, world, W, F)
     report = {"params": {k: v for k, v in p.items() if k not in ("arm_limits", "girdle_limits")},
               "limits": {"arm": p["arm_limits"], "girdle": p["girdle_limits"], "rhythm": RHYTHM},
               "frames": F, "rest": {}, "girdle": {}, "arm": {}, "twist": {}, "tenodesis": {}}
@@ -1258,11 +1176,7 @@ def layer(model, motion, params=None, key_frames=None, log=None, body=None):
         hand_moved = np.linalg.norm(pw_t - pw, axis=-1) * UNIT_CM
         A = ArmInput(ps_new, pw_t, W.p(s + "ひじ"), T, W.q(s + "手首"), fe, Lf)
         # step 3: the arm
-        side_body = None
-        if body_parts is not None and body_parts[0]:
-            RT = _tool("touch_layer").RT
-            side_body = (body_parts[0], body_parts[1], RT.arm_radii(body, s)[:2])
-        final, reading_in = solve_arm(S, A, p, log, side_body)
+        final, reading_in = solve_arm(S, A, p, log)
         final["H"] = A.H
         arm_loc, twist_rep = arm_locals(S, C, final, {"手捩": local[s + "手捩"]}, p)
         for n, q in arm_loc.items():
@@ -1276,11 +1190,6 @@ def layer(model, motion, params=None, key_frames=None, log=None, body=None):
         report["girdle"][s]["hand_slid_cm"] = stats(hand_moved)
         report["girdle"][s]["hand_slid_frames"] = int((hand_moved > 0.05).sum())
         report["arm"][s] = arm_report(final, reading_in, A, S, p["arm_limits"])
-        if "body_depth" in final:
-            dsp, dout = final["body_depth_split"] * UNIT_CM, final["body_depth"] * UNIT_CM
-            report["arm"][s]["body"] = {"frames_over_1cm_split": int(np.sum(dsp > 1.0)), "frames_over_1cm_out": int(np.sum(dout > 1.0)),
-                                        "deeper_than_split_over_1cm_frames": int(np.sum(dout - dsp > 1.0)),
-                                        "deepest_cm_split": _r(float(dsp.max()), 3), "deepest_cm_out": _r(float(dout.max()), 3)}
         report["twist"][s] = twist_rep
         # step 4
         if p["tenodesis"]:
@@ -1635,8 +1544,7 @@ def run(dance_path, model_path, out_path, report_path=None, key_frames_path=None
     dance = vmd.load(dance_path)
     model = load_model(model_path)
     key_frames = key_frames_of(vmd.load(key_frames_path)) if key_frames_path else None
-    body = _tool("touch_layer").RT.Body.load(model_path) if (params or default_params()).get("body", True) else None
-    result = layer(model, dance, params, key_frames, log, body=body)
+    result = layer(model, dance, params, key_frames, log)
     write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
     report = dict({"in": os.path.abspath(dance_path), "model": os.path.abspath(model_path), "out": os.path.abspath(out_path),
                    "key_frames": key_frames_path and os.path.abspath(key_frames_path)}, **result.report)
@@ -1672,14 +1580,11 @@ def main(argv=None):
     ap.add_argument("--no-split", action="store_true", help="leave 上半身 / 上半身2 / 首 / 頭 as they are")
     ap.add_argument("--no-girdle", action="store_true", help="leave 肩 as it is")
     ap.add_argument("--no-rom", action="store_true", help="split the arm only, no range of motion")
-    ap.add_argument("--no-body", action="store_true", help="the range of motion without the body (the elbow may swing the "
-                                                            "forearm into it, as before v11)")
     ap.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = ap.parse_args(argv)
     params = default_params()
     params.update(forearm_twist=a.forearm_twist, upper_twist_share=a.upper_twist_share, tenodesis=a.tenodesis,
-                  split=not a.no_split, girdle=not a.no_girdle, rom=not a.no_rom, girdle_hand_slack_cm=a.hand_slack,
-                  body=not a.no_body)
+                  split=not a.no_split, girdle=not a.no_girdle, rom=not a.no_rom, girdle_hand_slack_cm=a.hand_slack)
     log = (lambda msg: print(msg, file=sys.stderr, flush=True)) if a.verbose else None
     try:
         for flag, key in ((a.trunk_shares, "trunk_shares"), (a.neck_shares, "neck_shares")):

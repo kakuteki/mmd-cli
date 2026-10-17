@@ -7,7 +7,6 @@ import math
 import os
 import shutil
 import tempfile
-import struct
 import unittest
 
 import numpy as np
@@ -32,12 +31,11 @@ motor_layer = load_tool()
 LAST = 90
 
 
-def model_bytes(hand_at_face=False, fingers=True, blob=None):
+def model_bytes(hand_at_face=False, fingers=True):
     """the bones of Sour's Rin the layer reads or writes (her rest positions, model units), with her 肩P / 肩C (肩C takes
     肩P's turn with ratio -1) and the twist bones between the joints.  hand_at_face folds the left arm up so that the tip
-    of the left middle finger rests 6.8 cm in front of the left eye; blob: (bone, centre at rest, radius, points) a sphere
-    of vertices on the bone (a hard part)"""
-    w = Writer(bone=2, vertex=2)
+    of the left middle finger rests 6.8 cm in front of the left eye"""
+    w = Writer(bone=2)
     bones = [("全ての親", None, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", "全ての親", (0.0, 7.847, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("腰", "センター", (0.0, 11.726, 0.255), {}),
@@ -78,17 +76,7 @@ def model_bytes(hand_at_face=False, fingers=True, blob=None):
         if "append" in kw:
             kw["append"] = (index[kw["append"]], -1.0)
         built.append(w.bone(name, parent=-1 if parent is None else index[parent], position=position, **kw))
-    verts = []
-    if blob is not None:
-        bone, centre, radius, n = blob
-        for i in range(n):
-            y = 1.0 - 2.0 * (i + 0.5) / n
-            r = math.sqrt(max(0.0, 1.0 - y * y))
-            a = i * math.pi * (3.0 - math.sqrt(5.0))
-            d = (r * math.cos(a), y, r * math.sin(a))
-            raw = w.vertex("BDEF1", (index[bone],))
-            verts.append(struct.pack("<3f", *[c + radius * v for c, v in zip(centre, d)]) + struct.pack("<3f", *d) + raw[24:])
-    return w.build(name="rin-like", bones=built, vertices=verts)
+    return w.build(name="rin-like", bones=built)
 
 
 MODEL = pmx.loads(model_bytes())
@@ -402,62 +390,6 @@ class FloorTest(unittest.TestCase):
         d_in, d_out = self.tip_eye_mm(result.world_in), self.tip_eye_mm(result.world_out)
         near = d_in < 100.0
         self.assertGreaterEqual(float(np.min((d_out - d_in)[near])), -10.0)
-
-
-class SurfaceContactTest(unittest.TestCase):
-    """with the model's mesh the touches are read from the body's surfaces too (CONTACT_SURFACE_MM): the left hand swings
-    in fast to rest by a hard part far from the eyes and the chest's line (as a hand on the side of Rin's head, 125 - 148
-    mm from her eyes), along a path that runs on into it; a soft tracking overshoots into the part unless the contact
-    keeps the input there"""
-
-    @classmethod
-    def setUpClass(cls):
-        keys = untouched_keys()
-        keys += [key("左腕", 0, axis_angle((0, 0, 1), 45.0)), key("左腕", 20, axis_angle((0, 0, 1), 45.0)), key("左腕", 24),
-                 key("左腕", LAST)]
-        cls.dance = vmd.Motion(model_name="dancer", bones=keys)
-        at = fk.Pose(MODEL, cls.dance, ["左中指３", "下半身"]).at(30)
-        tip = np.asarray(at["左中指３"][0])
-        cls.radius = 0.6
-        centre = tip + np.array([-0.6, -0.8, 0.0]) * (cls.radius + 0.05)       # on along the swing, 4 mm off the tip
-        pos, rot = np.asarray(at["下半身"][0]), at["下半身"][1]
-        rest = np.array([0.0, 12.225, -0.649])
-        inv = (-rot[0], -rot[1], -rot[2], rot[3])
-        cls.centre_rest = rest + np.array(fk.rotate(inv, tuple(centre - pos)))
-        cls.data = model_bytes(blob=("下半身", tuple(cls.centre_rest), cls.radius, 300))
-        cls.model = pmx.loads(cls.data)
-        spec = importlib.util.spec_from_file_location("_test_motor_touch", os.path.join(ROOT, "tools", "touch_layer.py"))
-        tl = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tl)
-        cls.body = tl.RT.Body.loads(cls.data)
-
-    def gap(self, world):
-        """per frame, the left middle finger's tip's distance to the sphere (units), the sphere carried by 下半身 (which
-        the layer does not move: read from the dance)"""
-        pose = fk.Pose(MODEL, self.dance, ["下半身"])
-        out = []
-        for f in range(LAST + 1):
-            p, q = pose.at(f)["下半身"]
-            c = np.asarray(p) + np.array(fk.rotate(q, tuple(self.centre_rest - np.array([0.0, 12.225, -0.649]))))
-            out.append(float(np.linalg.norm(world["左中指３"][0][f] - c)) - self.radius)
-        return np.array(out)
-
-    def test_the_surface_takes_the_hand_nearer_the_input_where_it_comes_to_rest_by_the_part(self):
-        # (the default tracking; the whole stop in 4 frames runs the forearm and the hand on past the upper arm's stop,
-        # which a contact's stiffening and feed-forward on the arm's own joints take back only in part)
-        p = motor_layer.default_params()
-        p["holds"] = False
-        p["floor"] = False
-        loose = motor_layer.layer(self.model, self.dance, p)
-        into = float(np.min(self.gap(loose.world_out) - self.gap(loose.world_in)))
-        self.assertLess(into, -0.2)                                             # without the mesh: 1.6 cm and more into it
-        held = motor_layer.layer(self.model, self.dance, p, body=self.body)
-        self.assertGreater(float(np.min(self.gap(held.world_out) - self.gap(held.world_in))), 0.75 * into)
-        self.assertTrue(held.report["contact_surface_stretches"]["左"])
-        self.assertFalse(loose.report["contact_stretches"]["左"])               # the eyes' and the chest's rules do not see it
-        off = dict(p, contact_surface=False)
-        again = motor_layer.layer(self.model, self.dance, off, body=self.body)
-        self.assertEqual(vmd.dumps(again.motion), vmd.dumps(loose.motion))
 
 
 def wrist_step_excess(result, first, last):

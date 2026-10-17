@@ -271,24 +271,6 @@ def merged(dance, tracks, names):
     return out
 
 
-def keep_layer(body_in, motion_in, body_out, motion_out, params=None, log=None):
-    """(motion_out with its arm keys refit, the report): a layer's output whose hands keep the places they had on the
-    body's parts in the layer's input (keep with the input as the source and its body, the output on its own body; a hand
-    far from the body untouched), then its arms out of the body.  For a layer that moves the trunk under the arms (the
-    spine layer, wb): a hand that lies on a thigh, the hips or the head stays on it"""
-    last = max(max(k.frame for k in motion_in.bones), max(k.frame for k in motion_out.bones))
-    frames = np.arange(0, last + 1)
-    trk_in = RT.tracks_of(motion_in.bones)
-    trk_out = RT.tracks_of(motion_out.bones)
-    rep = keep(body_in, body_out, trk_in, trk_out, frames, params, log)
-    out = vmd.Motion(model_name=motion_out.model_name, bones=merged(motion_out, trk_out, ARM), morphs=list(motion_out.morphs),
-                     cameras=list(motion_out.cameras), lights=list(motion_out.lights), shadows=list(motion_out.shadows),
-                     show_iks=list(motion_out.show_iks))
-    short = {s: {"moved_frames": rep.get(s, {}).get("moved_frames"), "moved_cm": rep.get(s, {}).get("moved_cm"),
-                 "clear": rep.get(s, {}).get("clear")} for s in SIDES}
-    return out, short
-
-
 def layer(dance, source, src_body, tgt_body, params=None, log=None):
     """the dance with the source's touches kept on the target body (Result: motion, report)"""
     log = log or (lambda *_: None)

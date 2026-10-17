@@ -175,16 +175,6 @@ sys.path.insert(0, ROOT)
 from mmd_cli import fk  # noqa: E402
 from mmd_cli.formats import pmd, pmx, vmd  # noqa: E402
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-
-
-def _tool(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_motor_" + name, os.path.join(HERE, name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
 FPS = 30.0
 UNIT_M = 0.08                   # one model unit is 8 cm (the analysis pack's README; Rin's 頭先 is then 1.50 m up)
 UNIT_MM = 80.0
@@ -243,12 +233,6 @@ KIME_STIFF = 0.5                # wn x 1.5 (RESEARCH 4.2)
 KIME_FF = 0.2                   # beta + 0.2 (RESEARCH 4.2)
 CONTACT_FACE_MM = (70.0, 100.0)  # the tip to the eyes: all contact below, none above (the input's least is 58 mm)
 CONTACT_BODY_MM = (60.0, 90.0)   # the tip to the line 上半身 - 首 (Rin's chest is about 9 cm deep each way)
-# with the model's mesh, also the four long fingertips' and the palm's middle's distance to the body's hard parts
-# (tools/hand_layer.surface_weights: the head with its face, the ribbon, the chest, the belly, the hips, the thighs by the
-# leg IK): the face rule misses a hand on the side or the top of Rin's head (125 - 148 mm from her eyes), and there the
-# tracking ran the hands off the head (the v11 review: the hands kept on the head 79 -> 66 of 88 frames, the input's
-# fingertips -13 .. +6 mm from the head's surface there).  The hand layer's band (CONTACT_SURFACE_MM there)
-CONTACT_SURFACE_MM = (10.0, 25.0)
 CONTACT_PAD = 4                 # frames (RESEARCH 4.2: "その前後 4 フレーム")
 CONTACT_STIFF = 1.0
 JUMP_DEG = 60.0                 # a jump turns at least this in one frame,
@@ -659,11 +643,10 @@ class Result:
 
 
 class Plan:
-    def __init__(self, model, motion, params, beats=None, key_frames=None, log=None, body=None):
+    def __init__(self, model, motion, params, beats=None, key_frames=None, log=None):
         self.log = log or (lambda *_: None)
         self.p = params
         self.motion = motion
-        self.mesh = body                    # tools/retarget.py's Body with the mesh: the touches read from the surfaces too
         self.skel = sk = Skeleton(model)
         self.sim = simulated_bones(sk)
         if not self.sim:
@@ -836,11 +819,6 @@ class Plan:
             t0, per = self.beats
             n = np.arange(0, int((F / FPS - t0) / per) + 2)
             beat_frames = (t0 + n * per) * FPS
-        surface = None
-        if self.mesh is not None and self.p.get("contact", True) and self.p.get("contact_surface", True):
-            HL = _tool("hand_layer")
-            surface = HL.surface_weights(self.mesh, self.motion, F, [s for s in SIDES])[1]
-        self.surface_contacts = {}
         for s in SIDES:
             cols = [j for j in range(nb) if self.side[j] == s]
             if not cols:
@@ -873,10 +851,6 @@ class Plan:
                     dist = fn(self.world_in, tip)
                     if dist is not None:
                         c = np.maximum(c, falling(dist, *limits))
-                if surface is not None and np.isfinite(surface[s]).any():
-                    cs = falling(np.where(np.isfinite(surface[s]), surface[s], 1e9), *CONTACT_SURFACE_MM)
-                    self.surface_contacts[s] = runs(max_filter(cs, CONTACT_PAD) > 0.5)
-                    c = np.maximum(c, cs)
                 c = max_filter(c, CONTACT_PAD)
                 c = np.convolve(np.pad(c, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
                 contact[:, cols] = c[:, None]
@@ -1476,13 +1450,12 @@ def seam_summary(seams):
             "worst": [{k: v for k, v in x.items() if k != "span"} for x in worst]}
 
 
-def layer(model, motion, params=None, beats=None, key_frames=None, log=None, body=None):
+def layer(model, motion, params=None, beats=None, key_frames=None, log=None):
     """the dance with the layer and the report (see the module docstring).  beats: (first beat seconds, period
-    seconds); key_frames: side -> frames of the trace's keys (the error at the keys); body: tools/retarget.py's Body of
-    the model with its mesh (the touches read from the body's surfaces too, CONTACT_SURFACE_MM; none: as before)"""
+    seconds); key_frames: side -> frames of the trace's keys (the error at the keys)"""
     params = params or default_params()
     started = time.time()
-    plan = Plan(model, motion, params, beats, key_frames, log, body)
+    plan = Plan(model, motion, params, beats, key_frames, log)
     F, nb = plan.F, plan.nb
     # pass 1 (lead 0) and pass 2 (the measured lags as the lead), unless a lead is given
     passes = []
@@ -2114,7 +2087,6 @@ def report_of(plan, world_out, out, info):
     rep["holds"] = {s: len(v) for s, v in plan.holds.items()}
     rep["beat_holds"] = kime_arrivals(plan, W) if plan.beats is not None else None
     rep["contact_stretches"] = plan.contacts
-    rep["contact_surface_stretches"] = plan.surface_contacts
     rep["finger_snaps"] = plan.snaps
     rep["weights_share"] = {k: _r(float((v > 0.5).mean()), 4) for k, v in plan.weights.items()}
     rep["a09"] = {"input": measure_a09(Win, Win, Qin, Qin, F), "output": measure_a09(W, Win, Q, Qin, F)}
@@ -2197,10 +2169,7 @@ def run(dance_path, model_path, out_path, report_path=None, beats_path=None, key
     model = load_model(model_path)
     beats = read_beats(beats_path) if beats_path else None
     key_frames = read_key_frames(key_frames_path) if key_frames_path else None
-    p = params or default_params()
-    body = _tool("hand_layer")._tool("touch_layer").RT.Body.load(model_path) \
-        if p.get("contact", True) and p.get("contact_surface", True) else None
-    result = layer(model, dance, params, beats, key_frames, log, body=body)
+    result = layer(model, dance, params, beats, key_frames, log)
     write_bytes(os.path.abspath(out_path), vmd.dumps(result.motion))
     if world_path:
         names = [n for n in result.world_in if n in result.world_out]
@@ -2241,12 +2210,9 @@ def main(argv=None):
                         "(default: the preset's, off)")
     p.add_argument("--substeps", type=int, default=SUBSTEPS, help="simulation steps per frame (default %d)" % SUBSTEPS)
     p.add_argument("--world", help="save the world positions and rotations, input and output, to this .npz")
-    p.add_argument("--no-contact-surface", action="store_true",
-                   help="read the touches from the eyes and the line 上半身 - 首 only, not from the body's surfaces")
     p.add_argument("--verbose", action="store_true", help="progress on stderr")
     a = p.parse_args(argv)
     params = default_params(a.preset)
-    params["contact_surface"] = not a.no_contact_surface
     params.update(lead=a.lead, delay_scale=a.delay_scale, substeps=a.substeps)
     if a.finger_delay is not None:
         params["finger_delay"] = a.finger_delay

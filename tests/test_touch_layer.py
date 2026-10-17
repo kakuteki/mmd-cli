@@ -292,42 +292,6 @@ class ThighTest(unittest.TestCase):
         self.assertGreater(abs(t_fk - max(d, 0.0)), 0.15)                 # (read by the key, the hand leaves the thigh)
 
 
-def hips_pose():
-    """an arm pose of Rin's whose palm lies on her hips (2 to 8 mm off the hips' sphere)"""
-    best = None
-    for a in range(-78, -41, 3):
-        for b in (-50, -40, -30, -20, -10):
-            for g in (30, 50, 60, 70, 80, 90):
-                m = motion(*arm_pose_keys(a, b, g))
-                d = sphere_distance(RIN_DATA, RIN, RIN_LEGS, "下半身", m, palm(RIN_DATA, m, "左", [0]), [0])[0]
-                if 0.025 <= d <= 0.1 and (best is None or abs(d - 0.05) < abs(best[0] - 0.05)):
-                    best = (d, (a, b, g))
-    return best
-
-
-class KeepLayerTest(unittest.TestCase):
-    """a layer that moves the trunk under the arms (here 上半身 bent 10 degrees forward: the hand rides on the chest)
-    takes a hand that lies on the hips off them; keep_layer, with the layer's input as the source, puts it back"""
-
-    def test_a_hand_on_the_hips_stays_on_them(self):
-        found = hips_pose()
-        self.assertIsNotNone(found)
-        d, pose = found
-        before = motion(*arm_pose_keys(*pose), key("上半身", 0))
-        after = motion(*arm_pose_keys(*pose), key("上半身", 0, axis_angle((1.0, 0.0, 0.0), 10.0)))
-        p0 = palm(RIN_DATA, before, "左", [0])[0]                         # (下半身 stays: its world is its rest)
-        off = float(np.linalg.norm(palm(RIN_DATA, after, "左", [0])[0] - p0))
-        self.assertGreater(off, 0.15)                                     # the palm slid 1.2 cm and more over the hips
-        out, rep = touch_layer.keep_layer(body(RIN_DATA), before, body(RIN_DATA), after)
-        kept = sphere_distance(RIN_DATA, RIN, RIN_LEGS, "下半身", out, palm(RIN_DATA, out, "左", [0]), [0])[0]
-        self.assertLess(abs(kept - d), 0.03)                              # as far off them as before
-        # back at its place within the part's polytope's reading (the k-DOP's nearest point slides on a facet)
-        self.assertLess(float(np.linalg.norm(palm(RIN_DATA, out, "左", [0])[0] - p0)), 0.5 * off)
-        self.assertGreater(rep["左"]["moved_frames"], 0)
-        other = [k for k in out.bones if k.name not in touch_layer.ARM]
-        self.assertEqual(vmd.dumps(motion(*other)), vmd.dumps(motion(*[k for k in after.bones if k.name not in touch_layer.ARM])))
-
-
 class CommandTest(unittest.TestCase):
     def test_run_writes_the_dance_and_its_report(self):
         d, pose = head_pose()

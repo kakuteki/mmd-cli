@@ -7,7 +7,6 @@ import json
 import math
 import os
 import shutil
-import struct
 import tempfile
 import unittest
 
@@ -65,9 +64,8 @@ def mirrored(kw):
     return out
 
 
-def model_bytes(blob=None):
-    """the model; blob: (bone, centre at rest, radius, points) a sphere of vertices on the bone (a hard part)"""
-    w = Writer(bone=2, vertex=2)
+def model_bytes():
+    w = Writer(bone=2)
     bones = [("全ての親", None, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", "全ての親", (0.0, 7.847, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("腰", "センター", (0.0, 11.726, 0.255), {}),
@@ -93,17 +91,7 @@ def model_bytes(blob=None):
         if "append" in kw:
             kw["append"] = (index[kw["append"][0]], kw["append"][1])
         built.append(w.bone(name, parent=-1 if parent is None else index[parent], position=position, **kw))
-    verts = []
-    if blob is not None:
-        bone, centre, radius, n = blob
-        for i in range(n):
-            y = 1.0 - 2.0 * (i + 0.5) / n
-            r = math.sqrt(max(0.0, 1.0 - y * y))
-            a = i * math.pi * (3.0 - math.sqrt(5.0))
-            d = (r * math.cos(a), y, r * math.sin(a))
-            raw = w.vertex("BDEF1", (index[bone],))
-            verts.append(struct.pack("<3f", *[c + radius * v for c, v in zip(centre, d)]) + struct.pack("<3f", *d) + raw[24:])
-    return w.build(name="rin-like", bones=built, vertices=verts)
+    return w.build(name="rin-like", bones=built)
 
 
 MODEL = pmx.loads(model_bytes())
@@ -464,71 +452,6 @@ class RangeTest(unittest.TestCase):
         frames = {item["frame"] for item in listed if item["side"] == "左"}
         self.assertIn(40, frames, listed)
         self.assertNotIn(0, frames)
-
-
-def load_named(name):
-    spec = importlib.util.spec_from_file_location("_test_anatomy_" + name, os.path.join(ROOT, "tools", name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-class BodyTest(unittest.TestCase):
-    """given the model's mesh, the range of motion does not swing the forearm into the body: a hard part (a sphere on
-    下半身, the hips) laid where the program alone takes the forearm, beside the split's own forearm, is kept out of"""
-
-    def forearm_depth(self, motion, centre_rest, radius, r_f=0.3):
-        """per frame, how deep the left forearm (a capsule of radius r_f from 左ひじ to 左手首) goes into the sphere"""
-        model = pmx.loads(self.data)
-        pose = fk.Pose(model, motion, ["左ひじ", "左手首", "下半身"])
-        rest = np.array(next(b.position for b in model.bones if b.name == "下半身"))
-        out = []
-        for f in range(LAST + 1):
-            at = pose.at(f)
-            p, q = np.asarray(at["下半身"][0]), at["下半身"][1]
-            c = p + np.array(fk.rotate(q, tuple(centre_rest - rest)))
-            e, w = np.asarray(at["左ひじ"][0]), np.asarray(at["左手首"][0])
-            out.append(max(r_f + radius - float(np.linalg.norm(e + t * (w - e) - c)) for t in np.linspace(0.0, 1.0, 11)))
-        return np.array(out)
-
-    def test_the_forearm_is_not_swung_into_the_hips(self):
-        dance = odd_elbow_dance(supinate=-90.0)
-        p = anatomy_layer.default_params()
-        p.update(girdle=False)
-        alone = anatomy_layer.layer(MODEL, dance, p).motion
-        split = anatomy_layer.layer(MODEL, dance, split_only()).motion
-        a, b = worlds(alone, ["左ひじ", "左手首", "下半身"]), worlds(split, ["左ひじ"])
-        moved = np.linalg.norm(a["左ひじ"][0] - b["左ひじ"][0], axis=1)
-        f = int(np.argmax(moved))
-        self.assertGreater(moved[f] * 8.0, 2.0)                                 # the program moves this elbow 2 cm or more
-        w = a["左手首"][0][f]
-        m_alone, m_split = 0.5 * (a["左ひじ"][0][f] + w), 0.5 * (b["左ひじ"][0][f] + w)
-        u = (m_alone - m_split) / np.linalg.norm(m_alone - m_split)
-        radius = 1.0
-        centre = m_alone + u * (radius + 0.3 - 0.2)                             # the forearm alone 0.2 units into it
-        pos, rot = a["下半身"][0][f], a["下半身"][1][f]
-        rest = np.array(next(bb.position for bb in MODEL.bones if bb.name == "下半身"))
-        centre_rest = rest + np.array(fk.rotate(tuple(np.asarray(rot) * np.array([-1.0, -1.0, -1.0, 1.0])), tuple(centre - pos)))
-        self.data = model_bytes(blob=("下半身", tuple(centre_rest), radius, 400))
-        model = pmx.loads(self.data)
-        body = load_named("touch_layer").RT.Body.loads(self.data)
-        d_split = self.forearm_depth(split, centre_rest, radius)
-        d_alone = self.forearm_depth(anatomy_layer.layer(model, dance, p).motion, centre_rest, radius)
-        self.assertGreater(float((d_alone - np.maximum(d_split, 0.0)).max()), 0.15)   # (without the mesh: in, as built)
-        res = anatomy_layer.layer(model, dance, p, body=body)
-        d_body = self.forearm_depth(res.motion, centre_rest, radius)
-        self.assertLess(float((d_body - np.maximum(d_split, 0.0)).max()), 0.05)
-        win, wout = worlds(dance, ["左手首"]), worlds(res.motion, ["左手首"])        # the hand stays
-        self.assertLess(np.linalg.norm(win["左手首"][0] - wout["左手首"][0], axis=1).max(), 0.01)
-        self.assertLess(rot_deg(win["左手首"][1], wout["左手首"][1]).max(), 0.05)
-        self.assertIn("body", res.report["arm"]["左"])
-
-    def test_without_a_mesh_the_arm_is_as_before(self):
-        dance = odd_elbow_dance(supinate=-90.0)
-        p = anatomy_layer.default_params()
-        body = load_named("touch_layer").RT.Body.loads(model_bytes())           # no vertices: no hard parts
-        self.assertEqual(vmd.dumps(anatomy_layer.layer(MODEL, dance, p, body=body).motion),
-                         vmd.dumps(anatomy_layer.layer(MODEL, dance, p).motion))
 
 
 class TenodesisTest(unittest.TestCase):

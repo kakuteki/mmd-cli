@@ -37,38 +37,6 @@ def chest_frame(model, motion, name, F):
     return tr["首"]
 
 
-class KeepTouchesTest(unittest.TestCase):
-    """the chest's drift carries the arms: a hand that lies on the hips would go into them or leave them; given the two
-    models' bodies, the layer keeps it where the input has it on the hips (tools/touch_layer.keep_layer)"""
-
-    def test_a_hand_on_the_hips_stays_on_them_while_the_trunk_bends(self):
-        from tests import test_touch_layer as T
-        old_data = T.RIN_DATA
-        doc = pmx_edit.loads(old_data)
-        pmx_spine.build(doc)
-        new_data = pmx_edit.dumps(doc)
-        old, new = pmx.loads(old_data), pmx.loads(new_data)
-        best = None
-        bend = [key("上半身", 0), key("上半身", 10, (40, 0, 0)), key("上半身", 20, (40, 0, 0)), key("上半身2", 0)]
-        for a in range(-78, -41, 3):                    # the trunk bent 40 degrees forward, the palm on the hips
-            for b in (-50, -40, -30, -20, -10, 0, 10):
-                for g in (30, 50, 70, 90):
-                    m = vmd.Motion(model_name="toy", bones=bend + T.arm_pose_keys(a, b, g))
-                    d = T.sphere_distance(old_data, T.RIN, T.RIN_LEGS, "下半身", m, T.palm(old_data, m, "左", [20]), [20])[0]
-                    if 0.025 <= d <= 0.1 and (best is None or abs(d - 0.05) < abs(best[0] - 0.05)):
-                        best = (d, (a, b, g), m)
-        self.assertIsNotNone(best)
-        d, _, m = best
-        plain, _ = spine_layer.layer(old, new, m)
-        dp = T.sphere_distance(new_data, T.RIN, T.RIN_LEGS, "下半身", plain, T.palm(new_data, plain, "左", [20]), [20])[0]
-        self.assertGreater(abs(dp - d), 0.1)                    # (the drift alone takes the palm 8 mm and more off its place)
-        RT = T.touch_layer.RT
-        kept, report = spine_layer.layer(old, new, m, bodies=(RT.Body.loads(old_data), RT.Body.loads(new_data)))
-        dk = T.sphere_distance(new_data, T.RIN, T.RIN_LEGS, "下半身", kept, T.palm(new_data, kept, "左", [20]), [20])[0]
-        self.assertLess(abs(dk - d), 0.06)
-        self.assertIn("touches", report)
-
-
 class LayerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
