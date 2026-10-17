@@ -2100,7 +2100,7 @@ python tools/touch_layer.py DANCE.vmd SOURCE.vmd SOURCE_BODY MODEL.pmx OUT.vmd [
 
 - 入力: DANCE は手と指の層の出力（視線の前。視線は手の行き着いた所を見る）、SOURCE は retarget が読んだ元の踊り（トレース）、SOURCE_BODY は
   元の体（retarget に渡すのと同じモデルか .json の体）、MODEL はリン。腕を動かす層のいちばん最後に置く。作る順は … → wb → 手と指 → **触れ** →
-  視線 → 表情 → 口 → 目の光（`_spike/out/stage6/v11/scripts/build_v11_final.ps1`）。手と指の層を変えたら、この層から作り直す。
+  視線 → 表情 → 口 → 目の光（v11 の組み立ての台本 hinata `C:/work/hibikase/v11/scripts/build_v11_final.ps1`）。手と指の層を変えたら、この層から作り直す。
 - もも は脚の IK で読む（`--fk-thighs` で retarget と同じく 足 のキーで読む）: MMD は足ＩＫで 足 を回すので、キーの向きと IK の向きはヒビカセで
   中央値 21〜22 度・90 % 点 39〜42 度違い、ももの上の手を 1〜7 cm 違う所に読む。両方の体の もも を tools/leg_ik.py の解きで読む。
 - ならし（`SMOOTH_FRAMES` 1.0 コマ、`--smooth-frames`）: 腕の直し（手首と肘の世界の動き）をガウスで時間にならし、ならした点へ腕を通す（手の
