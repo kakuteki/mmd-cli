@@ -2713,7 +2713,12 @@ python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 
 - 使い方の例（v9 と v10、hinata `stage6/inspect/scripts/example.bat`）: `compare runs/v9 runs/v10 --out cmp` で物差しごとの判定と新しく外れた所・
   消えた所、`timeline runs/v9 --from 18 --to 31` で時間の図、`mark runs/v9 --camera cam_front.vmd --video fv9_00.mp4 --start 0 --at 19.9 26.4`
   で、時刻表が指したコマ（着地のひざ・浮きの続き）の正面の絵に印を描いて確かめる。
-- 体の大きさのそろえの既定は股関節の床からの高さ（`--size hip`、v11 の土台 2026-10-17。歩行の正規化の慣例で、協調役の決め）: 人の値の体は股関節が母指球の関節（人の物差しの床）から 83.98 cm（human.json の `_about` の `body` の `hip_above_ball_cm`）、リンは股関節（`足` の骨、左右の平均）が休みの姿勢の靴底（靴の頂点の一番低い所、`tools/sink_check.rest_floor`、y 0.111 単位）から 84.1 cm で、リンを 0.998 倍にして同じ物差しで測り直す（report.json の `size` は `by` "hip"・`hip_cm`・`people_hip_cm`・`floor_y`・`scale`、report.md の欄は「股関節の高さでそろえた値（判定）」）。脚の骨の長さでそろえるのは `--size legs`（前の既定。出力はそのまま）、`--size none` はそろえない（前と同じ出力）。`compare` は 2 つの版のそろえ方が同じときだけそろえた値の判定を出す。
+- 体の大きさのそろえの既定は股関節の床からの高さ（`--size hip`、v11 の土台 2026-10-17。歩行の正規化の慣例で、協調役の決め）: 人の値の体は
+  股関節が母指球の関節（人の物差しの床）から 83.98 cm（human.json の `_about` の `body` の `hip_above_ball_cm`）、リンは股関節（`足` の骨、
+  左右の平均）が休みの姿勢の靴底（靴の頂点の一番低い所、`tools/sink_check.rest_floor`、y 0.111 単位）から 84.1 cm で、リンを 0.9985 倍にして
+  同じ物差しで測り直す（report.json の `size` は `by` "hip"・`hip_cm`・`people_hip_cm`・`floor_y`・`scale`、report.md の欄は「股関節の高さで
+  そろえた値（判定）」）。v10 で判定の変わる物差しは 0。脚の骨の長さでそろえるのは `--size legs`（前の既定。出力は前のまま）、`--size none` は
+  そろえない（前と同じ出力。どちらも v10 で前のコードと出力を突き合わせた）。`compare` は 2 つの版のそろえ方が同じときだけそろえた値の判定を出す。
 - 体の大きさ（前の既定 `--size legs` の記録）: 人の値は FineDance の標準の体（全部の列を SMPL-X の中立の体へリターゲットした
   もの。太もも 37.4 cm・すね 40.9 cm（休みの関節は左右で違い、脚は左 78.9・右 77.7 cm。リンと同じく左右の平均）、背は約 1.7 m。寸法は
   human.json の `_about` の `body`）で測ったもので、脚はリンより長い（リンの太もも＋すね 71.2 cm、8 cm/単位。人の 0.91 倍）。長さと長さの
