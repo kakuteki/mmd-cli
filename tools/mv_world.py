@@ -400,8 +400,9 @@ def _shade(X, Z, figure, strength):
 
 # where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with
 MMD_LIGHT = (-0.5, -1.0, 0.5)
-KEY_SHARE = 0.6          # of the light on the floor's plane and pool, the share of the key light (the rest is all round);
-                         # tools/mme_shadow.py gives her body's shadow the same (its key_share)
+KEY_SHARE = 0.6          # of the light on the floor's plane and pool, the share of the key light (the rest is all round):
+                         # the default of stage.shadow_key (the core of a shadow keeps 0.40); her body's shade
+                         # (tools/mme_shadow.py --key-share) defaults to 0.35 instead: it keeps 0.65 (option D, 2026-10-17)
 SHADOW_CELL = 0.08       # MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world
 SHADOW_GRID_MAX = 1200   # cells to a side at most (a grid that would be larger is coarser)
 CUTOFF = 8.0             # standard deviations of the light's spread past which a capsule keeps none of it off
@@ -681,7 +682,8 @@ def needs_body(look):
 
 def soft_light(key, contact, stage):
     """what the floor's plane and the pool of light keep of their light where the soft shadow lets `key` of the key light
-    and `contact` of the light from all round through: KEY_SHARE of their light comes from the key light, which only the
+    and `contact` of the light from all round through: stage.shadow_key (KEY_SHARE when the look has none: 0.6) of
+    their light comes from the key light, which only the
     shadow along it cuts, the rest from all round, which only the darkening from all round cuts.  stage.shadow scales
     the shadow, stage.shadow_contact the darkening from all round.  So the core of a shadow away from her feet keeps
     1 - KEY_SHARE (0.4) of the floor round it, and beside a foot on the lit side only the light from all round is cut.
@@ -691,9 +693,10 @@ def soft_light(key, contact, stage):
     the shadow kept 13 to 16 % of the floor round it, and the lit floor beside a foot lost a tenth, review_softshadow;
     the lines took the plane's share too)"""
     s = float(stage["shadow"])
+    k = float(stage.get("shadow_key", KEY_SHARE))
     m_key = 1.0 - s * (1.0 - key)
     m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
-    return (1.0 - KEY_SHARE) * m_all + KEY_SHARE * m_key
+    return (1.0 - k) * m_all + k * m_key
 
 
 def soft_light_before(key, contact, stage):
@@ -701,9 +704,10 @@ def soft_light_before(key, contact, stage):
     keep KEY_SHARE of their light from the key light and the rest, and the pool the key light's alone, each times the
     darkening from all round"""
     s = float(stage["shadow"])
+    k = float(stage.get("shadow_key", KEY_SHARE))
     m_key = 1.0 - s * (1.0 - key)
     m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
-    return ((1.0 - KEY_SHARE) + KEY_SHARE * m_key) * m_all, m_key * m_all
+    return ((1.0 - k) + k * m_key) * m_all, m_key * m_all
 
 
 def _inside(view, d, half):

@@ -41,19 +41,39 @@ class EffectTest(unittest.TestCase):
                          {(a, b, c) for a in (False, True) for b in (False, True) for c in (False, True)})
         self.assertTrue(text.isascii())
 
-    def test_the_gaussian_points_sum_to_one_and_fall_off_with_the_radius(self):
+    def test_the_gaussian_points_weigh_the_same_and_lie_as_the_gaussian_does(self):
+        # n points of weight 1 / n whose radii are the quantiles of the Gaussian's radius (truncated at KERNEL_SIGMAS):
+        # an edge passing across them steps by 1 / n.  With even radii and Gaussian weights (before softshadow-mme2) the
+        # inner points weighed 3 to 5 times the mean, and a wide shadow showed its copies (the review's ramp)
         text = mme_shadow.effect(n_taps=32)
         n, rows = array(text, "KERNEL")
         self.assertEqual(n, 32)
-        self.assertAlmostEqual(sum(w for _, _, w in rows), 1.0, places=5)
-        radii = [math.hypot(x, y) for x, y, _ in rows]
-        self.assertLessEqual(max(radii), mme_shadow.KERNEL_SIGMAS + 1e-6)
-        # a point twice as far out (in standard deviations) weighs exp(-1.5 r^2) times as much
-        (x0, y0, w0), (x1, y1, w1) = rows[0], rows[-1]
-        r0, r1 = math.hypot(x0, y0), math.hypot(x1, y1)
-        self.assertAlmostEqual(w1 / w0, math.exp(-0.5 * (r1 * r1 - r0 * r0)), places=4)
-        # the points cover the disc evenly: no two of them on the same spot
+        for _, _, w in rows:
+            self.assertAlmostEqual(w, 1.0 / 32, places=6)
+        radii = sorted(math.hypot(x, y) for x, y, _ in rows)
+        # the Gaussian cut at KERNEL_SIGMAS, then widened so that it has a standard deviation of 1 (cut, it had 0.925:
+        # an edge came out 0.75 of the light's on the review's ramp, softshadow-mme2)
+        k = mme_shadow.CUT_STD
+        self.assertAlmostEqual(k, 0.9254, places=4)
+        self.assertLessEqual(max(radii), mme_shadow.KERNEL_SIGMAS / k + 1e-6)
+        top = 1.0 - math.exp(-0.5 * mme_shadow.KERNEL_SIGMAS ** 2)
+        for i, r in enumerate(radii):
+            self.assertAlmostEqual(1.0 - math.exp(-0.5 * (r * k) ** 2), (i + 0.5) / 32 * top, places=5)
+        for n in (32, 64):
+            pts = mme_shadow.taps(n)
+            for axis in (0, 1):
+                self.assertAlmostEqual(math.sqrt(sum(p[axis] ** 2 for p in pts) / n), 1.0, delta=0.03)
+        # the points cover the disc evenly round it: no two of them on the same spot
         self.assertEqual(len({(round(x, 4), round(y, 4)) for x, y, _ in rows}), 32)
+        # a straight edge across the points: the share on its lit side follows the Gaussian's integral within 1 / 32 + a
+        # little (the points are not a Gaussian, they stand for one)
+        pts = [(x * mme_shadow.CUT_STD, y * mme_shadow.CUT_STD, w) for x, y, w in mme_shadow.taps(32)]
+        for k in range(16):
+            a = k * math.pi / 16.0
+            for x0 in (-1.5, -0.75, 0.0, 0.5, 1.2):
+                lit = sum(w for x, y, w in pts if x * math.cos(a) + y * math.sin(a) < x0)
+                want = 0.5 * (1.0 + math.erf(x0 / math.sqrt(2.0)))
+                self.assertLess(abs(lit - want), 0.09, (a, x0))
 
     def test_the_settings_reach_the_shader(self):
         text = mme_shadow.effect(blur=5.0, min_blur=0.07, n_taps=24, search_taps=12)
@@ -79,13 +99,17 @@ class EffectTest(unittest.TestCase):
         self.assertIn("#define SKII2 8000.0", text)
         self.assertIn("slope - 0.3f", text)
 
-    def test_the_shade_keeps_what_the_floor_keeps_in_a_shadow(self):
-        # by default the shade keeps 1 - key_share of the light, the key light's share of tools/mv_world.py's floor
+    def test_the_shade_keeps_option_d_by_default_and_the_floor_its_own(self):
+        # the shade keeps 1 - key_share of the light.  By default option D (Kaga-san's choice of 2026-10-17 among A: the
+        # shade 0.40, B: MMD's toon, C and D: the shade 0.65, the floor 0.65 in C and 0.40 in D): the shade keeps 0.65
+        # (key_share 0.35) while the floor's shadow keeps 0.40 (tools/mv_world.py KEY_SHARE 0.6, stage.shadow_key)
         text = mme_shadow.effect()
         self.assertEqual(define(text, "SS_ALIGN"), 1)
-        self.assertAlmostEqual(define(text, "SS_KEEP"), 1.0 - mme_shadow.DEFAULTS["key_share"], places=6)
+        self.assertAlmostEqual(mme_shadow.DEFAULTS["key_share"], 0.35, places=9)
+        self.assertAlmostEqual(define(text, "SS_KEEP"), 0.65, places=6)
         self.assertAlmostEqual(define(mme_shadow.effect(key_share=0.3), "SS_KEEP"), 0.7, places=6)
-        self.assertIn('"key_share": 0.6', text.splitlines()[2])
+        self.assertAlmostEqual(define(mme_shadow.effect(key_share=0.6), "SS_KEEP"), 0.4, places=6)     # option A
+        self.assertIn('"key_share": 0.35', text.splitlines()[2])
         # the toon's hue kept, its luma set (BT.709, as tools/shadow_check.py reads the floor); a white toon left white
         self.assertIn("float3(0.2126f, 0.7152f, 0.0722f)", text)
         self.assertIn("if (luma < 0.999f)", text)
@@ -99,7 +123,7 @@ class EffectTest(unittest.TestCase):
             spec.loader.exec_module(mv_world)
         except ImportError:                    # mv_world needs numpy and Pillow
             return
-        self.assertEqual(mme_shadow.DEFAULTS["key_share"], mv_world.KEY_SHARE)
+        self.assertAlmostEqual(1.0 - mv_world.KEY_SHARE, 0.40, places=9)      # the floor's shadow stays 0.40 (option D)
 
     def test_debug_draws_the_shadow_alone_or_the_body_lit(self):
         self.assertEqual(define(mme_shadow.effect(debug="shadow"), "SS_DEBUG"), 1)
@@ -108,6 +132,16 @@ class EffectTest(unittest.TestCase):
         self.assertIn('"debug": "lit"', lit.splitlines()[2])
         self.assertIn("#if SS_DEBUG == 2", lit)
         self.assertEqual(define(mme_shadow.effect(), "SS_DEBUG"), 0)
+        # --debug toon (review of softshadow-mme2): the toon's share of the light where a shade shows, 0 where none can
+        # (no toon or a white one), for tools/selfshadow_check.py against --toon
+        toon = mme_shadow.effect(debug="toon")
+        self.assertEqual(define(toon, "SS_DEBUG"), 3)
+        self.assertIn('"debug": "toon"', toon.splitlines()[2])
+        body = toon[toon.index("#if SS_DEBUG == 3"):]
+        body = body[:body.index("#endif")]
+        self.assertIn("saturate(dot(IN.Normal, -LightDirection) * TOON_SLOPE)", body)
+        self.assertIn("MaterialToon", body)
+        self.assertIn("useToon", body)
 
     def test_wrong_settings_are_refused(self):
         for bad in ({"blur": -1}, {"blur": 45}, {"min_blur": -0.1}, {"min_blur": 3}, {"n_taps": 0}, {"n_taps": 65},
@@ -119,8 +153,8 @@ class EffectTest(unittest.TestCase):
     def test_the_command_line_takes_the_shade(self):
         out = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out, True)
-        for args, keep, align in (([], 0.4, 1), (["--key-share", "0.5"], 0.5, 1), (["--toon"], 1.0, 0),
-                                  (["--debug", "lit"], 0.4, 1), (["--debug"], 0.4, 1)):
+        for args, keep, align in (([], 0.65, 1), (["--key-share", "0.5"], 0.5, 1), (["--toon"], 1.0, 0),
+                                  (["--key-share", "0.6"], 0.4, 1), (["--debug", "lit"], 0.65, 1), (["--debug"], 0.65, 1)):
             path = os.path.join(out, "e.fx")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(mme_shadow.main(["write", path] + args), 0, args)
@@ -130,6 +164,208 @@ class EffectTest(unittest.TestCase):
             self.assertEqual(define(text, "SS_ALIGN"), align)
         with open(path, encoding="ascii") as f:
             self.assertEqual(define(f.read(), "SS_DEBUG"), 1)                 # --debug alone: the shadow
+
+
+def _unit(v):
+    n = math.sqrt(sum(x * x for x in v))
+    return tuple(x / n for x in v)
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def oblique_light(light=(-0.5, -1.0, 0.5), scale=0.0225, slant=53.0, rate=1.17 * 0.0016875, offset=(0.11, -0.23, 0.31)):
+    """a light's matrix (D3D rows: a point P goes to (P, 1) M) as MMD's measured in the review of softshadow-mme: x and y
+    of the map across the light (a point keeps its place on the map along the light), the depth rising `rate` per unit
+    along the light and its gradient turned `slant` degrees from the light"""
+    L = _unit(light)
+    a = _unit(_cross(L, (0.0, 1.0, 0.0)))
+    b = _cross(L, a)
+    t = _unit(tuple(x + 0.5 * y for x, y in zip(a, b)))
+    k = math.tan(math.radians(slant))
+    depth = tuple(rate * (l + k * u) for l, u in zip(L, t))
+    rows = [[scale * a[i], scale * b[i], depth[i], 0.0] for i in range(3)]
+    return rows + [[offset[0], offset[1], offset[2], 1.0]]
+
+
+def to_map(M, P):
+    """(u, v, z): where the point lands on the map (MME: uv = ((1 + x / w) / 2, (1 - y / w) / 2)) and its depth z / w"""
+    x, y, z, w = (sum(P[i] * M[i][j] for i in range(3)) + M[3][j] for j in range(4))
+    return (1.0 + x / w) / 2.0, (1.0 - y / w) / 2.0, z / w
+
+
+def warped_light(light=(-0.5, -1.0, 0.5), warp=0.006, **kw):
+    """the oblique light with a w that changes across the light (MMD's light matrix: its fourth column is not 0, the
+    picture of the map is warped across the light, along the light w stays: softshadow-mme2)"""
+    M = oblique_light(light, **kw)
+    L = _unit(light)
+    a = _unit(_cross(L, (0.0, 1.0, 0.0)))
+    b = _cross(L, a)
+    c3 = tuple(warp * (u + 0.7 * v) for u, v in zip(a, b))           # across the light only
+    for i in range(3):
+        M[i][3] = c3[i]
+    M[3][3] = 1.3
+    return M
+
+
+class PlaneTest(unittest.TestCase):
+    """the depth of the receiver's own plane round a pixel (review of softshadow-mme: MMD's light depth runs some 53 degrees
+    off the light, so a point of the map beside the pixel, on the pixel's own plane, has another depth; the search for
+    what casts the shadow took the receiver itself, and the points of the Gaussian shadowed it: acne)"""
+
+    LIGHT = (-0.5, -1.0, 0.5)
+
+    def test_the_plane_slope_gives_the_depth_of_the_receivers_plane_round_the_pixel(self):
+        M = oblique_light()
+        P = (0.7, 9.2, -0.4)
+        toward = tuple(-x for x in _unit(self.LIGHT))
+        for n in [toward, _unit((0.0, 1.0, 0.0)), _unit((0.3, 0.2, -0.9)), _unit((-0.3, 0.9, 0.2)), _unit((0.5, 0.1, -0.6))]:
+            self.assertGreater(_dot(n, toward), mme_shadow.FACING_MIN, n)
+            su, sv = mme_shadow.plane_slope(M, n, self.LIGHT)
+            t1 = _unit(_cross(n, (0.37, 0.61, 0.7)))
+            t2 = _cross(n, t1)
+            u0, v0, z0 = to_map(M, P)
+            for alpha, beta in ((0.4, 0.0), (0.0, -0.7), (1.3, 0.9), (-2.0, 0.5)):
+                Q = tuple(p + alpha * x + beta * y for p, x, y in zip(P, t1, t2))
+                u, v, z = to_map(M, Q)
+                self.assertAlmostEqual(z - z0, su * (u - u0) + sv * (v - v0), places=12, msg=(n, alpha, beta))
+
+    def test_a_receiver_facing_the_light_has_the_slope_of_the_depths_slant_alone(self):
+        toward = tuple(-x for x in _unit(self.LIGHT))
+        su, sv = mme_shadow.plane_slope(oblique_light(slant=0.0), toward, self.LIGHT)
+        self.assertAlmostEqual(su, 0.0, places=12)          # a depth along the light: the plane facing it keeps one depth
+        self.assertAlmostEqual(sv, 0.0, places=12)
+        su, sv = mme_shadow.plane_slope(oblique_light(), toward, self.LIGHT)
+        # MMD's: 0.0026 of depth per unit across the light (the review), some 0.12 per unit of the map (0.0225 / 2 a unit)
+        self.assertGreater(math.hypot(su, sv), 0.1)
+
+    def test_an_edge_on_receiver_is_held_at_the_least_facing(self):
+        M = oblique_light()
+        L = _unit(self.LIGHT)
+        toward = tuple(-x for x in L)
+        side = _unit(_cross(L, (0.0, 1.0, 0.0)))                # a plane along the light: no depth of its own
+        f = mme_shadow.FACING_MIN
+        held = tuple(x * math.sqrt(1.0 - f * f) + y * f for x, y in zip(side, toward))
+        got = mme_shadow.plane_slope(M, side, self.LIGHT)
+        want = mme_shadow.plane_slope(M, held, self.LIGHT)
+        self.assertTrue(all(math.isfinite(x) for x in got))
+        for g, w in zip(got, want):
+            self.assertAlmostEqual(g, w, places=12)
+        # a face turned from the light is held the same way (its own shade covers it)
+        back = tuple(-x for x in toward)
+        self.assertTrue(all(math.isfinite(x) for x in mme_shadow.plane_slope(M, back, self.LIGHT)))
+
+    def test_with_the_lights_perspective_the_slope_is_the_planes_round_the_pixel(self):
+        # MMD's light matrix divides by w (its fourth column 0.005 a unit across the light, softshadow-mme2): the plane's
+        # depth round the pixel follows the columns less the perspective's share there (to first order)
+        M = warped_light()
+        P = (0.7, 9.2, -0.4)
+        toward = tuple(-x for x in _unit(self.LIGHT))
+        for n in [toward, _unit((0.0, 1.0, 0.0)), _unit((0.3, 0.2, -0.9)), _unit((-0.3, 0.9, 0.2))]:
+            su, sv = mme_shadow.plane_slope(M, n, self.LIGHT, point=P)
+            flat_u, flat_v = mme_shadow.plane_slope(M, n, self.LIGHT)       # without the point: the columns as they are
+            t1 = _unit(_cross(n, (0.37, 0.61, 0.7)))
+            t2 = _cross(n, t1)
+            u0, v0, z0 = to_map(M, P)
+            for alpha, beta in ((1e-4, 0.0), (0.0, -1e-4), (7e-5, 5e-5)):
+                Q = tuple(p + alpha * x + beta * y for p, x, y in zip(P, t1, t2))
+                u, v, z = to_map(M, Q)
+                got = su * (u - u0) + sv * (v - v0)
+                self.assertAlmostEqual(z - z0, got, delta=2e-3 * abs(z - z0) + 1e-14, msg=(n, alpha, beta))
+            self.assertGreater(abs(su - flat_u) + abs(sv - flat_v), 0.01)    # the perspective matters
+
+    def test_the_gap_is_a_distance_along_the_light(self):
+        M = oblique_light()
+        L = _unit(self.LIGHT)
+        P = (0.2, 3.0, -1.0)
+        for d in (0.5, 2.6, 9.6):
+            B = tuple(p - d * l for p, l in zip(P, L))          # what casts the shadow, d up the light from the receiver
+            gap = to_map(M, P)[2] - to_map(M, B)[2]
+            self.assertAlmostEqual(mme_shadow.along_light(M, self.LIGHT, gap), d, places=9)
+        # with the light's perspective (w the same all along the light) the gap is over the rate at the receiver's w
+        M = warped_light()
+        for d in (0.5, 2.6, 9.6):
+            B = tuple(p - d * l for p, l in zip(P, L))
+            gap = to_map(M, P)[2] - to_map(M, B)[2]
+            self.assertAlmostEqual(mme_shadow.along_light(M, self.LIGHT, gap, point=P), d, places=9)
+
+    def test_the_search_counts_only_what_lies_in_the_lights_cone(self):
+        # a thing above the receiver's plane casts a shadow on the pixel only within the light's spread from it: across
+        # the light at most SS_CONE standard deviations of the light times its distance along the light (and the least
+        # blur).  Beside the pixel and not above it (the next plate of the fan, review of softshadow-mme) it is not a caster
+        text = mme_shadow.effect()
+        self.assertAlmostEqual(define(text, "SS_CONE"), mme_shadow.KERNEL_SIGMAS, places=6)
+        self.assertIn("if (length(off) / perUnit <= SS_CONE * SS_BLUR_RAD * along + SS_MIN_WORLD) {", text)
+        self.assertTrue(mme_shadow.in_cone(0.0, 0.2, 5.0, 0.05))
+        self.assertTrue(mme_shadow.in_cone(0.9, 4.0, 5.0, 0.05))            # 2.5 x 5 degrees at 4: 0.87 + 0.05
+        self.assertFalse(mme_shadow.in_cone(0.95, 4.0, 5.0, 0.05))
+        self.assertFalse(mme_shadow.in_cone(1.5, 2.0, 5.0, 0.05))           # the next plate, 1.5 beside and 2 above
+
+    def test_the_search_looks_at_every_scale_round_the_pixel(self):
+        # a caster at the distance D along the light counts within 2.5 x the light's spread x D: near the pixel the cone
+        # is small (0.38 units at 1.5 for 5 degrees), so the search's points lie from SEARCH_INNER of its radius out to
+        # all of it, evenly on a logarithm of the radius, round the golden angle (the even spiral had one point within
+        # 0.38 of 1.8 and fell back to MMD's hard test: review of softshadow-mme2)
+        pts = mme_shadow.search_points(16)
+        radii = sorted(math.hypot(x, y) for x, y, _ in pts)
+        self.assertAlmostEqual(radii[0], mme_shadow.SEARCH_INNER, places=6)
+        self.assertAlmostEqual(radii[-1], 1.0, places=6)
+        steps = [b / a for a, b in zip(radii, radii[1:])]
+        self.assertLess(max(steps) - min(steps), 1e-6)                  # the same ratio from each to the next
+        cone = (mme_shadow.KERNEL_SIGMAS * math.radians(5.0) * 1.5 + 0.05) / mme_shadow.SEARCH
+        self.assertGreaterEqual(sum(1 for r in radii if r <= cone), 6)
+        n, rows = array(mme_shadow.effect(), "SEARCH")
+        self.assertEqual(n, mme_shadow.DEFAULTS["search_taps"])
+        for (x, y, _), (a, b, _) in zip(rows, mme_shadow.search_points(n)):
+            self.assertAlmostEqual(x, a, places=6)
+            self.assertAlmostEqual(y, b, places=6)
+
+    def test_the_casters_gaps_are_averaged_plainly_over_64_points_by_default(self):
+        # review of softshadow-mme2, against the reference of a 5 degree light (MMD's own hard shadow under 64 directions
+        # of the light, averaged: tools/selfshadow_check.py against) at 4 frames of the dancer: with the harmonic mean
+        # of the gaps (the nearest caster rules) one search point that found a near thing (a fold of the dress) shrank
+        # the blur of its pixel alone, and the penumbra came out speckled and lined (8.4 % of its pixels brighter or
+        # darker than both neighbours across it, MMD's own 2.1 %) with its outer edge cut (4.5 % of its tail all lit).
+        # The plain mean over 64 search points and 64 Gaussian points: 2.4 % and 0.4 %, the mean error the same
+        text = mme_shadow.effect()
+        self.assertEqual(define(text, "SS_HARMONIC"), 0)
+        self.assertLess(text.index("#define SS_HARMONIC 0"), text.index("#ifndef SS_HARMONIC"))   # the body takes it
+        self.assertEqual(define(text, "SS_SEARCH"), 64)
+        self.assertEqual(define(text, "SS_TAPS"), 64)
+        self.assertEqual(array(text, "SEARCH")[0], 64)
+        self.assertEqual(array(text, "KERNEL")[0], 64)
+        # the points of 64 still lie as the Gaussian lies (a standard deviation of 1 on each axis) and the search from
+        # SEARCH_INNER of its radius out to all of it
+        pts = mme_shadow.taps(64)
+        for axis in (0, 1):
+            self.assertAlmostEqual(math.sqrt(sum(p[axis] ** 2 for p in pts) / 64.0), 1.0, delta=0.03)
+        radii = sorted(math.hypot(x, y) for x, y, _ in mme_shadow.search_points(64))
+        self.assertAlmostEqual(radii[0], mme_shadow.SEARCH_INNER, places=6)
+        self.assertAlmostEqual(radii[-1], 1.0, places=6)
+
+    def test_with_no_caster_found_the_least_blur_is_kept(self):
+        # no caster in the cone is not a reason for MMD's hard test: the Gaussian at the least blur, as everywhere
+        text = mme_shadow.effect()
+        self.assertNotIn("return ShadowTest(zc.z, uv, slope);", text)
+        self.assertIn("if (found > 0.5f) {", text)
+
+    def test_the_effect_compares_the_map_with_the_receivers_plane(self):
+        text = mme_shadow.effect()
+        # every point of the map round the pixel, in the search and in the Gaussian, against the receiver's plane there
+        self.assertIn("float2 PlaneSlope(float3 n, float3 ndc)", text)
+        self.assertIn("LightWorldViewProjMatrix._14", text)             # the perspective's column
+        self.assertRegex(text, r"float zr = zc\.z \+ dot\(plane, off\);")
+        self.assertRegex(text, r"ShadowTest\(zc\.z \+ dot\(plane, off\), uv \+ off, slope\)")
+        # the gap turned into a distance along the light with the light's own matrix (MMD's depth is not along the light:
+        # _33 of the projection is not the rate)
+        self.assertNotIn("LightProjMatrix._33", text)
+        self.assertIn("LightWorldViewProjMatrix._13", text)
+        self.assertAlmostEqual(define(text, "SS_FACING_MIN"), mme_shadow.FACING_MIN, places=6)
 
 
 class FilesTest(unittest.TestCase):
@@ -261,7 +497,7 @@ class VerifyTest(unittest.TestCase):
         # review of softshadow-mme: --debug draws the shadow alone (black and white) or the body lit, --sharp MMD's own
         # test; a plan that says soft must not render either
         self.install()
-        for settings in ({"debug": "shadow"}, {"debug": "lit"}, {"sharp": True}):
+        for settings in ({"debug": "shadow"}, {"debug": "lit"}, {"debug": "toon"}, {"sharp": True}):
             mme_shadow.write(os.path.join(self.models, "White.fx"), **settings)
             with self.assertRaises(ValueError, msg=settings):
                 mme_shadow.verify(self.exe, self.model, "soft")
