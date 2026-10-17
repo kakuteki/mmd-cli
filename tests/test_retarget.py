@@ -552,3 +552,39 @@ class ClearUpperArmTest(unittest.TestCase):
         m = motion(*arm_pose_keys(best[1], best[2], 0))
         out = retarget.layer(m, body(MIKU_DATA), body(BIG_HEAD_DATA), {"feet": False, "hands": False}).motion
         self.assertLess(upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, out), 0.03)
+
+    def test_a_hand_on_the_head_stays_while_the_upper_arm_goes_in_least(self):
+        """the hand on the head is the dance's: it stays, and the elbow turns round the shoulder-wrist line to where the
+        upper arm goes into the head least (measured here on the sphere, over 72 elbow positions)"""
+        k = BIG_HEAD[0][2] / MIKU_BLOBS[0][2]
+        best = None
+        for a in range(60, 181, 10):                 # palms on the source's head whose mapped upper arm goes into the big head
+            for b in range(-60, 61, 20):
+                for g in range(0, 151, 15):
+                    m = motion(*arm_pose_keys(a, b, g))
+                    d = sphere_distance(MIKU_DATA, MIKU, MIKU_BLOBS, "頭", m, palm(MIKU_DATA, MIKU, m, "左", [0]), [0])[0]
+                    if abs(d - 0.05) > 0.08:
+                        continue
+                    pure = retarget.layer(m, body(MIKU_DATA), body(BIG_HEAD_DATA), PURE).motion
+                    t = upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, pure)
+                    if 0.05 < t < 0.5 and (best is None or t > best[0]):
+                        best = (t, d, a, b, g)
+        self.assertIsNotNone(best)
+        m = motion(*arm_pose_keys(*best[2:]))
+        out = retarget.layer(m, body(MIKU_DATA), body(BIG_HEAD_DATA), {"feet": False}).motion
+        d = sphere_distance(BIG_HEAD_DATA, RIN, BIG_HEAD, "頭", out, palm(BIG_HEAD_DATA, RIN, out, "左", [0]), [0])[0]
+        self.assertLess(abs(d - max(best[1], 0.0) * k), 0.08)                    # the hand stays on the head
+        w = world(BIG_HEAD_DATA, out, ["左腕", "左ひじ", "左手首", "頭"], [0])[0]
+        S, E, W = (np.asarray(w[n][0]) for n in ("左腕", "左ひじ", "左手首"))
+        c0, R = blob_centre(RIN, BIG_HEAD, "頭")
+        c = np.asarray(w["頭"][0]) + leg_ik.qrot(np.asarray(w["頭"][1]), np.subtract(c0, RIN["頭"]))
+        u = unit(W - S)
+        along = float(np.dot(E - S, u))
+        radial = (E - S) - along * u
+        v1 = unit(radial)
+        v2 = np.cross(u, v1)
+        least = min(max(0.35 + R - float(np.linalg.norm(S + t * (Ek - S) - c)) for t in np.linspace(0.5, 1.0, 11))
+                    for Ek in (S + along * u + np.linalg.norm(radial) * (math.cos(p) * v1 + math.sin(p) * v2)
+                               for p in np.linspace(0, 2 * math.pi, 72, endpoint=False)))
+        self.assertLess(upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, out), max(least, 0.0) + 0.05)
+        self.assertLess(upper_arm_in_head(BIG_HEAD_DATA, RIN, BIG_HEAD, out), best[0])

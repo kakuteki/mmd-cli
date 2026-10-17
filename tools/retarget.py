@@ -1319,6 +1319,52 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
     return deepest, turn_s, push_w
 
 
+SWIVELS = 24                    # elbow positions tried round the shoulder-wrist line when a held hand's arm goes in
+SWIVEL_COST = 0.02              # units of depth one radian of swivel away from the dance's elbow is worth
+
+
+def upper_depth(tgt, side, S, E, W, parts):
+    """per frame the deepest the upper arm's half by the elbow and the forearm's first share go into a part (the head
+    for the upper arm; any hard part for the forearm), for elbows E [F, 3] (the shoulder S and the wrist W fixed)"""
+    surf = surfaces(tgt)
+    radii = arm_radii(tgt, side)
+    out = np.zeros(len(S))
+    pts = [(S + t * (E - S), radii[0], "upper") for t in np.linspace(SHOULDER_SKIP, 1.0, 4)]
+    pts += [(E + t * (W - E), radii[1], "fore") for t in np.linspace(0.0, 1.0, 5)]
+    for part, (pos, rot) in parts.items():
+        if soft(part):
+            continue
+        s = surf[part]
+        for P, r, kind in pts:
+            if kind == "upper" and part != "head":
+                continue
+            out = np.maximum(out, r - s.sdf(qrot(qconj(rot), P - pos)))
+    return np.maximum(out, 0.0)
+
+
+def best_swivel(tgt, side, S, E, W, parts):
+    """elbows [F, 3] on the circle the arm allows round the line from the shoulder S to the wrist W (lengths kept), the
+    one that goes least into the body, the dance's own swivel preferred (SWIVEL_COST a radian)"""
+    u = unit(W - S)
+    off = E - S
+    centre_len = np.sum(off * u, axis=1)
+    radial = off - centre_len[:, None] * u
+    rad_len = np.linalg.norm(radial, axis=1)
+    v1 = unit(np.where(rad_len[:, None] > 1e-6, radial, np.cross(u, np.array([0.0, 0.0, 1.0]))))
+    v2 = np.cross(u, v1)
+    best_cost = np.full(len(S), np.inf)
+    best = E.copy()
+    for k in range(SWIVELS):
+        phi = 2 * np.pi * k / SWIVELS
+        phi = phi if phi <= np.pi else phi - 2 * np.pi
+        Ek = S + centre_len[:, None] * u + rad_len[:, None] * (np.cos(phi) * v1 + np.sin(phi) * v2)
+        cost = upper_depth(tgt, side, S, Ek, W, parts) + SWIVEL_COST * abs(phi)
+        take = cost < best_cost
+        best[take] = Ek[take]
+        best_cost[take] = cost[take]
+    return best
+
+
 def clear_arms(tgt, trk, frames, contact_weights, parts, log):
     """push the target's arms out of its head, ribbon, trunk, hips and thighs: what the upper arm or the elbow goes into
     is cleared by turning the whole arm about the shoulder, what the forearm or the hand goes into by moving the wrist
@@ -1330,6 +1376,7 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
         if not all(tgt.has(n) for n in arm_names(side)):
             continue
         cw = contact_weights.get(side, {})
+        hold = np.max(np.stack(list(cw.values())), axis=0) if cw else None
         before = None
         moved_any = np.zeros(F, bool)
         for rnd in range(CLEAR_ROUNDS):
@@ -1361,7 +1408,18 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
             S, E, W = ap[side + "腕"][0], ap[side + "ひじ"][0], ap[side + "手首"][0]
             E1 = S + qrot(ts2, E - S)
             W1 = S + qrot(ts2, W - S)
-            Es, Ws = arm_ik(S, E1, W1, W1 + pw2, pole=E1)
+            # a hand on a part the source's hand touches stays where the contact put it: the arm clears the body by its
+            # elbow (the IK turns the elbow towards where the turned arm would have it) and the wrist does not follow
+            # the turn
+            Wt = W1 + pw2
+            if hold is not None:
+                Wt = Wt + hold[:, None] * (W - Wt)
+            Es, Ws = arm_ik(S, E1, W1, Wt, pole=E1)
+            if hold is not None:                        # a held hand: the elbow round the arm's circle where it goes in least
+                idx = np.flatnonzero((hold >= 0.3) & moved)
+                if len(idx):
+                    sub = {p: (pos[idx], rot[idx]) for p, (pos, rot) in parts.items()}
+                    Es[idx] = best_swivel(tgt, side, S[idx], Es[idx], Ws[idx], sub)
             Es = np.where(moved[:, None], Es, E)
             Ws = np.where(moved[:, None], Ws, W)
             loc = arm_locals(tgt, trk, frames, side, Es, Ws, hand[1])
