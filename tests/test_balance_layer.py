@@ -504,17 +504,18 @@ def swing_onto_the_landing_foot(last=119):
     return motion
 
 
-def falling_step(last=119):
+def falling_step(last=119, travel_units=3.6, travel_frames=20.0):
     """standing on the right foot, the left foot steps 16 cm up and lands where it was while the body travels 29 cm
     towards it (up to 52 cm/s): the XcoM at the landing is 5 cm past the left foot's outer edge (the dance's landing does
-    not catch the body); then the right foot lifts and the left one holds the body alone"""
+    not catch the body); then the right foot lifts and the left one holds the body alone.  travel_units 5.4 in 18
+    frames: the body runs past the landing foot (the XcoM 19 cm past its edge)"""
     motion = dance(last=last)
     left = []
     for f in range(last + 1):
         y = 2.0 * min(smooth((f - 40) / 4.0), 1.0 - smooth((f - 48) / 4.0))
         left.append(key("左足ＩＫ", f, (1.0, y, 0.0)))
     right = foot_track("右足ＩＫ", last, (-1.0, 0.0, 0.0), [(56, 62, 90, 96, 2.0)])
-    travel = [key("センター", f, (-0.9 + 3.6 * smooth((f - 36) / 20.0), -0.6, 0.0)) for f in range(last + 1)]
+    travel = [key("センター", f, (-0.9 + travel_units * smooth((f - 36) / travel_frames), -0.6, 0.0)) for f in range(last + 1)]
     motion.bones = [k for k in motion.bones if k.name not in ("左足ＩＫ", "右足ＩＫ", "センター")] + left + right + travel
     return motion
 
@@ -562,8 +563,32 @@ class CatchTest(unittest.TestCase):
         self.assertEqual(row["stance"], "右")
         self.assertLess(row["margin_cm"][0], -4.0)
         self.assertGreater(row["margin_cm"][1], -0.5)
+        self.assertTrue(row["held_back"])
+        self.assertFalse(row["passed"])
         self.assertGreaterEqual(rep["summary"]["before_under_0"], 1)
         self.assertEqual(rep["summary"]["newly_under_0"], 0)
+        self.assertEqual(rep["summary"]["passed"], 0)
+
+    def test_body_running_past_the_landing_foot_is_not_held_back(self):
+        """the body runs past the landing foot (the XcoM 19 cm past its outer edge; the v11 chain's dance at 195.27 s and
+        200.33 s, 8.8 and 26 cm): holding it back would rewrite the step (there the layer moved the body 15-22 cm
+        against the dance for a second, its solve did not converge and the ZMP left the support for 2 s), so the landing
+        stays as the dance has it, neither held back nor pushed further, and the solve converges; one that misses by
+        less (falling_step, 5 cm) is still held back"""
+        motion = falling_step(travel_units=5.4, travel_frames=18.0)
+        land = first_landing(motion)
+        before = xcom_margin(balance_layer.Body(MODEL, motion), "右", land)
+        self.assertLess(before, -15.0)                                        # the fixture: far past the foot
+        result = balance_layer.layer(MODEL, motion)
+        rep = result.report["catch"]
+        row = [r for r in rep["landings"] if r["frame"] == land][0]
+        self.assertTrue(row["passed"])
+        self.assertFalse(row["held_back"])
+        self.assertEqual(rep["summary"]["passed"], 1)
+        self.assertEqual(rep["summary"]["held_back"], 0)
+        after = xcom_margin(balance_layer.Body(MODEL, result.motion), "右", land)
+        self.assertLess(abs(after - before), 1.0)
+        self.assertLess(result.report["solver"]["bound_cut_max"], 0.05)       # (the hold-back: 0.92, 2,000 rounds)
 
 
 class ReachTest(unittest.TestCase):
