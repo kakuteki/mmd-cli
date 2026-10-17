@@ -421,6 +421,29 @@ class HoldTest(unittest.TestCase):
             self.assertLess(float(np.linalg.norm(step_t - step_m)), 0.012, f)
 
 
+class EaseOutTest(unittest.TestCase):
+    """the frames next to a stand ease out the correction made on the stand's edge: a foot lifting off the floor is not
+    held down onto it while the correction eases out (the song's 99.9 s left foot, its shoe 1.3 cm up in the mapping, was
+    pulled to 1 mm and slid along the floor with the mapping)"""
+
+    def test_a_foot_lifting_off_is_not_held_down(self):
+        keys = []
+        for f in range(21):
+            up = max(0, f - 10)
+            keys.append(key("左足ＩＫ", f, position=(0.1 * up, 0.05 * up, 0.0)))   # flat on the floor, then up 12 cm/s at 24 cm/s
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)), *keys,
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["plants"], 1)
+        before = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, pure.motion, range(0, 21))
+        after = lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res.motion, range(0, 21))
+        self.assertLess(float(np.abs(before[:10]).max()), 0.0125)                          # the stand is on the floor
+        self.assertGreater(float(before[12]), 0.06)                                         # lifted off in the mapping
+        for f in range(11, 15):
+            self.assertGreater(float(after[f] - before[f]), -0.0125, f)
+
+
 class DragTest(unittest.TestCase):
     """a foot low over the floor and moving while the other foot stands (it carries no weight: a small step, a drag) is
     left as the mapping puts it, not dragged along the floor"""

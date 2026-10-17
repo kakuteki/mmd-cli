@@ -826,8 +826,10 @@ TOUCH_MIN = 3
 # was still on the floor while the source's lifted (the pitch and the lift easing out) and slid there
 AIR_H = 0.05                    # units (4 mm)
 HOLD_AIR = 6                    # frames
-CLEAR_TO = 0.075                # units (6 mm): a carried shoe is kept as high over the floor as the source's, up to this
-                                # (off the floor of main's contact_check, 4 mm; not higher: the turns' feet stay low)
+CLEAR_TO = 0.125                # units (1 cm): a carried shoe is kept as high over the floor as the source's, up to this
+                                # (over main's contact_check's floor, 4 mm; under the review's 1.2 cm, within which a shoe
+                                # counts as by the floor: raised to 2 cm the turns at 99.5 s and 127.8 s floated 8 and 3
+                                # frames, against 6 and 0)
 TOUCH_PITCH_MAX = 20.0          # degrees: the most a foot's pitch is changed from the source's to reach the floor, on the
                                 # floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing on its toe
                                 # or heel: a foot is not flicked (the song's 86.07 s pitched 50 degrees for one frame without
@@ -1112,7 +1114,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     floor the edge was 3 mm under it in the median, 1.4 cm at most) and its ankle moves up or down (at most FLAT_LIFT_MAX)
     until the shoe is on the floor; the touching point is held still.  A foot that turns on the floor (touches) is put on
     the floor the same way and turns in place: the sole point it turns on is held.  The turn and the lift ease in and out
-    over EASE frames; the hold along the floor changes only while the target's shoe is off the floor (hold_offsets), and
+    over EASE frames (the corrections made on the span's edges, eased out); the hold along the floor changes only while the target's shoe is off the floor (hold_offsets), and
     while the turn eases the point held next is kept where the mapping puts it.  Off the spans a shoe the source carries
     over the floor (faster than TOUCH_SPEED) is carried at least as high (up to CLEAR_TO).  The hips are never lowered.
     Returns the report."""
@@ -1142,6 +1144,18 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             turned_on = {k: 0 for k in names}
             roll_out = []
             points, edges = [], []
+
+            def edge_held(idx, a, b, *vals):
+                # in the easing frames (off the span) the correction made on the span's edge, eased out: not one found
+                # there (a lift or a pitch that put the shoe onto the floor frame by frame pulled a foot lifting off or
+                # coming down onto the floor a few frames early, where it slid along with the mapping)
+                before, after = idx < a, idx > b
+                ia, ib = int(np.searchsorted(idx, a)), int(np.searchsorted(idx, b))
+                for v in vals:
+                    if np.any(before) and ia < len(idx):
+                        v[before] = v[ia]
+                    if np.any(after) and ib < len(idx):
+                        v[after] = v[ib]
 
             def held_at(n, idx, Qn, point, a, b):
                 # the point kept where it is over the span (the mean of where it would be), against the mapped foot at
@@ -1183,6 +1197,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                     d, rest_h = solve_pitch(A[idx], base, shell_t, floor_t, lo, hi)
                     up = np.zeros(len(idx))
                     left_over[idx] = rest_h
+                edge_held(idx, a, b, up, d)
                 Qn = qmul(pitch_turn(base, d), base)
                 want_turn[idx] = Qn
                 lift[idx] = up
