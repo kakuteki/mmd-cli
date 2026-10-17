@@ -43,12 +43,14 @@ How:
          it 3.8-6.3 cm towards the lifting leg and start 0.32-0.44 s (lifting a leg) to about 0.6 s (a step) before
          the foot leaves, and are still about 2 cm short of the standing foot when it does (Hussein et al. 2013,
          Mouchnino & Blouin 2013); dancers get there in one go (Mouchnino et al. 1992).
-     (b) every foot IK's target within its leg's reach less REACH_TOL_CM (1.5 cm) after the hips move (or no farther
-         than it already was), the hips allowed down for it: a leg at its reach stays straight (the hip goes round the
-         ankle), so the drop for one leg is bounded by what bends the other leg, if it is on the floor, KNEE_GIVE_DEG
-         more (at most --drop-max).  The 1.5 cm: MMD's IK (saba's solve; the feet layer's tools/leg_ik.py) leaves a foot
-         on the floor more than 4 mm short of its target on most frames of the v7 dance with under 1 cm of two-bone
-         slack, on 2-3 % with 1.5-4 cm.
+     (b) every foot IK's target within its leg's reach less the slack it keeps (reach_tol_cm: REACH_TOL_CM, 1.5 cm,
+         or REACH_TOL_FULL_CM, 0.5 cm, on a model whose leg IKs run REACH_FULL_LOOPS loops and more) after the hips move
+         (or no farther than it already was), the hips allowed down for it: a leg at its reach stays straight (the hip
+         goes round the ankle), so the drop for one leg is bounded by what bends the other leg, if it is on the floor,
+         KNEE_GIVE_DEG more (at most --drop-max).  The 1.5 cm: MMD's IK (saba's solve; the feet layer's
+         tools/leg_ik.py), its leg IK running 40 loops, leaves a foot on the floor more than 4 mm short of its target on
+         most frames of the v7 dance with under 1 cm of two-bone slack, on 2-3 % with 1.5-4 cm; with 120 loops and more
+         it meets every target the two-bone leg reaches (v11bal).
      (c) each hip's adduction (the hip-to-ankle line out of 下半身's sagittal plane) under the reference range's upper
          proposal (22 degrees; stage 3 research: the Japanese reference 20) and its abduction under 45, or no farther
          than in the dance; each knee under 159 degrees (the upper proposal; the hip kept as far from the foot IK's
@@ -187,7 +189,13 @@ DROP_INSIDE_CM = 0.01           # the drop for the legs' reach aims this much in
 REACH_TOL_CM = 1.5              # a leg keeps this much slack, or as much as it had: MMD's IK (saba's solve, the feet
                                 # layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK
                                 # target in 70-100 % of the v7 frames with under 1 cm of two-bone slack, 22-26 % at
-                                # 1-1.5 cm, 2-3 % at 1.5-4 cm (the review's measure, NOTES 10/14)
+                                # 1-1.5 cm, 2-3 % at 1.5-4 cm (the review's measure, NOTES 10/14; the model's leg IK
+                                # running 40 loops)
+REACH_FULL_LOOPS = 120          # a model whose leg IKs run this many loops and more keeps REACH_TOL_FULL_CM instead
+REACH_TOL_FULL_CM = 0.5         # (reach_tol_cm): the v11 chain's floor frames with 0-0.25 / 0.25-0.5 / 0.5-0.75 / 0.75-1 /
+                                # 1-1.5 cm of slack, MMD's IK more than 4 mm short on 89 / 81 / 76 / 67 / 17 % of them with
+                                # 40 loops, 83 / 38 / 0 / 0 / 2 % with 60, 28 / 0 / 0 / 0 / 0.2 % with 80 and on none with 120,
+                                # 200 and 400 (the v11 recipe's pmx_rig --leg-ik-loops 400; v11bal, 10-17)
 ADMM_ITERS = 2000                # at most; it stops when the residuals are under the tolerances (v7: about 1,650)
 ADMM_TOL_ACC = 0.02             # m/s^2
 ADMM_TOL_REACH = 0.05           # cm
@@ -305,7 +313,25 @@ def params_default():
             "catch": True, "vertical": True, "dip_deg_flat": DIP_DEG_FLAT, "dip_deg_fore": DIP_DEG_FORE,
             "down_acc_max": DOWN_ACC_MAX, "air_down_acc_max": AIR_DOWN_ACC_MAX, "air_no_drop": AIR_NO_DROP, "despike": True, "spike_per_min": SPIKE_PER_MIN, "pull_moving": False,
             "mos_ml_min_cm": MOS_ML_MIN_CM, "still_v_cm_s": STILL_V_CM_S, "still_min_s": STILL_MIN_S,
-            "still_hold": STILL_HOLD, "despike_passes": DESPIKE_PASSES}
+            "still_hold": STILL_HOLD, "despike_passes": DESPIKE_PASSES, "reach_tol_cm": None}
+
+
+def leg_ik_loops(model):
+    """the fewer loops of the model's two leg IKs (足ＩＫ), None when either has no IK"""
+    loops = []
+    for s in SIDES:
+        bone = next((b for b in model.bones if b.name == s + "足ＩＫ"), None)
+        if bone is None or not bone.ik:
+            return None
+        loops.append(int(bone.ik["loops"]))
+    return min(loops)
+
+
+def reach_tol_cm(model):
+    """the slack (cm) a leg keeps to its foot IK on this model: REACH_TOL_FULL_CM when its leg IKs run REACH_FULL_LOOPS
+    loops and more (MMD's IK then meets every target the two-bone leg reaches), REACH_TOL_CM otherwise"""
+    n = leg_ik_loops(model)
+    return REACH_TOL_FULL_CM if n is not None and n >= REACH_FULL_LOOPS else REACH_TOL_CM
 
 
 # ---- the body ---------------------------------------------------------------------------------------------------
@@ -1318,7 +1344,7 @@ def hip_share(carry, s, F):
     return np.ones(F) if carry is None or s not in carry else 1.0 - carry[s]
 
 
-def reach_discs(body, allowance, carry=None):
+def reach_discs(body, allowance, carry=None, tol_cm=REACH_TOL_CM):
     """per leg, the disc of センター floor shifts (metres) that keep its IK target within reach with the hips also down
     by up to allowance[leg] (units, per frame); a target already out of reach: no farther than it was.  A carried foot
     moves with the hip by its carry: the hip moves against it by (1 - carry) y, so the disc grows by 1 / (1 - carry)"""
@@ -1327,7 +1353,7 @@ def reach_discs(body, allowance, carry=None):
         D = body.ankle(s) - body.hip(s)
         v = -D[:, 1]                                       # the hip's height over the target
         v2 = v - np.clip(v, 0.0, allowance[s])
-        R = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, np.linalg.norm(D, axis=1) + REACH_NO_WORSE_M / UNIT_M)
+        R = np.maximum(body.leg_length(s) - tol_cm / CM, np.linalg.norm(D, axis=1) + REACH_NO_WORSE_M / UNIT_M)
         r = np.sqrt(np.maximum(R * R - v2 * v2, 0.0))
         g = hip_share(carry, s, body.F)
         free = g < KEPT_MIN
@@ -1535,7 +1561,7 @@ def vertical_fix(heights, cap=None):
     return np.minimum(z, 0.0)
 
 
-def despike_room(body, plan, before):
+def despike_room(body, plan, before, tol_cm=REACH_TOL_CM):
     """per frame (units): how far up and how far on the floor the despike may move the hips (body: as the layer has them
     now) before a leg on the floor reaches farther than REACH_TOL_CM short of its full length or, where the dance itself
     reaches farther, than the dance does (the reach report's bound).  The hip's distance to the target grows by u . e
@@ -1546,7 +1572,7 @@ def despike_room(body, plan, before):
     for s in SIDES:
         D = body.hip(s) - body.ankle(s)
         dist = np.maximum(np.linalg.norm(D, axis=1), 1e-9)
-        allow = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M) - 1e-4
+        allow = np.maximum(body.leg_length(s) - tol_cm / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M) - 1e-4
         room = np.maximum(allow - dist, 0.0)
         u = D / dist[:, None]
         uh = np.linalg.norm(u[:, [0, 2]], axis=1)
@@ -1559,12 +1585,12 @@ def despike_room(body, plan, before):
     return up, xz
 
 
-def despike_overreach(body, plan, before):
+def despike_overreach(body, plan, before, tol_cm=REACH_TOL_CM):
     """per frame: a leg on the floor reaches farther than the reach report allows (REACH_TOL_CM short of full length, or
     the dance's own reach where that is farther)"""
     over = np.zeros(body.F, bool)
     for s in SIDES:
-        allow = np.maximum(body.leg_length(s) - REACH_TOL_CM / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M)
+        allow = np.maximum(body.leg_length(s) - tol_cm / CM, before.reach(s) + REACH_NO_WORSE_M / UNIT_M)
         over |= body.reach(s) > allow
     return over
 
@@ -1831,6 +1857,9 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
     log = log or (lambda *_: None)
     p = params_default()
     p.update(params or {})
+    if p.get("reach_tol_cm") is None:
+        p["reach_tol_cm"] = reach_tol_cm(model)         # the slack MMD's IK needs on this model (its leg IK's loops)
+    tol = float(p["reach_tol_cm"])
     t0 = time.time()
     body = Body(model, motion)
     F = body.F
@@ -1860,7 +1889,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         if p.get("still_hold", STILL_HOLD):
             d = hold_still_targets(d, plan, com0)
         k = com_response(body, com0, carry)
-        discs = reach_discs(body, allowance, carry)
+        discs = reach_discs(body, allowance, carry, tol_cm=tol)
         slabs = range_slabs(body, carry)
         kslabs = knee_slabs(body, carry, plan["low"])
         if catches or stance is not None:
@@ -1914,7 +1943,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
         shift = np.zeros((F, 3))
         shift[:, [0, 2]] = y / UNIT_M
         moved = body.moved(shift, carry)
-        need = drop_needed(moved, before=body)
+        need = drop_needed(moved, tol_cm=tol, before=body)
         # no standing knee straighter than KNEE_MIN_DEG, within what the other leg allows as the body now stands (the
         # shift onto a foot bends that leg already)
         allow_moved = drop_allowance(moved, plan, p["drop_max_cm"], KNEE_GIVE_DEG, actual=True, ref=body)
@@ -1953,7 +1982,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
             # in passes: the take-back over the legs' reach and the lowering after it make new spikes (order C of the
             # MV: 43 left after the despike, 48 after)
             for _pass in range(int(p.get("despike_passes", DESPIKE_PASSES))):
-                room_up, room_xz = despike_room(body.moved(shift, carry), plan, body)
+                room_up, room_xz = despike_room(body.moved(shift, carry), plan, body, tol_cm=tol)
                 hts = [body.p(n)[:, 1] + shift[:, 1] for n in ("下半身", CENTRE)]
                 cap_d = cap_v
                 if np.ndim(cap_v):
@@ -1966,7 +1995,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
                 # the linear room is a guess: where a leg on the floor still reaches past its bound, the despike is taken
                 # back there (scaled by a smooth cover of what is past, until none is)
                 for _ in range(8):
-                    over = despike_overreach(body.moved(shift + e_sp, carry), plan, body) & \
+                    over = despike_overreach(body.moved(shift + e_sp, carry), plan, body, tol_cm=tol) & \
                         np.any(np.abs(e_sp) > 0.0, axis=1)
                     if not over.any():
                         break
@@ -2017,7 +2046,7 @@ def layer(model, motion, params=None, log=None, ik_check=None, support_motion=No
     report.update(measures(body, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over,
                            unreachable=int(np.sum(~finite)), feet=feet, catches=catches, vfix=vfix,
                            bound=p["down_acc_max"], spikes=spikes, mos_min_cm=p["mos_ml_min_cm"], despike_e=e_sp,
-                           air=air, air_bound=p["air_down_acc_max"]))
+                           air=air, air_bound=p["air_down_acc_max"], tol_cm=tol))
     report["seconds"] = round(time.time() - t0, 2)
     foot_code = np.array([{"左": 1, "右": 2}.get(v, 0) for v in plan["foot"]], dtype=np.int8)
     arrays = {"shift": shift, "com_before": com0, "com_after": after.com(), "com_shift_m": x, "pull": w,
@@ -2206,7 +2235,7 @@ def stance_report(before, after, com0, com1, plan, mos_min_cm):
 
 def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, motion, out, drop_over, unreachable,
              feet=None, catches=None, vfix=None, bound=DOWN_ACC_MAX, spikes=None, mos_min_cm=MOS_ML_MIN_CM, despike_e=None,
-             air=None, air_bound=None):
+             air=None, air_bound=None, tol_cm=REACH_TOL_CM):
     F = before.F
     com1 = after.com()
     rep = {"catch": catch_report(after, com1, catches or [])}
@@ -2326,8 +2355,8 @@ def measures(before, after, com0, plan, x, d, shift, drop, dip, landings, info, 
         reach["unreachable_frames_" + tag] = [int(np.sum(rb - L > CONTACT_EPS)), int(np.sum(ra - L > CONTACT_EPS))]
         eps = REACH_NO_WORSE_M / UNIT_M + 1e-5          # a leg already past it may go 0.5 mm farther
         reach["worse_frames_" + tag] = int(np.sum((ra > np.maximum(L, rb + eps))))
-        # frames whose two-bone slack the layer took below REACH_TOL_CM (or below what the dance had)
-        reach["slack_taken_frames_" + tag] = int(np.sum(ra > np.maximum(L - REACH_TOL_CM / CM, rb + eps)))
+        # frames whose two-bone slack the layer took below the slack it keeps (reach_tol_cm, or below what the dance had)
+        reach["slack_taken_frames_" + tag] = int(np.sum(ra > np.maximum(L - tol_cm / CM, rb + eps)))
         on = plan["sup"][s]
         kb, ka = before.knee_flexion(s), after.knee_flexion(s)
         knee["on_floor_deg_" + tag] = {"before": q_stats(kb[on], (0.05, 0.5, 0.95)), "after": q_stats(ka[on], (0.05, 0.5, 0.95))}
@@ -2485,6 +2514,9 @@ def main(argv=None):
                          "-4.2, quartiles -6.1 and -3.6)")
     ap.add_argument("--spike-per-min", type=float, default=SPIKE_PER_MIN,
                     help="センター's 1-frame spikes left at most, a minute (human dancers 7.2)")
+    ap.add_argument("--reach-tol", type=float, default=None,
+                    help="cm: the slack a leg keeps to its foot IK (default: from the model's leg IK, %g with %d loops "
+                         "and more, else %g)" % (REACH_TOL_FULL_CM, REACH_FULL_LOOPS, REACH_TOL_CM))
     ap.add_argument("--arrays", help="write the per-frame curves (.npz) for figures and checks")
     ap.add_argument("--support-from", help="read which foot is on the floor off this motion of the same dance (the feet "
                                            "layer's output on it); the dance given is the one moved")
@@ -2499,7 +2531,8 @@ def main(argv=None):
                   "drop_max_cm": args.drop_max, "dip_deg": args.dip_deg, "dip": bool(args.dip and not args.no_dip), "catch": not args.no_catch,
                   "vertical": not args.no_vertical, "down_acc_max": args.down_acc_max,
                   "air_down_acc_max": args.air_down_acc_max, "still_hold": not args.no_still_hold, "air_no_drop": not args.air_drop, "despike": not args.no_despike,
-                  "despike_passes": args.despike_passes, "spike_per_min": args.spike_per_min, "pull_moving": args.pull_moving, "mos_ml_min_cm": args.mos_ml_min}
+                  "despike_passes": args.despike_passes, "spike_per_min": args.spike_per_min, "pull_moving": args.pull_moving, "mos_ml_min_cm": args.mos_ml_min,
+                  "reach_tol_cm": args.reach_tol}
         ik_check, ik_note = None, None
         if args.mmd_ik:
             ik_check, ik_note = mmd_ik_check(args.mmd_ik, args.model, fk.last_frame(motion) + 1)

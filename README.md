@@ -1249,7 +1249,7 @@ python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.j
                               [--acc-max 1.0] [--lead 0.15] [--lag 0.05] [--drop-max 2.0] [--dip] [--dip-deg 15]
                               [--no-catch] [--no-vertical] [--down-acc-max 122] [--air-down-acc-max 122] [--air-drop]
                               [--no-despike] [--despike-passes 3] [--spike-per-min 7.2] [--pull-moving] [--no-still-hold]
-                              [--mos-ml-min -4.2]
+                              [--mos-ml-min -4.2] [--reach-tol CM]
                               [--support-from feet.vmd] [--mmd-ik tools/leg_ik.py]
 ```
 
@@ -1348,7 +1348,11 @@ python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.j
   下で ADMM で解く。(a) 足した重心の加速度 `--acc-max` m/s² 以下（1 m/s² は足圧中心にして約 9 cm。人が脚を上げる前に押す
   足圧中心は 3.8〜6.3 cm）。(b) 両方の足ＩＫが、脚の長さより 1.5 cm 内に届く（入力の余りがそれより小さければ入力より減らさない）。
   1.5 cm は MMD の IK（saba の解き方。足の層の `tools/leg_ik.py`）で測った: 2 本の骨の余りが 1 cm 未満の床の足は、v7 のコマの
-  70〜100 % で足首が足ＩＫに 4 mm より届かず、1.5〜4 cm では 2〜3 %。腰は下げてよいが、その脚は伸びたまま股関節が足首の
+  70〜100 % で足首が足ＩＫに 4 mm より届かず、1.5〜4 cm では 2〜3 %（モデルの足ＩＫが 40 回のとき）。足ＩＫの回数が
+  `REACH_FULL_LOOPS`（120）以上のモデルでは余りを `REACH_TOL_FULL_CM`（0.5 cm）にする（`--reach-tol` で置ける。2026-10-17、v11bal:
+  v11 の鎖の床のコマを余り 0〜0.25・〜0.5・〜0.75・〜1・〜1.5 cm に分けると、4 mm より届かないのは 40 回で 89・81・76・67・17 %、
+  60 回で 83・38・0・0・2 %、80 回で 28・0 %、120・200・400 回ではどれも 0。v11 の処方は `pmx_rig --leg-ik-loops 400`）。
+  腰は下げてよいが、その脚は伸びたまま股関節が足首の
   まわりを回るだけなので、下げで曲がるのは床にある他方の脚で、その曲がりを 12 度までにする（最大 `--drop-max` cm）。
   (c) 股関節の内転 22 度・外転 45 度、ひざ 159 度（第 3 段の調査の上限案。入力で越えていれば入力まで）。股関節の範囲は大腿（股関節
   から層が解くひざ）で測る（2026-10-15。股関節〜足首の線で近似していたときは、ひざが内を向く立ち足で大腿が 24.7 度まで行った）。
@@ -1386,7 +1390,7 @@ python tools/balance_layer.py dance.vmd model.pmx dance_balance.vmd --report r.j
 | `runs` | 片足立ちの区間ごと: 時刻・立ち足・他方の足の高さ・種類（pulled / hover / transfer）・寄せる割合（`need_share`）・中心線までの距離（前・後・狙い）・届かない量と、止めた制約（reach / hip range / acceleration）。引かない区間は、そこでのずらしの最大（隣の区間の寄せの出入り） |
 | `centre` | センターのずらし・1 フレームの動き・足した加速度（水平 `added_acc_h_m_s2`、上下 `added_acc_v_m_s2`）・それが要る足圧中心の動き・届く範囲のための下げ・着地の下げ |
 | `apa` | 0.3 秒以上の区間で、足が離れた時点のずらしの割合と、ずらしの始まり（10 %）が足の離れる何秒前か |
-| `reach` / `knee` / `hip` | 足ＩＫが届かないフレーム数（前・後、2 本の骨）、余りを 1.5 cm より減らしたフレーム（`slack_taken_frames`）、床にある脚のひざの角度と変わり、ひざが新しく 159 度を越えるフレーム、股関節の内転と範囲の越え |
+| `reach` / `knee` / `hip` | 足ＩＫが届かないフレーム数（前・後、2 本の骨）、余りを保つ量（`reach_tol_cm`: 足ＩＫ 120 回以上のモデルで 0.5 cm、ほかは 1.5 cm）より減らしたフレーム（`slack_taken_frames`）、床にある脚のひざの角度と変わり、ひざが新しく 159 度を越えるフレーム、股関節の内転と範囲の越え |
 | `landings` | 着地の数・体重を受ける数・曲げた数・着地から 0.13 秒のひざの曲がりの増え（前・後） |
 | `stance` | 止まった片足立ちと動きながらの片足立ちのコマ数、支えの中心からの重心と XcoM の横のずれ・XcoM の横の余裕の中央値（前・後）、境を越えるコマ |
 | `spikes` | センターの 1 コマの突起（前・後、回/分と数）と、ならしの中身（取った数・回・窓のコマ・動かした最大） |
