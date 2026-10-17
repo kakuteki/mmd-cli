@@ -36,7 +36,7 @@ balance_layer = load_tool()
 SIDE = {"左": 1.0, "右": -1.0}
 
 
-def model_bytes():
+def model_bytes(loops=40):
     w = Writer(bone=2)
     bones = [("全ての親", None, (0.0, 0.1, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", "全ての親", (0.0, 7.8468, 0.0), {"flags": NORMAL | TRANSLATE}),
@@ -75,13 +75,14 @@ def model_bytes():
             kw["append"] = (index[kw["append"]], -1.0)
         if "ik" in kw:
             target, links = kw["ik"]
-            kw["ik"] = {"target": index[target], "loops": 40, "angle": 2.0,
+            kw["ik"] = {"target": index[target], "loops": loops, "angle": 2.0,
                         "links": [(index[n], lim) for n, lim in links]}
         built.append(w.bone(name, parent=-1 if parent is None else index[parent], position=position, **kw))
     return w.build(name="rin-like", bones=built)
 
 
 MODEL = pmx.loads(model_bytes())
+MODEL_400 = pmx.loads(model_bytes(loops=400))       # the leg IK as the v11 recipe sets it (pmx_rig --leg-ik-loops 400)
 
 
 def key(name, frame, position=(0.0, 0.0, 0.0), q=(0.0, 0.0, 0.0, 1.0)):
@@ -609,6 +610,44 @@ class ReachTest(unittest.TestCase):
         short = [r for r in result.report["runs"] if r["short_of_target_cm"] > 3.0]
         self.assertTrue(short, "the run that the reach stops must be named")
         self.assertIn("reach", short[0]["limited_by"])
+
+
+class ReachTolTest(unittest.TestCase):
+    """the slack a leg keeps is what MMD's IK needs, and that depends on how many loops the model's leg IK runs (v11bal,
+    2026-10-17, the v11 chain's floor frames by the two-bone slack 0-0.25 / 0.25-0.5 / 0.5-0.75 / 0.75-1 / 1-1.5 cm: with 40
+    loops MMD's IK left the ankle more than 4 mm short on 89 / 81 / 76 / 67 / 17 % of them, 60 loops 83 / 38 / 0 / 0 / 2 %,
+    80 loops 28 / 0 %, 120, 200 and 400 loops on none)"""
+
+    def test_slack_follows_the_leg_ik_loops(self):
+        self.assertEqual(balance_layer.reach_tol_cm(MODEL), balance_layer.REACH_TOL_CM)              # 40 loops
+        self.assertEqual(balance_layer.reach_tol_cm(pmx.loads(model_bytes(loops=80))), balance_layer.REACH_TOL_CM)
+        full = balance_layer.reach_tol_cm(MODEL_400)
+        self.assertLess(full, balance_layer.REACH_TOL_CM)
+        self.assertGreater(full, 0.0)
+        self.assertEqual(balance_layer.reach_tol_cm(pmx.loads(model_bytes(loops=120))), full)
+
+    def test_legs_of_many_loops_go_nearer_full_stretch(self):
+        """ReachTest's wide stance on the model whose leg IK runs 400 loops: the left leg, which the 1.5 cm stopped, may
+        come nearer its full stretch (and no nearer than the layer's slack), so the body gets farther over the right
+        foot; the report names the slack it kept"""
+        last = 119
+        motion = dance(last=last, spread=3.3, centre=(0.0, -1.2, 0.0), left_lifts=[(40, 50, 80, 90, 0.75)])
+        r40 = balance_layer.layer(MODEL, motion)
+        r400 = balance_layer.layer(MODEL_400, motion)
+        tol = balance_layer.reach_tol_cm(MODEL_400)
+        self.assertEqual(r40.report["params"]["reach_tol_cm"], balance_layer.REACH_TOL_CM)
+        self.assertEqual(r400.report["params"]["reach_tol_cm"], tol)
+        before = balance_layer.Body(MODEL_400, motion)
+        after = balance_layer.Body(MODEL_400, r400.motion)
+        for s in ("左", "右"):
+            room = np.maximum(after.leg_length(s) - tol / CM, before.reach(s))
+            self.assertTrue(np.all(after.reach(s) <= room + 1e-6), s)
+            self.assertEqual(r400.report["reach"]["slack_taken_frames_" + {"左": "L", "右": "R"}[s]], 0)
+        left = balance_layer.Body(MODEL, r40.motion).reach("左")
+        self.assertGreater(float(after.reach("左").max() - left.max()) * CM, 0.5)       # nearer full stretch
+        sh40 = centre_offsets(motion, r40.motion, last)
+        sh400 = centre_offsets(motion, r400.motion, last)
+        self.assertGreater(-sh400[40:90, 0].min() * CM, -sh40[40:90, 0].min() * CM + 0.3)   # farther over the right foot
 
 
 class MmdIkCheckTest(unittest.TestCase):
