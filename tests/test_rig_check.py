@@ -201,6 +201,69 @@ class IkReportTest(unittest.TestCase):
         self.assertEqual(rep["loops400"]["左"]["reachable_miss_gt_4mm"], 0)
         self.assertEqual(rep["settings"]["左"]["leg_loops"], 40)
 
+    def test_least_bend_keeps_the_knee_off_its_rest_bend(self):
+        # the out-of-reach goal straightens the leg to the knee's limit; a limit of a least bend of 5 degrees keeps 5
+        # degrees there, and costs a reachable goal at most the reach between the two (2.2 mm here)
+        data = rin_legs_bytes()
+        rig = leg_ik.LegRig.loads(data)
+        mo = motion(key("左足ＩＫ", 0, position=(0.0, -3.0, 0.0)), key("左足ＩＫ", 1, position=(0.0, 0.1, 0.0)))
+        rep = rig_check.ik_report(rig, mo, [0, 1], alternatives={"soft": {"loops": 400, "least_bend": 5.0}})
+        self.assertEqual(rep["model"]["左"]["knee_at_least_bend"], 1)            # frame 0 at the limit (bend 0)
+        soft = leg_ik.solve(rig_check._with_settings(rig, 400, None, 5.0), mo, [0, 1])["左"]
+        self.assertAlmostEqual(math.degrees(-soft["knee_angle"][0]), 5.0, places=6)
+        r0 = rig_check.max_reach(rig, "左")
+        r5 = rig_check.max_reach(rig_check._with_settings(rig, least_bend=5.0), "左")
+        self.assertLess(r5, r0)
+        self.assertLess(r0 - r5, 0.035)                    # 0.028 units (2.2 mm) on these legs
+        self.assertLess(float(soft["reach"][1]), 0.002)                          # the lifted foot is reached
+
+
+class PhysicsTest(unittest.TestCase):
+    def body(self, shape, size, pos, rot=(0.0, 0.0, 0.0), group=0, mask=0xFFFF, mode=1, damping=0.999):
+        return pmx_edit.RigidBody(group, mask, shape, tuple(size), tuple(pos), tuple(math.radians(r) for r in rot), 0.5,
+                                  damping, damping, 0.0, 0.0, mode)
+
+    def test_frame_turns_y_by_yaw_pitch_roll(self):
+        # roll -90 degrees about z lays a capsule's Y along +X; then pitch and yaw act on that
+        c, R = rig_check.body_frame(self.body(2, (0.5, 2, 0), (1, 2, 3), (0, 0, -90)))
+        self.assertTrue(np.allclose(R @ [0, 1, 0], [1, 0, 0], atol=1e-12))
+        _, R2 = rig_check.body_frame(self.body(2, (0.5, 2, 0), (0, 0, 0), (0, 90, -90)))
+        self.assertTrue(np.allclose(R2 @ [0, 1, 0], [0, 0, -1], atol=1e-12))    # then yaw 90 swings +X to -Z
+
+    def test_gaps(self):
+        a = self.body(0, (1, 0, 0), (0, 0, 0))
+        self.assertAlmostEqual(rig_check.gap(a, self.body(0, (1, 0, 0), (3, 0, 0))), 1.0)
+        cap = self.body(2, (0.5, 2, 0), (0, 0, 0))                       # ends at y -1 and 1
+        self.assertAlmostEqual(rig_check.gap(cap, self.body(0, (0.5, 0, 0), (0, 2, 0))), 0.0, places=9)
+        self.assertAlmostEqual(rig_check.gap(cap, self.body(0, (0.5, 0, 0), (1.2, 0.3, 0))), 0.2, places=9)
+        self.assertAlmostEqual(rig_check.gap(cap, self.body(2, (0.5, 2, 0), (1.8, 0, 0), (0, 0, 90))), -0.2, places=9)   # crossing ends 0.8 apart
+        box = self.body(1, (1, 0.5, 0.25), (0, 0, 0))
+        self.assertAlmostEqual(rig_check.gap(box, self.body(0, (0.25, 0, 0), (0, 1.0, 0))), 0.25, places=9)
+        self.assertAlmostEqual(rig_check.gap(box, self.body(0, (0.25, 0, 0), (0, 0.6, 0))), -0.15, places=9)
+
+    def test_collide_reads_both_masks(self):
+        a = self.body(0, (1, 0, 0), (0, 0, 0), group=2, mask=0xFFF8)        # not groups 0, 1, 2
+        self.assertFalse(rig_check.collide(a, self.body(0, (1, 0, 0), (0, 0, 0), group=0)))
+        self.assertTrue(rig_check.collide(a, self.body(0, (1, 0, 0), (0, 0, 0), group=3)))
+        self.assertFalse(rig_check.collide(a, self.body(0, (1, 0, 0), (0, 0, 0), group=3, mask=0xFFFB)))   # it lets 2 not through
+
+    def test_report_lists_overlaps_of_colliding_pairs_and_the_nearest_body(self):
+        doc = pmx_edit.loads(rin_legs_bytes())
+        hair = self.body(2, (0.3, 1.0, 0), (0.0, 1.0, 0.0), group=2, mask=0xFFFF, mode=1)
+        head = self.body(0, (1.0, 0, 0), (0.0, 2.0, 0.0), group=0, mode=0)
+        far = self.body(0, (0.2, 0, 0), (5.0, 0, 0), group=2, mask=0xFFF8, mode=1)    # collides with no body
+        for n, b in (("髪_1", hair), ("頭", head), ("飾り_1", far)):
+            doc.rigid_bodies.append(pmx_edit.new_rigid(doc, n, n, 0, b))
+        pmx_edit.set_joints(doc, [pmx_edit.Joint("髪_1", "", 0, 1, 0, (0.0, 1.5, 0.0), (0, 0, 0), (0, 0, 0), (0, 0, 0),
+                                                 (0, 0, 0), (0, 0, 0), (0, 0, 0), (0, 0, 0))])
+        rep = rig_check.physics_report(doc, gravities=(98.0,))
+        self.assertEqual([(o["a"], o["b"]) for o in rep["overlaps_at_rest"]], [("髪_1", "頭")])
+        self.assertAlmostEqual(rep["overlaps_at_rest"][0]["depth"], 0.3 + 1.0 - 0.5, places=4)
+        self.assertEqual(rep["dynamic_nearest_body"]["飾り_1"]["collides"], False)
+        hz = rep["families"]["髪"]["pendulum_hz"]["98.0"][0]
+        self.assertAlmostEqual(hz, math.sqrt(98.0 / 0.5) / (2 * math.pi), places=3)
+        self.assertAlmostEqual(rep["families"]["髪"]["decay_s"][0], -1.0 / math.log(0.001), places=4)
+
 
 class SourRinTest(unittest.TestCase):
     """the measures on the real model when this machine has it: the rest pose measures nothing; the upper arm's skin

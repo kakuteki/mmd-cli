@@ -9,6 +9,7 @@ another), as numbers and pictures.  No MMD: the pose and the skinning are MMD's 
     python tools/rig_check.py angles MODEL.pmx DANCE.vmd --out angles.npz
     python tools/rig_check.py skin DANCE.vmd --model TAG=MODEL.pmx ... --out DIR [--angles angles.npz] [--pick N]
                                    [--frames F ...] [--figures N]
+    python tools/rig_check.py physics MODEL.pmx --out r.json [--gravity 94 118]
 
 receivers: per VMD, every bone and morph it keys, with the key count, whether the model has it (a VMD names a bone with
   at most 15 bytes of cp932: a longer model name is matched by its first 15), and how much it moves (the largest turn
@@ -36,6 +37,15 @@ skin: on frames picked from the angles (the --pick highest of each yardstick, GA
   deepest.  Parts that physics moves (Model.physics) are not measured: here they would hang as at rest.
   Pictures (--figures N): the N worst frames of each yardstick, each model's skin from the front (or the side) with the
   triangles coloured by their area against rest and the vertices pushed in marked.
+physics: the rigid bodies and joints at rest, by family (the name without its numbers): shape, size, mass, damping
+  (and the time a velocity takes to fall to 1/e under it: Bullet scales velocities by (1 - d) a second), what each
+  collides with (the groups both masks let through), the pendulum frequency of each dynamic body about the joint that
+  hangs it (sqrt(g / L) / 2 pi, L the joint to the body's centre) for each --gravity (MMD's window 9.8 is about 94
+  units/s^2 as measured, the real g at Sour's Rin's 8 cm a unit is 122.5), the pairs that collide and already overlap at
+  rest (they are pushed apart the moment physics starts), and per dynamic body the nearest body-following body (group 0
+  or 1: the trunk, head, shoulders, arms, legs) and the gap to it, with whether the two collide.  A rigid body's
+  rotation (x, y, z radians) turns its frame by Ry Rx Rz (yaw, pitch, roll as Direct3D builds it), a capsule lies along
+  its own Y (size: radius, height between the end centres), a box has half extents.
 """
 import argparse
 import importlib.util
@@ -485,6 +495,148 @@ def dance_angles(model_path, motion, first=0, last=None):
     return out
 
 
+# ---- physics at rest ------------------------------------------------------------------------------------------------------
+
+def body_frame(body):
+    """(centre [3], rotation [3, 3]) of a pmx_edit RigidBody: R = Ry Rx Rz of its rotation (radians)"""
+    x, y, z = body.rotation
+    cx, sx, cy, sy, cz, sz = math.cos(x), math.sin(x), math.cos(y), math.sin(y), math.cos(z), math.sin(z)
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return np.array(body.position, float), Ry @ Rx @ Rz
+
+
+def _segment(body):
+    """(a, b, radius) of a sphere or capsule (a == b for a sphere)"""
+    c, R = body_frame(body)
+    if body.shape == 0:
+        return c, c, float(body.size[0])
+    half = 0.5 * float(body.size[1]) * R[:, 1]
+    return c - half, c + half, float(body.size[0])
+
+
+def _seg_seg(p1, q1, p2, q2):
+    """the closest distance between segments p1-q1 and p2-q2"""
+    d1, d2, r = q1 - p1, q2 - p2, p1 - p2
+    a, e, f = float(d1 @ d1), float(d2 @ d2), float(d2 @ r)
+    if a <= 1e-12 and e <= 1e-12:
+        return float(np.linalg.norm(r))
+    if a <= 1e-12:
+        s, t = 0.0, min(1.0, max(0.0, f / e))
+    else:
+        c = float(d1 @ r)
+        if e <= 1e-12:
+            t, s = 0.0, min(1.0, max(0.0, -c / a))
+        else:
+            b = float(d1 @ d2)
+            den = a * e - b * b
+            s = min(1.0, max(0.0, (b * f - c * e) / den)) if den > 1e-12 else 0.0
+            t = (b * s + f) / e
+            if t < 0.0:
+                t, s = 0.0, min(1.0, max(0.0, -c / a))
+            elif t > 1.0:
+                t, s = 1.0, min(1.0, max(0.0, (b - c) / a))
+    return float(np.linalg.norm((p1 + d1 * s) - (p2 + d2 * t)))
+
+
+def _point_box(p, body):
+    c, R = body_frame(body)
+    local = R.T @ (np.asarray(p, float) - c)
+    h = np.array(body.size, float)
+    q = np.clip(local, -h, h)
+    out = float(np.linalg.norm(local - q))
+    if out > 0.0:
+        return out
+    return -float(np.min(h - np.abs(local)))           # inside: minus the depth to the nearest face
+
+
+def gap(a, b, samples=21):
+    """the distance between the surfaces of two rigid bodies at rest (negative: they overlap by that much).  Spheres and
+    capsules exactly; a box against a sphere or capsule by points along the other's segment; two boxes by their corners."""
+    if a.shape == 1 and b.shape == 1:
+        c, R = body_frame(a)
+        corners = [c + R @ (np.array(sg) * np.array(a.size)) for sg in
+                   ((1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1), (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1))]
+        return min(_point_box(p, b) for p in corners + [c])
+    if a.shape == 1 or b.shape == 1:
+        box, other = (a, b) if a.shape == 1 else (b, a)
+        p, q, r = _segment(other)
+        return min(_point_box(p + (q - p) * k / (samples - 1), box) for k in range(samples)) - r
+    p1, q1, r1 = _segment(a)
+    p2, q2, r2 = _segment(b)
+    return _seg_seg(p1, q1, p2, q2) - r1 - r2
+
+
+def collide(a, b):
+    """whether two rigid bodies collide: each one's mask lets the other's group through"""
+    return bool((a.mask >> b.group) & 1) and bool((b.mask >> a.group) & 1)
+
+
+def _family(name):
+    import re
+    m = re.match(r"^(.*?)[_0-9０-９]+(?:[_0-9０-９]*)$", name)
+    return m.group(1) if m and m.group(1) else name
+
+
+def physics_report(doc, gravities=(94.0, 122.5)):
+    """the rigid bodies and joints of `doc` at rest (see the module docstring)"""
+    names = [pmx_edit.rigid_names(doc, rb)[0] for rb in doc.rigid_bodies]
+    bodies = [pmx_edit.rigid_body(rb) for rb in doc.rigid_bodies]
+    joints = pmx_edit.joints(doc)
+    hang = {}
+    for j in joints:
+        if 0 <= j.b < len(bodies) and j.b not in hang and bodies[j.b].mode != 0:
+            hang[j.b] = j
+    fam = {}
+    for i, (n, b) in enumerate(zip(names, bodies)):
+        f = fam.setdefault(_family(n), {"bodies": 0, "modes": set(), "shapes": set(), "mass": [], "linear_damping": set(),
+                                        "angular_damping": set(), "groups": set(), "collides_with": set(), "pendulum_hz": {}})
+        f["bodies"] += 1
+        f["modes"].add(pmx_edit.RIGID_MODES[b.mode])
+        f["shapes"].add(pmx_edit.RIGID_SHAPES[b.shape])
+        f["mass"].append(b.mass)
+        f["linear_damping"].add(round(b.linear_damping, 6))
+        f["angular_damping"].add(round(b.angular_damping, 6))
+        f["groups"].add(b.group)
+        f["collides_with"] |= {g for g in range(16) if (b.mask >> g) & 1}
+        if i in hang:
+            L = float(np.linalg.norm(np.array(b.position) - np.array(hang[i].position)))
+            for g in gravities:
+                f["pendulum_hz"].setdefault(str(g), []).append(math.sqrt(g / max(L, 1e-6)) / (2.0 * math.pi))
+    families = {}
+    for k, f in fam.items():
+        families[k] = {"bodies": f["bodies"], "modes": sorted(f["modes"]), "shapes": sorted(f["shapes"]),
+                       "mass": [round(min(f["mass"]), 4), round(max(f["mass"]), 4)],
+                       "linear_damping": sorted(f["linear_damping"]), "angular_damping": sorted(f["angular_damping"]),
+                       "decay_s": [round(-1.0 / math.log(max(1e-12, 1.0 - d)), 4) if d < 1.0 else 0.0 for d in sorted(f["linear_damping"])],
+                       "groups": sorted(f["groups"]), "collides_with": sorted(f["collides_with"]),
+                       "pendulum_hz": {g: [round(min(v), 3), round(max(v), 3)] for g, v in f["pendulum_hz"].items()}}
+    overlaps = []
+    for i in range(len(bodies)):
+        for j in range(i + 1, len(bodies)):
+            a, b = bodies[i], bodies[j]
+            if a.mode == 0 and b.mode == 0:
+                continue                # two bodies that follow their bones never push each other
+            if not collide(a, b):
+                continue
+            g = gap(a, b)
+            if g < 0.0:
+                overlaps.append({"a": names[i], "b": names[j], "depth": round(-g, 4)})
+    overlaps.sort(key=lambda o: -o["depth"])
+    body_like = [i for i, b in enumerate(bodies) if b.mode == 0 and b.group in (0, 1)]
+    near = {}
+    for i, b in enumerate(bodies):
+        if b.mode == 0:
+            continue
+        best = min(((gap(b, bodies[k]), k) for k in body_like), default=(None, None))
+        if best[1] is None:
+            continue
+        near[names[i]] = {"nearest": names[best[1]], "gap": round(best[0], 4), "collides": collide(b, bodies[best[1]])}
+    return {"bodies": len(bodies), "joints": len(joints), "gravities": list(gravities), "families": families,
+            "overlaps_at_rest": overlaps, "dynamic_nearest_body": near}
+
+
 # ---- the parts of Sour's Rin (and models built like her) -----------------------------------------------------------------
 
 TRUNK = ("上半身", "腰椎上部", "上半身2", "胸椎上部")
@@ -765,7 +917,18 @@ def main(argv=None):
     d.add_argument("--pick", type=int, default=4)
     d.add_argument("--frames", type=int, nargs="*", default=[])
     d.add_argument("--figures", type=int, default=0)
+    e = sub.add_parser("physics")
+    e.add_argument("model")
+    e.add_argument("--out", required=True)
+    e.add_argument("--gravity", type=float, nargs="+", default=[94.0, 122.5])
     args = ap.parse_args(argv)
+    if args.cmd == "physics":
+        rep = physics_report(pmx_edit.load(args.model), tuple(args.gravity))
+        rep["model"] = os.path.abspath(args.model)
+        _json(args.out, rep)
+        print(json.dumps({"bodies": rep["bodies"], "joints": rep["joints"], "overlaps_at_rest": len(rep["overlaps_at_rest"]),
+                          "deepest": rep["overlaps_at_rest"][:5]}, ensure_ascii=True))
+        return 0
     if args.cmd == "receivers":
         motions = {tag: vmd.load(p) for tag, p in _tagged(args.vmd, "--vmd").items()}
         rep = receivers(pmx_edit.load(args.model), motions)
