@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1918（定数 1546・引数 92・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 386（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 56。
+- 数: 全部 1921（定数 1549・引数 92・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 388（retarget 248・rig 59・踊りだけ 91）、記録の出所つき 60。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -19,7 +19,7 @@
 | 6 | 運動（遅れと堅さ、--preset human --elbow-hinge on） | motor_layer.py | 103 | 15 | 3 | 3 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R、arms.a09_elbow_wrist_L、arms.a09_elbow_wrist_R、upper.head_sudden_stops_per_min、upper.head_stop_ms | - |
 | 7 | 背骨 4 本へ配る | spine_layer.py | 9 | 1 | 0 | 0 | upper.upper_sudden_stops_per_min、upper.chest_follow | spine_check.py |
 | 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 75 | 27 | 5 | 2 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
-| 9 | 体重（順 C の balance） | balance_layer.py | 96 | 32 | 1 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
+| 9 | 体重（順 C の balance） | balance_layer.py | 99 | 34 | 2 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
@@ -533,106 +533,109 @@
 | --toes | "anatomical" |  | 1780 | the toes (足先EX): anatomical (the floor bends them, a foot on its ball stays on it until it leaves, they return over TOE_RELEASE_TAU after it, nothing bent in the air) or… |  |  |  |  |  |  |  |  |
 | --toe-reach-cm | 0.0 | cm | 1784 | a still pointed foot whose shoe hovers less than this over the floor reaches it with its toes, bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is… |  | ○ |  |  |  |  |  | retarget |
 
-## balance_layer.py（9. 体重（順 C の balance）、96）
+## balance_layer.py（9. 体重（順 C の balance）、99）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 130 |  |  |  |  |  |  |  |  |  |
-| DT | 1.0 / FPS |  | 131 |  |  |  |  |  |  |  |  |  |
-| UNIT_M | 0.08 | m | 132 | one model unit is 8 cm (the analysis pack) |  | ○ |  |  |  |  |  | retarget |
-| CM | 8.0 | cm | 133 | cm per unit |  | ○ |  |  |  |  |  | retarget |
-| G | 9.81 |  | 134 |  |  |  | ○ |  |  |  |  | retarget |
-| SUPPORT_H | 0.2 | units | 139 | units (1.6 cm, a05's FLY): a foot this low carries weight |  | ○ |  |  |  |  |  | retarget |
-| CONTACT_EPS | 0.05 | units | 140 | units (4 mm, a05): a foot on the floor (the a05 measure, the landings) |  | ○ |  |  |  |  |  | retarget |
-| CLEAR_CM | 5.0 | cm | 141 | the other foot this high: the full pull (a05's single support: 5 cm) |  | ○ |  |  |  |  |  | retarget |
-| R_BAL_CM（引数 --r-bal） | 0.6 | cm | 142 | the band about the standing sole's line: people standing on one foot keep the centre of pressure -0.32 +- 0.55 cm from the foot's long axis (Haba & Iwatsuki 2023, Table … |  | ○ |  |  |  | ○ | ○ | retarget |
-| LEAD_S（引数 --lead） | 0.15 | s | 146 | the pull ramps up this long before the foot lifts |  |  |  |  |  |  |  |  |
-| LAG_S（引数 --lag） | 0.05 | s | 147 | and down this long after it lands |  |  |  |  |  |  |  |  |
-| TRANSFER_V | 0.2 | m/s | 148 | m/s: a run whose COM moves this fast towards where the other foot lands, its XcoM past half the way there, is a step onto that foot and is not pulled (the review's crite… |  | ○ |  |  |  |  |  | retarget |
-| STILL_V_CM_S | 5.0 | cm/s | 150 | cm/s: single support whose pelvis moves slower than this on the floor for STILL_MIN_S is |  | ○ |  |  |  |  |  | retarget |
-| STILL_MIN_S | 0.3 | s | 151 | still, and pulled over the foot; elsewhere it moves (the human baseline's COM: v / w0 < 1.5 cm, a third of the foot's half width, so the XcoM stands within 1.5 cm of the… |  |  |  | ○ |  | ○ |  | dance |
-| STILL_WEIGHT | 1.0 |  | 161 | the pull's weight there, times the run's peak (10 and 30 kept the body still a little longer at the stillness's end but started the weight shift over a second early and … |  |  |  |  |  |  |  |  |
-| STILL_TAIL_S | 0.1 | s | 164 | the pull held this long after a still stretch (the foot still on the floor): the way back then starts at its end, not inside it (0.2 s left a 17 cm shift 0.5 cm short 1 … |  |  |  |  |  |  |  |  |
-| STILL_LEAD_S | 0.6 | s | 168 | a still stretch that starts inside its run is pulled from this long before it: carrying the body 9 cm at ACC_MAX (up, then down) takes 2 sqrt(0.09 / 1) = 0.6 s |  |  |  |  |  |  |  |  |
-| SUPPORT_R_CM | 4.0 | cm | 170 | a05's support of a foot: the capsule of this radius about the line from the heel point (ankle - 0.3 (toe - ankle)) to the toe; its centre half way |  | ○ |  |  |  |  |  | retarget |
-| MOS_ML_MIN_CM（引数 --mos-ml-min） | -4.2 | cm | 172 | moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways offset from the support's centre, towards the lifted foot along 下半身's side axis)… | HANDOVER 2026-10-16 balance-v2: 動きながらの片足立ちは XcoM の余裕で守る（人 −4.2 [−6.1, −3.6]、human_baseline の stance_summary） | ○ |  | ○ |  | ○ |  | retarget |
-| STANCE_WEIGHT | 30.0 |  | 178 | the pull on the XcoM to that bound where the dance is past it (as CATCH_WEIGHT) |  |  |  | ○ |  |  |  | dance |
-| ACC_MAX（引数 --acc-max） | 1.0 | m/s^2 | 180 | m/s^2 of added COM acceleration (about 9 cm of centre-of-pressure move) |  | ○ | ○ |  |  |  |  | retarget |
-| TAU_S | 0.1 | s | 181 | the minimum-jerk smoothness's time scale |  |  |  |  |  |  |  |  |
-| LAM_IN | 0.02 |  | 182 | the pull back to the dance where the pull is (relative to a full pull) |  |  |  | ○ |  |  |  | dance |
-| LAM_OUT | 0.5 |  | 183 | and elsewhere: keeps a brief step's lean short (it does not start a second early) |  |  |  |  |  |  |  |  |
-| DROP_MAX_CM（引数 --drop-max） | 2.0 | cm | 184 | the hips may go down this far for the legs to reach |  | ○ |  |  |  |  |  | retarget |
-| DROP_ACC_MAX | 0.5 | m/s^2 | 185 | m/s^2: the drop's own acceleration (a slow give of the knees) |  | ○ | ○ |  |  |  |  | retarget |
-| DROP_INSIDE_CM | 0.01 | cm | 186 | the drop for the legs' reach aims this much inside REACH_TOL_CM |  | ○ |  |  |  |  |  | retarget |
-| REACH_TOL_CM | 1.5 | cm | 187 | a leg keeps this much slack, or as much as it had: MMD's IK (saba's solve, the feet layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK ta… |  | ○ |  | ○ |  |  |  | retarget |
-| ADMM_ITERS | 2000 |  | 191 | at most; it stops when the residuals are under the tolerances (v7: about 1,650) |  |  |  | ○ |  |  |  | dance |
-| ADMM_TOL_ACC | 0.02 | m/s^2 | 192 | m/s^2 |  | ○ | ○ |  |  |  |  | retarget |
-| ADMM_TOL_REACH | 0.05 | cm | 193 | cm |  | ○ |  |  |  |  |  | retarget |
-| SET_MARGIN | 0.001 | m | 194 | m: the bounds are solved this much tighter, so the converged curve is inside the true ones |  | ○ |  |  |  |  |  | retarget |
-| REACH_NO_WORSE_M | 0.0005 | m | 195 | m: "no worse than the dance" bounds allow this much, so the dance itself (no shift) is |  | ○ |  | ○ |  |  |  | retarget |
-| RANGE_NO_WORSE_M | 0.002 | m | 196 | inside them, not on their edge (on the edge, the smallest miss of the solve could only be |  | ○ |  |  |  |  |  | retarget |
-| RANGE_LINEAR_DEG | 0.5 | deg | 197 | degrees: the thigh's range is solved this much inside (its linear bound missed by up to 0.3 degrees where the shift turns the thigh 8 degrees, 195 s of the MV) |  |  |  |  |  |  |  |  |
-| RANGE_NO_WORSE_DEG | 0.2 | deg | 199 | undone by no shift at all). A leg already past its reach: 0.5 mm (under the 1 mm of a new IK miss); a knee past 159 degrees: 2 mm along the hip-to-ankle line; a hip alre… |  |  |  | ○ |  |  |  | dance |
-| FIX_HALF | 9 | frames | 203 | frames: the half-width of the smooth cover that brings an unconverged curve inside |  |  |  |  |  |  |  |  |
-| SOLE_HALF_W_CM | 4.65 | cm | 205 | half the sole's width (young Japanese women's foot width 93.2 mm, AIST 1997-98) |  | ○ |  |  |  | ○ | ○ | retarget |
-| CATCH_MARGIN_CM | 1.0 | cm | 206 | at a landing the margin of stability (the landing foot's outer edge along the step minus the XcoM) is kept at least this: a step onto a foot placed beyond the XcoM (Hof … |  | ○ |  |  |  |  | ○ | retarget |
-| CATCH_WEIGHT | 30.0 |  | 210 | the pull on the XcoM at a landing the dance does not catch (against LAM_OUT 0.5 per frame) |  |  |  | ○ |  |  |  | dance |
-| CATCH_FREE_S | 0.2 | s | 211 | the "never away from the nearest pull" half-plane is off this long after such a landing |  |  |  |  |  |  |  |  |
-| XI_RHO | 1.0 |  | 212 | the catch block's ADMM penalty relative to the per-frame sets' (convergence only) |  |  |  |  |  |  |  |  |
-| IK_ROUNDS | 6 |  | 213 | with MMD's IK at hand: the rounds of holding back where it would newly fall short |  |  |  |  |  |  |  |  |
-| IK_MISS | 0.05 | units | 214 | units (4 mm, a05's contact): an ankle this far from its foot IK's target misses it |  | ○ |  |  |  |  |  | retarget |
-| IK_WORSE | 0.0125 | units | 215 | units (1 mm): and this much farther than in the dance: a new miss (the review's) |  | ○ |  | ○ |  |  |  | retarget |
-| IK_HALF | 2 | frames | 216 | frames on each side of a new miss whose shift and dips are halved in a round |  |  |  |  |  |  |  |  |
-| KEPT_MIN | 0.02 |  | 217 | a foot carried 98 % and more: its leg sets no bound on the shift |  |  |  |  |  |  |  |  |
-| FREE_M | 1.0e3 | m | 218 | m: the radius (or slab side) of a bound that does not bound |  | ○ |  |  |  |  |  | retarget |
-| CARRY_HALF | 6 | frames | 219 | frames: the half-width of the carry's smoothing (it changes over about 0.4 s) |  |  |  |  |  |  |  |  |
-| G_MMD | 98.0 | units/s^2 | 221 | units/s^2: MMD's gravity as saba, three.js, MMDAgent-EX and babylon-mmd all have it (9.8 x 10; MMD's own default is not documented; the skirt research, question 4) | 再実装（saba・three.js・MMDAgent-EX・babylon-mmd）の 9.8 × 10。MMD 9.32 で測ると窓の値 1 あたり 9.6 単位/s²（窓 9.8 → 94。README の pmm_gravity の… | ○ | ○ |  |  |  |  | rig |
-| DOWN_ACC_MAX（引数 --down-acc-max） | 122.0 | units/s^2 | 223 | units/s^2: the pelvis's downward acceleration, the dance's and the layer's together, at most this: the real g at 8 cm a unit (122.5). A body the floor holds up cannot fa… | HANDOVER 2026-10-16 balance-v2 の取り込み: 上限 122（1 単位 8 cm の重力 122.5。天井 70 のスカートで 99.4・213.4・253.6 秒の下着 0）。78 は拍の窪み 38 か所を浅… | ○ | ○ | ○ |  | ○ |  | retarget |
-| SPIKE_T | 0.15 | m/s | 236 | m/s: a step of センター's path whose speed is above (or below) both neighbours' by more than this is a 1-frame spike, a jolt or a hitch (a08: s2_spectrum.spikes, T_SPIKE of … |  | ○ |  |  |  |  |  | retarget |
-| SPIKE_PER_MIN（引数 --spike-per-min） | 7.2 |  | 238 | left at most, a minute, the largest taken first: human dancers have 7.2 [2.9, 10.9] (the human baseline, FineDance K-pop / choreography / jazz, 62 sequences); the traced… |  |  |  | ○ |  | ○ |  | dance |
-| SPIKE_KINK_SHARE | 0.95 |  | 240 | around a spike taken the path's kinks at most this share of SPIKE_T (the speed changes no more than the velocity does: ／s(k) - s(k-1)／ <= ／v(k) - v(k-1)／) |  |  |  |  |  |  |  |  |
-| DESPIKE_XZ_CM | 0.5 | cm | 242 | a despiked frame moves at most this far on the floor (the legs' reach is solved before it) |  | ○ |  |  |  |  |  | retarget |
-| DESPIKE_DOWN_CM | 1.5 | cm | 243 | and at most this far down |  | ○ |  |  |  |  |  | retarget |
-| DESPIKE_UP_CM | 0.75 | cm | 244 | and up (and never past the legs' reach). On the MV (on what the vertical fix leaves, 161 spikes): 1 / 0.5 / 0.3 cm leave 47 (10.9 a minute), 1.5 / 0.75 / 0.5 leave 38 (8… |  | ○ |  |  |  |  |  | retarget |
-| DESPIKE_SOFT | 100.0 |  | 247 | the kink bound's weight (against 1 for the change): where the box cannot meet it, smaller |  |  |  |  |  |  |  |  |
-| DESPIKE_HALF | 10 | frames | 248 | frames each side of a bounded kink that may move with it |  |  |  |  |  |  |  |  |
-| DESPIKE_ROUNDS | 8 |  | 249 |  |  |  |  |  |  |  |  |  |
-| DESPIKE_ITERS | 1500 |  | 250 |  |  |  |  |  |  |  |  |  |
-| DESPIKE_PASSES（引数 --despike-passes） | 3 |  | 251 | (1: the layer before 2026-10-16; --despike-passes) | HANDOVER 2026-10-17 balance-v3: 突起のならしは最大 3 回（11.2 → 8.5 回/分） |  |  |  |  |  |  |  |
-| DESPIKE_AIR | 1.0 |  | 252 | the box in the air (no leg reaches a floor there): order C of the MV kept 11.2 spikes a minute with the floor's box once the air kept the dance's fall (10.7 with 122 the… |  |  |  | ○ |  |  |  | dance |
-| DIP_DEG（引数 --dip-deg） | 15.0 | deg | 255 | the knee's extra bend on a landing that takes the weight, from the heel (walking: 1-3 -> |  |  |  |  |  |  |  |  |
-| DIP_PEAK_S | 0.13 | s | 256 | 17 degrees at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm) |  |  |  |  |  |  | ○ |  |
-| DIP_DEG_FLAT | 12.0 |  | 257 | the foot flat (level walking 6 -> 18 degrees at 14 % of the cycle; De Pieri et al. 2022) |  |  |  |  |  |  |  |  |
-| DIP_DEG_FORE | 9.0 |  | 258 | from the forefoot: the knee is already bent and the ankle takes more (toe walking 22 -> 30 degrees, the ankle 11 degrees up, De Pieri et al. 2022; the weight acceptance … |  |  |  |  |  |  |  |  |
-| PITCH_KIND_DEG | 4.0 | deg | 261 | the toe-IK-to-ankle-IK line pitched this much from its rest: forefoot / heel first (the feet layer's HEEL_UP_DEG) |  |  |  |  |  |  |  |  |
-| DIP_END_S | 0.4 | s | 263 |  |  |  |  |  |  |  |  |  |
-| DIP_MAX_CM | 2.0 | cm | 264 | (2 cm in 0.13 s: the hips accelerate at most about 6 m/s^2) |  | ○ |  |  |  |  |  | retarget |
-| DIP_WINDOW_S | 0.3 | s | 265 | the other foot lifts within this after the landing: the landing takes the weight |  |  |  |  |  |  |  |  |
-| GAP | 4 |  | 266 | a05's swing: at least 4 frames off the floor... |  |  |  |  |  |  |  |  |
-| SWING_MIN_H | 0.2 |  | 267 | ...in which the foot rose at least 1.6 cm |  |  |  |  |  |  |  |  |
-| HIP_ADDUCTION_DEG | (20.0, 22.0) | deg | 269 | ---- the reference ranges (stage 3 research, the Japanese reference ROM 1995 / 2022 and the upper proposal) ----- |  |  |  |  |  |  | ○ |  |
-| HIP_ABDUCTION_DEG | 45.0 | deg | 270 |  |  |  |  |  |  |  |  |  |
-| KNEE_FLEXION_DEG | (130.0, 159.0) | deg | 271 |  |  |  |  |  |  |  |  |  |
-| KNEE_GIVE_DEG | 12.0 | deg | 272 | the reach's drop bends a leg on the floor by at most this much more |  |  |  |  |  |  |  |  |
-| KNEE_MIN_DEG | 5.0 | deg | 273 | a leg on the floor keeps its knee bent at least this much (the two-bone knee from the hip to the foot IK's target, a05's measure): human dancers never stand on a straigh… |  |  |  | ○ |  | ○ |  | dance |
-| LIFT_FOLD_DEG | 5.0 | deg | 278 | a lifted leg's knee folds at most this much past the dance's (195 s of the MV: the heel kicked up behind from 3 to 60 cm in 0.2 s, faster than the carry comes in; 150 ->… |  |  |  | ○ |  |  |  | dance |
-| SEGMENTS.head | (6.68, 48.41) |  | 284 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
-| SEGMENTS.middle_trunk | (14.65, 45.12) |  | 284 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
-| SEGMENTS.upper_trunk | (15.45, 50.50) |  | 284 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
-| SEGMENTS.forearm | (1.38, 45.59) |  | 285 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.hand | (0.56, 34.27) |  | 285 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.lower_trunk | (12.47, 49.20) |  | 285 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.upper_arm | (2.55, 57.54) |  | 285 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.foot | (1.29, 40.14) |  | 286 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.shank | (4.81, 43.52) |  | 286 |  |  |  |  |  |  |  |  |  |
-| SEGMENTS.thigh | (14.78, 36.12) |  | 286 |  |  |  |  |  |  |  |  |  |
-| HEEL_BACK | 0.3 |  | 287 | the heel this share of the ankle-to-toe line behind the ankle (a05) |  |  |  |  |  |  |  |  |
-| q_stats(qs) | (0.5, 0.9, 0.99) |  | 521 |  |  |  |  |  |  |  |  |  |
-| D2_STENCIL | (1.0, -2.0, 1.0) |  | 592 |  |  |  |  |  |  |  |  |  |
-| D3_STENCIL | (-1.0, 3.0, -3.0, 1.0) |  | 593 |  |  |  |  |  |  |  |  |  |
-| project(rounds) | 30 |  | 831 |  |  |  |  |  |  |  |  |  |
-| AIR_RAMP | 3 | frames | 1436 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
-| AIR_MIN | 4 | frames | 1437 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
+| FPS | 30.0 |  | 132 |  |  |  |  |  |  |  |  |  |
+| DT | 1.0 / FPS |  | 133 |  |  |  |  |  |  |  |  |  |
+| UNIT_M | 0.08 | m | 134 | one model unit is 8 cm (the analysis pack) |  | ○ |  |  |  |  |  | retarget |
+| CM | 8.0 | cm | 135 | cm per unit |  | ○ |  |  |  |  |  | retarget |
+| G | 9.81 |  | 136 |  |  |  | ○ |  |  |  |  | retarget |
+| SUPPORT_H | 0.2 | units | 141 | units (1.6 cm, a05's FLY): a foot this low carries weight |  | ○ |  |  |  |  |  | retarget |
+| CONTACT_EPS | 0.05 | units | 142 | units (4 mm, a05): a foot on the floor (the a05 measure, the landings) |  | ○ |  |  |  |  |  | retarget |
+| CLEAR_CM | 5.0 | cm | 143 | the other foot this high: the full pull (a05's single support: 5 cm) |  | ○ |  |  |  |  |  | retarget |
+| R_BAL_CM（引数 --r-bal） | 0.6 | cm | 144 | the band about the standing sole's line: people standing on one foot keep the centre of pressure -0.32 +- 0.55 cm from the foot's long axis (Haba & Iwatsuki 2023, Table … |  | ○ |  |  |  | ○ | ○ | retarget |
+| LEAD_S（引数 --lead） | 0.15 | s | 148 | the pull ramps up this long before the foot lifts |  |  |  |  |  |  |  |  |
+| LAG_S（引数 --lag） | 0.05 | s | 149 | and down this long after it lands |  |  |  |  |  |  |  |  |
+| TRANSFER_V | 0.2 | m/s | 150 | m/s: a run whose COM moves this fast towards where the other foot lands, its XcoM past half the way there, is a step onto that foot and is not pulled (the review's crite… |  | ○ |  |  |  |  |  | retarget |
+| STILL_V_CM_S | 5.0 | cm/s | 152 | cm/s: single support whose pelvis moves slower than this on the floor for STILL_MIN_S is |  | ○ |  |  |  |  |  | retarget |
+| STILL_MIN_S | 0.3 | s | 153 | still, and pulled over the foot; elsewhere it moves (the human baseline's COM: v / w0 < 1.5 cm, a third of the foot's half width, so the XcoM stands within 1.5 cm of the… |  |  |  | ○ |  | ○ |  | dance |
+| STILL_WEIGHT | 1.0 |  | 163 | the pull's weight there, times the run's peak (10 and 30 kept the body still a little longer at the stillness's end but started the weight shift over a second early and … |  |  |  |  |  |  |  |  |
+| STILL_TAIL_S | 0.1 | s | 166 | the pull held this long after a still stretch (the foot still on the floor): the way back then starts at its end, not inside it (0.2 s left a 17 cm shift 0.5 cm short 1 … |  |  |  |  |  |  |  |  |
+| STILL_LEAD_S | 0.6 | s | 170 | a still stretch that starts inside its run is pulled from this long before it: carrying the body 9 cm at ACC_MAX (up, then down) takes 2 sqrt(0.09 / 1) = 0.6 s |  |  |  |  |  |  |  |  |
+| SUPPORT_R_CM | 4.0 | cm | 172 | a05's support of a foot: the capsule of this radius about the line from the heel point (ankle - 0.3 (toe - ankle)) to the toe; its centre half way |  | ○ |  |  |  |  |  | retarget |
+| MOS_ML_MIN_CM（引数 --mos-ml-min） | -4.2 | cm | 174 | moving single support: the XcoM's sideways margin (SUPPORT_R_CM less the XcoM's sideways offset from the support's centre, towards the lifted foot along 下半身's side axis)… | HANDOVER 2026-10-16 balance-v2: 動きながらの片足立ちは XcoM の余裕で守る（人 −4.2 [−6.1, −3.6]、human_baseline の stance_summary） | ○ |  | ○ |  | ○ |  | retarget |
+| STANCE_WEIGHT | 30.0 |  | 180 | the pull on the XcoM to that bound where the dance is past it (as CATCH_WEIGHT) |  |  |  | ○ |  |  |  | dance |
+| ACC_MAX（引数 --acc-max） | 1.0 | m/s^2 | 182 | m/s^2 of added COM acceleration (about 9 cm of centre-of-pressure move) |  | ○ | ○ |  |  |  |  | retarget |
+| TAU_S | 0.1 | s | 183 | the minimum-jerk smoothness's time scale |  |  |  |  |  |  |  |  |
+| LAM_IN | 0.02 |  | 184 | the pull back to the dance where the pull is (relative to a full pull) |  |  |  | ○ |  |  |  | dance |
+| LAM_OUT | 0.5 |  | 185 | and elsewhere: keeps a brief step's lean short (it does not start a second early) |  |  |  |  |  |  |  |  |
+| DROP_MAX_CM（引数 --drop-max） | 2.0 | cm | 186 | the hips may go down this far for the legs to reach |  | ○ |  |  |  |  |  | retarget |
+| DROP_ACC_MAX | 0.5 | m/s^2 | 187 | m/s^2: the drop's own acceleration (a slow give of the knees) |  | ○ | ○ |  |  |  |  | retarget |
+| DROP_INSIDE_CM | 0.01 | cm | 188 | the drop for the legs' reach aims this much inside REACH_TOL_CM |  | ○ |  |  |  |  |  | retarget |
+| REACH_TOL_CM | 1.5 | cm | 189 | a leg keeps this much slack, or as much as it had: MMD's IK (saba's solve, the feet layer's tools/leg_ik.py) leaves a foot on the floor more than 4 mm short of its IK ta… | HANDOVER 2026-10-14 balance の査読: 足ＩＫ 40 回の MMD の IK は余り 1 cm 未満で 70〜100 %、1.5〜4 cm で 2〜3 % 届かない。v11bal 2026-10-17: 足ＩＫ … | ○ |  | ○ | ○ |  |  | retarget・rig |
+| REACH_FULL_LOOPS | 120 |  | 194 | a model whose leg IKs run this many loops and more keeps REACH_TOL_FULL_CM instead | v11bal 2026-10-17: 余り 0〜0.25 cm で届かないのは 40 回 89 %・60 回 83 %・80 回 28 %・120 回以上 0 % |  |  |  |  |  |  |  |
+| REACH_TOL_FULL_CM | 0.5 | cm | 195 | (reach_tol_cm): the v11 chain's floor frames with 0-0.25 / 0.25-0.5 / 0.5-0.75 / 0.75-1 / 1-1.5 cm of slack, MMD's IK more than 4 mm short on 89 / 81 / 76 / 67 / 17 % of… | v11bal 2026-10-17: 足ＩＫ 120 回以上の模型（rig の写し 400 回）は余り 0〜1.5 cm の床のコマで MMD の IK が 4 mm より届かないコマ 0 → 余り 0.5 cm（1.5 cm のままでは… | ○ |  | ○ |  |  |  | retarget |
+| ADMM_ITERS | 2000 |  | 199 | at most; it stops when the residuals are under the tolerances (v7: about 1,650) |  |  |  | ○ |  |  |  | dance |
+| ADMM_TOL_ACC | 0.02 | m/s^2 | 200 | m/s^2 |  | ○ | ○ |  |  |  |  | retarget |
+| ADMM_TOL_REACH | 0.05 | cm | 201 | cm |  | ○ |  |  |  |  |  | retarget |
+| SET_MARGIN | 0.001 | m | 202 | m: the bounds are solved this much tighter, so the converged curve is inside the true ones |  | ○ |  |  |  |  |  | retarget |
+| REACH_NO_WORSE_M | 0.0005 | m | 203 | m: "no worse than the dance" bounds allow this much, so the dance itself (no shift) is |  | ○ |  | ○ |  |  |  | retarget |
+| RANGE_NO_WORSE_M | 0.002 | m | 204 | inside them, not on their edge (on the edge, the smallest miss of the solve could only be |  | ○ |  |  |  |  |  | retarget |
+| RANGE_LINEAR_DEG | 0.5 | deg | 205 | degrees: the thigh's range is solved this much inside (its linear bound missed by up to 0.3 degrees where the shift turns the thigh 8 degrees, 195 s of the MV) |  |  |  |  |  |  |  |  |
+| RANGE_NO_WORSE_DEG | 0.2 | deg | 207 | undone by no shift at all). A leg already past its reach: 0.5 mm (under the 1 mm of a new IK miss); a knee past 159 degrees: 2 mm along the hip-to-ankle line; a hip alre… |  |  |  | ○ |  |  |  | dance |
+| FIX_HALF | 9 | frames | 211 | frames: the half-width of the smooth cover that brings an unconverged curve inside |  |  |  |  |  |  |  |  |
+| SOLE_HALF_W_CM | 4.65 | cm | 213 | half the sole's width (young Japanese women's foot width 93.2 mm, AIST 1997-98) |  | ○ |  |  |  | ○ | ○ | retarget |
+| CATCH_MARGIN_CM | 1.0 | cm | 214 | at a landing the margin of stability (the landing foot's outer edge along the step minus the XcoM) is kept at least this: a step onto a foot placed beyond the XcoM (Hof … |  | ○ |  |  |  |  | ○ | retarget |
+| CATCH_WEIGHT | 30.0 |  | 218 | the pull on the XcoM at a landing the dance does not catch (against LAM_OUT 0.5 per frame) |  |  |  | ○ |  |  |  | dance |
+| CATCH_FREE_S | 0.2 | s | 219 | the "never away from the nearest pull" half-plane is off this long after such a landing |  |  |  |  |  |  |  |  |
+| CATCH_HOLD_MAX_CM | 8.0 | cm | 220 | a landing the dance misses by more than this (its margin under CATCH_MARGIN_CM less this) is a body running past the foot: it is not held back (nor bounded), the dance's… | v11bal 2026-10-17: v11 の鎖で受け止めを 9.8・10.0・27.1 cm 外す着地を引き戻すと体を 10〜22 cm ずらし解き方が収まらない（195・200 秒の ZMP の外れ）→ 8 cm を越えて外す着地は… | ○ | ○ | ○ |  |  |  | retarget |
+| XI_RHO | 1.0 |  | 228 | the catch block's ADMM penalty relative to the per-frame sets' (convergence only) |  |  |  |  |  |  |  |  |
+| IK_ROUNDS | 6 |  | 229 | with MMD's IK at hand: the rounds of holding back where it would newly fall short |  |  |  |  |  |  |  |  |
+| IK_MISS | 0.05 | units | 230 | units (4 mm, a05's contact): an ankle this far from its foot IK's target misses it |  | ○ |  |  |  |  |  | retarget |
+| IK_WORSE | 0.0125 | units | 231 | units (1 mm): and this much farther than in the dance: a new miss (the review's) |  | ○ |  | ○ |  |  |  | retarget |
+| IK_HALF | 2 | frames | 232 | frames on each side of a new miss whose shift and dips are halved in a round |  |  |  |  |  |  |  |  |
+| KEPT_MIN | 0.02 |  | 233 | a foot carried 98 % and more: its leg sets no bound on the shift |  |  |  |  |  |  |  |  |
+| FREE_M | 1.0e3 | m | 234 | m: the radius (or slab side) of a bound that does not bound |  | ○ |  |  |  |  |  | retarget |
+| CARRY_HALF | 6 | frames | 235 | frames: the half-width of the carry's smoothing (it changes over about 0.4 s) |  |  |  |  |  |  |  |  |
+| G_MMD | 98.0 | units/s^2 | 237 | units/s^2: MMD's gravity as saba, three.js, MMDAgent-EX and babylon-mmd all have it (9.8 x 10; MMD's own default is not documented; the skirt research, question 4) | 再実装（saba・three.js・MMDAgent-EX・babylon-mmd）の 9.8 × 10。MMD 9.32 で測ると窓の値 1 あたり 9.6 単位/s²（窓 9.8 → 94。README の pmm_gravity の… | ○ | ○ |  |  |  |  | rig |
+| DOWN_ACC_MAX（引数 --down-acc-max） | 122.0 | units/s^2 | 239 | units/s^2: the pelvis's downward acceleration, the dance's and the layer's together, at most this: the real g at 8 cm a unit (122.5). A body the floor holds up cannot fa… | HANDOVER 2026-10-16 balance-v2 の取り込み: 上限 122（1 単位 8 cm の重力 122.5。天井 70 のスカートで 99.4・213.4・253.6 秒の下着 0）。78 は拍の窪み 38 か所を浅… | ○ | ○ | ○ |  | ○ |  | retarget |
+| SPIKE_T | 0.15 | m/s | 252 | m/s: a step of センター's path whose speed is above (or below) both neighbours' by more than this is a 1-frame spike, a jolt or a hitch (a08: s2_spectrum.spikes, T_SPIKE of … |  | ○ |  |  |  |  |  | retarget |
+| SPIKE_PER_MIN（引数 --spike-per-min） | 7.2 |  | 254 | left at most, a minute, the largest taken first: human dancers have 7.2 [2.9, 10.9] (the human baseline, FineDance K-pop / choreography / jazz, 62 sequences); the traced… |  |  |  | ○ |  | ○ |  | dance |
+| SPIKE_KINK_SHARE | 0.95 |  | 256 | around a spike taken the path's kinks at most this share of SPIKE_T (the speed changes no more than the velocity does: ／s(k) - s(k-1)／ <= ／v(k) - v(k-1)／) |  |  |  |  |  |  |  |  |
+| DESPIKE_XZ_CM | 0.5 | cm | 258 | a despiked frame moves at most this far on the floor (the legs' reach is solved before it) |  | ○ |  |  |  |  |  | retarget |
+| DESPIKE_DOWN_CM | 1.5 | cm | 259 | and at most this far down |  | ○ |  |  |  |  |  | retarget |
+| DESPIKE_UP_CM | 0.75 | cm | 260 | and up (and never past the legs' reach). On the MV (on what the vertical fix leaves, 161 spikes): 1 / 0.5 / 0.3 cm leave 47 (10.9 a minute), 1.5 / 0.75 / 0.5 leave 38 (8… |  | ○ |  |  |  |  |  | retarget |
+| DESPIKE_SOFT | 100.0 |  | 263 | the kink bound's weight (against 1 for the change): where the box cannot meet it, smaller |  |  |  |  |  |  |  |  |
+| DESPIKE_HALF | 10 | frames | 264 | frames each side of a bounded kink that may move with it |  |  |  |  |  |  |  |  |
+| DESPIKE_ROUNDS | 8 |  | 265 |  |  |  |  |  |  |  |  |  |
+| DESPIKE_ITERS | 1500 |  | 266 |  |  |  |  |  |  |  |  |  |
+| DESPIKE_PASSES（引数 --despike-passes） | 3 |  | 267 | (1: the layer before 2026-10-16; --despike-passes) | HANDOVER 2026-10-17 balance-v3: 突起のならしは最大 3 回（11.2 → 8.5 回/分） |  |  |  |  |  |  |  |
+| DESPIKE_AIR | 1.0 |  | 268 | the box in the air (no leg reaches a floor there): order C of the MV kept 11.2 spikes a minute with the floor's box once the air kept the dance's fall (10.7 with 122 the… |  |  |  | ○ |  |  |  | dance |
+| DIP_DEG（引数 --dip-deg） | 15.0 | deg | 271 | the knee's extra bend on a landing that takes the weight, from the heel (walking: 1-3 -> |  |  |  |  |  |  |  |  |
+| DIP_PEAK_S | 0.13 | s | 272 | 17 degrees at 0.129 s after contact; Winter 2009 Table A.1, a woman of 156 cm) |  |  |  |  |  |  | ○ |  |
+| DIP_DEG_FLAT | 12.0 |  | 273 | the foot flat (level walking 6 -> 18 degrees at 14 % of the cycle; De Pieri et al. 2022) |  |  |  |  |  |  |  |  |
+| DIP_DEG_FORE | 9.0 |  | 274 | from the forefoot: the knee is already bent and the ankle takes more (toe walking 22 -> 30 degrees, the ankle 11 degrees up, De Pieri et al. 2022; the weight acceptance … |  |  |  |  |  |  |  |  |
+| PITCH_KIND_DEG | 4.0 | deg | 277 | the toe-IK-to-ankle-IK line pitched this much from its rest: forefoot / heel first (the feet layer's HEEL_UP_DEG) |  |  |  |  |  |  |  |  |
+| DIP_END_S | 0.4 | s | 279 |  |  |  |  |  |  |  |  |  |
+| DIP_MAX_CM | 2.0 | cm | 280 | (2 cm in 0.13 s: the hips accelerate at most about 6 m/s^2) |  | ○ |  |  |  |  |  | retarget |
+| DIP_WINDOW_S | 0.3 | s | 281 | the other foot lifts within this after the landing: the landing takes the weight |  |  |  |  |  |  |  |  |
+| GAP | 4 |  | 282 | a05's swing: at least 4 frames off the floor... |  |  |  |  |  |  |  |  |
+| SWING_MIN_H | 0.2 |  | 283 | ...in which the foot rose at least 1.6 cm |  |  |  |  |  |  |  |  |
+| HIP_ADDUCTION_DEG | (20.0, 22.0) | deg | 285 | ---- the reference ranges (stage 3 research, the Japanese reference ROM 1995 / 2022 and the upper proposal) ----- |  |  |  |  |  |  | ○ |  |
+| HIP_ABDUCTION_DEG | 45.0 | deg | 286 |  |  |  |  |  |  |  |  |  |
+| KNEE_FLEXION_DEG | (130.0, 159.0) | deg | 287 |  |  |  |  |  |  |  |  |  |
+| KNEE_GIVE_DEG | 12.0 | deg | 288 | the reach's drop bends a leg on the floor by at most this much more |  |  |  |  |  |  |  |  |
+| KNEE_MIN_DEG | 5.0 | deg | 289 | a leg on the floor keeps its knee bent at least this much (the two-bone knee from the hip to the foot IK's target, a05's measure): human dancers never stand on a straigh… |  |  |  | ○ |  | ○ |  | dance |
+| LIFT_FOLD_DEG | 5.0 | deg | 294 | a lifted leg's knee folds at most this much past the dance's (195 s of the MV: the heel kicked up behind from 3 to 60 cm in 0.2 s, faster than the carry comes in; 150 ->… |  |  |  | ○ |  |  |  | dance |
+| SEGMENTS.head | (6.68, 48.41) |  | 300 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
+| SEGMENTS.middle_trunk | (14.65, 45.12) |  | 300 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
+| SEGMENTS.upper_trunk | (15.45, 50.50) |  | 300 | de Leva P (1996) J Biomech 29:1223-1230, Table 4, females: mass %, CM % from the first end (read in the original: _spike/out/stage2/motor/work/deleva1996_table4_text.txt… |  |  |  |  |  |  |  |  |
+| SEGMENTS.forearm | (1.38, 45.59) |  | 301 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.hand | (0.56, 34.27) |  | 301 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.lower_trunk | (12.47, 49.20) |  | 301 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.upper_arm | (2.55, 57.54) |  | 301 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.foot | (1.29, 40.14) |  | 302 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.shank | (4.81, 43.52) |  | 302 |  |  |  |  |  |  |  |  |  |
+| SEGMENTS.thigh | (14.78, 36.12) |  | 302 |  |  |  |  |  |  |  |  |  |
+| HEEL_BACK | 0.3 |  | 303 | the heel this share of the ankle-to-toe line behind the ankle (a05) |  |  |  |  |  |  |  |  |
+| q_stats(qs) | (0.5, 0.9, 0.99) |  | 555 |  |  |  |  |  |  |  |  |  |
+| D2_STENCIL | (1.0, -2.0, 1.0) |  | 626 |  |  |  |  |  |  |  |  |  |
+| D3_STENCIL | (-1.0, 3.0, -3.0, 1.0) |  | 627 |  |  |  |  |  |  |  |  |  |
+| project(rounds) | 30 |  | 865 |  |  |  |  |  |  |  |  |  |
+| AIR_RAMP | 3 | frames | 1478 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
+| AIR_MIN | 4 | frames | 1479 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
 
 ## contact_layer.py（11. 接地の計画（枝 contact、査読中）、61）
 
