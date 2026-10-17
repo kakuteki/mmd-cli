@@ -806,6 +806,9 @@ EASE = 3                        # frames a correction takes to come in and to go
 TOUCH_FLOOR = 0.25              # units (2 cm)
 TOUCH_RISE = 0.03               # units a frame (7 cm/s)
 TOUCH_MIN = 3
+TOUCH_PITCH_MAX = 20.0          # degrees: the most such a foot's pitch is changed from the source's to reach the floor (the
+                                # ankle comes down the rest, within FLAT_LIFT_MAX): a foot lifting off is not flicked down
+                                # (the song's 86.07 s pitched 50 degrees for one frame without it)
 HEEL_BACK = 0.3                 # without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle
 SHOE = ("足首", "足首D", "足先EX", "つま先")
 
@@ -1058,6 +1061,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -np.maximum(p0[sel], 0.0), MAX_PITCH_DEG - p0[sel]
                     else:
                         lo, hi = -MAX_PITCH_DEG - p0[sel], -np.minimum(p0[sel], 0.0)
+                    lo, hi = np.maximum(lo, -TOUCH_PITCH_MAX), np.minimum(hi, TOUCH_PITCH_MAX)
                     d[sel], low[sel] = solve_pitch(A[idx[sel]], base[sel], shell_t, floor_t, lo, hi)
                 flat = np.abs(p0) <= PITCH_FLAT_DEG
                 if np.any(flat):

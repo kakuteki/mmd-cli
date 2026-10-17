@@ -340,6 +340,28 @@ class SpinTest(unittest.TestCase):
         np.testing.assert_allclose(ik_out[:, [0, 2]], ik_ref[:, [0, 2]], atol=1e-4)                     # the foot's path
 
 
+class SpinPitchTest(unittest.TestCase):
+    """the spinning toe of SpinTest left 1.9 cm over the floor: Rin's shorter foot reaches it only pitched 25 degrees past
+    the source's; the pitch changes at most TOUCH_PITCH_MAX from the source's and the ankle comes down the rest (a foot
+    lifting off is not flicked down: the song's 86.07 s pitched 50 degrees for one frame)"""
+
+    def test_a_moving_foots_pitch_stays_near_the_sources(self):
+        l = MIKU["足首"][2] - MIKU["つま先"][2]
+        h = MIKU["足首"][1] - MIKU["つま先"][1]
+        th = math.radians(10.0)
+        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.24            # the source's toe 1.9 cm over its floor
+        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+        spin = [key("全ての親", f, axis_angle((0.0, 1.0, 0.0), 24.0 * f)) for f in range(0, 21)]
+        m = motion(*spin, key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(0.0, rise, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False}).motion
+        leg = legs(RIN_SHOE_DATA, res, range(0, 21))["左"]
+        self.assertLess(float(np.abs(retarget.foot_pitch(leg["q_foot"]) - 10.0).max()), retarget.TOUCH_PITCH_MAX + 0.5)
+        toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
+        self.assertLess(float(np.abs(foot_point(leg, toe_off)[:, 1] - RIN_SHOE["sole"]).max()), 0.0125)
+
+
 RIN_SPRING = dict(RIN_SHOE, spring=0.15)          # the sole's front 4 of 12 rows turned up, the toe 1.2 cm
 RIN_SPRING_DATA = humanoid_bytes(RIN, RIN_BLOBS, twist_axis=True, name="rin-spring", shoe=RIN_SPRING)
 
