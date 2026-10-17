@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 1918（定数 1546・引数 92・関数の既定 280。定数を既定にする引数 34 は定数の行に書き、数えない）、見直しの印 386（retarget 246・rig 58・踊りだけ 91）、記録の出所つき 56。
+- 数: 全部 1920（定数 1548・引数 92・関数の既定 280。定数を既定にする引数 35 は定数の行に書き、数えない）、見直しの印 388（retarget 247・rig 60・踊りだけ 91）、記録の出所つき 58。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -23,7 +23,7 @@
 | 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 75 | 27 | 5 | 2 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
 | 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 61 | 23 | 1 | 5 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
-| 13 | 手と指 | hand_layer.py | 149 | 11 | 8 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R | - |
+| 13 | 手と指、触れの層（v11arms） | hand_layer.py・touch_layer.py | 151 | 12 | 10 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.contacts_lost_runs、spikes.wrist_R_per_min、spikes.wrist_L_per_min、arms.wrist_8hz_pct | retarget_check.py |
 | 14 | 視線 | eye_gaze.py | 103 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 81 | 0 | 2 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
@@ -744,7 +744,7 @@
 | BANDS.4-8Hz | (4.0, 8.0) |  | 716 |  |  |  |  |  |  |  |  |  |
 | WELCH_N | 60 | frames | 717 | frames (2 s Hann windows, half overlap) |  |  |  |  |  |  |  |  |
 
-## hand_layer.py（13. 手と指、149）
+## hand_layer.py（13. 手と指、触れの層（v11arms）、150）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -862,41 +862,48 @@
 | FIST_WRIST.flexion | 0.73 * 77.6 |  | 587 | a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free hand's active palmar flexion and ulnar deviation (Gracia… |  |  |  |  |  |  | ○ |  |
 | FIST_WRIST.ulnar | 0.89 * 33.4 |  | 587 | a fist takes away palmar flexion and ulnar deviation (Gehrmann 2008: 0.73 and 0.89 of the free hand's); the free hand's active palmar flexion and ulnar deviation (Gracia… |  |  |  |  |  |  | ○ |  |
 | CONTACT_MM.chest | (60.0, 90.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
-| CONTACT_MM.face | (70.0, 100.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … | 手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値 | ○ |  |  |  |  | ○ | retarget・rig |
+| CONTACT_MM.face | (70.0, 100.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … | 手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値。v11arms（10-17）: 顔の前はこのまま（目から）。頭の横・上に添えた手は目から 125〜148 mm でこ… | ○ |  |  |  |  | ○ | retarget・rig |
 | CONTACT_MM.other | (35.0, 60.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
 | CONTACT_MM.waist | (80.0, 110.0) | mm | 592 | where the hand touches the face, the body or the other arm and hand, the relaxed curl and the passive lag are left out (what the fingers touch holds them; Varghese 2020 … |  | ○ |  |  |  |  | ○ | retarget |
 | CONTACT_PAD | 4 |  | 593 |  |  |  |  |  |  |  |  |  |
-| FOLLOW_SCALE（引数 --follow-scale） | 0.5 |  | 607 | the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive body's spring and damper (its omega and zeta between the … |  |  |  | ○ | ○ | ○ | ○ | rig |
-| HOLD_DEG_S | 5.0 | deg/s | 615 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
-| HOLD_MIN | 4 |  | 615 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
-| HOLD_EXIT | 2 |  | 616 |  |  |  |  |  |  |  |  |  |
-| HOLD_RAMP | 3 |  | 616 |  |  |  |  |  |  |  |  |  |
-| KIME_BEAT | 2 |  | 616 |  |  |  |  |  |  |  |  |  |
-| KIME_LEAD | 3 |  | 616 |  |  |  |  |  |  |  |  |  |
-| KIME_RAMP | 4 |  | 616 |  |  |  |  |  |  |  |  |  |
-| KIME_STIFFNESS | 4.0 |  | 617 |  |  |  |  |  |  |  |  |  |
-| _r(n) | 2 |  | 661 |  |  |  |  |  |  |  |  |  |
-| REACH.band | 5.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.damping | 1e-6 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.h | 0.01 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.iterations | 16 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.reg | 0.05 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.rom | 1.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| REACH.step_max | 15.0 |  | 804 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
-| MM_PER_UNIT | UNIT_M * 1000.0 |  | 805 |  |  |  |  |  |  |  |  |  |
-| order(scale) | 1.0 |  | 1005 |  |  |  |  |  |  |  |  |  |
-| transit(scale) | 1.0 |  | 1240 |  |  |  |  |  |  |  |  |  |
-| transit(seed) | 0 |  | 1240 |  |  |  |  |  |  |  |  |  |
-| a09_lags(maxlag) | 6 |  | 1571 |  |  |  |  |  |  |  |  |  |
-| a09_lags(step) | 15 |  | 1571 |  |  |  |  |  |  |  |  |  |
-| a09_lags(win) | 60 |  | 1571 |  |  |  |  |  |  |  |  |  |
-| shape_changes(min_change) | 20.0 |  | 1888 |  |  |  |  |  |  |  |  |  |
-| shape_changes(still) | 1.0 |  | 1888 |  |  |  |  |  |  |  |  |  |
-| onset(share) | 0.1 |  | 1899 |  |  |  |  |  |  |  |  |  |
-| HELD_REACH | 4 | frames | 1911 | frames each way the input's joint must be still for a frame to count as a held shape |  |  |  |  |  |  |  |  |
-| --order-scale | 1.0 |  | 2027 | the joints' lags within a change of shape times this (default 1; 0 moves them together) |  |  |  |  |  |  |  |  |
-| --order-mode | "centre" |  | 2040 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
-| --transit-scale | 1.0 |  | 2051 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
+| CONTACT_SURFACE_MM | (10.0, 25.0) | mm | 605 | and where a fingertip or the palm's middle lies within the first distance (mm) of one of Rin's hard parts, fully, none past the second: the parts' own surfaces (tools/re… | v11arms（10-17）: 手の層が指先・手のひらの中を部位へ 5 mm 以上入れたコマ（I7、54 コマ、頭 43）の入力は面から −11〜+16 mm（中央値 5）。帯 10〜25 mm でその全部を捕まえ、20〜40 mm より… | ○ |  | ○ | ○ | ○ |  | retarget・rig |
+| FOLLOW_SCALE（引数 --follow-scale） | 0.5 |  | 619 | the follow (--follow; off by default): each finger reaches the shape its muscles take it to through the passive body's spring and damper (its omega and zeta between the … |  |  |  | ○ | ○ | ○ | ○ | rig |
+| HOLD_DEG_S | 5.0 | deg/s | 627 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
+| HOLD_MIN | 4 |  | 627 | a beat hold (--beats; motor_layer's): the joints of the shoulder, the elbow and the wrist all under HOLD_DEG_S for HOLD_MIN frames or more, the hold starting within KIME… |  |  |  | ○ |  |  | ○ | dance |
+| HOLD_EXIT | 2 |  | 628 |  |  |  |  |  |  |  |  |  |
+| HOLD_RAMP | 3 |  | 628 |  |  |  |  |  |  |  |  |  |
+| KIME_BEAT | 2 |  | 628 |  |  |  |  |  |  |  |  |  |
+| KIME_LEAD | 3 |  | 628 |  |  |  |  |  |  |  |  |  |
+| KIME_RAMP | 4 |  | 628 |  |  |  |  |  |  |  |  |  |
+| KIME_STIFFNESS | 4.0 |  | 629 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 2 |  | 674 |  |  |  |  |  |  |  |  |  |
+| REACH.band | 5.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.damping | 1e-6 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.h | 0.01 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.iterations | 16 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.reg | 0.05 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.rom | 1.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| REACH.step_max | 15.0 |  | 817 | the hinges and the coupling undo a shape the trace made at the wrong joint (the thumbs of a heart bent sideways at their MP, a pinch made at the index's PIP, a fist hook… |  |  |  | ○ |  |  |  | dance |
+| MM_PER_UNIT | UNIT_M * 1000.0 |  | 818 |  |  |  |  |  |  |  |  |  |
+| order(scale) | 1.0 |  | 1018 |  |  |  |  |  |  |  |  |  |
+| transit(scale) | 1.0 |  | 1253 |  |  |  |  |  |  |  |  |  |
+| transit(seed) | 0 |  | 1253 |  |  |  |  |  |  |  |  |  |
+| a09_lags(maxlag) | 6 |  | 1584 |  |  |  |  |  |  |  |  |  |
+| a09_lags(step) | 15 |  | 1584 |  |  |  |  |  |  |  |  |  |
+| a09_lags(win) | 60 |  | 1584 |  |  |  |  |  |  |  |  |  |
+| shape_changes(min_change) | 20.0 |  | 1954 |  |  |  |  |  |  |  |  |  |
+| shape_changes(still) | 1.0 |  | 1954 |  |  |  |  |  |  |  |  |  |
+| onset(share) | 0.1 |  | 1965 |  |  |  |  |  |  |  |  |  |
+| HELD_REACH | 4 | frames | 1977 | frames each way the input's joint must be still for a frame to count as a held shape |  |  |  |  |  |  |  |  |
+| --order-scale | 1.0 |  | 2096 | the joints' lags within a change of shape times this (default 1; 0 moves them together) |  |  |  |  |  |  |  |  |
+| --order-mode | "centre" |  | 2112 | the joints' stagger laid round the change's middle (centre, default) or only delaying (delay, v8) |  |  |  | ○ |  |  |  | dance |
+| --transit-scale | 1.0 |  | 2123 | the transit's excursions (the fingers moving out and back with each movement of the arm) times this (default 1, FineDance's dancers; 0 leaves them out as --no-transit do… |  |  |  |  |  | ○ |  |  |
+
+## touch_layer.py（13. 手と指、触れの層（v11arms）、1）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| SMOOTH_FRAMES（引数 --smooth-frames） | 1.0 | frames | 81 | the change made to the arm, as the moves of the wrist and the elbow in the world, is smoothed over the frames by a Gaussian of this many frames (its standard deviation; … | v11arms（10-17）: 触れの層の直しを時間でならす（元の手が触れるコマはそのまま）。σ 0 / 1.0 / 1.5 / 2.5 コマ: 右手首の 8 Hz 超 0.97 / 0.71 / 0.72 / -（前の段 0.60、人 … |  |  | ○ | ○ | ○ |  | rig |
 
 ## eye_gaze.py（14. 視線、103）
 
@@ -2031,7 +2038,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
 | ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 444 |  |  |  |  |  |  |  |  |  |
+| _cell(n) | 170 |  | 445 |  |  |  |  |  |  |  |  |  |
 
 ### dump_controls.py（確かめ・部品、0）
 

@@ -75,7 +75,9 @@ THIGHS = {"thigh_左": "左", "thigh_右": "右"}
 # every frame on its own.  On Hibikase (the new hand layer's output, mv_inspect's arms, spikes and retarget parts): not
 # smoothed, the right wrist's velocity above 8 Hz 0.60 -> 0.97 % (people 0.15) and its one-frame spikes 21.5 -> 26.1 a
 # minute (people 9.4); smoothed everywhere by 1.0, 0.61 % and 21.2 but the touches kept 0.86 -> 0.82 (a short touch's
-# change thinned); smoothed but where it touches, 0.71 % and 22.4 with the touches kept 0.86 (1.5: 0.72 %, 22.7, 0.86)
+# change thinned); smoothed but where it touches, 0.71 % and 22.4 with the touches kept 0.86 (1.5: 0.72 %, 22.7, 0.86).
+# With the thighs read by the leg IK, the frames of an arm over 1 cm in Rin's hard parts 13 (not smoothed), 12 (1.0),
+# 15 (1.5), 23 (2.5)
 SMOOTH_FRAMES = 1.0
 
 
