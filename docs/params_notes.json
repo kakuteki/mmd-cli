@@ -94,10 +94,6 @@
  "smooth_motion.py:DENOISE_CAP": {
   "from": "既定 3 度/0.05。本番は 6 度/0.05（HANDOVER 2026-10-06: 右ひじ p99 −25.7 %、6 度/0.3 は足が床で 0.11 横滑りするので使わない）"
  },
- "eye_optics.py:PARAMS.vergence.ipd_mm": {
-  "from": "女性の平均 61.5 mm（Murray 2017）。リンのモデルの目の骨の間は 0.82 単位（8 cm/単位で 65.6 mm、adapt 10-17）: 寄り目の角は人の値で、モデルの目の位置とは 6.7 % 違う（MV のカメラでは片目 1 px ほど）",
-  "review": "rig"
- },
  "eye_gaze.py:UNIT_M": {
   "from": "eye_optics の unit_mm 80（8 cm/単位）",
   "review": "retarget"
@@ -135,11 +131,7 @@
   "from": "HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中）"
  },
  "lip_sync.py:SHAPES.i.あ": {
-  "from": "HANDOVER 2026-10-17 lipsync: い＝い＋あ 0.3（リンの描いた試しで選んだ）",
-  "review": "rig"
- },
- "lip_sync.py:SHAPES.u.お": {
-  "from": "HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ）",
+  "from": "v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて見える）。寄りの絵では え へ 88 %（rig の担当の勧め い＋あ 0.1 は寄りでは正しい）",
   "review": "rig"
  },
  "make_camera.py:SHOT_VALUES.push_in.height": {
@@ -201,5 +193,14 @@
  },
  "pmm_gravity.py:CURRENT.acceleration": {
   "from": "pmm の中の位置（重力の今の値の加速度）。値の決めではない。窓の値と単位: MMD 9.32 で窓の値 1 あたり 9.6 単位/s²（README）"
+ },
+ "lip_sync.py:BREAK_SHARE": {
+  "from": "v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた）"
+ },
+ "lip_sync.py:HOLD_DB": {
+  "from": "v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり）"
+ },
+ "mouth_shape.py:TEETH_GREY": {
+  "from": "v11face 2026-10-17: リンの skin.png の歯の帯は (246, 220, 220) 前後、歯ぐき・舌は (240, 176, 178) 前後（色の差 60 以上）"
  }
 }

@@ -107,7 +107,7 @@ EXPECTED = {"pmx_rig.py": "rig", "rig_skin.py": "rig", "rig_check.py": "rig", "r
             "contact_layer.py": "contact", "contact_check.py": "contact"}
 # the tools that measure, check or serve (their thresholds are the measures' rules, looked at with the measures)
 CHECKERS = ["mv_inspect.py", "param_inventory.py", "spine_check.py", "skirt_probe.py", "motion_fk.py", "motion_jerk.py",
-            "sink_check.py", "leg_ik.py", "upper_body_check.py", "lip_check.py", "shadow_check.py", "shadow_measure.py",
+            "sink_check.py", "leg_ik.py", "upper_body_check.py", "lip_check.py", "mouth_shape.py", "shadow_check.py", "shadow_measure.py",
             "selfshadow_check.py", "dump_controls.py", "live_in_session.py", "run_live_tests_in_session.py", "make_figures.py",
             "mvi/a05.py", "mvi/analysts.py", "mvi/arms.py", "mvi/balance.py", "mvi/base.py", "mvi/body.py", "mvi/eyes.py",
             "mvi/feet.py", "mvi/fq.py", "mvi/gravity.py", "mvi/hb.py", "mvi/marks.py", "mvi/mouth.py", "mvi/pixels.py",
