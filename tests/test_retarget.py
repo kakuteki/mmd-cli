@@ -387,6 +387,8 @@ class SpinPitchTest(unittest.TestCase):
 
 RIN_SPRING = dict(RIN_SHOE, spring=0.15)          # the sole's front 4 of 12 rows turned up, the toe 1.2 cm
 RIN_SPRING_DATA = humanoid_bytes(RIN, RIN_BLOBS, twist_axis=True, name="rin-spring", shoe=RIN_SPRING)
+RIN_SHORT = dict(RIN_SHOE, toe_ahead=1.0)         # the toe 8 cm ahead of the ankle
+RIN_SHORT_DATA = humanoid_bytes(RIN, RIN_BLOBS, twist_axis=True, name="rin-short", shoe=RIN_SHORT)
 
 
 def lowest_sole(data, shoe, m, frames):
@@ -474,6 +476,22 @@ class PlantShellTest(unittest.TestCase):
         self.assertLess(float(np.abs(sole.min(axis=(1, 2))).max()), 0.0125)                      # the shoe on the floor
         self.assertLess(float(np.abs(sole[:, :, 0] - sole[:, :, 2]).max()), 0.0125)               # its two edges level
         # (along the foot the source's own pitch is kept: -0.3 degrees here, the toe IK's)
+
+    def test_a_toe_stand_the_target_cannot_reach_is_not_flicked_to_a_steep_foot(self):
+        # the source on its toe with its ankle at its rest height (0.5 mm under it): Rin's foot cannot pitch onto its toe
+        # without going under the floor, and pitched near vertical (63 degrees on this short shoe) its toe comes back up to
+        # the floor; the song's 137.77 s pitched the left foot from 7.8 to 58.9 degrees for one frame that way
+        q = axis_angle((1.0, 0.0, 0.0), -8.0)
+        low = -0.006 / retarget.scale_of(body(MIKU_DATA), body(RIN_SHORT_DATA))
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, q, position=(0.0, low, 0.0)), key("左足ＩＫ", 20, q, position=(0.0, low, 0.0)),
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHORT_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["kinds"]["toe"], 1)
+        src = legs(MIKU_DATA, m, range(0, 21))["左"]
+        leg = legs(RIN_SHORT_DATA, res.motion, range(0, 21))["左"]
+        change = retarget.foot_pitch(leg["q_foot"]) - retarget.foot_pitch(src["q_foot"])
+        self.assertLess(float(np.abs(change).max()), retarget.TOUCH_PITCH_MAX + 0.5)
 
     def test_a_toe_stand_on_a_turned_up_toe_stands_on_the_shoe(self):
         l = MIKU["足首"][2] - MIKU["つま先"][2]

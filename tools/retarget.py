@@ -807,9 +807,10 @@ EASE = 3                        # frames a correction takes to come in and to go
 TOUCH_FLOOR = 0.25              # units (2 cm)
 TOUCH_RISE = 0.03               # units a frame (7 cm/s)
 TOUCH_MIN = 3
-TOUCH_PITCH_MAX = 20.0          # degrees: the most such a foot's pitch is changed from the source's to reach the floor (the
-                                # ankle comes down the rest, within FLAT_LIFT_MAX): a foot lifting off is not flicked down
-                                # (the song's 86.07 s pitched 50 degrees for one frame without it)
+TOUCH_PITCH_MAX = 20.0          # degrees: the most a foot's pitch is changed from the source's to reach the floor, on the
+                                # floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing on its toe
+                                # or heel: a foot is not flicked (the song's 86.07 s pitched 50 degrees for one frame without
+                                # it; a toe stand at 137.77 s 51 degrees, its toe on the floor again pitched near vertical)
 HEEL_BACK = 0.3                 # without a shoe mesh, the heel lies this share of the ankle-to-toe line behind the ankle
 SHOE = ("足首", "足首D", "足先EX", "つま先")
 
@@ -950,6 +951,9 @@ def pitch_turn(q_foot, degrees):
     return qaxis(axis, -np.radians(degrees))
 
 
+PITCH_ON_FLOOR = 0.0125         # units (1 mm): a point this close to the floor is on it (solve_pitch takes it as found)
+
+
 def solve_pitch(A, Q, offset, floor, lo, hi, step=0.5):
     """per frame the pitch change (degrees, in lo..hi) nearest 0 that puts the point `offset` (rel. the ankle A, turned by
     the foot Q; or the lowest of the points `offset` [k, 3]) on the floor; where no pitch in the range reaches it, the one
@@ -973,7 +977,7 @@ def solve_pitch(A, Q, offset, floor, lo, hi, step=0.5):
     a_br = np.zeros(n)
     b_br = np.zeros(n)
     for j in range(steps - 1):              # the crossing nearest no change
-        cross = (np.sign(H[:, j]) != np.sign(H[:, j + 1])) | (H[:, j] == 0.0)
+        cross = (np.sign(H[:, j]) != np.sign(H[:, j + 1])) | (np.abs(H[:, j]) <= PITCH_ON_FLOOR)
         mid = 0.5 * (grid[:, j] + grid[:, j + 1])
         take = cross & (np.isnan(best) | (np.abs(mid) < np.abs(best)))
         best = np.where(take, mid, best)
@@ -1001,8 +1005,8 @@ FEET_ROUNDS = 2
 def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     """the target's foot keys for the source's plants (the foot IK's goal and turn, the ankle's key): the foot takes the
     source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
-    by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it) until
-    the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot stands level across (the source's roll taken out:
+    by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it, by at
+    most TOUCH_PITCH_MAX) until the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot stands level across (the source's roll taken out:
     Hibikase's flat feet roll 7 degrees in the median, and with the sole's middle on the floor the edge was 3 mm under it
     in the median, 1.4 cm at most) and its ankle moves up or down (at most FLAT_LIFT_MAX) until the shoe is on the floor;
     the touching point is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the same way, frame
@@ -1052,6 +1056,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -np.maximum(p0, 0.0), MAX_PITCH_DEG - p0
                     else:
                         lo, hi = -MAX_PITCH_DEG - p0, -np.minimum(p0, 0.0)
+                    lo, hi = np.maximum(lo, -TOUCH_PITCH_MAX), np.minimum(hi, TOUCH_PITCH_MAX)
                     d, rest_h = solve_pitch(A[idx], base, shell_t, floor_t, lo, hi)
                     lift = np.zeros(len(idx))
                     left_over[idx] = rest_h
