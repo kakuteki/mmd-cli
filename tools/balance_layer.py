@@ -209,6 +209,14 @@ CATCH_MARGIN_CM = 1.0           # at a landing the margin of stability (the land
                                 # the carried foot, the height bound): with 0 the MV kept 4 landings at -0.1 to -0.5 cm
 CATCH_WEIGHT = 30.0             # the pull on the XcoM at a landing the dance does not catch (against LAM_OUT 0.5 per frame)
 CATCH_FREE_S = 0.2              # the "never away from the nearest pull" half-plane is off this long after such a landing
+CATCH_HOLD_MAX_CM = 8.0         # a landing the dance misses by more than this (its margin under CATCH_MARGIN_CM less this) is
+                                # a body running past the foot: it is not held back (nor bounded), the dance's own step is
+                                # left.  The v11 chain (retarget's dance) misses four: by 3.3 cm (26.07 s, held back) and by
+                                # 9.8, 10.0 and 27.1 cm (195.27, 248.93, 200.33 s); holding those back moved the body 10-22 cm
+                                # against the dance for a second, the solve stopped at ADMM_ITERS unconverged (2,000 rounds,
+                                # the residual 1.5 m/s^2, the shift cut by 48 % at 195 s) and the ZMP left the support there
+                                # (194.3-196.2 s 107 -> 394 degrees of tilt, 199.3-200.7 s 34 -> 344).  v9's dance missed by
+                                # 0.9-3.7 cm and by 9.6 (248.93 s); the falling step of the tests by 5.6 (v11bal, 10-17)
 XI_RHO = 1.0                    # the catch block's ADMM penalty relative to the per-frame sets' (convergence only)
 IK_ROUNDS = 6                   # with MMD's IK at hand: the rounds of holding back where it would newly fall short
 IK_MISS = 0.05                  # units (4 mm, a05's contact): an ankle this far from its foot IK's target misses it
@@ -1094,6 +1102,12 @@ def landing_catches(body, com, plan):
     return rows
 
 
+def passed_landing(row):
+    """a landing_catches() row the dance misses by more than CATCH_HOLD_MAX_CM: the body runs past the foot, and the
+    layer leaves the dance's step (no hold-back, no bound)"""
+    return row["margin"] * CM < CATCH_MARGIN_CM - CATCH_HOLD_MAX_CM
+
+
 def catch_terms(F, catches, gain, run_starts, stance=None):
     """the catch's terms for solve_shift: per landing row (frame L, row L - 1 of xi_op) the half-plane
     gain_L u . (Xi y)_L <= margin - CATCH_MARGIN_CM (metres): where the dance catches the body it keeps catching it (the
@@ -1114,6 +1128,8 @@ def catch_terms(F, catches, gain, run_starts, stance=None):
     for r in catches:
         k = r["frame"] - 1
         m = (r["margin"] * CM - CATCH_MARGIN_CM) / CM * UNIT_M                  # metres
+        if passed_landing(r):
+            continue                                    # a body running past the foot: the dance's step is left
         mask[k] = True
         n[k] = gain[r["frame"]] * r["u"]
         hi[k] = m
@@ -2105,15 +2121,17 @@ def catch_report(after, com1, catches):
     for r in catches:
         f = r["frame"]
         after_m = r["edge"] - float((xi1[f] - r["here"]) @ r["u"])
+        passed = passed_landing(r)
         rows.append({"frame": f, "s": round(f / FPS, 2), "stance": r["stance"], "kind": r["kind"],
                      "margin_cm": [round(r["margin"] * CM, 2), round(after_m * CM, 2)],
-                     "held_back": bool(r["margin"] * CM < CATCH_MARGIN_CM)})
+                     "held_back": bool(r["margin"] * CM < CATCH_MARGIN_CM and not passed), "passed": bool(passed)})
     b = np.array([r["margin_cm"][0] for r in rows])
     a = np.array([r["margin_cm"][1] for r in rows])
     summary = {"landings": len(rows), "before_under_0": int(np.sum(b < 0)), "after_under_0": int(np.sum(a < 0)),
                "newly_under_0": int(np.sum(a < np.minimum(b, 0.0) - 0.5)),
                "held_back": int(sum(r["held_back"] for r in rows)),
                "held_back_caught": int(sum(1 for r in rows if r["held_back"] and r["margin_cm"][1] >= -0.5)),
+               "passed": int(sum(r["passed"] for r in rows)),
                "after_min_cm": round(float(a.min()), 2) if len(a) else None,
                "margin": "the landing foot's outer edge along the step minus the XcoM (COM + v / w0), cm; >= 0 caught"}
     return {"landings": rows, "summary": summary}

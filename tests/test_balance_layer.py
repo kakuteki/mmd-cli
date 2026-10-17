@@ -1451,6 +1451,12 @@ def song_paths():
 class SongTest(unittest.TestCase):
     """the MV (BALANCE_SONG), solved with MMD's IK at hand when the JSON names the feet layer's leg_ik"""
     DANCE = "dance"
+    MODEL = "model"
+    # what the song has enough of for the checks to mean something (v9's dance: 227 air frames, 30 jumps, 375 still
+    # frames; the v11 chain's, retarget's dance made smaller by the legs' ratio 0.872: 37, 8, 98)
+    MIN_AIR_FRAMES = 100
+    MIN_JUMPS = 15
+    MIN_STILL = 100
 
     @classmethod
     def setUpClass(cls):
@@ -1459,12 +1465,14 @@ class SongTest(unittest.TestCase):
             raise unittest.SkipTest("BALANCE_SONG names no %s" % cls.DANCE)
         if not os.path.isfile(paths[cls.DANCE]):
             raise AssertionError("BALANCE_SONG's %s is not there: %s" % (cls.DANCE, paths[cls.DANCE]))
-        cls.model = pmx.load(paths["model"])
+        if not paths.get(cls.MODEL) or not os.path.isfile(paths[cls.MODEL]):
+            raise AssertionError("BALANCE_SONG names %s but its %s is not there: %s" % (cls.DANCE, cls.MODEL, paths.get(cls.MODEL)))
+        cls.model = pmx.load(paths[cls.MODEL])
         cls.motion = vmd.load(paths[cls.DANCE])
         cls.ik = paths.get("leg_ik")
         check = None
         if cls.ik:
-            check, _ = balance_layer.mmd_ik_check(cls.ik, paths["model"], fk.last_frame(cls.motion) + 1)
+            check, _ = balance_layer.mmd_ik_check(cls.ik, paths[cls.MODEL], fk.last_frame(cls.motion) + 1)
         cls.result = balance_layer.layer(cls.model, cls.motion, ik_check=check)
         cls.report = cls.result.report
 
@@ -1500,7 +1508,7 @@ class SongTest(unittest.TestCase):
         self.assertLessEqual(v["pelvis"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertLessEqual(v["centre"]["after_max_on_the_floor"], balance_layer.DOWN_ACC_MAX + 0.5)
         self.assertEqual(v["pelvis"]["after_over_bound_on_the_floor"], 0)
-        self.assertGreater(v["air_frames"], 100)
+        self.assertGreater(v["air_frames"], self.MIN_AIR_FRAMES)
         y0 = balance_layer.Body(self.model, self.motion).p("下半身")[:, 1]
         z = self.result.arrays["vertical_fix"]
         lows = [f for f in range(1, len(y0) - 1) if y0[f] < y0[f - 1] and y0[f] <= y0[f + 1]]
@@ -1515,7 +1523,7 @@ class SongTest(unittest.TestCase):
         com0 = body.com()
         plan = balance_layer.support_plan(body, balance_layer.params_default(), com0)
         st = plan["still"]
-        self.assertGreater(int(st.sum()), 100)
+        self.assertGreater(int(st.sum()), self.MIN_STILL)
         com1 = self.result.arrays["com_after"]
         v = np.zeros(len(com1))
         v[1:-1] = np.linalg.norm(com1[2:, [0, 2]] - com1[:-2, [0, 2]], axis=1) * FPS / 2.0 * CM
@@ -1530,19 +1538,21 @@ class SongTest(unittest.TestCase):
         sup = {s: self.result.arrays["low_" + t] < balance_layer.SUPPORT_H for s, t in (("左", "L"), ("右", "R"))}
         air = ~sup["左"] & ~sup["右"]
         jumps = [(a, b) for a, b in balance_layer.runs(air) if b - a + 1 >= 4]
-        self.assertGreater(len(jumps), 15)
+        self.assertGreater(len(jumps), self.MIN_JUMPS)
         lowered = [round(float(y0[a:b + 1].max() - y1[a:b + 1].max()) * CM, 2) for a, b in jumps]
         self.assertLess(max(lowered), 2.0, lowered)
 
     def test_landings_catch_and_the_thigh_in_range(self):
         """no landing that the dance catches stops catching the body (its XcoM past the landing foot's edge), the ones
-        it does not catch are held back until they do, and no thigh newly passes 22 degrees of adduction"""
+        it does not catch are held back until they do but for a body running past the foot (missed by more than
+        CATCH_HOLD_MAX_CM, left as the dance has it), and no thigh newly passes 22 degrees of adduction"""
         straight = self.report["knee"]["straight_on_floor_frames"]
         self.assertLess(straight[1], straight[0] / 2.0)                          # standing on straight knees: far fewer
         self.assertEqual(self.report["landings"]["dipped"], 0)                    # no landing dip (human dancers add 0.3-1.6)
         catch = self.report["catch"]["summary"]
         self.assertEqual(catch["newly_under_0"], 0)
-        self.assertEqual(catch["after_under_0"], 0)
+        under = [r for r in self.report["catch"]["landings"] if r["margin_cm"][1] < 0.0 and not r["passed"]]
+        self.assertEqual(under, [])
         self.assertEqual(catch["held_back_caught"], catch["held_back"])
         self.assertEqual(self.report["hip"]["over_22_newly_L"], 0)
         self.assertEqual(self.report["hip"]["over_22_newly_R"], 0)
@@ -1590,6 +1600,17 @@ class SongOrderCTest(SongTest):
     """the same on what the build gives the layer in order C (feet -> balance -> feet): the feet layer's output on the
     dance (BALANCE_SONG's "dance_c")"""
     DANCE = "dance_c"
+
+
+class SongV11Test(SongTest):
+    """the same on the v11 chain (retarget first: the dance on Rin's body, the legs' ratio 0.872; the v7 copy of Rin with
+    the leg IK's 400 loops; order C's feet0): BALANCE_SONG's "dance_v11" with its "model_v11" (on hinata, the build of
+    stage6/v11bal: builds/B0/feet0.vmd 60F80C7B and model/White_v7_bal.pmx 28644E8E)"""
+    DANCE = "dance_v11"
+    MODEL = "model_v11"
+    MIN_AIR_FRAMES = 20
+    MIN_JUMPS = 5
+    MIN_STILL = 50
 
 
 if __name__ == "__main__":
