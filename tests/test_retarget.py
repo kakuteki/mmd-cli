@@ -305,39 +305,120 @@ class FeetTest(unittest.TestCase):
         self.assertLess(float(np.abs(after[:, 1] - RIN_SHOE["sole"]).max()), 0.0125)
 
 
-class SpinTest(unittest.TestCase):
-    """the whole figure spinning (全ての親 turning 24 degrees a frame) with its left foot on its toe, which the trace
-    leaves 1 cm over the floor (the toe sweeps round too fast to stand still): the target's toe is put on the floor by
-    the foot's pitch, the hips and the foot's path left as they are"""
+def pivot_motion(rise, rate=24.0, n=21):
+    """the whole figure turning about the vertical line through its left toe (全ての親 turning `rate` degrees a frame
+    about that line), the left foot pitched 10 degrees down on its toe and `rise` over the source's floor (the trace
+    leaves a turning foot over the floor): the toe stays where it is and the rest sweeps round it, a pivot; the knees
+    well bent, the right foot swept round with the figure"""
+    pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+    base = [key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", n - 1, position=(0.0, -1.0, 0.0)),
+            key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", n - 1, pitch, position=(0.0, rise, 0.0)),
+            key("右足ＩＫ", 0), key("右足ＩＫ", n - 1)]
+    toe = foot_point(legs(MIKU_DATA, motion(*base), [0])["左"], np.subtract(MIKU["つま先"], MIKU["足首"]))[0]
+    turn = []
+    for f in range(n):
+        q = axis_angle((0.0, 1.0, 0.0), rate * f)
+        p = toe - leg_ik.qrot(np.array(q), toe)
+        turn.append(key("全ての親", f, q, position=(float(p[0]), 0.0, float(p[2]))))
+    return motion(*turn, *base)
 
-    def test_a_spinning_toe_goes_onto_the_floor(self):
-        l = MIKU["足首"][2] - MIKU["つま先"][2]
-        h = MIKU["足首"][1] - MIKU["つま先"][1]
-        th = math.radians(10.0)       # (pitched further, Rin's shorter foot cannot reach the floor below the mapped ankle)
-        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.12            # the source's toe 1 cm over its floor
-        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
-        spin = [key("全ての親", f, axis_angle((0.0, 1.0, 0.0), 24.0 * f)) for f in range(0, 21)]
-        m = motion(*spin, key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
-                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(0.0, rise, 0.0)),
-                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+
+# the source's foot IK raised this much stands its toe on the floor pitched 10 degrees down
+TOE_RISE_10 = ((MIKU["足首"][2] - MIKU["つま先"][2]) * math.sin(math.radians(10.0))
+               - (MIKU["足首"][1] - MIKU["つま先"][1]) * (1 - math.cos(math.radians(10.0))))
+
+
+class PivotTest(unittest.TestCase):
+    """the whole figure turning on its left toe, which the trace leaves 1 cm over the floor: the target's toe is put on
+    the floor by the foot's pitch and held where it is while the figure turns round it (on Rin's other proportions the
+    mapping alone sweeps it round a circle along the floor); the hips are left as they are"""
+
+    def test_a_pivoting_toe_goes_onto_the_floor_and_stays_put(self):
+        m = pivot_motion(TOE_RISE_10 + 0.12)
         src = legs(MIKU_DATA, m, range(0, 21))
         toe_s = foot_point(src["左"], np.subtract(MIKU["つま先"], MIKU["足首"]))
         self.assertLess(float(np.abs(toe_s[:, 1] - MIKU["つま先"][1] - 0.12).max()), 2e-3)   # 1 cm up, all through
-        self.assertGreater(float(np.linalg.norm(np.diff(toe_s[:, [0, 2]], axis=0), axis=1).min()), 0.5)  # sweeping round
+        self.assertLess(float(np.linalg.norm(toe_s[:, [0, 2]] - toe_s[0, [0, 2]], axis=1).max()), 2e-3)   # a pivot
         pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
         res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
         toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
         before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 21))["左"], toe_off)
         after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 21))["左"], toe_off)
         self.assertGreater(float(before[:, 1].min()) - RIN_SHOE["sole"], 0.03)               # the mapping alone floats
+        self.assertGreater(float(np.linalg.norm(before[:, [0, 2]] - before[0, [0, 2]], axis=1).max()), 0.1)   # and sweeps
         self.assertLess(float(np.abs(after[:, 1] - RIN_SHOE["sole"]).max()), 0.0125)        # on the floor within 1 mm
+        drift = np.linalg.norm(after[:, [0, 2]] - np.mean(after[:, [0, 2]], axis=0), axis=1)
+        self.assertLess(float(drift.max()), 0.0125)                                           # held where it is within 1 mm
         out = {(k.name, k.frame): k for k in res.motion.bones}
         ref = {(k.name, k.frame): k for k in pure.motion.bones}
         for f in (0, 20):
             np.testing.assert_allclose(out[("センター", f)].position, ref[("センター", f)].position, atol=1e-9)   # the hips
-        ik_out = retarget.Track([k for k in res.motion.bones if k.name == "左足ＩＫ"]).sample(np.arange(0, 21))[0]
-        ik_ref = retarget.Track([k for k in pure.motion.bones if k.name == "左足ＩＫ"]).sample(np.arange(0, 21))[0]
-        np.testing.assert_allclose(ik_out[:, [0, 2]], ik_ref[:, [0, 2]], atol=1e-4)                     # the foot's path
+
+
+class CarriedTest(unittest.TestCase):
+    """a foot carried low and fast along the floor while the other foot is up (a step: the trace's 198.9-199.3 s carries
+    the right foot 1-2 cm over the floor) is left as the mapping puts it, not pressed onto the floor and dragged along it"""
+
+    def test_a_foot_carried_low_and_fast_is_left_as_mapped(self):
+        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
+        rise = TOE_RISE_10 + 0.12                                         # the source's toe 1 cm over its floor
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(3.0, rise, 0.0)),
+                   key("右足ＩＫ", 0, position=(0.0, 1.0, 0.0)), key("右足ＩＫ", 20, position=(0.0, 1.0, 0.0)))   # 36 cm/s; right up
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["右"]["plants"], 0)                        # the other foot does not stand
+        toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
+        before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 21))["左"], toe_off)
+        after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 21))["左"], toe_off)
+        self.assertGreater(float(before[:, 1].min()) - RIN_SHOE["sole"], 0.03)
+        np.testing.assert_allclose(after, before, atol=1e-3)
+
+    def test_a_carried_shoe_keeps_the_sources_clearance(self):
+        # the source carries its flat foot 4.5 mm over its floor (its shoe off the floor of main's contact_check, 4 mm);
+        # the mapping scales the height to 3.9 mm, on that floor: the shoe is kept as high over the floor as the source's
+        rise = 0.056
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
+                   key("左足ＩＫ", 0, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, position=(3.0, rise, 0.0)),
+                   key("右足ＩＫ", 0, position=(0.0, 1.0, 0.0)), key("右足ＩＫ", 20, position=(0.0, 1.0, 0.0)))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE).motion
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False}).motion
+        src = legs(MIKU_DATA, m, range(0, 21))["左"]
+        pts, floor = retarget.sole_points(body(MIKU_DATA), "左")
+        src_low = np.min(np.stack([foot_point(src, p)[:, 1] for p in pts.values()], axis=1), axis=1) - floor
+        self.assertGreater(float(src_low.min()), 0.04)                                       # the source's shoe off the floor
+        self.assertLess(float((lowest_sole(RIN_SHOE_DATA, RIN_SHOE, pure, range(0, 21)) - src_low).min()), -0.005)   # lower
+        self.assertGreater(float((lowest_sole(RIN_SHOE_DATA, RIN_SHOE, res, range(0, 21)) - src_low).min()), -0.004)
+
+
+class HoldTest(unittest.TestCase):
+    """the hold along the floor of a standing foot changes only while the foot is off the floor: the left foot comes
+    down from the air, slides into a stand on the floor (14 cm/s), stands drifting 5 cm/s (the hold keeps its middle),
+    slides out and lifts; the right foot stands throughout.  On the floor next to the stand the target's foot moves as
+    the mapping moves it (the hold's offset was taken in the air before it and is given back in the air after it), not
+    eased in or out along the floor"""
+
+    def test_the_hold_moves_the_foot_only_in_the_air(self):
+        xs, x = [], -0.6
+        for f in range(35):
+            xs.append(x)
+            x += 0.022 if 9 <= f < 24 else 0.06
+        ys = [0.3 if (f <= 4 or f >= 30) else 0.0 for f in range(35)]
+        keys = [key("左足ＩＫ", f, position=(xs[f], ys[f], 0.0)) for f in range(35)]
+        m = motion(key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 34, position=(0.0, -1.0, 0.0)), *keys,
+                   key("右足ＩＫ", 0), key("右足ＩＫ", 34))
+        pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), PURE)
+        res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False})
+        self.assertEqual(res.report["feet"]["左"]["plants"], 1)
+        ball = np.array([RIN["足先EX"][0], RIN_SHOE["sole"], RIN["足先EX"][2]]) - np.array(RIN["足首"])
+        before = foot_point(legs(RIN_SHOE_DATA, pure.motion, range(0, 35))["左"], ball)
+        after = foot_point(legs(RIN_SHOE_DATA, res.motion, range(0, 35))["左"], ball)
+        held = after[12:22, [0, 2]]
+        self.assertLess(float(np.linalg.norm(held - held.mean(axis=0), axis=1).max()), 0.0125)   # the stand is held
+        for f in (5, 6, 7, 25, 26, 27, 28):                                  # steps on the floor before and after it
+            step_t = after[f + 1, [0, 2]] - after[f, [0, 2]]
+            step_m = before[f + 1, [0, 2]] - before[f, [0, 2]]
+            self.assertLess(float(np.linalg.norm(step_t - step_m)), 0.012, f)
 
 
 class DragTest(unittest.TestCase):
@@ -364,20 +445,12 @@ class DragTest(unittest.TestCase):
 
 
 class SpinPitchTest(unittest.TestCase):
-    """the spinning toe of SpinTest left 1.9 cm over the floor: Rin's shorter foot reaches it only pitched 25 degrees past
-    the source's; the pitch changes at most TOUCH_PITCH_MAX from the source's and the ankle comes down the rest (a foot
-    lifting off is not flicked down: the song's 86.07 s pitched 50 degrees for one frame)"""
+    """the pivoting toe of PivotTest left 1.9 cm over the floor: Rin's shorter foot reaches it only pitched 25 degrees
+    past the source's; the pitch changes at most TOUCH_PITCH_MAX from the source's and the ankle comes down the rest (a
+    foot lifting off is not flicked down: the song's 86.07 s pitched 50 degrees for one frame)"""
 
     def test_a_moving_foots_pitch_stays_near_the_sources(self):
-        l = MIKU["足首"][2] - MIKU["つま先"][2]
-        h = MIKU["足首"][1] - MIKU["つま先"][1]
-        th = math.radians(10.0)
-        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.24            # the source's toe 1.9 cm over its floor
-        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
-        spin = [key("全ての親", f, axis_angle((0.0, 1.0, 0.0), 24.0 * f)) for f in range(0, 21)]
-        m = motion(*spin, key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
-                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(0.0, rise, 0.0)),
-                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        m = pivot_motion(TOE_RISE_10 + 0.24)                               # the source's toe 1.9 cm over its floor
         res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False}).motion
         leg = legs(RIN_SHOE_DATA, res, range(0, 21))["左"]
         self.assertLess(float(np.abs(retarget.foot_pitch(leg["q_foot"]) - 10.0).max()), retarget.TOUCH_PITCH_MAX + 0.5)
@@ -405,19 +478,11 @@ def lowest_sole(data, shoe, m, frames):
 
 
 class SpinShellTest(unittest.TestCase):
-    """the spinning toe of SpinTest on a shoe whose sole turns up at the toe: the shoe's lowest vertex goes onto the
+    """the pivoting toe of PivotTest on a shoe whose sole turns up at the toe: the shoe's lowest vertex goes onto the
     floor (not a point of the toe's tip at the floor's height, under which the turned-up sole would stay over it)"""
 
     def test_the_shoe_itself_reaches_the_floor(self):
-        l = MIKU["足首"][2] - MIKU["つま先"][2]
-        h = MIKU["足首"][1] - MIKU["つま先"][1]
-        th = math.radians(10.0)
-        rise = l * math.sin(th) - h * (1 - math.cos(th)) + 0.12
-        pitch = axis_angle((1.0, 0.0, 0.0), -10.0)
-        spin = [key("全ての親", f, axis_angle((0.0, 1.0, 0.0), 24.0 * f)) for f in range(0, 21)]
-        m = motion(*spin, key("センター", 0, position=(0.0, -1.0, 0.0)), key("センター", 20, position=(0.0, -1.0, 0.0)),
-                   key("左足ＩＫ", 0, pitch, position=(0.0, rise, 0.0)), key("左足ＩＫ", 20, pitch, position=(0.0, rise, 0.0)),
-                   key("右足ＩＫ", 0), key("右足ＩＫ", 20))
+        m = pivot_motion(TOE_RISE_10 + 0.12)
         pure = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), PURE).motion
         res = retarget.layer(m, body(MIKU_DATA), body(RIN_SPRING_DATA), {"hands": False, "clear": False}).motion
         self.assertGreater(float(lowest_sole(RIN_SPRING_DATA, RIN_SPRING, pure, range(0, 21)).min()), 0.03)

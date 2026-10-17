@@ -32,8 +32,10 @@ Then the corrections, measured on both bodies frame by frame (fix_feet, fix_hand
 
 * feet: where the source's foot stands still on the floor (a plant) the target's takes the source's foot's world turn
   (a flat foot level across), its toe or heel pitched (a flat foot's ankle up or down) until the shoe's lowest vertex
-  is on the floor and its touching point held; where the source's foot is on the floor but moving (turning on its toe) and the other foot does
-  not stand, the target's shoe is put on the floor the same way, not held.
+  is on the floor and its touching point held; where the source's foot turns on the floor (its slowest sole point slow)
+  and the other foot does not stand, the target's shoe is put on the floor the same way and turns in place on that
+  point (a foot carried low and fast is a step, left as mapped, its shoe as high over the floor as the source's); the
+  hold along the floor changes only while the foot is off the floor.
 * hands: a hand near a part of the source's body (head, chest, belly, hips, thighs, within NEAR) is put at the same
   place of the target's part (scaled by the parts' sizes), and the two hands as far apart as the shoulders' ratio says;
   the hand's points are the palm and the middle finger's tip as the dance's finger keys bend them.
@@ -799,14 +801,33 @@ PLANT_MIN = 3                   # frames: standing this long is a plant
 PITCH_FLAT_DEG = 4.0            # a foot pitched less than this stands flat; toe down more: on the toe; toe up more: on the heel
 MAX_PITCH_DEG = 75.0            # the foot's pitch from flat at most (toe down)
 EASE = 3                        # frames a correction takes to come in and to go out
-# a foot on the floor that does not stand still (turning on its ball or toe: the toe sweeps round faster than STILL; the
-# trace leaves such a foot up to 1.7 cm over the floor, the song's 59.2 s): its lowest sole point this close to the floor
-# and rising or falling slower than TOUCH_RISE for TOUCH_MIN frames, while the other foot does not stand.  The target's
-# lowest sole point is put on the floor (the foot's pitch, the ankle), its path along the floor left as it is.  (Beside a
-# standing foot such a foot is a small step or a drag: put on the floor too, the song's feet slid twice as far along it.)
+# a foot on the floor that does not stand still but turns on it (on its ball or toe: the rest of the foot sweeps round
+# faster than STILL; the trace leaves such a foot up to 1.7 cm over the floor, the song's 59.2 s, and lets it skid: its
+# slowest sole point 15-60 cm/s while it turns 260-1000 degrees a second about a point 3-6 cm off it): its lowest sole
+# point this close to the floor, rising or falling slower than TOUCH_RISE, and nearly still (the sole's slowest point
+# slower than TOUCH_SPEED) or turning about a point near it (TURN_MIN, TURN_NEAR), for TOUCH_MIN frames, while the other
+# foot does not stand.  The target's foot is put on the floor (the foot's pitch, the ankle) and turns in place: the
+# point of the sole's line the source's foot turns on (the slowest over the run) is held where it is.  (A foot carried
+# low and fast is a step, not on the floor: pressed onto it, the song's 198.9-199.3 s dragged the right shoe 65 cm along
+# the floor; beside a standing foot a low moving foot is a small step or a drag.)
 TOUCH_FLOOR = 0.25              # units (2 cm)
 TOUCH_RISE = 0.03               # units a frame (7 cm/s)
+TOUCH_SPEED = 20.0 / UNIT_CM / FPS     # units a frame (20 cm/s)
+TURN_MIN = math.radians(60.0) / FPS    # radians a frame (60 degrees a second)
+TURN_NEAR = 18.0 / UNIT_CM             # units (18 cm): how far the turn's centre may lie from the sole's slowest point
+                                       # (the song's 127.9 s right foot turns 320-460 degrees a second about a point 15-17 cm
+                                       # off its sole's slowest one; the step carried at 199 s turns about one 30 cm off)
+LINE_T = np.linspace(-0.3, 1.0, 27)    # the sole's line: shares of the way from the heel point to the toe point
 TOUCH_MIN = 3
+# the hold along the floor (a standing or turning foot's point kept where it is) changes only while the target's shoe
+# is off the floor (its lowest vertex over AIR_H, the floor of main's contact_check, with the turn and the lift as they
+# ease): taken in the air before a span, given back in the air after it (over HOLD_AIR such frames when the gap is long);
+# eased along the floor the song's feet slid 1.5 m in the 3 frames each side, and read off the source's foot the shoe
+# was still on the floor while the source's lifted (the pitch and the lift easing out) and slid there
+AIR_H = 0.05                    # units (4 mm)
+HOLD_AIR = 6                    # frames
+CLEAR_TO = 0.075                # units (6 mm): a carried shoe is kept as high over the floor as the source's, up to this
+                                # (off the floor of main's contact_check, 4 mm; not higher: the turns' feet stay low)
 TOUCH_PITCH_MAX = 20.0          # degrees: the most a foot's pitch is changed from the source's to reach the floor, on the
                                 # floor moving (the ankle comes down the rest, within FLAT_LIFT_MAX) or standing on its toe
                                 # or heel: a foot is not flicked (the song's 86.07 s pitched 50 degrees for one frame without
@@ -826,10 +847,11 @@ def sole_points(body, side):
         P = body.vertices[m]
         floor = float(P[:, 1].min())
         low = P[P[:, 1] < floor + 0.25]
-        front = low[np.argmin(low[:, 2])]
+        zf = float(low[:, 2].min())
+        front_x = float(np.mean(low[low[:, 2] < zf + 0.0125][:, 0]))      # the front end's middle (a square toe: not a corner)
         back = low[np.argmax(low[:, 2])]
         heel = np.array([ankle[0], floor, back[2]])
-        tip = np.array([front[0], floor, front[2]])
+        tip = np.array([front_x, floor, zf])
     else:
         floor = float(toe[1])
         tip = np.array([toe[0], floor, toe[2]])
@@ -842,12 +864,14 @@ def sole_points(body, side):
     return {"heel": heel - ankle, "ball": ball - ankle, "toe": tip - ankle}, floor
 
 
-def sole_shell(body, side, cap=256):
+def sole_shell(body, side, cap=256, mesh=False):
     """the shoe's vertices within 2 cm of its lowest point (the sole as it is, a raised toe and heel included), relative
-    to the ankle at rest, at most `cap` of them spread along the foot; a body without a shoe mesh: its sole points"""
+    to the ankle at rest, at most `cap` of them spread along the foot; a body without a shoe mesh (or one whose feet are
+    read from the bones, unless `mesh`): its sole points"""
     ankle = body.rest(side + "足首")
     idx = [body.i(side + n) for n in SHOE if body.has(side + n)]
-    m = np.isin(body.main_bone, idx) if (len(body.vertices) and getattr(body, "foot_from_mesh", True)) else np.zeros(0, bool)
+    use = len(body.vertices) and (mesh or getattr(body, "foot_from_mesh", True))
+    m = np.isin(body.main_bone, idx) if use else np.zeros(0, bool)
     if m.sum() >= 20:
         P = body.vertices[m]
         low = P[P[:, 1] < float(P[:, 1].min()) + 0.25]
@@ -909,8 +933,24 @@ def plants(body, legs, side):
     if len(low) > 2:
         rise[1:-1] = 0.5 * np.abs(low[2:] - low[:-2])
         rise[0], rise[-1] = abs(low[1] - low[0]), abs(low[-1] - low[-2])
-    touch = (low < TOUCH_FLOOR) & (rise < TOUCH_RISE)
-    return out, {"height": low, "pitch": pitch, "stand": stand, "touch": touch}
+    # turning on the floor or nearly still (not carried along it): the slowest point of the sole's line (LINE_T, from
+    # behind the heel point to the toe point) slower than TOUCH_SPEED, or the foot turning faster than TURN_MIN about a
+    # point within TURN_NEAR of that slowest point (its speed over the turn rate)
+    line = np.stack([pts["heel"] + t * (pts["toe"] - pts["heel"]) for t in LINE_T])
+    Wl = A[:, None, :] + qrot(Q[:, None, :], line[None, :, :])
+    vl = np.zeros(Wl.shape[:2])
+    vl[1:] = np.linalg.norm(np.diff(Wl[:, :, [0, 2]], axis=0), axis=2)
+    vl = 0.5 * (vl + np.concatenate([vl[1:], vl[-1:]], axis=0)) if len(vl) else vl
+    fwd = qrot(Q, np.array([0.0, 0.0, -1.0]))
+    yaw = np.unwrap(np.arctan2(fwd[:, 0], -fwd[:, 2]))
+    turn = np.zeros(len(yaw))
+    if len(yaw) > 2:
+        turn[1:-1] = 0.5 * np.abs(yaw[2:] - yaw[:-2])
+        turn[0], turn[-1] = abs(yaw[1] - yaw[0]), abs(yaw[-1] - yaw[-2])
+    slowest = vl.min(axis=1) if len(vl) else np.zeros(0)
+    turning = (turn > TURN_MIN) & (slowest < TURN_NEAR * turn)
+    touch = (low < TOUCH_FLOOR) & (rise < TOUCH_RISE) & ((slowest < TOUCH_SPEED) | turning)
+    return out, {"height": low, "pitch": pitch, "stand": stand, "touch": touch, "line_speed": vl}
 
 
 def touches(F, spans, arrays, other_spans=()):
@@ -1002,43 +1042,126 @@ FLAT_LIFT_MAX = 0.15            # units (1.2 cm): a flat foot's ankle moves up o
 FEET_ROUNDS = 2
 
 
+def hold_offsets(F, spans, hold, edges, mapped, on_floor, src_on_floor, ease_air=HOLD_AIR):
+    """the foot IK's offset along the floor [F, 2] (x, z): on a span's frames its hold (`hold`); between spans an offset
+    that changes only on the frames the target's shoe is off the floor.  `edges`: per span, the hold against the mapped
+    foot at its first and at its last frame; `mapped(n, f)`: where the mapping puts span n's point at frames f [k, 2].
+    Out of a span and into the next, while the shoe is on the floor (`on_floor`): the foot moves as the mapping moves it
+    (the offset kept) where the source's foot is on the floor too (`src_on_floor`), and stays where it is where the
+    source's foot is already off it or not yet on it (the turn and the lift, easing, keep the shoe down a few frames
+    longer); over the gap's frames off the floor the offset goes from what the last span left to what the next takes
+    (over a long gap back to nothing in its first `ease_air` such frames and in again over its last ones).  Where a gap
+    has no frame off the floor, the change is spread over the gap (it slides: listed).  Returns (offsets, the changes
+    made along the floor [cm])"""
+    H = np.zeros((F, 2))
+    floor_moves = []
+    order = sorted(range(len(spans)), key=lambda n: spans[n][0])
+    bounds = [(n, spans[n][0], spans[n][1], edges[n][0], edges[n][1]) for n in order] + [(None, F, F - 1, np.zeros(2), np.zeros(2))]
+    prev, prev_end, prev_off = None, -1, np.zeros(2)
+    for n, a, b, o_in, o_out in bounds:
+        g0, g1 = prev_end + 1, a - 1
+        if g1 >= g0:
+            k = np.arange(g0, g1 + 1)
+            air = ~on_floor[k]
+            if not air.any():
+                t = (np.arange(len(k)) + 1.0) / (len(k) + 1.0)
+                H[k] = prev_off + (o_in - prev_off) * smoothstep(t)[:, None]
+                if prev is not None and n is not None and np.linalg.norm(o_in - prev_off) > 1e-6:
+                    floor_moves.append(float(np.linalg.norm(o_in - prev_off)) * UNIT_CM)
+            else:
+                first, last = int(np.argmax(air)), len(k) - 1 - int(np.argmax(air[::-1]))
+                o = prev_off.copy()                       # out of the last span, the shoe still down
+                if prev is not None and first > 0:
+                    p = mapped(prev, np.arange(g0 - 1, g0 + first))
+                    for i in range(first):
+                        if not src_on_floor[k[i]]:
+                            o = o - (p[i + 1] - p[i])
+                        H[k[i]] = o
+                out_off = o
+                o = o_in.copy()                           # into the next span, the shoe already down
+                if n is not None and last < len(k) - 1:
+                    q = mapped(n, np.arange(g0 + last + 1, g1 + 2))
+                    for j in range(len(k) - 1, last, -1):
+                        jj = j - (last + 1)
+                        if not src_on_floor[k[j]]:
+                            o = o + (q[jj + 1] - q[jj])
+                        H[k[j]] = o
+                in_off = o
+                mid = np.arange(first, last + 1)
+                off = air[mid]
+                n_air = int(off.sum())
+                c = np.cumsum(off).astype(np.float64)
+                if n_air < 2 * ease_air:
+                    H[k[mid]] = out_off + (in_off - out_off) * smoothstep(c / n_air)[:, None]
+                else:
+                    go = smoothstep(np.clip(c / ease_air, 0.0, 1.0))
+                    come = smoothstep(np.clip((c - (n_air - ease_air)) / ease_air, 0.0, 1.0))
+                    H[k[mid]] = out_off * (1.0 - go)[:, None] + in_off * come[:, None]
+        if n is not None:
+            H[a:b + 1] = hold[a:b + 1]
+        prev, prev_end, prev_off = n, b, o_out
+    return H, floor_moves
+
+
 def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
     """the target's foot keys for the source's plants (the foot IK's goal and turn, the ankle's key): the foot takes the
     source's foot's world turn (a foot flat on the floor stays flat, whatever MMD's toe IK would turn the target's foot
     by); a foot on its toe or heel is pitched further about its own side axis (the ankle where the mapping put it, by at
-    most TOUCH_PITCH_MAX) until the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot stands level across (the source's roll taken out:
-    Hibikase's flat feet roll 7 degrees in the median, and with the sole's middle on the floor the edge was 3 mm under it
-    in the median, 1.4 cm at most) and its ankle moves up or down (at most FLAT_LIFT_MAX) until the shoe is on the floor;
-    the touching point is held still.  A foot on the floor that moves (turning on its toe: touches) is put on the floor the same way, frame
-    by frame, and not held.  The hips are never lowered.  The changes ease in and out over EASE frames.
+    most TOUCH_PITCH_MAX) until the shoe's lowest vertex (sole_shell) reaches the floor; a flat foot stands level across
+    (the source's roll taken out: Hibikase's flat feet roll 7 degrees in the median, and with the sole's middle on the
+    floor the edge was 3 mm under it in the median, 1.4 cm at most) and its ankle moves up or down (at most FLAT_LIFT_MAX)
+    until the shoe is on the floor; the touching point is held still.  A foot that turns on the floor (touches) is put on
+    the floor the same way and turns in place: the sole point it turns on is held.  The turn and the lift ease in and out
+    over EASE frames; the hold along the floor changes only while the target's shoe is off the floor (hold_offsets), and
+    while the turn eases the point held next is kept where the mapping puts it.  Off the spans a shoe the source carries
+    over the floor (faster than TOUCH_SPEED) is carried at least as high (up to CLEAR_TO).  The hips are never lowered.
     Returns the report."""
     F = len(frames)
     rep = {}
     found = {side: plants(src, src_legs, side) for side in SIDES}
     on_floor = {side: touches(F, *found[side], found[[s for s in SIDES if s != side][0]][0]) for side in SIDES}
+    names = ("heel", "ball", "toe")
     for rnd in range(FEET_ROUNDS):
         tgt_legs = leg_pose(tgt, tgt_trk, frames)
         for side in SIDES:
-            spans, _ = found[side]
+            spans, arrays = found[side]
             moving = on_floor[side]
             pts_t, floor_t = sole_points(tgt, side)
             shell_t = sole_shell(tgt, side)
             leg = tgt_legs[side]
             A, Q = leg["ankle"], leg["q_foot"]
             Qs = src_legs[side]["q_foot"]
-            which, weight = ease_weights(F, [(a, b) for a, b, _ in spans] + moving)
+            all_spans = [(a, b) for a, b, _ in spans] + list(moving)
+            which, weight = ease_weights(F, all_spans)
             want_turn = Q.copy()
-            shift = np.zeros((F, 3))
+            lift = np.zeros(F)
+            hold = np.zeros((F, 2))
             d_all = np.zeros(F)
             left_over = np.full(F, np.nan)
             kinds = {"flat": 0, "toe": 0, "heel": 0}
+            turned_on = {k: 0 for k in names}
             roll_out = []
+            points, edges = [], []
+
+            def held_at(n, idx, Qn, point, a, b):
+                # the point kept where it is over the span (the mean of where it would be), against the mapped foot at
+                # the span's ends (the offset the hold along the floor takes in the air)
+                C = A[idx] + qrot(Qn, point)
+                inside = (idx >= a) & (idx <= b)
+                lock = np.mean(C[inside][:, [0, 2]], axis=0) if np.any(inside) else np.mean(C[:, [0, 2]], axis=0)
+                hold[idx[inside]] = lock - C[inside][:, [0, 2]]
+                C0a, C0b = (A[f] + qrot(Q[f], point) for f in (a, b))
+                points.append(point)
+                edges.append((lock - C0a[[0, 2]], lock - C0b[[0, 2]]))
+
             for n, (a, b, kind) in enumerate(spans):
                 kinds[kind] += 1
                 idx = np.flatnonzero(which == n)
-                if not len(idx):
-                    continue
                 point = pts_t["toe" if kind == "toe" else ("heel" if kind == "heel" else "ball")]
+                if not len(idx):
+                    points.append(point)
+                    edges.append((np.zeros(2), np.zeros(2)))
+                    continue
                 base = Qs[idx]
                 p0 = foot_pitch(base)
                 if kind == "flat":
@@ -1049,8 +1172,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                     roll_out.append(np.abs(rolled[(idx >= a) & (idx <= b)]))
                     d = np.zeros(len(idx))
                     low = A[idx, 1] + np.min(qrot(base[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
-                    lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
-                    left_over[idx] = low + lift
+                    up = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
+                    left_over[idx] = low + up
                 else:
                     if kind == "toe":
                         lo, hi = -np.maximum(p0, 0.0), MAX_PITCH_DEG - p0
@@ -1058,28 +1181,30 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -MAX_PITCH_DEG - p0, -np.minimum(p0, 0.0)
                     lo, hi = np.maximum(lo, -TOUCH_PITCH_MAX), np.minimum(hi, TOUCH_PITCH_MAX)
                     d, rest_h = solve_pitch(A[idx], base, shell_t, floor_t, lo, hi)
-                    lift = np.zeros(len(idx))
+                    up = np.zeros(len(idx))
                     left_over[idx] = rest_h
                 Qn = qmul(pitch_turn(base, d), base)
-                C = A[idx] + qrot(Qn, point)
-                inside = (idx >= a) & (idx <= b)
-                lock = np.mean(C[inside][:, [0, 2]], axis=0) if np.any(inside) else np.mean(C[:, [0, 2]], axis=0)
-                sh = np.zeros((len(idx), 3))
-                sh[:, 0] = lock[0] - C[:, 0]
-                sh[:, 2] = lock[1] - C[:, 2]
-                sh[:, 1] = lift
                 want_turn[idx] = Qn
-                shift[idx] = sh
+                lift[idx] = up
                 d_all[idx] = d
+                held_at(n, idx, Qn, point, a, b)
             for n, (a, b) in enumerate(moving, start=len(spans)):
-                # on the floor but moving: the shoe's lowest point onto the floor by the foot's pitch (toe down or heel
-                # down as the source's foot is, frame by frame), what the pitch leaves by the ankle up or down (at most
-                # FLAT_LIFT_MAX); no hold along the floor
+                # turning on the floor: the shoe's lowest point onto the floor by the foot's pitch (toe down or heel down
+                # as the source's foot is, frame by frame; a flat foot level across), what the pitch leaves by the ankle
+                # up or down (at most FLAT_LIFT_MAX); the sole point the source's foot turns on held where it is
                 idx = np.flatnonzero(which == n)
+                t_on = float(LINE_T[int(np.argmin(np.median(arrays["line_speed"][a:b + 1], axis=0)))])
+                turned_on["heel" if t_on < 1 / 3 else ("toe" if t_on > 2 / 3 else "ball")] += 1
+                point = pts_t["heel"] + t_on * (pts_t["toe"] - pts_t["heel"])
                 if not len(idx):
+                    points.append(point)
+                    edges.append((np.zeros(2), np.zeros(2)))
                     continue
-                base = Qs[idx]
+                base = Qs[idx].copy()
                 p0 = foot_pitch(base)
+                flat = np.abs(p0) <= PITCH_FLAT_DEG
+                if np.any(flat):
+                    base[flat] = unroll(base[flat])[0]
                 d = np.zeros(len(idx))
                 low = np.zeros(len(idx))
                 for kind, sel in (("toe", p0 > PITCH_FLAT_DEG), ("heel", p0 < -PITCH_FLAT_DEG)):
@@ -1091,18 +1216,56 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                         lo, hi = -MAX_PITCH_DEG - p0[sel], -np.minimum(p0[sel], 0.0)
                     lo, hi = np.maximum(lo, -TOUCH_PITCH_MAX), np.minimum(hi, TOUCH_PITCH_MAX)
                     d[sel], low[sel] = solve_pitch(A[idx[sel]], base[sel], shell_t, floor_t, lo, hi)
-                flat = np.abs(p0) <= PITCH_FLAT_DEG
                 if np.any(flat):
                     low[flat] = A[idx[flat], 1] + np.min(qrot(base[flat][:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
-                lift = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
-                left_over[idx] = low + lift
-                want_turn[idx] = qmul(pitch_turn(base, d), base)
-                shift[idx, 1] = lift
+                up = np.clip(-low, -FLAT_LIFT_MAX, FLAT_LIFT_MAX)
+                left_over[idx] = low + up
+                Qn = qmul(pitch_turn(base, d), base)
+                want_turn[idx] = Qn
+                lift[idx] = up
                 d_all[idx] = d
-            moved = np.flatnonzero(weight > 0)
+                inside = (idx >= a) & (idx <= b)
+                if np.median(np.abs(p0[inside])) > PITCH_FLAT_DEG:
+                    # on its toe or heel the shoe touches the floor there, wherever the source's foot turned: the middle
+                    # of the shoe's vertices within 1 mm of its lowest, over the run (else that part sweeps round)
+                    y = qrot(Qn[inside][:, None, :], shell_t[None, :, :])[:, :, 1]
+                    touching = y <= y.min(axis=1, keepdims=True) + PITCH_ON_FLOOR
+                    centres = (touching[:, :, None] * shell_t[None, :, :]).sum(axis=1) / touching.sum(axis=1)[:, None]
+                    point = np.median(centres, axis=0)
+                held_at(n, idx, Qn, point, a, b)
+            in_span = np.zeros(F, bool)
+            for a, b in all_spans:
+                in_span[a:b + 1] = True
+            # off the spans a shoe the source carries over the floor (its sole's slowest point faster than TOUCH_SPEED)
+            # is carried at least as high, up to CLEAR_TO (its shoe, from its mesh: the mapping scales the heights by the
+            # legs' ratio and the shoes differ, and the song's carried feet came down onto the floor and slid along it
+            # while the source's shoe stayed over it; a slower foot, standing or turning, is left to the spans)
+            Qw = slerp_n(Q, want_turn, weight)
+            low_now = A[:, 1] + weight * lift + np.min(qrot(Qw[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
+            shell_s = sole_shell(src, side, mesh=True)
+            src_low = (src_legs[side]["ankle"][:, 1] + np.min(qrot(Qs[:, None, :], shell_s[None, :, :])[:, :, 1], axis=1)
+                       - float(src.rest(side + "足首")[1] + shell_s[:, 1].min()))
+            clear = np.clip(np.minimum(src_low, CLEAR_TO) - low_now, 0.0, CLEAR_TO) * (1.0 - weight)
+            clear[arrays["line_speed"].min(axis=1) < TOUCH_SPEED] = 0.0
+            shoe_low = low_now + clear
+            # along the floor: the holds, and between them an offset that changes only while the shoe is off the floor
+            # (as the turn and the lift leave it, easing)
+            H, floor_moves = hold_offsets(F, all_spans, hold, edges, lambda n, f: (A[f] + qrot(Q[f], points[n]))[:, [0, 2]],
+                                          shoe_low <= AIR_H, arrays["height"] <= AIR_H)
+            # while the turn eases in or out (off a span's frames) the point the foot stands on next or stood on last
+            # stays where the mapping puts it plus the offset: the turn is taken about that point, not about the ankle
+            easing = np.flatnonzero((weight > 0) & ~in_span)
+            if len(easing):
+                pk = np.stack([points[k] for k in which[easing]])
+                Qw = slerp_n(Q[easing], want_turn[easing], weight[easing])
+                H[easing] += (qrot(Q[easing], pk) - qrot(Qw, pk))[:, [0, 2]]
+            shift = np.zeros((F, 3))
+            shift[:, 0], shift[:, 2] = H[:, 0], H[:, 1]
+            shift[:, 1] = weight * lift + clear
+            moved = np.flatnonzero((weight > 0) | (np.abs(H).max(axis=1) > 1e-7) | (clear > 1e-7))
             r = rep.setdefault(side, {"plants": len(spans), "kinds": kinds, "plant_frames": int(sum(b - a + 1 for a, b, _ in spans)),
                                       "on_floor_moving": len(moving), "on_floor_moving_frames": int(sum(b - a + 1 for a, b in moving)),
-                                      "keys_added": 0})
+                                      "turned_on": turned_on, "keys_added": 0})
             if len(moved):
                 w = weight[moved]
                 # the foot IK: its world turn towards the wanted foot turn, its goal shifted (both in its parent's frame)
@@ -1116,7 +1279,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 pos, rot = tr.sample(frames)
                 Wik = qmul(Wp, rot)
                 new_ik = qmul(qconj(Wp[moved]), slerp_n(Wik[moved], want_turn[moved], w))
-                new_pos = pos[moved] + qrot(qconj(Wp[moved]), w[:, None] * shift[moved])
+                new_pos = pos[moved] + qrot(qconj(Wp[moved]), shift[moved])
                 added = tr.fit(frames[moved], want_rot=new_ik, want_pos=new_pos, tol_deg=0.25, tol_pos=0.005)
                 # the ankle's key: the foot's world turn through the solved shin (the toe IK then has nothing to turn)
                 ank = side + "足首"
@@ -1134,13 +1297,19 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 r["shift_cm"] = _quant(np.linalg.norm(shift[full], axis=1) * UNIT_CM)
                 r["turn_change_deg"] = _quant(np.degrees(qangle(qmul(qconj(Q[full]), want_turn[full]))))
                 r["flat_roll_removed_deg"] = _quant(np.concatenate(roll_out)) if roll_out else None
+                r["hold_cm"] = _quant(np.linalg.norm(hold[in_span], axis=1) * UNIT_CM)
+                r["off_span_offset_cm"] = _quant(np.linalg.norm(H[~in_span], axis=1) * UNIT_CM)
+                r["gaps_moved_on_the_floor"] = len(floor_moves)
+                r["gaps_moved_on_the_floor_cm"] = _quant(floor_moves)
+                r["clearance_frames"] = int(np.sum(clear > 1e-4))
+                r["clearance_cm"] = _quant(clear[clear > 1e-4] * UNIT_CM)
             inside_toe = np.isin(which, [n for n, s in enumerate(spans) if s[2] != "flat"]) & (weight >= 1.0)
             r["toe_left_over_cm"] = _quant(np.abs(left_over[inside_toe & ~np.isnan(left_over)]) * UNIT_CM)
             r["toe_unreached_frames"] = int(np.sum(inside_toe & (np.abs(np.nan_to_num(left_over)) > 0.0125)))
             inside_moving = (which >= len(spans)) & (weight >= 1.0)
             r["on_floor_moving_left_over_cm"] = _quant(np.abs(left_over[inside_moving & ~np.isnan(left_over)]) * UNIT_CM)
-            log("feet %s round %d: %d plants (%s), %d on the floor moving, %d keys added" % (side, rnd, len(spans), kinds,
-                                                                                       len(moving), r["keys_added"]))
+            log("feet %s round %d: %d plants (%s), %d turning on the floor (on %s), %d keys added" % (
+                side, rnd, len(spans), kinds, len(moving), turned_on, r["keys_added"]))
     return rep
 
 
