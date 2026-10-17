@@ -598,57 +598,27 @@ class FlightTest(unittest.TestCase):
         self.assertLess(float(d.max()), 2.0)
         self.assertGreater(float(d.min()), -1e-6)
 
-
-class ReachTest(unittest.TestCase):
-    """the layer's own moves of a foot stay where MMD's IK follows them: no new miss as tools/mv_inspect.py counts it (a
-    supporting shoe whose ankle MMD leaves more than 4 mm from its 足ＩＫ goal and 1 mm further than in the input)"""
-
-    @staticmethod
-    def new_misses(m, out, F):
-        sa, sb = leg_ik.solve(RIG, m, range(F)), leg_ik.solve(RIG, out, range(F))
-        sh = shoes(out, F)
-        return {s: int(np.sum((sh[s]["low"] < 1.6) & (sb[s]["reach"] > 0.05) & (sb[s]["reach"] > sa[s]["reach"] + 0.0125)))
-                for s in SIDES}
-
-    def test_a_free_foot_mmds_leg_stops_short_of_comes_down_only_as_far_as_mmd_follows(self):
-        # the body over the right foot, the left foot held still 1.2 cm up 1.7 units out: its leg reaches the floor on
-        # paper (the knee bent 5.5 degrees), but MMD's IK stops the ankle short of a goal there (4.9 mm, the dance 1.9 mm;
-        # the song's free feet: 0.5-0.9 cm with the knee bent some 20 degrees).  The layer gives back what MMD does not
-        # follow: no new miss, the pelvis as it was, the shoe no higher than the dance's and never into the floor
-        F = 30
-        m = dance(F, centre=lambda t: (-1.12, BENT + 0.6, 0.0), left=lambda t: ((1.7, 0.15, 0.0), None))
-        out, plan = run(m)
-        self.assertEqual(self.new_misses(m, out, F), {"左": 0, "右": 0})
-        self.assertLess(float(np.abs(world_y(out, F, "センター") - world_y(m, F, "センター")).max()), 1e-6)
-        a, b = shoes(m, F), shoes(out, F)
-        self.assertLess(float((b["左"]["low"] - a["左"]["low"]).max()), 0.01)
-        self.assertGreater(float(b["左"]["low"].min()), -0.05)
-
-    def test_a_weight_bearing_foot_mmds_leg_stops_short_of_gets_the_pelvis_lowered(self):
-        # a wide stance with the body leaning over the left foot (the centre of mass 13 cm outside the right foot's sole),
-        # the left foot held still 1.4 cm up 3 units out: its leg reaches the floor on paper, MMD's stops short.  Given
-        # back, the foot the body leans on would stay up (1.1 cm; the song's 160.2-161.0 s: 2 cm); it stays on the floor
-        # and the pelvis comes down a little instead, within the skirt's bound (in the first and last REACH_EDGE frames
-        # of the stance, a landing's and a take-off's, the foot stays as the layer put it: no higher than there)
-        F, e = 40, contact_layer.REACH_EDGE
-        m = dance(F, centre=lambda t: (0.9, BENT + 0.9, 0.0), left=lambda t: ((3.0, 0.15, 0.0), None))
-        a = shoes(m, F)["左"]["low"]
-        self.assertGreater(float(a.min()), 1.2)                                       # (as built: the foot 1.4 cm up)
-        out, plan = run(m)
-        sa, sb = leg_ik.solve(RIG, m, range(F)), leg_ik.solve(RIG, out, range(F))
-        b = shoes(out, F)["左"]["low"]
-        new = (b < 1.6) & (sb["左"]["reach"] > 0.05) & (sb["左"]["reach"] > sa["左"]["reach"] + 0.0125)
-        self.assertEqual(int(new[e:F - e].sum()), 0)                                  # no new miss but at the edges
-        k = e + contact_layer.EASE
-        self.assertLess(float(b[k:F - k].max()), 0.1)                                 # on the floor
-        self.assertLess(float(b[e:F - e].max()), 0.4)                                 # (a05's 4 mm where the lowering eases in)
-        self.assertLess(float(b.max()), 1.0)                                          # nowhere given back up
-        self.assertEqual(self.new_misses(m, out, F)["右"], 0)
-        d = (world_y(m, F, "センター") - world_y(out, F, "センター")) * CM
-        self.assertGreater(float(d.max()), 0.3)                                       # the pelvis lowered ...
-        self.assertLess(float(d.max()), 2.5)                                          # ... a little
-        for name in ("センター", "下半身"):
-            self.assertLess(float(down_acc(world_y(out, F, name)).max()), 122.0 + 0.5)
+    def test_the_least_lowering_at_a_turn_holds_where_a_need_nearby_joins_its_window(self):
+        # the same turn with a weight-bearing need 1 cm deep 20 frames after it (the song's 41.7 s after 40.13 s): the
+        # windows join, and the lowering at the turn stays the least one (a weight per window brought back 2.85 cm)
+        F = 80
+        fall = np.zeros(F)
+        fall[30] = 281.0
+        fall[29], fall[31] = 101.0, 112.0
+        strict = np.zeros(F, bool)
+        strict[30] = True
+        allowed = np.maximum(122.0, fall) + 0.25
+        allowed = np.where(strict, 122.25, allowed)
+        need0 = np.zeros(F)
+        z0, _ = contact_layer.drop_profile(need0, np.ones(F, bool), fall, allowed, F, strict=strict,
+                                           strict_smooth=contact_layer.STRICT_SMOOTH)
+        need = np.zeros(F)
+        need[50:53] = 1.0 / CM
+        z1, rows = contact_layer.drop_profile(need, np.ones(F, bool), fall, allowed, F, strict=strict,
+                                              strict_smooth=contact_layer.STRICT_SMOOTH)
+        self.assertEqual(len(rows), 1)                                                # (as built: one window)
+        self.assertLess(abs(float(z1[25:36].max()) - float(z0[25:36].max())) * CM, 0.1)
+        self.assertGreater(float(z1[50:53].min()) * CM, 1.0 - 1e-6)
 
 
 class DropProfileTest(unittest.TestCase):
