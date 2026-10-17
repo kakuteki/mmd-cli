@@ -1015,6 +1015,7 @@ CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the su
 CLEAR_TOL = 0.005               # units: an arm this little into a part is left as it is
 ELBOW_SHARE = 0.25              # the forearm's first share counts with the upper arm (cleared by turning the arm at the shoulder)
 TOUCH_ALLOW = 0.05              # units (4 mm): a hand on a part the source's hand touches may sink this far into it
+HOLD_FROM = 0.6                 # the relation's weight from which the clearance keeps the hand where it is (1 at a touch)
 SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder is not tested against the head (the shoulder is under it)
 TOL_DEG = 0.3                   # the keys meet the wanted turns this closely
 
@@ -1376,7 +1377,9 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
         if not all(tgt.has(n) for n in arm_names(side)):
             continue
         cw = contact_weights.get(side, {})
-        hold = np.max(np.stack(list(cw.values())), axis=0) if cw else None
+        # the hand is held where the source's hand touches a part (its relation's weight near 1), not where it is only
+        # near one: an arm clears the body by moving its hand when the hand was merely close
+        hold = smoothstep((np.max(np.stack(list(cw.values())), axis=0) - HOLD_FROM) / (1.0 - HOLD_FROM)) if cw else None
         before = None
         moved_any = np.zeros(F, bool)
         for rnd in range(CLEAR_ROUNDS):
@@ -1416,7 +1419,7 @@ def clear_arms(tgt, trk, frames, contact_weights, parts, log):
                 Wt = Wt + hold[:, None] * (W - Wt)
             Es, Ws = arm_ik(S, E1, W1, Wt, pole=E1)
             if hold is not None:                        # a held hand: the elbow round the arm's circle where it goes in least
-                idx = np.flatnonzero((hold >= 0.3) & moved)
+                idx = np.flatnonzero((hold >= 0.5) & moved)
                 if len(idx):
                     sub = {p: (pos[idx], rot[idx]) for p, (pos, rot) in parts.items()}
                     Es[idx] = best_swivel(tgt, side, S[idx], Es[idx], Ws[idx], sub)
