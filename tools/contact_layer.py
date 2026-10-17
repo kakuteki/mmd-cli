@@ -144,14 +144,16 @@ SWING_CLEAR = ON_FLOOR + 0.0125 # units (5 mm): a foot not standing whose touchi
                                 # and a lift of BRIDGE frames bridges only a foot slower than that (v11feet 2026-10-17: after
                                 # the retarget, which carries a shoe as high over the floor as the source's, these put the
                                 # song's swings on the floor, where they slid: 153 cm a minute, 621 in all; 272 without)
-GLIDE_MAX = 0.2                 # units (1.6 cm): in a run of AIR_MIN frames and more with no foot standing whose pelvis does
+GLIDE_MAX = 0.25                # units (2 cm): in a run of AIR_MIN frames and more with no foot standing whose pelvis does
                                 # not fall as in a flight (its parabola over the run and a frame each side slower than
                                 # FLIGHT_FIT, no frame faster than FALL_BOUND), the lower foot stands where its shoe is lower
-                                # than this (a shoe the skirt's bound already counts as standing: AIR_CLEAR): the dance's
-                                # support gliding along the floor, not a hover (v11feet 2026-10-17: after the retarget and the
-                                # swings kept off the floor, the layer made 55 of the song's hovers hops, the air 12 a minute
-                                # (mv_inspect), people's 1.3 [0, 2.9]; with the glide 2.4, the hover 4.6 -> 2.0 % (people's
-                                # 1.4 [0.55, 2.2]), the slide 272 -> 394 cm a minute)
+                                # than this (tools/retarget.py's TOUCH_FLOOR: a source foot this low turning or still is on
+                                # the floor there): the dance's support gliding along the floor, not a hover.  (v11feet
+                                # 2026-10-17: after the retarget and the swings kept off the floor, the layer made 55 of the
+                                # song's hovers hops; mv_inspect's air 12 a minute, people's 1.3 [0, 2.9].  With the glide under
+                                # 1.6 cm (the skirt's AIR_CLEAR) 4.6, hover 2.4 %; under 2 cm 2.7 and 2.0 % (people's 1.4
+                                # [0.55, 2.2]), contact_check's slide 297 -> 316 cm a minute: the source's 334, the retarget's
+                                # 315)
 NEED_CM = 10.0                  # cm: the centre of mass's floor point this far outside the other foot's sole: this foot
                                 # bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wide
                                 # stances -12 to -32 cm; people's single-support ZMP margin is -4.4 cm [-6.0, -2.2])
@@ -175,6 +177,9 @@ PLANT_POP = 2                   # steps: a standing foot's moves faster than PLA
                                 # slower step of the same stand on each side, are a jump, not a slide, and are held too (v11feet
                                 # 2026-10-17: the song's 242.1 s right foot, turned some 90 degrees in a frame by the trace, came
                                 # out of the foot layers with its shoe 11 cm along the floor in that frame)
+PLANT_SPIKE = (2.0, 5.0)        # (times, cm): and a standing foot's step longer than the first times the longer of its two
+                                # neighbours and than the second is a jump inside a slide: it is brought to the neighbours'
+                                # pace (the song's 242.1 s: 11.35 cm between steps of 1.7 and 1.9)
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
@@ -370,6 +375,25 @@ def swing_blend(corr, stance, F):
             u = float(smoothstep((t - b) / float(n)))
             out[t] = end * (1.0 - u) + start * u
     return out
+
+
+def held_share(step, stance, n=PLANT_POP, spike=PLANT_SPIKE):
+    """[F] how much of each step (frame t to t + 1, step [F] in cm) of a standing foot (stance [F]) the plant undoes: all of
+    a step slower than PLANT_SPEED a frame and of a lone jump (lone_pops), the excess over its neighbours' pace of a step
+    longer than spike[0] times both and than spike[1] cm (a jump inside a slide), none of the rest (the dance's slide)"""
+    step = np.asarray(step, dtype=float)
+    slow = step * FPS < PLANT_SPEED
+    share = (slow | lone_pops(~slow, stance, n)).astype(float)
+    F = len(step)
+    on = np.zeros(F, dtype=bool)
+    on[:-1] = np.asarray(stance[:-1], dtype=bool) & np.asarray(stance[1:], dtype=bool)
+    if F >= 3:
+        level = np.zeros(F)
+        level[1:-1] = np.maximum(step[:-2], step[2:])
+        jump = on & (share < 1.0) & (step > spike[1]) & (step > spike[0] * level)
+        jump[0] = jump[-1] = False
+        share = np.where(jump, 1.0 - level / np.maximum(step, 1e-9), share)
+    return share
 
 
 def lone_pops(fast, stance, n=PLANT_POP):
@@ -1239,8 +1263,8 @@ def layer(model, rig, shoe, motion, params=None):
         c = np.zeros((F, 2))
         rows = []
         if p["plant"]:
-            slow = np.linalg.norm(slip[s], axis=1) * UNIT_CM * FPS < PLANT_SPEED
-            slow = slow | lone_pops(~slow, stance[s])                  # (a jump of a frame or two is held too: PLANT_POP)
+            # the share of each step undone: the slow ones and the jumps (held_share: PLANT_POP, PLANT_SPIKE)
+            undo = held_share(np.linalg.norm(slip[s], axis=1) * UNIT_CM, stance[s])
             e = hips_low[s] - (sol[s]["goal_ankle"] + np.stack([np.zeros(F), dy_e[s], np.zeros(F)], 1))
             r_lo, r_hi = plant_band(e, *lengths[s])
             for a, b in runs(stance[s]):
@@ -1248,11 +1272,10 @@ def layer(model, rig, shoe, motion, params=None):
                 k0 = a + (int(put[0]) if len(put) else int(np.argmin(low_j[s][a:b + 1])))
                 limited = 0
                 for t in range(k0, b):
-                    c[t + 1], lim = held_within(c[t] - (slip[s][t] if slow[t] else 0.0), e[t + 1], r_lo[t + 1], r_hi[t + 1])
+                    c[t + 1], lim = held_within(c[t] - undo[t] * slip[s][t], e[t + 1], r_lo[t + 1], r_hi[t + 1])
                     limited += int(lim)
                 for t in range(k0, a, -1):
-                    c[t - 1], lim = held_within(c[t] + (slip[s][t - 1] if slow[t - 1] else 0.0), e[t - 1], r_lo[t - 1],
-                                                r_hi[t - 1])
+                    c[t - 1], lim = held_within(c[t] + undo[t - 1] * slip[s][t - 1], e[t - 1], r_lo[t - 1], r_hi[t - 1])
                     limited += int(lim)
                 if b > a:
                     n = np.linalg.norm(c[a:b + 1], axis=1) * UNIT_CM
