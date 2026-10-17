@@ -9,7 +9,8 @@ SOURCE_BODY is what tools/retarget.py takes (a model or a .json body); TARGET.vm
 retargeted one, or the source dance itself read on the target, to see what the retarget changed).  The measures are
 made apart from tools/retarget.py's own arithmetic (it is used only to read the bodies): the bones by forward kinematics
 (tools/motor_layer.py), the legs as MMD's IK puts them (tools/leg_ik.py), the target's shoes as their skinned vertices
-(tools/sink_check.py), and the body's surfaces as the nearest of its vertices, signed by that vertex's normal (no grid).
+(tools/sink_check.py), and the body's parts as the convex polytopes of their vertices along 96 directions (tools/retarget.py
+uses 98 others).
 
 * contacts: a hand point (the palm's middle, the middle finger's tip) of the source within TOUCH of a part of its body
   (head with what rides on 頭, chest, belly, hips, each thigh) touches it.  On those frames the target's same point is
@@ -17,7 +18,8 @@ made apart from tools/retarget.py's own arithmetic (it is used only to read the 
   not less than 0), 'lost' when it is more than LOST off (or LOST inside).  Per part: the touching frames, the share
   kept, the lost runs.
 * arms in the body: the target's arm as capsules on its bones (the upper arm, the forearm, the hand; radii the 60th
-  percentile of their vertices' distance from the bone), the deepest it goes into a part (the upper arm's half by the shoulder
+  percentile of their vertices' distance from the bone), the deepest it goes into a part (head with its hair, ribbon,
+  chest, belly, hips, thighs; each the convex polytope of its vertices; the skirt, moved by the physics, counted apart) (the upper arm's half by the shoulder
   arm not tested against the trunk, the hand not against a part the source's hand touches then).  The frames over 0.5
   and 1 cm, the deepest, the runs.  The same for the source's arm in its own body.
 * plants: a source foot stands where its foot IK goal or toe IK goal (forward kinematics: where the foot is meant to
@@ -63,11 +65,11 @@ PLANT_EPS = 0.05                # units (4 mm, a05's contact): a goal this close
 STILL = 0.025                   # units a frame
 PLANT_MIN = 3
 TOE_PITCH = 4.0
-VOXEL = 0.04
-SIDE_PLANE = 0.3                # units: a point this close beside its nearest vertex is measured to that vertex's plane
 SKIP_SHOULDER = 0.5
-PARTS = {"head": ("頭", ("頭",)), "chest": ("上半身2", ("上半身2", "胸椎上部")), "belly": ("上半身", ("上半身", "腰椎上部")),
-         "hips": ("下半身", ("下半身", "腰")), "thigh_左": ("左足", ("左足", "左足D")), "thigh_右": ("右足", ("右足", "右足D"))}
+PARTS = {"head": ("頭", ("頭", "髮親", "髪親"), False), "ribbon": ("頭", ("リボン親",), False),
+         "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
+         "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
+         "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
 
 
 def runs(mask, min_len=1):
@@ -108,50 +110,47 @@ class Pose:
         return {n: self._w[n] for n in names if n in self._w}
 
 
+def _cube_directions(n=4):
+    """unit vectors through an n x n grid on each face of a cube (6 n^2 of them)"""
+    t = (np.arange(n) + 0.5) / n * 2.0 - 1.0
+    out = []
+    for axis in range(3):
+        for sign in (-1.0, 1.0):
+            for u in t:
+                for v in t:
+                    p = np.zeros(3)
+                    p[axis] = sign
+                    p[(axis + 1) % 3] = u
+                    p[(axis + 2) % 3] = v
+                    out.append(p / np.linalg.norm(p))
+    return np.array(out)
+
+
+CUBE = _cube_directions()
+
+
 class Part:
-    """a part's vertices (voxel-thinned) in its riding bone's rest frame with their normals: the nearest vertex's
-    distance, signed by its normal"""
+    """a part's vertices in its riding bone's rest frame, as the convex polytope they span along the 96 directions of a
+    cube's faces: inside is past no face; the depth inside is the nearest face's distance, outside the farthest face's
+    (a lower bound of the distance, exact next to a face).  A soft part (the skirt) is measured apart."""
 
     def __init__(self, body, part):
-        ride, bones = PARTS[part]
-        idx = [body.i(n) for n in bones if body.has(n)]
-        if part == "head" and body.has("頭"):
-            head = body.i("頭")
-            idx += [b.index for b in body.model.bones if b.parent == head]
+        ride, bones, self.soft = PARTS[part]
+        if part == "skirt":
+            idx = [b.index for b in body.model.bones if "スカート" in b.name or "ｽｶｰﾄ" in b.name]
+        else:
+            idx = [body.i(n) for n in bones if body.has(n)]
         m = np.isin(body.main_bone, idx) if len(body.vertices) else np.zeros(0, bool)
         self.ok = body.has(ride) and m.sum() >= 8
         if not self.ok:
             return
         self.ride = ride
         P = body.vertices[m] - body.rest(ride)
-        N = unit(body.normals[m])
-        cell = np.floor(P / VOXEL).astype(np.int64)
-        _, first = np.unique(cell, axis=0, return_index=True)
-        self.P, self.N = P[first], N[first]
-        self.centre = 0.5 * (self.P.min(axis=0) + self.P.max(axis=0))
-        self.radius = float(np.linalg.norm(self.P - self.centre, axis=1).max())
+        self.d = np.max(P @ CUBE.T, axis=0)
 
-    def distance(self, q, reach=1.5):
-        """signed distances of points q [n, 3] (in the part's frame); points farther than `reach` from the part's bounding
-        sphere get their distance to the sphere"""
-        q = np.asarray(q, dtype=np.float64)
-        out = np.linalg.norm(q - self.centre, axis=1) - self.radius
-        near = np.flatnonzero(out < reach)
-        step = max(16, int(2.0e6 // len(self.P)))
-        for a in range(0, len(near), step):
-            i = near[a:a + step]
-            d2 = np.sum((q[i, None, :] - self.P[None, :, :]) ** 2, axis=-1)
-            j = np.argmin(d2, axis=1)
-            off = q[i] - self.P[j]
-            along = np.sum(off * self.N[j], axis=1)
-            euclid = np.sqrt(d2[np.arange(len(i)), j])
-            side = np.sqrt(np.maximum(euclid ** 2 - along ** 2, 0.0))
-            s = np.sign(along)
-            s[s == 0] = 1.0
-            # close to the surface, the distance to the nearest vertex's tangent plane (a thin sampling of a smooth
-            # surface overstates the plain distance by up to half the spacing)
-            out[i] = np.where(side < SIDE_PLANE, along, s * euclid)
-        return out
+    def distance(self, q):
+        """signed distances of points q [n, 3] (in the part's frame)"""
+        return np.max(np.asarray(q, dtype=np.float64) @ CUBE.T - self.d, axis=-1)
 
 
 def parts_of(body):
@@ -189,7 +188,7 @@ def contacts(src_pose, src_parts, tgt_pose, tgt_parts):
         dt = part_distances(tgt_pose, tgt_parts, hand_points(tgt_pose, side))
         rows = {}
         for part in ds:
-            if part not in dt:
+            if part not in dt or src_parts[part].soft:
                 continue
             point = np.where(ds[part]["palm"] <= ds[part]["tip"], "palm", "tip")
             d_s = np.where(point == "palm", ds[part]["palm"], ds[part]["tip"])
@@ -241,9 +240,13 @@ def arms_in(pose, body, parts, touching=None):
                 share.append(t)
         rad, seg, share = np.array(rad), np.array(seg), np.array(share)
         deep = np.zeros(len(S))
+        skirt = np.zeros(len(S))
         dist = part_distances(pose, parts, {i: p for i, p in enumerate(pts)})
         for part, by in dist.items():
             for i, d in by.items():
+                if parts[part].soft:
+                    skirt = np.maximum(skirt, rad[i] - d)
+                    continue
                 if part in ("chest", "belly") and seg[i] == 0 and share[i] < SKIP_SHOULDER:
                     continue
                 pen = rad[i] - d
@@ -252,6 +255,7 @@ def arms_in(pose, body, parts, touching=None):
                 deep = np.maximum(deep, pen)
         deep = np.maximum(deep, 0.0)
         out[side] = {"frames_over_0.5cm": int(np.sum(deep > 0.0625)), "frames_over_1cm": int(np.sum(deep > 0.125)),
+                     "skirt_frames_over_1cm": int(np.sum(skirt > 0.125)),
                      "deepest_cm": round(float(deep.max()) * UNIT_CM, 3) if len(deep) else 0.0,
                      "runs_over_1cm": [[a, b] for a, b in runs(deep > 0.125)], "_deep": deep}
     return out

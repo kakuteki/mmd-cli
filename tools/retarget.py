@@ -643,91 +643,67 @@ def leg_pose(body, trk, frames):
 
 # ---- the body's surfaces: signed distances from the mesh, per part, in the part's bone frame -----------------------------
 
-# part -> (the bone it rides on, the bones whose vertices make it); the head takes its bone's direct children too (hair,
-# ribbon, glasses on Rin; the front hair and tails' roots on あにまさ式)
-PARTS = {"head": ("頭", ("頭",)), "chest": ("上半身2", ("上半身2", "胸椎上部")), "belly": ("上半身", ("上半身", "腰椎上部")),
-         "hips": ("下半身", ("下半身", "腰")), "thigh_左": ("左足", ("左足", "左足D")), "thigh_右": ("右足", ("右足", "右足D"))}
-HEAD_CHILDREN = True
-GRID = 0.1                      # units: the signed distance grid's spacing
-MARGIN = 1.0                    # units the grid reaches past the part's vertices
-VOXEL = 0.08                    # units: vertices closer than this are merged before the grid is filled
+# part -> (the bone it rides on, the bones whose vertices make it, whether it is soft).  A soft part (the skirt, moved by
+# MMD's physics) is measured but the arms are not pushed out of it.  The head is 頭 with the hair that rides on it rigidly
+# (髮親 / 髪親 on Sour's models); the ribbon on top of Rin's head is its own part (its hull with the head's would fill the
+# space between them).
+PARTS = {"head": ("頭", ("頭", "髮親", "髪親"), False), "ribbon": ("頭", ("リボン親",), False),
+         "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
+         "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
+         "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
+SKIRT_WORDS = ("スカート", "ｽｶｰﾄ")
+
+
+def _directions(n=98):
+    """n unit vectors spread over the sphere (a golden spiral)"""
+    i = np.arange(n) + 0.5
+    y = 1.0 - 2.0 * i / n
+    r = np.sqrt(1.0 - y * y)
+    a = np.pi * (3.0 - np.sqrt(5.0)) * i
+    return np.stack([r * np.cos(a), y, r * np.sin(a)], axis=1)
+
+
+DIRECTIONS = _directions()
 
 
 class Surface:
-    """a signed distance to a part's mesh (its vertices with their normals, in the riding bone's frame relative to its rest
-    position): on a grid, the distance to the nearest vertex signed by that vertex's normal; trilinear between nodes,
-    past the grid the distance to its box added"""
+    """a part as the convex polytope its vertices span along DIRECTIONS (a k-DOP: the intersection of the half-spaces
+    u . x <= max over the vertices of u . v), in the riding bone's frame relative to its rest position.  The signed
+    distance is the largest of u . x - d_u: exact inside (negative: how deep), a lower bound outside (exact next to a
+    face).  Thin or double-sided meshes (hair, ribbons, clothes) do not change which side of a part a point is on."""
 
-    def __init__(self, points, normals, spacing=GRID, margin=MARGIN):
-        points = np.asarray(points, dtype=np.float64)
-        normals = unit(np.asarray(normals, dtype=np.float64))
-        cell = np.floor(points / VOXEL).astype(np.int64)
-        _, inv = np.unique(cell, axis=0, return_inverse=True)
-        inv = inv.reshape(-1)
-        n = inv.max() + 1
-        P = np.zeros((n, 3))
-        N = np.zeros((n, 3))
-        c = np.bincount(inv, minlength=n).astype(np.float64)
-        for d in range(3):
-            P[:, d] = np.bincount(inv, weights=points[:, d], minlength=n) / c
-            N[:, d] = np.bincount(inv, weights=normals[:, d], minlength=n)
-        self.points = P
-        self.normals = unit(N)
-        self.lo = P.min(axis=0) - margin
-        self.hi = P.max(axis=0) + margin
+    def __init__(self, points, normals=None):
+        P = np.asarray(points, dtype=np.float64)
+        self.dirs = DIRECTIONS
+        self.d = np.max(P @ self.dirs.T, axis=0)
         self.box_center = 0.5 * (P.min(axis=0) + P.max(axis=0))
         self.box_half = np.maximum(0.5 * (P.max(axis=0) - P.min(axis=0)), 1e-3)
-        self.h = spacing
-        self.shape = tuple(int(v) for v in np.ceil((self.hi - self.lo) / spacing).astype(int) + 1)
-        gx, gy, gz = (self.lo[d] + spacing * np.arange(self.shape[d]) for d in range(3))
-        nodes = np.stack(np.meshgrid(gx, gy, gz, indexing="ij"), axis=-1).reshape(-1, 3)
-        dist = np.empty(len(nodes))
-        step = max(64, int(2.0e6 // max(len(P), 1)))
-        for a in range(0, len(nodes), step):
-            q = nodes[a:a + step]
-            d2 = np.sum((q[:, None, :] - P[None, :, :]) ** 2, axis=-1)
-            j = np.argmin(d2, axis=1)
-            sign = np.sign(np.sum((q - P[j]) * self.normals[j], axis=1))
-            sign[sign == 0] = 1.0
-            dist[a:a + step] = sign * np.sqrt(d2[np.arange(len(q)), j])
-        self.grid = dist.reshape(self.shape)
+        self.count = len(P)
+
+    def _planes(self, q):
+        return np.asarray(q, dtype=np.float64) @ self.dirs.T - self.d
 
     def sdf(self, q):
-        q = np.asarray(q, dtype=np.float64)
-        flat = q.reshape(-1, 3)
-        inside = np.clip(flat, self.lo, self.hi)
-        outside = np.linalg.norm(flat - inside, axis=1)
-        g = (inside - self.lo) / self.h
-        i0 = np.clip(np.floor(g).astype(np.int64), 0, np.array(self.shape) - 2)
-        t = np.clip(g - i0, 0.0, 1.0)
-        out = np.zeros(len(flat))
-        for dx in (0, 1):
-            for dy in (0, 1):
-                for dz in (0, 1):
-                    w = ((t[:, 0] if dx else 1 - t[:, 0]) * (t[:, 1] if dy else 1 - t[:, 1]) * (t[:, 2] if dz else 1 - t[:, 2]))
-                    out += w * self.grid[i0[:, 0] + dx, i0[:, 1] + dy, i0[:, 2] + dz]
-        return (out + outside).reshape(q.shape[:-1])
+        return self._planes(q).max(axis=-1)
 
     def grad(self, q):
-        q = np.asarray(q, dtype=np.float64)
-        e = 0.5 * self.h
-        g = np.stack([(self.sdf(q + e * ax) - self.sdf(q - e * ax)) / (2 * e) for ax in np.eye(3)], axis=-1)
-        return unit(g)
+        return self.dirs[np.argmax(self._planes(q), axis=-1)]
 
     def closest(self, q):
-        """the point of the surface nearest q (one step along the gradient)"""
+        """the point of the surface nearest q (along the face q is past or nearest inside)"""
+        q = np.asarray(q, dtype=np.float64)
         return q - self.sdf(q)[..., None] * self.grad(q)
 
 
 def part_vertices(body, part):
     """(points rel. the riding bone's rest position, normals) of a part, or None"""
-    ride, bones = PARTS[part]
+    ride, bones, _ = PARTS[part]
     if not body.has(ride) or not len(body.vertices):
         return None
-    idx = [body.i(n) for n in bones if body.has(n)]
-    if part == "head" and HEAD_CHILDREN:
-        head = body.i("頭")
-        idx += [b.index for b in body.model.bones if b.parent == head and not b.name.endswith(("目", "目光"))]
+    if part == "skirt":
+        idx = [b.index for b in body.model.bones if any(w in b.name for w in SKIRT_WORDS)]
+    else:
+        idx = [body.i(n) for n in bones if body.has(n)]
     m = np.isin(body.main_bone, idx)
     if m.sum() < 8:
         return None
@@ -744,6 +720,10 @@ def surfaces(body):
                 out[part] = Surface(*pv)
         body._surfaces = out
     return body._surfaces
+
+
+def soft(part):
+    return PARTS[part][2]
 
 
 def arm_radii(body, side):
@@ -1178,9 +1158,10 @@ def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
     the other hand), then the arm pushed out of the target's head, trunk, hips and thighs; returns the report"""
     F = len(frames)
     rep = {}
-    have_src = set(surfaces(src)) & set(surfaces(tgt))
+    have_src = {p for p in set(surfaces(src)) & set(surfaces(tgt)) if not soft(p)}
     src_parts = {p: v for p, v in part_frames(src, src_trk, frames).items() if p in have_src}
-    tgt_parts = {p: v for p, v in part_frames(tgt, tgt_trk, frames).items() if p in have_src}
+    tgt_all = part_frames(tgt, tgt_trk, frames)
+    tgt_parts = {p: v for p, v in tgt_all.items() if p in have_src}
     want = {}
     weights = {}
     hands_src = {side: hand_world(src, src_trk, frames, side) for side in SIDES}
@@ -1240,7 +1221,7 @@ def fix_hands(src, tgt, src_trk, tgt_trk, frames, params, log):
         rep[side]["moved_frames"] = int(moved.sum())
         rep[side]["moved_cm"] = _quant(np.linalg.norm(want[side] - Wt, axis=1)[moved] * UNIT_CM)
     if params.get("clear", True):
-        clr = clear_arms(tgt, tgt_trk, frames, weights, tgt_parts, log)
+        clr = clear_arms(tgt, tgt_trk, frames, weights, tgt_all, log)
         for side in SIDES:
             rep.setdefault(side, {})["clear"] = clr.get(side)
     return rep
@@ -1293,6 +1274,8 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
     lever_w = np.where(seg == 0, 0.0, np.where(seg == 1, share, 1.0))
     lever_e = np.where(seg == 0, share, np.where(seg == 1, 1.0 - share, 0.0))
     for part, (pos, rot) in parts.items():
+        if soft(part):
+            continue
         s = surf[part]
         local = qrot(qconj(rot)[:, None, :], P - pos[:, None, :])
         pen = rad[None, :] - s.sdf(local)
