@@ -186,17 +186,30 @@ class SmoothTest(unittest.TestCase):
         self.assertLess(float(np.abs(a - b).max()), 0.01)
 
 
+def brush_pose(lo, hi):
+    """an arm pose whose palm lies lo .. hi units off the source's head (the first found, from the arm raised highest)"""
+    for a in range(170, 59, -10):
+        for b in range(-60, 61, 20):
+            for g in range(0, 151, 15):
+                m = motion(*arm_pose_keys(a, b, g))
+                d = sphere_distance(MIKU_DATA, MIKU, MIKU_LEGS, "頭", m, palm(MIKU_DATA, m, "左", [0]), [0])[0]
+                if lo <= d <= hi:
+                    return d, (a, b, g)
+    return None
+
+
 class BrushTest(unittest.TestCase):
     """a touch of one frame (a hand brushing the head in a swing) that a later layer moved off: the change that puts it
     back comes in and goes out at no more than RAMP_CM a frame (not in one frame), the touching frame's place kept"""
 
-    def test_a_brief_touch_is_put_back_without_a_jump(self):
-        d, (a, b, g) = head_pose()
+    def check(self, found):
+        self.assertIsNotNone(found)
+        d, (a, b, g) = found
         far = (a - 50, b, g)
         src = motion(*arm_pose_keys(*far), *arm_pose_keys(*far, frame=9), *arm_pose_keys(a, b, g, frame=10),
                      *arm_pose_keys(*far, frame=11), *arm_pose_keys(*far, frame=20))
         on = sphere_distance(MIKU_DATA, MIKU, MIKU_LEGS, "頭", src, palm(MIKU_DATA, src, "左", [9, 10, 11]), [9, 10, 11])
-        self.assertLess(on[1], 0.1)                                         # (the source's hand on its head at 10 only)
+        self.assertLess(on[1], 0.2)                                         # (the source's hand on its head at 10 only)
         self.assertGreater(min(on[0], on[2]), 1.0)
         rt = retarget.layer(src, body(MIKU_DATA), body(RIN_DATA), {"feet": False}).motion
         moved = turned(rt, "左腕", (0.0, 0.0, 1.0), -20.0)                  # a later layer: the arm 20 degrees down
@@ -213,6 +226,14 @@ class BrushTest(unittest.TestCase):
         far = np.linalg.norm(wrist(RIN_DATA, ramped, frames) - w0, axis=1)
         self.assertLess(float(far[[0, 20]].max()), 1e-6)                    # (the dance's own keys at the ends)
         self.assertLess(float(far[[1, 2, 3, 17, 18, 19]].max()), 0.05)      # the ramp stays round the touch
+
+    def test_a_brief_touch_is_put_back_without_a_jump(self):
+        self.check(head_pose())
+
+    def test_a_brief_touch_just_past_the_touch_distance_too(self):
+        # the source's palm a little further than fix_hands' TOUCH (its weight just under 1), as Hibikase's right hand
+        # brushing the right thigh at 20.2 s (1.15 cm off, the weight 0.996)
+        self.check(brush_pose(retarget.TOUCH + 0.005, retarget.TOUCH + 0.03))
 
 
 class LeaveTest(unittest.TestCase):

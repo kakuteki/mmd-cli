@@ -82,8 +82,9 @@ THIGHS = {"thigh_左": "左", "thigh_右": "右"}
 SMOOTH_FRAMES = 1.0
 # cm a frame: where the source's hand touches a part only for a frame or two (a hand brushing a thigh in a swing) the
 # change that puts it back can be large (the later layers took the swing 10 cm off) and come and go in a frame, a jump of
-# the wrist; the change at each touching frame is kept and the frames around it are moved toward it, no further from it
-# than this many cm a frame away (a cone from each touching frame: the change comes in and goes out at this speed, 0.6 m/s)
+# the wrist; the change at each touching frame (the hold 0.5 or more: on Hibikase's 20.2 s the source's hand passes 1.15 cm
+# off the thigh, fix_hands' weight 0.996) is kept and the frames around it are moved toward it, no further from it than
+# this many cm a frame away (a cone from each touching frame: the change comes in and goes out at this speed, 0.6 m/s)
 RAMP_CM = 2.0
 
 
@@ -247,7 +248,7 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
                          for part, c in rel.items()}
         rep[side] = {"touch_frames": used}
         holds[side] = RT.smoothstep((top - RT.HOLD_FROM) / (1.0 - RT.HOLD_FROM))
-        touching[side] = top >= 1.0 - 1e-9
+        touching[side] = holds[side] >= 0.5         # the frames whose change the hold keeps half or more of
     if p["hands"] and all(s in want for s in SIDES):
         ps = hands_src["左"][2]["palm"] - hands_src["右"][2]["palm"]
         pt = hands_tgt["左"][2]["palm"] - hands_tgt["右"][2]["palm"]
