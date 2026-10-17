@@ -581,67 +581,67 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| UNIT_CM | 8.0 | cm | 117 |  |  | ○ |  |  |  |  |  | retarget |
-| FPS | 30.0 |  | 118 |  |  |  |  |  |  |  |  |  |
-| G | 122.5 | units/s^2 | 119 | units/s^2: gravity (9.8 m/s^2) at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
-| ON_FLOOR | 0.05 | units | 123 | units (4 mm, a05's contact): a shoe this low stands on the floor |  | ○ |  |  |  |  |  | retarget |
-| HOLD_MAX | 0.5 | units | 124 | units (4 cm, a05 s11's band): a still shoe lower than this is held over the floor ... |  | ○ |  |  |  |  |  | retarget |
-| HOLD_SPEED | 30.0 | cm/s | 125 | cm/s: ... its touching part moving along the floor slower than this (the foot layer's TOE_SLIDE and HOVER_GLIDE: a toe on the floor stays or slides slowly, a swing skims… |  | ○ |  |  |  |  |  | retarget |
-| HOLD_RISE | 20.0 | cm/s | 127 | cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch o… |  | ○ |  |  |  |  |  | retarget |
-| HOLD_MIN | 4 | frames | 129 | frames: a shorter hold is a foot passing by |  |  |  |  |  |  |  |  |
-| FLIGHT_FIT | 0.8 * G | units/s^2 | 130 | units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side falling faster than this is a flight even over a foot held still (people: 6 … |  | ○ | ○ |  |  | ○ |  | retarget |
-| FALL_BOUND | 122.0 | units/s^2 | 133 | units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot d… |  | ○ | ○ |  |  |  |  | retarget |
-| FALL_TOL | 0.5 | units/s^2 | 135 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
-| BRIDGE | 2 | frames | 136 | frames: a standing foot lifted this long or less stays down ... |  |  |  |  |  |  |  |  |
-| BRIDGE_LIFT | 0.1875 | units | 137 | units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT) |  | ○ |  |  |  |  |  | retarget |
-| EASE | 4 | frames | 138 | frames: a foot's lowering comes and goes over this many frames each way (the foot layer's) |  |  |  |  |  |  |  |  |
-| TOUCH | 0.025 | units | 139 | units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH) |  | ○ |  |  |  |  |  | retarget |
-| NEED_CM | 10.0 | cm | 140 | cm: the centre of mass's floor point this far outside the other foot's sole: this foot bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wi… |  | ○ |  |  |  | ○ |  | retarget |
-| SOLE_TOUCH | 0.15 | units | 143 | units (1.2 cm): the vertices of a shoe this near the floor make its sole on it |  | ○ |  |  |  |  |  | retarget |
-| KNEE_GIVE | 10.0 | deg | 144 | degrees: a held foot's knee stays within this of the leg's without the hold; further the foot slides as the dance has it (the knee change tools/sink_check.py and tools/c… |  |  |  | ○ |  |  |  | dance |
-| DROP_MAX | 1.0 | units | 149 | units (8 cm): the most the pelvis goes down to let a standing leg reach the floor |  | ○ |  |  |  |  |  | retarget |
-| REACH_MIN | 9 | frames | 150 | frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered |  |  |  |  |  |  |  |  |
-| DROP_WINDOW | 24 | frames | 151 | frames each side of a lowering over which it comes and goes (smoothly, within the bound) |  |  |  |  |  |  |  |  |
-| DROP_QP_ROUNDS | 400 |  | 152 |  |  |  |  |  |  |  |  |  |
-| JUDGE_MISS | 0.75 | units | 153 | units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); furthe… |  | ○ |  |  |  |  |  | retarget |
-| PLANT_SPEED | 30.0 | cm/s | 156 | cm/s: a standing foot's touching part moving slower than this is held in place (the trace's drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of the… |  | ○ |  | ○ |  | ○ |  | retarget |
-| AIR_MIN | 4 | frames | 159 | frames with no foot standing: a flight (the balance layer's AIR_MIN) |  |  |  |  |  |  |  |  |
-| WINDOW | 8 | frames | 160 | frames each side of a flight over which the pelvis may change |  |  |  |  |  |  |  |  |
-| SMOOTH | 30.0 |  | 161 | the weight of the change's third differences against the change itself |  |  |  |  |  |  |  |  |
-| AIR_CLEAR | 0.2 + 0.0125 | units | 162 | units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the balance layer's support, tools/sink_check.py's SUPPORT_CM) |  | ○ |  |  |  |  |  | retarget |
-| CARRY_RAMP | 2 | frames | 164 | frames: a foot leaving the floor goes with the body's change by half on its first frame off it and fully from the second (the same before a landing) |  |  |  |  |  |  |  |  |
-| LIMB_SMOOTH | (1, 4, 6, 4, 1) |  | 166 | the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz pas… |  |  |  |  |  |  |  |  |
-| PAD | 2 | frames | 168 | frames pinned to no change each side of a window of the pelvis's solves |  |  |  |  |  |  |  |  |
-| SUB_NEAR | 0.25 | units | 169 | units: the intervals checked between the frames (either end this near the floor) |  | ○ |  |  |  |  |  | retarget |
-| SUB_ROUNDS | 3 |  | 170 |  |  |  |  |  |  |  |  |  |
-| IK_MISS | 0.0125 | units | 171 | units (1 mm): MMD's ankle this far from its goal has not reached it |  | ○ |  |  |  |  |  | retarget |
-| LAND_TOL | 0.0125 | units | 172 | units (1 mm): a weight-bearing foot whose shoe MMD leaves higher than this gets more drop |  | ○ |  |  |  |  |  | retarget |
-| PUSH_ROUNDS | 4 |  | 173 | rounds of pushing the goal of a weight-bearing foot MMD leaves over the floor ... |  |  |  |  |  |  |  |  |
-| PUSH_STEP | 0.15 | units | 174 | units: ... by at most this a round (the foot layer's push) |  | ○ |  |  |  |  |  | retarget |
-| DROP_ROUNDS | 4 |  | 175 | rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short) |  |  |  |  |  |  |  |  |
-| FLIGHT_ROUNDS | 4 |  | 176 | rounds of solving the flight again on the centre of mass the changed dance moves ... |  |  |  | ○ |  |  |  | dance |
-| FLIGHT_RESID | 1.0 | units/s^2 | 177 | units/s^2: ... until it falls within this of gravity on the frames with air on both sides |  | ○ | ○ |  |  |  |  | retarget |
-| STRICT_SMOOTH | 3.0 |  | 178 | the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it |  |  |  |  |  |  |  |  |
-| STRICT_NEAR | 8 |  | 179 | brings within the bound (strict frames) with no need there: the least lowering, not a wide one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; … |  |  |  | ○ |  |  |  | dance |
-| KNEE_NEAR | 0.05 |  | 192 | of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two straighter than the frames round them are bent like them |  |  |  | ○ | ○ |  | ○ | rig |
-| KNEE_POP_DEG | 6.0 | deg | 194 | degrees: there a frame's bend comes within this of the line through its neighbours, and no neighbour's further than this the other way (rig_check counts a jump at 10. On… |  |  |  | ○ |  |  |  | dance |
-| KNEE_JUMP_DEG | 10.0 | deg | 198 | degrees: rig_check ik's jump, a frame further than this off the line through its neighbours. Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the revie… |  |  |  | ○ |  |  |  | dance |
-| KNEE_JUMP_NEAR | 1 | frames | 204 | frames |  |  |  |  |  |  |  |  |
-| KNEE_ROUNDS | 40 |  | 205 | rounds of evening out (a pop of two frames halves its gap a round) |  |  |  |  |  |  |  |  |
-| KNEE_PITCH_MAX | 30.0 | deg | 206 | degrees: the most a standing foot turns onto its toes or its heel for its knee |  |  |  |  |  |  |  |  |
-| KNEE_PITCH_STEP | 0.25 | deg | 207 | degrees: the turns tried |  |  |  |  |  |  |  |  |
-| KNEE_EDGE | 3 | frames | 208 | frames at either end of a standing run: a turn there is held on to the end of the run (the heel does not come down again before the foot lifts, nor rise again after it l… |  |  |  |  |  |  |  |  |
-| KNEE_TOE_TOL | 1e-4 | units | 211 | units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it) |  | ○ |  |  |  |  |  | retarget |
-| KNEE_PLAN_ROUNDS | 8 |  | 212 | rounds of the targets on the distances the changes so far leave (a turn held on to a run's end bends that frame more, and the frame before may then need more) |  |  |  |  |  |  |  |  |
-| runs(n) | 1 |  | 216 |  |  |  |  |  |  |  |  |  |
-| _r(n) | 3 |  | 223 |  |  |  |  |  |  |  |  |  |
-| knee_bend(least_deg) | 0.0 | deg | 431 |  |  |  |  |  |  |  |  |  |
-| knee_targets(least_deg) | 0.0 | deg | 482 |  |  |  |  |  |  |  |  |  |
-| solve_qp(batch) | 1 |  | 518 |  |  |  |  |  |  |  |  |  |
-| solve_qp(rounds) | 60 |  | 518 |  |  |  |  |  |  |  |  |  |
-| knee_turn(least) | 0.0 |  | 868 |  |  |  |  |  |  |  |  |  |
-| knee_turn(sign) | 0.0 |  | 868 |  |  |  |  |  |  |  |  |  |
-| knee_jump_frames(deg) | 10.0 |  | 1475 |  |  |  |  |  |  |  |  |  |
+| UNIT_CM | 8.0 | cm | 118 |  |  | ○ |  |  |  |  |  | retarget |
+| FPS | 30.0 |  | 119 |  |  |  |  |  |  |  |  |  |
+| G | 122.5 | units/s^2 | 120 | units/s^2: gravity (9.8 m/s^2) at 8 cm a unit |  | ○ | ○ |  |  |  |  | retarget |
+| ON_FLOOR | 0.05 | units | 124 | units (4 mm, a05's contact): a shoe this low stands on the floor |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MAX | 0.5 | units | 125 | units (4 cm, a05 s11's band): a still shoe lower than this is held over the floor ... |  | ○ |  |  |  |  |  | retarget |
+| HOLD_SPEED | 30.0 | cm/s | 126 | cm/s: ... its touching part moving along the floor slower than this (the foot layer's TOE_SLIDE and HOVER_GLIDE: a toe on the floor stays or slides slowly, a swing skims… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_RISE | 20.0 | cm/s | 128 | cm/s: ... its lowest point rising or falling slower than this, the smaller of the steps into and out of the frame (the foot layer's HOVER_FOOT_SPEED: faster is a touch o… |  | ○ |  |  |  |  |  | retarget |
+| HOLD_MIN | 4 | frames | 130 | frames: a shorter hold is a foot passing by |  |  |  |  |  |  |  |  |
+| FLIGHT_FIT | 0.8 * G | units/s^2 | 131 | units/s^2: no foot on the floor and the pelvis's parabola over the run and a frame each side falling faster than this is a flight even over a foot held still (people: 6 … |  | ○ | ○ |  |  | ○ |  | retarget |
+| FALL_BOUND | 122.0 | units/s^2 | 134 | units/s^2: the pelvis's downward acceleration where a foot holds the body up (the balance layer's DOWN_ACC_MAX, for the skirt); faster on a frame of a run with no foot d… |  | ○ | ○ |  |  |  |  | retarget |
+| FALL_TOL | 0.5 | units/s^2 | 136 | units/s^2: past a bound by more than this (as the balance layer's report counts) |  | ○ | ○ |  |  |  |  | retarget |
+| BRIDGE | 2 | frames | 137 | frames: a standing foot lifted this long or less stays down ... |  |  |  |  |  |  |  |  |
+| BRIDGE_LIFT | 0.1875 | units | 138 | units (1.5 cm): ... where its shoe stays this low (the foot layer's BRIDGE_LIFT) |  | ○ |  |  |  |  |  | retarget |
+| EASE | 4 | frames | 139 | frames: a foot's lowering comes and goes over this many frames each way (the foot layer's) |  |  |  |  |  |  |  |  |
+| TOUCH | 0.025 | units | 140 | units (2 mm): the shoe's vertices this near its lowest touch (the foot layer's HOVER_TOUCH) |  | ○ |  |  |  |  |  | retarget |
+| NEED_CM | 10.0 | cm | 141 | cm: the centre of mass's floor point this far outside the other foot's sole: this foot bears weight (the MV's free resting feet have it -5 to +0.5 cm, the feet of its wi… |  | ○ |  |  |  | ○ |  | retarget |
+| SOLE_TOUCH | 0.15 | units | 144 | units (1.2 cm): the vertices of a shoe this near the floor make its sole on it |  | ○ |  |  |  |  |  | retarget |
+| KNEE_GIVE | 10.0 | deg | 145 | degrees: a held foot's knee stays within this of the leg's without the hold; further the foot slides as the dance has it (the knee change tools/sink_check.py and tools/c… |  |  |  | ○ |  |  |  | dance |
+| DROP_MAX | 1.0 | units | 150 | units (8 cm): the most the pelvis goes down to let a standing leg reach the floor |  | ○ |  |  |  |  |  | retarget |
+| REACH_MIN | 9 | frames | 151 | frames (0.3 s): a weight-bearing foot standing out of reach this long gets the pelvis lowered |  |  |  |  |  |  |  |  |
+| DROP_WINDOW | 24 | frames | 152 | frames each side of a lowering over which it comes and goes (smoothly, within the bound) |  |  |  |  |  |  |  |  |
+| DROP_QP_ROUNDS | 400 |  | 153 |  |  |  |  |  |  |  |  |  |
+| JUDGE_MISS | 0.75 | units | 154 | units (6 cm): a foot MMD leaves this far or less from its goal is judged at the goal (a leg lagging or just out of reach: 159.7-163.9 and 197-198.7 s are 5.1 cm); furthe… |  | ○ |  |  |  |  |  | retarget |
+| PLANT_SPEED | 30.0 | cm/s | 157 | cm/s: a standing foot's touching part moving slower than this is held in place (the trace's drift and jitter: v10's standing feet move faster than 27 cm/s on 10 % of the… |  | ○ |  | ○ |  | ○ |  | retarget |
+| AIR_MIN | 4 | frames | 160 | frames with no foot standing: a flight (the balance layer's AIR_MIN) |  |  |  |  |  |  |  |  |
+| WINDOW | 8 | frames | 161 | frames each side of a flight over which the pelvis may change |  |  |  |  |  |  |  |  |
+| SMOOTH | 30.0 |  | 162 | the weight of the change's third differences against the change itself |  |  |  |  |  |  |  |  |
+| AIR_CLEAR | 0.2 + 0.0125 | units | 163 | units (1.6 cm and 1 mm): a shoe lower than 1.6 cm stands, as the skirt's bound counts it (the balance layer's support, tools/sink_check.py's SUPPORT_CM) |  | ○ |  |  |  |  |  | retarget |
+| CARRY_RAMP | 2 | frames | 165 | frames: a foot leaving the floor goes with the body's change by half on its first frame off it and fully from the second (the same before a landing) |  |  |  |  |  |  |  |  |
+| LIMB_SMOOTH | (1, 4, 6, 4, 1) |  | 167 | the weights the limbs' part of the centre of mass (its height over the pelvis) is smoothed with for the flight's parabola (binomial: none of a one-frame jump's 15 Hz pas… |  |  |  |  |  |  |  |  |
+| PAD | 2 | frames | 169 | frames pinned to no change each side of a window of the pelvis's solves |  |  |  |  |  |  |  |  |
+| SUB_NEAR | 0.25 | units | 170 | units: the intervals checked between the frames (either end this near the floor) |  | ○ |  |  |  |  |  | retarget |
+| SUB_ROUNDS | 3 |  | 171 |  |  |  |  |  |  |  |  |  |
+| IK_MISS | 0.0125 | units | 172 | units (1 mm): MMD's ankle this far from its goal has not reached it |  | ○ |  |  |  |  |  | retarget |
+| LAND_TOL | 0.0125 | units | 173 | units (1 mm): a weight-bearing foot whose shoe MMD leaves higher than this gets more drop |  | ○ |  |  |  |  |  | retarget |
+| PUSH_ROUNDS | 4 |  | 174 | rounds of pushing the goal of a weight-bearing foot MMD leaves over the floor ... |  |  |  |  |  |  |  |  |
+| PUSH_STEP | 0.15 | units | 175 | units: ... by at most this a round (the foot layer's push) |  | ○ |  |  |  |  |  | retarget |
+| DROP_ROUNDS | 4 |  | 176 | rounds of checking the lowered pelvis on MMD's IK (a nearly straight leg stops short) |  |  |  |  |  |  |  |  |
+| FLIGHT_ROUNDS | 4 |  | 177 | rounds of solving the flight again on the centre of mass the changed dance moves ... |  |  |  | ○ |  |  |  | dance |
+| FLIGHT_RESID | 1.0 | units/s^2 | 178 | units/s^2: ... until it falls within this of gravity on the frames with air on both sides |  | ○ | ○ |  |  |  |  | retarget |
+| STRICT_SMOOTH | 3.0 |  | 179 | the weight of the third differences of a lowering within STRICT_NEAR frames of a turn it |  |  |  |  |  |  |  |  |
+| STRICT_NEAR | 8 |  | 180 | brings within the bound (strict frames) with no need there: the least lowering, not a wide one (the song's 40.13 s: 2.88 cm with SMOOTH, 1.55 with this, 1.29 the least; … |  |  |  | ○ |  |  |  | dance |
+| KNEE_NEAR | 0.05 |  | 193 | of the reach: the band at its end (Rin's knee bent 31 degrees and less) where a frame or two straighter than the frames round them are bent like them |  |  |  | ○ | ○ |  | ○ | rig |
+| KNEE_POP_DEG | 6.0 | deg | 195 | degrees: there a frame's bend comes within this of the line through its neighbours, and no neighbour's further than this the other way (rig_check counts a jump at 10. On… |  |  |  | ○ |  |  |  | dance |
+| KNEE_JUMP_DEG | 10.0 | deg | 199 | degrees: rig_check ik's jump, a frame further than this off the line through its neighbours. Only such a frame and the frames KNEE_JUMP_NEAR round it are bent (the revie… |  |  |  | ○ |  |  |  | dance |
+| KNEE_JUMP_NEAR | 1 | frames | 205 | frames |  |  |  |  |  |  |  |  |
+| KNEE_ROUNDS | 40 |  | 206 | rounds of evening out (a pop of two frames halves its gap a round) |  |  |  |  |  |  |  |  |
+| KNEE_PITCH_MAX | 30.0 | deg | 207 | degrees: the most a standing foot turns onto its toes or its heel for its knee |  |  |  |  |  |  |  |  |
+| KNEE_PITCH_STEP | 0.25 | deg | 208 | degrees: the turns tried |  |  |  |  |  |  |  |  |
+| KNEE_EDGE | 3 | frames | 209 | frames at either end of a standing run: a turn there is held on to the end of the run (the heel does not come down again before the foot lifts, nor rise again after it l… |  |  |  |  |  |  |  |  |
+| KNEE_TOE_TOL | 1e-4 | units | 212 | units: a goal MMD's ankle is nearer than this to is reached (its toe IK's goal moves with it) |  | ○ |  |  |  |  |  | retarget |
+| KNEE_PLAN_ROUNDS | 8 |  | 213 | rounds of the targets on the distances the changes so far leave (a turn held on to a run's end bends that frame more, and the frame before may then need more) |  |  |  |  |  |  |  |  |
+| runs(n) | 1 |  | 217 |  |  |  |  |  |  |  |  |  |
+| _r(n) | 3 |  | 224 |  |  |  |  |  |  |  |  |  |
+| knee_bend(least_deg) | 0.0 | deg | 432 |  |  |  |  |  |  |  |  |  |
+| knee_targets(least_deg) | 0.0 | deg | 483 |  |  |  |  |  |  |  |  |  |
+| solve_qp(batch) | 1 |  | 519 |  |  |  |  |  |  |  |  |  |
+| solve_qp(rounds) | 60 |  | 519 |  |  |  |  |  |  |  |  |  |
+| knee_turn(least) | 0.0 |  | 869 |  |  |  |  |  |  |  |  |  |
+| knee_turn(sign) | 0.0 |  | 869 |  |  |  |  |  |  |  |  |  |
+| knee_jump_frames(deg) | 10.0 |  | 1477 |  |  |  |  |  |  |  |  |  |
 
 ## wb_layer.py（12. 上体の慣性、5）
 

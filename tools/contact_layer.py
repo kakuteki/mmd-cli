@@ -75,7 +75,8 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    standing foot turns onto its toes about the front of its shoe's touching part, or onto its heel about its back
    (whichever needs the lesser turn, at most KNEE_PITCH_MAX), the shoe's lowest point where it was (the toes stay on the
    floor; a take-off rises onto them, a leg reaching forward lands on its heel), held on to the run's end within
-   KNEE_EDGE frames of a lift or a landing.  The pelvis does not move.
+   KNEE_EDGE frames of a lift or a landing, and only there (edge_turns: a turn in the middle of a stand would raise the heel
+   for a frame and set it down again; such a knee is left).  The pelvis does not move.
 7. The frames and between them: a frame whose shoe the layer leaves deeper in the floor than the input (a push that
    overshoots) is raised by the excess; MMD draws 240 fps and interpolates the keys, so where a shoe would dip into the
    floor between two frames further than the input's did, both are raised by the dip (the foot layer's sub-frame check).
@@ -899,7 +900,8 @@ def knee_plan(rig, shoe, sol, stance):
     run (it then lands a frame late, or lifts a frame early), moves as a swing foot does.  A turn held on bends that frame
     more, so the targets are found again on the distances the changes leave, KNEE_PLAN_ROUNDS times at most (only ever
     bending more).  Only the frames of the knee's jumps on the dance as it comes (near_jumps: rig_check's count) and the
-    frames KNEE_JUMP_NEAR round them are bent"""
+    frames KNEE_JUMP_NEAR round them are bent, and a standing foot is turned only within KNEE_EDGE frames of a lift or a
+    landing (edge_turns; a standing frame whose turn is left out keeps its own goal)"""
     F = len(stance[SIDES[0]])
     offsets, turns, toes, plan = {}, {}, {}, {}
     steps = np.radians(np.arange(0.0, KNEE_PITCH_MAX + 1e-9, KNEE_PITCH_STEP))
