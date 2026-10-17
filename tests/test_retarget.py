@@ -483,3 +483,36 @@ def dance_with_toes():
     m = dance()
     m.bones = [k for k in m.bones if k.name != "左足ＩＫ"] + [k for k in toe_dance(MIKU).bones if k.name == "左足ＩＫ"]
     return m
+
+
+class ArmIkTest(unittest.TestCase):
+    """the arm's IK puts the wrist where it is wanted, the elbow on the side it was, the hand's world turn kept; with or
+    without twist bones between the joints"""
+
+    def check(self, data):
+        b = retarget.Body.loads(data)
+        m = motion(key("左腕", 0, axis_angle((0.2, 0.3, 1.0), -30.0)), key("左腕捩", 0, axis_angle((1.0, -0.5, 0.0), 25.0)),
+                   key("左ひじ", 0, axis_angle((0.0, 1.0, 0.0), 50.0)), key("左手首", 0, axis_angle((0.0, 0.0, 1.0), 20.0)))
+        trk = retarget.tracks_of(m.bones)
+        frames = np.arange(0, 1)
+        ap = retarget.arm_pose(b, trk, frames, "左")
+        S, E, W = ap["左腕"][0], ap["左ひじ"][0], ap["左手首"][0]
+        hand = retarget.hand_world(b, trk, frames, "左")
+        want = W + np.array([[-0.6, 0.9, -0.4]])
+        Es, Ws = retarget.arm_ik(S, E, W, want)
+        np.testing.assert_allclose(Ws, want, atol=1e-6)
+        loc = retarget.arm_locals(b, trk, frames, "左", Es, Ws, hand[1])
+        keys = [k for k in m.bones if k.name not in loc] + [key(n, 0, tuple(q[0])) for n, q in loc.items()]
+        out = motion(*keys)
+        w = world(data, out, ["左腕", "左ひじ", "左手首"], [0])[0]
+        np.testing.assert_allclose(np.asarray(w["左手首"][0]), want[0], atol=1e-5)
+        np.testing.assert_allclose(np.asarray(w["左ひじ"][0]), Es[0], atol=1e-5)
+        self.assertGreater(abs(float(np.dot(np.asarray(w["左手首"][1]), hand[1][0]))), 1 - 1e-9)
+        # the upper arm and the forearm keep their lengths: the wrist really moved by the arm, not by a stretch
+        self.assertAlmostEqual(float(np.linalg.norm(np.subtract(w["左ひじ"][0], w["左腕"][0]))), float(np.linalg.norm(E - S)), places=6)
+
+    def test_with_twist_bones(self):
+        self.check(RIN_DATA)
+
+    def test_without_twist_bones(self):
+        self.check(humanoid_bytes(RIN, RIN_BLOBS, name="rin-no-twist", twists=False))

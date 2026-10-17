@@ -1030,13 +1030,12 @@ def part_frames(body, trk, frames):
 
 
 def arm_names(side):
-    return [side + n for n in ("腕", "腕捩", "ひじ", "手捩", "手首")]
+    """the arm's joints the IK sets (the twist bones between them, when a body has them, ride along)"""
+    return [side + n for n in ("腕", "ひじ", "手首")]
 
 
 def arm_pose(body, trk, frames, side):
-    names = arm_names(side)
-    have = [n for n in names if body.has(n)]
-    return world_pose(body, trk, frames, have)
+    return world_pose(body, trk, frames, arm_names(side))
 
 
 def frame_turn(d0, n0, d1, n1):
@@ -1085,17 +1084,14 @@ def arm_ik(S, E, W, Wt, pole=None):
 
 def arm_locals(body, trk, frames, side, Es, Ws, hand_turn):
     """the local turns (as applied) of 腕, ひじ and 手首 that put the elbow at Es and the wrist at Ws, keeping the arm's
-    plane turned with it (the elbow a hinge) and the hand's world turn `hand_turn`"""
-    names = arm_names(side)
-    up, tw, el, htw, hd = names
-    par = body.model.bones[body.i(up)].parent
-    wp = world_pose(body, trk, frames, [body.model.bones[par].name] + names)
-    Wpar = wp[body.model.bones[par].name][1]
+    plane turned with it (the elbow a hinge) and the hand's world turn `hand_turn`.  The bones between them (腕捩, 手捩
+    when the body has them) keep their keys and ride along."""
+    up, el, hd = arm_names(side)
+    pname = {n: body.model.bones[body.model.bones[body.i(n)].parent].name for n in (up, el, hd)}
+    wp = world_pose(body, trk, frames, sorted({up, el, hd} | set(pname.values())))
     S, Rup = wp[up]
     E, Rel = wp[el]
     W = wp[hd][0]
-    keys = key_values(body, trk, frames, [body.i(n) for n in names])
-    L = {n: keys[body.i(n)][1] for n in names}
     d0, d1 = unit(E - S), unit(Es - S)
     f0, f1 = W - E, Ws - Es
     n0, n1 = np.cross(d0, f0), np.cross(d1, f1)
@@ -1104,13 +1100,14 @@ def arm_locals(body, trk, frames, side, Es, Ws, hand_turn):
     n1 = unit(n1 - np.sum(n1 * d1, axis=1)[:, None] * d1)
     turn_up = frame_turn(d0, n0, d1, n1)
     turn_up = np.where(straight[:, None], qbetween(d0, d1), turn_up)
+    turn_fo = qbetween(qrot(turn_up, f0), f1)
+    turn_el = qmul(turn_fo, turn_up)
     Rup2 = qmul(turn_up, Rup)
-    Rtw2 = qmul(Rup2, L[tw])
-    f0b = qrot(turn_up, f0)
-    turn_fo = qbetween(f0b, f1)
-    Rel2 = qmul(turn_fo, qmul(turn_up, Rel))
-    Rhtw2 = qmul(Rel2, L[htw])
-    return {up: qnorm(qmul(qconj(Wpar), Rup2)), el: qnorm(qmul(qconj(Rtw2), Rel2)), hd: qnorm(qmul(qconj(Rhtw2), hand_turn))}
+    Rel2 = qmul(turn_el, Rel)
+    par_el = qmul(turn_up, wp[pname[el]][1])          # what lies between the upper arm and the elbow turns with the arm
+    par_hd = qmul(turn_el, wp[pname[hd]][1])          # and what lies between the elbow and the hand with the forearm
+    return {up: qnorm(qmul(qconj(wp[pname[up]][1]), Rup2)), el: qnorm(qmul(qconj(par_el), Rel2)),
+            hd: qnorm(qmul(qconj(par_hd), hand_turn))}
 
 
 def hand_world(body, trk, frames, side):
@@ -1642,7 +1639,13 @@ def fit(dance, candidates, log=None):
                          "height_signed_median_cm": round(float(np.median(r["toe_height"][m])) * UNIT_CM, 3) if m.any() else None,
                          "envelope": [[round(p, 2), round(v, 4), n] for p, v, n in env], "fit": fit_toe(env)}
             ank, toe_r = b.rest(side + "足首"), b.rest(side + "つま先")
-            toe[side]["own"] = {"l": round(float(ank[2] - toe_r[2]), 4), "h": round(float(ank[1] - toe_r[1]), 4)}
+            l_own, h_own = float(ank[2] - toe_r[2]), float(ank[1] - toe_r[1])
+            toe[side]["own"] = {"l": round(l_own, 4), "h": round(h_own, 4)}
+            # with the candidate's own ankle height: the toe length each pitch's envelope asks for, and their median
+            # (the two-number fit is ill-posed over 6..45 degrees: sin and 1 - cos rise together)
+            ask = [(p, (v + h_own * (1 - np.cos(np.radians(p)))) / np.sin(np.radians(p)), n) for p, v, n in env]
+            toe[side]["l_asked"] = [[round(p, 2), round(x, 4), n] for p, x, n in ask]
+            toe[side]["l_asked_median"] = round(float(np.median([x for _, x, _ in ask])), 4) if ask else None
         row["toe"] = toe
         row["stance"] = stance_reach(b, trk, frames)
         row["arms"] = own_arms(b, trk, frames)

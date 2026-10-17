@@ -57,7 +57,7 @@ def sphere(n):
     return out
 
 
-def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None):
+def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True):
     """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x), vertex `blobs` (each
     vertex's normal points out of its sphere) and, with `shoe`, a box of shoe vertices on each 足首"""
     w = Writer(bone=2, vertex=2)
@@ -76,9 +76,12 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None)
             ("下半身", "腰", "下半身", NORMAL, {})]
     for s in ("左", "右"):
         twist = NORMAL | (FIXED_AXIS if twist_axis else 0)
-        rows += [(s + "肩", "上半身2", "肩", NORMAL, {}), (s + "腕", s + "肩", "腕", NORMAL, {}),
-                 (s + "腕捩", s + "腕", "腕捩", twist, {"axis": "腕"}), (s + "ひじ", s + "腕捩", "ひじ", NORMAL, {}),
-                 (s + "手捩", s + "ひじ", "手捩", twist, {"axis": "ひじ"}), (s + "手首", s + "手捩", "手首", NORMAL, {}),
+        if twists:
+            arm = [(s + "腕捩", s + "腕", "腕捩", twist, {"axis": "腕"}), (s + "ひじ", s + "腕捩", "ひじ", NORMAL, {}),
+                   (s + "手捩", s + "ひじ", "手捩", twist, {"axis": "ひじ"}), (s + "手首", s + "手捩", "手首", NORMAL, {})]
+        else:
+            arm = [(s + "ひじ", s + "腕", "ひじ", NORMAL, {}), (s + "手首", s + "ひじ", "手首", NORMAL, {})]
+        rows += [(s + "肩", "上半身2", "肩", NORMAL, {}), (s + "腕", s + "肩", "腕", NORMAL, {})] + arm + [
                  (s + "中指１", s + "手首", "中指１", NORMAL, {}), (s + "中指２", s + "中指１", "中指２", NORMAL, {}),
                  (s + "中指３", s + "中指２", "中指３", NORMAL, {})]
         rows += [("腰キャンセル" + s, "下半身", "足", NORMAL | APPEND_ROTATE, {"append": ("腰", -1.0)}),
