@@ -3,9 +3,9 @@ what the source body did: the arms point the same way although the two bodies re
 the feet move by the legs' ratio and the legs keep their spread, a foot on the floor stays put and on the floor, a hand
 that touches the head, the trunk, the hips or the other hand still touches it, and the arms stay out of the body.
 
-    python tools/retarget.py run DANCE.vmd SOURCE TARGET.pmx OUT.vmd [--report r.json] [--arrays a.npz]
+    python tools/retarget.py run DANCE.vmd SOURCE TARGET.pmx OUT.vmd [--report r.json]
                                  [--no-feet] [--no-hands] [--no-clear] [--stance legs|offsets]
-    python tools/retarget.py fit DANCE.vmd --candidates A.pmx B.pmd ... --out fit.json [--target T.pmx]
+    python tools/retarget.py fit DANCE.vmd --candidates A.pmx B.pmd ... --out fit.json
 
 SOURCE is a model (.pmx / .pmd) or a body (.json: {"model": path, "add": [bones to add], "rest": {bone: [x, y, z]},
 "foot": {...}}; see Body.from_spec).  The dance is a VMD made for the source; the output is the same bones' keys for the
@@ -27,6 +27,21 @@ up, the model faces -Z; a key turns its bone in its parent's frame, mmd_cli/fk.p
   (both at rest, the mean of the two sides).  The foot IK is moved once more sideways by k = s (ankle_S - hip_S)_x -
   (ankle_T - hip_T)_x (per side, --stance legs, the default): a leg at rest offsets leans out from its hip as the
   source's does (the stance width keeps its ratio to the legs); --stance offsets leaves the target's own rest stance.
+
+Then the corrections, measured on both bodies frame by frame (fix_feet, fix_hands, clear_arms; the hips are never moved):
+
+* feet: where the source's foot stands still on the floor (a plant) the target's takes the source's foot's world turn,
+  its toe or heel pitched (a flat foot's ankle up or down) onto the floor and its touching point held; where the
+  source's foot is on the floor but moving (turning on its toe) the target's lowest sole point is put on the floor the
+  same way, not held.
+* hands: a hand near a part of the source's body (head, chest, belly, hips, thighs, within NEAR) is put at the same
+  place of the target's part (scaled by the parts' sizes), and the two hands as far apart as the shoulders' ratio says;
+  the hand's points are the palm and the middle finger's tip as the dance's finger keys bend them.
+* the arms are pushed out of the target's head, ribbon, trunk, hips and thighs (the upper arm only out of the head):
+  what the upper arm goes into by turning the arm at the shoulder, the forearm and the hand by moving the wrist; a
+  hand touching a part in the source is not pushed off it, one only near it comes no closer than the source's hand
+  does (scaled); a touching hand stays where it is when turning the elbow round the shoulder-wrist line clears the
+  upper arm.  The hair and the skirt are measured, not pushed (the physics; a bob's hull reaches the cheeks).
 """
 import argparse
 import importlib.util
