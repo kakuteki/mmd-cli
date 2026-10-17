@@ -643,11 +643,11 @@ def leg_pose(body, trk, frames):
 
 # ---- the body's surfaces: signed distances from the mesh, per part, in the part's bone frame -----------------------------
 
-# part -> (the bone it rides on, the bones whose vertices make it, whether it is soft).  A soft part (the skirt, moved by
-# MMD's physics) is measured but the arms are not pushed out of it.  The head is 頭 with the hair that rides on it rigidly
-# (髮親 / 髪親 on Sour's models); the ribbon on top of Rin's head is its own part (its hull with the head's would fill the
-# space between them).
-PARTS = {"head": ("頭", ("頭", "髮親", "髪親"), False), "ribbon": ("頭", ("リボン親",), False),
+# part -> (the bone it rides on, the bones whose vertices make it, whether it is soft).  A soft part is measured but the
+# arms are not pushed out of it: the skirt (MMD's physics moves it) and the hair (Rin's 髮親: the hull of a bob reaches
+# down beside the cheeks and the neck, where a hand on the face belongs).  The head is the face and skull (頭's own
+# vertices); the ribbon on top of Rin's head is its own part (its hull with the head's would fill the space between them).
+PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"), True), "ribbon": ("頭", ("リボン親",), False),
          "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
          "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
          "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
@@ -1012,7 +1012,7 @@ NEAR = 0.8                      # units (6.4 cm): the hand's place on a part is 
 HAND_THICK = 0.15               # units: half a hand's thickness (the two palms' points touch at twice this)
 CLEAR_ROUNDS = 3
 CLEAR_MARGIN = 0.02             # units: the arm is pushed this much past the surface
-SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder lies against the trunk (the armpit): not tested against it
+SHOULDER_SKIP = 0.5             # the upper arm's half by the shoulder is not tested against the head (the shoulder is under it)
 TOL_DEG = 0.3                   # the keys meet the wanted turns this closely
 
 
@@ -1276,8 +1276,13 @@ def penetration(tgt, side, ap, hand, parts, contact_w):
         s = surf[part]
         local = qrot(qconj(rot)[:, None, :], P - pos[:, None, :])
         pen = rad[None, :] - s.sdf(local)
-        if part in ("chest", "belly"):
+        # the upper arm lies against the trunk, the hips and the thighs in many a pose (its skin and the trunk's meet at the
+        # armpit and along the side): only the forearm and the hand are kept out of them; the upper arm, its half by
+        # the elbow, out of the head
+        if part == "head":
             pen[:, (seg == 0) & (share < SHOULDER_SKIP)] = 0.0
+        else:
+            pen[:, seg == 0] = 0.0
         if part in contact_w:
             pen[:, seg == 2] *= (contact_w[part] < 0.3)[:, None]
         pen = np.maximum(pen, 0.0)

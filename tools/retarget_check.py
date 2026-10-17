@@ -18,8 +18,9 @@ uses 98 others).
   not less than 0), 'lost' when it is more than LOST off (or LOST inside).  Per part: the touching frames, the share
   kept, the lost runs.
 * arms in the body: the target's arm as capsules on its bones (the upper arm, the forearm, the hand; radii the 60th
-  percentile of their vertices' distance from the bone), the deepest it goes into a part (head with its hair, ribbon,
-  chest, belly, hips, thighs; each the convex polytope of its vertices; the skirt, moved by the physics, counted apart) (the upper arm's half by the shoulder
+  percentile of their vertices' distance from the bone), the deepest its forearm and hand go into a part (head, ribbon,
+  chest, belly, hips, thighs; each the convex polytope of its vertices) and the upper arm's half by the elbow into the
+  head; the hair and the skirt (soft: the physics or the hull's shape) counted apart (the upper arm's half by the shoulder
   arm not tested against the trunk, the hand not against a part the source's hand touches then).  The frames over 0.5
   and 1 cm, the deepest, the runs.  The same for the source's arm in its own body.
 * plants: a source foot stands where its foot IK goal or toe IK goal (forward kinematics: where the foot is meant to
@@ -66,7 +67,7 @@ STILL = 0.025                   # units a frame
 PLANT_MIN = 3
 TOE_PITCH = 4.0
 SKIP_SHOULDER = 0.5
-PARTS = {"head": ("頭", ("頭", "髮親", "髪親"), False), "ribbon": ("頭", ("リボン親",), False),
+PARTS = {"head": ("頭", ("頭",), False), "hair": ("頭", ("髮親", "髪親"), True), "ribbon": ("頭", ("リボン親",), False),
          "chest": ("上半身2", ("上半身2", "胸椎上部", "胸リボン親"), False), "belly": ("上半身", ("上半身", "腰椎上部"), False),
          "hips": ("下半身", ("下半身", "腰"), False), "thigh_左": ("左足", ("左足", "左足D"), False),
          "thigh_右": ("右足", ("右足", "右足D"), False), "skirt": ("下半身", (), True)}
@@ -240,14 +241,14 @@ def arms_in(pose, body, parts, touching=None):
                 share.append(t)
         rad, seg, share = np.array(rad), np.array(seg), np.array(share)
         deep = np.zeros(len(S))
-        skirt = np.zeros(len(S))
+        soft_deep = {}
         dist = part_distances(pose, parts, {i: p for i, p in enumerate(pts)})
         for part, by in dist.items():
             for i, d in by.items():
+                if seg[i] == 0 and (part != "head" or share[i] < SKIP_SHOULDER):
+                    continue                    # the upper arm: only its half by the elbow, only against the head
                 if parts[part].soft:
-                    skirt = np.maximum(skirt, rad[i] - d)
-                    continue
-                if part in ("chest", "belly") and seg[i] == 0 and share[i] < SKIP_SHOULDER:
+                    soft_deep[part] = np.maximum(soft_deep.get(part, 0.0), rad[i] - d)
                     continue
                 pen = rad[i] - d
                 if seg[i] == 2 and touching is not None and part in touching.get(side, {}):
@@ -255,7 +256,7 @@ def arms_in(pose, body, parts, touching=None):
                 deep = np.maximum(deep, pen)
         deep = np.maximum(deep, 0.0)
         out[side] = {"frames_over_0.5cm": int(np.sum(deep > 0.0625)), "frames_over_1cm": int(np.sum(deep > 0.125)),
-                     "skirt_frames_over_1cm": int(np.sum(skirt > 0.125)),
+                     "soft_frames_over_1cm": {p: int(np.sum(v > 0.125)) for p, v in soft_deep.items()},
                      "deepest_cm": round(float(deep.max()) * UNIT_CM, 3) if len(deep) else 0.0,
                      "runs_over_1cm": [[a, b] for a, b in runs(deep > 0.125)], "_deep": deep}
     return out
