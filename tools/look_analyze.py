@@ -30,8 +30,8 @@ picture).  On each pair it measures, idea by idea (the names of the numbers star
 * frame: letterbox bars and the shape of the picture inside them, the frame rate and the rate at which the picture
   really changes (30 fps shown at 60), the cuts between shots.
 
-The measures of every sampled frame, of every shot and of the whole video go into OUT.json with the noise floor of
-each: how much it changes between the two frames of a pair (almost the same picture) and over the frames of the video.
+The measures of every sampled frame, of every shot (its medians, for shots with two samples or more) and of the whole
+video go into OUT.json with the noise floor of each: how much it changes between the two frames of a pair (almost the same picture) and over the frames of the video.
 `compare` puts videos side by side (the references' median and quartiles, ours, and how far ours lies outside the
 references' quartiles in units of their spread) as a table; `figure`, `crops` and `annotate` draw the figures.
 """
@@ -689,21 +689,25 @@ def _gradient(gray):
     return gx, gy, np.hypot(gx, gy)
 
 
-def edges(gray, unit=1.0, seed=0, points=EDGE_POINTS):
+def edges(gray, unit=1.0, seed=0, points=EDGE_POINTS, least=EDGE_LEAST, mask=None):
     """the edges of a Y' frame (Canny's thin lines of the strongest gradient) with each one's blur
 
     The blur is read as Zhuo and Sim (2011) do: blurring the frame again by a known s0 lowers an edge's gradient by
     sqrt(sigma^2 + s0^2) / sigma, so sigma follows from the ratio of the two gradients, whatever the edge's contrast
-    (the Sobel gradient's own width taken out); s0 is 1, 3 or 8 px (the narrowest that still reads the edge).  Returns arrays y, x (pixels), nx, ny (the unit normal, towards the
-    bright side), mag (the gradient) and sigma (the blur, as a Gaussian's standard deviation, in 720 line pixels)."""
+    (the Sobel gradient's own width taken out); s0 is 1, 3 or 8 px (the narrowest that still reads the edge).
+    least: the weakest gradient taken (a motion-blurred edge is weak); mask: only edges where it is true.  Returns
+    arrays y, x (pixels), nx, ny (the unit normal, towards the bright side), mag (the gradient), sigma (the blur, as a
+    Gaussian's standard deviation, in 720 line pixels) and scale (the re-blur it was read with)."""
     cv2, ndi = _cv2(), _ndi()
     g = np.asarray(gray, np.float64)
     gx, gy, mag = _gradient(g)
     u8 = np.clip(ndi.gaussian_filter(g, 0.7) * 255.0, 0, 255).astype(np.uint8)
-    hi = max(EDGE_LEAST * 255.0 * 8.0, float(np.percentile(mag, 90)) * 255.0 * 8.0)
+    hi = least * 255.0 * 8.0 if least < EDGE_LEAST else max(least * 255.0 * 8.0, float(np.percentile(mag, 90)) * 255.0 * 8.0)
     canny = cv2.Canny(u8, hi / 2.0, hi, L2gradient=True, apertureSize=3) > 0
     canny[:3], canny[-3:], canny[:, :3], canny[:, -3:] = False, False, False, False
-    sel = canny & (mag >= EDGE_LEAST)
+    sel = canny & (ndi.maximum_filter(mag, size=3) >= least)
+    if mask is not None:
+        sel &= mask
     ys, xs = np.nonzero(sel)
     if len(ys) > points:
         pick = np.random.default_rng(seed).choice(len(ys), points, replace=False)
@@ -889,6 +893,8 @@ def _veil(t, q, core):
 MOVING_LEAST = 3.0                # 720 line pixels a frame: an edge moving across itself at least this is read for
 STILL_MOST = 0.5                  # motion blur, against edges moving less than this; a pixel moving at least
 MOVING_PIXEL = 1.0                # this counts as moving
+MOTION_LEAST = 0.008              # Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over
+                                  # 30 px still shows)
 
 
 def flow(gray0, gray1):
@@ -968,18 +974,26 @@ def motion(gray0, gray1, e, unit=1.0, f=None, seed=0, detail=None):
     n = len(e["y"])
     if n == 0:
         return out
+    # the moving edges are read again with a low threshold where the picture moves (a long blur leaves weak edges
+    # that the frame's own edges miss), the still ones are the frame's own
+    weak = edges(gray0, unit, seed=seed, least=MOTION_LEAST, mask=speed >= MOVING_LEAST)
+    still_e = e
+    e = weak
+    if len(e["y"]) == 0:
+        return out
     fx, fy = f[e["y"], e["x"], 0], f[e["y"], e["x"], 1]
     across = np.abs(fx * e["nx"] + fy * e["ny"]) / unit
     sp = np.hypot(fx, fy) / unit
     moving = np.nonzero((across >= MOVING_LEAST) & (np.abs(fx * e["nx"] + fy * e["ny"]) >= 0.7 * np.hypot(fx, fy)))[0]
-    still = np.nonzero(sp < STILL_MOST)[0]
+    sfx, sfy = f[still_e["y"], still_e["x"], 0], f[still_e["y"], still_e["x"], 1]
+    still = np.nonzero(np.hypot(sfx, sfy) / unit < STILL_MOST)[0]
     if len(moving):
         out["motion.speed"] = float(np.median(sp[moving]))
     out["motion.edges"] = float(len(moving))
     if len(moving) < 10:
         return out
     sig_img = e["sigma"] * unit
-    base = float(np.median(box_length(sig_img[still], e["scale"][still]))) if len(still) >= 10 else 0.0
+    base = float(np.median(box_length(still_e["sigma"][still] * unit, still_e["scale"][still]))) if len(still) >= 10 else 0.0
     lengths = np.sqrt(np.clip(box_length(sig_img[moving], e["scale"][moving]) ** 2 - base ** 2, 0.0, None))
     ratio = lengths / (across[moving] * unit)
     out["motion.shutter"] = float(np.median(ratio))
@@ -1648,6 +1662,17 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
             row["m2"] = r["m2"]
         rows.append(row)
     summary = summarise(rows, seed=seed)
+    shots = []
+    for k in sorted(set(r["shot"] for r in rows)):
+        part = [r for r in rows if r["shot"] == k]
+        if len(part) < 2:
+            continue
+        meds = {}
+        for key in part[0]["m"]:
+            v = np.array([r["m"].get(key, np.nan) for r in part], np.float64)
+            meds[key] = float(np.nanmedian(v)) if np.isfinite(v).any() else float("nan")
+        shots.append({"shot": int(k), "n": len(part), "start": float(min(r["t"] for r in part)),
+                      "end": float(max(r["t"] for r in part)), "m": meds})
     profiles = {}
     curves = [r["extras"]["bloom_profile"] for r in results if r["extras"].get("bloom_profile")]
     if curves:
@@ -1689,7 +1714,7 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
               "frame": {"bars": bars, "box": [int(x0), int(y0), int(x1), int(y1)], "aspect": w_act / float(h_act),
                         "fps": rate, "fps_effective": eff["frame.fps_effective"], "step": step},
               "time": {"cuts": [int(c) for c in cut_list], "flashes": flash_events, "frames": int(len(maps))},
-              "vignette": vig, "frames": rows, "summary": summary, "profiles": profiles}
+              "vignette": vig, "frames": rows, "shots": shots, "summary": summary, "profiles": profiles}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
     return result

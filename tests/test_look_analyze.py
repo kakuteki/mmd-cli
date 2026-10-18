@@ -667,6 +667,16 @@ class VideoTest(unittest.TestCase):
         self.assertAlmostEqual(s["cuts.per_min"]["median"], 20.0, delta=0.01)
         self.assertEqual(d["matrix"], "bt709")
         self.assertEqual(len(d["profiles"]["tone_hist"]), 50)
+        # each shot with two samples or more has its own medians, its frames and times
+        counts = {}
+        for f in d["frames"]:
+            counts[f["shot"]] = counts.get(f["shot"], 0) + 1
+        self.assertEqual([sh["shot"] for sh in d["shots"]], sorted(k for k, c in counts.items() if c >= 2))
+        self.assertEqual(len(d["shots"]), 3)
+        for sh in d["shots"]:
+            self.assertGreaterEqual(sh["n"], 2)
+            self.assertLessEqual(sh["start"], sh["end"])
+            self.assertIn("tone.median", sh["m"])
         self.assertEqual(sum(d["profiles"]["sigma_hist"]) > 0, True)
 
     def test_the_figures_and_small_crops_are_drawn(self):
