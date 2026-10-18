@@ -430,21 +430,39 @@ class PlantTest(unittest.TestCase):
         self.assertLess(float(b["左"]["slide"][:F - 1].max()) / FPS, 0.5)
 
     def test_a_jump_inside_a_fast_slide_is_brought_to_the_slides_pace(self):
-        # the left foot slides 0.2 units a frame (48 cm/s, the dance's slide: kept) over frames 10-21, but its step from
+        # the left foot slides 0.2 units a frame (48 cm/s, the dance's slide: kept) over frames 10-25, but its step from
         # frame 15 to 16 is 1.25 units (10 cm: the song's 242.1 s, 11.35 cm between steps of 1.7 and 1.9): that step comes
-        # down to the slide's pace, the rest of the slide is kept
+        # down to the slide's pace, the slide before it is kept, and what the step took off is given back over the slide's
+        # steps after it (each at most doubled), so that the slide ends where the dance puts the foot (v11revm: held, the
+        # song's 242.53-242.63 s right foot stood 10.5 cm off the dance's stand after that slide)
         F = 40
 
         def x(t):
-            k = min(max(t - 10, 0), 11)
+            k = min(max(t - 10, 0), 15)
             return -0.2 * k - (1.05 if t >= 16 else 0.0)
         m = dance(F, left=lambda t: ((0.0, 0.0, x(t)), None))
         out, plan = run(m)
         a, b = shoes(m, F), shoes(out, F)
         self.assertGreater(float(a["左"]["slide"][15]) / FPS, 9.0)                     # cm: the dance's jump
         self.assertLess(float(b["左"]["slide"][15]) / FPS, 2.5)
-        for t in (11, 12, 13, 17, 18, 19):
+        for t in (11, 12, 13):
             self.assertAlmostEqual(float(b["左"]["slide"][t]) / FPS, float(a["左"]["slide"][t]) / FPS, delta=0.2)
+        for t in range(16, 25):
+            self.assertLess(float(b["左"]["slide"][t]) / FPS, 2.0 * float(a["左"]["slide"][t]) / FPS + 0.2)
+        g0, g1 = goal(m, F, "左"), goal(out, F, "左")
+        self.assertLess(float(np.abs(g1[26:, [0, 2]] - g0[26:, [0, 2]]).max()), 0.02)  # the slide ends where the dance's does
+
+    def test_a_standing_foots_jump_of_two_frames_is_held(self):
+        # the left foot stands still on the floor but its goal goes 0.94 units (7.5 cm) along x in two equal steps from
+        # frame 15 to 17 and stays: neither step is twice the other's or 5 cm (no jump inside a slide), both faster than
+        # PLANT_SPEED between still steps of the same stand (PLANT_POP): held, the stand stays where it was
+        F = 30
+        m = dance(F, left=lambda t: ((min(max(t - 15, 0), 2) * 0.47, 0.0, 0.0), None))
+        out, plan = run(m)
+        a, b = shoes(m, F), shoes(out, F)
+        self.assertGreater(float(a["左"]["slide"][15]) / FPS, 3.0)                     # cm: the dance's two steps
+        self.assertGreater(float(a["左"]["slide"][16]) / FPS, 3.0)
+        self.assertLess(float(b["左"]["slide"][:F - 1].max()) / FPS, 0.5)              # held
 
     def test_a_standing_foot_the_body_moves_away_from_slides_before_its_knee_changes_much(self):
         # single support on the left foot, which the dance slides slowly (0.08 units a frame, 19 cm/s) along -z for 40

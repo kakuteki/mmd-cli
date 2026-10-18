@@ -191,6 +191,12 @@ PLANT_POP = 2                   # steps: a standing foot's moves faster than PLA
 PLANT_SPIKE = (2.0, 5.0)        # (times, cm): and a standing foot's step longer than the first times the longer of its two
                                 # neighbours and than the second is a jump inside a slide: it is brought to the neighbours'
                                 # pace (the song's 242.1 s: 11.35 cm between steps of 1.7 and 1.9)
+PLANT_GIVE_BACK = 1.0           # times a step: what a jump inside a slide had taken off (PLANT_SPIKE) is given back over the
+                                # slide's fast steps after it (before it, on the frames before the stand's put frame), each
+                                # step taking at most this times its own length, so that the slide ends where the dance puts
+                                # the foot; what they cannot take stays held.  (v11revm 2026-10-18: held for good, the song's
+                                # 242.53-242.63 s right foot stood 10.5 cm off the dance's stand after the 242.1 s slide,
+                                # the step 32.6 cm for the dance's 23.4; the ankle where MMD's IK puts it)
 AIR_MIN = 4                     # frames with no foot standing: a flight (the balance layer's AIR_MIN)
 WINDOW = 8                      # frames each side of a flight over which the pelvis may change
 SMOOTH = 30.0                   # the weight of the change's third differences against the change itself
@@ -389,23 +395,53 @@ def swing_blend(corr, stance, F):
     return out
 
 
-def held_share(step, stance, n=PLANT_POP, spike=PLANT_SPIKE):
+def held_share(step, stance, n=PLANT_POP, spike=PLANT_SPIKE, jumps=False):
     """[F] how much of each step (frame t to t + 1, step [F] in cm) of a standing foot (stance [F]) the plant undoes: all of
     a step slower than PLANT_SPEED a frame and of a lone jump (lone_pops), the excess over its neighbours' pace of a step
-    longer than spike[0] times both and than spike[1] cm (a jump inside a slide), none of the rest (the dance's slide)"""
+    longer than spike[0] times both and than spike[1] cm (a jump inside a slide), none of the rest (the dance's slide).
+    jumps: (that, and [F] the steps that are jumps inside a slide)"""
     step = np.asarray(step, dtype=float)
     slow = step * FPS < PLANT_SPEED
     share = (slow | lone_pops(~slow, stance, n)).astype(float)
     F = len(step)
     on = np.zeros(F, dtype=bool)
     on[:-1] = np.asarray(stance[:-1], dtype=bool) & np.asarray(stance[1:], dtype=bool)
+    jump = np.zeros(F, dtype=bool)
     if F >= 3:
         level = np.zeros(F)
         level[1:-1] = np.maximum(step[:-2], step[2:])
         jump = on & (share < 1.0) & (step > spike[1]) & (step > spike[0] * level)
         jump[0] = jump[-1] = False
         share = np.where(jump, 1.0 - level / np.maximum(step, 1e-9), share)
-    return share
+    return (share, jump) if jumps else share
+
+
+def given_back(taken, step, share, jump, a, b, k0, cap=PLANT_GIVE_BACK):
+    """[F, 2] (units) what the slide's fast steps of a stand (frames a .. b, put down at k0) give back of the jumps inside it
+    (jump [F]; taken [F, 2] what the plant takes off each step): a jump at or after k0 over the fast steps after it, one
+    before k0 over the fast steps before it (a fast step: share 0, not a jump), each at most cap times its own length
+    (step [F], units), shared out by those lengths; what they cannot take stays held"""
+    F = len(step)
+    out = np.zeros((F, 2))
+    fast = (np.asarray(share) <= 0.0) & ~np.asarray(jump, dtype=bool)
+    room = np.where(fast, cap * np.asarray(step, dtype=float), 0.0)
+    for t in range(a, b):
+        if not jump[t]:
+            continue
+        E = np.asarray(taken[t], dtype=float)
+        need = float(np.linalg.norm(E))
+        if need <= 1e-12:
+            continue
+        idx = np.arange(t + 1, b) if t >= k0 else np.arange(a, t)
+        idx = idx[room[idx] > 0.0]
+        have = float(room[idx].sum()) if len(idx) else 0.0
+        if have <= 0.0:
+            continue
+        k = min(1.0, need / have)
+        w = room[idx] * k
+        out[idx] += (w / need)[:, None] * E[None, :]
+        room[idx] -= w
+    return out
 
 
 def lone_pops(fast, stance, n=PLANT_POP):
@@ -733,7 +769,7 @@ def flight_change(windows, air, floor_frames, com_y, pelvis_ys, fall_in, room, F
 
 def default_params():
     return {"floor_y": None, "ground": True, "plant": True, "drop": True, "flight": True, "knee": True, "glide": True,
-            "flight_band": True}
+            "flight_band": True, "give_back": True}
 
 
 def body_com(model, motion, F):
@@ -1276,19 +1312,24 @@ def layer(model, rig, shoe, motion, params=None):
         c = np.zeros((F, 2))
         rows = []
         if p["plant"]:
-            # the share of each step undone: the slow ones and the jumps (held_share: PLANT_POP, PLANT_SPIKE)
-            undo = held_share(np.linalg.norm(slip[s], axis=1) * UNIT_CM, stance[s])
+            # the share of each step undone: the slow ones and the jumps (held_share: PLANT_POP, PLANT_SPIKE); what a jump
+            # inside a slide takes off, the slide's fast steps give back (given_back: PLANT_GIVE_BACK)
+            step_cm = np.linalg.norm(slip[s], axis=1) * UNIT_CM
+            undo, jump = held_share(step_cm, stance[s], jumps=True)
+            taken = undo[:, None] * slip[s]
             e = hips_low[s] - (sol[s]["goal_ankle"] + np.stack([np.zeros(F), dy_e[s], np.zeros(F)], 1))
             r_lo, r_hi = plant_band(e, *lengths[s])
             for a, b in runs(stance[s]):
                 put = np.flatnonzero(on[s][a:b + 1])
                 k0 = a + (int(put[0]) if len(put) else int(np.argmin(low_j[s][a:b + 1])))
+                back = (given_back(taken, step_cm / UNIT_CM, undo, jump, a, b, k0) if p.get("give_back", True)
+                        else np.zeros((F, 2)))
                 limited = 0
                 for t in range(k0, b):
-                    c[t + 1], lim = held_within(c[t] - undo[t] * slip[s][t], e[t + 1], r_lo[t + 1], r_hi[t + 1])
+                    c[t + 1], lim = held_within(c[t] - taken[t] + back[t], e[t + 1], r_lo[t + 1], r_hi[t + 1])
                     limited += int(lim)
                 for t in range(k0, a, -1):
-                    c[t - 1], lim = held_within(c[t] + undo[t - 1] * slip[s][t - 1], e[t - 1], r_lo[t - 1], r_hi[t - 1])
+                    c[t - 1], lim = held_within(c[t] + taken[t - 1] - back[t - 1], e[t - 1], r_lo[t - 1], r_hi[t - 1])
                     limited += int(lim)
                 if b > a:
                     n = np.linalg.norm(c[a:b + 1], axis=1) * UNIT_CM
@@ -1623,6 +1664,9 @@ def main(argv=None):
     ap.add_argument("--no-glide", action="store_true",
                     help="leave a run with no foot standing under a pelvis that does not fall as in a flight to the flight "
                          "(the layer before v11feet) instead of standing it on its lower foot just over the floor")
+    ap.add_argument("--no-give-back", action="store_true",
+                    help="keep what the plant takes off a jump inside a slide held to the stand's end (the layer before "
+                         "v11revm) instead of giving it back over the slide's fast steps after it (PLANT_GIVE_BACK)")
     ap.add_argument("--exact-gravity", action="store_true",
                     help="make every flight's centre of mass fall by gravity (the layer before v11feet) instead of at the "
                          "dance's own rate kept within FLIGHT_BAND (0.8 of gravity to gravity)")
@@ -1642,7 +1686,8 @@ def main(argv=None):
     out, plan = layer(model, rig, shoe, motion, {"floor_y": args.floor_y, "ground": not args.no_ground,
                                                  "plant": not args.no_plant, "drop": not args.no_drop,
                                                  "flight": not args.no_flight, "knee": not args.no_knee,
-                                                 "glide": not args.no_glide, "flight_band": not args.exact_gravity})
+                                                 "glide": not args.no_glide, "flight_band": not args.exact_gravity,
+                                                 "give_back": not args.no_give_back})
     vmd.dump(out, args.out)
     back = vmd.load(args.out)
     F = plan["F"]
@@ -1650,6 +1695,7 @@ def main(argv=None):
     rep["untouched"] = untouched(motion, back, plan["written"])
     rep["params"] = {"no_ground": args.no_ground, "no_plant": args.no_plant, "no_drop": args.no_drop, "no_flight": args.no_flight,
                      "no_knee": args.no_knee, "no_glide": args.no_glide, "exact_gravity": args.exact_gravity,
+                     "no_give_back": args.no_give_back,
                      "floor_y": plan["floor_y"]}
     rep["seconds"] = round(time.time() - t0, 1)
     if args.report:
