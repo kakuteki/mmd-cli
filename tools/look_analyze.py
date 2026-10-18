@@ -1820,11 +1820,13 @@ def _plt():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib import font_manager
-    for p in FONTS:
-        if os.path.isfile(p):
+    names = []
+    for p in FONTS[:1] + ("C:/Windows/Fonts/msyh.ttc",) + FONTS[1:]:     # Microsoft YaHei for simplified Chinese
+        if os.path.isfile(p) and len(names) < 2:
             font_manager.fontManager.addfont(p)
-            plt.rcParams["font.family"] = font_manager.FontProperties(fname=p).get_name()
-            break
+            names.append(font_manager.FontProperties(fname=p).get_name())
+    if names:
+        plt.rcParams["font.family"] = names
     plt.rcParams["axes.unicode_minus"] = False
     return plt
 
