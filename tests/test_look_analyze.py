@@ -148,6 +148,12 @@ class ColourTest(unittest.TestCase):
         self.assertAlmostEqual(wb_n["wb.share"], 1.0)
         dark = np.full((50, 50, 3), 0.2)                         # no white to read it from
         self.assertTrue(math.isnan(LA.white_balance(dark, LA.rgb_to_lab(dark))["wb.cct"]))
+        # a bright yellow (blonde hair, a lamp) beside the white is no white: the white's own colour is read
+        mixed = np.full((60, 60, 3), 0.92)
+        mixed[:, 30:] = (0.97, 0.88, 0.25)                        # L* 89, C* 76
+        wb_m = LA.white_balance(mixed, LA.rgb_to_lab(mixed))
+        self.assertAlmostEqual(wb_m["wb.cct"], 6504, delta=60)
+        self.assertAlmostEqual(wb_m["wb.share"], 0.5, delta=0.01)
 
 
 @unittest.skipUnless(LA, NEEDS)
@@ -200,6 +206,8 @@ class TimeTest(unittest.TestCase):
         for start in (300, 900, 1500):
             series[start:start + 5] += 0.3           # three white flashes of 5 frames
         series[1800:] += 0.2                          # and a lasting change of light, which is no flash
+        series[2100:2105] += 0.45                     # nor is a light switched on with a flicker: it does not come back
+        series[2105:] += 0.25
         events, summary = LA.flashes(series, fps)
         self.assertEqual([e["start"] for e in events], [300, 900, 1500])
         self.assertAlmostEqual(summary["flash.per_min"], 4.5, delta=0.01)
@@ -346,7 +354,8 @@ class TextureTest(unittest.TestCase):
         for sigma in (2.0, 4.0, 8.0):
             noisy = clean + rng.normal(0, sigma / 255.0, clean.shape)
             got = LA.noise_spatial(noisy)["noise.spatial"]
-            self.assertAlmostEqual(got, sigma, delta=0.2 * sigma + 0.3)
+            # within 5 % (it reads 0.994 to 1.005 of sigma; without Immerkaer's sqrt(pi / 2) it would read 0.80)
+            self.assertAlmostEqual(got, sigma, delta=0.05 * sigma + 0.1)
         self.assertLess(LA.noise_spatial(clean)["noise.spatial"], 0.5)
 
     def test_grain_that_changes_every_frame_and_its_size(self):
@@ -872,6 +881,19 @@ class RegionTest(unittest.TestCase):
         far = np.clip(LA.linear_to_srgb(far), 0.0, 1.0)
         self.assertLess(abs(LA.region_measures(far, mask)["halo.share"]), 0.01)
 
+    def test_the_same_glow_shows_more_on_a_dark_stage(self):
+        # the same light added round the person (a share of its edge's light) lifts a dark stage by more L* than a
+        # bright one: halo.share reads the light, halo.dL what the eye sees of it
+        reads = {}
+        for stage_l in (8.0, 60.0):
+            picture, mask, _ = scene(person_lab=(90.0, 0.0, 0.0), stage_lab=(stage_l, 0.0, 0.0))
+            lin = LA.srgb_to_linear(picture)
+            glowing = np.clip(LA.linear_to_srgb(lin + 0.3 * ndi.gaussian_filter(mask, 14.0)[..., None]), 0.0, 1.0)
+            reads[stage_l] = LA.region_measures(glowing, mask)
+            self.assertLess(abs(LA.region_measures(picture, mask)["halo.dL"]), 0.5)
+        self.assertGreater(reads[8.0]["halo.dL"], 2.0 * reads[60.0]["halo.dL"])
+        self.assertGreater(reads[8.0]["halo.dL"], 10.0)
+
     def test_background_blur_is_read_on_the_stage_only(self):
         tex = ndi.gaussian_filter(blocks(720, 1280, seed=13, n=1600, low=0.1, high=0.9), 1.0)
         person = ndi.gaussian_filter(blocks(720, 1280, seed=14, n=1600, low=0.1, high=0.9), 1.0)
@@ -896,6 +918,9 @@ class RegionTest(unittest.TestCase):
         r = LA.region_measures(lights, mask)
         self.assertGreater(r["bloom.stage_strength"], 0.05)
         self.assertLess(r["bloom.person_strength"], 0.01)
+        self.assertGreater(r["stage.lights"], 0.0)                  # the stage holds lights (Y' 0.9 and up)
+        picture, m2, _ = scene()
+        self.assertEqual(LA.region_measures(picture, m2)["stage.lights"], 0.0)
 
     def test_no_person_leaves_the_person_measures_empty(self):
         picture, _, _ = scene()

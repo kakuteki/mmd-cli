@@ -1464,11 +1464,13 @@ REGION_MEASURES = {
     "dof.person_blur": ("stage", "人物の区画のぼけ（中央）", "px"),
     "dof.stage_blur": ("stage", "舞台の区画のぼけ（中央）", "px"),
     "dof.stage_ratio": ("stage", "舞台と人物の鮮鋭さの比（(舞台 + 1) / (人物 + 1)）", ""),
+    "stage.lights": ("stage", "舞台の光源の割合（舞台のうち Y' 0.9 以上）", ""),
     "bloom.stage_strength": ("stage", "舞台の光のグローの強さ（人物の外の光源、4 px 先）", ""),
     "bloom.stage_r50": ("stage", "舞台の光のグローの届き", "px"),
     "rim.ratio": ("edge", "縁の明るさ / 内側の明るさ（縁の 3〜6 px と 12〜20 px、中央。リムライトで 1 より大）", ""),
     "rim.p90": ("edge", "縁の明るさ / 内側の明るさの 90 % 点（強い縁の光）", ""),
     "halo.share": ("edge", "人物のまわりのにじみ（外 3〜8 px の光の上がり / 縁の光、中央）", ""),
+    "halo.dL": ("edge", "人物のまわりのにじみの見え方（外 3〜8 px と 24〜40 px の L* の差。暗い舞台ほど同じ光で大きい）", "L*"),
     "bloom.person_strength": ("edge", "人物の光源が人物の外に落とすグローの強さ（4 px 先）", ""),
     "bloom.person_r50": ("edge", "人物のグローの届き", "px"),
 }
@@ -1522,9 +1524,10 @@ def silhouette(Y, person, unit=1.0, seed=0):
     the person that far (thin parts left out): 1 for an evenly lit person, over 1 with a rim light; the median and the
     90 % point over the points.  halo.share: the light HALO_NEAR outside over the stage HALO_FAR outside, as a share of
     the person's edge (HALO_EDGE inside) over that stage, on normals that stay off the person and in the frame and where
-    the edge is brighter than the stage: 0 without a glow round the person, the glow's share at a few px with one."""
+    the edge is brighter than the stage: 0 without a glow round the person, the glow's share at a few px with one;
+    halo.dL: the same light as the eye sees it, L* near less L* far (the same glow lifts a dark stage by more L*)."""
     out = {"rim.ratio": float("nan"), "rim.p90": float("nan"), "rim.points": 0.0, "halo.share": float("nan"),
-           "halo.points": 0.0}
+           "halo.dL": float("nan"), "halo.points": 0.0}
     if person.sum() < 50 or (~person).sum() < 50:
         return out
     ys, xs, ny, nx = _outline(person, unit, seed)
@@ -1558,7 +1561,12 @@ def silhouette(Y, person, unit=1.0, seed=0):
     near, far, src = y_out[:, n_sel].mean(axis=1), y_out[:, f_sel].mean(axis=1), y_edge.mean(axis=1)
     keep = (off.max(axis=1) < 0.5) & in_frame & (src - far >= HALO_LEAST)
     if keep.sum() >= 10:
+
+        def lstar(y):
+            return 116.0 * _f(np.clip(y, 0.0, None)) - 16.0
+
         out.update({"halo.share": float(np.median((near[keep] - far[keep]) / (src[keep] - far[keep]))),
+                    "halo.dL": float(np.median(lstar(near[keep]) - lstar(far[keep]))),
                     "halo.points": float(keep.sum())})
     return out
 
@@ -1601,6 +1609,7 @@ def region_measures(rgb, mask, unit=1.0, seed=0):
         b_p = bloom(rgb, unit, sources=person, rings=~person)
         out["bloom.person_strength"], out["bloom.person_r50"] = b_p["bloom.strength"], b_p["bloom.r50"]
     if stage.sum() >= least:
+        out["stage.lights"] = float((luma(rgb)[stage] >= BLOOM_SOURCE).mean())
         b_s = bloom(rgb, unit, sources=stage, rings=stage)
         out["bloom.stage_strength"], out["bloom.stage_r50"] = b_s["bloom.strength"], b_s["bloom.r50"]
     return out
