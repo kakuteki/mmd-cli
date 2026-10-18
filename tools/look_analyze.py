@@ -382,3 +382,290 @@ def effective_fps(thumbs, fps):
         rate = fps / step
     rate = int(round(rate)) if abs(rate - round(rate)) < 0.01 else float(rate)
     return {"frame.fps_effective": rate, "step": step}
+
+
+# ---- light of one frame -----------------------------------------------------------------------------------------------
+
+BLOOM_SOURCE = 0.9                # Y': the light sources whose glow is read
+BLOOM_REACH = 96.0                # 720 line pixels: the glow is read this far out from them, and
+BLOOM_BACK = (96.0, 160.0)        # the level it falls to (the background) between these distances
+BLOOM_AT = 4.0                    # bloom.strength: the share of the sources' light found this far out (720 px)
+BLOOM_NEAR = (2.0, 8.0)           # the glow's colour is read between these distances
+
+
+def _luminance(lin):
+    return lin @ _RGB_TO_XYZ[1]
+
+
+def _components(mask):
+    """labels and sizes of the 8-connected parts of a mask"""
+    labels, n = _ndi().label(mask, structure=np.ones((3, 3), bool))
+    sizes = np.bincount(labels.ravel(), minlength=n + 1)
+    return labels, n, sizes
+
+
+def bloom(rgb, unit=1.0, compact=False):
+    """the glow round the brightest parts of a frame (Y' over BLOOM_SOURCE), read from the mean linear luminance in
+    rings at each distance from them, over the level it falls to further out (the background)
+
+    bloom.strength: the rings' light over the background as a share of the sources' light over it, BLOOM_AT 720 line
+    pixels from the sources (0 without glow; a glow added at k times the blurred source gives about k times a constant);
+    bloom.r50 / r10: the distance (720 line pixels) at which that share falls to a half and a tenth of its value at
+    BLOOM_AT (how far the glow reaches; nan without glow); bloom.halo_red / halo_blue: how
+    much more of the glow's light than of the source's is red (or blue): a red halo round a white light, as film's
+    halation, is positive.  compact: only small sources (under 0.2 % of the frame each: highlights, lamps, sparkles),
+    whose rings do not come near a big one.  profile: the share at each ring (for the figures)."""
+    rgb = np.asarray(rgb, np.float64)
+    nan = {"bloom.strength": float("nan"), "bloom.r50": float("nan"), "bloom.r10": float("nan"),
+           "bloom.halo_red": float("nan"), "bloom.halo_blue": float("nan"), "bloom.sources": 0.0, "profile": []}
+    src = luma(rgb) >= BLOOM_SOURCE
+    ndi = _ndi()
+    far_from_big = None
+    if compact:
+        labels, n, sizes = _components(src)
+        small = (sizes <= max(4, 0.002 * src.size)) & (sizes >= 2)
+        small[0] = False
+        big = src & ~small[labels]
+        src = small[labels]
+        if big.any():
+            far_from_big = ndi.distance_transform_edt(~big) / unit >= BLOOM_BACK[1]
+    if src.sum() < 3:
+        return nan
+    lin = srgb_to_linear(rgb)
+    Y = _luminance(lin)
+    dist = ndi.distance_transform_edt(~src)                      # image pixels
+    d720 = dist / unit
+    use = ~src if far_from_big is None else (~src & far_from_big)
+    back = use & (d720 >= BLOOM_BACK[0]) & (d720 < BLOOM_BACK[1])
+    if back.sum() < 50:
+        back = use & (d720 >= BLOOM_REACH / 2)
+    if back.sum() < 50:
+        return nan
+    background = float(np.median(Y[back]))
+    bg_rgb = np.median(lin[back], axis=0)
+    source = float(Y[src].mean())
+    if source - background < 0.05:
+        return nan
+    ring = np.floor(dist).astype(np.int64)
+    sel = use & (d720 < BLOOM_REACH) & (ring >= 1)
+    nring = int(math.ceil(BLOOM_REACH * unit)) + 1
+    counts = np.bincount(ring[sel], minlength=nring)[:nring]
+    sums = np.bincount(ring[sel], weights=Y[sel], minlength=nring)[:nring]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = (sums / counts - background) / (source - background)
+    centres = (np.arange(nring) + 0.5) / unit                     # 720 line pixels
+    ok = counts >= 8
+    xs, ys = centres[ok], share[ok]
+    out = dict(nan)
+    out["bloom.sources"] = float(src.mean())
+    if len(xs) < 2 or xs[0] > BLOOM_AT:
+        return out
+    ref = float(np.interp(BLOOM_AT, xs, ys))
+    out["bloom.strength"] = ref
+    if ref >= 0.02:
+        after = xs > BLOOM_AT
+        px, py = np.r_[BLOOM_AT, xs[after]], np.r_[ref, ys[after]]
+        for name, level in (("bloom.r50", 0.5), ("bloom.r10", 0.1)):
+            below = np.nonzero(py <= level * ref)[0]
+            if len(below):
+                k = below[0]
+                x0, y0, x1, y1 = px[k - 1], py[k - 1], px[k], py[k]
+                out[name] = float(x0 + (level * ref - y0) * (x1 - x0) / (y1 - y0)) if y1 != y0 else float(x1)
+    halo = sel & (d720 >= BLOOM_NEAR[0]) & (d720 <= BLOOM_NEAR[1])
+    if halo.sum() >= 8:
+        e = np.clip(lin[halo].mean(axis=0) - bg_rgb, 0.0, None)
+        s = np.clip(lin[src].mean(axis=0) - bg_rgb, 1e-9, None)
+        if e.sum() > 1e-6:
+            out["bloom.halo_red"] = float(e[0] / e.sum() - s[0] / s.sum())
+            out["bloom.halo_blue"] = float(e[2] / e.sum() - s[2] / s.sum())
+    out["profile"] = [[float(c), float(v)] for c, v, k in zip(centres, share, ok) if k]
+    return out
+
+
+STREAK_RING = (6.0, 40.0)         # 720 line pixels round a small highlight where its rays are read,
+STREAK_BACK = (40.0, 60.0)        # against the level of this ring
+STREAK_BINS = 36
+STREAK_HARMONICS = (2, 4, 6, 8)
+
+
+def streaks(rgb, unit=1.0):
+    """rays from small highlights (a star filter, an anamorphic streak): the light round each highlight between
+    STREAK_RING over the level further out, summed over the highlights by angle, and its angular harmonics
+
+    streak.strength: the largest of the harmonics 2, 4, 6, 8 over the mean (0 for a round glow, near 1 for thin rays);
+    streak.rays: the fewest rays that give it (the smallest harmonic within 0.85 of the largest; 2 is a streak through
+    the light, 4 a cross); streak.angle: the angle of a ray (degrees counterclockwise from the right, modulo 360 / rays);
+    streak.sources: how many highlights were read."""
+    rgb = np.asarray(rgb, np.float64)
+    out = {"streak.strength": float("nan"), "streak.rays": float("nan"), "streak.angle": float("nan"),
+           "streak.sources": 0.0}
+    src = luma(rgb) >= BLOOM_SOURCE
+    labels, n, sizes = _components(src)
+    if n == 0:
+        return out
+    h, w = src.shape
+    Y = _luminance(srgb_to_linear(rgb))
+    reach = STREAK_BACK[1] * unit
+    centres = _ndi().center_of_mass(src, labels, range(1, n + 1))
+    profile = np.zeros(STREAK_BINS)
+    used = 0
+    for k, (cy, cx) in enumerate(centres, start=1):
+        if sizes[k] > max(4, 0.002 * src.size) or sizes[k] < 1:
+            continue
+        if cy - reach < 0 or cx - reach < 0 or cy + reach >= h or cx + reach >= w:
+            continue                                            # its rings would leave the frame
+        y0, y1, x0, x1 = int(cy - reach), int(cy + reach) + 1, int(cx - reach), int(cx + reach) + 1
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        r = np.hypot(yy - cy, xx - cx) / unit
+        win = Y[y0:y1, x0:x1]
+        backr = (r >= STREAK_BACK[0]) & (r < STREAK_BACK[1])
+        ring = (r >= STREAK_RING[0]) & (r < STREAK_RING[1]) & ~src[y0:y1, x0:x1]
+        if backr.sum() < 20 or ring.sum() < STREAK_BINS:
+            continue
+        excess = win[ring] - np.median(win[backr])
+        theta = np.arctan2(-(yy[ring] - cy), xx[ring] - cx) % (2 * math.pi)
+        b = np.minimum((theta / (2 * math.pi) * STREAK_BINS).astype(int), STREAK_BINS - 1)
+        cnt = np.bincount(b, minlength=STREAK_BINS)
+        if (cnt == 0).any():
+            continue
+        mean = np.bincount(b, weights=excess, minlength=STREAK_BINS) / cnt
+        if mean.mean() <= 0:
+            continue
+        profile += np.clip(mean, 0.0, None) / max(mean.max(), 1e-12)
+        used += 1
+    out["streak.sources"] = float(used)
+    if used == 0 or profile.sum() <= 0:
+        return out
+    angles = (np.arange(STREAK_BINS) + 0.5) * 2 * math.pi / STREAK_BINS
+    mags = {}
+    for k in STREAK_HARMONICS:
+        mags[k] = (profile * np.exp(-1j * k * angles)).sum() / profile.sum()
+    best = max(abs(f) for f in mags.values())
+    rays = min(k for k in STREAK_HARMONICS if abs(mags[k]) >= 0.85 * best)
+    out["streak.strength"] = float(best)
+    out["streak.rays"] = float(rays)
+    out["streak.angle"] = float((math.degrees(-np.angle(mags[rays])) / rays) % (360.0 / rays))
+    return out
+
+
+def light(rgb, lab):
+    """two rough proxies for the light of a frame: light.key_hue / key_chroma, the hue and size of the mean a*b* of its
+    brightest 2 % (L*); light.lr / light.tb, how much brighter (Y') the right half is than the left (and the top than
+    the bottom), as a share of their sum"""
+    L = lab[..., 0]
+    top = L >= np.percentile(L, 98)
+    a, b = float(lab[..., 1][top].mean()), float(lab[..., 2][top].mean())
+    Yp = luma(rgb)
+    h, w = Yp.shape
+    left, right = Yp[:, :w // 2].mean(), Yp[:, w - w // 2:].mean()
+    upper, lower = Yp[:h // 2].mean(), Yp[h - h // 2:].mean()
+    return {"light.key_hue": _hue(a, b), "light.key_chroma": float(math.hypot(a, b)),
+            "light.lr": float((right - left) / max(right + left, 1e-9)),
+            "light.tb": float((upper - lower) / max(upper + lower, 1e-9))}
+
+
+# ---- texture of one frame ---------------------------------------------------------------------------------------------
+
+_IMMERKAER = np.array([[1.0, -2.0, 1.0], [-2.0, 4.0, -2.0], [1.0, -2.0, 1.0]])
+
+
+def flat_mask(gray, sigma=2.0, grow=2):
+    """the pixels away from edges: the gradient of the picture smoothed by sigma under 3 times its median, the edges
+    grown by grow pixels (smoothing first keeps the choice of pixels from following the noise in them)"""
+    ndi = _ndi()
+    s = ndi.gaussian_filter(gray, sigma)
+    g = np.hypot(ndi.sobel(s, axis=1), ndi.sobel(s, axis=0))
+    edge = g > 3.0 * max(float(np.median(g)), 1e-4)
+    if grow:
+        edge = ndi.binary_dilation(edge, iterations=grow)
+    return ~edge
+
+
+def noise_spatial(gray):
+    """the noise of the flat areas of a Y' frame (Immerkaer 1996: a Laplacian-like 3 x 3 filter that cancels plain
+    shading), in steps of 255: noise.spatial"""
+    gray = np.asarray(gray, np.float64)
+    conv = _ndi().convolve(gray, _IMMERKAER, mode="reflect")
+    flat = flat_mask(gray)
+    flat[:1], flat[-1:], flat[:, :1], flat[:, -1:] = False, False, False, False
+    if flat.sum() < 100:
+        return {"noise.spatial": float("nan")}
+    return {"noise.spatial": float(math.sqrt(math.pi / 2.0) * np.abs(conv[flat]).mean() / 6.0 * 255.0)}
+
+
+def grain(gray0, gray1, unit=1.0, still=None):
+    """the grain that changes from one frame to the next, read from their difference where the picture stands still
+    (still: a mask, e.g. from the optical flow; the flat areas of both frames are used in any case)
+
+    grain.temporal: its standard deviation in one frame (the robust spread of the difference over sqrt 2), in steps of
+    255; grain.size: the distance (720 line pixels) at which the difference's autocorrelation falls to a half (about 1
+    for grain of single pixels, more for coarse grain)."""
+    g0, g1 = np.asarray(gray0, np.float64), np.asarray(gray1, np.float64)
+    mask = flat_mask(g0) & flat_mask(g1)
+    if still is not None:
+        mask &= still
+    out = {"grain.temporal": float("nan"), "grain.size": float("nan")}
+    if mask.sum() < 500:
+        return out
+    d = g1 - g0
+    v = d[mask]
+    mad = float(np.median(np.abs(v - np.median(v))))
+    out["grain.temporal"] = 1.4826 * mad / math.sqrt(2.0) * 255.0
+    if mad <= 0:
+        return out
+    m = mask.astype(np.float64)
+    dm = (d - v.mean()) * m
+    fd = np.fft.rfft2(dm)
+    fm = np.fft.rfft2(m)
+    acf = np.fft.irfft2(fd * np.conj(fd), s=d.shape)
+    norm = np.fft.irfft2(fm * np.conj(fm), s=d.shape)
+    acf = acf / np.maximum(norm, 1.0)
+    lags = min(12, d.shape[0] // 4, d.shape[1] // 4)
+    r = np.array([(acf[0, k] + acf[k, 0]) / 2.0 for k in range(lags)])
+    r = r / r[0]
+    for k in range(1, lags):
+        if r[k] <= 0.5:
+            out["grain.size"] = float(((k - 1) + (r[k - 1] - 0.5) / (r[k - 1] - r[k])) / unit)
+            break
+    return out
+
+
+def scanlines(gray):
+    """scanlines: a period of 2 to 10 rows in the rows' mean Y' (the rows less their 9-row running mean): scan.peak, the
+    strongest frequency of that band over the band's median (a few for a picture without lines), scan.period (rows)"""
+    rows = np.asarray(gray, np.float64).mean(axis=1)
+    hp = rows - _ndi().uniform_filter1d(rows, 9, mode="reflect")
+    spec = np.abs(np.fft.rfft(hp * np.hanning(len(hp))))
+    freq = np.fft.rfftfreq(len(hp))
+    band = (freq >= 1.0 / 10.0) & (freq <= 0.5)
+    if band.sum() < 4:
+        return {"scan.peak": float("nan"), "scan.period": float("nan")}
+    s = spec[band]
+    i = int(np.argmax(s))
+    return {"scan.peak": float(s[i] / max(np.median(s), 1e-12)), "scan.period": float(1.0 / freq[band][i])}
+
+
+GLITCH_SHIFT = 6                  # pixels: a torn row is moved at least this much against the row above
+GLITCH_SEARCH = 32
+
+
+def glitch(gray):
+    """torn rows (a glitch effect): rows whose horizontal detail matches the row above best when moved by
+    GLITCH_SHIFT pixels or more (the match strong, and clearly better than unmoved): glitch.tears, how many"""
+    g = np.asarray(gray, np.float64)
+    gx = np.diff(g, axis=1, prepend=g[:, :1])
+    gx -= gx.mean(axis=1, keepdims=True)
+    n = gx.shape[1]
+    f = np.fft.rfft(gx, n=2 * n, axis=1)
+    corr = np.fft.irfft(f[1:] * np.conj(f[:-1]), n=2 * n, axis=1)
+    lags = np.r_[np.arange(0, GLITCH_SEARCH + 1), np.arange(-GLITCH_SEARCH, 0)]
+    corr = np.concatenate([corr[:, :GLITCH_SEARCH + 1], corr[:, -GLITCH_SEARCH:]], axis=1)
+    energy = np.sqrt((gx[1:] ** 2).sum(axis=1) * (gx[:-1] ** 2).sum(axis=1))
+    ok = energy > 1e-9
+    corr[ok] /= energy[ok, None]
+    best = np.argmax(corr, axis=1)
+    c_best = corr[np.arange(len(best)), best]
+    c_zero = corr[:, 0]
+    shift = lags[best]
+    torn = ok & (np.abs(shift) >= GLITCH_SHIFT) & (c_best >= 0.5) & (c_zero <= 0.5 * c_best)
+    return {"glitch.tears": float(torn.sum())}

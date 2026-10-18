@@ -239,5 +239,149 @@ class TimeTest(unittest.TestCase):
         self.assertEqual((own["frame.fps_effective"], own["step"]), (60, 1))
 
 
+
+def highlights(h, w, points, radius, level=1.0, base=0.05):
+    """a dark picture (Y' base) with small round highlights of Y' level at the given (y, x)"""
+    img = np.full((h, w), base)
+    yy, xx = np.mgrid[0:h, 0:w]
+    for y, x in points:
+        img[(yy - y) ** 2 + (xx - x) ** 2 <= radius * radius] = level
+    return rgb(img)
+
+
+def add_glow(picture, sigma, strength, channels=(1.0, 1.0, 1.0), threshold=0.9):
+    """a glow made the usual way: the bright parts (Y' over threshold) blurred and added in linear light"""
+    lin = LA.srgb_to_linear(picture)
+    bright = lin * (LA.luma(picture) >= threshold)[..., None]
+    glow = np.stack([ndi.gaussian_filter(bright[..., c], sigma) for c in range(3)], axis=-1)
+    return np.clip(LA.linear_to_srgb(lin + strength * glow * np.array(channels)), 0.0, 1.0)
+
+
+POINTS = [(60, 80), (60, 240), (60, 400), (60, 560), (200, 80), (200, 320), (200, 560), (300, 200), (300, 440)]
+
+
+@unittest.skipUnless(LA, NEEDS)
+class LightTest(unittest.TestCase):
+    unit = 0.5                                   # the pictures are 360 lines: half a 720 line pixel each
+
+    def test_no_glow_reads_as_none(self):
+        bloom = LA.bloom(highlights(360, 640, POINTS, 4), unit=self.unit)
+        self.assertLess(bloom["bloom.strength"], 0.01)
+        self.assertTrue(math.isnan(bloom["bloom.r50"]))
+
+    def test_a_wider_glow_reaches_further_and_a_stronger_one_is_stronger(self):
+        base = highlights(360, 640, POINTS, 4)
+        r50 = [LA.bloom(add_glow(base, s, 1.0), unit=self.unit)["bloom.r50"] for s in (2.0, 4.0, 8.0)]
+        self.assertLess(r50[0], r50[1])
+        self.assertLess(r50[1], r50[2])
+        self.assertAlmostEqual(r50[2] / r50[1], 2.0, delta=0.5)       # twice the blur, about twice the reach
+        strength = [LA.bloom(add_glow(base, 4.0, k), unit=self.unit)["bloom.strength"] for k in (0.25, 0.5)]
+        self.assertGreater(strength[0], 0.02)
+        self.assertAlmostEqual(strength[1] / strength[0], 2.0, delta=0.4)
+
+    def test_lengths_are_in_pixels_of_a_720_line_picture(self):
+        # the same glow drawn at 720 lines (twice as big) reads the same reach and strength
+        small = add_glow(highlights(360, 640, POINTS, 4), 4.0, 1.0)
+        big = add_glow(highlights(720, 1280, [(2 * p[0], 2 * p[1]) for p in POINTS], 8), 8.0, 1.0)
+        b_small, b_big = LA.bloom(small, unit=0.5), LA.bloom(big, unit=1.0)
+        self.assertAlmostEqual(b_small["bloom.r50"] / b_big["bloom.r50"], 1.0, delta=0.15)
+        self.assertAlmostEqual(b_small["bloom.strength"] / b_big["bloom.strength"], 1.0, delta=0.15)
+
+    def test_a_red_halo_round_a_white_light_is_halation(self):
+        base = highlights(360, 640, POINTS, 4)
+        red = LA.bloom(add_glow(base, 4.0, 0.6, channels=(1.0, 0.15, 0.05)), unit=self.unit)
+        white = LA.bloom(add_glow(base, 4.0, 0.6), unit=self.unit)
+        self.assertGreater(red["bloom.halo_red"], 0.3)
+        self.assertLess(abs(white["bloom.halo_red"]), 0.05)
+
+    def rays(self, picture, angles, length=30.0, level=0.6):
+        """thin rays from each highlight at the given angles (degrees, counterclockwise from the right, y up)"""
+        lin = LA.srgb_to_linear(picture)
+        h, w = picture.shape[:2]
+        add = np.zeros((h, w))
+        for y0, x0 in POINTS:
+            for a in angles:
+                for t in np.linspace(4, length, 200):
+                    y = int(round(y0 - t * math.sin(math.radians(a))))
+                    x = int(round(x0 + t * math.cos(math.radians(a))))
+                    if 0 <= y < h and 0 <= x < w:
+                        add[y, x] = max(add[y, x], level * (1.0 - t / length))
+        add = ndi.gaussian_filter(add, 0.7)
+        return np.clip(LA.linear_to_srgb(lin + add[..., None]), 0.0, 1.0)
+
+    def test_star_filter_rays_are_counted_and_their_angle_read(self):
+        base = highlights(360, 640, POINTS, 2)
+        star = LA.streaks(self.rays(base, [15 + 60 * k for k in range(6)]), unit=self.unit)
+        self.assertEqual(star["streak.rays"], 6)
+        self.assertGreater(star["streak.strength"], 0.3)
+        self.assertAlmostEqual(star["streak.angle"], 15.0, delta=5.0)
+        flare = LA.streaks(self.rays(base, [0, 180], length=40.0), unit=self.unit)
+        self.assertEqual(flare["streak.rays"], 2)
+        self.assertAlmostEqual(min(flare["streak.angle"], 180 - flare["streak.angle"]), 0.0, delta=5.0)
+        round_glow = LA.streaks(add_glow(base, 4.0, 1.0), unit=self.unit)
+        self.assertLess(round_glow["streak.strength"], 0.1)
+
+    def test_the_lights_colour_and_side(self):
+        # brighter on the right, and the brightest parts blue
+        h, w = 180, 320
+        grey = np.tile(np.linspace(0.2, 0.7, w), (h, 1))
+        picture = rgb(grey)
+        picture[:, -20:] = (0.7, 0.85, 1.0)
+        light = LA.light(picture, LA.rgb_to_lab(picture))
+        self.assertGreater(light["light.lr"], 0.1)
+        self.assertAlmostEqual(light["light.tb"], 0.0, delta=0.02)
+        self.assertGreater(light["light.key_hue"], 250.0)
+        self.assertLess(light["light.key_hue"], 300.0)
+
+
+@unittest.skipUnless(LA, NEEDS)
+class TextureTest(unittest.TestCase):
+    unit = 0.5
+
+    def test_the_noise_of_flat_areas(self):
+        rng = np.random.default_rng(11)
+        clean = blocks(360, 640, seed=2)
+        for sigma in (2.0, 4.0, 8.0):
+            noisy = clean + rng.normal(0, sigma / 255.0, clean.shape)
+            got = LA.noise_spatial(noisy)["noise.spatial"]
+            self.assertAlmostEqual(got, sigma, delta=0.2 * sigma + 0.3)
+        self.assertLess(LA.noise_spatial(clean)["noise.spatial"], 0.5)
+
+    def test_grain_that_changes_every_frame_and_its_size(self):
+        rng = np.random.default_rng(12)
+        clean = blocks(360, 640, seed=3)
+        a = clean + rng.normal(0, 4 / 255.0, clean.shape)
+        b = clean + rng.normal(0, 4 / 255.0, clean.shape)
+        fine = LA.grain(a, b, unit=self.unit)
+        self.assertAlmostEqual(fine["grain.temporal"], 4.0, delta=0.6)
+        self.assertLess(fine["grain.size"], 1.2)
+        # coarse grain: the same noise blurred by 1.5 pixels (3 of a 720 line picture) and brought back to 4 of 255
+        n1 = ndi.gaussian_filter(rng.standard_normal(clean.shape), 1.5)
+        n2 = ndi.gaussian_filter(rng.standard_normal(clean.shape), 1.5)
+        n1, n2 = n1 / n1.std() * 4 / 255.0, n2 / n2.std() * 4 / 255.0
+        coarse = LA.grain(clean + n1, clean + n2, unit=self.unit)
+        self.assertAlmostEqual(coarse["grain.temporal"], 4.0, delta=0.8)
+        self.assertGreater(coarse["grain.size"], 3 * fine["grain.size"])
+        self.assertAlmostEqual(coarse["grain.size"], 2 * 1.5 * math.sqrt(math.log(2)) / self.unit, delta=1.5)
+        still = LA.grain(clean, clean.copy(), unit=self.unit)
+        self.assertLess(still["grain.temporal"], 0.3)
+
+    def test_scanlines_are_a_period_in_the_rows(self):
+        clean = blocks(360, 640, seed=4)
+        lined = clean.copy()
+        lined[::3] -= 0.05
+        s_lined = LA.scanlines(lined)
+        s_clean = LA.scanlines(clean)
+        self.assertAlmostEqual(s_lined["scan.period"], 3.0, delta=0.2)
+        self.assertGreater(s_lined["scan.peak"], 3 * s_clean["scan.peak"])
+
+    def test_a_torn_band_of_rows_is_a_glitch(self):
+        clean = blocks(360, 640, seed=5, n=120)
+        torn = clean.copy()
+        torn[100:130] = np.roll(clean[100:130], 20, axis=1)
+        self.assertGreaterEqual(LA.glitch(torn)["glitch.tears"], 2)
+        self.assertEqual(LA.glitch(clean)["glitch.tears"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
