@@ -530,5 +530,135 @@ class OpticsTest(unittest.TestCase):
             self.assertAlmostEqual(got["distortion.k1"], k1, delta=tol, msg=k1)
 
 
+def synthetic_video(path, size=(320, 180), fps=30, seconds=6, cuts=(60, 120), bars=20, flash=150, tag=True):
+    """a small video of three shots of moving blocks with letterbox bars and a white flash, encoded as YouTube's are
+    (H.264, 4:2:0, BT.709 and tagged so) or untagged with ffmpeg's own conversion (BT.601)"""
+    w, h = size
+    rng = np.random.default_rng(31)
+    scenes = [ndi.gaussian_filter(blocks(h, w, seed=s, n=40), 1.0) for s in range(len(cuts) + 1)]
+    frames = []
+    for i in range(fps * seconds):
+        k = sum(i >= c for c in cuts)
+        g = np.roll(scenes[k], 2 * i, axis=1)
+        img = np.stack([g * 0.9, g, np.clip(g * 1.1, 0, 1)], axis=-1)
+        if flash <= i < flash + 3:
+            img = np.clip(img + 0.5, 0, 1)
+        img[:bars], img[h - bars:] = 0.0, 0.0
+        frames.append(np.clip(img * 255.0 + rng.normal(0, 0.5, img.shape), 0, 255).astype(np.uint8))
+    argv = ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (w, h), "-r", str(fps),
+            "-i", "-"]
+    if tag:
+        argv += ["-vf", "scale=out_color_matrix=bt709:out_range=tv", "-colorspace", "bt709", "-color_primaries", "bt709",
+                 "-color_trc", "bt709", "-color_range", "tv"]
+    argv += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p", path]
+    subprocess.run(argv, input=b"".join(f.tobytes() for f in frames), check=True)
+    return frames
+
+
+@unittest.skipUnless(LA, NEEDS)
+class SummaryTest(unittest.TestCase):
+    def test_a_measure_over_frames_has_its_median_spread_and_floor(self):
+        # 40 frames in 4 shots; each frame's second picture reads 0.1 more or less: the floor is about 0.1 / sqrt 2
+        rng = np.random.default_rng(41)
+        rows = []
+        for i in range(40):
+            v = 5.0 + (i // 10) + 0.05 * rng.standard_normal()
+            rows.append({"shot": i // 10, "m": {"tone.median": v}, "m2": {"tone.median": v + (0.1 if i % 2 else -0.1)}})
+        s = LA.summarise(rows)["tone.median"]
+        self.assertAlmostEqual(s["median"], 6.5, delta=0.5)
+        self.assertLess(s["q25"], s["median"])
+        self.assertGreater(s["q75"], s["median"])
+        self.assertEqual(s["n"], 40)
+        self.assertEqual(s["shots"], 4)
+        self.assertAlmostEqual(s["floor_pair"], 0.1 / math.sqrt(2), delta=0.02)
+        self.assertLess(s["ci"][0], s["median"])
+        self.assertGreater(s["ci"][1], s["median"])
+
+    def test_nan_frames_are_left_out_and_counted(self):
+        rows = [{"shot": 0, "m": {"bloom.r50": float("nan") if i % 3 else 10.0 + i}} for i in range(30)]
+        s = LA.summarise(rows)["bloom.r50"]
+        self.assertEqual(s["n"], 10)
+        self.assertAlmostEqual(s["valid"], 10 / 30.0)
+
+    def test_compare_reads_how_far_ours_lie_outside_the_references(self):
+        refs = [{"label": "r%d" % i, "summary": {"tone.median": {"median": v, "floor_pair": 0.1}}}
+                for i, v in enumerate([40.0, 42.0, 44.0, 46.0, 48.0])]
+        ours = [{"label": "inside", "summary": {"tone.median": {"median": 45.0, "floor_pair": 0.1}}},
+                {"label": "above", "summary": {"tone.median": {"median": 52.0, "floor_pair": 0.1}}}]
+        rows = LA.compare(refs, ours)
+        row = [r for r in rows if r["key"] == "tone.median"][0]
+        self.assertEqual((row["ref_q25"], row["ref_median"], row["ref_q75"]), (42.0, 44.0, 46.0))
+        self.assertEqual(row["ours"]["inside"]["distance"], 0.0)
+        self.assertAlmostEqual(row["ours"]["above"]["distance"], (52.0 - 46.0) / 4.0)
+        self.assertEqual(row["ours"]["above"]["side"], "above")
+        table = LA.table_md(rows, [o["label"] for o in ours])
+        self.assertIn("tone.median", table)
+        self.assertIn("1.5", table)
+
+    def test_every_measure_has_a_label(self):
+        for key, (concept, label, unit) in LA.MEASURES.items():
+            self.assertIn(concept, LA.CONCEPTS, key)
+            self.assertTrue(label, key)
+
+    def test_the_colour_matrix_follows_the_tag_and_else_the_players_custom(self):
+        self.assertEqual(LA.matrix_for({"color_space": "bt709", "height": 480}, "auto"), "bt709")
+        self.assertEqual(LA.matrix_for({"color_space": "smpte170m", "height": 1080}, "auto"), "bt601")
+        self.assertEqual(LA.matrix_for({"color_space": None, "height": 720}, "auto"), "bt709")
+        self.assertEqual(LA.matrix_for({"color_space": "unknown", "height": 480}, "auto"), "bt601")
+        self.assertEqual(LA.matrix_for({"color_space": "bt709", "height": 720}, "bt601"), "bt601")
+
+
+@unittest.skipUnless(LA, NEEDS)
+class FrameMeasureTest(unittest.TestCase):
+    def test_one_pair_of_frames_gives_every_frame_measure(self):
+        g = ndi.gaussian_filter(blocks(180, 320, seed=9, n=80), 0.8)
+        a = rgb(g)
+        b = rgb(np.roll(g, 2, axis=1))
+        m = LA.measure_frame(a, b, unit=0.25, full=True)
+        for key in LA.MEASURES:
+            if key in LA.VIDEO_LEVEL:
+                continue                                        # read from the whole video, not a frame
+            self.assertIn(key, m, key)
+            self.assertIsInstance(m[key], float, key)
+
+
+@unittest.skipUnless(LA and FFMPEG, NEEDS + ", ffmpeg and ffprobe")
+class VideoTest(unittest.TestCase):
+    def test_a_video_is_read_through_its_shots_bars_and_flash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            synthetic_video(path)
+            out = os.path.join(tmp, "v.json")
+            LA.measure_video(path, out, label="synthetic", pairs=8, height=180, jobs=1, pair_every=2)
+            with open(out, encoding="utf-8") as f:
+                d = json.load(f)
+        self.assertEqual(d["label"], "synthetic")
+        self.assertEqual(d["frame"]["bars"]["top"], 20)
+        self.assertEqual(d["frame"]["bars"]["bottom"], 20)
+        self.assertAlmostEqual(d["frame"]["aspect"], 320 / 140.0, delta=0.02)
+        self.assertEqual(d["time"]["cuts"], [60, 120])
+        self.assertEqual([e["start"] for e in d["time"]["flashes"]], [150])
+        self.assertEqual(d["frame"]["fps"], 30)
+        self.assertEqual(d["frame"]["fps_effective"], 30)
+        self.assertEqual(len(d["frames"]), 8)
+        for f in d["frames"]:                              # no pair straddles a cut
+            self.assertFalse(any(f["n"] < c <= f["n"] + 1 for c in (60, 120)), f["n"])
+        s = d["summary"]
+        self.assertIn("tone.median", s)
+        self.assertIn("floor_pair", s["tone.median"])
+        self.assertAlmostEqual(s["cuts.per_min"]["median"], 20.0, delta=0.01)
+        self.assertEqual(d["matrix"], "bt709")
+
+    def test_colours_come_back_as_they_went_in(self):
+        # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            frames = synthetic_video(path, cuts=(), flash=10 ** 6, bars=0, seconds=1)
+            info = LA.probe(path)
+            got = next(iter(LA.read_frames(path, info, [10], height=180)))[1]
+        want = frames[10].astype(np.float64) / 255.0
+        self.assertLess(float(np.abs(ndi.uniform_filter(got - want, (9, 9, 1))).mean()), 2.0 / 255)
+
+
 if __name__ == "__main__":
     unittest.main()

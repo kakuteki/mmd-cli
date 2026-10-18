@@ -1070,3 +1070,539 @@ def distortion(gray, unit=1.0):
             k1 += 0.5 * (y0 - y2) / den * float(K1_SEARCH[1] - K1_SEARCH[0])
     out["distortion.k1"] = k1
     return out
+
+
+# ---- the measures: names, ideas, labels -----------------------------------------------------------------------------
+
+CONCEPTS = ("tone", "colour", "light", "optics", "texture", "frame")
+CONCEPT_LABELS = {"tone": "色調（明るさ）", "colour": "色調（色）", "light": "光", "optics": "光学", "texture": "質感",
+                  "frame": "画面"}
+MEASURES = {
+    "tone.black": ("tone", "黒の位置（L* の 1 % 点）", "L*"),
+    "tone.p5": ("tone", "暗い側（L* の 5 % 点）", "L*"),
+    "tone.median": ("tone", "明るさの中央（L* の中央値）", "L*"),
+    "tone.p95": ("tone", "明るい側（L* の 95 % 点）", "L*"),
+    "tone.white": ("tone", "白の位置（L* の 99 % 点）", "L*"),
+    "tone.key": ("tone", "明暗の寄り（中央値が 5〜95 % 点のどこか。0.5 が真ん中、小さいほど暗い側）", ""),
+    "tone.contrast": ("tone", "コントラスト（L* の標準偏差）", "L*"),
+    "tone.local": ("tone", "細かいコントラスト（L* と 10 px ぼかしの差の平均）", "L*"),
+    "tone.shadows": ("tone", "暗部の割合（L* 25 未満）", ""),
+    "tone.highlights": ("tone", "明部の割合（L* 75 超）", ""),
+    "tone.clip_white": ("tone", "白飛び（どれかの色が 253 以上の画素の割合）", ""),
+    "tone.clip_black": ("tone", "黒つぶれ（全色 2 以下の画素の割合）", ""),
+    "colour.chroma": ("colour", "彩度（C*ab の平均）", "C*"),
+    "colour.chroma_p90": ("colour", "彩度の高い側（C*ab の 90 % 点）", "C*"),
+    "colour.colourfulness": ("colour", "色の豊かさ（Hasler と Suesstrunk の M）", ""),
+    "colour.cast_hue": ("colour", "画面全体の色かぶりの色相（a*b* の平均の角度）", "度"),
+    "colour.cast_chroma": ("colour", "画面全体の色かぶりの強さ（a*b* の平均の大きさ）", "C*"),
+    "split.shadow_hue": ("colour", "影（L* 8〜35）の色かぶりの色相", "度"),
+    "split.shadow_chroma": ("colour", "影の色かぶりの強さ", "C*"),
+    "split.mid_hue": ("colour", "中間（L* 35〜65）の色かぶりの色相", "度"),
+    "split.mid_chroma": ("colour", "中間の色かぶりの強さ", "C*"),
+    "split.high_hue": ("colour", "光（L* 65〜95）の色かぶりの色相", "度"),
+    "split.high_chroma": ("colour", "光の色かぶりの強さ", "C*"),
+    "split.teal_orange": ("colour", "ティールとオレンジの開き（光が影よりどれだけオレンジ寄りか）", "C*"),
+    "wb.cct": ("colour", "白の色温度（白に近い画素の平均、McCamy）", "K"),
+    "wb.white_a": ("colour", "白の a*（+ 赤み・- 緑み）", ""),
+    "wb.white_b": ("colour", "白の b*（+ 黄み・- 青み）", ""),
+    "wb.share": ("colour", "白に近い画素の割合", ""),
+    "bloom.strength": ("light", "グローの強さ（明るい所から 4 px 先に残る光の割合）", ""),
+    "bloom.r50": ("light", "グローの届き（半分に落ちる距離）", "px"),
+    "bloom.r10": ("light", "グローの裾（1 割に落ちる距離）", "px"),
+    "bloom.halo_red": ("light", "にじみの赤み（光源より赤い割合。フィルムのハレーションで +）", ""),
+    "bloom.halo_blue": ("light", "にじみの青み", ""),
+    "bloom.sources": ("light", "明るい所（Y' 0.9 以上）の割合", ""),
+    "glow_small.strength": ("light", "小さい光（点の光源）のグローの強さ", ""),
+    "glow_small.r50": ("light", "小さい光のグローの届き", "px"),
+    "glow_small.r10": ("light", "小さい光のグローの裾", "px"),
+    "glow_small.halo_red": ("light", "小さい光のにじみの赤み", ""),
+    "streak.strength": ("light", "光芒の強さ（小さい光のまわりの光の角度の偏り。丸いグローは 0）", ""),
+    "streak.rays": ("light", "光芒の本数（2 は横一文字、4 は十字）", "本"),
+    "streak.angle": ("light", "光芒の向き（右から反時計回り）", "度"),
+    "light.key_hue": ("light", "いちばん明るい 2 % の色相（光の色の目安）", "度"),
+    "light.key_chroma": ("light", "いちばん明るい 2 % の色の強さ", "C*"),
+    "light.lr": ("light", "右が左より明るい割合（光の向きの目安）", ""),
+    "light.tb": ("light", "上が下より明るい割合", ""),
+    "flash.per_min": ("light", "フラッシュの回数（1 分あたり）", "回"),
+    "flash.peak": ("light", "フラッシュの強さ（Y' の上がり）", ""),
+    "flash.len_s": ("light", "フラッシュの長さ", "秒"),
+    "dof.sharp": ("optics", "いちばん鋭い縁のぼけ（縁のぼけの 10 % 点）", "px"),
+    "dof.median": ("optics", "縁のぼけの中央", "px"),
+    "dof.soft": ("optics", "柔らかい縁のぼけ（90 % 点。被写界深度の外のぼけ）", "px"),
+    "dof.soft_share": ("optics", "ぼけた縁（3 px 超）の割合（被写界深度）", ""),
+    "motion.shutter": ("optics", "シャッター（動く縁の伸びから。0.5 が 180 度）", ""),
+    "motion.speed": ("optics", "動く縁の速さ", "px/コマ"),
+    "motion.moving": ("optics", "動く画素の割合", ""),
+    "ca.red_x": ("optics", "赤のずれ（横、+ 右）", "px"),
+    "ca.red_y": ("optics", "赤のずれ（縦、+ 下）", "px"),
+    "ca.blue_x": ("optics", "青のずれ（横）", "px"),
+    "ca.blue_y": ("optics", "青のずれ（縦）", "px"),
+    "ca.red_radial": ("optics", "赤の倍率の色収差（隅での外向きのずれ）", "px"),
+    "ca.blue_radial": ("optics", "青の倍率の色収差（隅での外向きのずれ）", "px"),
+    "vignette.corner": ("optics", "周辺減光（隅の明るさ / 中央の明るさ、全コマの平均）", ""),
+    "vignette.corner_p10": ("optics", "周辺減光（各所の 10 % 点で）", ""),
+    "distortion.k1": ("optics", "レンズの歪み k1（- たる型、+ 糸巻き型）", ""),
+    "distortion.segments": ("optics", "歪みを読んだ直線の数", "本"),
+    "noise.spatial": ("texture", "平らな所のノイズ（Immerkaer）", "/255"),
+    "grain.temporal": ("texture", "コマごとに変わる粒（フィルムグレイン）の強さ", "/255"),
+    "grain.size": ("texture", "粒の大きさ（自己相関が半分になる距離）", "px"),
+    "sharp.width": ("texture", "縁の幅（段の 10〜90 %）", "px"),
+    "sharp.overshoot": ("texture", "シャープの縁取り（縁の脇の行き過ぎ、段の割合）", ""),
+    "diffusion.share": ("texture", "ディフュージョン（鋭い縁のまわりの柔らかいにじみの割合）", ""),
+    "diffusion.radius": ("texture", "ディフュージョンの広がり", "px"),
+    "scan.peak": ("texture", "スキャンライン（行の周期の強さ。線なしで数）", ""),
+    "glitch.tears": ("texture", "行の裂け（グリッチ）の数", "行"),
+    "frame.aspect": ("frame", "絵の縦横比（黒帯の内側）", ""),
+    "frame.bars_tb": ("frame", "上下の黒帯（合計）", "px"),
+    "frame.bars_lr": ("frame", "左右の黒帯（合計）", "px"),
+    "frame.fps": ("frame", "fps（入れ物）", ""),
+    "frame.fps_effective": ("frame", "実際に絵が変わる fps", ""),
+    "cuts.per_min": ("frame", "カット（1 分あたり）", "回"),
+    "shots.median_s": ("frame", "1 カットの長さの中央", "秒"),
+}
+# read once from the whole video, not from each frame
+VIDEO_LEVEL = {"flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10", "frame.aspect",
+               "frame.bars_tb", "frame.bars_lr", "frame.fps", "frame.fps_effective", "cuts.per_min", "shots.median_s"}
+PAIR_ONLY = ("motion.", "grain.")             # need the next picture
+FULL_ONLY = ("ca.", "distortion.")            # read on every full_every-th pair only (slower)
+
+
+def measure_frame(rgb0, rgb1=None, unit=1.0, full=True, seed=0, extras=None):
+    """every measure of one frame (rgb0, 0..1) that one frame can give, and those that need the next different
+    picture (rgb1: motion and grain); full: also the slower ones (colour fringes, distortion).  extras, a dict, gets
+    the glow's profile and the edges' blur for the figures."""
+    rgb0 = np.asarray(rgb0, np.float64)
+    lab = rgb_to_lab(rgb0)
+    g0 = luma(rgb0)
+    m = {}
+    m.update(tone(rgb0, lab, unit))
+    m.update(colour(rgb0, lab))
+    m.update(white_balance(rgb0, lab))
+    b = bloom(rgb0, unit)
+    m.update({k: v for k, v in b.items() if k != "profile"})
+    small = bloom(rgb0, unit, compact=True)
+    m.update({k.replace("bloom.", "glow_small."): v for k, v in small.items() if k != "profile"})
+    m.update(streaks(rgb0, unit))
+    m.update(light(rgb0, lab))
+    e = edges(g0, unit, seed=seed)
+    m.update(depth_of_field(e))
+    m.update(edge_profiles(g0, e, unit, seed=seed))
+    m.update(noise_spatial(g0))
+    m.update(scanlines(g0))
+    m.update(glitch(g0))
+    pair_keys = [k for k in MEASURES if k.startswith(PAIR_ONLY)] + ["motion.edges"]
+    if rgb1 is not None:
+        g1 = luma(np.asarray(rgb1, np.float64))
+        f = flow(g0, g1)
+        m.update(motion(g0, g1, e, unit, f=f, seed=seed))
+        m.update(grain(g0, g1, unit, still=np.hypot(f[..., 0], f[..., 1]) / unit < 0.3))
+    else:
+        m.update({k: float("nan") for k in pair_keys})
+    full_keys = [k for k in MEASURES if k.startswith(FULL_ONLY)]
+    if full:
+        m.update(aberration(rgb0, unit))
+        m.update(distortion(g0, unit))
+    else:
+        m.update({k: float("nan") for k in full_keys})
+    if extras is not None:
+        extras["bloom_profile"] = b["profile"]
+        extras["sigma"] = e["sigma"]
+    return {k: float(v) for k, v in m.items()}
+
+
+# ---- summaries over frames, comparisons ---------------------------------------------------------------------------
+
+BOOTSTRAP = 400
+
+
+def _trimmed_rms(d, keep=0.9):
+    d = np.sort(np.abs(np.asarray(d, np.float64)))
+    if len(d) == 0:
+        return float("nan")
+    d = d[:max(1, int(math.ceil(keep * len(d))))]
+    return float(math.sqrt((d * d).mean()))
+
+
+def summarise(rows, seed=0):
+    """per measure over the frames of a video: median, q25 / q75, n (frames with a value), valid (their share),
+    shots (how many shots they come from), floor_pair (the measure's own noise: the trimmed rms of its difference
+    between the two pictures of a pair over sqrt 2, from the rows that have m2) and ci (the 2.5 and 97.5 % points of
+    the median over the shots drawn again with replacement, BOOTSTRAP times)"""
+    keys = []
+    for r in rows:
+        for k in r["m"]:
+            if k not in keys:
+                keys.append(k)
+    rng = np.random.default_rng(seed)
+    out = {}
+    for k in keys:
+        vals = np.array([r["m"].get(k, float("nan")) for r in rows], np.float64)
+        shots = np.array([r.get("shot", 0) for r in rows])
+        good = np.isfinite(vals)
+        s = {"n": int(good.sum()), "valid": float(good.mean()) if len(vals) else 0.0}
+        if good.sum() == 0:
+            s.update({"median": float("nan"), "q25": float("nan"), "q75": float("nan"), "shots": 0,
+                      "floor_pair": float("nan"), "ci": [float("nan"), float("nan")]})
+            out[k] = s
+            continue
+        v, sh = vals[good], shots[good]
+        s["median"] = float(np.median(v))
+        s["q25"], s["q75"] = (float(x) for x in np.percentile(v, [25, 75]))
+        groups = [v[sh == u] for u in np.unique(sh)]
+        s["shots"] = len(groups)
+        diffs = [r["m"][k] - r["m2"][k] for r in rows if "m2" in r and k in r["m2"]
+                 and np.isfinite(r["m"].get(k, np.nan)) and np.isfinite(r["m2"][k])]
+        s["floor_pair"] = _trimmed_rms(diffs) / math.sqrt(2.0) if diffs else float("nan")
+        meds = []
+        for _ in range(BOOTSTRAP):
+            if len(groups) >= 3:
+                pick = rng.integers(0, len(groups), len(groups))
+                sample = np.concatenate([groups[i] for i in pick])
+            else:
+                sample = v[rng.integers(0, len(v), len(v))]
+            meds.append(np.median(sample))
+        s["ci"] = [float(x) for x in np.percentile(meds, [2.5, 97.5])]
+        out[k] = s
+    return out
+
+
+def compare(refs, ours):
+    """rows of the table: per measure the references' per-video medians (their median, quartiles, least and most) and
+    each of ours with how far it lies outside the references' quartiles, in units of their spread (the quartile
+    distance, at least twice the references' median floor): 0 inside, + above, - below given by side"""
+    rows = []
+    for key, (concept, label, unit) in MEASURES.items():
+        vals = [r["summary"].get(key, {}).get("median", float("nan")) for r in refs]
+        floors = [r["summary"].get(key, {}).get("floor_pair", float("nan")) for r in refs]
+        good = [v for v in vals if v is not None and np.isfinite(v)]
+        row = {"key": key, "concept": concept, "label": label, "unit": unit, "refs": dict(zip([r["label"] for r in refs], vals)),
+               "ref_n": len(good), "ours": {}}
+        if good:
+            q25, med, q75 = (float(x) for x in np.percentile(good, [25, 50, 75]))
+            fl = [f for f in floors if f is not None and np.isfinite(f)]
+            spread = max(q75 - q25, 2.0 * float(np.median(fl)) if fl else 0.0, 1e-9)
+            row.update({"ref_q25": q25, "ref_median": med, "ref_q75": q75, "ref_min": float(min(good)),
+                        "ref_max": float(max(good)), "spread": spread})
+        for o in ours:
+            v = o["summary"].get(key, {}).get("median", float("nan"))
+            entry = {"value": v, "floor": o["summary"].get(key, {}).get("floor_pair", float("nan"))}
+            if good and v is not None and np.isfinite(v):
+                if v > row["ref_q75"]:
+                    entry.update({"distance": (v - row["ref_q75"]) / row["spread"], "side": "above"})
+                elif v < row["ref_q25"]:
+                    entry.update({"distance": (row["ref_q25"] - v) / row["spread"], "side": "below"})
+                else:
+                    entry.update({"distance": 0.0, "side": "inside"})
+            else:
+                entry.update({"distance": float("nan"), "side": "none"})
+            row["ours"][o["label"]] = entry
+        rows.append(row)
+    return rows
+
+
+def _fmt(v):
+    if v is None or not np.isfinite(v):
+        return "-"
+    a = abs(v)
+    if a >= 1000:
+        return "%.0f" % v
+    if a >= 100:
+        return "%.1f" % v
+    if a >= 1:
+        return "%.2f" % v
+    return "%.3f" % v
+
+
+SIDE_JA = {"above": "上へ", "below": "下へ", "inside": "中", "none": "-"}
+
+
+def table_md(rows, ours_labels):
+    """the comparison as a markdown table, idea by idea (the references' median [quartiles], ours, and how far outside
+    their quartiles ours lie in units of their spread)"""
+    lines = []
+    head = "| 物差し | 名 | 参考 中央値 [四分位] | " + " | ".join(ours_labels) + " | 参考の外の距離（" + " → ".join(ours_labels) + "） |"
+    sep = "| --- | --- | --- | " + " | ".join("---" for _ in ours_labels) + " | --- |"
+    for concept in CONCEPTS:
+        part = [r for r in rows if r["concept"] == concept]
+        if not part:
+            continue
+        lines += ["", "### " + CONCEPT_LABELS[concept], "", head, sep]
+        for r in part:
+            ref = "%s [%s, %s]" % (_fmt(r.get("ref_median")), _fmt(r.get("ref_q25")), _fmt(r.get("ref_q75"))) \
+                if r.get("ref_n") else "-"
+            vals = [_fmt(r["ours"][o]["value"]) for o in ours_labels]
+            dist = " → ".join("%s %s" % (SIDE_JA[r["ours"][o]["side"]], _fmt(r["ours"][o]["distance"]))
+                              if r["ours"][o]["side"] not in ("inside", "none") else SIDE_JA[r["ours"][o]["side"]]
+                              for o in ours_labels)
+            unit = (" (%s)" % r["unit"]) if r["unit"] else ""
+            lines.append("| %s%s | %s | %s | %s | %s |" % (r["label"], unit, r["key"], ref, " | ".join(vals), dist))
+    return "\n".join(lines) + "\n"
+
+
+# ---- reading videos -------------------------------------------------------------------------------------------------
+
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+_SPACES = {"bt709": "bt709", "smpte170m": "bt601", "bt470bg": "bt601", "bt2020nc": "bt2020", "bt2020c": "bt2020"}
+
+
+def parse_rate(text):
+    num, _, den = str(text).partition("/")
+    rate = float(num) / float(den or 1)
+    if not rate > 0:
+        raise ValueError("no frame rate in %r" % (text,))
+    return int(round(rate)) if abs(rate - round(rate)) < 0.01 else rate
+
+
+def probe(path, fps=30):
+    """what the analysis needs to know of a video (ffprobe) or of a folder of frames (fps given)"""
+    if os.path.isdir(path):
+        files = sorted(f for f in os.listdir(path) if f.lower().endswith(IMAGE_EXT))
+        if not files:
+            raise ValueError("no frames in %s" % path)
+        from PIL import Image
+        with Image.open(os.path.join(path, files[0])) as im:
+            w, h = im.size
+        return {"folder": True, "files": files, "width": w, "height": h, "fps": fps, "frames": len(files),
+                "duration": len(files) / float(fps), "codec": "images", "color_space": "sRGB"}
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                          "stream=width,height,avg_frame_rate,r_frame_rate,nb_frames,codec_name,pix_fmt,color_space,"
+                          "color_range,color_transfer,color_primaries,bit_rate:format=duration,bit_rate",
+                          "-of", "json", path], capture_output=True, text=True, check=True)
+    d = json.loads(out.stdout)
+    st = d["streams"][0]
+    fmt = d.get("format", {})
+    rate = st.get("avg_frame_rate")
+    try:
+        fps_v = parse_rate(rate)
+    except (ValueError, ZeroDivisionError):
+        fps_v = parse_rate(st.get("r_frame_rate"))
+    duration = float(fmt.get("duration") or 0.0)
+    return {"folder": False, "width": int(st["width"]), "height": int(st["height"]), "fps": fps_v,
+            "frames": int(st["nb_frames"]) if st.get("nb_frames", "N/A") not in ("N/A", None) else int(round(duration * fps_v)),
+            "duration": duration, "codec": st.get("codec_name"), "pix_fmt": st.get("pix_fmt"),
+            "color_space": st.get("color_space"), "color_range": st.get("color_range"),
+            "color_transfer": st.get("color_transfer"), "color_primaries": st.get("color_primaries"),
+            "bit_rate": int(st.get("bit_rate") or fmt.get("bit_rate") or 0)}
+
+
+def matrix_for(info, choice="auto"):
+    """the YCbCr matrix to read a video with: the one it is tagged with; untagged, what players assume (BT.709 for 720
+    lines and more, BT.601 under)"""
+    if choice != "auto":
+        return choice
+    space = _SPACES.get(info.get("color_space") or "")
+    if space:
+        return space
+    return "bt709" if info.get("height", 0) >= 720 else "bt601"
+
+
+def _scale(info, height):
+    h = int(height)
+    w = int(round(info["width"] * h / float(info["height"]) / 2.0)) * 2
+    return w, h
+
+
+def _vf(info, height, matrix, extra=""):
+    w, h = _scale(info, height) if height else (info["width"], info["height"])
+    rng = "pc" if info.get("color_range") in ("pc", "jpeg") else "tv"
+    return "%sscale=%d:%d:flags=lanczos+accurate_rnd+full_chroma_int:in_color_matrix=%s:in_range=%s:out_range=pc," \
+           "format=rgb24" % (extra, w, h, matrix, rng), (w, h)
+
+
+def _ffmpeg_frames(argv, size):
+    w, h = size
+    n = w * h * 3
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        while True:
+            buf = p.stdout.read(n)
+            if len(buf) < n:
+                break
+            yield np.frombuffer(buf, np.uint8).reshape(h, w, 3)
+    finally:
+        p.stdout.close()
+        p.wait()
+
+
+def _range_args(start, duration):
+    a = []
+    if start:
+        a += ["-ss", "%.6f" % start]
+    return a, (["-t", "%.6f" % duration] if duration else [])
+
+
+def read_frames(path, info, indices, height=None, matrix=None, start=0.0, duration=None, as_uint8=False):
+    """the frames of the given numbers (counted from start) as (n, frame) in order, frame H x W x 3 in 0..1 (or uint8),
+    scaled to height lines"""
+    want = sorted(set(int(i) for i in indices))
+    if info.get("folder"):
+        from PIL import Image
+        first = int(round((start or 0.0) * info["fps"]))
+        for n in want:
+            with Image.open(os.path.join(path, info["files"][first + n])) as im:
+                im = im.convert("RGB")
+                if height and im.size[1] != height:
+                    im = im.resize(_scale(info, height), Image.LANCZOS)
+                a = np.asarray(im, np.uint8)
+            yield n, (a if as_uint8 else a.astype(np.float64) / 255.0)
+        return
+    matrix = matrix or matrix_for(info)
+    expr = "+".join("eq(n\\,%d)" % i for i in want)
+    vf, size = _vf(info, height, matrix, extra="select='%s'," % expr)
+    pre, post = _range_args(start, duration)
+    argv = ["ffmpeg", "-v", "error", "-nostdin"] + pre + ["-i", path] + post + \
+           ["-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    for n, a in zip(want, _ffmpeg_frames(argv, size)):
+        yield n, (a.copy() if as_uint8 else a.astype(np.float64) / 255.0)
+
+
+THUMB = (64, 36)                  # every frame at this size: the cuts, flashes, repeats and the corners' darkening
+
+
+def read_thumbs(path, info, matrix=None, start=0.0, duration=None):
+    """every frame at THUMB size as Y' maps (N x 36 x 64, uint8)"""
+    if info.get("folder"):
+        from PIL import Image
+        first = int(round((start or 0.0) * info["fps"]))
+        last = len(info["files"]) if not duration else min(len(info["files"]), first + int(round(duration * info["fps"])))
+        maps = []
+        for f in info["files"][first:last]:
+            with Image.open(os.path.join(path, f)) as im:
+                a = np.asarray(im.convert("RGB").resize(THUMB, Image.BOX), np.float64) / 255.0
+            maps.append(np.clip(luma(a) * 255.0 + 0.5, 0, 255).astype(np.uint8))
+        return np.array(maps)
+    matrix = matrix or matrix_for(info)
+    rng = "pc" if info.get("color_range") in ("pc", "jpeg") else "tv"
+    vf = "scale=%d:%d:flags=area:in_color_matrix=%s:in_range=%s:out_range=pc,format=rgb24" % (THUMB + (matrix, rng))
+    pre, post = _range_args(start, duration)
+    argv = ["ffmpeg", "-v", "error", "-nostdin"] + pre + ["-i", path] + post + \
+           ["-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    maps = [np.clip(luma(a.astype(np.float64) / 255.0) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            for a in _ffmpeg_frames(argv, THUMB)]
+    return np.array(maps)
+
+
+# ---- one video ------------------------------------------------------------------------------------------------------
+
+def plan_pairs(n_frames, fps, cut_list, flash_events, step, count):
+    """the first frames of count pairs (n, n + step) spread evenly over the frames, half a second in from the ends,
+    none across a cut or touching a flash"""
+    bad = np.zeros(n_frames + step + 1, bool)
+    for c in cut_list:
+        bad[max(0, c - step):c] = True                      # a pair starting here would hold the cut
+    for e in flash_events:
+        bad[max(0, e["start"] - step):e["end"] + 1] = True
+    lo, hi = int(0.5 * fps), n_frames - 1 - step - int(0.5 * fps)
+    if hi <= lo:
+        lo, hi = 0, max(0, n_frames - 1 - step)
+    picks = []
+    for x in np.linspace(lo, hi, count):
+        n = int(round(x))
+        for d in range(0, max(2, int(fps))):
+            for cand in (n + d, n - d):
+                if lo <= cand <= hi and not bad[cand] and cand not in picks:
+                    picks.append(cand)
+                    break
+            else:
+                continue
+            break
+    return sorted(picks)
+
+
+def _measure_job(job):
+    f0, f1, f2, unit, full, seed = job
+    rows = {"m": measure_frame(f0.astype(np.float64) / 255.0, f1.astype(np.float64) / 255.0, unit=unit, full=full,
+                               seed=seed)}
+    if f2 is not None:
+        rows["m2"] = measure_frame(f2.astype(np.float64) / 255.0, None, unit=unit, full=False, seed=seed + 1)
+    return rows
+
+
+def measure_video(path, out, label=None, start=None, end=None, pairs=120, height=720, matrix="auto", jobs=1,
+                  pair_every=4, full_every=4, fps=30, seed=0, log=None):
+    """measure a video (or folder of frames) and write OUT.json (see the module's docstring)"""
+    info = probe(path, fps=fps)
+    mat = matrix_for(info, matrix)
+    start = float(start or 0.0)
+    end = float(end) if end else info["duration"]
+    duration = max(0.0, end - start)
+    rate = info["fps"]
+
+    def say(text):
+        if log:
+            log(text)
+
+    maps = read_thumbs(path, info, mat, start, duration)
+    say("thumbs %d" % len(maps))
+    thumbs = maps.reshape(len(maps), THUMB[1] // 2, 2, THUMB[0] // 2, 2).mean(axis=(2, 4)) / 255.0
+    series = maps.mean(axis=(1, 2)) / 255.0
+    flash_events, flash_sum = flashes(series, rate)
+    cut_list, cut_sum = cuts(thumbs, rate, flash_events)
+    eff = effective_fps(thumbs, rate)
+    step = eff["step"]
+    ns = plan_pairs(len(maps), rate, cut_list, flash_events, step, pairs)
+    want = set(ns) | set(n + step for n in ns)
+    frames = dict(read_frames(path, info, want, height=height, matrix=mat, start=start, duration=duration,
+                              as_uint8=True))
+    say("frames %d" % len(frames))
+    ns = [n for n in ns if n in frames and n + step in frames]
+    if not ns:
+        raise ValueError("no frames read from %s" % path)
+    stack = np.array([luma(frames[n].astype(np.float64) / 255.0) for n in ns])
+    bars = find_bars(stack)
+    x0, y0, x1, y1 = active_box(bars, stack.shape[1:])
+    unit = stack.shape[1] / REFERENCE_HEIGHT
+    jobs_list = []
+    for i, n in enumerate(ns):
+        f0 = frames[n][y0:y1, x0:x1]
+        f1 = frames[n + step][y0:y1, x0:x1]
+        f2 = f1 if i % pair_every == 0 else None
+        jobs_list.append((f0, f1, f2, unit, i % full_every == 0, seed + n))
+    if jobs > 1:
+        import multiprocessing
+        with multiprocessing.get_context("spawn").Pool(jobs) as pool:
+            results = pool.map(_measure_job, jobs_list, chunksize=1)
+    else:
+        results = [_measure_job(j) for j in jobs_list]
+    rows = []
+    for n, r in zip(ns, results):
+        shot = sum(1 for c in cut_list if c <= n)
+        row = {"n": int(n), "t": start + n / float(rate), "shot": shot, "m": r["m"]}
+        if "m2" in r:
+            row["m2"] = r["m2"]
+        rows.append(row)
+    summary = summarise(rows, seed=seed)
+    # the corners' darkening, from every frame inside the bars
+    th = maps.shape[1] / float(stack.shape[1])
+    tw = maps.shape[2] / float(stack.shape[2])
+    box_t = (int(round(x0 * tw)), int(round(y0 * th)), int(round(x1 * tw)), int(round(y1 * th)))
+    inner = maps[:, box_t[1]:box_t[3], box_t[0]:box_t[2]].astype(np.float64) / 255.0
+    vig = vignette(inner)
+    halves = [vignette(inner[0::2])["vignette.corner"], vignette(inner[1::2])["vignette.corner"]]
+    w_act, h_act = x1 - x0, y1 - y0
+    video_level = {"vignette.corner": (vig["vignette.corner"], abs(halves[0] - halves[1]) / 2.0),
+                   "vignette.corner_p10": (vig["vignette.corner_p10"], float("nan")),
+                   "flash.per_min": (flash_sum["flash.per_min"], float("nan")),
+                   "flash.peak": (flash_sum["flash.peak"], float("nan")),
+                   "flash.len_s": (flash_sum["flash.len_s"], float("nan")),
+                   "cuts.per_min": (cut_sum["cuts.per_min"], float("nan")),
+                   "shots.median_s": (cut_sum["shots.median_s"], float("nan")),
+                   "frame.aspect": (w_act / float(h_act), 0.0),
+                   "frame.bars_tb": ((bars["top"] + bars["bottom"]) / unit, 0.0),
+                   "frame.bars_lr": ((bars["left"] + bars["right"]) / unit, 0.0),
+                   "frame.fps": (float(rate), 0.0),
+                   "frame.fps_effective": (float(eff["frame.fps_effective"]), 0.0)}
+    for k, (v, fl) in video_level.items():
+        summary[k] = {"median": float(v), "q25": float(v), "q75": float(v), "n": 1, "valid": 1.0, "shots": 1,
+                      "floor_pair": float(fl), "ci": [float(v), float(v)]}
+    result = {"label": label or os.path.splitext(os.path.basename(path.rstrip("/\\")))[0], "path": path,
+              "probe": info if not info.get("folder") else {k: v for k, v in info.items() if k != "files"},
+              "range": [start, end], "analysis_height": int(stack.shape[1]),
+              "unit": unit, "matrix": mat,
+              "frame": {"bars": bars, "box": [int(x0), int(y0), int(x1), int(y1)], "aspect": w_act / float(h_act),
+                        "fps": rate, "fps_effective": eff["frame.fps_effective"], "step": step},
+              "time": {"cuts": [int(c) for c in cut_list], "flashes": flash_events, "frames": int(len(maps))},
+              "vignette": vig, "frames": rows, "summary": summary}
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
+    return result
