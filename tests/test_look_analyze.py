@@ -827,6 +827,34 @@ class VideoTest(unittest.TestCase):
                 with self.assertRaises(ValueError, msg=bad):
                     LA.measure_regions(path, out, frames=4, height=180, mask_video=bad)
 
+    def test_her_layer_is_read_on_the_frame_it_masks(self):
+        # look2rev 2026-10-19: the layer and the frames are one picture each; a mask a frame early or late takes her outline
+        # of another frame (the light just outside it is then read on her).  The test above has her still, which a mask a
+        # frame early passed.  Here she grows by 4 rows a frame, in the frames and in her layer: on every frame read, the
+        # person is that frame's box
+        w, h, n = 160, 180, 20
+        with tempfile.TemporaryDirectory() as tmp:
+            comps, layers = [], []
+            for k in range(n):
+                comp = np.full((h, w, 3), 40, np.uint8)
+                comp[40:64 + 4 * k, 60:100] = 230
+                layer = np.zeros((h, w, 4), np.uint8)
+                layer[40:64 + 4 * k, 60:100] = (230, 230, 230, 255)
+                comps.append(comp.tobytes())
+                layers.append(layer.tobytes())
+            path, mask = os.path.join(tmp, "c.mp4"), os.path.join(tmp, "layer.mov")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (w, h), "-r",
+                            "30", "-i", "-", "-vf", "scale=out_color_matrix=bt709:out_range=tv", "-colorspace", "bt709",
+                            "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", path], input=b"".join(comps), check=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "%dx%d" % (w, h), "-r",
+                            "30", "-i", "-", "-c:v", "png", "-pix_fmt", "rgba", mask], input=b"".join(layers), check=True)
+            out = os.path.join(tmp, "r.json")
+            d = LA.measure_regions(path, out, frames=6, height=180, mask_video=mask)
+            self.assertGreaterEqual(len(d["frames"]), 5)
+            for row in d["frames"]:
+                want = (24 + 4 * row["n"]) * 40 / float(w * h)
+                self.assertAlmostEqual(row["m"]["frame.person_share"], want, delta=0.001, msg=row["n"])
+
     def test_colours_come_back_as_they_went_in(self):
         # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255
         with tempfile.TemporaryDirectory() as tmp:

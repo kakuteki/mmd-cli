@@ -5,6 +5,7 @@ import importlib.util
 import math
 import os
 import sys
+import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -180,7 +181,6 @@ class DepthOfFieldTest(unittest.TestCase):
             far = mv_world.stage_blur(view, given)
             self.assertLessEqual(float(far.max()), 6.0 * SIZE[1] / 720.0 + 1e-9, distance)     # 30 in front: no more than dof
         # and a render that would meet such a key stops before any frame is drawn
-        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "cam.vmd")
             keys = [vmd.CameraKey(frame=0, distance=-40.0, position=(0.0, 10.0, 0.0), rotation=(0.0, 0.0, 0.0)),
@@ -257,6 +257,17 @@ class FloorLightTest(unittest.TestCase):
         seen = int(numpy.argmax(column))
         self.assertGreater(seen, SIZE[1] // 2)                                       # its reflection lies under the horizon
         self.assertGreater(column[seen], 5.0)
+
+    def test_the_mirror_lies_in_the_plane_of_the_floor_at_its_height(self):
+        # look2rev: the floor's mirror is the camera mirrored in y = floor_y (v11 has the floor at 0.111): what it sees of a
+        # point is what the camera sees of the point mirrored in that plane.  (Mirrored in y = 0 instead, no other test fell)
+        view = mv_world.View(state(**DOWN), SIZE)
+        points = numpy.array([[4.0, 9.0, 20.0], [-6.0, 2.5, 35.0], [1.0, 0.5, -3.0]])
+        for height in (0.0, 0.111, 3.0):
+            m = mv_world.mirrored(view, height)
+            twins = points * numpy.array([1.0, -1.0, 1.0]) + numpy.array([0.0, 2.0 * height, 0.0])
+            numpy.testing.assert_allclose(numpy.array(m.project(points)), numpy.array(view.project(twins)), atol=1e-9,
+                                          err_msg=str(height))
 
     def test_the_floor_light_is_refused_out_of_its_range(self):
         for stage_ in ({"world": 1, "reflect": -0.1}, {"world": 1, "reflect": 1.5}, {"world": 1, "reflect_blur": -1.0},
