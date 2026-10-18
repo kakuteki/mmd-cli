@@ -182,11 +182,13 @@ class FrameTest(unittest.TestCase):
             mask = np.cos(angle * r) ** 4
             rng = np.random.default_rng(7)
             maps = np.array([rng.uniform(0.2, 0.8, (h, w)) * mask for _ in range(400)])
-            got = LA.vignette(maps)["vignette.corner"]
+            got = LA.vignette(maps)
             want = mask[r >= 0.9].mean() / mask[r <= 0.3].mean()
-            self.assertAlmostEqual(got, want, delta=0.02)
+            self.assertAlmostEqual(got["vignette.corner"], want, delta=0.02)
+            self.assertAlmostEqual(got["vignette.corner_p95"], want, delta=0.02)
         flat = np.array([np.random.default_rng(i).uniform(0.2, 0.8, (h, w)) for i in range(400)])
         self.assertAlmostEqual(LA.vignette(flat)["vignette.corner"], 1.0, delta=0.02)
+        self.assertAlmostEqual(LA.vignette(flat)["vignette.corner_p95"], 1.0, delta=0.02)
 
 
 @unittest.skipUnless(LA, NEEDS)
@@ -383,13 +385,17 @@ class TextureTest(unittest.TestCase):
         self.assertEqual(LA.glitch(clean)["glitch.tears"], 0)
 
 
-def steps_picture(h=360, w=640, seed=21):
-    """big flat rectangles (steps with wide flat sides), well apart: clean edges to read blur from"""
+def steps_picture(h=360, w=640, seed=21, levels=(0.15, 0.8), bright=0):
+    """big flat rectangles (steps with wide flat sides), well apart: clean edges to read blur from; bright: so many
+    more, of Y' 0.97 (light sources)"""
     rng = np.random.default_rng(seed)
     img = np.full((h, w), 0.45)
     for _ in range(14):
         y0, x0 = rng.integers(0, h - 90), rng.integers(0, w - 120)
-        img[y0:y0 + rng.integers(60, 90), x0:x0 + rng.integers(80, 120)] = rng.choice([0.15, 0.8])
+        img[y0:y0 + rng.integers(60, 90), x0:x0 + rng.integers(80, 120)] = rng.choice(list(levels))
+    for _ in range(bright):
+        y0, x0 = rng.integers(0, h - 70), rng.integers(0, w - 90)
+        img[y0:y0 + 50, x0:x0 + 70] = 0.97
     return img
 
 
@@ -489,6 +495,16 @@ class OpticsTest(unittest.TestCase):
             self.assertGreater(d["diffusion.radius"], 6.0)
         clean = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
         self.assertLess(clean["diffusion.share"], 0.04)
+
+    def test_a_glow_of_the_bright_parts_is_not_diffusion(self):
+        # a glow made from the brightest parts widens the edges of those parts; diffusion veils every edge
+        picture = steps_picture(levels=(0.15, 0.3), bright=4)
+        glowing = LA.luma(add_glow(rgb(picture), 8.0, 0.8))
+        d = LA.edge_profiles(glowing, LA.edges(glowing, unit=self.unit), unit=self.unit)
+        self.assertLess(d["diffusion.share"], 0.04)
+        self.assertGreater(d["glow.edge_share"], 0.08)
+        plain = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
+        self.assertLess(plain["glow.edge_share"], 0.04)
 
     def test_motion_blur_gives_the_shutter(self):
         for shutter in (0.0, 0.5, 1.0):

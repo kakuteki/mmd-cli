@@ -259,15 +259,17 @@ def vignette(maps):
 
     vignette.corner: the mean over frames, in the corners (radius 0.9 to 1) over the middle (to 0.3); content that
     changes from frame to frame averages out, a lens darkening that stays does not (ffmpeg's vignette at angle 0.556,
-    mv_look's lens.vignette 0.3, gives about 0.55).  vignette.corner_p10: the same of each place's 10 % point over the
-    frames (less swayed by a bright subject that keeps to the middle)."""
+    mv_look's lens.vignette 0.3, gives about 0.55).  vignette.corner_p10 / corner_p95: the same of each place's 10 and
+    95 % points over the frames (the 95 % point is the brightest that passes each place: with a moving camera bright
+    things pass the corners too, and the darkening shows on them; a still camera with a bright subject in the middle
+    and a dark stage round it reads a strong darkening that is the stage, not the lens)."""
     maps = np.asarray(maps, np.float64)
     r = radius_map(*maps.shape[1:])
     corner, middle = r >= 0.9, r <= 0.3
     mean = maps.mean(axis=0)
-    p10 = np.percentile(maps, 10, axis=0)
+    p10, p95 = np.percentile(maps, [10, 95], axis=0)
     out = {}
-    for name, m in (("vignette.corner", mean), ("vignette.corner_p10", p10)):
+    for name, m in (("vignette.corner", mean), ("vignette.corner_p10", p10), ("vignette.corner_p95", p95)):
         out[name] = float(m[corner].mean() / m[middle].mean()) if m[middle].mean() > 1e-6 else float("nan")
     rings = np.linspace(0.0, 1.0, 11)
     out["profile"] = [float(mean[(r >= lo) & (r < hi)].mean()) if ((r >= lo) & (r < hi)).any() else float("nan")
@@ -750,6 +752,8 @@ LONG = (28.0, 40.0)               # the far sides (diffusion), where a step's fl
 STEP_LEAST = 0.12                 # Y': a step read for its profile rises at least this,
 FLAT_MOST = 0.04                  # and each side's spread stays under this
 INNER = 4.0                       # diffusion: the share of the step not reached within this of the edge (720 px)
+DIFFUSION_TOP = 0.65              # Y': diffusion is read on steps whose bright side is at most this (a glow of the
+BRIGHT_EDGE = 0.85                # bright parts does not reach them); the glow's own skirt on steps from this up
 CORE_MOST = 3.0                   # diffusion is read on edges whose core is at most this blurred (720 px)
 PROFILE_POINTS = 1500
 
@@ -770,6 +774,7 @@ def _steps(t, p, sides):
     flat = (p[:, far_lo].std(axis=1) <= FLAT_MOST) & (p[:, far_hi].std(axis=1) <= FLAT_MOST)
     ok = flat & (hi - lo >= STEP_LEAST)
     q = (p[ok] - lo[ok, None]) / (hi - lo)[ok, None]
+    _steps.hi = hi[ok]
     return ok, q
 
 
@@ -806,13 +811,16 @@ def edge_profiles(gray, e, unit=1.0, seed=0):
 
     sharp.width: the 10 to 90 % rise of clean steps (flat sides 8 to 16 px out); sharp.overshoot: how far the profile
     goes past its flat sides next to the edge (the halo of sharpening, as a share of the step); diffusion.share: on
-    steps with flat sides 28 to 40 px out and a sharp core, the share of the step not reached within INNER px of the
-    edge, less what the core's own blur leaves there (a veil over the frame: the sharp core stays, a wide soft skirt is
-    added); diffusion.radius: how far out that skirt reaches half of the rest; profile.short / long: how many steps."""
+    steps with flat sides 28 to 40 px out, a sharp core and a bright side at most DIFFUSION_TOP, the share of the step
+    not reached within INNER px of the edge, less what the core's own blur leaves there (a veil over the frame: the
+    sharp core stays, a wide soft skirt is added); diffusion.radius: how far out that skirt reaches half of the rest;
+    glow.edge_share / edge_radius: the same on steps whose bright side is at least BRIGHT_EDGE (the skirt a glow of the
+    bright parts adds, which diffusion leaves to these); profile.short / long: how many steps."""
     g = np.asarray(gray, np.float64)
     n = len(e["y"])
     out = {"sharp.width": float("nan"), "sharp.overshoot": float("nan"), "diffusion.share": float("nan"),
-           "diffusion.radius": float("nan"), "profile.short": 0.0, "profile.long": 0.0}
+           "diffusion.radius": float("nan"), "glow.edge_share": float("nan"), "glow.edge_radius": float("nan"),
+           "profile.short": 0.0, "profile.long": 0.0}
     if n == 0:
         return out
     idx = np.arange(n)
@@ -839,30 +847,43 @@ def edge_profiles(gray, e, unit=1.0, seed=0):
         out["sharp.overshoot"] = float(np.median(overs))
     t, p = _profiles(g, e, LONG[1], unit, idx)
     ok, q = _steps(t, p, LONG)
+    hi = _steps.hi
     core = e["sigma"][idx][ok]
     keep = core <= CORE_MOST
-    out["profile.long"] = float(keep.sum())
-    if keep.sum() >= 10:
-        q, core = q[keep], core[keep]
-        shares, radii = [], []
-        for row, c in zip(q, core):
-            mid = _middle(t, row)
-            if not np.isfinite(mid) or abs(mid) > INNER:
-                continue                                        # its middle is not near the edge found
-            q_hi, q_lo = float(np.interp(mid + INNER, t, row)), float(np.interp(mid - INNER, t, row))
-            share = math.erf(INNER / (max(c, 1e-3) * math.sqrt(2.0))) - (q_hi - q_lo)
-            shares.append(share)
-            if share >= 0.05:
-                r_hi = _cross(t, row, q_hi + 0.5 * (1.0 - q_hi), mid + INNER, +1)
-                r_lo = _cross(t, row, 0.5 * q_lo, mid - INNER, -1)
-                vals = [v for v in (r_hi - mid, mid - r_lo) if np.isfinite(v)]
-                if vals:
-                    radii.append(float(np.mean(vals)))
-        if len(shares) >= 10:
-            out["diffusion.share"] = float(np.median(shares))
-        if radii:
-            out["diffusion.radius"] = float(np.median(radii))
+    for prefix, group in (("diffusion", keep & (hi <= DIFFUSION_TOP)), ("glow.edge", keep & (hi >= BRIGHT_EDGE))):
+        shares, radii = _veil(t, q[group], core[group])
+        if prefix == "diffusion":
+            out["profile.long"] = float(group.sum())
+            if len(shares) >= 10:
+                out["diffusion.share"] = float(np.median(shares))
+            if radii:
+                out["diffusion.radius"] = float(np.median(radii))
+        else:
+            if len(shares) >= 5:
+                out["glow.edge_share"] = float(np.median(shares))
+            if radii:
+                out["glow.edge_radius"] = float(np.median(radii))
     return out
+
+
+def _veil(t, q, core):
+    """per step (normalised profile q, core blur): the share of the step not reached within INNER of its middle, less
+    what the core's own blur leaves there, and how far out the rest reaches its half"""
+    shares, radii = [], []
+    for row, c in zip(q, core):
+        mid = _middle(t, row)
+        if not np.isfinite(mid) or abs(mid) > INNER:
+            continue                                        # its middle is not near the edge found
+        q_hi, q_lo = float(np.interp(mid + INNER, t, row)), float(np.interp(mid - INNER, t, row))
+        share = math.erf(INNER / (max(c, 1e-3) * math.sqrt(2.0))) - (q_hi - q_lo)
+        shares.append(share)
+        if share >= 0.05:
+            r_hi = _cross(t, row, q_hi + 0.5 * (1.0 - q_hi), mid + INNER, +1)
+            r_lo = _cross(t, row, 0.5 * q_lo, mid - INNER, -1)
+            vals = [v for v in (r_hi - mid, mid - r_lo) if np.isfinite(v)]
+            if vals:
+                radii.append(float(np.mean(vals)))
+    return shares, radii
 
 
 MOVING_LEAST = 3.0                # 720 line pixels a frame: an edge moving across itself at least this is read for
@@ -1175,6 +1196,7 @@ MEASURES = {
     "ca.blue_radial": ("optics", "青の倍率の色収差（隅での外向きのずれ）", "px"),
     "vignette.corner": ("optics", "周辺減光（隅の明るさ / 中央の明るさ、全コマの平均）", ""),
     "vignette.corner_p10": ("optics", "周辺減光（各所の 10 % 点で）", ""),
+    "vignette.corner_p95": ("optics", "周辺減光（各所の 95 % 点で。動くカメラで明るい物が隅を通るとき）", ""),
     "distortion.k1": ("optics", "レンズの歪み k1（- たる型、+ 糸巻き型）", ""),
     "distortion.segments": ("optics", "歪みを読んだ直線の数", "本"),
     "noise.spatial": ("texture", "平らな所のノイズ（Immerkaer）", "/255"),
@@ -1184,6 +1206,8 @@ MEASURES = {
     "sharp.overshoot": ("texture", "シャープの縁取り（縁の脇の行き過ぎ、段の割合）", ""),
     "diffusion.share": ("texture", "ディフュージョン（鋭い縁のまわりの柔らかいにじみの割合）", ""),
     "diffusion.radius": ("texture", "ディフュージョンの広がり", "px"),
+    "glow.edge_share": ("light", "明るい縁のまわりのにじみの割合（明るい所のグローの裾）", ""),
+    "glow.edge_radius": ("light", "明るい縁のにじみの広がり", "px"),
     "scan.peak": ("texture", "スキャンライン（行の周期の強さ。線なしで数）", ""),
     "glitch.tears": ("texture", "行の裂け（グリッチ）の数", "行"),
     "frame.aspect": ("frame", "絵の縦横比（黒帯の内側）", ""),
@@ -1195,7 +1219,8 @@ MEASURES = {
     "shots.median_s": ("frame", "1 カットの長さの中央", "秒"),
 }
 # read once from the whole video, not from each frame
-VIDEO_LEVEL = {"flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10", "frame.aspect",
+VIDEO_LEVEL = {"flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10",
+               "vignette.corner_p95", "frame.aspect",
                "frame.bars_tb", "frame.bars_lr", "frame.fps", "frame.fps_effective", "cuts.per_min", "shots.median_s"}
 PAIR_ONLY = ("motion.", "grain.")             # need the next picture
 FULL_ONLY = ("ca.", "distortion.")            # read on every full_every-th pair only (slower)
@@ -1631,6 +1656,7 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
     w_act, h_act = x1 - x0, y1 - y0
     video_level = {"vignette.corner": (vig["vignette.corner"], abs(halves[0] - halves[1]) / 2.0),
                    "vignette.corner_p10": (vig["vignette.corner_p10"], float("nan")),
+                   "vignette.corner_p95": (vig["vignette.corner_p95"], float("nan")),
                    "flash.per_min": (flash_sum["flash.per_min"], float("nan")),
                    "flash.peak": (flash_sum["flash.peak"], float("nan")),
                    "flash.len_s": (flash_sum["flash.len_s"], float("nan")),
