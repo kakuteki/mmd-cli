@@ -44,8 +44,10 @@ What is done:
    height is the sum of the morphs' weights times あ 1, い 0.217, う 0.487, え 0.565, お 0.609 of あ's (root mean square
    error 0.019 over 22 mixes, 0.069 at most, for う + お 0.2), and the gap that is not teeth is that sum less a band of
    teeth of 0.245 x w(い)^2 that い brings into it (0.016, 0.055 at most): い alone shows only its teeth.  The MV shows
-   あ's opening 4.7 to 5.5 pixels tall on the front camera and 6.1 to 8.1 on camera D (10 to 90 %, 1280x720): い with
-   あ at 0.3 keeps a gap of 1.1 to 1.8 pixels there at gains 0.5 to 1 (0.1 keeps under 0.5: shut), which is why い
+   あ's opening 4.7 to 5.5 pixels tall on the front camera and 6.1 to 8.1 on camera D (10 to 90 %, 1280x720, scaled by
+   the mouth's depth): い with あ at 0.3 keeps a gap of 1.3 to 1.8 pixels there (0.9 to 1.3 at gain 0.5), あ at 0.1
+   0.3 to 0.5; drawn at that size (v11 review, 2026-10-18: three frames of each camera) 0.3 shows 1 or 2 rows of the
+   inside, 0.1 none on the front camera and a row on camera D, a line of teeth.  That is why い
    is い + あ 0.3 although on a close picture it stands 88 % of the way from い to え in height (the rigging review's
    concern: on the MV's pictures い and え differ by 0.2 to 0.4 pixels).  う is う alone: its gap is 1.2 to 2.6 pixels
    there, and う + お 0.2 (before) stood taller than お itself (0.68 against 0.61 of あ's height).  On a consonant
