@@ -167,6 +167,32 @@ class DepthOfFieldTest(unittest.TestCase):
                 mv_look.merge_look({"stage": stage_})
         mv_look.merge_look({"stage": {"world": 1, "dof": 2.0, "dof_focus": 30.0}})
 
+    def test_a_camera_at_or_beyond_its_look_at_point_has_no_focus_of_its_own(self):
+        # look2rev 2026-10-19: with dof_focus 0 the focus is the camera's own distance to its look-at point.  A camera turning
+        # on the spot (distance 0) or one beyond the point (a negative distance) has none: |1 - focus / depth| then blurred
+        # the whole stage by the far blur, or by up to DOF_MOST times it, without a word.  Refused; dof_focus gives the focus
+        look = mv_look.merge_look(dict(PLAIN, stage={"world": 1, "dof": 6.0}))
+        given = mv_look.merge_look(dict(PLAIN, stage={"world": 1, "dof": 6.0, "dof_focus": 30.0}))
+        for distance in (0.0, -12.0):
+            view = mv_world.View(state(look_at=(0.0, 10.0, 0.0), distance=distance, angles=(10.0, 0.0, 0.0)), SIZE)
+            with self.assertRaises(ValueError, msg=distance):
+                mv_world.stage_blur(view, look)
+            far = mv_world.stage_blur(view, given)
+            self.assertLessEqual(float(far.max()), 6.0 * SIZE[1] / 720.0 + 1e-9, distance)     # 30 in front: no more than dof
+        # and a render that would meet such a key stops before any frame is drawn
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cam.vmd")
+            keys = [vmd.CameraKey(frame=0, distance=-40.0, position=(0.0, 10.0, 0.0), rotation=(0.0, 0.0, 0.0)),
+                    vmd.CameraKey(frame=30, distance=0.0, position=(0.0, 10.0, 0.0), rotation=(0.0, 0.0, 0.0)),
+                    vmd.CameraKey(frame=60, distance=-40.0, position=(0.0, 10.0, 0.0), rotation=(0.0, 0.0, 0.0))]
+            vmd.dump(vmd.Motion.for_camera(cameras=keys), path)
+            with self.assertRaises(ValueError) as caught:
+                mv_look.world_inputs(mv_look.merge_look({"stage": {"world": 1, "dof": 6.0}}), path)
+            self.assertIn("30", str(caught.exception))
+            for fine in ({"world": 1, "dof": 6.0, "dof_focus": 40.0}, {"world": 1}):
+                mv_look.world_inputs(mv_look.merge_look({"stage": fine}), path)
+
 
 def between_lines(view, z=7.5, x=2.5):
     """the pixel of a point of the floor between its lines (they lie every 5 units)"""

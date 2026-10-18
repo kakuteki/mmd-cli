@@ -1171,6 +1171,11 @@ def stage_blur(view, look, cover=None):
     stage = look["stage"]
     far = float(stage["dof"]) * view.size[1] / REFERENCE_HEIGHT
     focus = float(stage["dof_focus"]) or view.distance
+    if not focus > 0:
+        # (look2rev) a camera turning on the spot or beyond its look-at point has no distance to focus at: |1 - focus / depth|
+        # would blur the whole stage by `far`, or by up to DOF_MOST times it, without a word
+        raise ValueError("stage.dof focuses at the camera's look-at point, and the camera is %s it (distance %.3f): give "
+                         "stage.dof_focus" % ("at" if view.distance == 0 else "beyond", view.distance))
     sigma = blur_of(cyc_depth(view, float(stage["radius"])), focus, far)
     if cover is not None:
         sigma = sigma * (1.0 - cover) + cover * blur_of(floor_depth(view, float(stage["floor_y"])), focus, far)

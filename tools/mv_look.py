@@ -1134,6 +1134,15 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
     world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
              "subframes": int(subframes), "shutter": float(shutter), "jobs": jobs}
     world["track"] = world_tool().camera_track(world["camera"])
+    if stage["dof"] > 0 and not stage["dof_focus"]:
+        # (look2rev) the focus is then the camera's own distance to its look-at point, which a key at the point (0) or beyond it
+        # (the window's distance below 0) has not: stop here, before any frame is drawn (mv_world.stage_blur refuses it too)
+        keys, _ = world["track"]
+        bad = [k.frame for k in keys if not -float(k.distance) > 0]
+        if bad:
+            raise ValueError("stage.dof focuses at the camera's look-at point, and the camera %s is at or beyond it at frame%s %s: "
+                             "give stage.dof_focus (the distance in focus)" % (world["camera"], "s" if len(bad) > 1 else "",
+                                                                                ", ".join(str(f) for f in bad[:8])))
     if stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         if not model or not motions:
             raise ValueError("stage.pool and stage.shadow follow the dancer: give --model MODEL.pmx and her --motion files, "
