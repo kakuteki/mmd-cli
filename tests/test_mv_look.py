@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -38,6 +39,22 @@ def mean(image, box):
     crop = image.convert("RGB").crop(box)
     pixels = list(crop.getdata())
     return tuple(sum(p[i] for p in pixels) / float(len(pixels)) for i in range(3))
+
+
+# the last conversion of every picture since look2 (2026-10-18), and the one before it; and the overlays of the text and the
+# flares, which work in RGB since then (before, in Y'CbCr 4:2:0)
+COLOUR_NOW = ("scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:"
+              "colorspace=bt709:range=tv[out]")
+COLOUR_BEFORE = "format=yuv420p[out]"
+OVERLAY_NOW, OVERLAY_BEFORE = ":eof_action=pass:format=gbrp[", ":eof_action=pass["
+VIGNETTE_NOW = re.compile(r"format=rgb24,(vignette=angle=[0-9.]+),format=gbrp")
+
+
+def colour_of_before(argv):
+    """the argv with its colour conversions put back as they were before look2: the graph's end, the format of the overlays
+    of the text and the flares and the packed RGB round the vignette, nothing else"""
+    return [VIGNETTE_NOW.sub(r"\1", a.replace(COLOUR_NOW, COLOUR_BEFORE).replace(OVERLAY_NOW, OVERLAY_BEFORE))
+            if a.endswith(COLOUR_NOW) else a for a in argv]
 
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")
@@ -302,6 +319,17 @@ class GraphTest(unittest.TestCase):
     def test_the_picture_ends_with_the_dancer(self):
         f = self.filter_of(self.graph())
         self.assertIn("shortest=1", f[f.index("[fg]overlay"):])
+
+    def test_the_picture_leaves_in_bt709_with_its_four_tags(self):
+        # lookref / lookrev 2026-10-18: the graph ended in format=yuv420p, which ffmpeg turns into Y'CbCr by BT.601 and tags
+        # with nothing, and a player reads an untagged HD video as BT.709 (red brighter, green darker, up to 17 of 255).
+        # -colorspace and the like on the output alone left two of the four tags out (ffmpeg 8.0): setparams writes them on
+        # the frames, after the conversion by BT.709 in the TV range
+        for look in ({}, {"glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0}}):
+            f = self.filter_of(self.graph(plan=PLAN, look=look))
+            self.assertTrue(f.endswith("scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:"
+                                       "color_trc=bt709:colorspace=bt709:range=tv[out]"), f[-200:])
+            self.assertEqual(f.count("out_color_matrix"), 1)
 
     def test_a_flare_at_every_hook_time(self):
         argv = self.graph(look={"flares": [1.0, 2.5]})
@@ -627,6 +655,104 @@ class RenderTest(unittest.TestCase):
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class ColourRenderTest(unittest.TestCase):
+    """look2 (2026-10-18): the colours the graph makes are the colours a player shows.  A dancer of eight flat patches over
+    the whole picture (the colours lookrev read wrong: the red, the green and the orange of the tie, a pink skin, a dark
+    navy), nothing else on the picture: the video says BT.709 with all four of its tags, and read as BT.709 (what a player
+    does with them, and with an untagged HD video) every patch comes back within a few of 255"""
+
+    PATCHES = [(200, 60, 40), (40, 160, 70), (50, 80, 200), (230, 200, 60), (128, 128, 128), (250, 180, 160),
+               (240, 160, 40), (20, 30, 60)]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg.avi")
+        w = SIZE[0] // len(cls.PATCHES)
+        boxes = ",".join("drawbox=x=%d:y=0:w=%d:h=%d:color=0x%02X%02X%02X@1.0:t=fill:replace=1" % ((i * w, w, SIZE[1]) + c)
+                         for i, c in enumerate(cls.PATCHES))
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=c=black@0.0:s=%dx%d:r=30,format=rgba,%s" % (SIZE + (boxes,)), "-frames:v", "15",
+                        "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        look = os.path.join(cls.folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                       "lens": {"vignette": 0, "grain": 0}, "flares": []}, f)
+        cls.out = os.path.join(cls.folder, "out.mp4")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cls.code = mv_look.main(["render", cls.fg, look, cls.out, "--work", os.path.join(cls.folder, "work")])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def read(self, matrix=None):
+        """the middle of every patch of frame 7, read as `matrix` says (None: as the video's tags say)"""
+        vf = ("scale=in_color_matrix=%s:in_range=tv:out_range=pc,format=rgb24" % matrix) if matrix else "format=rgb24"
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", self.out, "-vf", "select=eq(n\\,7)," + vf, "-frames:v", "1",
+                              "-f", "rawvideo", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+        image = numpy.frombuffer(raw[:SIZE[0] * SIZE[1] * 3], dtype=numpy.uint8).reshape(SIZE[1], SIZE[0], 3)
+        w = SIZE[0] // len(self.PATCHES)
+        return [tuple(int(v) for v in image[SIZE[1] // 2, i * w + w // 2]) for i in range(len(self.PATCHES))]
+
+    def test_the_video_carries_all_four_tags_of_bt709(self):
+        self.assertEqual(self.code, 0)
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=color_space,color_primaries,color_transfer,color_range", "-of", "json", self.out],
+                               check=True, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        tags = json.loads(probe.stdout)["streams"][0]
+        self.assertEqual(tags, {"color_space": "bt709", "color_primaries": "bt709", "color_transfer": "bt709",
+                                "color_range": "tv"})
+
+    def test_read_as_bt709_the_colours_come_back(self):
+        for matrix in ("bt709", None):
+            got = self.read(matrix)
+            worst = max(abs(g - c) for patch, made in zip(got, self.PATCHES) for g, c in zip(patch, made))
+            self.assertLessEqual(worst, 3, (matrix, got))
+
+    def test_read_as_bt601_they_would_not(self):
+        # the test tells the two apart: the conversion of before (BT.601) read as BT.709 moved the red by 12 and the green
+        # by 17 (lookrev's patches); this one read as BT.601 moves them as far the other way
+        got = self.read("bt601")
+        worst = max(abs(g - c) for patch, made in zip(got, self.PATCHES) for g, c in zip(patch, made))
+        self.assertGreaterEqual(worst, 8, got)
+
+    def test_the_picture_stays_rgb_under_a_flare_and_the_text(self):
+        # an overlay of ffmpeg works in Y'CbCr 4:2:0 unless told otherwise: under a flare or a cue the picture was turned
+        # into Y'CbCr by BT.601 half way and then into BT.709 at the end (the excerpt test saw it: the same frame with and
+        # without a flare laid over it came out 1.2 of 255 apart before x264).  A flare without light and a clear cue over
+        # the patches leave every pixel as it is
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        cue = os.path.join(folder, "cue")
+        os.makedirs(cue)
+        for i in range(15):
+            Image.new("RGBA", (64, 32), (255, 255, 255, 0)).save(os.path.join(cue, "f%05d.png" % i))
+        plan = {"cues": [{"start": 0.0, "frames": 15, "x": 8, "y": 8, "layer": layer, "pattern": os.path.join(cue, "f%05d.png")}
+                         for layer in ("back", "front")]}
+        # the lens too: ffmpeg's vignette takes no planar RGB, and was handed the picture in Y'CbCr 4:4:4 by BT.601
+        for lens in ({"vignette": 0, "grain": 0}, {"vignette": 0.3, "grain": 3}):
+            frames = {}
+            for name, look in (("bare", {}), ("laid", {"flares": [0.0], "flare": {"strength": 0},
+                                                        "camera": {"punch": 0, "aberration": 0}})):
+                look = mv_look.merge_look(dict({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0},
+                                                "glow": {"strength": 0}, "lens": lens, "flares": []}, **look))
+                layers = mv_look.write_layers(look, os.path.join(folder, "work_" + name), SIZE, 30)
+                out = os.path.join(folder, name + ".nut")
+                argv = mv_look.ffmpeg_command(self.fg, out, layers["plate"], layers["light_pattern"], look, SIZE, 30,
+                                              plan=plan if name == "laid" else None, flare_pattern=layers["flare_pattern"],
+                                              flare_frames=layers["flare_frames"], light_frames=layers["light_frames"])
+                argv = argv[:argv.index("-c:v")] + ["-c:v", "rawvideo", "-pix_fmt", "yuv420p", out]     # nothing lost after it
+                subprocess.run(argv, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+                frames[name] = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"],
+                                              check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+            self.assertEqual(len(frames["laid"]), len(frames["bare"]), lens)
+            bare = numpy.frombuffer(frames["bare"], dtype=numpy.uint8).astype(numpy.int16)
+            laid = numpy.frombuffer(frames["laid"], dtype=numpy.uint8).astype(numpy.int16)
+            self.assertEqual(int(numpy.abs(laid - bare).max()), 0, (lens, float(numpy.abs(laid - bare).mean())))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class ChunkLightRenderTest(unittest.TestCase):
     """review 10: rendered for real, a chunk of the song shows the light loop as the whole song shows it at that time
     (a loop of 10 frames whose frame i is a flat grey of 20 * i, nobody on the stage, a black plate)"""
@@ -765,8 +891,11 @@ class ThirtyArgvTest(unittest.TestCase):
             "C:/out/y.avi", "C:/out/y.mp4", "W/plate.png", "W/light/light_%05d.png", mv_look.merge_look({}), (1280, 720), 30)
 
     def test_the_argv_at_30_fps_is_the_one_of_before(self):
+        # but for its last colour conversion (BT.709 and its tags, look2 2026-10-18): with that put back as it was, every
+        # byte of the argv is the one of main 60956b2
         for name, argv in self.argvs():
-            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+            self.assertEqual(hashlib.sha256("\0".join(colour_of_before(argv)).encode("utf-8")).hexdigest(), self.GOLDEN[name],
+                             name)
 
     def test_the_counts_of_the_layers_at_30_fps_are_those_of_before(self):
         # what write_layers hands the argv at 30 (12 flare frames, the loop of v3 in 823): the values of main 60956b2
@@ -1035,7 +1164,8 @@ class SixtyArgvTest(unittest.TestCase):
                      "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 60,
                      plan=ThirtyArgvTest.PLAN, start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)}
         for name, argv in argvs.items():
-            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+            self.assertEqual(hashlib.sha256("\0".join(colour_of_before(argv)).encode("utf-8")).hexdigest(), self.GOLDEN[name],
+                             name)
 
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")

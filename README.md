@@ -444,6 +444,11 @@ python tools/mv_look.py phase DANCER.avi --subframes N [--shutter S] [--offset �
   出力の 1 コマが歩みの整数個になる折り方だけ（30・60 fps の出力なら 120・240・480 fps の人物）。カメラの動きが布も動かして
   歩みの画素が 2 枚続けて変わる所は、片側だけ静かな画素でも数え直す（答えの `told_by_half_lone` が数え直して決まった窓の数）。
 - 出力は無音（libx264、crf 16）。全曲 7,743 枚・1280x720 で約 70 秒（hinata 実測）。粒子を入れると大きさは約 2 倍になる。
+- 色: グラフの最後で RGB を BT.709（TV の範囲）で YUV にし、4 つの印（color_space・color_primaries・color_transfer・color_range）を
+  `setparams` でコマに付ける（`COLOUR_OUT`、2026-10-18 look2）。前は `format=yuv420p` だけで、ffmpeg が BT.601 で YUV にして印を付けず、
+  再生側（印のない 720 行以上を BT.709 と読む）で赤が明るく、緑が暗く出ていた（最大 17/255）。文字とフレアを載せる overlay（既定は YUV 4:2:0）と
+  周辺減光（ffmpeg の vignette は平面の RGB を受けない）も RGB のまま通す（前は途中で BT.601 の YUV になり、最後の BT.709 への変換と二重になった）。
+  人物のグローの元（黒の上の人物）だけは overlay の既定の YUV 4:2:0 のまま（往復とも BT.601 で、色は戻る）。
   240 fps・1280x720 の alpha つき AVI はモーション 1 フレームあたり約 29.5 MB（全曲なら 228 GB）なので、区間に分けて描く。
 - MMD の AVI は 30 fps を 10000000/333333 で書くので、人物は `-r` で層と同じ時計に載せている（載せないと最後の 1 枚が落ちる）。
 - `render` は呼ぶたびに層（板・光のループ・フレア）と合図の連番を全部描き直す（区間に依らず同じもの。60 fps のヒビカセで
@@ -2989,11 +2994,11 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
   差から取った人物の領域と IoU 中央 0.946・輪郭の距離中央 1.0 px で合い、物差しも両方の領域でほぼ同じ（人物の L* 中央 83.8 と 83.7）。
 - `look_credits.py`: 説明文の頭の名のり（Model・Motion・Camera・Stage・MME / Effects / 特效・Tools / 使用软件 …、【】の形も）を欄に分け、効果を名で
   （EFFECTS の綴りの一覧）、作者を効果の欄の名で、道具を名で数える。数えるたびに、見つけた行を逐語で残す（出所）。
-- 私たちの mp4 の色: mv_look の出力は色の印がなく、ffmpeg が BT.601 で YUV にしている（`scale` の既定）。再生側は印のない 720p 以上を BT.709 と読むので、
-  公開すると赤が明るく濃く、緑が暗く出る（6 色で平均 5.6/255 ずれる）。直すには mv_look の符号化に `out_color_matrix=bt709` と色の印を付ける。
-  hinata の ffmpeg 8.0 は `-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv` を付けても color_space と color_range しか書かない
-  （コマの持つ色の情報が勝つ）。4 つとも書くには、グラフの最後を `scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:
-  color_trc=bt709:colorspace=bt709:range=tv` にする（査読 lookrev の `matrix_tags.py`）。
+- 私たちの mp4 の色: look2（2026-10-18）の前の mv_look の出力は色の印がなく、ffmpeg が BT.601 で YUV にしていた（`scale` の既定）。再生側は印のない
+  720p 以上を BT.709 と読むので、公開すると赤が明るく濃く、緑が暗く出た（6 色で平均 5.6/255 ずれる）。hinata の ffmpeg 8.0 は `-colorspace bt709
+  -color_primaries bt709 -color_trc bt709 -color_range tv` を付けても color_space と color_range しか書かない（コマの持つ色の情報が勝つ。査読 lookrev の
+  `matrix_tags.py`）。look2 でグラフの最後を `scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:
+  colorspace=bt709:range=tv` にした（上の mv_look の節）。
 - 研究の記録と結果: `_spike/out/stage6/lookref/NOTES.md`（物差しの一覧 `measures.md`）、hinata `C:/work/hibikase/stage6/lookref/`（参考の動画は hinata の `ref/` だけに置き、
   配らない）。査読と人物・舞台を分けた測り直し: `_spike/out/stage6/lookrev/NOTES.md`、hinata `C:/work/hibikase/stage6/lookrev/`（模型は `models/isnetis.onnx`）。
 

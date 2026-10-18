@@ -46,6 +46,9 @@ ffmpeg (the compositing), from back to front:
 * the text cues of the "front" layer;
 * a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
+The picture stays RGB to the end, where it is made Y'CbCr by BT.709 in the TV range with the four tags that say so
+(COLOUR_OUT), as a player reads an HD video.
+
 look.json overrides single values of DEFAULT_LOOK; an unknown name is an error (a misspelt setting would
 otherwise silently do nothing).  Lengths are in pixels of a 720 line picture and scale with the height.
 Frame counts (flare.frames, camera.punch_frames) are frames of the song, as MMD counts them (SONG_FPS, 30 a second), and
@@ -140,6 +143,12 @@ X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "16"]
 NVENC = ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1",
          "-rc-lookahead", "32", "-bf", "3", "-profile:v", "high"]
 PREPARED = "prepared.json"       # what `prepare` made its layers and text from (render --prepared checks it)
+# the last step of every picture: RGB into Y'CbCr by BT.709 in the TV range, and the four tags that say so (look2, 2026-10-18).
+# format=yuv420p alone converts by BT.601 and tags nothing, and a player reads an untagged HD video as BT.709: the red came out
+# brighter and the green darker, by up to 17 of 255 (lookref, lookrev).  The tags go on the frames with setparams: given to
+# the output alone (-colorspace and the like), ffmpeg 8.0 wrote two of the four
+COLOUR_OUT = ("scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+              "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv")
 
 
 # ---- the look -------------------------------------------------------------------------------
@@ -500,7 +509,10 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
             # round: setpts cuts its result down to a whole tick, and 16 / 30 s written in decimals is a hair
             # short of the 16th tick (one cue in three came a frame early)
             parts.append("[%d:v]%sformat=rgba,setpts=PTS-STARTPTS+round(%.6f/TB)[c%d]" % (index, scaled, offset, state["n"]))
-            parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass[v%d]" % (state["label"], state["n"], x, y, state["n"]))
+            # in RGB (gbrp): an overlay works in Y'CbCr 4:2:0 by default, which turned the picture into Y'CbCr by BT.601
+            # half way to COLOUR_OUT (look2)
+            parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass:format=gbrp[v%d]" % (state["label"], state["n"], x, y,
+                                                                                           state["n"]))
             state["label"] = "v%d" % state["n"]
 
     lay(overlays["back"])
@@ -541,8 +553,9 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     lens = look["lens"]
     finish = []
     if lens["vignette"] > 0:
-        # the filter takes the angle of the lens: 0.3 is about PI/6.5, 1 about PI/2.6 (dark far into the picture)
-        finish.append("vignette=angle=%s" % _number(0.28 + 0.92 * min(float(lens["vignette"]), 1.0)))
+        # the filter takes the angle of the lens: 0.3 is about PI/6.5, 1 about PI/2.6 (dark far into the picture).  It takes
+        # no planar RGB: handed packed RGB (rgb24) it keeps the picture RGB, where ffmpeg gave it Y'CbCr 4:4:4 by BT.601 (look2)
+        finish.append("format=rgb24,vignette=angle=%s,format=gbrp" % _number(0.28 + 0.92 * min(float(lens["vignette"]), 1.0)))
     if lens["grain"] > 0:
         finish.append("noise=alls=%d:allf=t" % int(round(lens["grain"])))
     if finish:
@@ -550,7 +563,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         state["label"] = "lens"
     lay(overlays["front"])
     lay(overlays["flare"])
-    parts.append("[%s]format=yuv420p[out]" % state["label"])
+    parts.append("[%s]%s[out]" % (state["label"], COLOUR_OUT))
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
     argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
