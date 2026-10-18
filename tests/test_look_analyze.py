@@ -922,6 +922,35 @@ class RegionTest(unittest.TestCase):
         picture, m2, _ = scene()
         self.assertEqual(LA.region_measures(picture, m2)["stage.lights"], 0.0)
 
+    def test_the_glows_are_read_off_the_other_region(self):
+        # a person with a bright middle in a mid-grey band, no glow: the person's glow is read only off the person (the
+        # band next to its bright middle is the person, not its glow)
+        h, w = 720, 1280
+        yy, xx = np.mgrid[0:h, 0:w]
+        d = np.hypot(yy - 360.0, xx - 640.0)
+        grey = np.where(d <= 150.0, 0.95, np.where(d <= 200.0, 0.7, 0.05))
+        mask = (d <= 200.0).astype(np.float64)
+        r = LA.region_measures(rgb(grey), mask)
+        # (no glow off the person: none read, or nan when the bright middle lies too far inside to read one)
+        self.assertFalse(r["bloom.person_strength"] > 0.02, r["bloom.person_strength"])
+        # a light of the stage seen through a gap in a bright person (between the arms) reads as the same light alone:
+        # its rings and the level it falls to are read on the stage, not on the person round the gap
+        lone = add_glow(highlights(720, 1280, [(360, 900)], 8), 8.0, 1.0)
+        m_gap = np.ones((h, w))
+        m_gap[:, 870:930] = 0.0                                       # the stage only in a gap 60 px wide
+        through = np.where(m_gap[..., None] > 0.5, 0.95, lone)
+        r_alone = LA.region_measures(lone, np.zeros((h, w)))
+        r_gap = LA.region_measures(through, m_gap)
+        self.assertAlmostEqual(r_gap["bloom.stage_strength"] / r_alone["bloom.stage_strength"], 1.0, delta=0.2)
+
+    def test_the_stage_is_read_clear_of_the_person_s_edge(self):
+        # the model's outline a few px inside the person's: the person's bright edge must not be read as the stage's
+        picture, _, d = scene(person_lab=(97.0, 0.0, 0.0), stage_lab=(10.0, 0.0, 0.0), radius=200.0)
+        small = (d <= 194.0).astype(np.float64)
+        r = LA.region_measures(picture, small)
+        self.assertEqual(r["stage.lights"], 0.0)
+        self.assertLess(r["stage.L_p90"], 11.0)
+
     def test_no_person_leaves_the_person_measures_empty(self):
         picture, _, _ = scene()
         r = LA.region_measures(picture, np.zeros(picture.shape[:2]))
