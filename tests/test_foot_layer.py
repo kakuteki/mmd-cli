@@ -1323,6 +1323,28 @@ class CommandTest(unittest.TestCase):
         finally:
             shutil.rmtree(folder)
 
+    def test_skim_on_by_default_keeps_a_gliding_foot_off_the_floor_with_landing_off(self):
+        # what the command does with its default --skim on and --landing off (the order C's first run): a foot the dance
+        # moves fast 5.4 mm over the floor stays there; --skim off presses it onto the floor (the report names the choice,
+        # the feet show it)
+        folder = tempfile.mkdtemp()
+        try:
+            lift = 0.068
+            src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
+            vmd.dump(motion(*SkimTest().gliding(lift)), src)
+            with open(model, "wb") as fh:
+                fh.write(DATA)
+            low = {}
+            for tag, extra in (("on", []), ("off", ["--skim", "off"])):
+                out = os.path.join(folder, "out_%s.vmd" % tag)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--landing", "off"] + extra), 0)
+                low[tag] = foot_layer.measure_feet(RIG, SHOE, vmd.load(out), range(13))["左"]["low"]
+            self.assertGreater(float(low["on"][3:10].min()), 0.111 + 0.8 * lift)
+            self.assertLess(float(low["off"][3:10].max()), 0.111 + 0.6 * lift)
+        finally:
+            shutil.rmtree(folder)
+
     def test_hover_sink_is_off_unless_asked(self):
         # --hover: off by default with any --landing since v11feet (after the retarget the song's second foot layer sank one
         # run of 23 frames, by 1.3 cm, and every measure of the chain's last came out the same without it); sink when asked

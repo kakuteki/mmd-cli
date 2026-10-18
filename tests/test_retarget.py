@@ -410,8 +410,8 @@ class HoldBackTest(unittest.TestCase):
         frames = range(0, last + 1)
         toe_off = np.subtract((RIN["足首"][0], RIN_SHOE["sole"], RIN["足首"][2] - RIN_SHOE["toe_ahead"]), RIN["足首"])
         out = {}
-        for tag, rate in (("before", None), ("after", retarget.JUMP_RATE)):
-            res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), {"hands": False, "clear": False, "jump_rate": rate})
+        for tag, extra in (("before", {"jump_rate": None}), ("after", {})):      # (after: the layer's default)
+            res = retarget.layer(m, body(MIKU_DATA), body(RIN_SHOE_DATA), dict({"hands": False, "clear": False}, **extra))
             rep = res.report["feet"]["左"]
             self.assertEqual((rep["plants"], rep["on_floor_moving"]), (1, 1))
             toe = foot_point(legs(RIN_SHOE_DATA, res.motion, frames)["左"], toe_off)
