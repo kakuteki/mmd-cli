@@ -18,10 +18,10 @@
 | 5 | 関節の拘束 | anatomy_layer.py | 70 | 6 | 2 | 5 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R | - |
 | 6 | 運動（遅れと堅さ、--preset human --elbow-hinge on） | motor_layer.py | 103 | 15 | 3 | 3 | arms.a09_shoulder_elbow_L、arms.a09_shoulder_elbow_R、arms.a09_elbow_wrist_L、arms.a09_elbow_wrist_R、upper.head_sudden_stops_per_min、upper.head_stop_ms | - |
 | 7 | 背骨 4 本へ配る | spine_layer.py | 9 | 1 | 0 | 0 | upper.upper_sudden_stops_per_min、upper.chest_follow | spine_check.py |
-| 8 | 足（最初の足の層 feet0、--landing off） | foot_layer.py | 78 | 28 | 5 | 3 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
+| 8 | 足（最初の足の層 feet0、--landing off。v11 から --skim on・--hover off が… | foot_layer.py | 78 | 28 | 5 | 3 | feet.under_floor_frames、feet.ik_miss_floor_frames | sink_check.py・leg_ik.py |
 | 9 | 体重（順 C の balance） | balance_layer.py | 99 | 34 | 2 | 11 | gravity.centre_down_max、gravity.centre_down_gt98_pct、skirt.floor_over122_frames、skirt.floor_max、balance.com_lateral_cm、balance.moving_com_lateral_cm、balance.moving_mos_ml_cm、balance.still_com_lateral_cm、balance.touchdown_xcom_cm、gravity.landing_sink_cm、gravity.jump_apex_lowered、gravity.beat_dips_weak、spikes.centre_per_min | sink_check.py・leg_ik.py |
-| 10 | 足（着地・浮きの下げ、--landing human、既定の --hover sink） | foot_layer.py（8 と同じ道具・同じ値） | 78 | 28 | 5 | 3 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
-| 11 | 接地の計画（枝 contact、査読中） | contact_layer.py | 66 | 27 | 1 | 6 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
+| 10 | 足（2 回目の足の層、--landing human。v11 から --skim on・--hover off が既定） | foot_layer.py（8 と同じ道具・同じ値） | 78 | 28 | 5 | 3 | feet.slide10_per_min、feet.slide3_per_min、feet.slide_path_cm_per_min、feet.slide_fast_share、feet.knee_gain_deg、feet.knee_straight_pct、feet.ik_new_miss_frames、gravity.hover_pct、gravity.hover_runs6_per_min、gravity.air_per_min | sink_check.py |
+| 11 | 接地の計画（contact_layer） | contact_layer.py | 66 | 27 | 1 | 6 | gravity.hover_pct、gravity.hover_runs6_per_min、balance.single_share_pct、balance.zmp_inside_pct、feet.ik_new_miss_frames、gravity.jump_apex_lowered、spikes.centre_per_min | contact_check.py |
 | 12 | 上体の慣性 | wb_layer.py・wb_dynamics.py | 34 | 7 | 3 | 0 | upper.head_follow、upper.chest_follow、upper.arms_follow、upper.head_follow_2_4hz、balance.zmp_inside_pct、balance.single_share_pct、balance.zmp_margin_single_cm、balance.zmp_tilt_deg_per_min | upper_body_check.py |
 | 13 | 手と指、触れの層（v11arms） | hand_layer.py・touch_layer.py | 153 | 13 | 10 | 29 | arms.finger_speed_L、arms.finger_speed_R、arms.finger_wrist_ratio_L、arms.finger_wrist_ratio_R、arms.a09_wrist_finger_L、arms.a09_wrist_finger_R、arms.rests_per_min_R、retarget.contacts_kept_share、retarget.arms_in_body_frames、retarget.contacts_lost_runs、spikes.wrist_R_per_min、spikes.wrist_L_per_min、arms.wrist_8hz_pct | retarget_check.py |
 | 14 | 視線 | eye_gaze.py | 105 | 4 | 2 | 4 | eyes.edge_pct、eyes.edge_longest_s、eyes.eccentric15_pct | - |
@@ -457,7 +457,7 @@
 | DAMP | 1e-6 |  | 109 |  |  |  |  |  |  |  |  |  |
 | frame_runs(gap) | 5 |  | 142 |  |  |  |  |  |  |  |  |  |
 
-## foot_layer.py（8. 足（最初の足の層 feet0、--landing off）、78）
+## foot_layer.py（8. 足（最初の足の層 feet0、--landing off。v11 から --skim on・--hover off が既定）、78）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -644,7 +644,7 @@
 | AIR_RAMP | 3 | frames | 1478 | frames: the drop goes from all to none over this many frames in from each end of the air |  |  |  |  |  |  |  |  |
 | AIR_MIN | 4 | frames | 1479 | frames: the air is neither foot supporting for this many frames running or more (a jump, as the song's tests read it). A shorter stretch is a shuffle with a foot 1.6-3 c… |  |  |  | ○ |  |  |  | dance |
 
-## contact_layer.py（11. 接地の計画（枝 contact、査読中）、66）
+## contact_layer.py（11. 接地の計画（contact_layer）、66）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1036,153 +1036,153 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30.0 |  | 113 |  |  |  |  |  |  |  |  |  |
-| CORNERS_UP | ("口角上げ", "笑い", 0.6) |  | 117 | (morph, the morph it follows, share of its weight) |  |  |  |  | ○ |  |  | rig |
-| CORNERS_DOWN | ("口角下げ", "真面目", 0.2) |  | 118 |  |  |  |  |  |  |  |  |  |
-| ACTIVE | 0.05 |  | 119 | weight above which an expression counts as shown (a11) |  |  |  |  |  |  |  |  |
-| SNAP | 9 | frames | 120 | frames: a change this quick or quicker is stretched |  |  |  |  |  |  |  |  |
-| ONSET_FRAMES | (12, 16) | frames | 121 | frames of a rise from nothing (both ends included) |  |  |  |  |  |  |  |  |
-| OFFSET_FRAMES | (14, 18) | frames | 122 | of a fall to nothing |  |  |  |  |  |  |  |  |
-| CHANGE_FRAMES | (10, 14) | frames | 123 | of any other change |  |  |  |  |  |  |  |  |
-| TOGETHER | 4 | frames | 124 | frames: changes of different morphs this close are one change of the face |  |  |  |  | ○ |  |  | rig |
-| DELAY.brow | (0, 0) | frames | 125 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
-| DELAY.eye | (3, 4) | frames | 125 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
-| DELAY.mouth | (1, 2) | frames | 125 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
-| ALIGN | 9 | frames | 126 | frames a change may move toward the fastest turn of the head |  |  |  |  |  |  |  |  |
-| ALIGN_RATIO | 1.5 |  | 127 |  |  |  |  |  |  |  |  |  |
-| ALIGN_LEAD | 2 | frames | 128 | frames the face starts changing before the head turns fastest |  |  |  |  |  |  |  |  |
-| WAVE.brow | 0.15 |  | 129 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
-| WAVE.eye | 0.12 |  | 129 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
-| WAVE.mouth | 0.25 |  | 129 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
-| HUMAN_WAVE.brow | 0.15 |  | 130 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
-| HUMAN_WAVE.eye | 0.2 |  | 130 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
-| HUMAN_WAVE.mouth | 0.25 |  | 130 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
-| ENVELOPE_STEP | (35, 70) | frames | 134 | frames between the keys of the envelope |  |  |  |  |  |  |  |  |
-| ENVELOPE_MIN_STEP | 0.15 |  | 135 | the envelope changes by at least this from one key to the next |  |  |  |  |  |  |  |  |
-| SLOW | 20 | frames | 136 | frames: a change between two keys this far apart is a drift, and is waved too |  |  |  |  |  |  |  |  |
-| CLOSED | 0.8 |  | 139 | closure (まばたき + 笑い) at which the eye counts as shut (a10) |  |  |  |  |  |  |  |  |
-| STEEP | 0.05 |  | 140 | per-frame change of the closure that counts as the lid moving (a10) |  |  |  |  |  |  |  |  |
-| SHORT_CLOSURE | 4 |  | 141 | closed frames: up to this a closure is a blink, longer ones are kept (a10) |  |  |  |  |  |  |  |  |
-| CLOSING_FRAMES | (2, 3) | frames | 142 |  |  |  |  |  |  |  |  |  |
-| HOLD_FRAMES | (0, 1) | frames | 143 |  |  |  |  |  |  |  |  |  |
-| OPENING_FRAMES | (5, 6) | frames | 144 |  |  |  |  |  |  |  |  |  |
-| CLOSING | {2: (0.5,), 3: (0.3, 0.75)} |  | 145 | the lid between open (0) and shut (1) |  |  |  |  |  |  |  |  |
-| OPENING | {5: (0.62, 0.36, 0.18, 0.07), 6: (0.7, 0.45, 0.27, 0.14, 0.… |  | 146 |  |  |  |  |  |  |  |  |  |
-| P_GAZE | 0.75 |  | 147 |  |  |  |  |  |  |  |  |  |
-| P_PHRASE | 0.55 |  | 147 |  |  |  |  |  |  |  |  |  |
-| P_SACCADE | 0.7 |  | 147 |  |  |  |  |  |  |  |  |  |
-| GAZE_SHIFT | 33.0 | deg | 148 | degrees in frames (a10, Evinger et al. 1994) |  |  |  |  |  |  |  |  |
-| GAZE_SHIFT_FRAMES | 9 | frames | 148 | degrees in frames (a10, Evinger et al. 1994) |  |  |  |  |  |  |  |  |
-| BIG_SACCADE | 20.0 |  | 149 |  |  |  |  |  |  |  |  |  |
-| SACCADE_SPEED | 1.5 | deg | 150 | degrees per frame of the eyes in the head and in the world on a saccade frame |  |  |  |  |  |  |  |  |
-| SACCADE_LONGEST | 5 | frames | 151 | frames: a faster stretch than this is no saccade |  |  |  |  |  |  |  |  |
-| PHRASE_PAUSE | 15 | frames | 152 | frames between two vowel onsets that end a phrase for the blinks (a10) |  |  |  |  |  |  |  |  |
-| PHRASE_BLINK | (5, 9) | frames | 153 | frames after the last vowel of a phrase the blink starts |  |  |  |  |  |  |  |  |
-| MIN_BETWEEN | 15 | frames | 154 | frames between the starts of two blinks |  |  |  |  |  |  |  |  |
-| RATE | 25.0 |  | 155 | blinks a minute at most (the KAZUSA motion: 25.6; people talking: 26, 10.5-32.5) |  |  |  | ○ |  | ○ |  | dance |
-| BLINK_WINDOW | 300 |  | 156 | at most WINDOW_MAX blinks in any BLINK_WINDOW frames (10 s) |  |  |  |  |  |  |  |  |
-| WINDOW_MAX | 7 |  | 156 | at most WINDOW_MAX blinks in any BLINK_WINDOW frames (10 s) |  |  |  |  |  |  |  |  |
-| WINDOW_MARGIN | 4 | frames | 157 | frames added to the window when the blinks are chosen |  |  |  |  |  |  |  |  |
-| GAZE_SHARE | 0.7 |  | 158 | the share of the blinks that may go to the gaze shifts (the largest first) |  |  |  |  |  |  |  |  |
-| FILL_MEDIAN | 3.4 | s | 159 | seconds, log-normal |  |  |  |  |  |  |  |  |
-| FILL_SIGMA | 0.5 | s | 159 | seconds, log-normal |  |  |  |  |  |  |  |  |
-| LONG_PAUSE | (6.0, 10.0) |  | 160 |  |  |  |  |  |  |  |  |  |
-| LONG_PAUSE_CHANCE | 0.12 |  | 160 |  |  |  |  |  |  |  |  |  |
-| KEEP_CLEAR | 15 | frames | 161 | frames around the long closures and after the eyes open without new blinks |  |  |  |  |  |  |  |  |
-| BASE_SWITCH | 8 | frames | 162 | frames over which the lid level changes where an old blink hid the change |  |  |  |  |  |  |  |  |
-| CREEP_LONGEST | 9 | frames | 163 | frames: the lid never closes slowly for longer (a10 counts 10 and more as a creep) |  |  |  |  |  |  |  |  |
-| LID_DOWN | 0.01 |  | 164 | まばたき per degree the eyes look down / up |  |  |  |  |  |  |  |  |
-| LID_UP | 0.005 |  | 164 | まばたき per degree the eyes look down / up |  |  |  |  |  |  |  |  |
-| HUMAN_CLOSING_FRAMES | (2, 3) | frames | 179 | A spontaneous blink closes in 2 to 3 frames and opens in 4 to 7, 7 to 12 frames in all as the end of the opening is taken (Wu et al. 2014: 7.8 frames; Trutoiu et al. 201… |  |  |  | ○ |  |  |  | dance |
-| HUMAN_HOLD_CHANCE | 0.25 |  | 180 |  |  |  |  |  |  |  |  |  |
-| HUMAN_OPENING_FRAMES | (5, 6) | frames | 181 |  |  |  |  |  |  |  |  |  |
-| LONG_CLOSING | 2 | frames | 182 | frames a long blink closes in |  |  |  |  |  |  |  |  |
-| LONG_HOLD | (2, 3) | frames | 183 | frames it stays shut beyond the first (10 to 11 frames in all) |  |  |  |  |  |  |  |  |
-| LONG_OPENING | 6 |  | 184 |  |  |  |  |  |  |  |  |  |
-| LONG_GAP | 240 | frames | 185 | frames (8 s) at least between the starts of two long blinks |  |  |  |  |  |  |  |  |
-| P_LONG.phrase_end | 0.5 |  | 187 |  |  |  |  |  |  |  |  |  |
-| P_LONG.rest | 0.25 |  | 187 |  |  |  |  |  |  |  |  |  |
-| CLOSURE_CAP | 0.7 |  | 188 | human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that follows the eyes down must not shut a smiling eye. A decided value, under a10's "s… |  |  |  |  |  | ○ |  |  |
-| FLASH_QUIET | (8, 3) | frames | 190 | frames before and after a flash's kime no blink starts (blinks hold off at a moment that holds the attention: Shultz et al. 2011) |  |  |  |  |  |  |  |  |
-| SMILE_END_BLINK | 21 | frames | 192 | frames before a smile has fallen (its last moving frame) a blink is placed: in natural smiles of light conversation blinks came 21 frames on average before the offset, t… |  |  |  |  |  |  | ○ |  |
-| P_SMILE_END | 0.6 |  | 195 |  |  |  |  |  |  |  |  |  |
-| LID_NEUTRAL | 0.10 |  | 196 | the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2) |  |  |  | ○ | ○ | ○ |  | rig |
-| LID_SHOWN | (0.85, 0.95, 1.0) |  | 198 | the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung (the loudest), at rest, and in the relaxing after a phrase. A decided value, chos… | HANDOVER 2026-10-14 face-v2: KAZUSA 様の真顔の瞼を見せる割合 歌う間 0.85・休み 0.95・句の後 1.0（査読の 0.4〜0.55 は丸い目に見えた） |  |  | ○ |  | ○ |  | dance |
-| LID_QUIET | 0.25 |  | 205 | the quietest phrase shows this much more of it than the loudest (ranked by the voice), never more than all of it |  |  |  |  |  |  |  |  |
-| LID_DEEP | 0.5 |  | 207 | from here to CLOSED the author's lid (a long closure, the wake-up) is blended back in |  |  |  |  |  |  |  |  |
-| LID_STEP | 6 | frames | 208 | frames a change of the shown share takes |  |  |  |  |  |  |  |  |
-| LID_RELAX_AFTER | 6 | frames | 209 | frames after a phrase's last vowel the lid starts to relax |  |  |  |  |  |  |  |  |
-| LID_RELAX_HOLD | 24 | frames | 210 | frames the relaxed lid holds before it goes back to rest |  |  |  |  |  |  |  |  |
-| LID_RELAX_BACK | 12 | frames | 211 | frames it takes to go back (the lid opening: slow is no creep) |  |  |  |  |  |  |  |  |
-| LID_SHORT_GAP | 20 | frames | 212 | frames: phrases this close keep the lid as in a phrase between them |  |  |  |  |  |  |  |  |
-| LID_FOLLOW | (0.029, 0.021) |  | 213 | まばたき per degree the eyes look down / up. A person's upper lid follows the eye up and down by about the same angle (Becker and Fuchs 1988), the cover over the iris growin… | HANDOVER 2026-10-14 face-v2: 瞼が毎コマ目の縦の向きに付く（下 0.029/度・上 0.021/度） |  |  | ○ | ○ | ○ | ○ | rig |
-| BLINK_KEY_TOLERANCE | 0.001 |  | 220 | human style: まばたき's keys are those straight lines need to stay this near every frame (bake_within; eye_optics' keys.morph). Following the eyes the lid bends on most fram… |  |  |  |  | ○ | ○ |  | rig |
-| GAIN | (0.6, 1.0) |  | 226 |  |  |  |  |  |  |  |  |  |
-| SMALL_FLOOR | 0.8 |  | 227 |  |  |  |  |  |  |  |  |  |
-| FINAL_FLOOR | 0.9 |  | 228 | the last vowel of a phrase (a held note) is at least this |  |  |  |  |  |  |  |  |
-| SUNG | 0.99 |  | 229 | an onset key at least this high is a sung vowel and gets a gain |  |  |  |  |  |  |  |  |
-| PHRASE_GAP | 24 | frames | 230 | frames between onsets that end a phrase for the mouth (tools/lip_timing.py) |  |  |  |  |  |  |  |  |
-| CROSSFADE | 3 |  | 231 |  |  |  |  |  |  |  |  |  |
-| HOLD_RELAX | 0.08 | frames | 232 | a held vowel eases off by this much, frames |  |  |  |  |  |  |  |  |
-| HOLD_TAU | 12.0 | frames | 232 | a held vowel eases off by this much, frames |  |  |  |  |  |  |  |  |
-| CLOSE_FRAMES | 3 | frames | 233 |  |  |  |  |  |  |  |  |  |
-| OPEN_FRAMES | (2, 3) | frames | 234 |  |  |  |  |  |  |  |  |  |
-| BREATH | (0.03, 0.08, 0.20) |  | 235 |  |  |  |  |  |  |  |  |  |
-| BREATH_PERIOD | (1.6, 2.6) |  | 236 |  |  |  |  |  |  |  |  |  |
-| JOIN_BREATH | 0.25 |  | 237 | under lip_timing's MIN_WEIGHT, so a breath is no onset |  |  |  |  |  |  |  |  |
-| JOIN_GAP | (10, 90) | frames | 238 | frames between two onsets where a breath may go |  |  |  |  |  |  |  |  |
-| JOIN_INTO | 3 | frames | 239 | frames from the breath to the next vowel's onset |  |  |  |  |  |  |  |  |
-| BREATH_CAP | 0.29 |  | 240 | a breath never takes あ to lip_timing's MIN_WEIGHT (0.3): it makes no onset |  |  |  |  |  |  |  |  |
-| JOIN_PAUSE_BINS | 10 |  | 241 |  |  |  |  |  |  |  |  |  |
-| JOIN_PAUSE_DB | 6.0 |  | 241 |  |  |  |  |  |  |  |  |  |
-| VOICE_BAND | (300.0, 3500.0) |  | 242 |  |  |  |  |  |  |  |  |  |
-| HOP | 160 |  | 243 |  |  |  |  |  |  |  |  |  |
-| SAMPLE_RATE | 16000 |  | 243 |  |  |  |  |  |  |  |  |  |
-| WINDOW | 1024 |  | 243 |  |  |  |  |  |  |  |  |  |
-| AUDIO_T0 | WINDOW / 2.0 / SAMPLE_RATE | s | 244 | seconds: the centre of the first window |  |  |  |  |  |  |  |  |
-| SHOWN | 0.1875 | frames | 245 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py, a12) |  |  |  |  |  |  |  |  |
-| LEAD | 15 | frames | 247 | frames the eyes are open before the body moves |  |  |  |  |  |  |  |  |
-| WAKE_AFTER | 45 |  | 248 |  |  |  |  |  |  |  |  |  |
-| WAKE_BEFORE | 15 |  | 248 |  |  |  |  |  |  |  |  |  |
-| WAKE_OPEN | 10 |  | 248 |  |  |  |  |  |  |  |  |  |
-| BODY_MOVES | (3.0, 0.1) | deg | 249 | degrees / model units the head has moved from frame 0 when the body starts (more than breathing at rest moves it) |  |  |  |  |  |  |  |  |
-| MEASURE_SEED | 1234 |  | 251 | the circular shifts of the chance levels |  |  |  |  |  |  |  |  |
-| SHIFTS | 2000 |  | 252 |  |  |  |  |  |  |  |  |  |
-| _r(places) | 3 |  | 276 |  |  |  |  |  |  |  |  |  |
-| bake(places) | 6 |  | 309 |  |  |  |  |  |  |  |  |  |
-| bake_within(places) | 6 |  | 320 |  |  |  |  |  |  |  |  |  |
-| bake_within(start) | 0 |  | 320 |  |  |  |  |  |  |  |  |  |
-| FORWARD | np.array([0.0, 0.0, -1.0]) |  | 385 |  |  |  |  |  |  |  |  |  |
-| KIME_PEAK | 75 |  | 460 | percentile of a part's speed (from the body's start) the peak before a stop reaches |  |  |  |  |  |  |  |  |
-| KIME_MIN_SPEED | 8.0 | units/s | 461 | model units a second the peak reaches at least (0.64 m/s at 8 cm a unit) | 決めの頂きの速さ 8 単位/秒（8 cm/単位で 0.64 m/s） | ○ |  |  |  |  |  | retarget |
-| KIME_LOOK | 8 | frames | 462 | frames before the stop the peak is looked for in |  |  |  |  |  |  |  |  |
-| KIME_DROP | 0.25 |  | 463 | the speed falls below this share of the peak (tools/motor_layer.py's stops_and_hits) |  |  |  |  |  |  |  |  |
-| KIME_HOLD | 6 | frames | 464 | frames the part then stays under it: the pose is held |  |  |  |  |  |  |  |  |
-| KIME_MERGE | 4 | frames | 465 | frames: stops of several parts this close are one accent |  |  |  |  |  |  |  |  |
-| KIME_ARRIVE | 1 | frames | 466 | frames before a kime a change of the face arrives (human style). A decided value: never after the kime. The face and the body are both picture: the tolerance of sound ag… |  |  |  |  |  | ○ |  |  |
-| HUMAN_ONSET_FRAMES | (14, 18) | frames | 469 | human style: a rise from nothing (onsets of 4 and 7 frames looked faker than 16, |  |  |  |  |  | ○ |  |  |
-| HUMAN_OFFSET_FRAMES | (15, 20) | frames | 470 | Krumhuber and Kappas 2005; spontaneous smiles rise in 17 to 18 frames and fall in 17 |  |  |  |  |  |  | ○ |  |
-| HUMAN_CHANGE_FRAMES | (13, 17) | frames | 471 | to 19, Schmidt et al. 2006), a fall to nothing, any other change |  |  |  |  |  |  |  |  |
-| kimes(start) | 0 |  | 483 |  |  |  |  |  |  |  |  |  |
-| intensity(seconds) | 2.0 |  | 526 |  |  |  |  |  |  |  |  |  |
-| plan(seed) | 0 |  | 585 |  |  |  |  |  |  |  |  |  |
-| align_shift(length) | 13.0 |  | 947 |  |  |  |  |  |  |  |  |  |
-| PULSE_LONGEST | 3 | frames | 1278 | frames a blink's shut keys span at most (KAZUSA: 1; the long closures: 4 and more) |  |  |  | ○ |  |  |  | dance |
-| PULSE_HEIGHT | 0.15 |  | 1279 | how far a blink's peak stands above the keys on either side |  |  |  |  |  |  |  |  |
-| LID_HIDE | 3 | frames | 1303 | frames: a blink this near a change of the shown share takes it into its shut frames |  |  |  |  |  |  |  |  |
-| FLASH_RATE | 5.0 |  | 1304 | human style: eyes opened for a moment at a kime, at most this many in any minute. The flash is a decided value: Sour's Rin's brows lie under her fringe, so the lid carri… |  |  |  |  | ○ | ○ |  | rig |
-| FLASH_GAP | 60 | frames | 1308 | frames between two of them at least |  |  |  |  |  |  |  |  |
-| FLASH_STRENGTH | 60 |  | 1309 | percentile of the kimes' speed a kime reaches to get one |  |  |  |  |  |  |  |  |
-| FLASH_SHAPE | (5, 3, 8) | frames | 1310 | frames opening (ending a frame before the kime), held, closing again (decided values) |  |  |  |  |  |  |  |  |
-| FLASH_SUNG | 9 | frames | 1311 | frames around a lyric line or a phrase that count as singing |  |  |  |  |  |  |  |  |
-| smile_falls(gone) | 0.1 |  | 1314 |  |  |  |  |  |  |  |  |  |
-| smile_falls(steep) | 0.005 |  | 1314 |  |  |  |  |  |  |  |  |  |
-| smile_falls(top) | 0.25 |  | 1314 |  |  |  |  |  |  |  |  |  |
-| choose_flashes(start) | 0 |  | 1332 |  |  |  |  |  |  |  |  |  |
-| HALF | 0.2 |  | 1838 | まばたき from which the eye counts as half closed between the blinks (a10's base) |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 2107 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2142 | the random draws (default 0) |  |  |  |  |  |  |  |  |
-| --style | "human" |  | 2146 | human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; v7: the face of the MV v7 again, byte for byte |  |  |  | ○ |  | ○ |  | dance |
+| FPS | 30.0 |  | 120 |  |  |  |  |  |  |  |  |  |
+| CORNERS_UP | ("口角上げ", "笑い", 0.6) |  | 124 | (morph, the morph it follows, share of its weight) |  |  |  |  | ○ |  |  | rig |
+| CORNERS_DOWN | ("口角下げ", "真面目", 0.2) |  | 125 |  |  |  |  |  |  |  |  |  |
+| ACTIVE | 0.05 |  | 126 | weight above which an expression counts as shown (a11) |  |  |  |  |  |  |  |  |
+| SNAP | 9 | frames | 127 | frames: a change this quick or quicker is stretched |  |  |  |  |  |  |  |  |
+| ONSET_FRAMES | (12, 16) | frames | 128 | frames of a rise from nothing (both ends included) |  |  |  |  |  |  |  |  |
+| OFFSET_FRAMES | (14, 18) | frames | 129 | of a fall to nothing |  |  |  |  |  |  |  |  |
+| CHANGE_FRAMES | (10, 14) | frames | 130 | of any other change |  |  |  |  |  |  |  |  |
+| TOGETHER | 4 | frames | 131 | frames: changes of different morphs this close are one change of the face |  |  |  |  | ○ |  |  | rig |
+| DELAY.brow | (0, 0) | frames | 132 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
+| DELAY.eye | (3, 4) | frames | 132 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
+| DELAY.mouth | (1, 2) | frames | 132 | frames each part starts after the brows |  |  |  |  |  |  |  |  |
+| ALIGN | 9 | frames | 133 | frames a change may move toward the fastest turn of the head |  |  |  |  |  |  |  |  |
+| ALIGN_RATIO | 1.5 |  | 134 |  |  |  |  |  |  |  |  |  |
+| ALIGN_LEAD | 2 | frames | 135 | frames the face starts changing before the head turns fastest |  |  |  |  |  |  |  |  |
+| WAVE.brow | 0.15 |  | 136 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
+| WAVE.eye | 0.12 |  | 136 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
+| WAVE.mouth | 0.25 |  | 136 | how far the envelope lowers a held weight |  |  |  |  |  |  |  |  |
+| HUMAN_WAVE.brow | 0.15 |  | 137 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
+| HUMAN_WAVE.eye | 0.2 |  | 137 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
+| HUMAN_WAVE.mouth | 0.25 |  | 137 | human style: a held smile eases off by up to a fifth. A decided value, set by Hyde et al. 2013 (toon characters' whole motion scaled to 80-120 % was not told apart): the… |  |  |  |  |  | ○ |  |  |
+| ENVELOPE_STEP | (35, 70) | frames | 141 | frames between the keys of the envelope |  |  |  |  |  |  |  |  |
+| ENVELOPE_MIN_STEP | 0.15 |  | 142 | the envelope changes by at least this from one key to the next |  |  |  |  |  |  |  |  |
+| SLOW | 20 | frames | 143 | frames: a change between two keys this far apart is a drift, and is waved too |  |  |  |  |  |  |  |  |
+| CLOSED | 0.8 |  | 146 | closure (まばたき + 笑い) at which the eye counts as shut (a10) |  |  |  |  |  |  |  |  |
+| STEEP | 0.05 |  | 147 | per-frame change of the closure that counts as the lid moving (a10) |  |  |  |  |  |  |  |  |
+| SHORT_CLOSURE | 4 |  | 148 | closed frames: up to this a closure is a blink, longer ones are kept (a10) |  |  |  |  |  |  |  |  |
+| CLOSING_FRAMES | (2, 3) | frames | 149 |  |  |  |  |  |  |  |  |  |
+| HOLD_FRAMES | (0, 1) | frames | 150 |  |  |  |  |  |  |  |  |  |
+| OPENING_FRAMES | (5, 6) | frames | 151 |  |  |  |  |  |  |  |  |  |
+| CLOSING | {2: (0.5,), 3: (0.3, 0.75)} |  | 152 | the lid between open (0) and shut (1) |  |  |  |  |  |  |  |  |
+| OPENING | {5: (0.62, 0.36, 0.18, 0.07), 6: (0.7, 0.45, 0.27, 0.14, 0.… |  | 153 |  |  |  |  |  |  |  |  |  |
+| P_GAZE | 0.75 |  | 154 |  |  |  |  |  |  |  |  |  |
+| P_PHRASE | 0.55 |  | 154 |  |  |  |  |  |  |  |  |  |
+| P_SACCADE | 0.7 |  | 154 |  |  |  |  |  |  |  |  |  |
+| GAZE_SHIFT | 33.0 | deg | 155 | degrees in frames (a10, Evinger et al. 1994) |  |  |  |  |  |  |  |  |
+| GAZE_SHIFT_FRAMES | 9 | frames | 155 | degrees in frames (a10, Evinger et al. 1994) |  |  |  |  |  |  |  |  |
+| BIG_SACCADE | 20.0 |  | 156 |  |  |  |  |  |  |  |  |  |
+| SACCADE_SPEED | 1.5 | deg | 157 | degrees per frame of the eyes in the head and in the world on a saccade frame |  |  |  |  |  |  |  |  |
+| SACCADE_LONGEST | 5 | frames | 158 | frames: a faster stretch than this is no saccade |  |  |  |  |  |  |  |  |
+| PHRASE_PAUSE | 15 | frames | 159 | frames between two vowel onsets that end a phrase for the blinks (a10) |  |  |  |  |  |  |  |  |
+| PHRASE_BLINK | (5, 9) | frames | 160 | frames after the last vowel of a phrase the blink starts |  |  |  |  |  |  |  |  |
+| MIN_BETWEEN | 15 | frames | 161 | frames between the starts of two blinks |  |  |  |  |  |  |  |  |
+| RATE | 25.0 |  | 162 | blinks a minute at most (the KAZUSA motion: 25.6; people talking: 26, 10.5-32.5) |  |  |  | ○ |  | ○ |  | dance |
+| BLINK_WINDOW | 300 |  | 163 | at most WINDOW_MAX blinks in any BLINK_WINDOW frames (10 s) |  |  |  |  |  |  |  |  |
+| WINDOW_MAX | 7 |  | 163 | at most WINDOW_MAX blinks in any BLINK_WINDOW frames (10 s) |  |  |  |  |  |  |  |  |
+| WINDOW_MARGIN | 4 | frames | 164 | frames added to the window when the blinks are chosen |  |  |  |  |  |  |  |  |
+| GAZE_SHARE | 0.7 |  | 165 | the share of the blinks that may go to the gaze shifts (the largest first) |  |  |  |  |  |  |  |  |
+| FILL_MEDIAN | 3.4 | s | 166 | seconds, log-normal |  |  |  |  |  |  |  |  |
+| FILL_SIGMA | 0.5 | s | 166 | seconds, log-normal |  |  |  |  |  |  |  |  |
+| LONG_PAUSE | (6.0, 10.0) |  | 167 |  |  |  |  |  |  |  |  |  |
+| LONG_PAUSE_CHANCE | 0.12 |  | 167 |  |  |  |  |  |  |  |  |  |
+| KEEP_CLEAR | 15 | frames | 168 | frames around the long closures and after the eyes open without new blinks |  |  |  |  |  |  |  |  |
+| BASE_SWITCH | 8 | frames | 169 | frames over which the lid level changes where an old blink hid the change |  |  |  |  |  |  |  |  |
+| CREEP_LONGEST | 9 | frames | 170 | frames: the lid never closes slowly for longer (a10 counts 10 and more as a creep) |  |  |  |  |  |  |  |  |
+| LID_DOWN | 0.01 |  | 171 | まばたき per degree the eyes look down / up |  |  |  |  |  |  |  |  |
+| LID_UP | 0.005 |  | 171 | まばたき per degree the eyes look down / up |  |  |  |  |  |  |  |  |
+| HUMAN_CLOSING_FRAMES | (2, 3) | frames | 186 | A spontaneous blink closes in 2 to 3 frames and opens in 4 to 7, 7 to 12 frames in all as the end of the opening is taken (Wu et al. 2014: 7.8 frames; Trutoiu et al. 201… |  |  |  | ○ |  |  |  | dance |
+| HUMAN_HOLD_CHANCE | 0.25 |  | 187 |  |  |  |  |  |  |  |  |  |
+| HUMAN_OPENING_FRAMES | (5, 6) | frames | 188 |  |  |  |  |  |  |  |  |  |
+| LONG_CLOSING | 2 | frames | 189 | frames a long blink closes in |  |  |  |  |  |  |  |  |
+| LONG_HOLD | (2, 3) | frames | 190 | frames it stays shut beyond the first (10 to 11 frames in all) |  |  |  |  |  |  |  |  |
+| LONG_OPENING | 6 |  | 191 |  |  |  |  |  |  |  |  |  |
+| LONG_GAP | 240 | frames | 192 | frames (8 s) at least between the starts of two long blinks |  |  |  |  |  |  |  |  |
+| P_LONG.phrase_end | 0.5 |  | 194 |  |  |  |  |  |  |  |  |  |
+| P_LONG.rest | 0.25 |  | 194 |  |  |  |  |  |  |  |  |  |
+| CLOSURE_CAP | 0.7 |  | 195 | human style: between the blinks まばたき + 笑い at most this (or the author's): the lid that follows the eyes down must not shut a smiling eye. A decided value, under a10's "s… |  |  |  |  |  | ○ |  |  |
+| FLASH_QUIET | (8, 3) | frames | 197 | frames before and after a flash's kime no blink starts (blinks hold off at a moment that holds the attention: Shultz et al. 2011) |  |  |  |  |  |  |  |  |
+| SMILE_END_BLINK | 21 | frames | 199 | frames before a smile has fallen (its last moving frame) a blink is placed: in natural smiles of light conversation blinks came 21 frames on average before the offset, t… |  |  |  |  |  |  | ○ |  |
+| P_SMILE_END | 0.6 |  | 202 |  |  |  |  |  |  |  |  |  |
+| LID_NEUTRAL | 0.10 |  | 203 | the lid's level a person's face rests at (Sour's Rin: the upper lid 0.75 iris radii above the iris' centre seen from the front with the eyes level; stage 6 face-v2 q2) |  |  |  | ○ | ○ | ○ |  | rig |
+| LID_SHOWN | (0.85, 0.95, 1.0) |  | 205 | the share of the author's lowering below LID_NEUTRAL that shows: while a phrase is sung (the loudest), at rest, and in the relaxing after a phrase. A decided value, chos… | HANDOVER 2026-10-14 face-v2: KAZUSA 様の真顔の瞼を見せる割合 歌う間 0.85・休み 0.95・句の後 1.0（査読の 0.4〜0.55 は丸い目に見えた） |  |  | ○ |  | ○ |  | dance |
+| LID_QUIET | 0.25 |  | 212 | the quietest phrase shows this much more of it than the loudest (ranked by the voice), never more than all of it |  |  |  |  |  |  |  |  |
+| LID_DEEP | 0.5 |  | 214 | from here to CLOSED the author's lid (a long closure, the wake-up) is blended back in |  |  |  |  |  |  |  |  |
+| LID_STEP | 6 | frames | 215 | frames a change of the shown share takes |  |  |  |  |  |  |  |  |
+| LID_RELAX_AFTER | 6 | frames | 216 | frames after a phrase's last vowel the lid starts to relax |  |  |  |  |  |  |  |  |
+| LID_RELAX_HOLD | 24 | frames | 217 | frames the relaxed lid holds before it goes back to rest |  |  |  |  |  |  |  |  |
+| LID_RELAX_BACK | 12 | frames | 218 | frames it takes to go back (the lid opening: slow is no creep) |  |  |  |  |  |  |  |  |
+| LID_SHORT_GAP | 20 | frames | 219 | frames: phrases this close keep the lid as in a phrase between them |  |  |  |  |  |  |  |  |
+| LID_FOLLOW | (0.029, 0.021) |  | 220 | まばたき per degree the eyes look down / up. A person's upper lid follows the eye up and down by about the same angle (Becker and Fuchs 1988), the cover over the iris growin… | HANDOVER 2026-10-14 face-v2: 瞼が毎コマ目の縦の向きに付く（下 0.029/度・上 0.021/度） |  |  | ○ | ○ | ○ | ○ | rig |
+| BLINK_KEY_TOLERANCE | 0.001 |  | 227 | human style: まばたき's keys are those straight lines need to stay this near every frame (bake_within; eye_optics' keys.morph). Following the eyes the lid bends on most fram… |  |  |  |  | ○ | ○ |  | rig |
+| GAIN | (0.6, 1.0) |  | 233 |  |  |  |  |  |  |  |  |  |
+| SMALL_FLOOR | 0.8 |  | 234 |  |  |  |  |  |  |  |  |  |
+| FINAL_FLOOR | 0.9 |  | 235 | the last vowel of a phrase (a held note) is at least this |  |  |  |  |  |  |  |  |
+| SUNG | 0.99 |  | 236 | an onset key at least this high is a sung vowel and gets a gain |  |  |  |  |  |  |  |  |
+| PHRASE_GAP | 24 | frames | 237 | frames between onsets that end a phrase for the mouth (tools/lip_timing.py) |  |  |  |  |  |  |  |  |
+| CROSSFADE | 3 |  | 238 |  |  |  |  |  |  |  |  |  |
+| HOLD_RELAX | 0.08 | frames | 239 | a held vowel eases off by this much, frames |  |  |  |  |  |  |  |  |
+| HOLD_TAU | 12.0 | frames | 239 | a held vowel eases off by this much, frames |  |  |  |  |  |  |  |  |
+| CLOSE_FRAMES | 3 | frames | 240 |  |  |  |  |  |  |  |  |  |
+| OPEN_FRAMES | (2, 3) | frames | 241 |  |  |  |  |  |  |  |  |  |
+| BREATH | (0.03, 0.08, 0.20) |  | 242 |  |  |  |  |  |  |  |  |  |
+| BREATH_PERIOD | (1.6, 2.6) |  | 243 |  |  |  |  |  |  |  |  |  |
+| JOIN_BREATH | 0.25 |  | 244 | under lip_timing's MIN_WEIGHT, so a breath is no onset |  |  |  |  |  |  |  |  |
+| JOIN_GAP | (10, 90) | frames | 245 | frames between two onsets where a breath may go |  |  |  |  |  |  |  |  |
+| JOIN_INTO | 3 | frames | 246 | frames from the breath to the next vowel's onset |  |  |  |  |  |  |  |  |
+| BREATH_CAP | 0.29 |  | 247 | a breath never takes あ to lip_timing's MIN_WEIGHT (0.3): it makes no onset |  |  |  |  |  |  |  |  |
+| JOIN_PAUSE_BINS | 10 |  | 248 |  |  |  |  |  |  |  |  |  |
+| JOIN_PAUSE_DB | 6.0 |  | 248 |  |  |  |  |  |  |  |  |  |
+| VOICE_BAND | (300.0, 3500.0) |  | 249 |  |  |  |  |  |  |  |  |  |
+| HOP | 160 |  | 250 |  |  |  |  |  |  |  |  |  |
+| SAMPLE_RATE | 16000 |  | 250 |  |  |  |  |  |  |  |  |  |
+| WINDOW | 1024 |  | 250 |  |  |  |  |  |  |  |  |  |
+| AUDIO_T0 | WINDOW / 2.0 / SAMPLE_RATE | s | 251 | seconds: the centre of the first window |  |  |  |  |  |  |  |  |
+| SHOWN | 0.1875 | frames | 252 | frames: the MV shows frame f at f + 0.1875 (tools/mv_look.py, a12) |  |  |  |  |  |  |  |  |
+| LEAD | 15 | frames | 254 | frames the eyes are open before the body moves |  |  |  |  |  |  |  |  |
+| WAKE_AFTER | 45 |  | 255 |  |  |  |  |  |  |  |  |  |
+| WAKE_BEFORE | 15 |  | 255 |  |  |  |  |  |  |  |  |  |
+| WAKE_OPEN | 10 |  | 255 |  |  |  |  |  |  |  |  |  |
+| BODY_MOVES | (3.0, 0.1) | deg | 256 | degrees / model units the head has moved from frame 0 when the body starts (more than breathing at rest moves it) |  |  |  |  |  |  |  |  |
+| MEASURE_SEED | 1234 |  | 260 | the circular shifts of the chance levels |  |  |  |  |  |  |  |  |
+| SHIFTS | 2000 |  | 261 |  |  |  |  |  |  |  |  |  |
+| _r(places) | 3 |  | 285 |  |  |  |  |  |  |  |  |  |
+| bake(places) | 6 |  | 318 |  |  |  |  |  |  |  |  |  |
+| bake_within(places) | 6 |  | 329 |  |  |  |  |  |  |  |  |  |
+| bake_within(start) | 0 |  | 329 |  |  |  |  |  |  |  |  |  |
+| FORWARD | np.array([0.0, 0.0, -1.0]) |  | 394 |  |  |  |  |  |  |  |  |  |
+| KIME_PEAK | 75 |  | 469 | percentile of a part's speed (from the body's start) the peak before a stop reaches |  |  |  |  |  |  |  |  |
+| KIME_MIN_SPEED | 8.0 | units/s | 470 | model units a second the peak reaches at least (0.64 m/s at 8 cm a unit) | 決めの頂きの速さ 8 単位/秒（8 cm/単位で 0.64 m/s） | ○ |  |  |  |  |  | retarget |
+| KIME_LOOK | 8 | frames | 471 | frames before the stop the peak is looked for in |  |  |  |  |  |  |  |  |
+| KIME_DROP | 0.25 |  | 472 | the speed falls below this share of the peak (tools/motor_layer.py's stops_and_hits) |  |  |  |  |  |  |  |  |
+| KIME_HOLD | 6 | frames | 473 | frames the part then stays under it: the pose is held |  |  |  |  |  |  |  |  |
+| KIME_MERGE | 4 | frames | 474 | frames: stops of several parts this close are one accent |  |  |  |  |  |  |  |  |
+| KIME_ARRIVE | 1 | frames | 475 | frames before a kime a change of the face arrives (human style). A decided value: never after the kime. The face and the body are both picture: the tolerance of sound ag… |  |  |  |  |  | ○ |  |  |
+| HUMAN_ONSET_FRAMES | (14, 18) | frames | 478 | human style: a rise from nothing (onsets of 4 and 7 frames looked faker than 16, |  |  |  |  |  | ○ |  |  |
+| HUMAN_OFFSET_FRAMES | (15, 20) | frames | 479 | Krumhuber and Kappas 2005; spontaneous smiles rise in 17 to 18 frames and fall in 17 |  |  |  |  |  |  | ○ |  |
+| HUMAN_CHANGE_FRAMES | (13, 17) | frames | 480 | to 19, Schmidt et al. 2006), a fall to nothing, any other change |  |  |  |  |  |  |  |  |
+| kimes(start) | 0 |  | 492 |  |  |  |  |  |  |  |  |  |
+| intensity(seconds) | 2.0 |  | 535 |  |  |  |  |  |  |  |  |  |
+| plan(seed) | 0 |  | 594 |  |  |  |  |  |  |  |  |  |
+| align_shift(length) | 13.0 |  | 957 |  |  |  |  |  |  |  |  |  |
+| PULSE_LONGEST | 3 | frames | 1288 | frames a blink's shut keys span at most (KAZUSA: 1; the long closures: 4 and more) |  |  |  | ○ |  |  |  | dance |
+| PULSE_HEIGHT | 0.15 |  | 1289 | how far a blink's peak stands above the keys on either side |  |  |  |  |  |  |  |  |
+| LID_HIDE | 3 | frames | 1313 | frames: a blink this near a change of the shown share takes it into its shut frames |  |  |  |  |  |  |  |  |
+| FLASH_RATE | 5.0 |  | 1314 | human style: eyes opened for a moment at a kime, at most this many in any minute. The flash is a decided value: Sour's Rin's brows lie under her fringe, so the lid carri… |  |  |  |  | ○ | ○ |  | rig |
+| FLASH_GAP | 60 | frames | 1318 | frames between two of them at least |  |  |  |  |  |  |  |  |
+| FLASH_STRENGTH | 60 |  | 1319 | percentile of the kimes' speed a kime reaches to get one |  |  |  |  |  |  |  |  |
+| FLASH_SHAPE | (5, 3, 8) | frames | 1320 | frames opening (ending a frame before the kime), held, closing again (decided values) |  |  |  |  |  |  |  |  |
+| FLASH_SUNG | 9 | frames | 1321 | frames around a lyric line or a phrase that count as singing |  |  |  |  |  |  |  |  |
+| smile_falls(gone) | 0.1 |  | 1324 |  |  |  |  |  |  |  |  |  |
+| smile_falls(steep) | 0.005 |  | 1324 |  |  |  |  |  |  |  |  |  |
+| smile_falls(top) | 0.25 |  | 1324 |  |  |  |  |  |  |  |  |  |
+| choose_flashes(start) | 0 |  | 1342 |  |  |  |  |  |  |  |  |  |
+| HALF | 0.2 |  | 1848 | まばたき from which the eye counts as half closed between the blinks (a10's base) |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 2117 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2152 | the random draws (default 0) |  |  |  |  |  |  |  |  |
+| --style | "human" |  | 2156 | human (default): blinks of a person's length and lids tied to the voice, the gaze and the body; v7: the face of the MV v7 again, byte for byte |  |  |  | ○ |  | ○ |  | dance |
 
 ## lip_sync.py（16. 口、73）
 
@@ -2062,8 +2062,8 @@
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
-| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 51 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 445 |  |  |  |  |  |  |  |  |  |
+| ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 52 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
+| _cell(n) | 170 |  | 449 |  |  |  |  |  |  |  |  |  |
 
 ### mouth_shape.py（確かめ・部品、14）
 
