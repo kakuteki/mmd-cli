@@ -22,7 +22,10 @@ floor MMD drew was black with nothing under her feet.  Here the same pieces lie 
   `floor_half` to each side, at the height `floor_y`: its --height; 0.111 is where the model's soles stand) in the colours v7
   showed it, so MMD renders the dancer without the floor accessory.  It can take a
   pool of light round the dancer (`pool`) and the shadows of her feet and body (`shadow`), both from her motion (Figure):
-  the ankles and toes (the IK bones), the pelvis and the centre, by forward kinematics (mmd_cli/fk.py).
+  the ankles and toes (the IK bones), the pelvis and the centre, by forward kinematics (mmd_cli/fk.py);
+* the depth of field (`dof`, look2): the stage blurred by its distance from the focus (the camera's look-at point, or
+  `dof_focus`) as a thin lens blurs it, `dof` pixels (a standard deviation, of a 720 line picture) infinitely far, before
+  the dancer is laid over it: the floor under her stays sharp, the floor behind her and the cyc blur.
 
 A frame of the stage is drawn at the moment of its video frame; with motion blur (the dancer rendered at `subframes` times the
 rate and `shutter` of each frame averaged: mv_look --subframes 8 --shutter 0.5 averages subframes 0..3) the camera is the one
@@ -86,6 +89,7 @@ class View:
         if abs(state.angles[0]) >= 90.0:
             raise ValueError("the camera looks over the top (window X %.3f degrees at frame %s)" % (state.angles[0], state.frame))
         self.size = (int(size[0]), int(size[1]))
+        self.distance = float(state.distance)          # from the eye to the look-at point (the focus of stage.dof)
         self.eye = np.array(fk.camera_position(state), dtype=np.float64)
         self.forward = np.array(fk.camera_direction(state), dtype=np.float64)
         ax, ay = math.radians(state.angles[0]), math.radians(state.angles[1])
@@ -157,17 +161,13 @@ def _reference_focal(size):
     return (size[1] / 2.0) / math.tan(math.radians(REFERENCE["fov"]) / 2.0)
 
 
-def _cyc_place(view, scale, radius):
-    """(theta, psi) of the cyc where the rays of the pixels meet it: theta the angle round the stage centre from the front
-    (+Z, the back of the stage seen from the front) towards +X, psi the height as the angle the reference camera would see
-    it at from the back (infinitely far: the ray's own direction).  A ray that does not meet the cyc (straight up, or a
-    camera outside it looking away) takes its direction"""
+def _cyc_hit(view, scale, radius):
+    """(rays, t, ok): the rays of the pixels (View.rays) and where they meet the cyc of `radius`, e + t d, where ok (t 0
+    elsewhere); t and ok are None for a cyc infinitely far (radius 0)"""
     d = view.rays(scale)
-    horizontal = np.hypot(d[..., 0], d[..., 2])
-    theta = np.arctan2(d[..., 0], d[..., 2])
-    psi = np.arctan2(d[..., 1], horizontal)
     if radius <= 0:
-        return theta, psi
+        return d, None, None
+    horizontal = np.hypot(d[..., 0], d[..., 2])
     e = view.eye
     a = horizontal ** 2
     b = 2.0 * (e[0] * d[..., 0] + e[2] * d[..., 2])
@@ -177,7 +177,21 @@ def _cyc_place(view, scale, radius):
     with np.errstate(divide="ignore", invalid="ignore"):
         t = (-b + np.sqrt(np.where(ok, disc, 0.0))) / (2.0 * np.where(ok, a, 1.0))
     ok &= t > 0
-    t = np.where(ok, t, 0.0)
+    return d, np.where(ok, t, 0.0), ok
+
+
+def _cyc_place(view, scale, radius):
+    """(theta, psi) of the cyc where the rays of the pixels meet it: theta the angle round the stage centre from the front
+    (+Z, the back of the stage seen from the front) towards +X, psi the height as the angle the reference camera would see
+    it at from the back (infinitely far: the ray's own direction).  A ray that does not meet the cyc (straight up, or a
+    camera outside it looking away) takes its direction"""
+    d, t, ok = _cyc_hit(view, scale, radius)
+    horizontal = np.hypot(d[..., 0], d[..., 2])
+    theta = np.arctan2(d[..., 0], d[..., 2])
+    psi = np.arctan2(d[..., 1], horizontal)
+    if radius <= 0:
+        return theta, psi
+    e = view.eye
     x, y, z = e[0] + t * d[..., 0], e[1] + t * d[..., 1], e[2] + t * d[..., 2]
     theta = np.where(ok, np.arctan2(x, z), theta)
     psi = np.where(ok, np.arctan2(y - REFERENCE["look_at"][1], radius + REFERENCE["distance"]), psi)
@@ -1086,6 +1100,86 @@ def _centred_mean(values, window):
     return out
 
 
+# ---- depth of field (stage.dof, look2) ------------------------------------------------------
+#
+# The references (lookref, lookrev 2026-10-18) blur what lies behind the dancer: their stage is 1.85 times as soft as their
+# person (the median of 12 videos; 1.55 to 2.93 between the quartiles), ours was sharper than her (0.57 to 0.74).  The stage
+# is blurred here by its distance as a thin lens blurs it, before mv_look lays the dancer over it (she is in focus).
+
+DOF_MOST = 3.0                   # a stage nearer the camera than the focus blurs at most this many times stage.dof
+DOF_LEVELS = 2.0 ** 0.5          # defocus blurs the picture at levels of blur this far apart (and 0.5 px the first)
+_NDI = []
+
+
+def _ndi():
+    """scipy.ndimage, imported when a stage is first blurred (a stage without stage.dof does without it)"""
+    if not _NDI:
+        import scipy.ndimage
+        _NDI.append(scipy.ndimage)
+    return _NDI[0]
+
+
+def blur_of(depth, focus, far):
+    """the blur (a standard deviation) of what lies at `depth` along the line of sight, the camera focused at `focus`: a thin
+    lens's circle of confusion grows as |1 - focus / depth|, from none at the focus to `far` infinitely far behind it, and
+    in front of it up to DOF_MOST times `far`"""
+    depth = np.asarray(depth, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        k = np.abs(1.0 - float(focus) / np.where(depth > 0, depth, np.inf))
+    return np.minimum(np.where(depth > 0, k, DOF_MOST), DOF_MOST) * float(far)
+
+
+def cyc_depth(view, radius):
+    """the depth along the line of sight where the ray of every pixel meets the cyc (inf where it does not, and for a cyc
+    infinitely far)"""
+    d, t, ok = _cyc_hit(view, 1, radius)
+    if t is None:
+        return np.full(d.shape[:2], np.inf)
+    return np.where(ok, t * view.focal, np.inf)                 # the rays' component along the line of sight is the focal
+
+
+def floor_depth(view, height=0.0):
+    """the depth along the line of sight where the ray of every pixel meets the plane of the floor (inf where it does not)"""
+    d = view.rays(1)
+    above = float(view.eye[1]) - float(height)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = -above / d[..., 1]
+    return np.where((d[..., 1] < 0) & (above > 0), t * view.focal, np.inf)
+
+
+def stage_blur(view, look, cover=None):
+    """the blur of every pixel of the stage seen by `view` (pixels of its picture): the cyc's by its depth, and where the
+    floor covers a pixel (cover: its share, None without a floor) the floor's by its own"""
+    stage = look["stage"]
+    far = float(stage["dof"]) * view.size[1] / REFERENCE_HEIGHT
+    focus = float(stage["dof_focus"]) or view.distance
+    sigma = blur_of(cyc_depth(view, float(stage["radius"])), focus, far)
+    if cover is not None:
+        sigma = sigma * (1.0 - cover) + cover * blur_of(floor_depth(view, float(stage["floor_y"])), focus, far)
+    return sigma
+
+
+def defocus(img, sigma):
+    """img (rows, columns, channels: floats, light may pass 255) blurred at every pixel by its own `sigma` (a standard
+    deviation in pixels): the picture is blurred at levels of blur DOF_LEVELS apart, and each pixel is mixed from the two
+    levels round its blur.  A pixel of blur 0 keeps its value"""
+    img = np.asarray(img, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    out = img.copy()
+    top = float(sigma.max()) if sigma.size else 0.0
+    lower, below = 0.0, img
+    level = 0.5
+    while lower < top:
+        above = _ndi().gaussian_filter(img, (level, level, 0), mode="nearest")
+        here = (sigma > lower) & (sigma <= level)
+        if here.any():
+            w = ((sigma[here] - lower) / (level - lower))[:, None]
+            out[here] = below[here] * (1.0 - w) + above[here] * w
+        lower, below = level, above
+        level *= DOF_LEVELS
+    return out
+
+
 # ---- a frame of the stage -------------------------------------------------------------------
 
 def _screen(a, b):
@@ -1137,12 +1231,15 @@ def stage_image(look, size, track, fps, index, light_frames, subframes=1, shutte
     back = _screen(np.clip(back, 0, 255), np.clip(light, 0, 255))
     small = Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
     back = np.asarray(small.resize(tuple(size), Image.BILINEAR), dtype=np.float64)
+    cover = None
     if int(look["stage"]["floor"]):
         drawn = floor_moments(track, times, size, float(look["stage"]["floor_half"]), float(look["stage"]["floor_y"]))
         views = [view_at(track, t, size) for t in drawn]
         figures = [figure.state(t) for t in drawn] if figure is not None else None
         rgb, cover = floor(views, look, size, figures)
         back = back * (1.0 - cover[..., None]) + cover[..., None] * (rgb + FLOOR_SEE_THROUGH * back)
+    if look["stage"]["dof"] > 0:
+        back = defocus(back, stage_blur(middle, look, cover))
     return Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
 
 

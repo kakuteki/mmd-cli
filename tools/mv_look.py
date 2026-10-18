@@ -129,10 +129,16 @@ DEFAULT_LOOK = {
               "shadow_contact": 0.9,                # how dark the light from all round leaves the floor under her, 0 to 1
               "shadow_key": 0.6,    # the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE):
                                     # the core of a shadow keeps 1 - this (the rest comes from all round)
-              "shadow_share": 1},   # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
+              "shadow_share": 1,    # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
                                     # pool's light and the darkening from all round the rest, the lines keep their own
                                     # (mv_world.soft_light, 2026-10-17); 0 the floor of before (the pool the key light's
                                     # alone, both shares darkened from all round, the lines darkened too)
+              # depth of field (look2, 2026-10-18; the stage in the world only): the stage is blurred by its distance from
+              # the focus as a thin lens blurs it, before the dancer is laid over it (she is in focus)
+              "dof": 0.0,           # the blur (a standard deviation, pixels of a 720 line picture) of what lies infinitely
+                                    # far; half of it at twice the focus's distance, none at the focus; 0 no blur
+              "dof_focus": 0.0},    # the distance in focus along the line of sight (MMD units); 0: the camera's own
+                                    # distance to its look-at point (where the MV's cameras put the dancer)
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -228,6 +234,13 @@ def _check_stage(stage):
         raise ValueError("stage.pool_colour is r, g, b from 0")
     if stage["world"] and not stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         raise ValueError("stage.pool and stage.shadow light and darken the floor this tool draws: they need stage.floor 1")
+    for key in ("dof", "dof_focus"):
+        if not (math.isfinite(stage[key]) and stage[key] >= 0):
+            raise ValueError("stage.%s is from 0 (0: %s), not %r" % (key, "no blur" if key == "dof" else "the camera's look-at "
+                                                                     "point", stage[key]))
+    if stage["dof"] > 0 and not stage["world"]:
+        raise ValueError("stage.dof blurs the stage by its distance from the camera, which only a stage in the world has: it "
+                         "needs stage.world 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------
