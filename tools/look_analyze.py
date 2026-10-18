@@ -2083,13 +2083,38 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def layer_masks(path, indices, size, start=0.0, duration=None):
+    """{n: mask (0..1)}: the alpha of the frames of the given numbers of a video drawn with an alpha channel (the person
+    drawn alone: the dancer's layer of our own render), made `size` by averaging.  ValueError when it is of another shape
+    than the frames it is the mask of, or has not all of the frames"""
+    info = probe(path)
+    w, h = size
+    if abs(info["width"] / float(info["height"]) - w / float(h)) > 0.01:
+        raise ValueError("the layer %s is %dx%d, the frames it masks %dx%d" % (path, info["width"], info["height"], w, h))
+    want = sorted(set(int(i) for i in indices))
+    expr = "+".join("eq(n\\,%d)" % i for i in want)
+    pre, post = _range_args(start, duration)
+    argv = ["ffmpeg", "-v", "error", "-nostdin"] + pre + ["-i", path] + post + \
+           ["-vf", "select='%s',alphaextract,scale=%d:%d:flags=area" % (expr, w, h), "-fps_mode", "passthrough",
+            "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    raw = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL).stdout
+    got = len(raw) // (w * h)
+    if got != len(want):
+        raise ValueError("the layer %s has %d of the %d frames to mask (from %d to %d)" % (path, got, len(want), want[0],
+                                                                                             want[-1]))
+    return {n: np.frombuffer(raw[k * w * h:(k + 1) * w * h], np.uint8).reshape(h, w) / 255.0 for k, n in enumerate(want)}
+
+
 def measure_regions(path, out, label=None, start=None, end=None, frames=48, height=720, matrix="auto", model=None,
-                    threads=6, mask_fn=None, fps=30, seed=0, log=None):
+                    threads=6, mask_fn=None, fps=30, seed=0, log=None, mask_video=None):
     """the person and the stage read apart (REGION_MEASURES) on frames spread evenly over a video (or a folder of
-    frames), inside its letterbox bars: the person's mask from the person model (model: its ONNX file) or from
-    mask_fn(frame uint8) -> mask; OUT.json holds each frame's measures and their summary (as measure's)"""
-    if mask_fn is None and not model:
-        raise ValueError("regions needs the person model (--model isnetis.onnx) or a mask function")
+    frames), inside its letterbox bars: the person's mask from the person model (model: its ONNX file), from
+    mask_fn(frame uint8) -> mask, or from mask_video, a video of the same frames with the person drawn alone with an alpha
+    channel (our own render's dancer layer: the person model took a bright floor line under our dancer for part of her on
+    some frames, look2); OUT.json holds each frame's measures and their summary (as measure's)"""
+    if mask_fn is None and not model and not mask_video:
+        raise ValueError("regions needs the person model (--model isnetis.onnx), the person's layer (--mask-video) or a "
+                         "mask function")
     info = probe(path, fps=fps)
     mat = matrix_for(info, matrix)
     start = float(start or 0.0)
@@ -2109,7 +2134,11 @@ def measure_regions(path, out, label=None, start=None, end=None, frames=48, heig
     bars = find_bars(stack)
     x0, y0, x1, y1 = active_box(bars, stack.shape[1:])
     unit = stack.shape[1] / REFERENCE_HEIGHT
-    if mask_fn is None:
+    layers = None
+    if mask_video:
+        frame_h, frame_w = got[ns[0]].shape[:2]
+        layers = layer_masks(mask_video, ns, (frame_w, frame_h), start=start, duration=duration)
+    elif mask_fn is None:
         session = seg_session(model, threads)
 
         def mask_fn(a):
@@ -2117,7 +2146,7 @@ def measure_regions(path, out, label=None, start=None, end=None, frames=48, heig
     rows = []
     for n in ns:
         a = np.ascontiguousarray(got[n][y0:y1, x0:x1])
-        m = mask_fn(a)
+        m = layers[n][y0:y1, x0:x1] if layers is not None else mask_fn(a)
         rows.append({"n": int(n), "t": start + n / float(rate), "shot": 0,
                      "m": {k: float(v) for k, v in region_measures(a.astype(np.float64) / 255.0, m, unit, seed=seed + n).items()}})
         if log:
@@ -2128,7 +2157,8 @@ def measure_regions(path, out, label=None, start=None, end=None, frames=48, heig
               "probe": info if not info.get("folder") else {k: v for k, v in info.items() if k != "files"},
               "range": [start, end], "analysis_height": int(stack.shape[1]), "unit": unit, "matrix": mat,
               "box": [int(x0), int(y0), int(x1), int(y1)], "frames_with_person": with_person,
-              "model": {"path": model, "sha256": _sha256(model)} if model else None,
+              "model": {"path": model, "sha256": _sha256(model)} if model and not mask_video else None,
+              "mask": {"video": mask_video, "sha256": _sha256(mask_video)} if mask_video else None,
               "frames": rows, "summary": summary}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
@@ -2537,7 +2567,9 @@ def main(argv=None):
     g = sub.add_parser("regions", help="the person and the stage read apart (the person model's mask)")
     g.add_argument("input")
     g.add_argument("out")
-    g.add_argument("--model", required=True, help="the person model's ONNX file (skytnt/anime-seg isnetis.onnx)")
+    g.add_argument("--model", help="the person model's ONNX file (skytnt/anime-seg isnetis.onnx)")
+    g.add_argument("--mask-video", help="our own render: the person read from her layer, a video of the same frames with "
+                                        "her drawn alone with an alpha channel (in place of --model)")
     g.add_argument("--label")
     g.add_argument("--from", dest="start", type=float)
     g.add_argument("--to", dest="end", type=float)
@@ -2591,7 +2623,8 @@ def main(argv=None):
             r["frame"]["fps_effective"]))
     elif args.cmd == "regions":
         r = measure_regions(args.input, args.out, label=args.label, start=args.start, end=args.end, frames=args.frames,
-                            height=args.height, matrix=args.matrix, model=args.model, threads=args.threads, fps=args.fps)
+                            height=args.height, matrix=args.matrix, model=args.model, threads=args.threads, fps=args.fps,
+                            mask_video=args.mask_video)
         s = r["summary"]
         print("regions of %s: %d frames, %d with the person, person %.3f, person L* %.1f, stage L* %.1f" % (
             r["label"], len(r["frames"]), r["frames_with_person"], s["frame.person_share"]["median"],

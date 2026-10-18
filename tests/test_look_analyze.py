@@ -789,6 +789,44 @@ class VideoTest(unittest.TestCase):
         self.assertIn("### 人物", table)
         self.assertIn("person.L_p50", table)
 
+    def test_the_person_of_our_own_render_is_read_from_her_layer(self):
+        # look2 (2026-10-18): the person model took the bright floor line under v11's dancer for part of her on some frames,
+        # and whether it did changed with the stage's blur (the halo read 0.7 and 1.8 for the same dancer and glow).  Our
+        # own render has the dancer drawn alone with her alpha: --mask-video reads the person from it, frame by frame.  A
+        # bright box (her) with a bright line running down from it to the bottom of the picture (the floor line): read
+        # from her layer, the person is the box alone, and no model is needed
+        w, h, n = 160, 180, 20
+        with tempfile.TemporaryDirectory() as tmp:
+            comp = np.full((h, w, 3), 40, np.uint8)                     # (a stage darker than 15 would read as letterbox bars)
+            comp[40:110, 60:100] = 230                                  # her
+            comp[110:, 78:82] = (200, 130, 40)                           # the amber line under her
+            layer = np.zeros((h, w, 4), np.uint8)
+            layer[40:110, 60:100] = (230, 230, 230, 255)
+            path, mask = os.path.join(tmp, "c.mp4"), os.path.join(tmp, "layer.mov")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (w, h), "-r",
+                            "30", "-i", "-", "-vf", "scale=out_color_matrix=bt709:out_range=tv", "-colorspace", "bt709",
+                            "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", path],
+                           input=comp.tobytes() * n, check=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "%dx%d" % (w, h), "-r",
+                            "30", "-i", "-", "-c:v", "png", "-pix_fmt", "rgba", mask], input=layer.tobytes() * n, check=True)
+            out = os.path.join(tmp, "r.json")
+            self.assertEqual(LA.main(["regions", path, out, "--mask-video", mask, "--frames", "4", "--height", "180"]), 0)
+            with open(out, encoding="utf-8") as f:
+                d = json.load(f)
+            self.assertAlmostEqual(d["summary"]["frame.person_share"]["median"], 70 * 40 / float(w * h), delta=0.002)
+            self.assertEqual(d["mask"]["video"], mask)
+            self.assertIsNone(d["model"])
+            # a layer of another shape (another picture), or one shorter than the frames read, is refused
+            small = os.path.join(tmp, "small.mov")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "160x160", "-r", "30",
+                            "-i", "-", "-c:v", "png", "-pix_fmt", "rgba", small], input=layer[:160].tobytes() * n, check=True)
+            short = os.path.join(tmp, "short.mov")
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "%dx%d" % (w, h), "-r",
+                            "30", "-i", "-", "-c:v", "png", "-pix_fmt", "rgba", short], input=layer.tobytes() * 5, check=True)
+            for bad in (small, short):
+                with self.assertRaises(ValueError, msg=bad):
+                    LA.measure_regions(path, out, frames=4, height=180, mask_video=bad)
+
     def test_colours_come_back_as_they_went_in(self):
         # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255
         with tempfile.TemporaryDirectory() as tmp:
