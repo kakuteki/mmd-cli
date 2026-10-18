@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2069（定数 1643・引数 107・関数の既定 319。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 404（retarget 260・rig 62・踊りだけ 94）、記録の出所つき 84。
+- 数: 全部 2099（定数 1654・引数 114・関数の既定 331。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 405（retarget 260・rig 63・踊りだけ 94）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -2051,115 +2051,145 @@
 | --sub | 16 |  | 931 |  |  |  |  |  |  |  |  |  |
 | --shutter | 0.5 |  | 932 |  |  |  |  |  |  |  |  |  |
 
-### look_analyze.py（確かめ・部品、105）
+### look_analyze.py（確かめ・部品、135）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| REFERENCE_HEIGHT | 720.0 |  | 48 | every length is in pixels of a picture this tall (the height of our MV) |  |  |  |  |  |  |  |  |
-| CLIP_WHITE | 253.0 / 255.0 |  | 130 | a channel this high is clipped white |  |  |  |  |  |  |  |  |
-| CLIP_BLACK | 2.0 / 255.0 |  | 131 | all channels this low are crushed black |  |  |  |  |  |  |  |  |
-| LOCAL_SIGMA | 10.0 |  | 132 | the fine contrast: L* against itself blurred by this (720 line pixels) |  |  |  |  |  |  |  |  |
-| tone(unit) | 1.0 |  | 135 |  |  |  |  |  |  |  |  |  |
-| SPLIT_BANDS.high | (65.0, 95.0) |  | 158 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
-| SPLIT_BANDS.mid | (35.0, 65.0) |  | 158 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
-| SPLIT_BANDS.shadow | (8.0, 35.0) |  | 158 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
-| ORANGE | (math.cos(math.radians(55.0)), math.sin(math.radians(55.0))) |  | 159 |  |  |  |  |  |  |  |  |  |
-| WHITE_CHROMA | 30.0 |  | 198 | a near-white pixel: this bright and at most this coloured, and not clipped |  |  |  |  |  |  |  |  |
-| WHITE_L | 80.0 |  | 198 | a near-white pixel: this bright and at most this coloured, and not clipped |  |  |  |  |  |  |  |  |
-| BAR_LEVEL | 0.06 |  | 226 | a bar's rows (or columns) stay under this Y' (15 of 255) in every frame |  |  |  |  |  |  |  |  |
-| FLASH_RISE | 0.10 |  | 283 | Y' above the running median (of FLASH_WINDOW s each side) by this much is a flash |  |  |  |  |  |  |  |  |
-| FLASH_WINDOW | 0.5 |  | 284 |  |  |  |  |  |  |  |  |  |
-| FLASH_LONGEST | 0.6 | s | 285 | s: longer is a change of light, not a flash |  |  |  |  |  |  |  |  |
-| FLASH_BACK | 0.5 |  | 286 | after it the level comes back within this share of its rise (a step does not) |  |  |  |  |  |  |  |  |
-| CUT_LEAST | 0.06 |  | 327 | mean ／difference／ of the thumbnails (Y') a cut changes at least, and |  |  |  |  |  |  |  |  |
-| CUT_OVER | 5.0 |  | 328 | this many times the frame-to-frame change around it |  |  |  |  |  |  |  |  |
-| BLOOM_SOURCE | 0.9 |  | 392 | Y': the light sources whose glow is read |  |  |  |  |  |  |  |  |
-| BLOOM_REACH | 96.0 |  | 393 | 720 line pixels: the glow is read this far out from them, and |  |  |  |  |  |  |  |  |
-| BLOOM_BACK | (96.0, 160.0) |  | 394 | the level it falls to (the background) between these distances |  |  |  |  |  |  |  |  |
-| BLOOM_AT | 4.0 |  | 395 | bloom.strength: the share of the sources' light found this far out (720 px) |  |  |  |  |  |  |  |  |
-| BLOOM_NEAR | (2.0, 8.0) |  | 396 | the glow's colour is read between these distances |  |  |  |  |  |  |  |  |
-| bloom(unit) | 1.0 |  | 410 |  |  |  |  |  |  |  |  |  |
-| STREAK_RING | (6.0, 40.0) |  | 488 | 720 line pixels round a small highlight where its rays are read, |  |  |  |  |  |  |  |  |
-| STREAK_BACK | (40.0, 60.0) |  | 489 | against the level of this ring |  |  |  |  |  |  |  |  |
-| STREAK_BINS | 36 |  | 490 |  |  |  |  |  |  |  |  |  |
-| STREAK_HARMONICS | (2, 4, 6, 8) |  | 491 |  |  |  |  |  |  |  |  |  |
-| streaks(unit) | 1.0 |  | 494 |  |  |  |  |  |  |  |  |  |
-| flat_mask(grow) | 2 |  | 575 |  |  |  |  |  |  |  |  |  |
-| flat_mask(sigma) | 2.0 |  | 575 |  |  |  |  |  |  |  |  |  |
-| grain(unit) | 1.0 |  | 599 |  |  |  |  |  |  |  |  |  |
-| GLITCH_SHIFT | 6 | px | 651 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
-| GLITCH_SEARCH | 32 |  | 652 |  |  |  |  |  |  |  |  |  |
-| EDGE_POINTS | 4000 |  | 679 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
-| EDGE_LEAST | 0.03 |  | 680 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
-| SOBEL_VAR | 0.5 |  | 681 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
-| REBLUR | (1.0, 3.0, 8.0) | px | 683 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
-| SWITCH | (2.5, 6.0, float("inf")) |  | 684 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
-| edges(seed) | 0 |  | 693 |  |  |  |  |  |  |  |  |  |
-| edges(unit) | 1.0 |  | 693 |  |  |  |  |  |  |  |  |  |
-| SOFT_EDGE | 3.0 |  | 739 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
-| DOF_BLOCK | 40.0 |  | 755 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
-| DOF_CONTRAST | 0.10 |  | 756 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
-| DOF_TOP | 0.02 |  | 757 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
-| DOF_PRE | 0.0 |  | 760 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
-| DOF_LINES | 180 |  | 761 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
-| dof_blocks(unit) | 1.0 |  | 786 |  |  |  |  |  |  |  |  |  |
-| SHORT | (8.0, 16.0) |  | 835 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
-| LONG | (28.0, 40.0) |  | 836 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
-| STEP_LEAST | 0.12 |  | 837 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
-| FLAT_MOST | 0.04 |  | 838 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
-| INNER | 4.0 |  | 839 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
-| DIFFUSION_TOP | 0.65 |  | 840 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
-| BRIGHT_EDGE | 0.85 |  | 841 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
-| CORE_MOST | 3.0 |  | 842 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
-| PROFILE_POINTS | 1500 |  | 843 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(seed) | 0 |  | 894 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(unit) | 1.0 |  | 894 |  |  |  |  |  |  |  |  |  |
-| MOVING_LEAST | 3.0 |  | 974 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
-| STILL_MOST | 0.5 |  | 975 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
-| MOVING_PIXEL | 1.0 |  | 976 | this counts as moving |  |  |  |  |  |  |  |  |
-| MOTION_LEAST | 0.008 |  | 977 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
-| motion(seed) | 0 |  | 1037 |  |  |  |  |  |  |  |  |  |
-| motion(unit) | 1.0 |  | 1037 |  |  |  |  |  |  |  |  |  |
-| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1088 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
-| aberration(unit) | 1.0 |  | 1091 |  |  |  |  |  |  |  |  |  |
-| LINE_LEAST | 0.2 |  | 1131 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
-| LINE_OFF_CENTRE | 0.2 |  | 1132 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
-| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1135 |  |  |  |  |  |  |  |  |  |
-| distortion(unit) | 1.0 |  | 1169 |  |  |  |  |  |  |  |  |  |
-| measure_frame(seed) | 0 |  | 1347 |  |  |  |  |  |  |  |  |  |
-| measure_frame(unit) | 1.0 |  | 1347 |  |  |  |  |  |  |  |  |  |
-| BOOTSTRAP | 400 |  | 1397 |  |  |  |  |  |  |  |  |  |
-| _trimmed_rms(keep) | 0.9 |  | 1400 |  |  |  |  |  |  |  |  |  |
-| summarise(seed) | 0 |  | 1408 |  |  |  |  |  |  |  |  |  |
-| probe(fps) | 30 |  | 1541 |  |  |  |  |  |  |  |  |  |
-| read_frames(start) | 0.0 |  | 1622 |  |  |  |  |  |  |  |  |  |
-| THUMB | (64, 36) |  | 1647 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
-| read_thumbs(start) | 0.0 |  | 1650 |  |  |  |  |  |  |  |  |  |
-| measure_video(height) | 720 |  | 1710 |  |  |  |  |  |  |  |  |  |
-| measure_video(jobs) | 1 |  | 1710 |  |  |  |  |  |  |  |  |  |
-| measure_video(pairs) | 120 |  | 1710 |  |  |  |  |  |  |  |  |  |
-| measure_video(fps) | 30 |  | 1711 |  |  |  |  |  |  |  |  |  |
-| measure_video(full_every) | 4 |  | 1711 |  |  |  |  |  |  |  |  |  |
-| measure_video(pair_every) | 4 |  | 1711 |  |  |  |  |  |  |  |  |  |
-| measure_video(seed) | 0 |  | 1711 |  |  |  |  |  |  |  |  |  |
-| TEXT_LEAST | 8.0 |  | 1824 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
-| text_summary(unit) | 1.0 |  | 1848 |  |  |  |  |  |  |  |  |  |
-| measure_text(frames) | 24 |  | 1877 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(height) | 720 |  | 2018 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(size) | (320, 180) |  | 2018 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 720 |  | 2048 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2048 |  |  |  |  |  |  |  |  |  |
-| --pairs | 120 |  | 2186 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2187 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2188 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 2189 |  |  |  |  |  |  |  |  |  |
-| --pair-every | 4 |  | 2190 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
-| --full-every | 4 |  | 2192 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 2194 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --size | (320, 180) |  | 2212 |  |  |  |  |  |  |  |  |  |
-| --frames | 24 | frames | 2217 |  |  |  |  |  |  |  |  |  |
-| --what | "dof" |  | 2222 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2224 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 57 | every length is in pixels of a picture this tall (the height of our MV) |  |  |  |  |  |  |  |  |
+| CLIP_WHITE | 253.0 / 255.0 |  | 139 | a channel this high is clipped white |  |  |  |  |  |  |  |  |
+| CLIP_BLACK | 2.0 / 255.0 |  | 140 | all channels this low are crushed black |  |  |  |  |  |  |  |  |
+| LOCAL_SIGMA | 10.0 |  | 141 | the fine contrast: L* against itself blurred by this (720 line pixels) |  |  |  |  |  |  |  |  |
+| tone(unit) | 1.0 |  | 144 |  |  |  |  |  |  |  |  |  |
+| SPLIT_BANDS.high | (65.0, 95.0) |  | 167 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
+| SPLIT_BANDS.mid | (35.0, 65.0) |  | 167 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
+| SPLIT_BANDS.shadow | (8.0, 35.0) |  | 167 | the bands of L* for split toning, and the direction of orange in a*b* (teal is its opposite) |  |  |  |  |  |  |  |  |
+| ORANGE | (math.cos(math.radians(55.0)), math.sin(math.radians(55.0))) |  | 168 |  |  |  |  |  |  |  |  |  |
+| WHITE_CHROMA | 30.0 |  | 207 | a near-white pixel: this bright and at most this coloured, and not clipped |  |  |  |  |  |  |  |  |
+| WHITE_L | 80.0 |  | 207 | a near-white pixel: this bright and at most this coloured, and not clipped |  |  |  |  |  |  |  |  |
+| BAR_LEVEL | 0.06 |  | 235 | a bar's rows (or columns) stay under this Y' (15 of 255) in every frame |  |  |  |  |  |  |  |  |
+| FLASH_RISE | 0.10 |  | 292 | Y' above the running median (of FLASH_WINDOW s each side) by this much is a flash |  |  |  |  |  |  |  |  |
+| FLASH_WINDOW | 0.5 |  | 293 |  |  |  |  |  |  |  |  |  |
+| FLASH_LONGEST | 0.6 | s | 294 | s: longer is a change of light, not a flash |  |  |  |  |  |  |  |  |
+| FLASH_BACK | 0.5 |  | 295 | after it the level comes back within this share of its rise (a step does not) |  |  |  |  |  |  |  |  |
+| CUT_LEAST | 0.06 |  | 336 | mean ／difference／ of the thumbnails (Y') a cut changes at least, and |  |  |  |  |  |  |  |  |
+| CUT_OVER | 5.0 |  | 337 | this many times the frame-to-frame change around it |  |  |  |  |  |  |  |  |
+| BLOOM_SOURCE | 0.9 |  | 401 | Y': the light sources whose glow is read |  |  |  |  |  |  |  |  |
+| BLOOM_REACH | 96.0 |  | 402 | 720 line pixels: the glow is read this far out from them, and |  |  |  |  |  |  |  |  |
+| BLOOM_BACK | (96.0, 160.0) |  | 403 | the level it falls to (the background) between these distances |  |  |  |  |  |  |  |  |
+| BLOOM_AT | 4.0 |  | 404 | bloom.strength: the share of the sources' light found this far out (720 px) |  |  |  |  |  |  |  |  |
+| BLOOM_NEAR | (2.0, 8.0) |  | 405 | the glow's colour is read between these distances |  |  |  |  |  |  |  |  |
+| bloom(unit) | 1.0 |  | 419 |  |  |  |  |  |  |  |  |  |
+| STREAK_RING | (6.0, 40.0) |  | 503 | 720 line pixels round a small highlight where its rays are read, |  |  |  |  |  |  |  |  |
+| STREAK_BACK | (40.0, 60.0) |  | 504 | against the level of this ring |  |  |  |  |  |  |  |  |
+| STREAK_BINS | 36 |  | 505 |  |  |  |  |  |  |  |  |  |
+| STREAK_HARMONICS | (2, 4, 6, 8) |  | 506 |  |  |  |  |  |  |  |  |  |
+| streaks(unit) | 1.0 |  | 509 |  |  |  |  |  |  |  |  |  |
+| flat_mask(grow) | 2 |  | 590 |  |  |  |  |  |  |  |  |  |
+| flat_mask(sigma) | 2.0 |  | 590 |  |  |  |  |  |  |  |  |  |
+| grain(unit) | 1.0 |  | 614 |  |  |  |  |  |  |  |  |  |
+| GLITCH_SHIFT | 6 | px | 666 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
+| GLITCH_SEARCH | 32 |  | 667 |  |  |  |  |  |  |  |  |  |
+| EDGE_POINTS | 4000 |  | 694 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
+| EDGE_LEAST | 0.03 |  | 695 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
+| SOBEL_VAR | 0.5 |  | 696 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
+| REBLUR | (1.0, 3.0, 8.0) | px | 698 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
+| SWITCH | (2.5, 6.0, float("inf")) |  | 699 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
+| edges(seed) | 0 |  | 708 |  |  |  |  |  |  |  |  |  |
+| edges(unit) | 1.0 |  | 708 |  |  |  |  |  |  |  |  |  |
+| SOFT_EDGE | 3.0 |  | 754 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
+| DOF_BLOCK | 40.0 |  | 770 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
+| DOF_CONTRAST | 0.10 |  | 771 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
+| DOF_TOP | 0.02 |  | 772 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
+| DOF_PRE | 0.0 |  | 775 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
+| DOF_LINES | 180 |  | 776 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
+| _blur_blocks(unit) | 1.0 |  | 801 |  |  |  |  |  |  |  |  |  |
+| dof_blocks(unit) | 1.0 |  | 836 |  |  |  |  |  |  |  |  |  |
+| SHORT | (8.0, 16.0) |  | 865 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
+| LONG | (28.0, 40.0) |  | 866 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
+| STEP_LEAST | 0.12 |  | 867 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
+| FLAT_MOST | 0.04 |  | 868 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
+| INNER | 4.0 |  | 869 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
+| DIFFUSION_TOP | 0.65 |  | 870 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
+| BRIGHT_EDGE | 0.85 |  | 871 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
+| CORE_MOST | 3.0 |  | 872 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
+| PROFILE_POINTS | 1500 |  | 873 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(seed) | 0 |  | 924 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(unit) | 1.0 |  | 924 |  |  |  |  |  |  |  |  |  |
+| MOVING_LEAST | 3.0 |  | 1004 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
+| STILL_MOST | 0.5 |  | 1005 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
+| MOVING_PIXEL | 1.0 |  | 1006 | this counts as moving |  |  |  |  |  |  |  |  |
+| MOTION_LEAST | 0.008 |  | 1007 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
+| motion(seed) | 0 |  | 1067 |  |  |  |  |  |  |  |  |  |
+| motion(unit) | 1.0 |  | 1067 |  |  |  |  |  |  |  |  |  |
+| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1118 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
+| aberration(unit) | 1.0 |  | 1121 |  |  |  |  |  |  |  |  |  |
+| LINE_LEAST | 0.2 |  | 1161 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
+| LINE_OFF_CENTRE | 0.2 |  | 1162 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
+| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1165 |  |  |  |  |  |  |  |  |  |
+| distortion(unit) | 1.0 |  | 1199 |  |  |  |  |  |  |  |  |  |
+| measure_frame(seed) | 0 |  | 1377 |  |  |  |  |  |  |  |  |  |
+| measure_frame(unit) | 1.0 |  | 1377 |  |  |  |  |  |  |  |  |  |
+| PERSON_INNER | 3.0 |  | 1433 | 720 line px: the person is read this far inside its outline (the edge mixes with |  |  |  |  |  | ○ |  |  |
+| STAGE_GAP | 12.0 |  | 1434 | the stage), the stage this far outside it (the person's glow, the mask's error) |  |  |  |  |  | ○ |  |  |
+| REGION_LEAST | 0.005 |  | 1435 | a region under this share of the frame is not read |  |  |  |  |  |  |  |  |
+| RIM_EDGE | (3.0, 6.0) |  | 1436 | 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px, |  |  |  |  |  |  |  |  |
+| RIM_CORE | (12.0, 20.0) |  | 1437 | against the light further in along the same normal |  |  |  |  |  |  |  |  |
+| HALO_EDGE | (1.0, 4.0) |  | 1438 | 720 line px inside the outline: the person's own light at its edge, the source of |  |  |  |  |  | ○ |  |  |
+| HALO_NEAR | (3.0, 8.0) |  | 1439 | the glow it throws on the stage just outside, |  |  |  |  |  |  |  |  |
+| HALO_FAR | (24.0, 40.0) |  | 1440 | against the stage further out |  |  |  |  |  |  |  |  |
+| HALO_LEAST | 0.05 |  | 1441 | linear luminance: the edge brighter than the far stage by at least this |  |  |  |  |  |  |  |  |
+| OUTLINE_POINTS | 3000 |  | 1442 | outline points read per frame at most |  |  |  |  |  |  |  |  |
+| SEG_SIZE | 1024 |  | 1443 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
+| _along(order) | 1 |  | 1513 |  |  |  |  |  |  |  |  |  |
+| silhouette(seed) | 0 |  | 1520 |  |  |  |  |  |  |  |  |  |
+| silhouette(unit) | 1.0 |  | 1520 |  |  |  |  |  |  |  |  |  |
+| region_measures(seed) | 0 |  | 1574 |  |  |  |  |  |  |  |  |  |
+| region_measures(unit) | 1.0 |  | 1574 |  |  |  |  |  |  |  |  |  |
+| seg_session(threads) | 6 |  | 1621 |  |  |  |  |  |  |  |  |  |
+| BOOTSTRAP | 400 |  | 1651 |  |  |  |  |  |  |  |  |  |
+| _trimmed_rms(keep) | 0.9 |  | 1654 |  |  |  |  |  |  |  |  |  |
+| summarise(seed) | 0 |  | 1662 |  |  |  |  |  |  |  |  |  |
+| probe(fps) | 30 |  | 1796 |  |  |  |  |  |  |  |  |  |
+| read_frames(start) | 0.0 |  | 1877 |  |  |  |  |  |  |  |  |  |
+| THUMB | (64, 36) |  | 1902 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
+| read_thumbs(start) | 0.0 |  | 1905 |  |  |  |  |  |  |  |  |  |
+| measure_video(height) | 720 |  | 1965 |  |  |  |  |  |  |  |  |  |
+| measure_video(jobs) | 1 |  | 1965 |  |  |  |  |  |  |  |  |  |
+| measure_video(pairs) | 120 |  | 1965 |  |  |  |  |  |  |  |  |  |
+| measure_video(fps) | 30 |  | 1966 |  |  |  |  |  |  |  |  |  |
+| measure_video(full_every) | 4 |  | 1966 |  |  |  |  |  |  |  |  |  |
+| measure_video(pair_every) | 4 |  | 1966 |  |  |  |  |  |  |  |  |  |
+| measure_video(seed) | 0 |  | 1966 |  |  |  |  |  |  |  |  |  |
+| measure_regions(frames) | 48 |  | 2086 |  |  |  |  |  |  |  |  |  |
+| measure_regions(height) | 720 |  | 2086 |  |  |  |  |  |  |  |  |  |
+| measure_regions(fps) | 30 |  | 2087 |  |  |  |  |  |  |  |  |  |
+| measure_regions(seed) | 0 |  | 2087 |  |  |  |  |  |  |  |  |  |
+| measure_regions(threads) | 6 |  | 2087 |  |  |  |  |  |  |  |  |  |
+| TEXT_LEAST | 8.0 |  | 2140 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
+| text_summary(unit) | 1.0 |  | 2164 |  |  |  |  |  |  |  |  |  |
+| measure_text(frames) | 24 |  | 2193 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(height) | 720 |  | 2334 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(size) | (320, 180) |  | 2334 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 720 |  | 2364 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2364 |  |  |  |  |  |  |  |  |  |
+| --pairs | 120 |  | 2528 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2529 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2530 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 2531 |  |  |  |  |  |  |  |  |  |
+| --pair-every | 4 |  | 2532 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
+| --full-every | 4 |  | 2534 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 2536 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --frames | 48 | frames | 2544 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2545 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2546 |  |  |  |  |  |  |  |  |  |
+| --threads | 6 |  | 2547 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
+| --fps | 30 |  | 2548 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --size | (320, 180) |  | 2567 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2569 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
+| --frames | 24 | frames | 2574 |  |  |  |  |  |  |  |  |  |
+| --what | "dof" |  | 2579 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2581 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2583 |  |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 
