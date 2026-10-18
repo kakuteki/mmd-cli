@@ -677,8 +677,8 @@ EDGE_POINTS = 4000                # edges read per frame at most (a random choic
 EDGE_LEAST = 0.03                 # an edge's gradient (Y' per pixel, Sobel) at least this
 SOBEL_VAR = 0.5                   # px^2: the Sobel gradient and the pixel grid widen a step by this (measured on
                                   # synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70)
-REBLUR = (1.0, 3.0)               # px: the two re-blurs; the wider is used for edges softer than SOFT_SWITCH
-SOFT_SWITCH = 2.5
+REBLUR = (1.0, 3.0, 8.0)          # px: the re-blurs; an edge is read with the narrowest whose reading stays under
+SWITCH = (2.5, 6.0, float("inf"))  # its switch (a narrow re-blur hardly lowers a soft edge's gradient)
 
 
 def _gradient(gray):
@@ -692,7 +692,7 @@ def edges(gray, unit=1.0, seed=0, points=EDGE_POINTS):
 
     The blur is read as Zhuo and Sim (2011) do: blurring the frame again by a known s0 lowers an edge's gradient by
     sqrt(sigma^2 + s0^2) / sigma, so sigma follows from the ratio of the two gradients, whatever the edge's contrast
-    (the Sobel gradient's own width taken out).  Returns arrays y, x (pixels), nx, ny (the unit normal, towards the
+    (the Sobel gradient's own width taken out); s0 is 1, 3 or 8 px (the narrowest that still reads the edge).  Returns arrays y, x (pixels), nx, ny (the unit normal, towards the
     bright side), mag (the gradient) and sigma (the blur, as a Gaussian's standard deviation, in 720 line pixels)."""
     cv2, ndi = _cv2(), _ndi()
     g = np.asarray(gray, np.float64)
@@ -715,13 +715,18 @@ def edges(gray, unit=1.0, seed=0, points=EDGE_POINTS):
             r = m0 / m1
             est2 = s0 * s0 / np.maximum(r * r - 1.0, 1e-9)
         sigmas[s0] = np.sqrt(np.clip(est2 - SOBEL_VAR, 0.0, None))
-    sigma = np.where(sigmas[REBLUR[0]] <= SOFT_SWITCH, sigmas[REBLUR[0]], sigmas[REBLUR[1]])
+    sigma = sigmas[REBLUR[-1]].copy()
+    scale = np.full(len(sigma), REBLUR[-1])
+    for s0, top in reversed(list(zip(REBLUR[:-1], SWITCH[:-1]))):
+        use = sigmas[s0] <= top
+        sigma = np.where(use, sigmas[s0], sigma)
+        scale = np.where(use, s0, scale)
     sx, sy, smag = _gradient(ndi.gaussian_filter(g, 1.0))      # the normal from the smoothed frame (steadier)
     with np.errstate(invalid="ignore", divide="ignore"):
         nx, ny = sx[ys, xs] / smag[ys, xs], sy[ys, xs] / smag[ys, xs]
     good = np.isfinite(sigma) & (sigma < 40.0 * unit) & np.isfinite(nx) & np.isfinite(ny)
     return {"y": ys[good], "x": xs[good], "nx": nx[good], "ny": ny[good], "mag": m0[good],
-            "sigma": sigma[good] / unit, "shape": g.shape}
+            "sigma": sigma[good] / unit, "scale": scale[good], "shape": g.shape}
 
 
 SOFT_EDGE = 3.0                   # 720 line pixels: an edge blurred more than this is soft (out of focus)
@@ -873,15 +878,62 @@ def flow(gray0, gray1):
     return cv2.calcOpticalFlowFarneback(a, b, None, 0.5, 5, 21, 4, 7, 1.5, 0)
 
 
+_BOX = {}
+
+
+def _sigma_1d(profile, s0):
+    """the blur edges() reads with the re-blur s0 on a 1-D step profile (the same steps: the central difference, the
+    local top over 3, the re-blur, the Sobel width taken out), at the profile's steepest point"""
+    ndi = _ndi()
+
+    def grad(p):
+        g = np.zeros_like(p)
+        g[1:-1] = np.abs(p[2:] - p[:-2]) / 2.0
+        return ndi.maximum_filter1d(g, 3)
+
+    m0 = grad(profile)
+    i = int(np.argmax(ndi.gaussian_filter1d(m0, 0.7)))
+    m1 = grad(ndi.gaussian_filter1d(profile, s0, mode="nearest"))
+    r = m0[i] / max(m1[i], 1e-12)
+    return math.sqrt(max(s0 * s0 / max(r * r - 1.0, 1e-9) - SOBEL_VAR, 0.0))
+
+
+def box_length(sigma, scale):
+    """the length (pixels) of the box blur (a shutter open while the edge moves) that edges() reads as the blur sigma
+    (pixels) with the re-blur scale: edges() reads a Gaussian's sigma well, but a box of length L as about 1.5 to 2
+    times L / sqrt(12); this is the inverse of what each re-blur reads on steps blurred by boxes of 0 to 60 pixels
+    (made once, the pixel's own width included)"""
+    if "tables" not in _BOX:
+        x = np.arange(-160.0, 160.0, 1.0)
+        lengths = np.arange(0.0, 60.5, 0.5)
+        tables = {}
+        for s0 in REBLUR:
+            reads = []
+            for L in lengths:
+                lo = 0.3 - L / 2.0
+                # the box-blurred step as the pixels see it (each pixel the mean over its own width)
+                prof = (np.clip((x + 0.5 - lo) / max(L, 1e-9), 0.0, 1.0) + np.clip((x - 0.5 - lo) / max(L, 1e-9), 0.0, 1.0)) / 2.0                     if L > 0 else (x >= 0.3).astype(np.float64)
+                reads.append(_sigma_1d(prof, s0))
+            tables[s0] = (np.maximum.accumulate(np.array(reads)), lengths)
+        _BOX["tables"] = tables
+    sigma = np.asarray(sigma, np.float64)
+    scale = np.broadcast_to(np.asarray(scale, np.float64), sigma.shape)
+    out = np.zeros(sigma.shape)
+    for s0, (reads, lengths) in _BOX["tables"].items():
+        sel = scale == s0
+        if np.any(sel):
+            out[sel] = np.interp(sigma[sel], reads, lengths)
+    return out
+
+
 def motion(gray0, gray1, e, unit=1.0, f=None, seed=0):
     """motion and motion blur between two frames (the second the next different picture)
 
     motion.speed: the median speed of the moving edges (720 line pixels a frame); motion.moving: the share of pixels
-    moving at least MOVING_PIXEL; motion.shutter: how long the shutter was open as a share of the frame time, from the
-    10 to 90 % width of edges moving across themselves against the width of still ones: a box blur of length L widens
-    a step by 0.8 L, so shutter = sqrt(w_moving^2 - w_still^2) / (0.8 x the edge's motion across itself) (0 without
-    motion blur, 0.5 for a 180 degree shutter).  f: the flow if already made."""
-    g0 = np.asarray(gray0, np.float64)
+    moving at least MOVING_PIXEL; motion.shutter: how long the shutter was open as a share of the frame time: the
+    blur of each edge moving across itself (edges(), turned into the length of a box blur by box_length, less the
+    still edges' own) over how far it moved across itself in the frame (0 without motion blur, 0.5 for a 180 degree
+    shutter); motion.edges: how many moving edges it is read from.  f: the flow if already made."""
     if f is None:
         f = flow(gray0, gray1)
     speed = np.hypot(f[..., 0], f[..., 1]) / unit
@@ -897,31 +949,13 @@ def motion(gray0, gray1, e, unit=1.0, f=None, seed=0):
     still = np.nonzero(sp < STILL_MOST)[0]
     if len(moving):
         out["motion.speed"] = float(np.median(sp[moving]))
-    if len(moving) < 10 or len(still) < 10:
+    out["motion.edges"] = float(len(moving))
+    if len(moving) < 10:
         return out
-    rng = np.random.default_rng(seed)
-    if len(moving) > PROFILE_POINTS:
-        moving = rng.choice(moving, PROFILE_POINTS, replace=False)
-    if len(still) > PROFILE_POINTS:
-        still = rng.choice(still, PROFILE_POINTS, replace=False)
-
-    def widths(idx, half):
-        t, p = _profiles(g0, e, half, unit, idx)
-        sides = (half * 0.6, half)
-        ok, q = _steps(t, p, sides)
-        return ok, np.array([_width(t, row) for row in q])
-
-    ok_s, w_s = widths(still, SHORT[1])
-    w_still = np.nanmedian(w_s) if np.isfinite(w_s).sum() >= 5 else float("nan")
-    half = float(min(80.0, max(SHORT[1], 1.5 * np.percentile(across[moving], 90))))
-    ok_m, w_m = widths(moving, half)
-    u = across[moving][ok_m]
-    good = np.isfinite(w_m)
-    out["motion.edges"] = float(good.sum())
-    if good.sum() < 5 or not np.isfinite(w_still):
-        return out
-    s = np.sqrt(np.clip(w_m[good] ** 2 - w_still ** 2, 0.0, None)) / (0.8 * u[good])
-    out["motion.shutter"] = float(np.median(s))
+    sig_img = e["sigma"] * unit
+    base = float(np.median(box_length(sig_img[still], e["scale"][still]))) if len(still) >= 10 else 0.0
+    lengths = np.sqrt(np.clip(box_length(sig_img[moving], e["scale"][moving]) ** 2 - base ** 2, 0.0, None))
+    out["motion.shutter"] = float(np.median(lengths / (across[moving] * unit)))
     return out
 
 
