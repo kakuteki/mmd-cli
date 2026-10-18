@@ -26,7 +26,11 @@ What is done:
 3. Alignment (align): the lines that follow each other with less than BLOCK_GAP seconds between them are aligned to the
    voice together, by Viterbi through a left-to-right chain: silence, then per mora a consonant (if it has one), its
    vowel (at least SHORTEST rows), an optional short pause, and silence after each line (which may also take a sound
-   that is no lyric, an ad lib or the echo of the line before, at FILLER a row).  A line may sit only within LINE_SLACK
+   that is no lyric, an ad lib or the echo of the line before, at FILLER a row).  A vowel alone after another syllable
+   of the line (と お) has an optional break before it instead of the pause (breaks_before): a dip of the voice or near
+   silence, scored as a consonant, so that a vowel sung as a new note after the voice dies down is found there (before
+   2026-10-17 the only unit for such a dip was the next syllable's consonant: at 85.3 s of the MV と and お were
+   squeezed into one note and the next と spread over two; review lipsync 5).  A line may sit only within LINE_SLACK
    of its given time.  A vowel's emission: loud, voiced and steady (no dip), its spectral model (a Gaussian on the MFCC
    per vowel and for ん, trained on this voice: the first pass has none, each next pass is trained on the previous
    alignment, ITERATIONS passes, weighed by SPECTRAL_WEIGHT), and the guide: FACE's own vowels, GUIDE_LAG later (a lip
@@ -34,17 +38,33 @@ What is done:
    its mouth shows that vowel, or another; --no-guide leaves it out).  A consonant is a dip of the level or near silence;
    silence is quiet.  Each mora gets c0 (its consonant starts), v0 (its vowel starts), v1 (its vowel ends), in seconds of
    the voice.
-4. The mouth (mouth_track), every 10 ms of the voice: on a vowel the vowel's SHAPE (a mix of the model's morphs, chosen on
-   a rendered test of Sour's Rin: い with あ at 0.3 shows the teeth and a little opening, う with お at 0.2) times the gain
-   of the voice (GAIN: from GAIN[0] at the soft level to 1 at the loud one, smoothed over GAIN_SMOOTH); on a consonant
+4. The mouth (mouth_track), every 10 ms of the voice: on a vowel the vowel's SHAPE (a mix of the model's morphs) times the
+   gain of the voice (GAIN: from GAIN[0] at the soft level to 1 at the loud one, smoothed over GAIN_SMOOTH).  The mixes
+   were measured on MMD's pictures of Sour's Rin with tools/mouth_shape.py (v11 face review, 2026-10-17): the opening's
+   height is the sum of the morphs' weights times あ 1, い 0.217, う 0.487, え 0.565, お 0.609 of あ's (root mean square
+   error 0.019 over 22 mixes, 0.069 at most, for う + お 0.2), and the gap that is not teeth is that sum less a band of
+   teeth of 0.245 x w(い)^2 that い brings into it (0.016, 0.055 at most): い alone shows only its teeth.  The MV shows
+   あ's opening 4.7 to 5.5 pixels tall on the front camera and 6.1 to 8.1 on camera D (10 to 90 %, 1280x720, scaled by
+   the mouth's depth): い with あ at 0.3 keeps a gap of 1.3 to 1.8 pixels there (0.9 to 1.3 at gain 0.5), あ at 0.1
+   0.3 to 0.5; drawn at that size (v11 review, 2026-10-18: three frames of each camera) 0.3 shows 1 or 2 rows of the
+   inside, 0.1 none on the front camera and a row on camera D, a line of teeth.  That is why い
+   is い + あ 0.3 although on a close picture it stands 88 % of the way from い to え in height (the rigging review's
+   concern: on the MV's pictures い and え differ by 0.2 to 0.4 pixels).  う is う alone: its gap is 1.2 to 2.6 pixels
+   there, and う + お 0.2 (before) stood taller than お itself (0.68 against 0.61 of あ's height).  On a consonant
    the shape of its vowel times the consonant's opening (CONSONANTS), only over its last CONSONANT_LONGEST (the rest of a
    long consonant is the closure before it); the lips shut on m b p (and on っ and on ん before them or at a pause);
-   ん elsewhere nearly closed; silence closed, with a breath (INHALE) before a phrase that follows a rest of at least
+   ん elsewhere nearly closed; over a break before a vowel alone, BREAK_SHARE of that vowel's shape at the voice's
+   gain where the voice sounds, closed where it is quiet; silence closed, with a breath (INHALE) before a phrase that
+   follows a rest of at least
    INHALE_REST.  The mixes are smoothed (a Gaussian of COARTICULATION ms: one shape flows into the next, a vowel's
    shape starts during the consonant before it) and then the lip closures are put back on top of the smoothing
    (CLOSURE_MOVE), so m b p still shut.
    Outside the aligned singing (an ad lib, a vocal chop, the title word sung outside the lines): the author's vowels of
-   FACE where the voice sings (FACE's shape at the voice's gain), closed (at most REST_OPEN) where it does not.  FACE is
+   FACE where the voice sings (FACE's shape at the voice's gain), closed (at most REST_OPEN) where it does not; where
+   FACE closes while the voice sings on above HOLD_DB, FACE's last vowel is held to the end of that run of the voice (the
+   end of the long note at 233.2 s of the MV: FACE closed 0.3 s before the voice), and a sound FACE never opened the
+   mouth on stays closed (the separated voice also carries what is no singing: at 189 to 196 s of the MV a quiet sound
+   unlike her vowels, at 247.3 s a pure tone of the accompaniment; v11 face review).  FACE is
    read GUIDE_LAG later (its own lead taken out), so that there too the mouth leads the voice by --lead-ms and not by
    both (before 2026-10-17 it closed some 0.1 s before the end of a long note outside the lines).
 5. The motion: OUT frame f is the mouth at (f + SHOWN) / FPS + LEAD (the MV shows frame f at f + 0.1875, tools/mv_look.py;
@@ -95,13 +115,15 @@ F0_RANGE = (150.0, 1300.0)
 STEP = HOP / float(SR)          # seconds a feature row
 
 VOWELS = ("あ", "い", "う", "え", "お")
-SHAPES = {"a": {"あ": 1.0}, "i": {"い": 1.0, "あ": 0.3}, "u": {"う": 1.0, "お": 0.2}, "e": {"え": 1.0}, "o": {"お": 1.0}}
+SHAPES = {"a": {"あ": 1.0}, "i": {"い": 1.0, "あ": 0.3}, "u": {"う": 1.0}, "e": {"え": 1.0}, "o": {"お": 1.0}}
 # consonant class -> (share of its vowel's opening kept, a shape of its own or None).  The shares are chosen, not
 # measured: the lips shut for m b p, nearly for v f (the lower lip to the teeth), the jaw rises for the teeth and the
 # tongue tip (s z t d n), less for r k g h; y passes through い, w through う.
 CONSONANTS = {"m": (0.0, None), "v": (0.12, None), "f": (0.25, "u"), "s": (0.35, None), "n": (0.35, None),
               "r": (0.55, None), "k": (0.5, None), "h": (0.6, None), "y": (0.5, "i"), "w": (0.45, "u")}
 N_OPEN = 0.15                   # ん, not before the lips shut: nearly closed
+BREAK_SHARE = 0.6               # a break before a vowel alone keeps this share of its opening where the voice sounds
+                                # (chosen as for h: the jaw stays, nothing closes it)
 CONSONANT_LONGEST = 0.10        # s: a consonant shapes the mouth over this much before its vowel at most
 GAIN = (0.5, -24.0, -6.0)       # the gain at the soft level, the soft level and the loud level (dB, e)
 GAIN_SMOOTH = 0.05              # s
@@ -117,6 +139,8 @@ CLOSURE_HOLD = 0.04             # s: the lips stay shut at least this long (a fr
 CLOSURE_RAMP = 0.10             # s: shutting and parting take at least this long each
 RELEASE = 0.12                  # s: after the last vowel of a phrase the singing ends here
 REST_OPEN = 0.15                # outside the singing, where the voice is silent, the mouth opens at most this
+HOLD_DB = -20.0                 # outside the lines, FACE's last vowel is held while the voice stays above this (e: the
+                                # voice clearly sings, tools/lip_check.py's LOUD_DB)
 LEAD_MS = 50.0
 KEY_TOLERANCE = 0.025
 SIL_DB = -30.0                  # e below this: quiet
@@ -127,7 +151,7 @@ BLOCK_GAP = 2.0                 # s between lines that are aligned apart
 LINE_SLACK = (1.0, 1.5)         # s a line may begin before its given start, end after its given end
 MARGIN = (1.2, 1.6)             # s of the voice taken before and after a block
 ITERATIONS = 6
-STAY = {"V": 0.9, "C": 0.6, "N": 0.85, "Q": 0.85, "SIL": 0.95, "SP": 0.9}
+STAY = {"V": 0.9, "C": 0.6, "BR": 0.6, "N": 0.85, "Q": 0.85, "SIL": 0.95, "SP": 0.9}
 SP_PENALTY = (4.0, 1.5)         # log: a short pause inside a word, between words
 SPECTRAL_WEIGHT = 0.5
 GUIDE = (2.0, -1.0)             # log a row added to a vowel where the guide's mouth shows that vowel, another vowel
@@ -309,7 +333,7 @@ def _logsig(x):
 
 @dataclasses.dataclass
 class Unit:
-    kind: str                   # V C N Q SIL SP
+    kind: str                   # V C BR N Q SIL SP
     label: str                  # the vowel (V), the class (C), "" otherwise
     line: int                   # the line it belongs to (-1: silence between lines and around the block)
     mora: int                   # its mora in the line (-1 for silences)
@@ -318,20 +342,30 @@ class Unit:
     shortest: int               # frames
 
 
-SHORTEST = {"V": 5, "C": 2, "N": 4, "Q": 3, "SIL": 1, "SP": 3}
+SHORTEST = {"V": 5, "C": 2, "BR": 2, "N": 4, "Q": 3, "SIL": 1, "SP": 3}
+
+
+def breaks_before(morae, mi):
+    """whether mora mi of a line gets an optional break (BR) before its vowel: a vowel alone after another syllable of
+    the line (と お: sung legato it needs none, sung as a new note it may start after a dip of the voice)"""
+    m = morae[mi]
+    return mi > 0 and not m.consonant and m.vowel in "aiueo"
 
 
 def chain(lines_morae):
-    """the units of a block: silence, the morae of each line (consonant, vowel, optional pause), silence"""
+    """the units of a block: silence, the morae of each line (consonant or break, vowel, optional pause), silence"""
     units = [Unit("SIL", "", -1, -1, False, 0.0, SHORTEST["SIL"])]
     for li, morae in lines_morae:
         for mi, m in enumerate(morae):
             if m.consonant:
                 units.append(Unit("C", m.consonant, li, mi, False, 0.0, SHORTEST["C"]))
+            elif breaks_before(morae, mi):
+                units.append(Unit("BR", "", li, mi, True, 0.0, SHORTEST["BR"]))
             kind = "V" if m.vowel in "aiueo" else m.vowel
             units.append(Unit(kind, m.vowel if kind == "V" else "", li, mi, False, 0.0, SHORTEST[kind]))
             last = mi == len(morae) - 1
-            if not last:
+            if not last and not breaks_before(morae, mi + 1):
+                # (before a break the break is the pause: two optional units in a row could not both be skipped)
                 nxt = morae[mi + 1]
                 units.append(Unit("SP", "", li, mi, True, -(SP_PENALTY[1] if nxt.word_start else SP_PENALTY[0]),
                                   SHORTEST["SP"]))
@@ -406,6 +440,7 @@ def emissions(voice, model, rows, guide=None):
                 dominant = np.argmax(g, axis=1)
                 out["V:" + c] = out["V:" + c] + np.where(shown, np.where(dominant == j, GUIDE[0], GUIDE[1]), 0.0)
     out["C"] = np.log(0.5 * np.exp(_logsig((dip - 4.0) / 1.2)) + 0.5 * np.exp(_logsig((SIL_DB + 5.0 - e) / 3.0)) + 1e-4)
+    out["BR"] = out["C"]                              # a break before a vowel: a dip of the voice or near silence
     out["Q"] = quiet
     out["SIL"] = np.logaddexp(quiet, FILLER)          # between the lines also a sound that is no lyric (an ad lib)
     out["SP"] = quiet
@@ -548,6 +583,8 @@ def _align_pass(voice, lines, parsed, model, guide=None):
             d = times.setdefault((u.line, u.mora), {})
             if u.kind == "C":
                 d["c0"] = a * STEP
+            elif u.kind == "BR":
+                d["g0"] = a * STEP
             else:
                 d["v0"] = a * STEP
                 d["v1"] = (b + 1) * STEP
@@ -558,10 +595,13 @@ def _align_pass(voice, lines, parsed, model, guide=None):
             if v0 is None:
                 continue
             c0 = d.get("c0", v0)
-            morae_out.append({"line": li, "mora": mi, "kana": m.kana, "consonant": m.consonant, "vowel": m.vowel,
-                              "held": m.held, "word_start": m.word_start, "c0": round(c0, 3), "v0": round(v0, 3),
-                              "v1": round(d["v1"], 3)})
-            per_line.setdefault(li, []).append((c0, d["v1"]))
+            row = {"line": li, "mora": mi, "kana": m.kana, "consonant": m.consonant, "vowel": m.vowel,
+                   "held": m.held, "word_start": m.word_start, "c0": round(c0, 3), "v0": round(v0, 3),
+                   "v1": round(d["v1"], 3)}
+            if "g0" in d:
+                row["g0"] = round(d["g0"], 3)               # the break before this vowel starts
+            morae_out.append(row)
+            per_line.setdefault(li, []).append((d.get("g0", c0), d["v1"]))
         col = {c: emis[c] for c in emis}
         own = np.array([col[_column(units[path[t]])][t] for t in range(len(path))])
         for li in block:
@@ -616,10 +656,16 @@ def mouth_track(voice, morae, face_rows=None):
             prev = ms[k - 1] if k > 0 else None
             c0, v0, v1 = rowsof(m["c0"]), rowsof(m["v0"]), rowsof(m["v1"])
             c0 = max(c0, v0 - int(round(CONSONANT_LONGEST / STEP)))
-            pause_after = nxt is None or rowsof(nxt["c0"]) - v1 >= 15
+            pause_after = nxt is None or rowsof(nxt.get("g0", nxt["c0"])) - v1 >= 15
             if m["vowel"] in "aiueo":
                 base = shape(m["vowel"])
                 X[v0:v1] = base[None, :] * g[v0:v1, None]
+                if "g0" in m:
+                    # a break before a vowel alone (the voice dips and starts the vowel again): the jaw stays near the
+                    # vowel where the voice still sounds, the mouth closes where it is silent
+                    g0 = rowsof(m["g0"])
+                    X[g0:v0] = base[None, :] * (BREAK_SHARE * g[g0:v0, None]) * loud[g0:v0, None]
+                    c0 = min(c0, g0)
                 if m["consonant"]:
                     share, own = CONSONANTS[m["consonant"]]
                     if share == 0.0:
@@ -657,6 +703,17 @@ def mouth_track(voice, morae, face_rows=None):
         dom = np.argmax(face_rows, axis=1)
         for r in np.where(voiced & (total > 0.3))[0]:
             X[r] = shape("aiueo"[dom[r]]) * g[r]
+        # where FACE closes the mouth while the voice sings on (above HOLD_DB without a break), its last vowel is held to
+        # the voice's end; a sound FACE never opened the mouth on in that run stays closed (a leak of the accompaniment)
+        on = outside & (voice.level > HOLD_DB)
+        last = None
+        for r in range(T):
+            if not on[r]:
+                last = None
+            elif total[r] > 0.3:
+                last = dom[r]
+            elif last is not None:
+                X[r] = shape("aiueo"[last]) * g[r]
         quiet = outside & ~loud
         X[quiet] = np.minimum(face_rows[quiet], REST_OPEN)
     # the breath before a phrase that follows a rest
@@ -842,6 +899,7 @@ def run(face_path, vocal_path, lines_path, out_path, lead_ms=LEAD_MS, dance_path
         "sung_seconds": round(float(sung.sum() * STEP), 2),
         "checks": {"vowels_squeezed": sum(1 for m in result["morae"] if m["vowel"] in "aiueo" and not m["held"]
                                           and m["v1"] - m["v0"] < 0.04),
+                   "breaks": sum(1 for m in result["morae"] if "g0" in m),
                    "consonants_over_150ms": sum(1 for m in result["morae"] if m["v0"] - m["c0"] > 0.15)},
         "line_fit": result["lines"],
     }

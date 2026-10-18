@@ -10,6 +10,7 @@ part asks for).
                      tools/balance_layer.Body, the shoes as MMD bends them for the support, contact 1.2 cm, 6 Hz)
     m.shoes()     -> tools/sink_check.measure's curves of the dance (and m.shoes("reference"))
     m.rest()      -> a05's rest of the model's legs (a05.rest_of)
+    m.floor()     -> the floor her soles stand on at rest (units: the shoes' lowest vertex, tools/sink_check.rest_floor)
     m.scaled(s)   -> Scaled: the same version with her body s times as large, for the size-aligned values (base.SIZE_ALIGNED)
 """
 import time
@@ -47,6 +48,9 @@ class Measured:
 
     def rest(self):
         return self._once("rest", lambda: A05.rest_of(self.v.model))
+
+    def floor(self):
+        return self._once("floor", lambda: float(base.tool("sink_check").rest_floor(self.v.rig(), self.v.doc())))
 
     def a05(self):
         def build():
@@ -140,6 +144,9 @@ class Scaled:
     def rest(self):
         rest, ankle_y, toe_y = self.parent.rest()
         return {k: np.asarray(v, dtype=np.float64) * self.s for k, v in rest.items()}, ankle_y * self.s, toe_y * self.s
+
+    def floor(self):
+        return self.parent.floor() * self.s
 
     def a05(self):
         def build():

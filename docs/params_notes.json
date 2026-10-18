@@ -94,10 +94,6 @@
  "smooth_motion.py:DENOISE_CAP": {
   "from": "既定 3 度/0.05。本番は 6 度/0.05（HANDOVER 2026-10-06: 右ひじ p99 −25.7 %、6 度/0.3 は足が床で 0.11 横滑りするので使わない）"
  },
- "eye_optics.py:PARAMS.vergence.ipd_mm": {
-  "from": "女性の平均 61.5 mm（Murray 2017）。リンのモデルの目の骨の間は 0.82 単位（8 cm/単位で 65.6 mm、adapt 10-17）: 寄り目の角は人の値で、モデルの目の位置とは 6.7 % 違う（MV のカメラでは片目 1 px ほど）",
-  "review": "rig"
- },
  "eye_gaze.py:UNIT_M": {
   "from": "eye_optics の unit_mm 80（8 cm/単位）",
   "review": "retarget"
@@ -118,7 +114,7 @@
   "review": "retarget"
  },
  "hand_layer.py:CONTACT_MM.face": {
-  "from": "手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値",
+  "from": "手の層（hands-anatomy、10-14）: 指先が目からこの距離（mm）の内で触れる。リンの顔の大きさで決めた値。v11arms（10-17）: 顔の前はこのまま（目から）。手の層が指先を部位へ 5 mm 以上入れたコマ（I7、頭 43 コマほか）は目から中央値 121 mm（右）・134 mm（左）、10 % 点 112・124 mm でこの外になり、触れの重みは 0 だった。頭の横・上に添えた手は体の面からの CONTACT_SURFACE_MM で読む",
   "review": "retarget・rig"
  },
  "face_life.py:LID_FOLLOW": {
@@ -135,11 +131,7 @@
   "from": "HANDOVER 2026-10-17 lipsync: 口は声より 50 ms 先（lip_check で半分開く時刻 +54 ms、ITU-R BT.1359-1 の窓の中）"
  },
  "lip_sync.py:SHAPES.i.あ": {
-  "from": "HANDOVER 2026-10-17 lipsync: い＝い＋あ 0.3（リンの描いた試しで選んだ）",
-  "review": "rig"
- },
- "lip_sync.py:SHAPES.u.お": {
-  "from": "HANDOVER 2026-10-17 lipsync: う＝う＋お 0.2（リンの描いた試しで選んだ）",
+  "from": "v11face 2026-10-17（tools/mouth_shape.py の測り）: MV の絵で あ の開きは 4.7〜8.1 画素、い＋あ 0.3 の隙間は 1.1〜1.8 画素（い＋あ 0.1 は 0.4〜0.5 画素で閉じて見える）。寄りの絵では え へ 88 %（rig の担当の勧め い＋あ 0.1 は寄りでは正しい）",
   "review": "rig"
  },
  "make_camera.py:SHOT_VALUES.push_in.height": {
@@ -201,5 +193,98 @@
  },
  "pmm_gravity.py:CURRENT.acceleration": {
   "from": "pmm の中の位置（重力の今の値の加速度）。値の決めではない。窓の値と単位: MMD 9.32 で窓の値 1 あたり 9.6 単位/s²（README）"
+ },
+ "balance_layer.py:CATCH_HOLD_MAX_CM": {
+  "from": "v11bal 2026-10-17: v11 の鎖で受け止めを 9.8・10.0・27.1 cm 外す着地を引き戻すと体を 10〜22 cm ずらし解き方が収まらない（195・200 秒の ZMP の外れ）→ 8 cm を越えて外す着地は引き戻さない（試験の倒れる一歩 5.6 cm は引き戻す）",
+  "unit": "cm"
+ },
+ "balance_layer.py:REACH_TOL_FULL_CM": {
+  "from": "v11bal 2026-10-17: 足ＩＫ 120 回以上の模型（rig の写し 400 回）は余り 0〜1.5 cm の床のコマで MMD の IK が 4 mm より届かないコマ 0 → 余り 0.5 cm（1.5 cm のままでは 3 コマで余りの決めを破った）",
+  "unit": "cm"
+ },
+ "balance_layer.py:REACH_FULL_LOOPS": {
+  "from": "v11bal 2026-10-17: 余り 0〜0.25 cm で届かないのは 40 回 89 %・60 回 83 %・80 回 28 %・120 回以上 0 %"
+ },
+ "balance_layer.py:REACH_TOL_CM": {
+  "from": "HANDOVER 2026-10-14 balance の査読: 足ＩＫ 40 回の MMD の IK は余り 1 cm 未満で 70〜100 %、1.5〜4 cm で 2〜3 % 届かない。v11bal 2026-10-17: 足ＩＫ 120 回未満の模型だけに使う（以上は REACH_TOL_FULL_CM）",
+  "unit": "cm"
+ },
+ "hand_layer.py:CONTACT_SURFACE_MM": {
+  "from": "v11arms（10-17）: 手の層が指先・手のひらの中を部位へ 5 mm 以上入れたコマ（I7、54 コマ、頭 43）の入力は面から −11〜+16 mm（中央値 5）。帯 10〜25 mm でその全部を捕まえ、20〜40 mm より止めるコマが少ない（帯の内 0.56 倍。指の速さ 左 40.5 → 40.1・右 45.8 → 44.7 度/秒、20〜40 mm では 36.7・43.0）"
+ },
+ "touch_layer.py:SMOOTH_FRAMES": {
+  "from": "v11arms（10-17）: 触れの層の直しを時間でならす（元の手が触れるコマはそのまま）。σ 0 / 1.0 / 1.5 / 2.5 コマ: 右手首の 8 Hz 超 0.97 / 0.71 / 0.72 / -（前の段 0.60、人 0.15）、突起 右 26.1 / 22.4 / 22.7 / - 回/分、IK で読んだ 1 cm 超 13 / 12 / 15 / 23 コマ、触れを保つコマ 140 / 140 / 139 / 139（163 のうち）。触れるコマもならすと σ 1.0 で 131・1.5 で 127"
+ },
+ "touch_layer.py:RAMP_CM": {
+  "from": "v11arms（10-17）: 一瞬だけの触れ（20.2 秒、元の右手が振りの途中で右ももを 1 コマかすめる）を戻す直しが 1 コマで 9.0 cm 跳んでいた（右手首の 1 コマの落ちと跳ね 3.08・2.78 m/s）。入れ抜きの上限 0 / 1 / 1.5 / 2 cm/コマ: 右手首の 8 Hz 超 0.71 / 0.64 / 0.65 / 0.65 %、突起 右 22.4 / 21.2 / 21.5 / 21.5 回/分（触れの層の前 0.60・21.5、人 0.15・9.4）、IK で読んだ 1 cm 超 12 / 13 / 11 / 11 コマ、最深 2.35 / 3.51 / 2.43 / 2.35 cm、触れを保つコマ 140 / 140 / 139 / 139（163 のうち）"
+ },
+ "lip_sync.py:BREAK_SHARE": {
+  "from": "v11face 2026-10-17: 母音だけの音節の前の切れの間、声が鳴る所で口に残す母音の形の割合（h の 0.6 と同じに決めた）"
+ },
+ "lip_sync.py:HOLD_DB": {
+  "from": "v11face 2026-10-17: 行の外で手打ちの口が閉じても声がこれより大きい間は最後の母音を保つ（lip_check の LOUD_DB と同じ。233.2 秒の長い声の終わり）"
+ },
+ "mouth_shape.py:TEETH_GREY": {
+  "from": "v11face 2026-10-17: リンの skin.png の歯の帯は (246, 220, 220) 前後、歯ぐき・舌は (240, 176, 178) 前後（色の差 60 以上）"
+ },
+ "eye_gaze.py:ECCENTRIC_FROM": {
+  "from": "v11face 2026-10-17: 自由な範囲の一番遠い角（横 12・下 7 は正面から 13.87 度）のすぐ外。ここから ECCENTRIC_WALL へ tanh で押す（自由な範囲の中は前のまま）"
+ },
+ "eye_gaze.py:ECCENTRIC_WALL": {
+  "from": "v11face 2026-10-17: 人は目を正面から 15 度以内に置く（目の動きの 99 %、a13・mv_inspect eyes.eccentric15_pct の決まり 1 % 以下）。15 から目の揺れ（drift）の最大 0.42 を引いた。v11 の土台は正面固定 3.11 %・カメラ D 4.34 %（横の壁 15.3・角の 17.5・接触の 16 度）"
+ },
+ "foot_layer.py:SKIM_LIFT": {
+  "from": "v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 4.8〜5.2 mm → 0〜0.4 mm。retarget が元の高さで運ぶ足を足の層が床へ下ろして滑らせていた（足の層 1 の後の靴の滑り 380 → 604 cm/分、うち 160 は 3〜4 mm 浮いて 30 cm/s より速い足）。0.4 mm で 467、鎖の最後 621 → 316"
+ },
+ "foot_layer.py:SKIM_LIFT_BEFORE": {
+  "from": "v11feet 2026-10-17: --skim off で前の作り（landing human だけ、CONTACT_EXIT の 4.8〜5.2 mm）"
+ },
+ "foot_layer.py:--skim": {
+  "from": "v11feet 2026-10-17: 新設、既定 on（--landing off の 1 回目にも）。--landing off --skim off で c012c32 とバイト同じ"
+ },
+ "foot_layer.py:--hover": {
+  "from": "v11feet 2026-10-17: 既定 sink（--landing human）→ off。retarget の後は 2 回目の足の層の下げが 1 か所 23 コマ・最大 1.3 cm だけで、off でも鎖の最後の数が同じ（靴の滑り 296.6 → 294.9、宙 4.63、浮き 2.42 %）"
+ },
+ "contact_layer.py:SWING_CLEAR": {
+  "from": "v11feet 2026-10-17: 新設 5 mm（ON_FLOOR + 1 mm）。立ちの回りへの下げの馴らし・宙の体の変化に連れる下げで、30 cm/s より速い振りの足を床へ下ろしていた（曲の 22 + 15 cm/分）"
+ },
+ "contact_layer.py:GLIDE_MAX": {
+  "from": "v11feet 2026-10-17: 新設 2 cm（retarget の TOUCH_FLOOR）。立つ足の無い 4 コマ以上で腰が宙のように落ちない所を低い方の足で支える。1.6 cm（AIR_CLEAR）では宙 4.63 回/分・浮き 2.42 %、2 cm で 2.68・2.04 %（人 1.26 [0, 2.92]・1.39 [0.55, 2.19]）、靴の滑り 297 → 316 cm/分"
+ },
+ "contact_layer.py:PLANT_POP": {
+  "from": "v11feet 2026-10-17: 新設 2 歩。立つ足の 1〜2 歩の跳び（前後は遅い）は踊りの滑りでなく止める"
+ },
+ "contact_layer.py:PLANT_SPIKE": {
+  "from": "v11feet 2026-10-17: 新設（2 倍、5 cm）。滑りの中の 1 歩の跳び（曲の 242.1 秒、前後 1.7・1.9 cm の間の 11.35 cm）を前後の速さへ"
+ },
+ "contact_layer.py:FLIGHT_BAND": {
+  "from": "v11feet 2026-10-17（_spike/out/stage6/v11feet/NOTES.md）: 新設（FLIGHT_FIT 0.8 G 〜 G）。宙の重心は踊りの落ち方（宙の区間の放物線）をこの中で保つ（遅いものは 0.8 G、速いものは G）。前はすべての宙を G に。人の宙の重心は −109 [−118, −103]、腰 −108 [−119, −94.6]（FineDance の近い種類、mv_inspect の宙と同じ数え方、scripts/air_com.py・air_com2.py）。曲の宙の腰の加速度（mv_inspect）−132 → −114（土台 −124）、重心 −121 → −104。--exact-gravity で前の作り"
+ },
+ "retarget.py:JUMP_NEAR": {
+  "from": "v11feet 2026-10-17: 新設 2 cm（review_integ の pops.py の床の近さ）"
+ },
+ "retarget.py:JUMP_RATE": {
+  "from": "v11feet 2026-10-17: 新設 2.5 cm/コマ。床の近くで止めの分を 1 コマで返す跳び（128.0 秒の 13.7 cm）を、元の足より 2.5 cm/コマ以上速く動かないように前後へ配る"
+ },
+ "retarget.py:JUMP_SPREAD": {
+  "from": "v11feet 2026-10-17: 新設 6 コマ（各側）"
+ },
+ "retarget_check.py:POP_NEAR_CM": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ 2 cm"
+ },
+ "retarget_check.py:POP_CM": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ 8 cm"
+ },
+ "retarget_check.py:POP_SHARE": {
+  "from": "v11feet 2026-10-17: review_integ の pops.py と同じ（元の動きがその半分未満なら元に無い跳び）"
+ },
+ "retarget.py:JUMP_TOUCH": {
+  "from": "v11feet 2026-10-17: 新設 2 mm（tools/sink_check.py の触れる頂点、retarget_check の pops と同じ読み方）。底の線では 104.4 秒の着地の 9 cm を見落とした"
+ },
+ "contact_layer.py:PLANT_GIVE_BACK": {
+  "from": "v11revm 2026-10-18（_spike/out/stage6/v11revm/NOTES.md）: 新設 1.0（1 歩につきその歩みの長さまで）。PLANT_SPIKE が滑りの中の跳びで止めた分を同じ立ちの滑りの速い歩みへ返す。返さないと曲の 242.1 秒で止めた 9.6 cm が立ちの終わりまで残り、242.53〜242.63 秒の右足が踊りの立ちから 10.5 cm 外に立った（足首を MMD の IK で読む、踊りの歩み 23.4 cm が 32.6 cm）。曲で効くのはそこだけ（右足 242.17〜242.90 秒、最大 9.41 cm）"
+ },
+ "retarget.py:HAND_CLOUD": {
+  "from": "v11revm 2026-10-18（_spike/out/stage6/v11revm/NOTES.md）: 新設 48 点（触れの層だけが使う）。手首と指に最も重みの載る頂点から休みの形で互いに遠い順。リンの手は手首→中指の先の線から 3.4〜4.9 cm まで広がり（線の太さ 2.0 cm）、曲の 107.53〜107.90 秒で左手の横が左ももの周りの服へ 1.8 cm 入っていた（皮を付けた網で読む）。元の手がどこかに触れているコマでは使わない（触れの重みで弱める: 押すと元が左もも・腰に置く手が離れ 13 → 8）"
  }
 }

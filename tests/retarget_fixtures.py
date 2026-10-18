@@ -57,11 +57,14 @@ def sphere(n):
     return out
 
 
-def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True, extra=(), fingers=True):
+def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None, twists=True, extra=(), fingers=True,
+                   plates=()):
     """a PMX of the humanoid with the rest positions `rest` (the left side; the right mirrors x), vertex `blobs` (each
     vertex's normal points out of its sphere), with `shoe` a box of shoe vertices on each 足首, and `extra` bones after
-    the others: (name, parent, rest position, sided) — sided ones on both sides as 左name and 右name (the right mirrored),
-    their parent a middle bone or the same side's; without `fingers` no middle finger (中指１..３)"""
+    the others: (name, parent, rest position, sided) — sided ones on both sides as 左name and 右name (the right
+    mirrored), their parent a middle bone or the same side's; without `fingers` no middle finger (中指１..３); `plates`
+    flat grids of vertices on a sided bone (both sides, the right mirrored): (bone without its side, centre offset from
+    the bone's rest, half extent u, half extent v, points along u, points along v), e.g. a hand's palm on 手首"""
     w = Writer(bone=2, vertex=2)
     pos = {}
     for n, p in rest.items():
@@ -136,6 +139,20 @@ def humanoid_bytes(rest, blobs=(), twist_axis=False, name="humanoid", shoe=None,
                 raw = w.vertex("BDEF1", (index[b],))
                 q = (c[0] + offset[0] + radius * p[0], c[1] + offset[1] + radius * p[1], c[2] + offset[2] + radius * p[2])
                 verts.append(struct.pack("<3f", *q) + struct.pack("<3f", *p) + raw[24:])
+    for bone, offset, u, v, nu, nv in plates:
+        for s in ("左", "右"):
+            mx = -1.0 if s == "右" else 1.0
+            bx, by, bz = where(s + bone, bone)
+            n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+            nn = math.sqrt(sum(c * c for c in n)) or 1.0
+            for i in range(nu):
+                for j in range(nv):
+                    a = 2.0 * i / max(nu - 1, 1) - 1.0
+                    b = 2.0 * j / max(nv - 1, 1) - 1.0
+                    q = [offset[k] + a * u[k] + b * v[k] for k in range(3)]
+                    raw = w.vertex("BDEF1", (index[s + bone],))
+                    verts.append(struct.pack("<3f", bx + mx * q[0], by + q[1], bz + q[2])
+                                 + struct.pack("<3f", mx * n[0] / nn, n[1] / nn, n[2] / nn) + raw[24:])
     if shoe:
         for s in ("左", "右"):
             ax, ay, az = where(s + "足首", "足首")

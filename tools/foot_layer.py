@@ -883,7 +883,8 @@ def default_params():
             "rom": True, "toes": True, "limits": dict(REFERENCE), "heel_pitch_deg": HEEL_PITCH_DEG,
             "rounds": ROUNDS, "load_share": LOAD_SHARE, "flat_pitch": FLAT_PITCH, "loaded_dorsi_cap": LOADED_DORSI_CAP,
             "trace_toe_extra": 0.0, "toe_model": "anatomical", "toe_reach": 0.0,
-            "landing": True, "reach_knee": REACH_KNEE_DEG, "skim": True, "hover": None, "hover_glide": HOVER_GLIDE}
+            "landing": True, "reach_knee": REACH_KNEE_DEG, "skim": True, "skim_lift": SKIM_LIFT, "hover": None,
+            "hover_glide": HOVER_GLIDE}
 
 
 # ---- the landing (feet-landing, 2026-10-16) ---------------------------------------------------------------------------
@@ -912,8 +913,14 @@ SKIM_SPEED = (5.0, 15.0)
 # The most the landing's heel comes down in a frame (degrees): the cap (some 25 degrees) over 5 frames, about the
 # humans' 0.1 s median from the touch to the heel down and inside the 0.2 s that 61 % of them take.
 HEEL_DROP_DEG = 5.0
-SKIM_LIFT = (CONTACT_EXIT, CONTACT_EXIT + 0.005)  # (over the contact's hysteresis: a foot the dance keeps on the floor
-                                                   # is not taken for a skimming one; the review's hovers, 2026-10-16)
+SKIM_LIFT = (0.0, 0.005)        # units over the trace's floor (the flat sole): a foot moving faster than SKIM_SPEED higher
+                                # than 0.4 mm over it is not put onto it.  (CONTACT_EXIT's 4.8 to 5.2 mm before v11feet,
+                                # 2026-10-17, so that a foot the dance keeps on the floor was not taken for a skimming one;
+                                # after the retarget, which puts the source's plants on the floor and carries its other shoes
+                                # as high as the source's, the feet the first foot layer pressed down and that then slid along
+                                # the floor were moving faster than 30 cm/s 3 to 4 mm over it: the song's slide 380 -> 604 cm a
+                                # minute with 4.8 mm, 472 with 0.4 mm and skim in both runs, tools/contact_check.py)
+SKIM_LIFT_BEFORE = (CONTACT_EXIT, CONTACT_EXIT + 0.005)   # (--skim off: the band before v11feet)
 
 
 def toes_down_axis(o, q_foot):
@@ -1066,13 +1073,13 @@ def turn_about(axis, deg, q):
 
 def floor_weight(f, o, p):
     """the on-floor weight v [F] of one foot (0..1): the flat sole within the ON_FLOOR band over the trace's floor, the
-    trace's one- or two-frame lifts of a low shoe bridged, and with p["landing"] and p["skim"] a foot that the dance moves
-    fast with its sole off the floor (SKIM_SPEED, SKIM_LIFT) not put onto it"""
+    trace's one- or two-frame lifts of a low shoe bridged, and with p["skim"] (with the landing or without it: v11feet,
+    2026-10-17) a foot that the dance moves fast with its sole off the floor (SKIM_SPEED, SKIM_LIFT) not put onto it"""
     e = trace_height(f, o, p["trace_toe_extra"])
     lift = trace_height(f, o, p["trace_toe_extra"], key="low")    # the shoe itself, not laid flat
     v = bridge(1.0 - smoothstep(e, *p["on_floor"]), BRIDGE, lift < BRIDGE_LIFT)
-    if p.get("landing", True) and p.get("skim", True):
-        v = v * (1.0 - smoothstep(foot_speed(f), *SKIM_SPEED) * smoothstep(e, *SKIM_LIFT))
+    if p.get("skim", True):
+        v = v * (1.0 - smoothstep(foot_speed(f), *SKIM_SPEED) * smoothstep(e, *p.get("skim_lift", SKIM_LIFT)))
     return v
 
 
@@ -1786,15 +1793,19 @@ def main(argv=None):
                          "bent down up to TOE_FLEX_CAP (anatomical; 0, the default, for none; 2.5 is TOE_REACH)")
     ap.add_argument("--landing", choices=("human", "heel", "off"), default=None,
                     help="human (the default): a loaded touchdown with a sinking pelvis comes down on the forefoot and "
-                         "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball, a foot "
-                         "skimming the floor in the dance is not pressed onto it; heel: the touchdown's heel alone; "
-                         "off: the layer before them (c012c32), "
-                         "byte for byte")
-    ap.add_argument("--hover", choices=("sink", "off"), default=None,
-                    help="sink (the default with --landing human or heel): where no foot is on the floor but the lower shoe "
-                         "hovers under HOVER_MAX over it and the pelvis does not fall as in a flight, the whole figure "
-                         "(centre and leg IKs) is lowered onto the floor (hover_runs); off (the default with --landing "
-                         "off): left as the dance has it")
+                         "lowers its heel as the pelvis sinks, a standing leg out of reach rises onto its ball; heel: the "
+                         "touchdown's heel alone; off: the layer before them (c012c32), byte for byte with --skim off")
+    ap.add_argument("--skim", choices=("on", "off"), default="on",
+                    help="on (the default, with any --landing): a foot the dance moves faster than SKIM_SPEED over the "
+                         "floor (its flat sole higher than SKIM_LIFT) is not pressed onto it; off: as before v11feet "
+                         "(the skim only with --landing human, over 4.8 mm)")
+    ap.add_argument("--hover", choices=("sink", "off"), default="off",
+                    help="sink: where no foot is on the floor but the lower shoe hovers under HOVER_MAX over it and the "
+                         "pelvis does not fall as in a flight, the whole figure (centre and leg IKs) is lowered onto the "
+                         "floor (hover_runs); off (the default since v11feet, with any --landing: after the retarget the "
+                         "song's second foot layer sank one run of 23 frames, by 1.3 cm, and the chain's last measured "
+                         "the same without it; the contact layer's glide stands such runs on the floor): left as the dance "
+                         "has it")
     ap.add_argument("--hover-glide", type=float, default=HOVER_GLIDE, metavar="CM_S",
                     help="the sink takes only the frames whose lower shoe moves along the floor slower than this (cm/s, "
                          "%(default)s: TOE_SLIDE's, under which a pointed foot is taken to stand on the trace model's toe); "
@@ -1829,9 +1840,9 @@ def main(argv=None):
             print("WARNING: " + landing_warning, file=sys.stderr)
     m_in, rep, contacts = measure_report(rig, shoe, motion, floor_y, toe_extra=extra)
     report = {"input": rep, "floor_y": floor_y, "trace_floor": trace_floor(shoe), "trace_toe_cm": args.trace_toe_cm,
-              "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "landing_model": args.landing,
+              "heel_pitch_deg": HEEL_PITCH_DEG, "toe_model": args.toes, "landing_model": args.landing, "skim": args.skim,
               "landing_warning": landing_warning,
-              "hover": (args.hover or ("off" if args.landing == "off" else "sink")), "hover_glide_cm_s": args.hover_glide,
+              "hover": args.hover, "hover_glide_cm_s": args.hover_glide,
               "toe_reach_cm": max(0.0, args.toe_reach_cm),
               "seconds": None}
     report["toes"] = {"input": {TAGS[s]: toe_summary(m_in[s], contacts[s], floor_y) for s in m_in}}
@@ -1840,8 +1851,9 @@ def main(argv=None):
                                               "toe_reach": max(0.0, args.toe_reach_cm) / UNIT_CM,
                                               "landing": args.landing != "off",
                                               "reach_knee": REACH_KNEE_DEG if args.landing == "human" else 0.0,
-                                              "skim": args.landing == "human",
-                                              "hover": (args.hover or ("off" if args.landing == "off" else "sink")) == "sink",
+                                              "skim": args.skim == "on" or args.landing == "human",
+                                              "skim_lift": SKIM_LIFT if args.skim == "on" else SKIM_LIFT_BEFORE,
+                                              "hover": args.hover == "sink",
                                               "hover_glide": args.hover_glide})
         vmd.dump(out, args.out)
         back = vmd.load(args.out)                       # judge what was written, read back

@@ -86,17 +86,22 @@ def reference(mid, path=HUMAN_PATH):
 
 # ---- the body's size -----------------------------------------------------------------------------------------------
 # People's values were measured on one body: FineDance retargets every sequence to SMPL-X's neutral body (human.json's
-# "_about" "body": legs 78.3 cm from the hip to the ankle, the two sides' mean as for hers (its rest joints are not
-# symmetric: left 78.9, right 77.7; review_adapt), about 1.7 m tall), while Sour's Rin's legs are 71.2 cm (adapt,
-# 2026-10-17: thigh + shank 0.91 of people's; her stature 152.7 cm at 8 cm a unit, 0.90).  A measure in cm, or
-# one that counts against a threshold in cm, then compares a smaller body with a larger one.  The size-aligned value
-# measures her again with her body made as large as people's by the legs (shared.Scaled: every position of the pack and
-# of the legs' rest times size_scale, the timing kept, so that lengths, speeds and the thresholds in cm all compare one
-# size).  Only the measures of a05 and fq that count lengths: not those tied to gravity (the fall's acceleration, the
-# flight, the drop against free fall: the same g for every body), not the skirt's rule (in her own units), not the ZMP
-# and the support (her shoes, 16.7 cm, are 0.64 of people's feet, 26 cm, against 0.91 of their legs: another shape, not
-# a size), not the upper body and the arms (her trunk and arms are 0.5 to 0.75 of people's; the human baseline's
-# rin_proportions).
+# "_about" "body": its hip joints 83.98 cm over the ball of the foot's joint, the floor people's measures stand on;
+# legs 78.3 cm from the hip to the ankle, the two sides' mean as for hers (its rest joints are not symmetric: left 78.9,
+# right 77.7; review_adapt), about 1.7 m tall), while Sour's Rin's hips stand 84.1 cm over her soles (the two sides'
+# mean, her soles at rest 0.111 units over MMD's floor) on legs of 71.2 cm (adapt, 2026-10-17: thigh + shank 0.91 of
+# people's, her ankles standing 13.1 cm over her soles; her stature 152.7 cm at 8 cm a unit, 0.90).  A measure
+# in cm, or one that counts against a threshold in cm, then compares her body with people's.  The size-aligned value
+# measures her again with her body made as large as people's (shared.Scaled: every position of the pack and of the legs'
+# rest times the scale, the timing kept, so that lengths, speeds and the thresholds in cm all compare one size).  By
+# default (hip_scale) the scale makes her hips as high over her floor as people's over theirs: gait's usual normalisation
+# (leg length as the hip's height over the floor; the coordinator's choice of 2026-10-17, after review_adapt found that
+# by it no judgement of v10 changes, while by the legs four do, each within 0.2 of people's band from its edge);
+# size_scale makes her legs (hip to knee to ankle) people's.  Only the measures of a05 and fq that count lengths: not
+# those tied to gravity (the fall's acceleration, the flight, the drop against free fall: the same g for every body),
+# not the skirt's rule (in her own units), not the ZMP and the support (her shoes, 16.7 cm, are 0.64 of people's feet,
+# 26 cm, against 0.91 of their legs: another shape, not a size), not the upper body and the arms (her trunk and arms are
+# 0.5 to 0.75 of people's; the human baseline's rin_proportions).
 SIZE_ALIGNED = frozenset([
     "gravity.hover_pct", "gravity.hover_runs6_per_min", "gravity.landing_sink_cm", "gravity.air_per_min",
     "gravity.beat_range_cm", "gravity.vy_p95",
@@ -130,6 +135,34 @@ def size_scale(rest, path=None):
     """how many times as large her body is made to have people's legs (people_leg_cm / leg_cm), None without legs"""
     leg = leg_cm(rest) if rest else None
     return people_leg_cm(path) / leg if leg else None
+
+
+def hip_cm(rest, floor_y):
+    """the hip joints' (足) height over the floor her soles stand on at rest (floor_y, units), in cm (UNIT_CM a unit),
+    the two sides' mean; None when a hip or the floor is missing, or the hips are not over the floor"""
+    if not rest or floor_y is None:
+        return None
+    heights = []
+    for s in LEG_SIDES:
+        try:
+            heights.append(float(np.asarray(rest[s + "足"], dtype=np.float64)[1]) - float(floor_y))
+        except (KeyError, TypeError, IndexError):
+            return None
+    h = float(np.mean(heights)) * UNIT_CM
+    return h if h > 0.0 else None
+
+
+def people_hip_cm(path=None):
+    """the hip's height over the floor of the body people's values were measured on (human.json's "_about" "body":
+    the hip joint over the ball of the foot's joint, people's floor), cm"""
+    return float(human(path or HUMAN_PATH)["_about"]["body"]["hip_above_ball_cm"])
+
+
+def hip_scale(rest, floor_y, path=None):
+    """how many times as large her body is made to have her hips as high over her floor as people's over theirs
+    (people_hip_cm / hip_cm), None without the hips or the floor"""
+    h = hip_cm(rest, floor_y)
+    return people_hip_cm(path) / h if h else None
 
 
 def resolution(unit, seconds=MV_SECONDS):

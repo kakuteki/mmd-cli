@@ -8,6 +8,7 @@ import json
 import math
 import os
 import shutil
+import struct
 import tempfile
 import unittest
 
@@ -23,6 +24,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def load_tool():
     """tools/ is not a package: the module is loaded from its file"""
     spec = importlib.util.spec_from_file_location("hand_layer", os.path.join(ROOT, "tools", "hand_layer.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_named(name):
+    spec = importlib.util.spec_from_file_location("_test_hand_" + name, os.path.join(ROOT, "tools", name + ".py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -76,8 +84,9 @@ def mirrored(kw):
     return out
 
 
-def model_bytes():
-    w = Writer(bone=2)
+def model_bytes(blob=None):
+    """the hands' model; blob: (bone, centre at rest, radius, points) a sphere of vertices on the bone (a hard part)"""
+    w = Writer(bone=2, vertex=2)
     bones = [("全ての親", None, (0.0, 0.0, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("センター", "全ての親", (0.0, 7.847, 0.0), {"flags": NORMAL | TRANSLATE}),
              ("腰", "センター", (0.0, 11.726, 0.255), {}),
@@ -101,7 +110,17 @@ def model_bytes():
         if "append" in kw:
             kw["append"] = (index[kw["append"][0]], kw["append"][1])
         built.append(w.bone(name, parent=-1 if parent is None else index[parent], position=position, **kw))
-    return w.build(name="rin-hand", bones=built)
+    verts = []
+    if blob is not None:
+        bone, centre, radius, n = blob
+        for i in range(n):
+            y = 1.0 - 2.0 * (i + 0.5) / n
+            r = math.sqrt(max(0.0, 1.0 - y * y))
+            a = i * math.pi * (3.0 - math.sqrt(5.0))
+            d = (r * math.cos(a), y, r * math.sin(a))
+            raw = w.vertex("BDEF1", (index[bone],))
+            verts.append(struct.pack("<3f", *[c + radius * v for c, v in zip(centre, d)]) + struct.pack("<3f", *d) + raw[24:])
+    return w.build(name="rin-hand", bones=built, vertices=verts)
 
 
 MODEL = pmx.loads(model_bytes())
@@ -1698,6 +1717,65 @@ class AsV9Test(unittest.TestCase):
                                                   "--transit-scale", "-1"]), 2)
         finally:
             shutil.rmtree(folder)
+
+
+class SurfaceTouchTest(unittest.TestCase):
+    """a hand laid on a hard part far from the eyes (on Rin: the side or the top of the head, 125 - 148 mm from them) is a
+    touch read from the part's surface (CONTACT_SURFACE_MM): the open hand is not curled into it.  Here the part is a
+    sphere on 頭 laid against the left palm at rest, 5 mm off the middle finger's tip, half a metre from the eyes: the
+    rules from the eyes and the bones' lines do not see it"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dance = hand_dance([(0, "open"), (LAST, "open")], centre=False)
+        at = fk.Pose(MODEL, cls.dance, ["左中指３先", "左手首", "頭"]).at(0)       # the arm still: one frame tells
+        n = rotate(at["左手首"][1], palm_normal("左"))
+        cls.radius = 1.0
+        centre = np.asarray(at["左中指３先"][0]) + n * (cls.radius + 0.0625)
+        cls.centre = centre - (np.asarray(at["頭"][0]) - POS["頭"])                # at rest (頭 only carried by センター)
+        cls.normal = n
+        cls.data = model_bytes(blob=("頭", tuple(cls.centre), cls.radius, 300))
+        cls.model = pmx.loads(cls.data)
+        cls.body = load_named("touch_layer").RT.Body.loads(cls.data)
+
+    def gap_mm(self, motion):
+        """per frame, the left long fingertips' nearest distance to the sphere (mm), carried by 頭"""
+        names = ["頭"] + ["左" + f + "３先" for f in hand_layer.LONG]
+        pose = fk.Pose(self.model, motion, names)
+        out = []
+        for f in range(LAST + 1):
+            at = pose.at(f)
+            c = np.asarray(at["頭"][0]) + rotate(at["頭"][1], self.centre - POS["頭"])
+            out.append(min(float(np.linalg.norm(np.asarray(at[t][0]) - c)) for t in names[1:]) - self.radius)
+        return np.array(out) * MM
+
+    def test_the_surface_reads_the_touch_the_rules_do_not(self):
+        old = hand_layer.contact_weights(self.model, self.dance, LAST + 1, ["左", "右"])
+        new, near = hand_layer.surface_weights(self.body, self.dance, LAST + 1, ["左", "右"])
+        self.assertLess(float(old["左"].max()), 0.05)
+        self.assertGreater(float(new["左"].min()), 0.95)
+        self.assertLess(float(new["右"].max()), 0.05)                  # the right hand is far from the sphere
+        self.assertTrue(0.0 < float(near["左"][10]) <= 5.5, near["左"][10])   # mm (the polytope's distance: a lower bound outside)
+
+    def test_an_open_hand_laid_on_it_does_not_curl_into_it(self):
+        before = self.gap_mm(self.dance)
+        res = hand_layer.layer(self.model, self.dance, pulp=PULP, body=self.body)
+        after = self.gap_mm(res.motion)
+        self.assertGreater(float((after - before).min()), -1.0)
+        self.assertGreater(res.report["steps"]["contact_frames_surface"]["左"], LAST // 2)
+        loose = self.gap_mm(hand_layer.layer(self.model, self.dance, pulp=PULP).motion)        # no body: the rules alone
+        self.assertLess(float((loose - before).min()), -2.0)
+        off = dict(hand_layer.default_params(), contact_surface=False)
+        loose = self.gap_mm(hand_layer.layer(self.model, self.dance, off, pulp=PULP, body=self.body).motion)
+        self.assertLess(float((loose - before).min()), -2.0)
+
+    def test_a_hand_further_than_the_band_is_curled_as_before(self):
+        far = model_bytes(blob=("頭", tuple(self.centre + self.normal * 0.6), self.radius, 300))      # 53 mm off
+        body = load_named("touch_layer").RT.Body.loads(far)
+        model = pmx.loads(far)
+        a = hand_layer.layer(model, self.dance, pulp=PULP, body=body).motion
+        b = hand_layer.layer(model, self.dance, pulp=PULP).motion
+        self.assertEqual(vmd.dumps(a), vmd.dumps(b))
 
 
 # ---- the real dance (skipped where it is not; MMD_CLI_TRACE and MMD_CLI_RIN point at them elsewhere) ---------------

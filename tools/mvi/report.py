@@ -122,15 +122,22 @@ def _judge_text(r):
 
 
 def _size_text(r):
-    """the size-aligned value and judgement of a row (mv_inspect's --size legs), or an empty string"""
+    """the size-aligned value and judgement of a row (mv_inspect's --size hip or legs), or an empty string"""
     z = r.get("size")
     if not z:
         return ""
     return "%s（%s）" % (_value(dict(r, value=z["value"])), _judge_text(dict(r, judge=z["judge"])))
 
 
+SIZE_WORDS = {"hip": "股関節の高さでそろえた", "legs": "脚でそろえた"}       # mv_inspect's --size: the columns' words
+
+
 def _sized(report):
-    return (report.get("size") or {}).get("by") == "legs"
+    return (report.get("size") or {}).get("by") in SIZE_WORDS
+
+
+def _size_word(report):
+    return SIZE_WORDS[report["size"]["by"]]
 
 
 def size_flips(report):
@@ -149,7 +156,16 @@ def measures_md(report):
              "- 人の値: %s（中央値 [四分位]。列の組が違う物差しは report.json の ref.group）。決まり・目安のものはその旨。"
              "判定は 中 / 上へ外 / 下へ外（外の数は人の幅を単位にした距離）。" % base.human().get("_about", {}).get("people", ""),
              "- 単位: u は MMD の 1 単位（8 cm）、重力は 122.5 u/s²。加速度の符号は物差しの名に書いた向き（「+ 上」の値は負が下向き）。", ""]
-    if _sized(report):
+    if _sized(report) and report["size"]["by"] == "hip":
+        z = report["size"]
+        lines[-1:-1] = ["- 体の大きさ: 人の値は FineDance の標準の体（SMPL-X の中立の体、股関節が母指球の関節（人の床）から %.1f cm）で測ったもの。"
+                        "リンの股関節は休みの姿勢の靴底（y %.4f 単位）から %.1f cm（左右の平均、8 cm/単位）。「股関節の高さでそろえた」値は"
+                        "リンを %.3f 倍に大きくして同じ時刻で測り直した値で、長さと長さの閾値を数える物差しだけ（tools/mvi/base.SIZE_ALIGNED。"
+                        "重力に結んだ物差し・スカートの決まり・ZMP・上体はそろえない）。判定と外れた所の表は元の値のまま。歩行の正規化の慣例どおり"
+                        "股関節の床からの高さでそろえる（協調役の決め、2026-10-17。脚（股関節→ひざ→足首）でそろえるのは --size legs: リンの脚は人の"
+                        "0.91 倍で、v10 では判定の変わる物差しが 4、股関節の高さなら 0。README）。"
+                        % (z["people_hip_cm"], z["floor_y"], z["hip_cm"], z["scale"])]
+    elif _sized(report):
         z = report["size"]
         lines[-1:-1] = ["- 体の大きさ: 人の値は FineDance の標準の体（SMPL-X の中立の体、脚 %.1f cm）で測ったもの。リンの脚は %.1f cm"
                         "（股関節→ひざ→足首、どちらも左右の平均、8 cm/単位）。「脚でそろえた」値はリンを %.3f 倍に大きくして同じ時刻で測り直した値で、"
@@ -173,7 +189,7 @@ def measures_md(report):
         lines += ["決まり・目安を外れた物差し: " + "、".join("%s %s（%s）" % (r["name"], _value(r), base.ref_text(r.get("ref"))) for r in broken), ""]
     if _sized(report):
         flips = size_flips(report)
-        lines += ["脚でそろえると判定が変わる物差し（%d）: " % len(flips) +
+        lines += ["%sると判定が変わる物差し（%d）: " % (_size_word(report)[:-1], len(flips)) +
                   ("、".join("%s %s → %s（%s → %s）" % (r["name"], _value(r), _value(dict(r, value=r["size"]["value"])), a, b)
                             for r, a, b in flips) if flips else "なし"), ""]
     by_c = {}
@@ -188,7 +204,7 @@ def measures_md(report):
         if not rs:
             continue
         if _sized(report):
-            lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | 脚でそろえた値（判定） | 外れた所 |",
+            lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | %s値（判定） | 外れた所 |" % _size_word(report),
                       "| --- | --- | --- | --- | --- | --- |"]
         else:
             lines += ["## %s" % cname, "", "| 物差し | 値 | 人 / 決まり | 判定 | 外れた所 |", "| --- | --- | --- | --- | --- |"]
@@ -306,6 +322,8 @@ def compare(a, b):
     A's listed places that B still has, unlisted (B's measure as a whole went inside people: the place is not gone);
     "listed_now": B's listed places that A had, unlisted}"""
     ra = {r["id"]: r for r in a["measures"]}
+    by_a, by_b = ((x.get("size") or {}).get("by") for x in (a, b))
+    size_by = by_a if by_a is not None and by_a == by_b else None      # aligned values of one scale only
     rows = []
     for rb in b["measures"]:
         r0 = ra.get(rb["id"])
@@ -316,7 +334,7 @@ def compare(a, b):
                "ref": ref, "judge_a": None if r0 is None else r0.get("judge"), "judge_b": rb.get("judge"),
                "word": base.compare(ref, va, vb, rb.get("unit", ""))}
         za, zb = (r0 or {}).get("size"), rb.get("size")
-        if za and zb:
+        if za and zb and size_by is not None:
             row["a_size"], row["b_size"] = za["value"], zb["value"]
             row["word_size"] = base.compare(ref, za["value"], zb["value"], rb.get("unit", ""))
         rows.append(row)
@@ -339,8 +357,12 @@ def compare(a, b):
         return heavy(none), heavy(unlisted)
     new, listed_now = split(lb, a["events"])
     gone, unlisted_now = split(la, b["events"])
-    return {"a": a["label"], "b": b["label"], "rows": rows, "new": new, "gone": gone, "listed_now": listed_now,
-            "unlisted_now": unlisted_now, "listed": [len(la), len(lb)], "formats": [a.get("format"), b.get("format")]}
+    out = {"a": a["label"], "b": b["label"], "rows": rows, "new": new, "gone": gone, "listed_now": listed_now,
+           "unlisted_now": unlisted_now, "listed": [len(la), len(lb)], "formats": [a.get("format"), b.get("format")]}
+    if by_a is not None or by_b is not None:
+        out["size_by"] = size_by
+        out["sizes_by"] = [by_a, by_b]
+    return out
 
 
 def _dist_text(side, dist):
@@ -363,6 +385,10 @@ def compare_md(c, top=30):
     if fa != fb or fa != FORMAT:
         lines += ["**注意**: 2 つの版の report.json は時刻表の決め方の版が違う（%s %s・%s %s、今の道具は %d）。外れた所の数と"
                   "新しく外れた所・消えた所は測り直してから比べる。" % (c["a"], fa, c["b"], fb, FORMAT), ""]
+    ba, bb = c.get("sizes_by") or [None, None]
+    if ba is not None and bb is not None and ba != bb:
+        lines += ["体の大きさのそろえ方が違う（%s %s・%s %s）ので、そろえた値の判定は比べない（同じ --size で測り直す）。" % (
+            c["a"], SIZE_WORDS.get(ba, ba), c["b"], SIZE_WORDS.get(bb, bb)), ""]
     if c.get("unlisted_now") or c.get("listed_now"):
         lines += ["同じ物差しの所が両方の版にあり、時刻表に入るかだけが変わったもの（物差し全体が人の中に入った・出た）: "
                   "%s の時刻表から外れたがまだある %d、%s で時刻表に入ったが %s にもあった %d。下の「新しく外れた所」「消えた所」には入れない。" % (
@@ -376,7 +402,8 @@ def compare_md(c, top=30):
             continue
         sized = any("word_size" in r for r in c["rows"])
         if sized:
-            lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 | 脚でそろえた判定 |" % (c["a"], c["b"]),
+            lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 | %s判定 |" % (
+                          c["a"], c["b"], SIZE_WORDS.get(c.get("size_by"), "脚でそろえた")),
                       "| --- | --- | --- | --- | --- | --- | --- |"]
         else:
             lines += ["## %s" % cname, "", "| 物差し | 単位 | 人 / 決まり | %s | %s | 判定 |" % (c["a"], c["b"]), "| --- | --- | --- | --- | --- | --- |"]

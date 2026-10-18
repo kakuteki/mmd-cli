@@ -1,9 +1,12 @@
-"""The body size in tools/mvi (base.leg_cm, base.size_scale, shared.Scaled): people's values were measured on one body,
-FineDance's standard body (every sequence retargeted to SMPL-X's neutral body, legs 78.3 cm from the hip to the ankle,
-the two sides' mean), while Sour's Rin's legs are about 71 cm.  A measure in cm, or one that counts against a threshold
-in cm, then compares a smaller body with a larger one.  The size-aligned value measures her again with her body made as
-large as people's (every position of the pack and of the rest, the timing kept).  So a body c times as large, dancing
-the same dance c times as large, gets the same size-aligned values, while its raw values in cm scale with c."""
+"""The body size in tools/mvi (base.hip_cm, base.hip_scale, base.leg_cm, base.size_scale, shared.Scaled): people's
+values were measured on one body, FineDance's standard body (every sequence retargeted to SMPL-X's neutral body, its
+hip joints 84.0 cm over the ball of the foot, its legs 78.3 cm from the hip to the ankle, the two sides' mean), while
+Sour's Rin's hips stand about as high (84.1 cm over her soles) on shorter legs (about 71 cm: her ankles stand high).
+A measure in cm, or one that counts against a threshold in cm, then compares her body with people's.  The size-aligned
+value measures her again with her body made as large as people's (every position of the pack and of the rest, the
+timing kept): by default by the hip's height over the floor (gait's usual normalisation; the coordinator's choice of
+2026-10-17), or by the legs.  So a body c times as large, dancing the same dance c times as large, gets the same
+size-aligned values, while its raw values in cm scale with c."""
 import unittest
 
 import numpy as np
@@ -12,6 +15,7 @@ from tests import mvi_fixtures as MF
 from mvi import balance, base, feet, gravity, shared
 
 F = 600
+RIN_SOLE_Y = 0.1113             # Sour's Rin's soles at rest: her lowest vertex (adapt, 2026-10-17)
 
 
 def rest_scaled(c):
@@ -107,6 +111,54 @@ class LegTest(unittest.TestCase):
     def test_rins_legs_are_shorter_than_peoples(self):
         rest, _, _ = MF.rin_rest()
         self.assertGreater(base.size_scale(rest), 1.05)
+
+
+class HipTest(unittest.TestCase):
+    """the hip's height over the floor: the hip joints (足) over the floor her soles stand on at rest, in cm"""
+
+    def test_the_hip_height_is_the_hips_over_the_floor_in_cm(self):
+        self.assertAlmostEqual(base.hip_cm(legs(), 0.111), (10.0 - 0.111) * base.UNIT_CM)
+        self.assertAlmostEqual(base.hip_cm(legs(), 0.0), 10.0 * base.UNIT_CM)
+
+    def test_the_two_hips_are_averaged(self):
+        # Sour's Rin's hips stand at 10.66 and 10.59: the mean is the body's, as for the legs
+        self.assertAlmostEqual(base.hip_cm(legs(10.0, 9.8), 0.111), (0.5 * (10.0 + 9.8) - 0.111) * base.UNIT_CM)
+
+    def test_a_missing_hip_or_floor_is_no_height(self):
+        rest = legs()
+        del rest["右足"]
+        self.assertIsNone(base.hip_cm(rest, 0.111))
+        self.assertIsNone(base.hip_cm(legs(), None))
+        self.assertIsNone(base.hip_cm({}, 0.111))
+        self.assertIsNone(base.hip_cm(legs(0.1, 0.1), 0.111))         # hips under the floor: no height
+
+    def test_peoples_hip_height_is_the_body_their_values_were_measured_on(self):
+        # over the ball of the foot's joint: the floor people's measures stand on (human.json's "_about" "body")
+        body = base.human()["_about"]["body"]
+        self.assertAlmostEqual(base.people_hip_cm(), body["hip_above_ball_cm"], places=6)
+        self.assertIn("ball of the foot", body["what"])
+
+    def test_the_hip_scale_makes_her_hips_as_high_as_peoples(self):
+        rest = legs()
+        s = base.hip_scale(rest, 0.111)
+        self.assertAlmostEqual(s * base.hip_cm(rest, 0.111), base.people_hip_cm(), places=6)
+        self.assertIsNone(base.hip_scale({}, 0.111))
+        self.assertIsNone(base.hip_scale(rest, None))
+
+    def test_rins_hips_stand_about_as_high_as_peoples(self):
+        # her legs are 0.91 of people's, but her ankles stand high over her soles (13 cm): by the hip's height she is
+        # within 1 % of people's (review_adapt: aligned so, no judgement of v10 changes; by the legs, four do)
+        rest, _, _ = MF.rin_rest()
+        s = base.hip_scale(rest, RIN_SOLE_Y)
+        self.assertTrue(0.99 < s < 1.01, s)
+        self.assertGreater(base.size_scale(rest) - s, 0.09)
+
+    def test_the_hip_scale_of_a_body_c_times_as_large(self):
+        rest, _, _ = MF.rin_rest()
+        s = base.hip_scale(rest, RIN_SOLE_Y)
+        for c in (0.8, 1.25):
+            big = {k: v * c for k, v in rest.items()}
+            self.assertAlmostEqual(base.hip_scale(big, RIN_SOLE_Y * c), s / c, places=9)
 
 
 class ScaledTest(unittest.TestCase):

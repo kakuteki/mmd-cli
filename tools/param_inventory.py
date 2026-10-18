@@ -44,10 +44,11 @@ OUT_MD = os.path.join(DOCS, "params.md")
 FORMAT = 1
 
 # ---- the rebuild's order ---------------------------------------------------------------------------------------------
-# (step, title, tools, what the step makes, the measures of tools/mv_inspect.py that check it, other checks).  From the
-# v10 build (hinata v10/NOTES.md: motor -> spine -> feet0 -> balance -> feet -> wb -> hands -> skirt -> gaze -> face ->
-# lips -> eye_optics -> render) and its inputs (v4s -> breath -> anatomy: variants/v5a/anat_v5a.vmd; the arms opened 6
-# degrees and fix_twist before the smoothing); retarget and rig (other branches, 2026-10-17) go first.
+# (step, title, tools, what the step makes, the measures of tools/mv_inspect.py that check it, other checks).  The v11
+# build (hinata v11/scripts/build_v11_final.ps1, 2026-10-18: the copies pmx_spine, pmx_eyes, pmx_rig and pmx_skirt make
+# -> retarget -> v4s -> fix_twist -> breath -> anatomy -> motor -> spine -> feet0 -> balance -> feet -> contact -> wb ->
+# hands -> touch -> gaze -> face -> lips -> eye_optics -> render); the v10 build it grew from had no retarget, rig,
+# contact or touch.
 ORDER = [
     (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pmx_spine.py", "pmx_eyes.py", "pmx_skirt.py"],
      "骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し",
@@ -67,27 +68,31 @@ ORDER = [
       "upper.head_sudden_stops_per_min", "upper.head_stop_ms"], []),
     (7, "背骨 4 本へ配る", ["spine_layer.py"], "体幹の曲がりを解剖学の割合で腰椎上部・上半身2・胸椎上部へ",
      ["upper.upper_sudden_stops_per_min", "upper.chest_follow"], ["spine_check.py"]),
-    (8, "足（最初の足の層 feet0、--landing off）", ["foot_layer.py"], "転がり・母指球・床に入れない・距骨下",
+    (8, "足（最初の足の層 feet0、--landing off。v11 から --skim on・--hover off が既定）", ["foot_layer.py"],
+     "転がり・母指球・床に入れない・距骨下・床をかすめる速い足を押し付けない",
      ["feet.under_floor_frames", "feet.ik_miss_floor_frames"], ["sink_check.py", "leg_ik.py"]),
     (9, "体重（順 C の balance）", ["balance_layer.py"], "片足立ちの重心・XcoM の余裕・腰の下向きの加速度の上限・宙・突起のならし",
      ["gravity.centre_down_max", "gravity.centre_down_gt98_pct", "skirt.floor_over122_frames", "skirt.floor_max",
       "balance.com_lateral_cm", "balance.moving_com_lateral_cm", "balance.moving_mos_ml_cm", "balance.still_com_lateral_cm",
       "balance.touchdown_xcom_cm", "gravity.landing_sink_cm", "gravity.jump_apex_lowered", "gravity.beat_dips_weak",
       "spikes.centre_per_min"], ["sink_check.py", "leg_ik.py"]),
-    (10, "足（着地・浮きの下げ、--landing human、既定の --hover sink）", ["foot_layer.py"], "着地のひざ・浮きを床へ・つま先",
+    (10, "足（2 回目の足の層、--landing human。v11 から --skim on・--hover off が既定）", ["foot_layer.py"],
+     "着地のひざ・つま先・床をかすめる足を押し付けない（浮きの体の下げ --hover sink は v11 から既定で off）",
      ["feet.slide10_per_min", "feet.slide3_per_min", "feet.slide_path_cm_per_min", "feet.slide_fast_share", "feet.knee_gain_deg",
       "feet.knee_straight_pct", "feet.ik_new_miss_frames", "gravity.hover_pct", "gravity.hover_runs6_per_min",
       "gravity.air_per_min"], ["sink_check.py"]),
-    (11, "接地の計画（枝 contact、査読中）", ["contact_layer.py"], "立ち足を置く・宙の放物線・体重を受ける足の浮き",
+    (11, "接地の計画（contact_layer）", ["contact_layer.py"],
+     "立ち足を置く・宙の放物線・体重を受ける足の浮き・ひざの段・振りの足を床へ下ろさない（SWING_CLEAR）・低い払いを下の足で支える（glide）",
      ["gravity.hover_pct", "gravity.hover_runs6_per_min", "balance.single_share_pct", "balance.zmp_inside_pct",
       "feet.ik_new_miss_frames", "gravity.jump_apex_lowered", "spikes.centre_per_min"], ["contact_check.py"]),
     (12, "上体の慣性", ["wb_layer.py", "wb_dynamics.py"], "骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）",
      ["upper.head_follow", "upper.chest_follow", "upper.arms_follow", "upper.head_follow_2_4hz", "balance.zmp_inside_pct",
       "balance.single_share_pct", "balance.zmp_margin_single_cm", "balance.zmp_tilt_deg_per_min"], ["upper_body_check.py"]),
-    (13, "手と指", ["hand_layer.py"], "指の形・遅れ・触れ・受け身の指", ["arms.finger_speed_L", "arms.finger_speed_R",
-                                                                     "arms.finger_wrist_ratio_L", "arms.finger_wrist_ratio_R",
-                                                                     "arms.a09_wrist_finger_L", "arms.a09_wrist_finger_R",
-                                                                     "arms.rests_per_min_R"], []),
+    (13, "手と指、触れの層（v11arms）", ["hand_layer.py", "touch_layer.py"],
+     "指の形・遅れ・触れ・受け身の指、元の踊りの手の触れをリンの体に戻して腕を体から出す（retarget の手の直しをもう一度、もも は脚の IK）",
+     ["arms.finger_speed_L", "arms.finger_speed_R", "arms.finger_wrist_ratio_L", "arms.finger_wrist_ratio_R", "arms.a09_wrist_finger_L",
+      "arms.a09_wrist_finger_R", "arms.rests_per_min_R", "retarget.contacts_kept_share", "retarget.arms_in_body_frames",
+      "retarget.contacts_lost_runs", "spikes.wrist_R_per_min", "spikes.wrist_L_per_min", "arms.wrist_8hz_pct"], ["retarget_check.py"]),
     (14, "視線", ["eye_gaze.py"], "固視とサッカード・カメラ目線・手を見る", ["eyes.edge_pct", "eyes.edge_longest_s", "eyes.eccentric15_pct"], []),
     (15, "表情", ["face_life.py"], "KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）", [], []),
     (16, "口", ["lip_sync.py", "lip_timing.py"], "歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）",
@@ -107,7 +112,7 @@ EXPECTED = {"pmx_rig.py": "rig", "rig_skin.py": "rig", "rig_check.py": "rig", "r
             "contact_layer.py": "contact", "contact_check.py": "contact"}
 # the tools that measure, check or serve (their thresholds are the measures' rules, looked at with the measures)
 CHECKERS = ["mv_inspect.py", "param_inventory.py", "spine_check.py", "skirt_probe.py", "motion_fk.py", "motion_jerk.py",
-            "sink_check.py", "leg_ik.py", "upper_body_check.py", "lip_check.py", "shadow_check.py", "shadow_measure.py",
+            "sink_check.py", "leg_ik.py", "upper_body_check.py", "lip_check.py", "mouth_shape.py", "shadow_check.py", "shadow_measure.py",
             "selfshadow_check.py", "dump_controls.py", "live_in_session.py", "run_live_tests_in_session.py", "make_figures.py",
             "mvi/a05.py", "mvi/analysts.py", "mvi/arms.py", "mvi/balance.py", "mvi/base.py", "mvi/body.py", "mvi/eyes.py",
             "mvi/feet.py", "mvi/fq.py", "mvi/gravity.py", "mvi/hb.py", "mvi/marks.py", "mvi/mouth.py", "mvi/pixels.py",
@@ -484,7 +489,7 @@ def markdown(inv):
             "、".join(s["measures"]) or "（物差しなし）", "・".join(s["checks"]) or "-"))
     lines += ["", "各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は"
               "視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`"
-              "（--size legs の「脚でそろえた」値も見る）と `compare`。", ""]
+              "（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。", ""]
     by_tool = {}
     for e in inv["entries"]:
         if not e.get("same_as"):

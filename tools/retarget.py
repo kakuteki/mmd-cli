@@ -470,6 +470,8 @@ class Body:
         out = base.edited(spec.get("add", ()), spec.get("rest", {}), name=spec.get("name"))
         out.foot_from_mesh = spec.get("foot", "mesh") != "bones"
         out.spec = spec
+        if getattr(base, "doc", None) is not None:
+            out.doc = base.doc              # (the model's mesh: the added bones come after its own, whose indices it keeps)
         return out
 
     def edited(self, add=(), rest=None, name=None):
@@ -1042,6 +1044,84 @@ def solve_pitch(A, Q, offset, floor, lo, hi, step=0.5):
 
 FLAT_LIFT_MAX = 0.15            # units (1.2 cm): a flat foot's ankle moves up or down at most this to put its sole on the floor
 FEET_ROUNDS = 2
+# a hold given back near the floor in a frame (review_integ 2026-10-17: the song's 128.0 s right foot turned on the floor
+# 3834-3840, lifted 1 cm for a frame and stood again; the hold, 13.7 cm, went back in that one frame of air, and the later
+# layers put that frame on the floor; 104.4 s landed with 9 cm in its last frame): where the shoe, under JUMP_NEAR on
+# either frame, moves along the floor (the slowest of its vertices touching, within JUMP_TOUCH of its lowest, as
+# tools/retarget_check.py's pops read it) more than JUMP_RATE further than the source's shoe does (the same of its own, by
+# the legs' ratio), that frame's move of the correction (the holds,
+# and the offsets between them) is spread over the frames round it (a raised cosine over 2k + 1 of them, the least k up to
+# JUMP_SPREAD that keeps the shoe within JUMP_RATE of the source's foot there, else the k that comes nearest), the
+# correction's own moves there kept: the foot skids into its next hold over a few frames instead of jumping; a hold that
+# keeps a point still is no jump
+JUMP_NEAR = 0.25                # units (2 cm)
+JUMP_RATE = 2.5 / UNIT_CM       # units a frame (2.5 cm: 75 cm/s)
+JUMP_SPREAD = 6                 # frames each way at most
+JUMP_TOUCH = 0.025              # units (2 mm): a shoe's vertices this near its lowest touch (tools/sink_check.py's)
+
+
+def touch_steps(P, touch=JUMP_TOUCH):
+    """[F - 1] the move along the floor (units) to the next frame of the slowest of a shoe's vertices touching (within
+    `touch` of its lowest) at each frame, P [F, k, 3] the shoe's vertices in the world"""
+    P = np.asarray(P, dtype=np.float64)
+    if len(P) < 2:
+        return np.zeros(0)
+    near = P[:-1, :, 1] <= P[:-1, :, 1].min(axis=1, keepdims=True) + touch
+    d = np.linalg.norm(np.diff(P[:, :, [0, 2]], axis=0), axis=2)
+    return np.where(near, d, np.inf).min(axis=1)
+
+
+def spread_jumps(H, low, P0, src, rate=JUMP_RATE, near=JUMP_NEAR, spread=JUMP_SPREAD):
+    """(H [F, 2] (the correction along the floor, x and z) with its jumps spread, the rows [frame, the shoe's step past the
+    source's (cm), what is left of it in the frames that take it (cm), k]) (see JUMP_RATE); low [F]: the shoe's lowest
+    point over the floor (units); P0 [F, k, 3]: the shoe's vertices as the mapping puts them (without the correction along
+    the floor); src [F - 1]: the source's shoe's move a frame (touch_steps, units, by the legs' ratio).  rate None: H as
+    it is"""
+    H = np.array(H, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    P0 = np.asarray(P0, dtype=np.float64)
+    src = np.asarray(src, dtype=np.float64)
+    F = len(H)
+    rows, done = [], set()
+    if F < 2 or rate is None:
+        return H, rows
+    d0 = np.diff(P0[:, :, [0, 2]], axis=0)                     # [F - 1, k, 2]
+    touching = P0[:-1, :, 1] <= P0[:-1, :, 1].min(axis=1, keepdims=True) + JUMP_TOUCH
+
+    def slowest(dd, rows):
+        return np.where(touching[rows], np.linalg.norm(d0[rows] + dd[:, None, :], axis=2), np.inf).min(axis=1)
+    lowish = (low[:-1] < near) | (low[1:] < near)
+    everything = np.arange(F - 1)
+    for _ in range(F):
+        d = np.diff(H, axis=0)
+        excess = slowest(d, everything) - src
+        bad = [t for t in np.flatnonzero((excess > rate * (1.0 + 1e-6)) & lowish) if int(t) not in done]
+        if not bad:
+            break
+        t = int(max(bad, key=lambda i: excess[i]))
+        done.add(t)
+        J = d[t].copy()
+        best = None
+        for k in range(1, spread + 1):
+            a, b = t - k, t + k                                 # the moves (frame i to i + 1) that take the jump
+            if a < 0 or b > F - 2:
+                break
+            w = np.hanning(2 * k + 3)[1:-1]
+            w = w / w.sum()
+            dd = d[a:b + 1].copy()
+            dd[k] -= J
+            dd += w[:, None] * J[None, :]
+            left = float((slowest(dd, np.arange(a, b + 1)) - src[a:b + 1]).max())
+            if best is None or left < best[3] - 1e-9:
+                best = (k, a, dd, left)
+            if left <= rate * (1.0 + 1e-6):
+                break
+        if best is None or best[3] >= float(excess[t]) - 1e-9:
+            continue
+        k, a, dd, left = best
+        H[a + 1:a + 1 + len(dd)] = H[a] + np.cumsum(dd, axis=0)
+        rows.append([t, round(float(excess[t]) * UNIT_CM, 2), round(left * UNIT_CM, 2), k])
+    return H, rows
 
 
 def hold_offsets(F, spans, hold, edges, mapped, on_floor, src_on_floor, ease_air=HOLD_AIR):
@@ -1262,6 +1342,7 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             # that one frame and the 99.6 s right shoe went to 1.3-1.5 cm between two turns)
             Qw = slerp_n(Q, want_turn, weight)
             low_now = A[:, 1] + weight * lift + np.min(qrot(Qw[:, None, :], shell_t[None, :, :])[:, :, 1], axis=1) - floor_t
+            shell_mapped = A[:, None, :] + qrot(Qw[:, None, :], shell_t[None, :, :])        # (the shoe, the turn easing)
             shell_s = sole_shell(src, side, mesh=True)
             src_low = (src_legs[side]["ankle"][:, 1] + np.min(qrot(Qs[:, None, :], shell_s[None, :, :])[:, :, 1], axis=1)
                        - float(src.rest(side + "足首")[1] + shell_s[:, 1].min()))
@@ -1282,6 +1363,10 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
                 pk = np.stack([points[k] for k in which[easing]])
                 Qw = slerp_n(Q[easing], want_turn[easing], weight[easing])
                 H[easing] += (qrot(Q[easing], pk) - qrot(Qw, pk))[:, [0, 2]]
+            # a hold given back near the floor in a frame is spread over the frames round it (spread_jumps)
+            src_shell = src_legs[side]["ankle"][:, None, :] + qrot(Qs[:, None, :], shell_s[None, :, :])
+            H, jumps = spread_jumps(H, shoe_low, shell_mapped, touch_steps(src_shell) * scale_of(src, tgt),
+                                    rate=params.get("jump_rate", JUMP_RATE))
             shift = np.zeros((F, 3))
             shift[:, 0], shift[:, 2] = H[:, 0], H[:, 1]
             shift[:, 1] = weight * lift + clear
@@ -1289,6 +1374,8 @@ def fix_feet(src, tgt, src_legs, tgt_trk, frames, params, log):
             r = rep.setdefault(side, {"plants": len(spans), "kinds": kinds, "plant_frames": int(sum(b - a + 1 for a, b, _ in spans)),
                                       "on_floor_moving": len(moving), "on_floor_moving_frames": int(sum(b - a + 1 for a, b in moving)),
                                       "turned_on": turned_on, "keys_added": 0})
+            r["jumps_spread"] = len(jumps)
+            r["jumps_spread_rows [frame, cm, cm after, k]"] = jumps[:40]
             if len(moved):
                 w = weight[moved]
                 # the foot IK: its world turn towards the wanted foot turn, its goal shifted (both in its parent's frame)
@@ -1616,17 +1703,71 @@ def arm_points(body, side, ap, radii, hand):
     return np.stack(pts, axis=1), np.array(rad), np.array(share), np.array(seg)
 
 
-def penetration(tgt, side, ap, hand, parts, relations):
+# the hand's own vertices a clearance may test besides the line from the wrist to the middle finger's tip (penetration's
+# hand, a capsule of the hand's radius): up to this many of the vertices on the wrist and the fingers, spread over the hand
+# (farthest from each other at rest), each carried by its own bone.  Sour's Rin's hand reaches 3.4 - 4.9 cm off that line
+# (its thumb and its little finger's side) where the capsule's radius is 2.0 cm: on Hibikase 107.5 s her left hand's side
+# went 1.8 cm into the dress round her left thigh with the line 2.3 cm off it (the v11 review, v11revm).  Only the touch
+# layer passes them (clear_arms' clouds); retarget's own fix_hands tests the line alone, as before
+HAND_CLOUD = 48
+
+
+def hand_cloud(body, side, n=HAND_CLOUD):
+    """(the bone names [k], the offsets from those bones' rest positions [k, 3]) of up to n of the hand's vertices (the
+    ones whose largest weight is on side's 手首 or a finger, 指), spread over the hand: farthest point sampling at rest
+    from the vertex farthest from the wrist.  None without such vertices (8 at least) or without the wrist"""
+    if not body.has(side + "手首") or not len(body.vertices):
+        return None
+    bones = [b.index for b in body.model.bones if b.name == side + "手首" or (b.name.startswith(side) and "指" in b.name)]
+    m = np.isin(body.main_bone, bones)
+    if m.sum() < 8:
+        return None
+    P = body.vertices[m]
+    B = body.main_bone[m]
+    pick = [int(np.argmax(np.linalg.norm(P - body.rest(side + "手首"), axis=1)))]
+    d = np.linalg.norm(P - P[pick[0]], axis=1)
+    while len(pick) < min(n, len(P)):
+        j = int(np.argmax(d))
+        if d[j] <= 0.0:
+            break
+        pick.append(j)
+        d = np.minimum(d, np.linalg.norm(P - P[j], axis=1))
+    names = [body.model.bones[int(B[j])].name for j in pick]
+    offs = np.stack([P[j] - body.rest_all[int(B[j])] for j in pick])
+    return names, offs
+
+
+def hand_cloud_world(body, trk, frames, cloud):
+    """[F, k, 3] the cloud's vertices (hand_cloud) where the tracks carry their bones (mmd_cli.fk's rule)"""
+    names, offs = cloud
+    wp = world_pose(body, trk, frames, sorted(set(names)))
+    out = np.zeros((len(frames), len(names), 3))
+    for j, (name, o) in enumerate(zip(names, offs)):
+        pos, rot = wp[name]
+        out[:, j] = pos + qrot(rot, np.broadcast_to(o, pos.shape))
+    return out
+
+
+def penetration(tgt, side, ap, hand, parts, relations, cloud=None, cloud_weight=None):
     """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
     point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; the push that takes the wrist out of
     what the forearm and the hand go into [F, 3], and the same from the hand and the forearm's half by it alone [F, 3]
     (a held hand moves by that only).  The hand and the forearm's half by it are not tested against a part
     the source's hand touches then (relations[part]["d"] within TOUCH: the contact sets them there); near one they come
     as close to it as the source's hand is to its own (relations[part]["want"], the distance the hand's relation wants,
-    scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's."""
+    scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's.  cloud [F, k, 3]:
+    the hand's own vertices (hand_cloud_world), tested as points of the hand besides its line, how far they are in taken
+    times cloud_weight [F] (0 .. 1; clear_arms: none where the source's hand touches a part, the hand held there)"""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
+    n_line = P.shape[1]
+    if cloud is not None and np.size(cloud):
+        k = cloud.shape[1]
+        P = np.concatenate([P, cloud], axis=1)
+        rad = np.concatenate([rad, np.zeros(k)])
+        share = np.concatenate([share, np.ones(k)])
+        seg = np.concatenate([seg, np.full(k, 2)])
     S = ap[side + "腕"][0]
     F = P.shape[0]
     deepest = np.zeros(F)
@@ -1664,6 +1805,8 @@ def penetration(tgt, side, ap, hand, parts, relations):
             excuse = smoothstep((TOUCH + TOUCH_BAND - relations[part]["d"]) / TOUCH_BAND)
             pen = np.where(near_hand[None, :], pen * (1.0 - excuse)[:, None], pen)
         pen = np.maximum(pen, 0.0)
+        if cloud_weight is not None and pen.shape[1] > n_line:
+            pen[:, n_line:] *= np.asarray(cloud_weight, dtype=float)[:, None]
         if not np.any(pen > 0):
             continue
         deepest = np.maximum(deepest, pen.max(axis=1))
@@ -1747,12 +1890,13 @@ def best_swivel(tgt, side, S, E, W, parts, touched=None):
     return best
 
 
-def clear_arms(tgt, trk, frames, hand_relations, parts, log):
+def clear_arms(tgt, trk, frames, hand_relations, parts, log, clouds=None):
     """push the target's arms out of its head, ribbon, trunk, hips and thighs: what the upper arm or the elbow goes into
     is cleared by turning the whole arm about the shoulder, what the forearm or the hand goes into by moving the wrist
     (arm IK, the elbow kept on its side); each change eases in and out over EASE frames around the frames that go in.
     hand_relations: side -> part -> {"w": the hand's relation's weight [F], "d": the source's hand's distance [F],
-    "want": the distance the relation wants [F]} (fix_hands).
+    "want": the distance the relation wants [F]} (fix_hands).  clouds: side -> hand_cloud (the hand's own vertices tested
+    too; None: the hand's line alone).
     Returns the report per side."""
     F = len(frames)
     rep = {}
@@ -1764,12 +1908,17 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log):
         # the hand is held where the source's hand touches a part (its relation's weight near 1), not where it is only
         # near one: an arm clears the body by moving its hand when the hand was merely close
         hold = smoothstep((np.max(np.stack(list(cw.values())), axis=0) - HOLD_FROM) / (1.0 - HOLD_FROM)) if cw else None
+        # the hand's own vertices push it only where the source's hand touches nothing: a held hand is set where the
+        # touch puts it and its line is kept out as before (pushed by them, the song's left hand left the thigh and the
+        # hips it rests on: 13 -> 8 of their touching frames kept, v11revm)
+        cloud_weight = None if hold is None else 1.0 - hold
         before = None
         moved_any = np.zeros(F, bool)
         for rnd in range(CLEAR_ROUNDS):
             ap = arm_pose(tgt, trk, frames, side)
             hand = hand_world(tgt, trk, frames, side)
-            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations)
+            cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
+            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations, cloud, cloud_weight)
             if before is None:
                 before = deep.copy()
             bad = deep > CLEAR_TOL
@@ -1827,7 +1976,8 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log):
                 _fit_turns(trk, name, frames, q, moved)
         ap = arm_pose(tgt, trk, frames, side)
         hand = hand_world(tgt, trk, frames, side)
-        after = penetration(tgt, side, ap, hand, parts, relations)[0]
+        cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
+        after = penetration(tgt, side, ap, hand, parts, relations, cloud, cloud_weight)[0]
         rep[side] = {"in_before_frames": int(np.sum(before > CLEAR_TOL)) if before is not None else 0,
                      "in_after_frames": int(np.sum(after > CLEAR_TOL)), "in_after_over_1cm": int(np.sum(after > 0.125)),
                      "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,
@@ -1903,7 +2053,7 @@ class Result:
 
 
 def params_default():
-    return {"feet": True, "hands": True, "clear": True, "stance": "legs"}
+    return {"feet": True, "hands": True, "clear": True, "stance": "legs", "jump_rate": JUMP_RATE}
 
 
 def pure_keys(motion, src, tgt, s, shift, corr):

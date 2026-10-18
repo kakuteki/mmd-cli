@@ -1177,6 +1177,37 @@ class LandingTest(unittest.TestCase):
         self.assertLess(float(f_still["左"]["low"][3:10].max()), 0.111 + 0.6 * lift)
 
 
+class SkimTest(unittest.TestCase):
+    """a foot the dance moves fast just over the floor is not pressed onto it, in either run of the order C (v11feet,
+    2026-10-17: after the retarget, which carries a shoe as high over the floor as the source's, the first foot layer,
+    --landing off, put such shoes onto the floor and they slid along it: the song's slide 380 -> 604 cm a minute, 160 of
+    it on feet the input had over the floor, most of them faster than 30 cm/s and 3 to 4 mm up)"""
+
+    def gliding(self, lift, step=0.125):
+        """the left foot gliding `step` units a frame sideways (0.125: 30 cm/s), its flat sole `lift` over the floor"""
+        return [key("センター", 0, position=(0, -1.2, 0)), key("右足ＩＫ", 0, position=(0, 0.0, 0.8))] + \
+            [key("左足ＩＫ", t, position=(step * t, lift, 0.0)) for t in range(13)]
+
+    def test_the_first_foot_layer_leaves_a_gliding_foot_over_the_floor(self):
+        lift = 0.068                                                          # 5.4 mm
+        _, f_new, _, _ = run_layer(*self.gliding(lift), frames=13, landing=False)
+        _, f_old, _, _ = run_layer(*self.gliding(lift), frames=13, landing=False, skim=False)
+        self.assertGreater(float(f_new["左"]["low"][3:10].min()), 0.111 + 0.8 * lift)
+        self.assertLess(float(f_old["左"]["low"][3:10].max()), 0.111 + 0.6 * lift)     # (the layer before pressed it)
+
+    def test_a_foot_gliding_under_the_contacts_hysteresis_is_left_over_the_floor(self):
+        lift = 0.035                                                          # 2.8 mm, under CONTACT_EXIT (4.8 mm)
+        for landing in (True, False):
+            _, f, _, _ = run_layer(*self.gliding(lift), frames=13, landing=landing)
+            self.assertGreater(float(f["左"]["low"][3:10].min()), 0.111 + 0.8 * lift, landing)
+
+    def test_a_still_foot_just_over_the_floor_is_put_onto_it(self):
+        lift = 0.035
+        for landing in (True, False):
+            _, f, _, _ = run_layer(*self.gliding(lift, step=0.0), frames=13, landing=landing)
+            self.assertLess(float(f["左"]["low"][3:10].max()), 0.111 + 0.3 * lift, landing)
+
+
 class CommandTest(unittest.TestCase):
     def write_inputs(self, folder):
         src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
@@ -1274,6 +1305,58 @@ class CommandTest(unittest.TestCase):
                 self.assertEqual(r["landing_model"], mode)
                 self.assertEqual(r["landing_warning"] is not None, warned)
                 self.assertEqual("WARNING" in err.getvalue(), warned)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_skim_option(self):
+        # --skim on (the default, also with --landing off) leaves a foot moving fast just over the floor there; off: the
+        # layer before (with --landing off, c012c32's)
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            for extra, skim in (([], "on"), (["--landing", "off"], "on"), (["--landing", "off", "--skim", "off"], "off")):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh)["skim"], skim)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_skim_on_by_default_keeps_a_gliding_foot_off_the_floor_with_landing_off(self):
+        # what the command does with its default --skim on and --landing off (the order C's first run): a foot the dance
+        # moves fast 5.4 mm over the floor stays there; --skim off presses it onto the floor (the report names the choice,
+        # the feet show it)
+        folder = tempfile.mkdtemp()
+        try:
+            lift = 0.068
+            src, model = os.path.join(folder, "in.vmd"), os.path.join(folder, "m.pmx")
+            vmd.dump(motion(*SkimTest().gliding(lift)), src)
+            with open(model, "wb") as fh:
+                fh.write(DATA)
+            low = {}
+            for tag, extra in (("on", []), ("off", ["--skim", "off"])):
+                out = os.path.join(folder, "out_%s.vmd" % tag)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--landing", "off"] + extra), 0)
+                low[tag] = foot_layer.measure_feet(RIG, SHOE, vmd.load(out), range(13))["左"]["low"]
+            self.assertGreater(float(low["on"][3:10].min()), 0.111 + 0.8 * lift)
+            self.assertLess(float(low["off"][3:10].max()), 0.111 + 0.6 * lift)
+        finally:
+            shutil.rmtree(folder)
+
+    def test_hover_sink_is_off_unless_asked(self):
+        # --hover: off by default with any --landing since v11feet (after the retarget the song's second foot layer sank one
+        # run of 23 frames, by 1.3 cm, and every measure of the chain's last came out the same without it); sink when asked
+        folder = tempfile.mkdtemp()
+        try:
+            src, model = self.write_inputs(folder)
+            out, rep = os.path.join(folder, "out.vmd"), os.path.join(folder, "r.json")
+            for extra, hover in (([], "off"), (["--landing", "off"], "off"), (["--hover", "sink"], "sink")):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(foot_layer.main([src, model, out, "--report", rep] + extra), 0)
+                with open(rep, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh)["hover"], hover)
         finally:
             shutil.rmtree(folder)
 
