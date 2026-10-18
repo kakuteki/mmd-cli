@@ -102,7 +102,7 @@ ORDER = [
     (18, "描画と後処理", ["mv_chunks.py", "mv_world.py", "mv_look.py", "mv_text.py", "make_stage.py", "mme_shadow.py", "pmm_gravity.py"],
      "区間の描画・舞台と光・床と体の影・文字・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す",
      ["pixels.pants_frames", "pixels.shadow_rough", "pixels.shadow_total_rough"],
-     ["shadow_check.py", "shadow_measure.py", "selfshadow_check.py"]),
+     ["shadow_check.py", "shadow_measure.py", "selfshadow_check.py", "look_analyze.py"]),
     (19, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"],
      "ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す",
      [], []),
@@ -117,7 +117,7 @@ CHECKERS = ["mv_inspect.py", "param_inventory.py", "spine_check.py", "skirt_prob
             "mvi/a05.py", "mvi/analysts.py", "mvi/arms.py", "mvi/balance.py", "mvi/base.py", "mvi/body.py", "mvi/eyes.py",
             "mvi/feet.py", "mvi/fq.py", "mvi/gravity.py", "mvi/hb.py", "mvi/marks.py", "mvi/mouth.py", "mvi/pixels.py",
             "mvi/plot.py", "mvi/report.py", "mvi/retarget.py", "mvi/shared.py", "mvi/skirt.py", "mvi/spikes.py", "mvi/upper.py",
-            "mvi/vertical.py"]
+            "mvi/vertical.py", "look_credits.py"]
 
 
 def placed_tools():
