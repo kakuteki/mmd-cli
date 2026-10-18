@@ -367,6 +367,29 @@ class HandSideTest(unittest.TestCase):
         thin = touch_layer.layer(dance, src, body(MIKU_DATA), body(RIN_HAND_DATA), {"hand_cloud": False})
         self.assertGreater(hips_depths(thin.motion, [0])[0][0], 0.1)    # (the middle line alone leaves the side in)
 
+    def test_a_held_hand_is_not_pushed_by_its_own_vertices(self):
+        # the pose above (the thumb 1.2 cm in the hips' sphere, the hand's line clear of it), cleared as the touch layer
+        # clears (retarget's clear_arms with the hand's vertices): where the source's hand touches a part (here the left
+        # thigh, its relation's weight 1), the hand is held where the touch puts it and only its line is kept out, as
+        # before; its own vertices push it only where it touches nothing (Hibikase: pushed by them, the left hand left
+        # the left thigh and the hips where the source rests it there, 13 -> 8 of their touching frames kept, v11revm)
+        axis = np.asarray(HAND_DIR) / np.linalg.norm(HAND_DIR)
+        dance = motion(*arm_pose_keys(-50, -60, 65), key("左手首", 0, axis_angle(tuple(axis), -15.0)))
+        tgt = body(RIN_HAND_DATA)
+        frames = np.arange(1)
+        cloud = {s: retarget.hand_cloud(tgt, s) for s in retarget.SIDES}
+        moved = {}
+        for tag, w in (("free", 0.0), ("held", 1.0)):
+            trk = retarget.tracks_of(dance.bones)
+            parts = touch_layer.part_frames(tgt, trk, frames)
+            rel = {"左": {"thigh_左": {"w": np.full(1, w), "d": np.full(1, 0.0 if w else 2.0), "want": np.zeros(1)}}}
+            w0 = retarget.world_pose(tgt, trk, frames, ["左手首"])["左手首"][0]
+            retarget.clear_arms(tgt, trk, frames, rel, parts, lambda *_: None, clouds=cloud)
+            w1 = retarget.world_pose(tgt, trk, frames, ["左手首"])["左手首"][0]
+            moved[tag] = float(np.linalg.norm(w1 - w0))
+        self.assertGreater(moved["free"], 0.05)                            # (a free hand is pushed out by its side)
+        self.assertLess(moved["held"], 0.005)
+
 
 class ThighTest(unittest.TestCase):
     """a hand on a thigh of a crouching body (the knees bent by the leg IK, the thigh's own key at rest) stays on the

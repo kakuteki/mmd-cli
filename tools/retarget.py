@@ -1748,7 +1748,7 @@ def hand_cloud_world(body, trk, frames, cloud):
     return out
 
 
-def penetration(tgt, side, ap, hand, parts, relations, cloud=None):
+def penetration(tgt, side, ap, hand, parts, relations, cloud=None, cloud_weight=None):
     """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
     point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; the push that takes the wrist out of
     what the forearm and the hand go into [F, 3], and the same from the hand and the forearm's half by it alone [F, 3]
@@ -1756,10 +1756,12 @@ def penetration(tgt, side, ap, hand, parts, relations, cloud=None):
     the source's hand touches then (relations[part]["d"] within TOUCH: the contact sets them there); near one they come
     as close to it as the source's hand is to its own (relations[part]["want"], the distance the hand's relation wants,
     scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's.  cloud [F, k, 3]:
-    the hand's own vertices (hand_cloud_world), tested as points of the hand besides its line"""
+    the hand's own vertices (hand_cloud_world), tested as points of the hand besides its line, how far they are in taken
+    times cloud_weight [F] (0 .. 1; clear_arms: none where the source's hand touches a part, the hand held there)"""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
+    n_line = P.shape[1]
     if cloud is not None and np.size(cloud):
         k = cloud.shape[1]
         P = np.concatenate([P, cloud], axis=1)
@@ -1803,6 +1805,8 @@ def penetration(tgt, side, ap, hand, parts, relations, cloud=None):
             excuse = smoothstep((TOUCH + TOUCH_BAND - relations[part]["d"]) / TOUCH_BAND)
             pen = np.where(near_hand[None, :], pen * (1.0 - excuse)[:, None], pen)
         pen = np.maximum(pen, 0.0)
+        if cloud_weight is not None and pen.shape[1] > n_line:
+            pen[:, n_line:] *= np.asarray(cloud_weight, dtype=float)[:, None]
         if not np.any(pen > 0):
             continue
         deepest = np.maximum(deepest, pen.max(axis=1))
@@ -1904,13 +1908,17 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log, clouds=None):
         # the hand is held where the source's hand touches a part (its relation's weight near 1), not where it is only
         # near one: an arm clears the body by moving its hand when the hand was merely close
         hold = smoothstep((np.max(np.stack(list(cw.values())), axis=0) - HOLD_FROM) / (1.0 - HOLD_FROM)) if cw else None
+        # the hand's own vertices push it only where the source's hand touches nothing: a held hand is set where the
+        # touch puts it and its line is kept out as before (pushed by them, the song's left hand left the thigh and the
+        # hips it rests on: 13 -> 8 of their touching frames kept, v11revm)
+        cloud_weight = None if hold is None else 1.0 - hold
         before = None
         moved_any = np.zeros(F, bool)
         for rnd in range(CLEAR_ROUNDS):
             ap = arm_pose(tgt, trk, frames, side)
             hand = hand_world(tgt, trk, frames, side)
             cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
-            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations, cloud)
+            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations, cloud, cloud_weight)
             if before is None:
                 before = deep.copy()
             bad = deep > CLEAR_TOL
@@ -1969,7 +1977,7 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log, clouds=None):
         ap = arm_pose(tgt, trk, frames, side)
         hand = hand_world(tgt, trk, frames, side)
         cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
-        after = penetration(tgt, side, ap, hand, parts, relations, cloud)[0]
+        after = penetration(tgt, side, ap, hand, parts, relations, cloud, cloud_weight)[0]
         rep[side] = {"in_before_frames": int(np.sum(before > CLEAR_TOL)) if before is not None else 0,
                      "in_after_frames": int(np.sum(after > CLEAR_TOL)), "in_after_over_1cm": int(np.sum(after > 0.125)),
                      "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,
