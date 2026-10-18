@@ -305,6 +305,8 @@ def _check_stage(stage):
         raise ValueError("stage.floor_plane is r, g, b from 0")
     if stage["reflect"] > 0 and not (stage["world"] and stage["floor"]):
         raise ValueError("stage.reflect mirrors the stage in the floor this tool draws: it needs stage.world 1 and stage.floor 1")
+    if list(stage["floor_plane"]) != list(DEFAULT_LOOK["stage"]["floor_plane"]) and not (stage["world"] and stage["floor"]):
+        raise ValueError("stage.floor_plane is the colour of the floor this tool draws: it needs stage.world 1 and stage.floor 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------

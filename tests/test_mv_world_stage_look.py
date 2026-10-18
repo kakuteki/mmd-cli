@@ -234,7 +234,8 @@ class FloorLightTest(unittest.TestCase):
 
     def test_the_floor_light_is_refused_out_of_its_range(self):
         for stage_ in ({"world": 1, "reflect": -0.1}, {"world": 1, "reflect": 1.5}, {"world": 1, "reflect_blur": -1.0},
-                       {"world": 1, "floor_plane": [10, -1, 3]}, {"reflect": 0.5}):
+                       {"world": 1, "floor_plane": [10, -1, 3]}, {"reflect": 0.5}, {"floor_plane": [30, 40, 80]},
+                       {"world": 1, "floor": 0, "floor_plane": [30, 40, 80]}):
             with self.assertRaises(ValueError, msg=stage_):
                 mv_look.merge_look({"stage": stage_})
 
