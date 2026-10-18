@@ -34,10 +34,10 @@ FIELD_KEYS = {
 }
 
 # name: patterns (case-insensitive unless the pattern says otherwise); a name written in several ways is one effect
-_W = r"(?<![A-Za-z])"
-_E = r"(?![A-Za-z])"
+_W = r"(?<![A-Za-z0-9_])"      # a short name is a whole word: no letter, digit or _ next to it
+_E = r"(?![A-Za-z0-9_])"
 EFFECTS = {
-    "ray-mmd": [r"ray[-_ ]?mmd", _W + r"ray" + _E, r"ray-cast", r"Copyright \(C\) 2016-2017 Rui"],
+    "ray-mmd": [r"ray[-_ ]?mmd", _W + r"ray(?![A-Za-z])", r"ray-cast", r"Copyright \(C\) 2016-2017 Rui"],
     "ray-toon": [r"ray[-_ ]?toon"],
     "AutoLuminous": [r"AutoLuminous", _W + r"AL4" + _E, r"発光エフェクト"],
     "Diffusion": [r"(?<!ik)Diffusion(?!.{0,3}ik)", r"ディフュージョン"],
@@ -96,6 +96,15 @@ EFFECTS = {
     "o_SelfOverlay": [r"o_SelfOverlay", r"SelfOverlay"],
     "Croquis": [r"Croquis"],
     "N3+CShader": [r"N3\+C", r"N2\+C"],
+    "SelfBlend": [r"SelfBlend"],
+    "o_SurplusFilter": [r"SurplusFilter"],
+    "likelooks": [r"likelooks"],
+    "grid floor (tk_grid-floor)": [r"grid-floor"],
+    "CameraScreen": [r"CameraScreen"],
+    "DOF (other)": [_W + r"DOF" + _E, r"_DOF", r"被写界深度"],
+    "Particle_Offset": [r"Particle_Offset"],
+    "o_LikeHDR": [r"LikeHDR"],
+    "PostHatchingShader": [r"PostHatching"],
 }
 
 AUTHORS = {

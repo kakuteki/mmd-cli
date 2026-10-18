@@ -93,6 +93,12 @@ class EffectTest(unittest.TestCase):
         text = "Model：Punishing Gray Raven team\nStage：PRISM hall"
         self.assertEqual(LC.effects(text), [])
         self.assertEqual(LC.tools(text), [])
+        # "_MMM" ends an effect's file name: it is not MikuMikuMoving; "ray1.5.2" is ray-mmd's version
+        self.assertEqual(LC.tools("KiraKira_v2_32_64_MMM キラキラエフェクト"), [])
+        self.assertEqual(LC.effects("KiraKira_v2_32_64_MMM キラキラエフェクト"), ["KiraKira"])
+        self.assertEqual(LC.effects("Effects：ray1.5.2 （Rui）"), ["ray-mmd"])
+        self.assertEqual(LC.effects("MME：SvSSAO, SelfBlend_v011, o_SurplusFilter_v0_1, BeamMan_DOF"),
+                         ["DOF (other)", "SelfBlend", "SvSSAO", "o_SurplusFilter"])
 
     def test_authors_are_split_from_the_effects_field(self):
         self.assertEqual(LC.authors(LC.fields(LC.credit_section(BRACKETS))),
