@@ -751,6 +751,69 @@ def depth_of_field(e):
             "dof.soft_share": float((s > SOFT_EDGE).mean()), "dof.edges": float(len(s))}
 
 
+DOF_BLOCK = 40.0                  # 720 line pixels: depth of field is read in blocks this wide,
+DOF_CONTRAST = 0.10               # those whose Y' spreads at least this (5 to 95 %: they hold detail),
+DOF_TOP = 0.02                    # each by the blur of its steepest 2 % of pixels
+
+
+def blur_map(gray):
+    """the blur (image pixels) edges() would read at every pixel, and the gradient there (its top over 3 x 3)"""
+    ndi = _ndi()
+    g = np.asarray(gray, np.float64)
+    m0 = ndi.maximum_filter(_gradient(g)[2], size=3)
+    sigma = None
+    for s0, top in reversed(list(zip(REBLUR, SWITCH))):
+        m1 = ndi.maximum_filter(_gradient(ndi.gaussian_filter(g, s0))[2], size=3)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            r = m0 / np.maximum(m1, 1e-12)
+            est = np.sqrt(np.clip(s0 * s0 / np.maximum(r * r - 1.0, 1e-9) - SOBEL_VAR, 0.0, None))
+        sigma = est if sigma is None else np.where(est <= top, est, sigma)
+    return sigma, m0
+
+
+def dof_blocks(gray, unit=1.0, extras=None):
+    """depth of field read in blocks (the edges Canny finds keep to what is in focus; a blurred background has weak
+    edges): each block of DOF_BLOCK px whose Y' spreads at least DOF_CONTRAST is read by the median blur of its
+    steepest DOF_TOP of pixels (720 line pixels)
+
+    dof.fg_blur: the median of the sharpest fifth of the blocks (what is in focus); dof.bg_blur: the median of the
+    softer half; dof.ratio: bg over fg (fg at least 0.5 px): about 1 when all is in focus, several with a blurred
+    background (or with soft light, haze or glow behind the subject, which read the same); dof.soft_blocks: the share
+    of blocks softer than SOFT_EDGE; dof.blocks: how many blocks hold detail.  extras gets the block map."""
+    g = np.asarray(gray, np.float64)
+    sigma, mag = blur_map(g)
+    b = max(8, int(round(DOF_BLOCK * unit)))
+    h, w = g.shape
+    ny, nx = h // b, w // b
+    out = {"dof.fg_blur": float("nan"), "dof.bg_blur": float("nan"), "dof.ratio": float("nan"),
+           "dof.soft_blocks": float("nan"), "dof.blocks": 0.0}
+    if ny < 2 or nx < 2:
+        return out
+
+    def tiles(a):
+        return a[:ny * b, :nx * b].reshape(ny, b, nx, b).transpose(0, 2, 1, 3).reshape(ny, nx, b * b)
+
+    tg, ts, tm = tiles(g), tiles(sigma), tiles(mag)
+    lo, hi = np.percentile(tg, [5, 95], axis=2)
+    textured = (hi - lo) >= DOF_CONTRAST
+    k = max(4, int(round(DOF_TOP * b * b)))
+    order = np.argsort(tm, axis=2)[:, :, -k:]
+    steep = np.take_along_axis(ts, order, axis=2)
+    block = np.median(steep, axis=2) / unit
+    block[~textured] = np.nan
+    vals = np.sort(block[textured])
+    out["dof.blocks"] = float(len(vals))
+    if extras is not None:
+        extras["dof_map"] = (block, b)
+    if len(vals) < 6:
+        return out
+    fg = float(np.median(vals[:max(1, len(vals) // 5)]))
+    bg = float(np.median(vals[len(vals) // 2:]))
+    out.update({"dof.fg_blur": fg, "dof.bg_blur": bg, "dof.ratio": bg / max(fg, 0.5),
+                "dof.soft_blocks": float((vals > SOFT_EDGE).mean())})
+    return out
+
+
 SHORT = (8.0, 16.0)               # 720 line pixels: the near sides of an edge (sharpening, width) and
 LONG = (28.0, 40.0)               # the far sides (diffusion), where a step's flat sides are read
 STEP_LEAST = 0.12                 # Y': a step read for its profile rises at least this,
@@ -1209,6 +1272,10 @@ MEASURES = {
     "dof.median": ("optics", "縁のぼけの中央", "px"),
     "dof.soft": ("optics", "柔らかい縁のぼけ（90 % 点。被写界深度の外のぼけ）", "px"),
     "dof.soft_share": ("optics", "ぼけた縁（3 px 超）の割合（被写界深度）", ""),
+    "dof.fg_blur": ("optics", "ピントの合った所のぼけ（鋭い 1/5 の区画の中央）", "px"),
+    "dof.bg_blur": ("optics", "背景のぼけ（柔らかい半分の区画の中央）", "px"),
+    "dof.ratio": ("optics", "人物と背景の鮮鋭さの比（背景のぼけ / ピントの所のぼけ）", ""),
+    "dof.soft_blocks": ("optics", "ぼけた区画（3 px 超）の割合", ""),
     "motion.shutter": ("optics", "シャッター（動く縁の伸びから。0.5 が 180 度）", ""),
     "motion.shutter_p75": ("optics", "シャッターの上側（動く縁の 75 % 点）", ""),
     "motion.blurred_share": ("optics", "動きの 1/4 以上ぼけた動く縁の割合", ""),
@@ -1271,6 +1338,7 @@ def measure_frame(rgb0, rgb1=None, unit=1.0, full=True, seed=0, extras=None):
     m.update(light(rgb0, lab))
     e = edges(g0, unit, seed=seed)
     m.update(depth_of_field(e))
+    m.update(dof_blocks(g0, unit))
     m.update(edge_profiles(g0, e, unit, seed=seed))
     m.update(noise_spatial(g0))
     m.update(scanlines(g0))
@@ -1492,10 +1560,13 @@ def _scale(info, height):
 
 
 def _vf(info, height, matrix, extra=""):
+    """the filter that reads a frame as RGB at the analysis height: made smaller by averaging the pixels it covers
+    (area; lanczos rings by about 8 % of a step at 1.5 to 1, which reads as sharpening), made bigger bicubic"""
     w, h = _scale(info, height) if height else (info["width"], info["height"])
     rng = "pc" if info.get("color_range") in ("pc", "jpeg") else "tv"
-    return "%sscale=%d:%d:flags=lanczos+accurate_rnd+full_chroma_int:in_color_matrix=%s:in_range=%s:out_range=pc," \
-           "format=rgb24" % (extra, w, h, matrix, rng), (w, h)
+    kind = "area" if h < info["height"] else "bicubic"
+    return "%sscale=%d:%d:flags=%s+accurate_rnd+full_chroma_int:in_color_matrix=%s:in_range=%s:out_range=pc," \
+           "format=rgb24" % (extra, w, h, kind, matrix, rng), (w, h)
 
 
 def _ffmpeg_frames(argv, size):
@@ -1531,7 +1602,7 @@ def read_frames(path, info, indices, height=None, matrix=None, start=0.0, durati
             with Image.open(os.path.join(path, info["files"][first + n])) as im:
                 im = im.convert("RGB")
                 if height and im.size[1] != height:
-                    im = im.resize(_scale(info, height), Image.LANCZOS)
+                    im = im.resize(_scale(info, height), Image.BOX if height < im.size[1] else Image.BICUBIC)
                 a = np.asarray(im, np.uint8)
             yield n, (a if as_uint8 else a.astype(np.float64) / 255.0)
         return
@@ -1873,14 +1944,28 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
     d = ImageDraw.Draw(im)
     note = ""
     if what == "dof":
+        ex = {}
+        blocks_out = dof_blocks(luma(rgb), unit, extras=ex)
+        bmap, bsize = ex["dof_map"]
+        arr = np.asarray(im).astype(np.float64)
+        for by in range(bmap.shape[0]):
+            for bx in range(bmap.shape[1]):
+                v = bmap[by, bx]
+                if not np.isfinite(v):
+                    continue
+                c = np.array([255.0 * min(v / 8.0, 1.0), 60.0, 255.0 * (1 - min(v / 8.0, 1.0))])
+                sl = (slice(by * bsize, (by + 1) * bsize), slice(bx * bsize, (bx + 1) * bsize))
+                arr[sl] = arr[sl] * 0.65 + c * 0.35
+        im = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+        d = ImageDraw.Draw(im)
         e = edges(luma(rgb), unit)
         s = np.clip(e["sigma"] / 8.0, 0, 1)
         for y, x, v in zip(e["y"], e["x"], s):
             c = (int(255 * v), int(80 * (1 - abs(2 * v - 1))), int(255 * (1 - v)))
             d.ellipse([x - 1.5, y - 1.5, x + 1.5, y + 1.5], fill=c)
         dof = depth_of_field(e)
-        note = "縁のぼけ: 青 0 px → 赤 8 px 以上（10 %% 点 %.1f / 中央 %.1f / 90 %% 点 %.1f）" % (
-            dof["dof.sharp"], dof["dof.median"], dof["dof.soft"])
+        note = "縁と区画のぼけ: 青 0 px → 赤 8 px 以上（縁の 90 %% 点 %.1f、区画: ピント %.1f / 背景 %.1f / 比 %.1f）" % (
+            dof["dof.soft"], blocks_out["dof.fg_blur"], blocks_out["dof.bg_blur"], blocks_out["dof.ratio"])
     elif what == "bloom":
         ndi = _ndi()
         src = luma(rgb) >= BLOOM_SOURCE

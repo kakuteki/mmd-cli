@@ -473,6 +473,21 @@ class OpticsTest(unittest.TestCase):
         self.assertLess(flat["dof.soft_share"], 0.05)
         self.assertLess(flat["dof.soft"] - flat["dof.sharp"], 1.5)
 
+    def test_background_blur_is_read_from_blocks_of_detail(self):
+        # the edges Canny finds keep to what is in focus: a blurred background has weak edges and is read in blocks,
+        # each by the blur of its own steepest places (here a sharp half and the same picture blurred by 4 px)
+        tex = ndi.gaussian_filter(blocks(360, 640, seed=13, n=400, low=0.1, high=0.9), 0.5)
+        both = tex.copy()
+        both[:, 320:] = ndi.gaussian_filter(tex, 4.0)[:, 320:]
+        d = LA.dof_blocks(both, unit=self.unit)
+        self.assertLess(d["dof.fg_blur"], 2.5)
+        self.assertAlmostEqual(d["dof.bg_blur"], 8.0, delta=3.0)
+        self.assertGreater(d["dof.ratio"], 3.0)
+        sharp = LA.dof_blocks(tex, unit=self.unit)
+        self.assertLess(sharp["dof.ratio"], 1.6)
+        flat = LA.dof_blocks(np.full((360, 640), 0.5) + 0.01 * np.linspace(0, 1, 640)[None, :], unit=self.unit)
+        self.assertTrue(math.isnan(flat["dof.ratio"]))              # no detail to read
+
     def test_sharpening_leaves_a_halo_on_both_sides_of_an_edge(self):
         picture = ndi.gaussian_filter(steps_picture(), 1.0)
         unsharp = picture + 0.8 * (picture - ndi.gaussian_filter(picture, 2.0))
@@ -700,6 +715,21 @@ class VideoTest(unittest.TestCase):
             prof = os.path.join(tmp, "prof.png")
             self.assertEqual(LA.main(["figure", "profiles", prof, m, "--ours", "v"]), 0)
             self.assertTrue(os.path.getsize(strip) > 0 and os.path.getsize(prof) > 0)
+
+    def test_a_video_made_smaller_for_the_analysis_does_not_ring(self):
+        # read at half its height, a hard edge must not overshoot (lanczos rings by a few %, which reads as sharpening)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "edge.mp4")
+            img = np.full((540, 960, 3), 51, np.uint8)            # 1080 to 720 is 1.5 to 1: so is 540 to 360
+            img[:, 481:] = 204
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "960x540", "-r", "30",
+                            "-i", "-", "-vf", "scale=out_color_matrix=bt709:out_range=tv", "-colorspace", "bt709",
+                            "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", path], input=img.tobytes() * 3, check=True)
+            info = LA.probe(path)
+            got = next(iter(LA.read_frames(path, info, [1], height=360)))[1]
+        row = got[180, :, 1]
+        self.assertLess(row.max(), 204 / 255.0 + 0.01)
+        self.assertGreater(row.min(), 51 / 255.0 - 0.01)
 
     def test_colours_come_back_as_they_went_in(self):
         # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255
