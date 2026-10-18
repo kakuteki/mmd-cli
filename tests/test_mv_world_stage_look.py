@@ -269,6 +269,19 @@ class FloorLightTest(unittest.TestCase):
             numpy.testing.assert_allclose(numpy.array(m.project(points)), numpy.array(view.project(twins)), atol=1e-9,
                                           err_msg=str(height))
 
+    def test_the_mirror_shows_no_speck_that_lies_under_the_floor(self):
+        # look2rev: the specks stand as high as the reference camera saw them on the cyc, some of them under the floor's height;
+        # the floor hides those, and its mirror must not show them (with every speck shown, no test fell).  A level camera with
+        # a wide view, whose mirrored twin sees the specks' heights: with the floor raised over all of them (70) the specks add
+        # nothing to the mirror; with it under all of them (-50) they do
+        view = mv_world.View(state(look_at=(0.0, 6.0, 0.0), distance=40.0, angles=(0.0, 0.0, 0.0), fov=80.0), SIZE)
+        lit = dict(PLAIN, bokeh={"count": 26, "opacity": 0.8})
+        for floor_y, shown in ((70.0, False), (-50.0, True)):
+            stage_ = {"world": 1, "reflect": 1.0, "floor_y": floor_y}
+            with_ = mv_world.reflection(view, mv_look.merge_look(dict(lit, stage=stage_)), 0.0)
+            without = mv_world.reflection(view, mv_look.merge_look(dict(PLAIN, stage=stage_)), 0.0)
+            self.assertEqual(bool(numpy.abs(with_ - without).max() > 1.0), shown, floor_y)
+
     def test_the_floor_light_is_refused_out_of_its_range(self):
         for stage_ in ({"world": 1, "reflect": -0.1}, {"world": 1, "reflect": 1.5}, {"world": 1, "reflect_blur": -1.0},
                        {"world": 1, "floor_plane": [10, -1, 3]}, {"reflect": 0.5}, {"floor_plane": [30, 40, 80]},
