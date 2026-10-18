@@ -648,6 +648,30 @@ class VideoTest(unittest.TestCase):
         self.assertIn("floor_pair", s["tone.median"])
         self.assertAlmostEqual(s["cuts.per_min"]["median"], 20.0, delta=0.01)
         self.assertEqual(d["matrix"], "bt709")
+        self.assertEqual(len(d["profiles"]["tone_hist"]), 50)
+        self.assertEqual(sum(d["profiles"]["sigma_hist"]) > 0, True)
+
+    def test_the_figures_and_small_crops_are_drawn(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            synthetic_video(path)
+            sheet = LA.contact_sheet(path, os.path.join(tmp, "sheet.png"), [1.0, 3.0], size=(160, 90), height=180,
+                                     label="test")
+            with Image.open(sheet) as im:
+                self.assertEqual(im.size, (320, 108))
+            for what in ("dof", "bloom", "ca", "bars"):
+                out = LA.annotate(path, os.path.join(tmp, what + ".png"), 1.0, what=what, height=180)
+                self.assertTrue(os.path.getsize(out) > 0, what)
+            m = os.path.join(tmp, "v.json")
+            self.assertEqual(LA.main(["measure", path, m, "--pairs", "4", "--height", "180"]), 0)
+            md, js = os.path.join(tmp, "t.md"), os.path.join(tmp, "t.json")
+            self.assertEqual(LA.main(["compare", md, js, "--ref", m, m, "--ours", m]), 0)
+            strip = os.path.join(tmp, "strip.png")
+            self.assertEqual(LA.main(["figure", "strip", strip, js]), 0)
+            prof = os.path.join(tmp, "prof.png")
+            self.assertEqual(LA.main(["figure", "profiles", prof, m, "--ours", "v"]), 0)
+            self.assertTrue(os.path.getsize(strip) > 0 and os.path.getsize(prof) > 0)
 
     def test_colours_come_back_as_they_went_in(self):
         # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255

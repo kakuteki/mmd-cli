@@ -1205,8 +1205,12 @@ def measure_frame(rgb0, rgb1=None, unit=1.0, full=True, seed=0, extras=None):
     else:
         m.update({k: float("nan") for k in full_keys})
     if extras is not None:
-        extras["bloom_profile"] = b["profile"]
-        extras["sigma"] = e["sigma"]
+        grid = np.arange(1.0, BLOOM_REACH + 1.0)
+        if b["profile"]:
+            d, v = np.array(b["profile"]).T
+            extras["bloom_profile"] = np.interp(grid, d, v, left=np.nan, right=np.nan).tolist()
+        extras["tone_hist"] = np.histogram(lab[..., 0], bins=50, range=(0.0, 100.0))[0].tolist()
+        extras["sigma_hist"] = np.histogram(e["sigma"], bins=40, range=(0.0, 20.0))[0].tolist()
     return {k: float(v) for k, v in m.items()}
 
 
@@ -1511,8 +1515,9 @@ def plan_pairs(n_frames, fps, cut_list, flash_events, step, count):
 
 def _measure_job(job):
     f0, f1, f2, unit, full, seed = job
+    extras = {}
     rows = {"m": measure_frame(f0.astype(np.float64) / 255.0, f1.astype(np.float64) / 255.0, unit=unit, full=full,
-                               seed=seed)}
+                               seed=seed, extras=extras), "extras": extras}
     if f2 is not None:
         rows["m2"] = measure_frame(f2.astype(np.float64) / 255.0, None, unit=unit, full=False, seed=seed + 1)
     return rows
@@ -1572,6 +1577,16 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
             row["m2"] = r["m2"]
         rows.append(row)
     summary = summarise(rows, seed=seed)
+    profiles = {}
+    curves = [r["extras"]["bloom_profile"] for r in results if r["extras"].get("bloom_profile")]
+    if curves:
+        med = np.nanmedian(np.array(curves, np.float64), axis=0)
+        profiles["bloom"] = [[float(d), float(v)] for d, v in zip(np.arange(1.0, BLOOM_REACH + 1.0), med)
+                             if np.isfinite(v)]
+    for name in ("tone_hist", "sigma_hist"):
+        hs = [r["extras"][name] for r in results if name in r["extras"]]
+        if hs:
+            profiles[name] = np.sum(np.array(hs, np.float64), axis=0).tolist()
     # the corners' darkening, from every frame inside the bars
     th = maps.shape[1] / float(stack.shape[1])
     tw = maps.shape[2] / float(stack.shape[2])
@@ -1602,7 +1617,310 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
               "frame": {"bars": bars, "box": [int(x0), int(y0), int(x1), int(y1)], "aspect": w_act / float(h_act),
                         "fps": rate, "fps_effective": eff["frame.fps_effective"], "step": step},
               "time": {"cuts": [int(c) for c in cut_list], "flashes": flash_events, "frames": int(len(maps))},
-              "vignette": vig, "frames": rows, "summary": summary}
+              "vignette": vig, "frames": rows, "summary": summary, "profiles": profiles}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
     return result
+
+
+# ---- figures ----------------------------------------------------------------------------------------------------------
+
+FONTS = ("C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/msgothic.ttc",
+         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+OURS_COLOURS = ("#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e")
+
+
+def _plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import font_manager
+    for p in FONTS:
+        if os.path.isfile(p):
+            font_manager.fontManager.addfont(p)
+            plt.rcParams["font.family"] = font_manager.FontProperties(fname=p).get_name()
+            break
+    plt.rcParams["axes.unicode_minus"] = False
+    return plt
+
+
+def figure_strip(table, out, keys=None, title=None):
+    """the comparison as a figure: one row per measure, the references' per-video medians (grey dots) and their
+    quartiles (a grey band), each of ours (coloured), all on the measure's own scale put as (value - median) / spread"""
+    plt = _plt()
+    rows = [r for r in table["rows"] if r.get("ref_n") and (keys is None or r["key"] in keys)]
+    ours = table["ours"]
+    fig_h = 0.32 * len(rows) + 1.2
+    fig, ax = plt.subplots(figsize=(11, fig_h))
+    for i, r in enumerate(rows):
+        y = len(rows) - 1 - i
+        med, spread = r["ref_median"], r["spread"]
+        ax.add_patch(plt.Rectangle(((r["ref_q25"] - med) / spread, y - 0.3), (r["ref_q75"] - r["ref_q25"]) / spread, 0.6,
+                                   color="#dddddd", zorder=1))
+        xs = [(v - med) / spread for v in r["refs"].values() if v is not None and np.isfinite(v)]
+        ax.scatter(xs, [y] * len(xs), s=12, color="#777777", zorder=2)
+        for j, o in enumerate(ours):
+            v = r["ours"][o]["value"]
+            if v is not None and np.isfinite(v):
+                x = float(np.clip((v - med) / spread, -8, 8))
+                ax.scatter([x], [y], s=46, marker="D", color=OURS_COLOURS[j % len(OURS_COLOURS)], zorder=3,
+                           label=o if i == 0 else None)
+    ax.set_yticks(range(len(rows)))
+    ax.set_yticklabels(["%s  %s" % (r["key"], _fmt(r["ref_median"])) for r in reversed(rows)], fontsize=7)
+    ax.axvline(0, color="#999999", lw=0.8)
+    ax.set_xlim(-8.5, 8.5)
+    ax.set_xlabel("（値 - 参考の中央値）/ 参考の四分位の幅（灰の帯が参考の四分位、灰の点が参考の各動画、8 で打ち切り）")
+    ax.legend(loc="upper right", fontsize=8)
+    if title:
+        ax.set_title(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out, dpi=110)
+    plt.close(fig)
+
+
+def figure_profiles(out, results, labels=None):
+    """the glow's profile (the share of the sources' light at each distance), the tone histogram (L*) and the
+    edges' blur histogram of each video, side by side (the references grey, ours coloured)"""
+    plt = _plt()
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+    labels = labels or {}
+    k = 0
+    for r in results:
+        prof = r.get("profiles", {})
+        ours = labels.get(r["label"]) is not None
+        colour = OURS_COLOURS[k % len(OURS_COLOURS)] if ours else "#888888"
+        k += 1 if ours else 0
+        lw = 2.0 if ours else 0.8
+        if prof.get("bloom"):
+            d, s = zip(*prof["bloom"])
+            axes[0].plot(d, s, color=colour, lw=lw, label=r["label"] if ours else None)
+        if prof.get("tone_hist"):
+            h = np.asarray(prof["tone_hist"], np.float64)
+            axes[1].plot(np.arange(len(h)) * 2 + 1, h / max(h.sum(), 1e-12), color=colour, lw=lw)
+        if prof.get("sigma_hist"):
+            h = np.asarray(prof["sigma_hist"], np.float64)
+            axes[2].plot(np.arange(len(h)) * 0.5 + 0.25, h / max(h.sum(), 1e-12), color=colour, lw=lw)
+    axes[0].set_xlabel("明るい所からの距離（720 行の px）")
+    axes[0].set_ylabel("光源の光の割合（背景を引いて）")
+    axes[0].set_xlim(0, 60)
+    axes[0].set_title("グローの広がり", fontsize=10)
+    axes[1].set_xlabel("L*")
+    axes[1].set_title("明るさの分布", fontsize=10)
+    axes[2].set_xlabel("縁のぼけ（720 行の px）")
+    axes[2].set_xlim(0, 12)
+    axes[2].set_title("縁のぼけの分布（右に長いほど被写界深度が浅い）", fontsize=10)
+    if axes[0].get_legend_handles_labels()[0]:
+        axes[0].legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out, dpi=110)
+    plt.close(fig)
+
+
+def _font(size):
+    from PIL import ImageFont
+    for p in FONTS:
+        if os.path.isfile(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _frame_at(path, info, t, height, matrix):
+    n = int(round(t * info["fps"]))
+    return next(iter(read_frames(path, info, [n], height=height, matrix=matrix, as_uint8=True)))[1]
+
+
+def contact_sheet(path, out, times, box=None, size=(320, 180), height=720, matrix="auto", label=None):
+    """small crops (box in the 720 line frame, scaled to size) of the frames at the given times, in a row, each with
+    its time: for the report a small picture of the reference, not the frame itself"""
+    from PIL import Image, ImageDraw
+    info = probe(path)
+    mat = matrix_for(info, matrix)
+    tiles = []
+    for t in times:
+        a = _frame_at(path, info, t, height, mat)
+        im = Image.fromarray(a)
+        if box:
+            im = im.crop(box)
+        im = im.resize(size, Image.LANCZOS)
+        d = ImageDraw.Draw(im)
+        d.rectangle([0, 0, 70, 16], fill=(0, 0, 0))
+        d.text((3, 1), "%.1f s" % t, fill=(255, 255, 255), font=_font(12))
+        tiles.append(im)
+    head = 18 if label else 0
+    sheet = Image.new("RGB", (size[0] * len(tiles), size[1] + head), (255, 255, 255))
+    if label:
+        ImageDraw.Draw(sheet).text((4, 2), label, fill=(0, 0, 0), font=_font(12))
+    for i, im in enumerate(tiles):
+        sheet.paste(im, (i * size[0], head))
+    sheet.save(out)
+    return out
+
+
+def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scale=1.0):
+    """a frame (cropped to box, 720 line pixels) with what a measure saw drawn on it: dof, the edges coloured by their
+    blur (blue sharp, red soft); bloom, the bright sources outlined and rings 4, 16 and 48 px out; ca, the shift of red
+    and blue against green as arrows (drawn 20 times longer); bars, the picture inside the bars"""
+    from PIL import Image, ImageDraw
+    info = probe(path)
+    mat = matrix_for(info, matrix)
+    a = _frame_at(path, info, t, height, mat)
+    rgb = a.astype(np.float64) / 255.0
+    unit = a.shape[0] / REFERENCE_HEIGHT
+    im = Image.fromarray(a)
+    d = ImageDraw.Draw(im)
+    note = ""
+    if what == "dof":
+        e = edges(luma(rgb), unit)
+        s = np.clip(e["sigma"] / 8.0, 0, 1)
+        for y, x, v in zip(e["y"], e["x"], s):
+            c = (int(255 * v), int(80 * (1 - abs(2 * v - 1))), int(255 * (1 - v)))
+            d.ellipse([x - 1.5, y - 1.5, x + 1.5, y + 1.5], fill=c)
+        dof = depth_of_field(e)
+        note = "縁のぼけ: 青 0 px → 赤 8 px 以上（10 %% 点 %.1f / 中央 %.1f / 90 %% 点 %.1f）" % (
+            dof["dof.sharp"], dof["dof.median"], dof["dof.soft"])
+    elif what == "bloom":
+        ndi = _ndi()
+        src = luma(rgb) >= BLOOM_SOURCE
+        dist = ndi.distance_transform_edt(~src) / unit
+        ring = np.zeros(src.shape, bool)
+        for r_ in (4.0, 16.0, 48.0):
+            ring |= np.abs(dist - r_) < 0.6
+        edge = src & ~ndi.binary_erosion(src)
+        arr = np.asarray(im).copy()
+        arr[ring] = (arr[ring] * 0.3 + np.array([0, 255, 255]) * 0.7).astype(np.uint8)
+        arr[edge] = (255, 0, 255)
+        im = Image.fromarray(arr)
+        d = ImageDraw.Draw(im)
+        b = bloom(rgb, unit)
+        note = "明るい所（紫の縁）と 4・16・48 px の輪（水色）。グローの強さ %.3f・届き %.1f px" % (
+            b["bloom.strength"], b["bloom.r50"])
+    elif what == "ca":
+        ca = aberration(rgb, unit)
+        h, w = a.shape[:2]
+        for name, colour in (("red", (255, 40, 40)), ("blue", (40, 120, 255))):
+            for cx, cy in ((0.1, 0.1), (0.9, 0.1), (0.1, 0.9), (0.9, 0.9), (0.5, 0.5)):
+                x0, y0 = cx * w, cy * h
+                rx, ry = (x0 - w / 2.0) / (w / 2.0), (y0 - h / 2.0) / (h / 2.0)
+                radial = ca["ca.%s_radial" % name] * math.hypot(rx * w / 2.0, ry * h / 2.0) / math.hypot(w / 2.0, h / 2.0)
+                ang = math.atan2(y0 - h / 2.0, x0 - w / 2.0)
+                dx = (ca["ca.%s_x" % name] + radial * math.cos(ang)) * unit * 20
+                dy = (ca["ca.%s_y" % name] + radial * math.sin(ang)) * unit * 20
+                d.line([x0, y0, x0 + dx, y0 + dy], fill=colour, width=3)
+        note = "赤と青の緑に対するずれ（20 倍に伸ばした矢印）: 赤 (%.2f, %.2f) px 倍率 %.2f px、青 (%.2f, %.2f) px 倍率 %.2f px" % (
+            ca["ca.red_x"], ca["ca.red_y"], ca["ca.red_radial"], ca["ca.blue_x"], ca["ca.blue_y"], ca["ca.blue_radial"])
+    elif what == "bars":
+        bars = find_bars(np.array([luma(rgb)]))
+        x0, y0, x1, y1 = active_box(bars, a.shape)
+        d.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(0, 255, 0), width=2)
+        note = "黒帯の内側（緑）: %d x %d" % (x1 - x0, y1 - y0)
+    if box:
+        im = im.crop(box)
+    if scale != 1.0:
+        im = im.resize((int(im.size[0] * scale), int(im.size[1] * scale)), Image.LANCZOS)
+    canvas = Image.new("RGB", (im.size[0], im.size[1] + 22), (255, 255, 255))
+    canvas.paste(im, (0, 22))
+    ImageDraw.Draw(canvas).text((4, 3), "%.1f s  %s" % (t, note), fill=(0, 0, 0), font=_font(12))
+    canvas.save(out)
+    return out
+
+
+# ---- the command line -------------------------------------------------------------------------------------------------
+
+def _box(text):
+    if not text:
+        return None
+    parts = [int(v) for v in text.split(",")]
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError("a box is X0,Y0,X1,Y1")
+    return tuple(parts)
+
+
+def _size(text):
+    w, _, h = text.lower().partition("x")
+    return int(w), int(h)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    m = sub.add_parser("measure", help="measure a video or a folder of frames")
+    m.add_argument("input")
+    m.add_argument("out")
+    m.add_argument("--label")
+    m.add_argument("--from", dest="start", type=float, help="seconds: where to start (e.g. after an intro)")
+    m.add_argument("--to", dest="end", type=float, help="seconds: where to stop")
+    m.add_argument("--pairs", type=int, default=120, help="pairs of frames to measure, spread over the video")
+    m.add_argument("--height", type=int, default=720, help="the analysis height (lengths are given at 720 lines)")
+    m.add_argument("--matrix", default="auto", choices=("auto", "bt601", "bt709", "bt2020"))
+    m.add_argument("--jobs", type=int, default=1)
+    m.add_argument("--pair-every", type=int, default=4, help="measure the second picture too every this many pairs "
+                   "(the noise floor)")
+    m.add_argument("--full-every", type=int, default=4, help="the slower measures (fringes, distortion) every this "
+                   "many pairs")
+    m.add_argument("--fps", type=int, default=30, help="the rate of a folder of frames")
+    c = sub.add_parser("compare", help="the references and ours side by side")
+    c.add_argument("md")
+    c.add_argument("json")
+    c.add_argument("--ref", nargs="+", required=True)
+    c.add_argument("--ours", nargs="+", required=True)
+    f = sub.add_parser("figure", help="figures")
+    f.add_argument("kind", choices=("strip", "profiles"))
+    f.add_argument("out")
+    f.add_argument("inputs", nargs="+", help="strip: the compare JSON; profiles: measure JSONs")
+    f.add_argument("--ours", nargs="*", default=[], help="profiles: the labels of ours (coloured)")
+    f.add_argument("--keys", nargs="*")
+    f.add_argument("--title")
+    s = sub.add_parser("crops", help="small crops of frames at given times, in a row")
+    s.add_argument("input")
+    s.add_argument("out")
+    s.add_argument("--at", type=float, nargs="+", required=True)
+    s.add_argument("--box", type=_box)
+    s.add_argument("--size", type=_size, default=(320, 180))
+    s.add_argument("--label")
+    a = sub.add_parser("annotate", help="a frame with what a measure saw drawn on it")
+    a.add_argument("input")
+    a.add_argument("out")
+    a.add_argument("--at", type=float, required=True)
+    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars"), default="dof")
+    a.add_argument("--box", type=_box)
+    a.add_argument("--scale", type=float, default=1.0)
+    args = ap.parse_args(argv)
+    if args.cmd == "measure":
+        r = measure_video(args.input, args.out, label=args.label, start=args.start, end=args.end, pairs=args.pairs,
+                          height=args.height, matrix=args.matrix, jobs=args.jobs, pair_every=args.pair_every,
+                          full_every=args.full_every, fps=args.fps, log=lambda t: print(t, flush=True))
+        print("measured %s: %d pairs, %d cuts, bars %s, fps %s (moves at %s)" % (
+            r["label"], len(r["frames"]), len(r["time"]["cuts"]), r["frame"]["bars"], r["frame"]["fps"],
+            r["frame"]["fps_effective"]))
+    elif args.cmd == "compare":
+        refs = [_load(p) for p in args.ref]
+        ours = [_load(p) for p in args.ours]
+        rows = compare(refs, ours)
+        labels = [o["label"] for o in ours]
+        with open(args.md, "w", encoding="utf-8") as fh:
+            fh.write(table_md(rows, labels))
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump({"refs": [r["label"] for r in refs], "ours": labels, "rows": rows}, fh, ensure_ascii=False,
+                      indent=1, allow_nan=True)
+        far = sorted(((max([e["distance"] for e in r["ours"].values() if np.isfinite(e["distance"])] or [0]), r["key"])
+                      for r in rows), reverse=True)[:12]
+        for dist, key in far:
+            print("%-24s %.2f" % (key, dist))
+    elif args.cmd == "figure":
+        if args.kind == "strip":
+            figure_strip(_load(args.inputs[0]), args.out, keys=args.keys, title=args.title)
+        else:
+            results = [_load(p) for p in args.inputs]
+            figure_profiles(args.out, results, labels={o: True for o in args.ours})
+    elif args.cmd == "crops":
+        contact_sheet(args.input, args.out, args.at, box=args.box, size=args.size, label=args.label)
+    elif args.cmd == "annotate":
+        annotate(args.input, args.out, args.at, what=args.what, box=args.box, scale=args.scale)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
