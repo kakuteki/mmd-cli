@@ -1543,6 +1543,8 @@ class SongTest(unittest.TestCase):
         for key, band in (("still_lateral_cm", PEOPLE_STILL_CM), ("moving_lateral_cm", PEOPLE_MOVING_CM),
                           ("moving_mos_ml_cm", PEOPLE_MOS_ML_CM)):
             before, after = st[key]["before"], st[key]["after"]
+            self.assertIsNotNone(before, key)              # (the plan has still and moving single support: v8's pulled all)
+            self.assertIsNotNone(after, key)
             self.assertLessEqual(off_band(after, band), off_band(before, band), (key, before, after, band))
             if off_band(before, band) > 0.0:
                 self.assertLess(off_band(after, band), off_band(before, band), (key, before, after, band))
