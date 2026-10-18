@@ -54,7 +54,10 @@ foot turning on its ball, its toe or its heel does not move there), the lowest p
    travel, as long as its knee stays within KNEE_GIVE of the leg's without the hold (and bent REACH_KNEE_DEG): further,
    the body is going away from it as the dance has it, and the foot slides with it (the song's 70.4-71.2 s held a foot
    11 cm from the dance's, the knee 35 degrees straighter and MMD's leg 2.3 cm short).  Between its runs the correction
-   goes from one run's to the next's over the swing (a smoothstep), so that it lands where the dance puts it.
+   goes from one run's to the next's over the swing (a smoothstep), so that it lands where the dance puts it.  A jump of
+   a frame or two between slow steps (PLANT_POP) is held too; a jump inside a slide (PLANT_SPIKE) is brought to the
+   slide's pace and what that takes off is given back over the slide's fast steps after it (PLANT_GIVE_BACK), so that
+   the slide ends where the dance's does.
 5. Flight: where no foot stands for AIR_MIN frames or more, the body's centre of mass falls as a body in the air does,
    at one rate over the flight: the dance's own (its parabola there) kept within FLIGHT_BAND (FLIGHT_FIT to gravity G:
    slower comes to FLIGHT_FIT, faster to G).  The pelvis's height (センター) changes over the flight and WINDOW frames
