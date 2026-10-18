@@ -1843,6 +1843,11 @@ def _size(text):
     return int(w), int(h)
 
 
+def _load(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
