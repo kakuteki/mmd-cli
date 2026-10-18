@@ -753,6 +753,60 @@ class ColourRenderTest(unittest.TestCase):
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class RimLightRenderTest(unittest.TestCase):
+    """look2 (2026-10-18): a light from behind her (look rim) lights the inner band of her edges that face where it comes from,
+    and nothing else.  A grey box (her) on a black stage, no glow, no lens: a cool light from above"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg.avi")
+        source = ("color=c=black@0.0:s=%dx%d:r=30,format=rgba,"
+                  "drawbox=x=100:y=40:w=120:h=100:color=0x808080@1.0:t=fill:replace=1" % SIZE)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "10", "-c:v", "rawvideo",
+                        "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        cls.frames = {}
+        for name, rim in (("bare", {}), ("lit", {"rim": {"strength": 1.0, "colour": [0, 0, 255], "width": 12.0,
+                                                          "from": [0.0, -1.0]}})):
+            look = os.path.join(cls.folder, name + ".json")
+            with open(look, "w", encoding="utf-8") as f:
+                json.dump(dict({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                                "plate": {"base": [0, 0, 0], "haze": [0, 0, 0], "pool": [0, 0, 0]},
+                                "lens": {"vignette": 0, "grain": 0}}, **rim), f)
+            out = os.path.join(cls.folder, name + ".mp4")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert mv_look.main(["render", cls.fg, look, out, "--work", os.path.join(cls.folder, "w_" + name)]) == 0
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-vf", "select=eq(n\\,5),format=rgb24", "-frames:v", "1",
+                                  "-f", "rawvideo", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+            cls.frames[name] = numpy.frombuffer(raw, dtype=numpy.uint8).reshape(SIZE[1], SIZE[0], 3).astype(numpy.int16)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def blue(self, rows, cols):
+        lit, bare = self.frames["lit"], self.frames["bare"]
+        return float((lit[rows, cols, 2] - bare[rows, cols, 2]).mean())
+
+    def test_the_edge_facing_the_light_is_lit_and_the_rest_is_not(self):
+        top = self.blue(slice(40, 43), slice(130, 190))              # the band just inside her top edge (12 px of 720: 3 here)
+        bottom = self.blue(slice(134, 138), slice(130, 190))         # her bottom edge faces away from the light
+        middle = self.blue(slice(80, 100), slice(130, 190))
+        outside = self.blue(slice(10, 30), slice(130, 190))
+        self.assertGreater(top, 40.0, (top, bottom, middle, outside))
+        self.assertLess(abs(bottom), 4.0)
+        self.assertLess(abs(middle), 4.0)
+        self.assertLess(abs(outside), 4.0)
+
+    def test_no_rim_unless_asked(self):
+        argv = mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", mv_look.merge_look({}), SIZE, 30)
+        self.assertNotIn("alphamerge", argv[argv.index("-filter_complex") + 1])
+        for bad in ({"strength": -0.1}, {"width": -1}, {"from": [0, 0]}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"rim": bad})
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class ChunkLightRenderTest(unittest.TestCase):
     """review 10: rendered for real, a chunk of the song shows the light loop as the whole song shows it at that time
     (a loop of 10 frames whose frame i is a flat grey of 20 * i, nobody on the stage, a black plate)"""

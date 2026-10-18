@@ -106,6 +106,11 @@ DEFAULT_LOOK = {
     # the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with
     # every frame (0 none, up to about 10); both lie under the text in front
     "lens": {"vignette": 0.3, "grain": 3},
+    # a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from
+    # in the picture (`from`, x right and y down: [0, -1] from above), `width` deep (pixels of a 720 line picture) and
+    # softened by `soft`, screened over her in `colour` times `strength`; 0 none.  The references' strong edge light
+    # (lookrev: the 90th percentile of the edge over the core, 2.15) is above ours (1.56 to 1.75)
+    "rim": {"strength": 0.0, "colour": [200, 220, 255], "width": 5.0, "soft": 2.0, "from": [0.0, -1.0]},
     "flares": [],
     # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py, which says how);
     # world 0 keeps them fixed to the picture, as before
@@ -220,7 +225,18 @@ def merge_look(overrides):
             raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
     _check_stage(look["stage"])
     _check_lamps(look["lamps"], look["stage"])
+    _check_rim(look["rim"])
     return look
+
+
+def _check_rim(rim):
+    for key in ("strength", "width", "soft"):
+        if not (math.isfinite(rim[key]) and rim[key] >= 0):
+            raise ValueError("rim.%s is from 0, not %r" % (key, rim[key]))
+    if not math.hypot(*rim["from"]) > 0:
+        raise ValueError("rim.from is the way the light comes from in the picture (x right, y down), not %r" % (rim["from"],))
+    if any(c < 0 for c in rim["colour"]):
+        raise ValueError("rim.colour is r, g, b from 0")
 
 
 def _check_lamps(lamps, stage):
@@ -579,10 +595,12 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     lay(overlays["back"])
     glow = look["glow"]
     scale = h / REFERENCE_HEIGHT
+    rim = look["rim"]
+    rim_on = rim["strength"] > 0 and rim["width"] > 0
     if glow["strength"] > 0 and glow["radius"] > 0:
         t = int(glow["threshold"])
         curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
-        parts += ["[0:v]%sformat=rgba,split=2[fg][fgb]" % _fold(subframes, taken, fps, shifts),
+        parts += ["[0:v]%sformat=rgba,split=%s" % (_fold(subframes, taken, fps, shifts), "3[fg][fgb][fgr]" if rim_on else "2[fg][fgb]"),
                   "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
                   "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
                   "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
@@ -590,9 +608,12 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["[0:v]%sformat=rgba[fg]" % _fold(subframes, taken, fps, shifts),
+        parts += ["[0:v]%sformat=rgba%s" % (_fold(subframes, taken, fps, shifts), ",split=2[fg][fgr]" if rim_on else "[fg]"),
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
+    if rim_on:
+        parts += _rim(rim, scale, state["label"])
+        state["label"] = "rimlit"
     camera = look["camera"]
     span = punch_span
     hits = flare_starts if span > 0 else []
@@ -628,6 +649,28 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
     argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
+
+
+def _rim(rim, scale, label):
+    """the filters of the rim light (look rim) from the dancer's branch [fgr] over [label], into [rimlit]: her alpha A, the
+    same moved by `width` away from the light, S(x, y) = A((x, y) + width * from), and the band A (1 - S), softened, as the
+    alpha of her picture painted the rim's colour; screened over [label] (premultiplied: colour times the band)"""
+    ux, uy = rim["from"]
+    norm = math.hypot(ux, uy)
+    reach = float(rim["width"]) * scale
+    tx, ty = int(round(-ux / norm * reach)), int(round(-uy / norm * reach))
+    m = max(abs(tx), abs(ty), 1)
+    soft = float(rim["soft"]) * scale
+    r, g, b = (int(round(min(255.0, c * float(rim["strength"])))) for c in rim["colour"])
+    return ["[fgr]split=2[rx][ry]",
+            "[rx]alphaextract,split=2[ra][rb]",
+            "[rb]pad=iw+%d:ih+%d:%d:%d,crop=iw-%d:ih-%d:%d:%d,%snegate[rs]" % (2 * m, 2 * m, m + tx, m + ty, 2 * m, 2 * m, m, m,
+                                                                               "gblur=sigma=%s," % _number(soft) if soft > 0 else ""),
+            "[ra][rs]blend=all_mode=multiply[rm]",
+            "[ry]lutrgb=r=%d:g=%d:b=%d,format=rgba[rc]" % (r, g, b),
+            "[rc][rm]alphamerge,premultiply=inplace=1,format=gbrp[rim]",
+            "[%s]format=gbrp[rimbase]" % label,
+            "[rimbase][rim]blend=all_mode=screen:shortest=1[rimlit]"]
 
 
 def _since(at):
