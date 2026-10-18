@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 try:
     import numpy as np
     import scipy.ndimage as ndi
-    import cv2  # noqa: F401
+    import cv2
 except ImportError:                       # the tool needs numpy, scipy and OpenCV; the rest of the suite does not
     np = None
 
@@ -488,6 +488,20 @@ class OpticsTest(unittest.TestCase):
         flat = LA.dof_blocks(np.full((360, 640), 0.5) + 0.01 * np.linspace(0, 1, 640)[None, :], unit=self.unit)
         self.assertTrue(math.isnan(flat["dof.ratio"]))              # no detail to read
 
+    def test_a_blurred_background_under_coding_noise_still_reads_blurred(self):
+        # the blocks and the noise of a compressed video are sharp: read at full size they make a background blurred by
+        # 8 px read about 1 to 2 px (the first reading of r01's blurred background); read on the frame made 180 lines
+        # tall they average out
+        tex = ndi.gaussian_filter(blocks(720, 1280, seed=13, n=1600, low=0.1, high=0.9), 1.0)
+        both = tex.copy()
+        both[:, 640:] = ndi.gaussian_filter(tex, 8.0)[:, 640:]
+        noisy = both + np.random.default_rng(3).normal(0, 1.5 / 255.0, both.shape)
+        ok, buf = cv2.imencode(".jpg", np.clip(noisy * 255.0 + 0.5, 0, 255).astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, 40])
+        coded = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE).astype(np.float64) / 255.0
+        d = LA.dof_blocks(coded, unit=1.0)
+        self.assertAlmostEqual(d["dof.bg_blur"], 8.0, delta=2.5)
+        self.assertGreater(d["dof.ratio"], 2.5)
+
     def test_sharpening_leaves_a_halo_on_both_sides_of_an_edge(self):
         picture = ndi.gaussian_filter(steps_picture(), 1.0)
         unsharp = picture + 0.8 * (picture - ndi.gaussian_filter(picture, 2.0))
@@ -512,14 +526,16 @@ class OpticsTest(unittest.TestCase):
         self.assertLess(clean["diffusion.share"], 0.04)
 
     def test_a_glow_of_the_bright_parts_is_not_diffusion(self):
-        # a glow made from the brightest parts widens the edges of those parts; diffusion veils every edge
-        picture = steps_picture(levels=(0.15, 0.3), bright=4)
-        glowing = LA.luma(add_glow(rgb(picture), 8.0, 0.8))
-        d = LA.edge_profiles(glowing, LA.edges(glowing, unit=self.unit), unit=self.unit)
-        self.assertLess(d["diffusion.share"], 0.04)
-        self.assertGreater(d["glow.edge_share"], 0.08)
-        plain = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
-        self.assertLess(plain["glow.edge_share"], 0.04)
+        # a glow made from the brightest parts widens the edges of those parts; diffusion veils every edge.  With many
+        # bright parts (12: about half the clean steps are theirs) the bright steps must still be left out of diffusion
+        for bright in (4, 12):
+            picture = steps_picture(levels=(0.15, 0.3), bright=bright)
+            glowing = LA.luma(add_glow(rgb(picture), 8.0, 0.8))
+            d = LA.edge_profiles(glowing, LA.edges(glowing, unit=self.unit), unit=self.unit)
+            self.assertLess(d["diffusion.share"], 0.04, bright)
+            self.assertGreater(d["glow.edge_share"], 0.08, bright)
+            plain = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
+            self.assertLess(plain["glow.edge_share"], 0.04, bright)
 
     def test_motion_blur_gives_the_shutter(self):
         for shutter in (0.0, 0.5, 1.0):
