@@ -742,5 +742,50 @@ class VideoTest(unittest.TestCase):
         self.assertLess(float(np.abs(ndi.uniform_filter(got - want, (9, 9, 1))).mean()), 2.0 / 255)
 
 
+
+def _ocr_ready():
+    try:
+        import importlib.util as u
+        return bool(u.find_spec("easyocr")) and os.path.isfile(os.path.join(os.path.expanduser("~"), ".EasyOCR", "model",
+                                                                            "craft_mlt_25k.pth"))
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(LA, NEEDS)
+class TextTest(unittest.TestCase):
+    def test_where_and_how_big_the_text_is(self):
+        # four frames of a 720 line picture: a lyric line at the bottom in two, a watermark in a corner in all
+        shape = (720, 1280)
+        mark = (40, 30, 200, 60)                       # x0, y0, x1, y1: top left corner, 30 px tall
+        lyric = (340, 620, 940, 670)                   # bottom middle, 50 px tall
+        frames = [[mark, lyric], [mark], [mark, lyric], [mark]]
+        t = LA.text_summary(frames, shape, unit=1.0)
+        self.assertEqual(t["text.frames"], 1.0)
+        self.assertEqual(t["text.height"], 30.0)                     # the median of the boxes' heights
+        self.assertAlmostEqual(t["text.bottom"], 2 / 6.0, delta=1e-9)
+        self.assertAlmostEqual(t["text.top"], 4 / 6.0, delta=1e-9)
+        self.assertAlmostEqual(t["text.corner"], 4 / 6.0, delta=1e-9)
+        area = (160 * 30 + 0.5 * 600 * 50) / float(720 * 1280)
+        self.assertAlmostEqual(t["text.area"], area, delta=1e-6)
+        none = LA.text_summary([[], []], shape, unit=1.0)
+        self.assertEqual(none["text.frames"], 0.0)
+        self.assertTrue(math.isnan(none["text.height"]))
+
+    @unittest.skipUnless(LA and _ocr_ready(), "needs EasyOCR and its CRAFT model in ~/.EasyOCR (hinata has them)")
+    def test_text_drawn_on_a_frame_is_found(self):
+        from PIL import Image, ImageDraw, ImageFont
+        im = Image.new("RGB", (1280, 720), (30, 40, 60))
+        font = None
+        for p in ("C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/arial.ttf"):
+            if os.path.isfile(p):
+                font = ImageFont.truetype(p, 40)
+                break
+        ImageDraw.Draw(im).text((100, 600), "Model: someone  Motion: mover", fill=(255, 255, 255), font=font)
+        boxes = LA.text_boxes(np.asarray(im), LA.text_reader())
+        self.assertTrue(any(b[1] < 660 and b[3] > 600 and b[0] < 400 for b in boxes), boxes)
+        empty = LA.text_boxes(np.full((720, 1280, 3), 90, np.uint8), LA.text_reader())
+        self.assertEqual(empty, [])
+
 if __name__ == "__main__":
     unittest.main()

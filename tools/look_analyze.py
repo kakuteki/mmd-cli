@@ -6,7 +6,8 @@
     python tools/look_analyze.py figure strip TABLE.json OUT.png
     python tools/look_analyze.py figure profiles OUT.png A.json B.json ...
     python tools/look_analyze.py crops VIDEO OUT.png --at S S ... [--box X0,Y0,X1,Y1] [--size 320x180]
-    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars]
+    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion]
+    python tools/look_analyze.py text VIDEO MEASURE.json [--frames 24]      # where the text is (EasyOCR on the CPU)
 
 `measure` reads the video twice with ffmpeg: once every frame at a tiny size (the cuts between shots, the flashes, the
 frames that are shown twice, the darkening of the corners over all the frames), then pairs of frames spread over the
@@ -1320,6 +1321,12 @@ MEASURES = {
     "glow.edge_radius": ("light", "明るい縁のにじみの広がり", "px"),
     "scan.peak": ("texture", "スキャンライン（行の周期の強さ。線なしで数）", ""),
     "glitch.tears": ("texture", "行の裂け（グリッチ）の数", "行"),
+    "text.frames": ("frame", "文字の入るコマの割合（EasyOCR の文字の検出）", ""),
+    "text.area": ("frame", "文字の覆う面積の割合", ""),
+    "text.height": ("frame", "文字の高さ（箱の高さの中央）", "px"),
+    "text.top": ("frame", "上の 1/3 にある文字の割合", ""),
+    "text.bottom": ("frame", "下の 1/3 にある文字の割合", ""),
+    "text.corner": ("frame", "隅にある文字の割合（透かし・名のり）", ""),
     "frame.aspect": ("frame", "絵の縦横比（黒帯の内側）", ""),
     "frame.bars_tb": ("frame", "上下の黒帯（合計）", "px"),
     "frame.bars_lr": ("frame", "左右の黒帯（合計）", "px"),
@@ -1330,7 +1337,8 @@ MEASURES = {
 }
 # read once from the whole video, not from each frame
 VIDEO_LEVEL = {"flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10",
-               "vignette.corner_p95", "frame.aspect",
+               "vignette.corner_p95", "text.frames", "text.area", "text.height", "text.top", "text.bottom", "text.corner",
+               "frame.aspect",
                "frame.bars_tb", "frame.bars_lr", "frame.fps", "frame.fps_effective", "cuts.per_min", "shots.median_s"}
 PAIR_ONLY = ("motion.", "grain.")             # need the next picture
 FULL_ONLY = ("ca.", "distortion.")            # read on every full_every-th pair only (slower)
@@ -1808,6 +1816,91 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
     return result
 
 
+# ---- text on the frame ------------------------------------------------------------------------------------------------
+
+TEXT_LEAST = 8.0                  # 720 line pixels: a box of text at least this tall is counted
+
+
+def text_reader():
+    """EasyOCR's text detector (CRAFT) on the CPU, from the models already in ~/.EasyOCR (nothing is downloaded)"""
+    if "ocr" not in _LAZY:
+        import easyocr
+        _LAZY["ocr"] = easyocr.Reader(["en"], gpu=False, download_enabled=False, verbose=False)
+    return _LAZY["ocr"]
+
+
+def text_boxes(rgb_u8, reader):
+    """the boxes (x0, y0, x1, y1, pixels) of the text the detector finds in a frame"""
+    horizontal, free = reader.detect(np.asarray(rgb_u8))
+    out = []
+    for b in (horizontal[0] if horizontal else []):
+        x0, x1, y0, y1 = (int(v) for v in b)
+        out.append((x0, y0, x1, y1))
+    for poly in (free[0] if free else []):
+        xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+        out.append((int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))))
+    return out
+
+
+def text_summary(frames, shape, unit=1.0):
+    """where and how big the text of a video is, from the boxes of some of its frames (shape: the frame's H, W)
+
+    text.frames: the share of frames with text (a box at least TEXT_LEAST px tall); text.area: the mean share of a
+    frame the boxes cover; text.height: the median height of the boxes (720 line pixels: the size of the letters);
+    text.top / middle / bottom: the share of boxes whose middle is in that third of the frame; text.corner: the share in
+    a corner (the outer quarter across and fifth up or down: watermarks and credits)"""
+    h, w = shape[:2]
+    boxes, with_text, areas = [], 0, []
+    for fb in frames:
+        fb = [b for b in fb if (b[3] - b[1]) / unit >= TEXT_LEAST]
+        with_text += 1 if fb else 0
+        areas.append(sum((b[2] - b[0]) * (b[3] - b[1]) for b in fb) / float(h * w))
+        boxes += fb
+    out = {"text.frames": with_text / float(len(frames)) if frames else float("nan"),
+           "text.area": float(np.mean(areas)) if areas else float("nan"),
+           "text.height": float("nan"), "text.top": float("nan"), "text.middle": float("nan"),
+           "text.bottom": float("nan"), "text.corner": float("nan")}
+    if boxes:
+        cy = np.array([(b[1] + b[3]) / 2.0 for b in boxes]) / h
+        cx = np.array([(b[0] + b[2]) / 2.0 for b in boxes]) / w
+        out["text.height"] = float(np.median([(b[3] - b[1]) / unit for b in boxes]))
+        out["text.top"] = float((cy < 1 / 3.0).mean())
+        out["text.middle"] = float(((cy >= 1 / 3.0) & (cy < 2 / 3.0)).mean())
+        out["text.bottom"] = float((cy >= 2 / 3.0).mean())
+        out["text.corner"] = float((((cx < 0.25) | (cx > 0.75)) & ((cy < 0.2) | (cy > 0.8))).mean())
+    return out
+
+
+def measure_text(path, measure_json, frames=24, matrix="auto"):
+    """add the text measures to a measure JSON: frames of its sampled frames, spread evenly, read at its analysis
+    height inside its bars; the boxes go into its "text" and the measures into its summary (one value each)"""
+    with open(measure_json, encoding="utf-8") as fh:
+        d = json.load(fh)
+    info = probe(path)
+    mat = matrix_for(info, d.get("matrix", matrix))
+    rows = d["frames"]
+    if not rows:
+        return d
+    pick = sorted(set(int(round(x)) for x in np.linspace(0, len(rows) - 1, min(frames, len(rows)))))
+    ns = [rows[i]["n"] for i in pick]
+    x0, y0, x1, y1 = d["frame"]["box"]
+    got = dict(read_frames(path, info, ns, height=d["analysis_height"], matrix=mat, start=d["range"][0],
+                           duration=d["range"][1] - d["range"][0], as_uint8=True))
+    reader = text_reader()
+    per = []
+    for n in ns:
+        if n in got:
+            per.append(text_boxes(got[n][y0:y1, x0:x1], reader))
+    summary = text_summary(per, (y1 - y0, x1 - x0), unit=d["unit"])
+    d["text"] = {"frames": [int(n) for n in ns], "boxes": [[list(b) for b in fb] for fb in per]}
+    for k, v in summary.items():
+        d["summary"][k] = {"median": float(v), "q25": float(v), "q75": float(v), "n": len(per), "valid": 1.0, "shots": 1,
+                           "floor_pair": float("nan"), "ci": [float(v), float(v)]}
+    with open(measure_json, "w", encoding="utf-8") as fh:
+        json.dump(d, fh, ensure_ascii=False, indent=1, allow_nan=True)
+    return d
+
+
 # ---- figures ----------------------------------------------------------------------------------------------------------
 
 FONTS = ("C:/Windows/Fonts/meiryo.ttc", "C:/Windows/Fonts/YuGothM.ttc", "C:/Windows/Fonts/msgothic.ttc",
@@ -2103,6 +2196,10 @@ def main(argv=None):
     s.add_argument("--box", type=_box)
     s.add_argument("--size", type=_size, default=(320, 180))
     s.add_argument("--label")
+    x = sub.add_parser("text", help="add where and how big the text is to a measure JSON (EasyOCR, CPU)")
+    x.add_argument("input")
+    x.add_argument("measure_json")
+    x.add_argument("--frames", type=int, default=24)
     a = sub.add_parser("annotate", help="a frame with what a measure saw drawn on it")
     a.add_argument("input")
     a.add_argument("out")
@@ -2140,6 +2237,10 @@ def main(argv=None):
             figure_profiles(args.out, results, labels={o: True for o in args.ours})
     elif args.cmd == "crops":
         contact_sheet(args.input, args.out, args.at, box=args.box, size=args.size, label=args.label)
+    elif args.cmd == "text":
+        d = measure_text(args.input, args.measure_json, frames=args.frames)
+        print("text of %s: %s" % (d["label"], {k: round(v["median"], 3) for k, v in d["summary"].items()
+                                              if k.startswith("text.")}))
     elif args.cmd == "annotate":
         annotate(args.input, args.out, args.at, what=args.what, box=args.box, scale=args.scale)
     return 0
