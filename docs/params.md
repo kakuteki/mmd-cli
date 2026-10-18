@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2099（定数 1654・引数 114・関数の既定 331。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 405（retarget 260・rig 63・踊りだけ 94）、記録の出所つき 84。
+- 数: 全部 2132（定数 1683・引数 114・関数の既定 335。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 412（retarget 262・rig 63・踊りだけ 99）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 230 | 5 | 8 | 19 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 262 | 7 | 8 | 24 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1397,141 +1397,173 @@
 | --workers | 1 |  | 892 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
 | --encoder | "x264" |  | 894 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
-## mv_world.py（18. 描画と後処理、42）
+## mv_world.py（18. 描画と後処理、54）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SONG_FPS | 30 |  | 57 | MMD's frames of the song (mv_look's SONG_FPS) |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 58 | the backdrop and the light are drawn at half size: they are all blur (mv_look's LIGHT_SCALE) |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 59 | lengths of the look are pixels of a 720 line picture (mv_look) |  |  |  |  |  |  |  |  |
-| REFERENCE.distance | 38.0 |  | 61 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
-| REFERENCE.fov | 30.0 |  | 61 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
-| REFERENCE.look_at | (0.0, 13.0, 0.0) |  | 61 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
-| BEAM_ORIGIN | (0.5, -0.35) |  | 63 | where the old fan of beams had its origin: above the middle of the picture by 35 % of its height (mv_look._beams) |  |  |  |  |  |  |  |  |
-| FLOOR_COLOURS.accent | (198.9, 126.5, 41.6) |  | 70 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
-| FLOOR_COLOURS.line | (93.9, 110.9, 138.3) |  | 70 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
-| FLOOR_COLOURS.plane | (6.0, 9.0, 17.9) |  | 70 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
-| FLOOR_SEE_THROUGH | 0.08 |  | 71 | the old floor let 8 % of the stage behind it through (its alpha 0.92): kept |  |  |  |  |  |  |  |  |
-| NEAR | 0.1 | units | 72 | nothing nearer the camera than this is drawn (MMD units) |  | ○ |  |  |  |  |  | retarget |
-| rays(scale) | 1 |  | 106 |  |  |  |  |  |  |  |  |  |
-| truss_point(size) | (1280, 720) |  | 228 |  |  |  |  |  |  |  |  |  |
-| MMD_LIGHT | (-0.5, -1.0, 0.5) |  | 402 | where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with |  |  |  |  |  |  |  |  |
-| KEY_SHARE | 0.6 |  | 403 | of the light on the floor's plane and pool, the share of the key light (the rest is all round): the default of stage.shadow_key (the core of a shadow keeps 0.40); her bo… |  |  |  |  |  |  |  |  |
-| SHADOW_CELL | 0.08 | units | 406 | MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world | softshadow（10-17）: 床の上の影の格子 0.08 単位 | ○ |  |  |  |  |  | retarget |
-| SHADOW_GRID_MAX | 1200 |  | 407 | cells to a side at most (a grid that would be larger is coarser) |  |  |  |  |  |  |  |  |
-| CUTOFF | 8.0 |  | 408 | standard deviations of the light's spread past which a capsule keeps none of it off |  |  |  |  |  |  |  |  |
-| COARSE_STEPS | 6 |  | 409 | a capsule's shade is worked out on a grid at least this many cells to the distance it changes |  |  |  |  |  |  |  |  |
-| COARSE_LEVELS | 4 |  | 410 | over (its least blur on the floor; for the light from all round its axis's height), up to 2^4 times SHADOW_CELL coarser |  |  |  |  |  |  |  |  |
-| soft_shadow_grid(floor_y) | 0.0 |  | 593 |  |  |  |  |  |  |  |  |  |
-| _floor_top(step) | 8 |  | 721 |  |  |  |  |  |  |  |  |  |
-| FIGURE_WINDOW | 90 | frames | 858 | frames: the pool follows the centre averaged like make_camera's look-at point |  |  |  |  |  |  |  |  |
-| FIGURE_REST_PERCENTILE | 2.0 |  | 859 |  |  |  |  |  |  |  |  |  |
-| REFERENCE_HEAD | 16.24313735961914 |  | 879 | the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on | リンの頭の骨の休みの高さ 16.243。体のカプセル（BODY_PARTS、リンの頂点から測った）をほかのモデルではこの比で縮める |  |  |  | ○ |  |  | rig |
-| BODY_PARTS | ( ("上半身", (0.0, 0.0, 0.0), "上半身2", (0.0, 0.0, 0.0), 1.0), (… |  | 887 | the head and the hair the ribbon the hips the skirt: its upper part and its hem |  |  |  |  | ○ |  |  | rig |
-| LEG_PARTS | (("hip", "knee", 0.78), ("knee", "ankle", 0.68)) |  | 913 | the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with 足首: the instep from the ankle to above the ball of… |  |  |  |  |  |  |  |  |
-| INSTEP | 0.5 |  | 914 |  |  |  |  |  |  |  |  |  |
-| SOLE | 0.42 |  | 915 |  |  |  |  |  |  |  |  |  |
-| LEG_BLOCK | 256 | frames | 916 | frames the legs are solved for at a time (leg_ik is vectorised over frames) |  |  |  |  |  |  |  |  |
-| moments(shutter) | 1.0 |  | 1095 |  |  |  |  |  |  |  |  |  |
-| moments(subframes) | 1 |  | 1095 |  |  |  |  |  |  |  |  |  |
-| SHARP_ENOUGH | 1.0 | px | 1103 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
-| floor_moves(height) | 0.0 |  | 1106 |  |  |  |  |  |  |  |  |  |
-| floor_moments(height) | 0.0 |  | 1117 |  |  |  |  |  |  |  |  |  |
-| stage_image(shutter) | 1.0 |  | 1128 |  |  |  |  |  |  |  |  |  |
-| stage_image(subframes) | 1 |  | 1128 |  |  |  |  |  |  |  |  |  |
-| write_stage(jobs) | 1 |  | 1175 |  |  |  |  |  |  |  |  |  |
-| write_stage(shutter) | 1.0 |  | 1175 |  |  |  |  |  |  |  |  |  |
-| write_stage(subframes) | 1 |  | 1175 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1261 |  |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 |  | 67 | MMD's frames of the song (mv_look's SONG_FPS) |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 68 | the backdrop and the light are drawn at half size: they are all blur (mv_look's LIGHT_SCALE) |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 69 | lengths of the look are pixels of a 720 line picture (mv_look) |  |  |  |  |  |  |  |  |
+| REFERENCE.distance | 38.0 |  | 71 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
+| REFERENCE.fov | 30.0 |  | 71 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
+| REFERENCE.look_at | (0.0, 13.0, 0.0) |  | 71 | the camera the picture-fixed look was made for: 38 in front of the stage centre, 13 up, level (make_camera's shots) |  |  |  |  |  |  |  |  |
+| BEAM_ORIGIN | (0.5, -0.35) |  | 73 | where the old fan of beams had its origin: above the middle of the picture by 35 % of its height (mv_look._beams) |  |  |  |  |  |  |  |  |
+| FLOOR_COLOURS.accent | (198.9, 126.5, 41.6) |  | 80 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
+| FLOOR_COLOURS.line | (93.9, 110.9, 138.3) |  | 80 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
+| FLOOR_COLOURS.plane | (6.0, 9.0, 17.9) |  | 80 | (the settings of the stage, look["stage"], and their defaults are mv_look's DEFAULT_LOOK["stage"]) the floor of tools/make_stage.py as v7 showed it. Its materials are em… |  |  |  | ○ | ○ |  |  | rig |
+| FLOOR_SEE_THROUGH | 0.08 |  | 81 | the old floor let 8 % of the stage behind it through (its alpha 0.92): kept |  |  |  |  |  |  |  |  |
+| LINE_SEE_THROUGH.accent | 0.20 |  | 84 | and its lines let the plane under them through by 1 - their alpha (0.55 and 0.80): a plane lit brighter than v7's (stage.floor_plane, look2) shows through them by as muc… |  |  |  | ○ |  |  |  | dance |
+| LINE_SEE_THROUGH.line | 0.45 |  | 84 | and its lines let the plane under them through by 1 - their alpha (0.55 and 0.80): a plane lit brighter than v7's (stage.floor_plane, look2) shows through them by as muc… |  |  |  | ○ |  |  |  | dance |
+| NEAR | 0.1 | units | 85 | nothing nearer the camera than this is drawn (MMD units) |  | ○ |  |  |  |  |  | retarget |
+| rays(scale) | 1 |  | 120 |  |  |  |  |  |  |  |  |  |
+| truss_point(size) | (1280, 720) |  | 252 |  |  |  |  |  |  |  |  |  |
+| MMD_LIGHT | (-0.5, -1.0, 0.5) |  | 429 | where MMD's light shines to at its default (`light get` on a new project, 2026-10-17): the light MMD shades her with |  |  |  |  |  |  |  |  |
+| KEY_SHARE | 0.6 |  | 430 | of the light on the floor's plane and pool, the share of the key light (the rest is all round): the default of stage.shadow_key (the core of a shadow keeps 0.40); her bo… |  |  |  |  |  |  |  |  |
+| SHADOW_CELL | 0.08 | units | 433 | MMD units: the soft shadow is worked out on a grid of the floor this fine, fixed in the world | softshadow（10-17）: 床の上の影の格子 0.08 単位 | ○ |  |  |  |  |  | retarget |
+| SHADOW_GRID_MAX | 1200 |  | 434 | cells to a side at most (a grid that would be larger is coarser) |  |  |  |  |  |  |  |  |
+| CUTOFF | 8.0 |  | 435 | standard deviations of the light's spread past which a capsule keeps none of it off |  |  |  |  |  |  |  |  |
+| COARSE_STEPS | 6 |  | 436 | a capsule's shade is worked out on a grid at least this many cells to the distance it changes |  |  |  |  |  |  |  |  |
+| COARSE_LEVELS | 4 |  | 437 | over (its least blur on the floor; for the light from all round its axis's height), up to 2^4 times SHADOW_CELL coarser |  |  |  |  |  |  |  |  |
+| soft_shadow_grid(floor_y) | 0.0 |  | 620 |  |  |  |  |  |  |  |  |  |
+| _floor_top(step) | 8 |  | 748 |  |  |  |  |  |  |  |  |  |
+| FIGURE_WINDOW | 90 | frames | 890 | frames: the pool follows the centre averaged like make_camera's look-at point |  |  |  |  |  |  |  |  |
+| FIGURE_REST_PERCENTILE | 2.0 |  | 891 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEAD | 16.24313735961914 |  | 911 | the rest height of 頭 on Sour's Rin, whose mesh BODY_PARTS were measured on | リンの頭の骨の休みの高さ 16.243。体のカプセル（BODY_PARTS、リンの頂点から測った）をほかのモデルではこの比で縮める |  |  |  | ○ |  |  | rig |
+| BODY_PARTS | ( ("上半身", (0.0, 0.0, 0.0), "上半身2", (0.0, 0.0, 0.0), 1.0), (… |  | 919 | the head and the hair the ribbon the hips the skirt: its upper part and its hem |  |  |  |  | ○ |  |  | rig |
+| LEG_PARTS | (("hip", "knee", 0.78), ("knee", "ankle", 0.68)) |  | 945 | the legs, as MMD's IK puts them (tools/leg_ik.py): (from, to, radius) of the solved points; then the foot, turned with 足首: the instep from the ankle to above the ball of… |  |  |  |  |  |  |  |  |
+| INSTEP | 0.5 |  | 946 |  |  |  |  |  |  |  |  |  |
+| SOLE | 0.42 |  | 947 |  |  |  |  |  |  |  |  |  |
+| LEG_BLOCK | 256 | frames | 948 | frames the legs are solved for at a time (leg_ik is vectorised over frames) |  |  |  |  |  |  |  |  |
+| DOF_MOST | 3.0 |  | 1127 | a stage nearer the camera than the focus blurs at most this many times stage.dof |  |  |  |  |  |  |  |  |
+| DOF_LEVELS | 2.0 ** 0.5 |  | 1128 | defocus blurs the picture at levels of blur this far apart (and 0.5 px the first) |  |  |  |  |  |  |  |  |
+| floor_depth(height) | 0.0 |  | 1159 |  |  |  |  |  |  |  |  |  |
+| LAMP_LIFT | 0.15 | units | 1220 | MMD units: the edge lamps stand this far above the floor |  | ○ |  |  |  |  |  | retarget |
+| LAMP_LEAST | 0.75 | px | 1221 | pixels: a lamp's core is never narrower (smaller, it would fall between the pixels) |  |  |  |  |  |  |  |  |
+| LAMP_COLOURS.cool | (150.0, 180.0, 255.0) |  | 1222 | the specks' colours |  |  |  |  |  |  |  |  |
+| LAMP_COLOURS.warm | (255.0, 214.0, 150.0) |  | 1222 | the specks' colours |  |  |  |  |  |  |  |  |
+| lamp_places(size) | (1280, 720) |  | 1225 |  |  |  |  |  |  |  |  |  |
+| FRESNEL_R0 | 0.04 |  | 1299 | a polished floor's share of the light it mirrors, looked at straight down (Schlick's) |  |  |  |  |  |  |  |  |
+| mirrored(height) | 0.0 |  | 1302 |  |  |  |  |  |  |  |  |  |
+| moments(shutter) | 1.0 |  | 1341 |  |  |  |  |  |  |  |  |  |
+| moments(subframes) | 1 |  | 1341 |  |  |  |  |  |  |  |  |  |
+| SHARP_ENOUGH | 1.0 | px | 1349 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
+| floor_moves(height) | 0.0 |  | 1352 |  |  |  |  |  |  |  |  |  |
+| floor_moments(height) | 0.0 |  | 1363 |  |  |  |  |  |  |  |  |  |
+| stage_image(shutter) | 1.0 |  | 1374 |  |  |  |  |  |  |  |  |  |
+| stage_image(subframes) | 1 |  | 1374 |  |  |  |  |  |  |  |  |  |
+| write_stage(jobs) | 1 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| write_stage(shutter) | 1.0 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| write_stage(subframes) | 1 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1521 |  |  |  |  |  |  |  |  |  |
 
-## mv_look.py（18. 描画と後処理、84）
+## mv_look.py（18. 描画と後処理、104）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DEFAULT_LOOK.plate.base | [10, 12, 20] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.plate.haze | [34, 44, 78] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.plate.horizon | 0.68 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.plate.pool | [70, 86, 140] |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.plate.vignette | 0.45 |  | 88 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.count | 6 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.cycles | [1, 2] |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.loop_seconds | 12 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.opacity | 0.55 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.spread | 76.0 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.sway | 3.0 |  | 91 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.cool | [90, 110, 190] |  | 92 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.warm | [200, 150, 80] |  | 92 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.beams.warm_every | 5 |  | 92 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.bokeh.count | 26 |  | 94 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.bokeh.cycles | [1, 2] |  | 94 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.bokeh.opacity | 0.8 |  | 94 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.bokeh.seed | 7 |  | 94 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.bokeh.warm_share | 0.35 |  | 94 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.glow.radius | 14 |  | 97 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.glow.strength | 0.45 |  | 97 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.glow.threshold | 175 |  | 97 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… | 2026-10-05 の最初の抜粋で決めた（150 / 16 / 0.6 は白い服を飛ばし肌が桃色に）。リン White の服に合わせた値 |  |  |  |  |  |  | rig |
-| DEFAULT_LOOK.flare.colour | [255, 244, 224] |  | 99 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.flare.frames | 12 |  | 99 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.flare.strength | 0.85 |  | 99 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.camera.aberration | 3 |  | 102 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.camera.punch | 0.04 |  | 102 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.camera.punch_frames | 10 | frames | 102 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.lens.grain | 3 |  | 105 | the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with every frame (0 none, up to about 10); both lie under the text in … |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.lens.vignette | 0.3 |  | 105 | the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with every frame (0 none, up to about 10); both lie under the text in … |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.world | 0 |  | 109 | 1: the stage lies in the world and follows the camera (render needs --camera) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.radius | 120.0 | units | 110 | the cyc: a cylinder round the stage centre, MMD units (0: infinitely far) |  | ○ |  |  |  |  |  | retarget |
-| DEFAULT_LOOK.stage.truss | 60.0 |  | 111 | the beams hang from a truss this far behind the stage centre |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.specks | 160.0 |  | 112 | the specks lie on the cyc over this many degrees round the stage centre |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.floor | 1 |  | 113 | 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.stage.floor_accent_every | 4 |  | 114 | make_stage.py's floor |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.floor_half | 60.0 |  | 114 | make_stage.py's floor |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.floor_line | 0.06 |  | 114 | make_stage.py's floor |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.floor_step | 5.0 |  | 114 | make_stage.py's floor |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.floor_y | 0.0 |  | 115 | its height (make_stage --height): 0.111 is where the model's soles stand (2026-10-14) |  |  |  |  | ○ |  |  | rig |
-| DEFAULT_LOOK.stage.pool | 0.0 |  | 116 | a pool of light on the floor round the dancer, 0 none to 1 (needs her motion) |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.stage.pool_radius | 14.0 | units | 117 | its size (a standard deviation, MMD units) |  | ○ |  |  |  |  |  | retarget |
-| DEFAULT_LOOK.stage.pool_colour | [34, 32, 30] |  | 118 | what it adds to the floor at its middle at 1 |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow | 0.0 |  | 119 | the shadows of her feet and body on the floor, 0 none to 1 (needs her motion) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_soft | 1 |  | 120 | 1: the soft shadow of her whole body from a light (mv_world.soft_shadow_grid); 0: the shadows of v8 and v9 (round her soles and her pelvis, straight down) | HANDOVER 2026-10-17 softshadow: やわらかい床の影を既定に（0 で v9 とバイト単位で同じ） |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.stage.shadow_blur | 5.0 | deg | 122 | the soft shadow: the spread of the light, degrees (a standard deviation): the edge of a shadow blurs by about 2.6 x this (in radians) x the distance along the light from… | HANDOVER 2026-10-17 softshadow: 光の広がり 5 度 |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_light | [-0.5, -1.0, 0.5] |  | 125 | where the light shines to (MMD's light direction; its default) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_contact | 0.9 |  | 126 | how dark the light from all round leaves the floor under her, 0 to 1 |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_key | 0.6 |  | 127 | the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE): the core of a shadow keeps 1 - this (the rest comes from all round) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.stage.shadow_share | 1 |  | 129 | the soft shadow: 1 the key light's shadow cuts its share of the plane's and the pool's light and the darkening from all round the rest, the lines keep their own (mv_worl… |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 134 |  |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 135 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 | frames | 136 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
-| FLARE_HEIGHT | 0.42 |  | 316 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 417 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 418 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 418 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 418 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 616 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 617 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 618 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 619 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 620 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 621 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 662 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 758 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 949 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 997 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 998 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 999 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1002 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1002 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1002 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1220 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1235 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1237 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1239 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1241 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1255 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1256 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1266 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1275 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1277 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1279 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.base | [10, 12, 20] |  | 91 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.haze | [34, 44, 78] |  | 91 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.horizon | 0.68 |  | 91 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.pool | [70, 86, 140] |  | 91 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.plate.vignette | 0.45 |  | 91 | colours are r, g, b of 255; horizon is the height of the haze band (0 top, 1 bottom) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.count | 6 |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.cycles | [1, 2] |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.loop_seconds | 12 |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.opacity | 0.55 |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.spread | 76.0 |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.sway | 3.0 |  | 94 | count beams over `spread` degrees, each swaying `sway` degrees; every `warm_every`-th one is warm. The light is a loop of `loop_seconds`; the beams sway cycles[0] and cy… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.cool | [90, 110, 190] |  | 95 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.warm | [200, 150, 80] |  | 95 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.beams.warm_every | 5 |  | 95 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.bokeh.count | 26 |  | 97 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.bokeh.cycles | [1, 2] |  | 97 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.bokeh.opacity | 0.8 |  | 97 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.bokeh.seed | 7 |  | 97 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.bokeh.warm_share | 0.35 |  | 97 | the specks drift round cycles[0] times per loop and twinkle cycles[1] times |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.glow.radius | 14 |  | 100 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.glow.strength | 0.45 |  | 100 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.glow.threshold | 175 |  | 100 | tuned on the first real excerpt (hinata, 2026-10-05): 150 / 16 / 0.6 washed the white dress out and turned the skin pink; this keeps the folds of the dress and still giv… | 2026-10-05 の最初の抜粋で決めた（150 / 16 / 0.6 は白い服を飛ばし肌が桃色に）。リン White の服に合わせた値 |  |  |  |  |  |  | rig |
+| DEFAULT_LOOK.flare.colour | [255, 244, 224] |  | 102 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.flare.frames | 12 |  | 102 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.flare.strength | 0.85 |  | 102 | the flare lasts `frames` frames of the song (SONG_FPS: 0.4 s, at 30 fps and at 60) |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.camera.aberration | 3 |  | 105 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.camera.punch | 0.04 |  | 105 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.camera.punch_frames | 10 | frames | 105 | what the camera does at a flare: it punches in by `punch` of the picture and comes back within `punch_frames` frames of the song, and red and blue part by `aberration` p… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.lens.grain | 3 |  | 108 | the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with every frame (0 none, up to about 10); both lie under the text in … |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lens.vignette | 0.3 |  | 108 | the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with every frame (0 none, up to about 10); both lie under the text in … |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.rim.colour | [200, 220, 255] |  | 113 | a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from in the picture (`from`, x right and y down: [0… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.rim.from | [0.0, -1.0] |  | 113 | a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from in the picture (`from`, x right and y down: [0… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.rim.soft | 2.0 |  | 113 | a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from in the picture (`from`, x right and y down: [0… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.rim.strength | 0.0 |  | 113 | a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from in the picture (`from`, x right and y down: [0… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.rim.width | 5.0 |  | 113 | a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from in the picture (`from`, x right and y down: [0… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.world | 0 |  | 117 | 1: the stage lies in the world and follows the camera (render needs --camera) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.radius | 120.0 | units | 118 | the cyc: a cylinder round the stage centre, MMD units (0: infinitely far) |  | ○ |  |  |  |  |  | retarget |
+| DEFAULT_LOOK.stage.truss | 60.0 |  | 119 | the beams hang from a truss this far behind the stage centre |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.specks | 160.0 |  | 120 | the specks lie on the cyc over this many degrees round the stage centre |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor | 1 |  | 121 | 1: draw the floor (MMD renders the dancer without the floor accessory); 0: MMD draws it |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.floor_accent_every | 4 |  | 122 | make_stage.py's floor |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor_half | 60.0 |  | 122 | make_stage.py's floor |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor_line | 0.06 |  | 122 | make_stage.py's floor |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor_step | 5.0 |  | 122 | make_stage.py's floor |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor_y | 0.0 |  | 123 | its height (make_stage --height): 0.111 is where the model's soles stand (2026-10-14) |  |  |  |  | ○ |  |  | rig |
+| DEFAULT_LOOK.stage.pool | 0.0 |  | 124 | a pool of light on the floor round the dancer, 0 none to 1 (needs her motion) |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.pool_radius | 14.0 | units | 125 | its size (a standard deviation, MMD units) |  | ○ |  |  |  |  |  | retarget |
+| DEFAULT_LOOK.stage.pool_colour | [34, 32, 30] |  | 126 | what it adds to the floor at its middle at 1 |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow | 0.0 |  | 127 | the shadows of her feet and body on the floor, 0 none to 1 (needs her motion) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_soft | 1 |  | 128 | 1: the soft shadow of her whole body from a light (mv_world.soft_shadow_grid); 0: the shadows of v8 and v9 (round her soles and her pelvis, straight down) | HANDOVER 2026-10-17 softshadow: やわらかい床の影を既定に（0 で v9 とバイト単位で同じ） |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.shadow_blur | 5.0 | deg | 130 | the soft shadow: the spread of the light, degrees (a standard deviation): the edge of a shadow blurs by about 2.6 x this (in radians) x the distance along the light from… | HANDOVER 2026-10-17 softshadow: 光の広がり 5 度 |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_light | [-0.5, -1.0, 0.5] |  | 133 | where the light shines to (MMD's light direction; its default) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_contact | 0.9 |  | 134 | how dark the light from all round leaves the floor under her, 0 to 1 |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_key | 0.6 |  | 135 | the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE): the core of a shadow keeps 1 - this (the rest comes from all round) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.shadow_share | 1 |  | 137 | the soft shadow: 1 the key light's shadow cuts its share of the plane's and the pool's light and the darkening from all round the rest, the lines keep their own (mv_worl… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.floor_plane | [6.0, 9.0, 17.9] |  | 142 | the colour of the floor's plane between its lines (v7's: mv_world's FLOOR_COLOURS); its lines keep their own light |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.reflect | 0.0 |  | 144 | the floor mirrors the cyc, the beams, the specks and the lamps above it by Fresnel's share (more where it is seen at a grazing angle) times this, 0 none to 1 (polished).… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.reflect_blur | 8.0 |  | 147 | how blurred the reflection is (a rough floor), pixels of a 720 line picture |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.stage.dof | 0.0 |  | 150 | the blur (a standard deviation, pixels of a 720 line picture) of what lies infinitely far; half of it at twice the focus's distance, none at the focus; 0 no blur |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.stage.dof_focus | 0.0 | units | 152 | the distance in focus along the line of sight (MMD units); 0: the camera's own distance to its look-at point (where the MV's cameras put the dancer) |  | ○ |  | ○ |  |  |  | retarget |
+| DEFAULT_LOOK.lamps.cyc | 0 |  | 158 | how many lamps on the cyc, over stage.specks degrees and the height the reference camera sees of it (as the specks); 0 none |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.edge_step | 0.0 |  | 160 | a lamp every this many MMD units along the edges of the floor; 0 none |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.size | 1.2 |  | 161 | the radius of a lamp's core (a standard deviation), pixels of a 720 line picture |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.power | 3.0 |  | 162 | its light at the middle, times white |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.warm_share | 0.35 |  | 163 | the share of warm lamps (the specks' colours: warm 255, 214, 150, cool 150, 180, 255) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.twinkle | 0.5 |  | 164 | how far a lamp's light dips as it twinkles, 0 (steady) to 1 |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.cycles | 3 |  | 165 | whole twinkles per light loop (beams.loop_seconds: the loop closes) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.seed | 11 |  | 166 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.glow | 0.0 |  | 167 | the lamps' glow round each: its middle is this share of the lamp's colour; 0 none |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.lamps.glow_radius | 8.0 |  | 168 | its radius (a standard deviation), pixels of a 720 line picture |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 170 |  |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 171 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 172 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
+| FLARE_HEIGHT | 0.42 |  | 404 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
+| ffmpeg_command(flare_frames) | 0 | frames | 505 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 506 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 506 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 506 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 735 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 736 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 737 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 738 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 739 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 740 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 781 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 877 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 1068 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 1116 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 1117 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 1118 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1121 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1121 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1121 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1348 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1363 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1365 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1367 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1369 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1383 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1384 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1394 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1403 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1405 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1407 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
@@ -2051,7 +2083,7 @@
 | --sub | 16 |  | 931 |  |  |  |  |  |  |  |  |  |
 | --shutter | 0.5 |  | 932 |  |  |  |  |  |  |  |  |  |
 
-### look_analyze.py（確かめ・部品、135）
+### look_analyze.py（確かめ・部品、136）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2160,36 +2192,37 @@
 | measure_video(full_every) | 4 |  | 1966 |  |  |  |  |  |  |  |  |  |
 | measure_video(pair_every) | 4 |  | 1966 |  |  |  |  |  |  |  |  |  |
 | measure_video(seed) | 0 |  | 1966 |  |  |  |  |  |  |  |  |  |
-| measure_regions(frames) | 48 |  | 2086 |  |  |  |  |  |  |  |  |  |
-| measure_regions(height) | 720 |  | 2086 |  |  |  |  |  |  |  |  |  |
-| measure_regions(fps) | 30 |  | 2087 |  |  |  |  |  |  |  |  |  |
-| measure_regions(seed) | 0 |  | 2087 |  |  |  |  |  |  |  |  |  |
-| measure_regions(threads) | 6 |  | 2087 |  |  |  |  |  |  |  |  |  |
-| TEXT_LEAST | 8.0 |  | 2140 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
-| text_summary(unit) | 1.0 |  | 2164 |  |  |  |  |  |  |  |  |  |
-| measure_text(frames) | 24 |  | 2193 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(height) | 720 |  | 2334 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(size) | (320, 180) |  | 2334 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 720 |  | 2364 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2364 |  |  |  |  |  |  |  |  |  |
-| --pairs | 120 |  | 2528 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2529 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2530 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 2531 |  |  |  |  |  |  |  |  |  |
-| --pair-every | 4 |  | 2532 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
-| --full-every | 4 |  | 2534 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 2536 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --frames | 48 | frames | 2544 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2545 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2546 |  |  |  |  |  |  |  |  |  |
-| --threads | 6 |  | 2547 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
-| --fps | 30 |  | 2548 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --size | (320, 180) |  | 2567 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2569 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
-| --frames | 24 | frames | 2574 |  |  |  |  |  |  |  |  |  |
-| --what | "dof" |  | 2579 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2581 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2583 |  |  |  |  |  |  |  |  |  |
+| layer_masks(start) | 0.0 |  | 2086 |  |  |  |  |  |  |  |  |  |
+| measure_regions(frames) | 48 |  | 2108 |  |  |  |  |  |  |  |  |  |
+| measure_regions(height) | 720 |  | 2108 |  |  |  |  |  |  |  |  |  |
+| measure_regions(fps) | 30 |  | 2109 |  |  |  |  |  |  |  |  |  |
+| measure_regions(seed) | 0 |  | 2109 |  |  |  |  |  |  |  |  |  |
+| measure_regions(threads) | 6 |  | 2109 |  |  |  |  |  |  |  |  |  |
+| TEXT_LEAST | 8.0 |  | 2170 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
+| text_summary(unit) | 1.0 |  | 2194 |  |  |  |  |  |  |  |  |  |
+| measure_text(frames) | 24 |  | 2223 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(height) | 720 |  | 2364 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(size) | (320, 180) |  | 2364 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 720 |  | 2394 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2394 |  |  |  |  |  |  |  |  |  |
+| --pairs | 120 |  | 2558 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2559 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2560 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 2561 |  |  |  |  |  |  |  |  |  |
+| --pair-every | 4 |  | 2562 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
+| --full-every | 4 |  | 2564 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 2566 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --frames | 48 | frames | 2576 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2577 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2578 |  |  |  |  |  |  |  |  |  |
+| --threads | 6 |  | 2579 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
+| --fps | 30 |  | 2580 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --size | (320, 180) |  | 2599 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2601 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
+| --frames | 24 | frames | 2606 |  |  |  |  |  |  |  |  |  |
+| --what | "dof" |  | 2611 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2613 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2615 |  |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 

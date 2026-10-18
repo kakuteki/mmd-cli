@@ -46,6 +46,9 @@ ffmpeg (the compositing), from back to front:
 * the text cues of the "front" layer;
 * a flare at each of those times: a burst of light and a streak for `flare.frames`.
 
+The picture stays RGB to the end, where it is made Y'CbCr by BT.709 in the TV range with the four tags that say so
+(COLOUR_OUT), as a player reads an HD video.
+
 look.json overrides single values of DEFAULT_LOOK; an unknown name is an error (a misspelt setting would
 otherwise silently do nothing).  Lengths are in pixels of a 720 line picture and scale with the height.
 Frame counts (flare.frames, camera.punch_frames) are frames of the song, as MMD counts them (SONG_FPS, 30 a second), and
@@ -103,6 +106,11 @@ DEFAULT_LOOK = {
     # the lens: the corners a little darker (vignette, 0 none to 1 strong) and a fine grain that changes with
     # every frame (0 none, up to about 10); both lie under the text in front
     "lens": {"vignette": 0.3, "grain": 3},
+    # a light from behind her (a rim light, look2 2026-10-18): it lights the band inside her edges that face where it comes from
+    # in the picture (`from`, x right and y down: [0, -1] from above), `width` deep (pixels of a 720 line picture) and
+    # softened by `soft`, screened over her in `colour` times `strength`; 0 none.  The references' strong edge light
+    # (lookrev: the 90th percentile of the edge over the core, 2.15) is above ours (1.56 to 1.75)
+    "rim": {"strength": 0.0, "colour": [200, 220, 255], "width": 5.0, "soft": 2.0, "from": [0.0, -1.0]},
     "flares": [],
     # the plate, the light and a floor placed in the world and drawn from the camera (tools/mv_world.py, which says how);
     # world 0 keeps them fixed to the picture, as before
@@ -126,10 +134,38 @@ DEFAULT_LOOK = {
               "shadow_contact": 0.9,                # how dark the light from all round leaves the floor under her, 0 to 1
               "shadow_key": 0.6,    # the soft shadow: the key light's share of the floor's light (mv_world.KEY_SHARE):
                                     # the core of a shadow keeps 1 - this (the rest comes from all round)
-              "shadow_share": 1},   # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
+              "shadow_share": 1,    # the soft shadow: 1 the key light's shadow cuts its share of the plane's and the
                                     # pool's light and the darkening from all round the rest, the lines keep their own
                                     # (mv_world.soft_light, 2026-10-17); 0 the floor of before (the pool the key light's
                                     # alone, both shares darkened from all round, the lines darkened too)
+              # the light on the floor (look2, 2026-10-18; the stage in the world only)
+              "floor_plane": [6.0, 9.0, 17.9],      # the colour of the floor's plane between its lines (v7's: mv_world's
+                                                    # FLOOR_COLOURS); its lines keep their own light
+              "reflect": 0.0,       # the floor mirrors the cyc, the beams, the specks and the lamps above it by Fresnel's
+                                    # share (more where it is seen at a grazing angle) times this, 0 none to 1 (polished).
+                                    # The dancer is not mirrored (MMD draws her alone)
+              "reflect_blur": 8.0,  # how blurred the reflection is (a rough floor), pixels of a 720 line picture
+              # depth of field (look2, 2026-10-18; the stage in the world only): the stage is blurred by its distance from
+              # the focus as a thin lens blurs it, before the dancer is laid over it (she is in focus)
+              "dof": 0.0,           # the blur (a standard deviation, pixels of a 720 line picture) of what lies infinitely
+                                    # far; half of it at twice the focus's distance, none at the focus; 0 no blur
+              "dof_focus": 0.0},    # the distance in focus along the line of sight (MMD units); 0: the camera's own
+                                    # distance to its look-at point (where the MV's cameras put the dancer)
+    # small lamps on the stage in the world (look2, 2026-10-18; tools/mv_world.py): a star cloth on the cyc and lamps along
+    # the four edges of the floor, brighter than white at their cores (their light stays white as stage.dof blurs it into a
+    # disc), each twinkling, with a glow of their own.  The references have such small lights on their stages (0.1 to 1.2 %
+    # of the stage past Y' 0.9) with a glow round them; ours had none
+    "lamps": {"cyc": 0,             # how many lamps on the cyc, over stage.specks degrees and the height the reference
+                                    # camera sees of it (as the specks); 0 none
+              "edge_step": 0.0,     # a lamp every this many MMD units along the edges of the floor; 0 none
+              "size": 1.2,          # the radius of a lamp's core (a standard deviation), pixels of a 720 line picture
+              "power": 3.0,         # its light at the middle, times white
+              "warm_share": 0.35,   # the share of warm lamps (the specks' colours: warm 255, 214, 150, cool 150, 180, 255)
+              "twinkle": 0.5,       # how far a lamp's light dips as it twinkles, 0 (steady) to 1
+              "cycles": 3,          # whole twinkles per light loop (beams.loop_seconds: the loop closes)
+              "seed": 11,
+              "glow": 0.0,          # the lamps' glow round each: its middle is this share of the lamp's colour; 0 none
+              "glow_radius": 8.0},  # its radius (a standard deviation), pixels of a 720 line picture
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -140,6 +176,12 @@ X264 = ["-c:v", "libx264", "-preset", "medium", "-crf", "16"]
 NVENC = ["-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1",
          "-rc-lookahead", "32", "-bf", "3", "-profile:v", "high"]
 PREPARED = "prepared.json"       # what `prepare` made its layers and text from (render --prepared checks it)
+# the last step of every picture: RGB into Y'CbCr by BT.709 in the TV range, and the four tags that say so (look2, 2026-10-18).
+# format=yuv420p alone converts by BT.601 and tags nothing, and a player reads an untagged HD video as BT.709: the red came out
+# brighter and the green darker, by up to 17 of 255 (lookref, lookrev).  The tags go on the frames with setparams: given to
+# the output alone (-colorspace and the like), ffmpeg 8.0 wrote two of the four
+COLOUR_OUT = ("scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+              "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv")
 
 
 # ---- the look -------------------------------------------------------------------------------
@@ -182,7 +224,36 @@ def merge_look(overrides):
         if not all(int(v) == v and v >= 1 for v in look[name]["cycles"]):
             raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
     _check_stage(look["stage"])
+    _check_lamps(look["lamps"], look["stage"])
+    _check_rim(look["rim"])
     return look
+
+
+def _check_rim(rim):
+    for key in ("strength", "width", "soft"):
+        if not (math.isfinite(rim[key]) and rim[key] >= 0):
+            raise ValueError("rim.%s is from 0, not %r" % (key, rim[key]))
+    if not math.hypot(*rim["from"]) > 0:
+        raise ValueError("rim.from is the way the light comes from in the picture (x right, y down), not %r" % (rim["from"],))
+    if any(c < 0 for c in rim["colour"]):
+        raise ValueError("rim.colour is r, g, b from 0")
+
+
+def _check_lamps(lamps, stage):
+    """the values of the lamps section that tools/mv_world.py can draw"""
+    if int(lamps["cyc"]) != lamps["cyc"] or lamps["cyc"] < 0:
+        raise ValueError("lamps.cyc is how many lamps the cyc has, a whole number from 0: not %r" % (lamps["cyc"],))
+    for key in ("edge_step", "glow", "glow_radius", "warm_share", "power"):
+        if not (math.isfinite(lamps[key]) and lamps[key] >= 0):
+            raise ValueError("lamps.%s is from 0, not %r" % (key, lamps[key]))
+    if not lamps["size"] > 0:
+        raise ValueError("lamps.size is the radius of a lamp's core, above 0: not %r" % (lamps["size"],))
+    if not 0 <= lamps["twinkle"] <= 1 or not 0 <= lamps["warm_share"] <= 1:
+        raise ValueError("lamps.twinkle and lamps.warm_share are 0 to 1, not %r and %r" % (lamps["twinkle"], lamps["warm_share"]))
+    if int(lamps["cycles"]) != lamps["cycles"] or lamps["cycles"] < 1:
+        raise ValueError("lamps.cycles are whole twinkles per light loop, from 1: not %r" % (lamps["cycles"],))
+    if (lamps["cyc"] > 0 or lamps["edge_step"] > 0) and not stage["world"]:
+        raise ValueError("the lamps lie on the stage in the world: they need stage.world 1")
 
 
 def _check_stage(stage):
@@ -219,6 +290,23 @@ def _check_stage(stage):
         raise ValueError("stage.pool_colour is r, g, b from 0")
     if stage["world"] and not stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         raise ValueError("stage.pool and stage.shadow light and darken the floor this tool draws: they need stage.floor 1")
+    for key in ("dof", "dof_focus"):
+        if not (math.isfinite(stage[key]) and stage[key] >= 0):
+            raise ValueError("stage.%s is from 0 (0: %s), not %r" % (key, "no blur" if key == "dof" else "the camera's look-at "
+                                                                     "point", stage[key]))
+    if stage["dof"] > 0 and not stage["world"]:
+        raise ValueError("stage.dof blurs the stage by its distance from the camera, which only a stage in the world has: it "
+                         "needs stage.world 1")
+    if not 0 <= stage["reflect"] <= 1:
+        raise ValueError("stage.reflect is 0 (none) to 1 (a polished floor), not %r" % (stage["reflect"],))
+    if not (math.isfinite(stage["reflect_blur"]) and stage["reflect_blur"] >= 0):
+        raise ValueError("stage.reflect_blur is from 0, not %r" % (stage["reflect_blur"],))
+    if any(c < 0 for c in stage["floor_plane"]):
+        raise ValueError("stage.floor_plane is r, g, b from 0")
+    if stage["reflect"] > 0 and not (stage["world"] and stage["floor"]):
+        raise ValueError("stage.reflect mirrors the stage in the floor this tool draws: it needs stage.world 1 and stage.floor 1")
+    if list(stage["floor_plane"]) != list(DEFAULT_LOOK["stage"]["floor_plane"]) and not (stage["world"] and stage["floor"]):
+        raise ValueError("stage.floor_plane is the colour of the floor this tool draws: it needs stage.world 1 and stage.floor 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------
@@ -500,16 +588,21 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
             # round: setpts cuts its result down to a whole tick, and 16 / 30 s written in decimals is a hair
             # short of the 16th tick (one cue in three came a frame early)
             parts.append("[%d:v]%sformat=rgba,setpts=PTS-STARTPTS+round(%.6f/TB)[c%d]" % (index, scaled, offset, state["n"]))
-            parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass[v%d]" % (state["label"], state["n"], x, y, state["n"]))
+            # in RGB (gbrp): an overlay works in Y'CbCr 4:2:0 by default, which turned the picture into Y'CbCr by BT.601
+            # half way to COLOUR_OUT (look2)
+            parts.append("[%s][c%d]overlay=x=%d:y=%d:eof_action=pass:format=gbrp[v%d]" % (state["label"], state["n"], x, y,
+                                                                                           state["n"]))
             state["label"] = "v%d" % state["n"]
 
     lay(overlays["back"])
     glow = look["glow"]
     scale = h / REFERENCE_HEIGHT
+    rim = look["rim"]
+    rim_on = rim["strength"] > 0 and rim["width"] > 0
     if glow["strength"] > 0 and glow["radius"] > 0:
         t = int(glow["threshold"])
         curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
-        parts += ["[0:v]%sformat=rgba,split=2[fg][fgb]" % _fold(subframes, taken, fps, shifts),
+        parts += ["[0:v]%sformat=rgba,split=%s" % (_fold(subframes, taken, fps, shifts), "3[fg][fgb][fgr]" if rim_on else "2[fg][fgb]"),
                   "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
                   "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
                   "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
@@ -517,9 +610,12 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["[0:v]%sformat=rgba[fg]" % _fold(subframes, taken, fps, shifts),
+        parts += ["[0:v]%sformat=rgba%s" % (_fold(subframes, taken, fps, shifts), ",split=2[fg][fgr]" if rim_on else "[fg]"),
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
+    if rim_on:
+        parts += _rim(rim, scale, state["label"])
+        state["label"] = "rimlit"
     camera = look["camera"]
     span = punch_span
     hits = flare_starts if span > 0 else []
@@ -541,8 +637,9 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     lens = look["lens"]
     finish = []
     if lens["vignette"] > 0:
-        # the filter takes the angle of the lens: 0.3 is about PI/6.5, 1 about PI/2.6 (dark far into the picture)
-        finish.append("vignette=angle=%s" % _number(0.28 + 0.92 * min(float(lens["vignette"]), 1.0)))
+        # the filter takes the angle of the lens: 0.3 is about PI/6.5, 1 about PI/2.6 (dark far into the picture).  It takes
+        # no planar RGB: handed packed RGB (rgb24) it keeps the picture RGB, where ffmpeg gave it Y'CbCr 4:4:4 by BT.601 (look2)
+        finish.append("format=rgb24,vignette=angle=%s,format=gbrp" % _number(0.28 + 0.92 * min(float(lens["vignette"]), 1.0)))
     if lens["grain"] > 0:
         finish.append("noise=alls=%d:allf=t" % int(round(lens["grain"])))
     if finish:
@@ -550,10 +647,32 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         state["label"] = "lens"
     lay(overlays["front"])
     lay(overlays["flare"])
-    parts.append("[%s]format=yuv420p[out]" % state["label"])
+    parts.append("[%s]%s[out]" % (state["label"], COLOUR_OUT))
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
     argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
+
+
+def _rim(rim, scale, label):
+    """the filters of the rim light (look rim) from the dancer's branch [fgr] over [label], into [rimlit]: her alpha A, the
+    same moved by `width` away from the light, S(x, y) = A((x, y) + width * from), and the band A (1 - S), softened, as the
+    alpha of her picture painted the rim's colour; screened over [label] (premultiplied: colour times the band)"""
+    ux, uy = rim["from"]
+    norm = math.hypot(ux, uy)
+    reach = float(rim["width"]) * scale
+    tx, ty = int(round(-ux / norm * reach)), int(round(-uy / norm * reach))
+    m = max(abs(tx), abs(ty), 1)
+    soft = float(rim["soft"]) * scale
+    r, g, b = (int(round(min(255.0, c * float(rim["strength"])))) for c in rim["colour"])
+    return ["[fgr]split=2[rx][ry]",
+            "[rx]alphaextract,split=2[ra][rb]",
+            "[rb]pad=iw+%d:ih+%d:%d:%d,crop=iw-%d:ih-%d:%d:%d,%snegate[rs]" % (2 * m, 2 * m, m + tx, m + ty, 2 * m, 2 * m, m, m,
+                                                                               "gblur=sigma=%s," % _number(soft) if soft > 0 else ""),
+            "[ra][rs]blend=all_mode=multiply[rm]",
+            "[ry]lutrgb=r=%d:g=%d:b=%d,format=rgba[rc]" % (r, g, b),
+            "[rc][rm]alphamerge,premultiply=inplace=1,format=gbrp[rim]",
+            "[%s]format=gbrp[rimbase]" % label,
+            "[rimbase][rim]blend=all_mode=screen:shortest=1[rimlit]"]
 
 
 def _since(at):
@@ -1015,6 +1134,15 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
     world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
              "subframes": int(subframes), "shutter": float(shutter), "jobs": jobs}
     world["track"] = world_tool().camera_track(world["camera"])
+    if stage["dof"] > 0 and not stage["dof_focus"]:
+        # (look2rev) the focus is then the camera's own distance to its look-at point, which a key at the point (0) or beyond it
+        # (the window's distance below 0) has not: stop here, before any frame is drawn (mv_world.stage_blur refuses it too)
+        keys, _ = world["track"]
+        bad = [k.frame for k in keys if not -float(k.distance) > 0]
+        if bad:
+            raise ValueError("stage.dof focuses at the camera's look-at point, and the camera %s is at or beyond it at frame%s %s: "
+                             "give stage.dof_focus (the distance in focus)" % (world["camera"], "s" if len(bad) > 1 else "",
+                                                                                ", ".join(str(f) for f in bad[:8])))
     if stage["floor"] and (stage["pool"] > 0 or stage["shadow"] > 0):
         if not model or not motions:
             raise ValueError("stage.pool and stage.shadow follow the dancer: give --model MODEL.pmx and her --motion files, "
