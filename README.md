@@ -2940,6 +2940,63 @@ python tools/mv_inspect.py pixels shadow plain_%05d.png shaded_%05d.png --first 
   0.99〜1.03 で 0、1.04 から 1 つずつ増えて 1.08 以上で 4。review_adapt）。腰の上下・滑り・宙・浮き・着地のひざは、どれでそろえても外
   （adapt 10-17、v10）。
 
+### 参考の動画の見た目を数にする（`tools/look_analyze.py`・`tools/look_credits.py`、MMD なし）
+
+参考にする MV（加賀さんの指示: YouTube の @Akashi1939。Bilibili の中国の MMD 作者の作品の転載チャンネル）と私たちの版を、同じ物差しで数にして
+並べる（2026-10-18、見た目の研究 lookref）。動画は hinata で読む（ffmpeg）。見た目の考え方ごとに約 100 の物差しがあり（一覧は `MEASURES`）、
+どれも作り方の分かる合成の絵（決まった量だけぼかした段・決まった光をにじませた光源・決まった画素だけずらした色）で試験してある。
+
+```
+python tools/look_analyze.py measure VIDEO|FOLDER OUT.json [--label NAME] [--from S] [--to S] [--pairs 120] [--height 720]
+                                     [--matrix auto|bt601|bt709] [--jobs N]
+python tools/look_analyze.py text VIDEO OUT.json [--frames 24]                  # 文字の入り方（EasyOCR の検出を CPU で）を足す
+python tools/look_analyze.py compare TABLE.md TABLE.json --ref A.json ... --ours V10.json V11.json
+python tools/look_analyze.py figure strip FIG.png TABLE.json [--keys ...]        # 物差しの帯の図
+python tools/look_analyze.py figure profiles FIG.png A.json ... --ours v10 v11    # グローの広がり・明るさの分布・縁のぼけの分布
+python tools/look_analyze.py crops VIDEO FIG.png --at S S S [--box X0,Y0,X1,Y1] [--size 320x180] [--matrix bt601]   # 小さな切り抜きの並び
+python tools/look_analyze.py annotate VIDEO FIG.png --at S --what dof|bloom|ca|bars|motion|regions [--model M.onnx]   # 物差しが見た所を絵に描く
+python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48] [--matrix bt601]   # 人物と舞台を分けて
+python tools/look_analyze.py compare TABLE.md TABLE.json --ref A.json ... --ours V10.json ... --regions   # regions の比べ
+python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                   # 説明文の名のり（効果・作者・道具）を数える
+```
+
+- 読み方: 全部のコマを 64x36 で 1 回（カット・フラッシュ・同じ絵の繰り返し・周辺減光）、間引いた対のコマを解析の高さ（既定 720 行、私たちの MV の
+  高さ）で 1 回。長さは 720 行の画素。縮めは画素の平均（area。lanczos は 1.5 倍の縮めで段の約 8 % 行き過ぎ、シャープの縁取りに読める）。
+  色の行列は印のとおり、印がなければ再生側の慣わし（720 行以上は BT.709）。黒帯の内側だけを測る。
+- 考え方: 色調（L* の黒・中央・白の位置、明暗の寄り、コントラスト、細かいコントラスト、白飛び・黒つぶれ）・色（C*ab、Hasler と Süsstrunk の
+  色の豊かさ、全体と影・中間・光の色かぶり、ティールとオレンジ、白に近い画素の色温度）・光（明るい所のまわりのグローの強さと届き、にじみの色、
+  小さい光のグロー、明るい縁の裾、光芒の本数と向き、フラッシュ、光の色と向きの目安）・光学（縁のぼけ、区画で読む被写界深度、動く縁のぼけから
+  シャッター、色収差のずれと倍率、周辺減光、レンズの歪み）・質感（ノイズ、コマごとに変わる粒と大きさ、縁の幅とシャープの縁取り、ディフュージョン、
+  スキャンライン、行の裂け）・画面（縦横比と黒帯、fps と実際に絵が変わる fps、カット、文字）。
+- 床: 物差しごとに、対の 2 枚（ほぼ同じ絵）での読みの差（floor_pair）、コマにわたる四分位、場面を引き直した中央値の 95 % 区間を出す。
+  `compare` は参考の動画ごとの中央値の中央値と四分位に対して、私たちの値が四分位の外へどれだけ出ているか（四分位の幅を単位、床の 2 倍より狭くしない）。
+- 弱いところ（道具でデバッグして分かったこと）: (1) 1 枚の絵からのシャッターは下限の目安。私たちの描画は物理（髪・スカート）を 1 歩にそろえて描くので
+  鋭く、大きくぼけた腕は縁として拾いにくく、細い線は線の幅しかぼけて見えない（v10、作りは 0.5、読みの中央値 0、75 % 点は約 0.3）。
+  (2) 被写界深度は Canny の縁では読めない（縁はピントの合った所にしか立たない）ので、180 行に縮めた絵の区画で読む。動画の符号化のブロックと雑音は
+  縮めると消える。2 px 未満のぼけは見分けない。もやや柔らかい光の背景もぼけと読む。(3) 周辺減光は、真ん中に明るい人物が立つと人物を読む
+  （v10: 舞台の層だけ 0.54、それに mv_look のレンズを掛けて 0.31、出来上がり 0.04、レンズだけ 0.58。査読 lookrev）。参考の値はレンズの暗さの上限としてしか
+  使えない。(4) グローの強さは、白い服のように広く明るい所ではその服を読む（v10 の 0.56 は 4 px の輪の多くが服の上）。人物のグローは regions の
+  halo.share・halo.dL で読む（輪郭を 1 px ずらしても 0.011〜0.013・2.6〜3.5）。bloom.person_strength は輪郭が 1 px 内へずれると 3.7 倍に読むので弱い。
+  (5) 粒の大きさは参考では動画の符号化の乱れを読む。
+- **画面全体の物差しは、絵に何が写っているかも読む**（査読 lookrev）: 私たちの正面の絵は人物が画面の 3〜7 %、まわりは暗い舞台なので、明るさの中央は舞台の
+  明るさ、ティールとオレンジは「青い舞台と暖かい人物」の差、周辺減光は中央の人物を読む。2 段目の狙いは `regions` の表（人物と舞台を分けた物差し）で
+  決める。読み方と符号化をそろえる確かめ（私たちの絵を参考と同じ VP9 1080 行に通す）では、明るさ・色・被写界深度・グローの差は動かず、ノイズと粒だけが
+  符号化で決まる（YouTube 並みで 0.64 → 0.08、粒は 0）。
+- `regions`: 人物の領域をアニメの人物の分け方の模型（skytnt/anime-seg の ISNet `isnetis.onnx`、onnxruntime の CPU）で取り、人物（輪郭の 3 px 内側）と
+  舞台（人物から 12 px 外）を分けて読む: 両方の L* の 10・50・90 % 点・彩度・色かぶり・中の影と光の色の開き（明るい 1/4 と暗い 1/4）、人物と舞台の明るさの差、
+  人物の面積の割合（構図）、輪郭の法線に沿った縁の光（3〜6 px と 12〜20 px の比。リムライトで 1 より大）と外のにじみ（3〜8 px と 24〜40 px、光の割合と
+  L* の差）、舞台と人物の区画のぼけの比、舞台の光源の割合とそのグロー、人物の光源が人物の外に落とすグロー。模型は v10 の 30 コマで、合成の絵と舞台の層の
+  差から取った人物の領域と IoU 中央 0.946・輪郭の距離中央 1.0 px で合い、物差しも両方の領域でほぼ同じ（人物の L* 中央 83.8 と 83.7）。
+- `look_credits.py`: 説明文の頭の名のり（Model・Motion・Camera・Stage・MME / Effects / 特效・Tools / 使用软件 …、【】の形も）を欄に分け、効果を名で
+  （EFFECTS の綴りの一覧）、作者を効果の欄の名で、道具を名で数える。数えるたびに、見つけた行を逐語で残す（出所）。
+- 私たちの mp4 の色: mv_look の出力は色の印がなく、ffmpeg が BT.601 で YUV にしている（`scale` の既定）。再生側は印のない 720p 以上を BT.709 と読むので、
+  公開すると赤が明るく濃く、緑が暗く出る（6 色で平均 5.6/255 ずれる）。直すには mv_look の符号化に `out_color_matrix=bt709` と色の印を付ける。
+  hinata の ffmpeg 8.0 は `-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv` を付けても color_space と color_range しか書かない
+  （コマの持つ色の情報が勝つ）。4 つとも書くには、グラフの最後を `scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:
+  color_trc=bt709:colorspace=bt709:range=tv` にする（査読 lookrev の `matrix_tags.py`）。
+- 研究の記録と結果: `_spike/out/stage6/lookref/NOTES.md`（物差しの一覧 `measures.md`）、hinata `C:/work/hibikase/stage6/lookref/`（参考の動画は hinata の `ref/` だけに置き、
+  配らない）。査読と人物・舞台を分けた測り直し: `_spike/out/stage6/lookrev/NOTES.md`、hinata `C:/work/hibikase/stage6/lookrev/`（模型は `models/isnetis.onnx`）。
+
 ### 調整した値の一覧を作る（`tools/param_inventory.py`、MMD なし）
 
 v11 の組み直し（retarget・rig の後）で見直す値の表を、手で書かずにコードから作る（2026-10-17、adapt）。
