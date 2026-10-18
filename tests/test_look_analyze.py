@@ -512,6 +512,8 @@ class OpticsTest(unittest.TestCase):
             m = LA.motion(a, b, LA.edges(a, unit=self.unit), unit=self.unit)
             self.assertAlmostEqual(m["motion.speed"], 24.0, delta=3.0)        # 12 pixels a frame at 360 lines
             self.assertAlmostEqual(m["motion.shutter"], shutter, delta=0.15, msg=shutter)
+            self.assertAlmostEqual(m["motion.blurred_share"], 0.0 if shutter == 0 else 1.0, delta=0.15, msg=shutter)
+            self.assertGreaterEqual(m["motion.shutter_p75"], m["motion.shutter"])
 
     def test_colour_fringes_shifted_and_scaled(self):
         grey = ndi.gaussian_filter(blocks(360, 640, seed=7, n=150), 0.8)
@@ -676,7 +678,7 @@ class VideoTest(unittest.TestCase):
                                      label="test")
             with Image.open(sheet) as im:
                 self.assertEqual(im.size, (320, 108))
-            for what in ("dof", "bloom", "ca", "bars"):
+            for what in ("dof", "bloom", "ca", "bars", "motion"):
                 out = LA.annotate(path, os.path.join(tmp, what + ".png"), 1.0, what=what, height=180)
                 self.assertTrue(os.path.getsize(out) > 0, what)
             m = os.path.join(tmp, "v.json")

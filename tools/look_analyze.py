@@ -947,19 +947,24 @@ def box_length(sigma, scale):
     return out
 
 
-def motion(gray0, gray1, e, unit=1.0, f=None, seed=0):
+def motion(gray0, gray1, e, unit=1.0, f=None, seed=0, detail=None):
     """motion and motion blur between two frames (the second the next different picture)
 
     motion.speed: the median speed of the moving edges (720 line pixels a frame); motion.moving: the share of pixels
     moving at least MOVING_PIXEL; motion.shutter: how long the shutter was open as a share of the frame time: the
     blur of each edge moving across itself (edges(), turned into the length of a box blur by box_length, less the
     still edges' own) over how far it moved across itself in the frame (0 without motion blur, 0.5 for a 180 degree
-    shutter); motion.edges: how many moving edges it is read from.  f: the flow if already made."""
+    shutter); motion.shutter_p75: its upper quartile; motion.blurred_share: the share of the moving edges blurred over
+    at least a quarter of their motion (in an MMD render folded from many subframes with the physics held to one step,
+    the hair and the skirt stay sharp while the body blurs: the median reads the sharp ones); motion.edges: how many
+    moving edges it is read from.  f: the flow if already made; detail, a dict, gets each moving edge and its reading
+    (for annotate)."""
     if f is None:
         f = flow(gray0, gray1)
     speed = np.hypot(f[..., 0], f[..., 1]) / unit
     out = {"motion.speed": float("nan"), "motion.moving": float((speed >= MOVING_PIXEL).mean()),
-           "motion.shutter": float("nan"), "motion.edges": 0.0}
+           "motion.shutter": float("nan"), "motion.shutter_p75": float("nan"), "motion.blurred_share": float("nan"),
+           "motion.edges": 0.0}
     n = len(e["y"])
     if n == 0:
         return out
@@ -976,7 +981,12 @@ def motion(gray0, gray1, e, unit=1.0, f=None, seed=0):
     sig_img = e["sigma"] * unit
     base = float(np.median(box_length(sig_img[still], e["scale"][still]))) if len(still) >= 10 else 0.0
     lengths = np.sqrt(np.clip(box_length(sig_img[moving], e["scale"][moving]) ** 2 - base ** 2, 0.0, None))
-    out["motion.shutter"] = float(np.median(lengths / (across[moving] * unit)))
+    ratio = lengths / (across[moving] * unit)
+    out["motion.shutter"] = float(np.median(ratio))
+    out["motion.shutter_p75"] = float(np.percentile(ratio, 75))
+    out["motion.blurred_share"] = float((ratio >= 0.25).mean())
+    if detail is not None:
+        detail.update({"y": e["y"][moving], "x": e["x"][moving], "ratio": ratio, "across": across[moving]})
     return out
 
 
@@ -1186,6 +1196,8 @@ MEASURES = {
     "dof.soft": ("optics", "柔らかい縁のぼけ（90 % 点。被写界深度の外のぼけ）", "px"),
     "dof.soft_share": ("optics", "ぼけた縁（3 px 超）の割合（被写界深度）", ""),
     "motion.shutter": ("optics", "シャッター（動く縁の伸びから。0.5 が 180 度）", ""),
+    "motion.shutter_p75": ("optics", "シャッターの上側（動く縁の 75 % 点）", ""),
+    "motion.blurred_share": ("optics", "動きの 1/4 以上ぼけた動く縁の割合", ""),
     "motion.speed": ("optics", "動く縁の速さ", "px/コマ"),
     "motion.moving": ("optics", "動く画素の割合", ""),
     "ca.red_x": ("optics", "赤のずれ（横、+ 右）", "px"),
@@ -1871,6 +1883,20 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
                 d.line([x0, y0, x0 + dx, y0 + dy], fill=colour, width=3)
         note = "赤と青の緑に対するずれ（20 倍に伸ばした矢印）: 赤 (%.2f, %.2f) px 倍率 %.2f px、青 (%.2f, %.2f) px 倍率 %.2f px" % (
             ca["ca.red_x"], ca["ca.red_y"], ca["ca.red_radial"], ca["ca.blue_x"], ca["ca.blue_y"], ca["ca.blue_radial"])
+    elif what == "motion":
+        n = int(round(t * info["fps"]))
+        pair = dict(read_frames(path, info, [n, n + 1], height=height, matrix=mat, as_uint8=True))
+        g0 = luma(pair[n].astype(np.float64) / 255.0)
+        g1 = luma(pair[n + 1].astype(np.float64) / 255.0)
+        e = edges(g0, unit)
+        det = {}
+        m = motion(g0, g1, e, unit, detail=det)
+        for y, x, v in zip(det.get("y", []), det.get("x", []), det.get("ratio", [])):
+            v = min(float(v), 1.0)
+            c = (int(255 * v), int(80 * (1 - abs(2 * v - 1))), int(255 * (1 - v)))
+            d.ellipse([x - 2, y - 2, x + 2, y + 2], fill=c)
+        note = "動く縁のぼけ / 動き: 青 0 → 赤 1 以上（中央 %.2f、75 %% 点 %.2f、1/4 以上ぼけた割合 %.2f、%d 点）" % (
+            m["motion.shutter"], m["motion.shutter_p75"], m["motion.blurred_share"], m["motion.edges"])
     elif what == "bars":
         bars = find_bars(np.array([luma(rgb)]))
         x0, y0, x1, y1 = active_box(bars, a.shape)
@@ -1949,7 +1975,7 @@ def main(argv=None):
     a.add_argument("input")
     a.add_argument("out")
     a.add_argument("--at", type=float, required=True)
-    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars"), default="dof")
+    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion"), default="dof")
     a.add_argument("--box", type=_box)
     a.add_argument("--scale", type=float, default=1.0)
     args = ap.parse_args(argv)
