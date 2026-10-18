@@ -1451,7 +1451,8 @@ def summarise(rows, seed=0):
 def compare(refs, ours):
     """rows of the table: per measure the references' per-video medians (their median, quartiles, least and most) and
     each of ours with how far it lies outside the references' quartiles, in units of their spread (the quartile
-    distance, at least twice the references' median floor): 0 inside, + above, - below given by side"""
+    distance, at least twice the references' median floor and 5 % of their median): 0 inside, + above, - below
+    given by side"""
     rows = []
     for key, (concept, label, unit) in MEASURES.items():
         vals = [r["summary"].get(key, {}).get("median", float("nan")) for r in refs]
@@ -1462,7 +1463,9 @@ def compare(refs, ours):
         if good:
             q25, med, q75 = (float(x) for x in np.percentile(good, [25, 50, 75]))
             fl = [f for f in floors if f is not None and np.isfinite(f)]
-            spread = max(q75 - q25, 2.0 * float(np.median(fl)) if fl else 0.0, 1e-9)
+            # the quartile distance; at least twice the references' floor and 5 % of their median (references that
+            # all agree leave none: 60 fps everywhere)
+            spread = max(q75 - q25, 2.0 * float(np.median(fl)) if fl else 0.0, 0.05 * abs(med), 1e-6)
             row.update({"ref_q25": q25, "ref_median": med, "ref_q75": q75, "ref_min": float(min(good)),
                         "ref_max": float(max(good)), "spread": spread})
         for o in ours:

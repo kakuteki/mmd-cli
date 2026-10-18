@@ -624,6 +624,11 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(row["ours"]["inside"]["distance"], 0.0)
         self.assertAlmostEqual(row["ours"]["above"]["distance"], (52.0 - 46.0) / 4.0)
         self.assertEqual(row["ours"]["above"]["side"], "above")
+        # references that all agree (every one at 60 fps) leave no spread: 5 % of their value stands in for it
+        same = [{"label": "r%d" % i, "summary": {"frame.fps": {"median": 60.0, "floor_pair": 0.0}}} for i in range(4)]
+        ours30 = [{"label": "v", "summary": {"frame.fps": {"median": 30.0, "floor_pair": 0.0}}}]
+        fps = [r for r in LA.compare(same, ours30) if r["key"] == "frame.fps"][0]
+        self.assertAlmostEqual(fps["ours"]["v"]["distance"], 30.0 / 3.0)
         table = LA.table_md(rows, [o["label"] for o in ours])
         self.assertIn("tone.median", table)
         self.assertIn("1.5", table)
