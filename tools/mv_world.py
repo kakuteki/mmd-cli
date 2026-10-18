@@ -26,6 +26,13 @@ floor MMD drew was black with nothing under her feet.  Here the same pieces lie 
 * the depth of field (`dof`, look2): the stage blurred by its distance from the focus (the camera's look-at point, or
   `dof_focus`) as a thin lens blurs it, `dof` pixels (a standard deviation, of a 720 line picture) infinitely far, before
   the dancer is laid over it: the floor under her stays sharp, the floor behind her and the cyc blur.
+* the light on the floor (look2): its plane's colour (`floor_plane`, which shows through its lines as v7's materials let
+  it), and a mirror (`reflect`, by Fresnel's share, blurred by `reflect_blur`) of the cyc, the beams, the specks and the lamps
+  above it (not of the dancer);
+* small lamps (the look's `lamps`, look2): a star cloth on the cyc and lamps along the floor's edges, brighter than white at
+  their cores, twinkling with the light loop, each with a glow.
+
+Every one of these left at its default draws the stage of before, byte for byte (tests/test_mv_world_stage_look.py).
 
 A frame of the stage is drawn at the moment of its video frame; with motion blur (the dancer rendered at `subframes` times the
 rate and `shutter` of each frame averaged: mv_look --subframes 8 --shutter 0.5 averages subframes 0..3) the camera is the one
@@ -72,6 +79,9 @@ BEAM_ORIGIN = (0.5, -0.35)
 # through, the grain and the vignette)
 FLOOR_COLOURS = {"plane": (6.0, 9.0, 17.9), "line": (93.9, 110.9, 138.3), "accent": (198.9, 126.5, 41.6)}
 FLOOR_SEE_THROUGH = 0.08         # the old floor let 8 % of the stage behind it through (its alpha 0.92): kept
+# and its lines let the plane under them through by 1 - their alpha (0.55 and 0.80): a plane lit brighter than v7's
+# (stage.floor_plane, look2) shows through them by as much, so they stay brighter than it
+LINE_SEE_THROUGH = {"line": 0.45, "accent": 0.20}
 NEAR = 0.1                       # nothing nearer the camera than this is drawn (MMD units)
 
 
@@ -317,10 +327,11 @@ def _cyc_span(look, size):
     return 2.0 * math.degrees(lo)
 
 
-def specks(view, look, phase, scale=LIGHT_SCALE):
+def specks(view, look, phase, scale=LIGHT_SCALE, above=None):
     """[rows, columns, 3] floats on black: the specks on the cyc as `view` sees them.  The plate had bokeh.count of them on
     the reference picture; the cyc has as many per degree over `specks` degrees, each a little in front of it (up to 15 % of
-    the radius) and as high as the reference camera saw it, drifting and twinkling as before"""
+    the radius) and as high as the reference camera saw it, drifting and twinkling as before.  `above`: only the specks
+    higher than this (the floor's mirror shows nothing under the floor)"""
     settings = look["bokeh"]
     w, h = view.size[0] // scale, view.size[1] // scale
     if int(settings["count"]) <= 0 or settings["opacity"] <= 0:
@@ -347,6 +358,8 @@ def specks(view, look, phase, scale=LIGHT_SCALE):
         else:
             far = 1e6
             point = tuple(view.eye + far * np.array([math.sin(theta), rise, math.cos(theta)]))
+        if above is not None and point[1] < above:
+            continue
         u, v, depth = view.project([point])
         if depth[0] <= NEAR:
             continue
@@ -783,7 +796,12 @@ def _floor_once(view, stage, figure):
         is_accent = (np.mod(np.abs(k), every) == 0) if every > 0 else np.zeros(k.shape, dtype=bool)
         plain = np.maximum(plain, np.where(is_accent, 0.0, _overlap(dist, foot, line)))
         accent = np.maximum(accent, np.where(is_accent, _overlap(dist, foot, 2.0 * line), 0.0))
-    base = np.tile(np.array(FLOOR_COLOURS["plane"], dtype=np.float64), (X.size, 1))
+    plane = np.array(stage["floor_plane"], dtype=np.float64)                            # FLOOR_COLOURS["plane"] by default
+    base = np.tile(plane, (X.size, 1))
+    lines = {name: np.array(FLOOR_COLOURS[name]) for name in ("line", "accent")}
+    lift = plane - np.array(FLOOR_COLOURS["plane"])
+    if lift.any():
+        lines = {name: colour + LINE_SEE_THROUGH[name] * lift for name, colour in lines.items()}
     pool = None
     if figure is not None and stage["pool"] > 0:
         r2 = (X - figure.centre[0]) ** 2 + (Z - figure.centre[1]) ** 2
@@ -805,15 +823,15 @@ def _floor_once(view, stage, figure):
             base = base * lit[:, None]
             if pool is not None:
                 base += pool * pooled[:, None]
-            mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * (lit * plain)[:, None]
-            rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * (lit * accent)[:, None]
+            mixed = base * (1.0 - plain[:, None]) + lines["line"][None, :] * (lit * plain)[:, None]
+            rgb[on] = mixed * (1.0 - accent[:, None]) + lines["accent"][None, :] * (lit * accent)[:, None]
             return rgb, cover
         lit = soft_light(*through, stage)
         if pool is not None:
             base += pool
         base = base * lit[:, None]
-        mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * plain[:, None]
-        rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * accent[:, None]
+        mixed = base * (1.0 - plain[:, None]) + lines["line"][None, :] * plain[:, None]
+        rgb[on] = mixed * (1.0 - accent[:, None]) + lines["accent"][None, :] * accent[:, None]
         return rgb, cover
     if pool is not None:
         base += pool
@@ -824,8 +842,8 @@ def _floor_once(view, stage, figure):
         near = (np.abs(X - px) < 12.0 + max(reach)) & (np.abs(Z - pz) < 12.0 + max(reach))
         if near.any():
             base[near] *= 1.0 - _shade(X[near], Z[near], figure, float(stage["shadow"]))[:, None]
-    mixed = base * (1.0 - plain[:, None]) + np.array(FLOOR_COLOURS["line"])[None, :] * plain[:, None]
-    rgb[on] = mixed * (1.0 - accent[:, None]) + np.array(FLOOR_COLOURS["accent"])[None, :] * accent[:, None]
+    mixed = base * (1.0 - plain[:, None]) + lines["line"][None, :] * plain[:, None]
+    rgb[on] = mixed * (1.0 - accent[:, None]) + lines["accent"][None, :] * accent[:, None]
     return rgb, cover
 
 
@@ -1180,6 +1198,135 @@ def defocus(img, sigma):
     return out
 
 
+def _blurred(img, sigma):
+    """img (rows, columns, channels) blurred by a Gaussian of `sigma` pixels (none at 0)"""
+    if sigma <= 0:
+        return img
+    return _ndi().gaussian_filter(img, (sigma, sigma, 0), mode="nearest")
+
+
+# ---- small lamps (look `lamps`, look2) ------------------------------------------------------
+#
+# A star cloth on the cyc and lamps along the edges of the floor, each a small round core brighter than white: the light
+# past white stays white as stage.dof blurs a lamp into a disc, and lamps.glow spreads a glow round it (as AutoLuminous makes
+# a material glow in MMD).  The references have 0.1 to 1.2 % of their stage past Y' 0.9 (lookrev, the quartiles of 12) with
+# a glow round it; ours had none.
+
+LAMP_LIFT = 0.15                 # MMD units: the edge lamps stand this far above the floor
+LAMP_LEAST = 0.75                # pixels: a lamp's core is never narrower (smaller, it would fall between the pixels)
+LAMP_COLOURS = {"warm": (255.0, 214.0, 150.0), "cool": (150.0, 180.0, 255.0)}      # the specks' colours
+
+
+def lamp_places(look, size=(1280, 720)):
+    """the lamps of the look: [{"at": world point (None: infinitely far, then "dir" is its direction), "on": "cyc" or "edge",
+    "colour": (r, g, b) of 255, "offset": 0 to 1, the phase of its twinkle}].  The cyc's lie on it (stage.radius) over
+    stage.specks degrees round the front, as high as the reference camera sees the cyc (as the specks: its picture's rows);
+    the edge's every lamps.edge_step along the four edges of the floor, LAMP_LIFT above it, each corner once"""
+    lamps, stage = look["lamps"], look["stage"]
+    seed = float(lamps["seed"])
+    spots = []
+    radius = float(stage["radius"])
+    spread = float(stage["specks"])
+    tall = size[1] / _reference_focal(size)
+    for i in range(int(lamps["cyc"])):
+        theta = math.radians(-spread / 2.0 + spread * _unit(i, seed + 1))
+        rise = (0.5 - _unit(i, seed + 3)) * tall
+        if radius > 0:
+            y = REFERENCE["look_at"][1] + rise * (radius + REFERENCE["distance"])
+            spots.append(({"at": (radius * math.sin(theta), y, radius * math.cos(theta)), "on": "cyc"}))
+        else:
+            spots.append({"at": None, "dir": (math.sin(theta), rise, math.cos(theta)), "on": "cyc"})
+    step = float(lamps["edge_step"])
+    if step > 0:
+        half = float(stage["floor_half"])
+        k = max(1, int(round(2.0 * half / step)))
+        y = float(stage["floor_y"]) + LAMP_LIFT
+        for j in range(k):                       # each edge from a corner up to the next one, round the floor
+            a = -half + 2.0 * half * j / k
+            spots += [{"at": p, "on": "edge"} for p in ((a, y, half), (half, y, -a), (-a, y, -half), (-half, y, a))]
+    for i, spot in enumerate(spots):
+        spot["colour"] = LAMP_COLOURS["warm" if _unit(i, seed + 8) < float(lamps["warm_share"]) else "cool"]
+        spot["offset"] = _unit(i, seed + 6)
+    return spots
+
+
+def lamp_layer(view, look, phase, places, cover=None, above=None, halo=False):
+    """[rows, columns, 3] floats on black: the lamps as `view` sees them, each a round core (a Gaussian of lamps.size, at
+    least LAMP_LEAST pixels) whose middle is lamps.power times its colour, past white, dimmed by up to lamps.twinkle as it
+    twinkles lamps.cycles times per loop of the light (`phase`).  `halo`: their glow instead, a Gaussian of
+    lamps.glow_radius whose middle is lamps.glow times the lamp's colour (a glow as wide and as bright as that, whatever the
+    core; blurring the cores would spread their little light thin).  `cover` (the floor's share of each pixel) hides the
+    cyc's lamps behind the floor; `above`: only the lamps higher than this (the floor's mirror)"""
+    w, h = view.size
+    layers = {"cyc": np.zeros((h, w, 3)), "edge": np.zeros((h, w, 3))}
+    if not places:
+        return layers["edge"]
+    lamps = look["lamps"]
+    s = max(LAMP_LEAST, float(lamps["size"]) * h / REFERENCE_HEIGHT)
+    power = float(lamps["power"])
+    if halo:
+        s = max(LAMP_LEAST, float(lamps["glow_radius"]) * h / REFERENCE_HEIGHT)
+        power = float(lamps["glow"])
+    reach = int(math.ceil(4.0 * s))
+    points = [p["at"] if p["at"] is not None else tuple(view.eye + 1e6 * np.array(p["dir"])) for p in places]
+    u, v, depth = view.project(points)
+    twinkle, cycles = float(lamps["twinkle"]), float(lamps["cycles"])
+    for p, point, x, y, d in zip(places, points, u, v, depth):
+        if not d > NEAR or not (-reach <= x < w + reach and -reach <= y < h + reach):
+            continue
+        if above is not None and point[1] < above:
+            continue
+        c0, c1 = max(0, int(math.floor(x)) - reach), min(w, int(math.ceil(x)) + reach + 1)
+        r0, r1 = max(0, int(math.floor(y)) - reach), min(h, int(math.ceil(y)) + reach + 1)
+        if c1 <= c0 or r1 <= r0:
+            continue
+        dim = 1.0 - twinkle * 0.5 * (1.0 - math.cos(cycles * phase + 2.0 * math.pi * p["offset"]))
+        dx, dy = np.arange(c0, c1) - x, np.arange(r0, r1) - y
+        core = np.exp(-(dy[:, None] ** 2 + dx[None, :] ** 2) / (2.0 * s * s))
+        layers[p["on"]][r0:r1, c0:c1] += core[..., None] * (power * dim * np.array(p["colour"]))[None, None, :]
+    if cover is not None:
+        layers["cyc"] *= 1.0 - cover[..., None]
+    return layers["cyc"] + layers["edge"]
+
+
+# ---- the floor's mirror (stage.reflect, look2) ----------------------------------------------
+
+FRESNEL_R0 = 0.04                # a polished floor's share of the light it mirrors, looked at straight down (Schlick's)
+
+
+def mirrored(view, height=0.0):
+    """the camera mirrored in the floor's plane (y = height): what the floor mirrors at a pixel is what this camera sees
+    there, past the floor (M(eye) + t M(d) = M(eye + t d), and the floor's point is its own mirror)"""
+    m = copy.copy(view)
+    flip = np.array([1.0, -1.0, 1.0])
+    m.eye = view.eye * flip + np.array([0.0, 2.0 * float(height), 0.0])
+    m.forward, m.right, m.up = view.forward * flip, view.right * flip, view.up * flip
+    return m
+
+
+def fresnel(view):
+    """the share of the light the floor mirrors at every pixel (Schlick's approximation, FRESNEL_R0 straight down): more as
+    the line of sight grazes the floor, the far floor"""
+    d = view.rays(1)
+    cos = np.abs(d[..., 1]) / np.linalg.norm(d, axis=2)
+    return FRESNEL_R0 + (1.0 - FRESNEL_R0) * (1.0 - cos) ** 5
+
+
+def reflection(view, look, phase, places=None):
+    """[rows, columns, 3] floats: what the floor mirrors at every pixel, the cyc, the beams, the specks and the lamps above
+    the floor seen by the mirrored camera (before its share, fresnel, and its blur).  The dancer is not in it"""
+    height = float(look["stage"]["floor_y"])
+    m = mirrored(view, height)
+    back = backdrop(m, look)
+    light = beams(m, look, phase) + specks(m, look, phase, above=height)
+    back = _screen(np.clip(back, 0, 255), np.clip(light, 0, 255))
+    small = Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
+    img = np.asarray(small.resize(tuple(view.size), Image.BILINEAR), dtype=np.float64)
+    if places:
+        img = img + lamp_layer(m, look, phase, places, above=height)
+    return img
+
+
 # ---- a frame of the stage -------------------------------------------------------------------
 
 def _screen(a, b):
@@ -1231,15 +1378,26 @@ def stage_image(look, size, track, fps, index, light_frames, subframes=1, shutte
     back = _screen(np.clip(back, 0, 255), np.clip(light, 0, 255))
     small = Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
     back = np.asarray(small.resize(tuple(size), Image.BILINEAR), dtype=np.float64)
+    stage = look["stage"]
+    unit = size[1] / REFERENCE_HEIGHT
+    places = lamp_places(look, size) if look["lamps"]["cyc"] > 0 or look["lamps"]["edge_step"] > 0 else []
     cover = None
-    if int(look["stage"]["floor"]):
-        drawn = floor_moments(track, times, size, float(look["stage"]["floor_half"]), float(look["stage"]["floor_y"]))
+    if int(stage["floor"]):
+        drawn = floor_moments(track, times, size, float(stage["floor_half"]), float(stage["floor_y"]))
         views = [view_at(track, t, size) for t in drawn]
         figures = [figure.state(t) for t in drawn] if figure is not None else None
         rgb, cover = floor(views, look, size, figures)
+        if stage["reflect"] > 0:
+            # the floor mirrors what stands above it, blurred as a rough floor blurs it, by Fresnel's share
+            mirror = _blurred(reflection(middle, look, phase, places), float(stage["reflect_blur"]) * unit)
+            rgb = rgb + float(stage["reflect"]) * fresnel(middle)[..., None] * mirror
         back = back * (1.0 - cover[..., None]) + cover[..., None] * (rgb + FLOOR_SEE_THROUGH * back)
-    if look["stage"]["dof"] > 0:
+    if places:
+        back = back + lamp_layer(middle, look, phase, places, cover)
+    if stage["dof"] > 0:
         back = defocus(back, stage_blur(middle, look, cover))
+    if places and look["lamps"]["glow"] > 0:
+        back = back + lamp_layer(middle, look, phase, places, cover, halo=True)
     return Image.fromarray(np.clip(back + 0.5, 0, 255).astype(np.uint8), "RGB")
 
 

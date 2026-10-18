@@ -133,12 +133,34 @@ DEFAULT_LOOK = {
                                     # pool's light and the darkening from all round the rest, the lines keep their own
                                     # (mv_world.soft_light, 2026-10-17); 0 the floor of before (the pool the key light's
                                     # alone, both shares darkened from all round, the lines darkened too)
+              # the light on the floor (look2, 2026-10-18; the stage in the world only)
+              "floor_plane": [6.0, 9.0, 17.9],      # the colour of the floor's plane between its lines (v7's: mv_world's
+                                                    # FLOOR_COLOURS); its lines keep their own light
+              "reflect": 0.0,       # the floor mirrors the cyc, the beams, the specks and the lamps above it by Fresnel's
+                                    # share (more where it is seen at a grazing angle) times this, 0 none to 1 (polished).
+                                    # The dancer is not mirrored (MMD draws her alone)
+              "reflect_blur": 8.0,  # how blurred the reflection is (a rough floor), pixels of a 720 line picture
               # depth of field (look2, 2026-10-18; the stage in the world only): the stage is blurred by its distance from
               # the focus as a thin lens blurs it, before the dancer is laid over it (she is in focus)
               "dof": 0.0,           # the blur (a standard deviation, pixels of a 720 line picture) of what lies infinitely
                                     # far; half of it at twice the focus's distance, none at the focus; 0 no blur
               "dof_focus": 0.0},    # the distance in focus along the line of sight (MMD units); 0: the camera's own
                                     # distance to its look-at point (where the MV's cameras put the dancer)
+    # small lamps on the stage in the world (look2, 2026-10-18; tools/mv_world.py): a star cloth on the cyc and lamps along
+    # the four edges of the floor, brighter than white at their cores (their light stays white as stage.dof blurs it into a
+    # disc), each twinkling, with a glow of their own.  The references have such small lights on their stages (0.1 to 1.2 %
+    # of the stage past Y' 0.9) with a glow round them; ours had none
+    "lamps": {"cyc": 0,             # how many lamps on the cyc, over stage.specks degrees and the height the reference
+                                    # camera sees of it (as the specks); 0 none
+              "edge_step": 0.0,     # a lamp every this many MMD units along the edges of the floor; 0 none
+              "size": 1.2,          # the radius of a lamp's core (a standard deviation), pixels of a 720 line picture
+              "power": 3.0,         # its light at the middle, times white
+              "warm_share": 0.35,   # the share of warm lamps (the specks' colours: warm 255, 214, 150, cool 150, 180, 255)
+              "twinkle": 0.5,       # how far a lamp's light dips as it twinkles, 0 (steady) to 1
+              "cycles": 3,          # whole twinkles per light loop (beams.loop_seconds: the loop closes)
+              "seed": 11,
+              "glow": 0.0,          # the lamps' glow round each: its middle is this share of the lamp's colour; 0 none
+              "glow_radius": 8.0},  # its radius (a standard deviation), pixels of a 720 line picture
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -197,7 +219,25 @@ def merge_look(overrides):
         if not all(int(v) == v and v >= 1 for v in look[name]["cycles"]):
             raise ValueError("%s.cycles are whole periods per loop, from 1: not %r" % (name, look[name]["cycles"]))
     _check_stage(look["stage"])
+    _check_lamps(look["lamps"], look["stage"])
     return look
+
+
+def _check_lamps(lamps, stage):
+    """the values of the lamps section that tools/mv_world.py can draw"""
+    if int(lamps["cyc"]) != lamps["cyc"] or lamps["cyc"] < 0:
+        raise ValueError("lamps.cyc is how many lamps the cyc has, a whole number from 0: not %r" % (lamps["cyc"],))
+    for key in ("edge_step", "glow", "glow_radius", "warm_share", "power"):
+        if not (math.isfinite(lamps[key]) and lamps[key] >= 0):
+            raise ValueError("lamps.%s is from 0, not %r" % (key, lamps[key]))
+    if not lamps["size"] > 0:
+        raise ValueError("lamps.size is the radius of a lamp's core, above 0: not %r" % (lamps["size"],))
+    if not 0 <= lamps["twinkle"] <= 1 or not 0 <= lamps["warm_share"] <= 1:
+        raise ValueError("lamps.twinkle and lamps.warm_share are 0 to 1, not %r and %r" % (lamps["twinkle"], lamps["warm_share"]))
+    if int(lamps["cycles"]) != lamps["cycles"] or lamps["cycles"] < 1:
+        raise ValueError("lamps.cycles are whole twinkles per light loop, from 1: not %r" % (lamps["cycles"],))
+    if (lamps["cyc"] > 0 or lamps["edge_step"] > 0) and not stage["world"]:
+        raise ValueError("the lamps lie on the stage in the world: they need stage.world 1")
 
 
 def _check_stage(stage):
@@ -241,6 +281,14 @@ def _check_stage(stage):
     if stage["dof"] > 0 and not stage["world"]:
         raise ValueError("stage.dof blurs the stage by its distance from the camera, which only a stage in the world has: it "
                          "needs stage.world 1")
+    if not 0 <= stage["reflect"] <= 1:
+        raise ValueError("stage.reflect is 0 (none) to 1 (a polished floor), not %r" % (stage["reflect"],))
+    if not (math.isfinite(stage["reflect_blur"]) and stage["reflect_blur"] >= 0):
+        raise ValueError("stage.reflect_blur is from 0, not %r" % (stage["reflect_blur"],))
+    if any(c < 0 for c in stage["floor_plane"]):
+        raise ValueError("stage.floor_plane is r, g, b from 0")
+    if stage["reflect"] > 0 and not (stage["world"] and stage["floor"]):
+        raise ValueError("stage.reflect mirrors the stage in the floor this tool draws: it needs stage.world 1 and stage.floor 1")
 
 
 # ---- the layers -----------------------------------------------------------------------------

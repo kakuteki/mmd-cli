@@ -168,5 +168,164 @@ class DepthOfFieldTest(unittest.TestCase):
         mv_look.merge_look({"stage": {"world": 1, "dof": 2.0, "dof_focus": 30.0}})
 
 
+def between_lines(view, z=7.5, x=2.5):
+    """the pixel of a point of the floor between its lines (they lie every 5 units)"""
+    u, v, _ = view.project([(x, 0.0, z)])
+    return int(round(v[0])), int(round(u[0]))
+
+
+@unittest.skipUnless(mv_world, "needs Pillow and numpy")
+class FloorLightTest(unittest.TestCase):
+    """the light on the floor (look2): its plane takes stage.floor_plane, and it mirrors the cyc, the light and the lamps
+    above it (stage.reflect, by Fresnel's share: more at a grazing view, the far floor)"""
+
+    def test_the_plane_between_the_lines_takes_its_colour_and_the_lines_keep_theirs(self):
+        view = mv_world.View(state(**DOWN), SIZE)
+        plain = mv_world.floor([view], mv_look.merge_look({"stage": {"world": 1}}), SIZE)[0]
+        lit = mv_world.floor([view], mv_look.merge_look({"stage": {"world": 1, "floor_plane": [30.0, 45.0, 90.0]}}), SIZE)[0]
+        row, col = between_lines(view)
+        numpy.testing.assert_allclose(plain[row, col], mv_world.FLOOR_COLOURS["plane"], atol=0.01)
+        numpy.testing.assert_allclose(lit[row, col], [30.0, 45.0, 90.0], atol=0.01)
+        u, v, _ = view.project([(5.0 + 0.0, 0.0, 7.5)])           # on the line x = 5 (an accent every 4: x 20 is one)
+        on = (int(round(v[0])), int(round(u[0])))
+        self.assertGreater(lit[on].sum(), lit[row, col].sum())
+
+    def test_on_a_brightly_lit_floor_the_lines_still_shine_over_it(self):
+        # v7's line material lets 45 % of the plane under it through (its alpha 0.55; an accent 20 %, alpha 0.80): a plane
+        # lit brighter than a line's own light shows through it, and the line stays brighter than the plane round it
+        view = mv_world.View(state(**DOWN), SIZE)
+        bright = [66.0, 88.0, 156.0]
+        dark = mv_world.floor([view], mv_look.merge_look({"stage": {"world": 1}}), SIZE)[0]
+        lit = mv_world.floor([view], mv_look.merge_look({"stage": {"world": 1, "floor_plane": bright}}), SIZE)[0]
+        row, col = between_lines(view)
+        for x in (5.0, 0.0):                                       # a line, and an accent (x 0: every 4th from 0)
+            u, v, _ = view.project([(x, 0.0, 7.5)])
+            on = (int(round(v[0])), int(round(u[0])))
+            self.assertGreater(lit[on].sum(), lit[row, col].sum() + 20.0, x)
+            self.assertGreater(lit[on].sum(), dark[on].sum())
+
+    def test_the_floor_mirrors_the_cyc_more_where_it_is_seen_at_a_grazing_angle(self):
+        flat = {"world": 1, "floor_plane": [0.0, 0.0, 0.0]}
+        look = dict(PLAIN, plate={"vignette": 0.0, "base": [60, 70, 110]})
+        dark = stage(dict(look, stage=flat), SIZE, state(**DOWN))
+        mirror = stage(dict(look, stage=dict(flat, reflect=1.0)), SIZE, state(**DOWN))
+        view = mv_world.View(state(**DOWN), SIZE)
+        near, far = between_lines(view, z=-7.5), between_lines(view, z=37.5)
+        lift = lambda at: float((mirror[at] - dark[at]).sum())
+        self.assertGreater(lift(far), 0.0)
+        self.assertGreater(lift(far), 2.0 * lift(near), (lift(far), lift(near)))
+        # off the floor (the cyc above it) nothing changes
+        numpy.testing.assert_array_equal(mirror[:5], dark[:5])
+
+    def test_the_floor_mirrors_a_bright_band_where_a_mirror_would_show_it(self):
+        # the plate's haze band at the horizon of the reference picture: a level camera at height 6 over a mirror sees it at
+        # the elevation e above its eye and its reflection at -(e + 2 x 6 / distance) below: under the horizon, upside down
+        level = dict(look_at=(0.0, 6.0, 0.0), distance=40.0, angles=(0.0, 0.0, 0.0), fov=40.0)
+        look = dict(PLAIN, plate={"vignette": 0.0, "horizon": 0.30, "haze": [200, 200, 200], "pool": [0, 0, 0]})
+        flat = {"world": 1, "floor_plane": [0.0, 0.0, 0.0], "floor_half": 200.0}
+        dark = stage(dict(look, stage=flat), SIZE, state(**level))
+        mirror = stage(dict(look, stage=dict(flat, reflect=1.0, reflect_blur=0.5)), SIZE, state(**level))
+        column = (mirror - dark)[:, SIZE[0] // 2].sum(axis=1)
+        band = int(numpy.argmax(dark[:, SIZE[0] // 2].sum(axis=1)))                   # the haze band, above the horizon
+        self.assertLess(band, SIZE[1] // 2)
+        seen = int(numpy.argmax(column))
+        self.assertGreater(seen, SIZE[1] // 2)                                       # its reflection lies under the horizon
+        self.assertGreater(column[seen], 5.0)
+
+    def test_the_floor_light_is_refused_out_of_its_range(self):
+        for stage_ in ({"world": 1, "reflect": -0.1}, {"world": 1, "reflect": 1.5}, {"world": 1, "reflect_blur": -1.0},
+                       {"world": 1, "floor_plane": [10, -1, 3]}, {"reflect": 0.5}):
+            with self.assertRaises(ValueError, msg=stage_):
+                mv_look.merge_look({"stage": stage_})
+
+
+LAMPS = {"cyc": 400, "edge_step": 2.5, "size": 2.0, "power": 3.0, "twinkle": 0.0}
+
+
+@unittest.skipUnless(mv_world, "needs Pillow and numpy")
+class LampsTest(unittest.TestCase):
+    """small lamps on the stage (look2): a star cloth on the cyc and lamps along the floor's edges, brighter than white at
+    their cores, with a glow of their own"""
+
+    def look(self, **lamps):
+        return mv_look.merge_look(dict(PLAIN, stage={"world": 1}, lamps=dict(LAMPS, **lamps)))
+
+    def test_the_lamps_lie_on_the_cyc_and_along_the_edges_of_the_floor(self):
+        look = self.look()
+        places = mv_world.lamp_places(look, SIZE)
+        cyc = [p for p in places if p["on"] == "cyc"]
+        edge = [p for p in places if p["on"] == "edge"]
+        self.assertEqual(len(cyc), 400)
+        for p in cyc:
+            self.assertAlmostEqual(math.hypot(p["at"][0], p["at"][2]), 120.0, places=6)      # on the cyc (stage.radius)
+            self.assertLess(abs(math.degrees(math.atan2(p["at"][0], p["at"][2]))), 80.0 + 1e-9)  # over stage.specks
+        self.assertEqual(len(edge), 4 * 48)                       # 120 / 2.5 to a side, the corners once
+        for p in edge:
+            x, y, z = p["at"]
+            self.assertTrue(abs(abs(x) - 60.0) < 1e-9 or abs(abs(z) - 60.0) < 1e-9, p["at"])
+            self.assertAlmostEqual(y, look["stage"]["floor_y"] + mv_world.LAMP_LIFT)
+        self.assertEqual(mv_world.lamp_places(mv_look.merge_look({"stage": {"world": 1}}), SIZE), [])
+
+    def test_a_lamp_is_brighter_than_white_at_its_core_where_it_projects(self):
+        look = self.look(cyc=0)
+        view = mv_world.View(state(**DOWN), SIZE)
+        layer = mv_world.lamp_layer(view, look, 0.0, mv_world.lamp_places(look, SIZE))
+        u, v, depth = view.project([p["at"] for p in mv_world.lamp_places(look, SIZE) if p["at"][2] == 60.0])
+        seen = [(int(round(b)), int(round(a))) for a, b, d in zip(u, v, depth) if 3 <= a < SIZE[0] - 3 and 3 <= b < SIZE[1] - 3]
+        self.assertGreater(len(seen), 5)
+        for row, col in seen:
+            self.assertGreater(layer[row, col].min(), 255.0)       # every channel past white at the core
+
+    def test_the_floor_hides_the_cyc_lamps_behind_it_and_the_dancer_does_the_rest(self):
+        look = self.look(edge_step=0.0)
+        img = stage(look, SIZE, state(**DOWN))
+        bare = stage(dict(PLAIN, stage={"world": 1}), SIZE, state(**DOWN))
+        view = mv_world.View(state(**DOWN), SIZE)
+        _, cover = mv_world.floor([view], look, SIZE)
+        lit = (img - bare).sum(axis=2) > 30
+        self.assertGreater(lit[cover < 0.01].sum(), 10)            # over the cyc
+        self.assertEqual(int(lit[cover > 0.99].sum()), 0)          # none through the floor
+
+    def test_the_lamps_twinkle_round_the_light_loop_and_close_it(self):
+        look = self.look(cyc=0, twinkle=0.8, cycles=3)
+        view = mv_world.View(state(**DOWN), SIZE)
+        places = mv_world.lamp_places(look, SIZE)
+        layers = [mv_world.lamp_layer(view, look, phase, places) for phase in (0.0, 0.7, 2.0 * math.pi)]
+        numpy.testing.assert_allclose(layers[0], layers[2], atol=1e-6)
+        self.assertGreater(float(numpy.abs(layers[1] - layers[0]).max()), 50.0)
+        self.assertLessEqual(float(layers[1].max()), float(LAMPS["power"]) * 255.0 + 1e-6)
+
+    def test_the_glow_spreads_the_lamps_light_and_none_without_it(self):
+        view = mv_world.View(state(**DOWN), SIZE)
+        u, v, _ = view.project([(0.0, 0.0, 60.0)])
+        row, col = int(round(v[0])), int(round(u[0]))
+        # (one lamp in the picture: a lamp every 60 along the edges, the far edge's middle one; the corners lie outside)
+        bare = stage(self.look(cyc=0, edge_step=60.0, glow=0.0), SIZE, state(**DOWN))
+        glow = stage(self.look(cyc=0, edge_step=60.0, glow=0.6, glow_radius=16.0), SIZE, state(**DOWN))
+        ring = (slice(row - 6, row - 3), slice(col - 1, col + 2))    # 3 to 6 px above the far edge's middle lamp
+        # the glow's middle is 0.6 of the lamp's colour: at 3 to 6 px of a Gaussian of 4 px, some 0.4 to 0.75 of that
+        self.assertGreater(float(glow[ring].mean()), float(bare[ring].mean()) + 40.0)
+        far = (slice(row - 6, row - 3), slice(col + 40, col + 43))   # and nothing 40 px away
+        self.assertAlmostEqual(float(glow[far].mean()), float(bare[far].mean()), delta=0.5)
+
+    def test_under_dof_a_far_lamp_blurs_into_a_disc_and_stays_white(self):
+        view = mv_world.View(state(**DOWN), SIZE)
+        u, v, _ = view.project([(0.0, 0.0, 60.0)])
+        row, col = int(round(v[0])), int(round(u[0]))
+        # (a far lamp spreads its light as it blurs: one twenty times white keeps a disc of white, a bigger one)
+        sharp = stage(self.look(cyc=0, power=20.0), SIZE, state(**DOWN))
+        soft = stage(dict(self.look(cyc=0, power=20.0), stage={"world": 1, "dof": 12.0}), SIZE, state(**DOWN))
+        bright = lambda img: int((img[row - 8:row + 9, col - 8:col + 9].min(axis=2) >= 250).sum())
+        self.assertGreater(bright(soft), bright(sharp))             # a bigger disc of white
+
+    def test_lamps_are_refused_without_the_world_or_out_of_their_range(self):
+        for look in ({"lamps": {"cyc": 10}}, {"stage": {"world": 1}, "lamps": {"cyc": -1}},
+                     {"stage": {"world": 1}, "lamps": {"cyc": 2.5}}, {"stage": {"world": 1}, "lamps": {"edge_step": -1}},
+                     {"stage": {"world": 1}, "lamps": {"cycles": 0}}, {"stage": {"world": 1}, "lamps": {"twinkle": 1.5}},
+                     {"stage": {"world": 1}, "lamps": {"size": 0}}, {"stage": {"world": 1}, "lamps": {"glow": -0.1}}):
+            with self.assertRaises(ValueError, msg=look):
+                mv_look.merge_look(look)
+
+
 if __name__ == "__main__":
     unittest.main()
