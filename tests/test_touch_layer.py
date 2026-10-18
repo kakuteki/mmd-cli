@@ -304,6 +304,70 @@ class ClearTest(unittest.TestCase):
         self.assertLess(hips_penetration(RIN_DATA, RIN, RIN_LEGS, res.motion, [0]), 0.03)
 
 
+# a hand as wide as Rin's (her hand's vertices lie up to 4.9 cm off the line from the wrist to the middle finger's tip, the
+# tool's hand radius 2 cm): a palm of vertices on 手首 from the wrist to 中指１, 0.22 each way across the hand, and a thumb
+# 0.45 off the palm's middle on its front
+HAND_DIR = tuple(RIN["中指１"][i] - RIN["手首"][i] for i in range(3))
+HAND_PLATES = (("手首", tuple(0.5 * c for c in HAND_DIR), (0.0, 0.0, 0.22), tuple(0.45 * c for c in HAND_DIR), 7, 9),
+               ("手首", tuple(0.4 * c for c in HAND_DIR[:2]) + (0.4 * HAND_DIR[2] - 0.45,), (0.0, 0.0, 0.06),
+                tuple(0.2 * c for c in HAND_DIR), 3, 3))
+RIN_HAND_DATA = humanoid_bytes(RIN, RIN_LEGS, twist_axis=True, name="rin", plates=HAND_PLATES)
+
+
+def plate_points(m, frames, side="左"):
+    """[F, n, 3] the hand plates' vertices where the motion's 手首 carries them (the plates as humanoid_bytes builds them)"""
+    local = np.array([[offset[k] + (2.0 * i / (nu - 1) - 1.0) * u[k] + (2.0 * j / (nv - 1) - 1.0) * v[k] for k in range(3)]
+                      for _, offset, u, v, nu, nv in HAND_PLATES for i in range(nu) for j in range(nv)])
+    w = world(RIN_HAND_DATA, m, [side + "手首"], frames)
+    return np.stack([np.asarray(w[f][side + "手首"][0]) + leg_ik.qrot(np.asarray(w[f][side + "手首"][1]), local) for f in frames])
+
+
+def hips_depths(m, frames):
+    """(the deepest the hand plate's vertices go into the hips' blob sphere, the deepest the hand's and the forearm's
+    middle lines go in with the tool's radii) per frame, units"""
+    c0, R = blob_centre(RIN, RIN_LEGS, "下半身")
+    radii = retarget.arm_radii(body(RIN_HAND_DATA), "左")
+    w = world(RIN_HAND_DATA, m, ["下半身", "左ひじ", "左手首", "左中指２", "左中指３"], frames)
+    pts = plate_points(m, frames)
+    plate, line = [], []
+    for n, f in enumerate(frames):
+        p, q = w[f]["下半身"]
+        c = np.asarray(p) + leg_ik.qrot(np.asarray(q), np.subtract(c0, RIN["下半身"]))
+        plate.append(float(R - np.linalg.norm(pts[n] - c, axis=1).min()))
+        e, wr = np.asarray(w[f]["左ひじ"][0]), np.asarray(w[f]["左手首"][0])
+        m3, m2 = np.asarray(w[f]["左中指３"][0]), np.asarray(w[f]["左中指２"][0])
+        tip = m3 + 0.6 * (m3 - m2)
+        deep = -1e9
+        for (a, b), r in (((e, wr), radii[1]), ((wr, tip), radii[2])):
+            for t in np.linspace(0.0, 1.0, 15):
+                deep = max(deep, r + R - float(np.linalg.norm(a + t * (b - a) - c)))
+        line.append(deep)
+    return np.array(plate), np.array(line)
+
+
+class HandSideTest(unittest.TestCase):
+    """the side of a hand that a later layer put into the hips (the hand's own vertices, past the hand's radius off its
+    middle line) comes out: the clearance tests the hand's vertices too, not only the line from the wrist to the middle
+    finger's tip (Hibikase 107.5 s: the left hand's thumb side 1.8 cm into the dress round the left thigh, its middle
+    line 2.3 cm off it)"""
+
+    def test_the_hand_s_side_comes_out_of_the_hips(self):
+        # the arm down by the hips, the hand turned 15 degrees about its own line (found by a search over the arm's
+        # angles): its thumb 1.2 cm into the hips' sphere, its middle line 0.8 cm clear of it
+        axis = np.asarray(HAND_DIR) / np.linalg.norm(HAND_DIR)
+        dance = motion(*arm_pose_keys(-50, -60, 65), key("左手首", 0, axis_angle(tuple(axis), -15.0)))
+        plate, line = hips_depths(dance, [0])
+        self.assertGreater(plate[0], 0.1)
+        self.assertLess(line[0], -0.05)
+        src = motion(*arm_pose_keys(150, 0, 0))             # the source's hand far from its body: nothing to keep
+        res = touch_layer.layer(dance, src, body(MIKU_DATA), body(RIN_HAND_DATA))
+        plate, line = hips_depths(res.motion, [0])
+        self.assertLess(plate[0], 0.03)
+        self.assertLess(line[0], 0.0)
+        thin = touch_layer.layer(dance, src, body(MIKU_DATA), body(RIN_HAND_DATA), {"hand_cloud": False})
+        self.assertGreater(hips_depths(thin.motion, [0])[0][0], 0.1)    # (the middle line alone leaves the side in)
+
+
 class ThighTest(unittest.TestCase):
     """a hand on a thigh of a crouching body (the knees bent by the leg IK, the thigh's own key at rest) stays on the
     thigh where the IK puts it when a later layer keys the thigh itself (MMD's IK sets the thigh's turn: the key does not

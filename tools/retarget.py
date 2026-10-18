@@ -1703,17 +1703,69 @@ def arm_points(body, side, ap, radii, hand):
     return np.stack(pts, axis=1), np.array(rad), np.array(share), np.array(seg)
 
 
-def penetration(tgt, side, ap, hand, parts, relations):
+# the hand's own vertices a clearance may test besides the line from the wrist to the middle finger's tip (penetration's
+# hand, a capsule of the hand's radius): up to this many of the vertices on the wrist and the fingers, spread over the hand
+# (farthest from each other at rest), each carried by its own bone.  Sour's Rin's hand reaches 3.4 - 4.9 cm off that line
+# (its thumb and its little finger's side) where the capsule's radius is 2.0 cm: on Hibikase 107.5 s her left hand's side
+# went 1.8 cm into the dress round her left thigh with the line 2.3 cm off it (the v11 review, v11revm).  Only the touch
+# layer passes them (clear_arms' clouds); retarget's own fix_hands tests the line alone, as before
+HAND_CLOUD = 48
+
+
+def hand_cloud(body, side, n=HAND_CLOUD):
+    """(the bone names [k], the offsets from those bones' rest positions [k, 3]) of up to n of the hand's vertices (the
+    ones whose largest weight is on side's 手首 or a finger, 指), spread over the hand: farthest point sampling at rest
+    from the vertex farthest from the wrist.  None without such vertices (8 at least) or without the wrist"""
+    if not body.has(side + "手首") or not len(body.vertices):
+        return None
+    bones = [b.index for b in body.model.bones if b.name == side + "手首" or (b.name.startswith(side) and "指" in b.name)]
+    m = np.isin(body.main_bone, bones)
+    if m.sum() < 8:
+        return None
+    P = body.vertices[m]
+    B = body.main_bone[m]
+    pick = [int(np.argmax(np.linalg.norm(P - body.rest(side + "手首"), axis=1)))]
+    d = np.linalg.norm(P - P[pick[0]], axis=1)
+    while len(pick) < min(n, len(P)):
+        j = int(np.argmax(d))
+        if d[j] <= 0.0:
+            break
+        pick.append(j)
+        d = np.minimum(d, np.linalg.norm(P - P[j], axis=1))
+    names = [body.model.bones[int(B[j])].name for j in pick]
+    offs = np.stack([P[j] - body.rest_all[int(B[j])] for j in pick])
+    return names, offs
+
+
+def hand_cloud_world(body, trk, frames, cloud):
+    """[F, k, 3] the cloud's vertices (hand_cloud) where the tracks carry their bones (mmd_cli.fk's rule)"""
+    names, offs = cloud
+    wp = world_pose(body, trk, frames, sorted(set(names)))
+    out = np.zeros((len(frames), len(names), 3))
+    for j, (name, o) in enumerate(zip(names, offs)):
+        pos, rot = wp[name]
+        out[:, j] = pos + qrot(rot, np.broadcast_to(o, pos.shape))
+    return out
+
+
+def penetration(tgt, side, ap, hand, parts, relations, cloud=None):
     """per frame the deepest the arm goes into a part (units, >= 0); the turn about the shoulder that takes the deepest
     point of the upper arm or the elbow out (the whole arm turned with it) [F, 4]; the push that takes the wrist out of
     what the forearm and the hand go into [F, 3], and the same from the hand and the forearm's half by it alone [F, 3]
     (a held hand moves by that only).  The hand and the forearm's half by it are not tested against a part
     the source's hand touches then (relations[part]["d"] within TOUCH: the contact sets them there); near one they come
     as close to it as the source's hand is to its own (relations[part]["want"], the distance the hand's relation wants,
-    scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's."""
+    scaled), as far as their thickness: a hand 2 cm off the source's hips stays 2 cm off the target's.  cloud [F, k, 3]:
+    the hand's own vertices (hand_cloud_world), tested as points of the hand besides its line"""
     surf = surfaces(tgt)
     radii = arm_radii(tgt, side)
     P, rad, share, seg = arm_points(tgt, side, ap, radii, hand)
+    if cloud is not None and np.size(cloud):
+        k = cloud.shape[1]
+        P = np.concatenate([P, cloud], axis=1)
+        rad = np.concatenate([rad, np.zeros(k)])
+        share = np.concatenate([share, np.ones(k)])
+        seg = np.concatenate([seg, np.full(k, 2)])
     S = ap[side + "腕"][0]
     F = P.shape[0]
     deepest = np.zeros(F)
@@ -1834,12 +1886,13 @@ def best_swivel(tgt, side, S, E, W, parts, touched=None):
     return best
 
 
-def clear_arms(tgt, trk, frames, hand_relations, parts, log):
+def clear_arms(tgt, trk, frames, hand_relations, parts, log, clouds=None):
     """push the target's arms out of its head, ribbon, trunk, hips and thighs: what the upper arm or the elbow goes into
     is cleared by turning the whole arm about the shoulder, what the forearm or the hand goes into by moving the wrist
     (arm IK, the elbow kept on its side); each change eases in and out over EASE frames around the frames that go in.
     hand_relations: side -> part -> {"w": the hand's relation's weight [F], "d": the source's hand's distance [F],
-    "want": the distance the relation wants [F]} (fix_hands).
+    "want": the distance the relation wants [F]} (fix_hands).  clouds: side -> hand_cloud (the hand's own vertices tested
+    too; None: the hand's line alone).
     Returns the report per side."""
     F = len(frames)
     rep = {}
@@ -1856,7 +1909,8 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log):
         for rnd in range(CLEAR_ROUNDS):
             ap = arm_pose(tgt, trk, frames, side)
             hand = hand_world(tgt, trk, frames, side)
-            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations)
+            cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
+            deep, ts, pw, ph = penetration(tgt, side, ap, hand, parts, relations, cloud)
             if before is None:
                 before = deep.copy()
             bad = deep > CLEAR_TOL
@@ -1914,7 +1968,8 @@ def clear_arms(tgt, trk, frames, hand_relations, parts, log):
                 _fit_turns(trk, name, frames, q, moved)
         ap = arm_pose(tgt, trk, frames, side)
         hand = hand_world(tgt, trk, frames, side)
-        after = penetration(tgt, side, ap, hand, parts, relations)[0]
+        cloud = hand_cloud_world(tgt, trk, frames, clouds[side]) if clouds and clouds.get(side) else None
+        after = penetration(tgt, side, ap, hand, parts, relations, cloud)[0]
         rep[side] = {"in_before_frames": int(np.sum(before > CLEAR_TOL)) if before is not None else 0,
                      "in_after_frames": int(np.sum(after > CLEAR_TOL)), "in_after_over_1cm": int(np.sum(after > 0.125)),
                      "deepest_before_cm": round(float(before.max()) * UNIT_CM, 3) if before is not None else 0.0,

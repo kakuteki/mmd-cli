@@ -6,7 +6,7 @@ parts read as MMD poses them (the thighs where the leg IK puts them).
 
     python tools/touch_layer.py DANCE.vmd SOURCE.vmd SOURCE_BODY MODEL.pmx OUT.vmd [--report r.json]
                                 [--no-hands] [--no-clear] [--fk-thighs] [--smooth-touches] [--smooth-frames 1.0]
-                                [--ramp-cm 2.0]
+                                [--ramp-cm 2.0] [--no-hand-cloud]
 
 DANCE.vmd is Rin's dance after the layers (tools/hand_layer.py's output; before the gaze, which looks at the hands
 where they end up); SOURCE.vmd the trace tools/retarget.py started from, on SOURCE_BODY (what retarget takes: a model or
@@ -26,6 +26,12 @@ keys; MMD's leg IK sets 足's turn (the dance keys 足 too: the trace 1,010 / 1,
 and on Hibikase the two differ by 21 - 22 degrees at the median, 39 - 42 at the 90th percentile (so a hand 3 cm off the
 thigh by one reading is 1 - 7 cm off by the other).  Here both bodies' thighs are read as tools/leg_ik.py solves them
 (--fk-thighs reads them by their keys, as retarget does).
+
+The clearance keeps the hand's own vertices out of the hard parts too (retarget's hand_cloud: up to HAND_CLOUD of the
+vertices on the wrist and the fingers, carried by their bones), not only the line from the wrist to the middle finger's
+tip with the hand's radius: Sour's Rin's hand reaches 3.4 - 4.9 cm off that line where the radius is 2.0 cm, and on
+Hibikase 107.5 s her left hand's side was 1.8 cm in the dress round her left thigh while the line stayed 2.3 cm off it
+(--no-hand-cloud: the line alone).
 
 What it writes: the arm bones 腕, ひじ and 手首 of each side, on the frames fix_hands moves (it keys every frame it moves
 and holds the frames around them; their twist bones keep their keys and ride along); every other key, those arm keys
@@ -97,7 +103,7 @@ RAMP_CM = 2.0
 
 def default_params():
     return {"hands": True, "clear": True, "ik_thighs": True, "smooth_frames": SMOOTH_FRAMES, "smooth_keep_touch": True,
-            "ramp_cm": RAMP_CM}
+            "ramp_cm": RAMP_CM, "hand_cloud": True}
 
 
 def smooth_rows(x, sigma):
@@ -285,7 +291,10 @@ def keep(src, tgt, src_trk, tgt_trk, frames, params=None, log=None):
         rep[side]["moved_frames"] = int(moved.sum())
         rep[side]["moved_cm"] = RT._quant(np.linalg.norm(want[side] - Wt, axis=1)[moved] * UNIT_CM)
     if p["clear"]:
-        clr = RT.clear_arms(tgt, tgt_trk, frames, weights, tgt_all, log)
+        # the hand's own vertices are kept out of the body too, not only its line (retarget's HAND_CLOUD: the v11 review,
+        # Hibikase 107.5 s, the left hand's side 1.8 cm into the dress round the left thigh)
+        clouds = {side: RT.hand_cloud(tgt, side) for side in SIDES} if p.get("hand_cloud", True) else None
+        clr = RT.clear_arms(tgt, tgt_trk, frames, weights, tgt_all, log, clouds=clouds)
         for side in SIDES:
             rep.setdefault(side, {})["clear"] = clr.get(side)
     if p.get("smooth_frames", 0.0) > 0 or ramp > 0:
@@ -370,6 +379,9 @@ def main(argv=None):
     ap.add_argument("--smooth-frames", type=float, default=SMOOTH_FRAMES,
                     help="the Gaussian (frames) the arm's change is smoothed by (default %g; 0 leaves it as fix_hands sets it)"
                          % SMOOTH_FRAMES)
+    ap.add_argument("--no-hand-cloud", action="store_true",
+                    help="keep only the hand's line (wrist to the middle finger's tip) out of the body, as before v11revm, "
+                         "not its own vertices (retarget's HAND_CLOUD)")
     ap.add_argument("--ramp-cm", type=float, default=RAMP_CM,
                     help="cm a frame the change comes in and goes out of a touching frame at, at most (default %g; 0: as it is)"
                          % RAMP_CM)
@@ -377,7 +389,8 @@ def main(argv=None):
     try:
         RT.check_distinct(args.dance, args.source, args.source_body, args.model, args.out, args.report)
         params = {"hands": not args.no_hands, "clear": not args.no_clear, "ik_thighs": not args.fk_thighs,
-                  "smooth_frames": args.smooth_frames, "smooth_keep_touch": not args.smooth_touches, "ramp_cm": args.ramp_cm}
+                  "smooth_frames": args.smooth_frames, "smooth_keep_touch": not args.smooth_touches, "ramp_cm": args.ramp_cm,
+                  "hand_cloud": not args.no_hand_cloud}
         res = layer(vmd.load(args.dance), vmd.load(args.source), RT.Body.load(args.source_body), RT.Body.load(args.model), params)
         RT.write_bytes(os.path.abspath(args.out), vmd.dumps(res.motion))
         rep = dict(res.report, dance=os.path.abspath(args.dance), source=os.path.abspath(args.source),
