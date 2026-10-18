@@ -1469,6 +1469,17 @@ class CliTest(unittest.TestCase):
 # ---- the MV itself ----------------------------------------------------------------------------------
 
 SONG = os.environ.get("BALANCE_SONG")
+# people's single support (cm, median and quartiles; FineDance's 62 near sequences, the human baseline: table_main's a05,
+# stance_summary's STILL (70 sequences with still single support) and MOVING, tools/mvi/human.json)
+PEOPLE_A05_CM = (9.03, 8.04, 10.32)     # all single support: the COM sideways from the standing foot's centre (a05)
+PEOPLE_STILL_CM = (1.71, -1.84, 3.38)   # standing still: the COM from the support's centre
+PEOPLE_MOVING_CM = (8.01, 7.02, 9.38)   # moving: the COM from the support's centre
+PEOPLE_MOS_ML_CM = (-4.23, -6.14, -3.57)   # moving: the XcoM's sideways margin
+
+
+def off_band(value, band):
+    """how far (cm) a value lies outside people's quartiles (median, lower, upper): 0 inside"""
+    return max(band[1] - value, 0.0, value - band[2])
 
 
 def song_paths():
@@ -1496,6 +1507,7 @@ class SongTest(unittest.TestCase):
     MIN_AIR_FRAMES = 100
     MIN_JUMPS = 15
     MIN_STILL = 100
+    MIN_SINGLE = 300                    # a05's single support frames (the v11 chain's feet0: 764)
 
     @classmethod
     def setUpClass(cls):
@@ -1518,13 +1530,25 @@ class SongTest(unittest.TestCase):
     def test_single_support_as_human_dancers_stand(self):
         """the human baseline (FineDance K-pop / choreography / jazz, 62 sequences): over all single support (a05) the COM
         9.0 cm [8.0, 10.3] sideways from the standing foot's centre (the traced dance 11.2; v8, which pulled every single
-        support onto the foot, 5.3); standing still 1.7 cm [-1.8, 3.4] from the support's centre; moving, the XcoM's
-        sideways margin -4.2 cm [-6.1, -3.6] (the layer keeps it from going past the median where it bounds it)"""
+        support onto the foot, 5.3); standing still 1.7 cm [-1.8, 3.4] from the support's centre; moving 8.0 cm [7.0, 9.4],
+        the XcoM's sideways margin -4.2 cm [-6.1, -3.6] (the layer keeps it from going past the median where it bounds it).
+        What the layer does is read off the dance it is given and its result, whatever version of the dance that is (the
+        v11 chain's feet0 stands its single support 10.04 cm off the foot before v11feet's skim, 9.97 after, people's
+        upper quartile 10.3): single support split as the human baseline splits it (still, moving) is brought from the
+        dance towards people's quartiles, never farther from them; over all of it the COM is pulled towards the foot where
+        the dance stands it farther off than people's median, and never onto the foot"""
         a05 = self.report["a05_lateral_cm"]
-        self.assertGreater(a05["before"]["median"], 10.0)
-        self.assertLess(a05["after"]["median"], a05["before"]["median"])
-        self.assertGreater(a05["after"]["median"], 7.0)                          # not pulled onto the foot (v8 5.3)
         st = self.report["stance"]
+        self.assertGreater(a05["before"]["frames"], self.MIN_SINGLE)
+        for key, band in (("still_lateral_cm", PEOPLE_STILL_CM), ("moving_lateral_cm", PEOPLE_MOVING_CM),
+                          ("moving_mos_ml_cm", PEOPLE_MOS_ML_CM)):
+            before, after = st[key]["before"], st[key]["after"]
+            self.assertLessEqual(off_band(after, band), off_band(before, band), (key, before, after, band))
+            if off_band(before, band) > 0.0:
+                self.assertLess(off_band(after, band), off_band(before, band), (key, before, after, band))
+        if a05["before"]["median"] > PEOPLE_A05_CM[0]:
+            self.assertLess(a05["after"]["median"], a05["before"]["median"])
+        self.assertGreater(a05["after"]["median"], 7.0)                          # not pulled onto the foot (v8 5.3)
         self.assertLess(st["still_lateral_cm"]["after"], 4.0)
         self.assertGreater(st["moving_mos_ml_cm"]["after"], st["moving_mos_ml_cm"]["before"])
         self.assertGreater(st["moving_mos_ml_cm"]["after"], balance_layer.MOS_ML_MIN_CM - 0.5)
