@@ -1835,10 +1835,13 @@ def contact_sheet(path, out, times, box=None, size=(320, 180), height=720, matri
     from PIL import Image, ImageDraw
     info = probe(path)
     mat = matrix_for(info, matrix)
+    ns = [int(round(t * info["fps"])) for t in times]
+    got = dict(read_frames(path, info, ns, height=height, matrix=mat, as_uint8=True))     # one pass over the video
     tiles = []
-    for t in times:
-        a = _frame_at(path, info, t, height, mat)
-        im = Image.fromarray(a)
+    for t, n in zip(times, ns):
+        if n not in got:
+            continue
+        im = Image.fromarray(got[n])
         if box:
             im = im.crop(box)
         im = im.resize(size, Image.LANCZOS)
