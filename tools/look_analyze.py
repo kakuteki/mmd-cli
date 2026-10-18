@@ -2,11 +2,13 @@
 
     python tools/look_analyze.py measure VIDEO|FOLDER OUT.json [--label NAME] [--from S] [--to S] [--pairs N]
                                          [--height 720] [--matrix auto|bt601|bt709] [--jobs N] [--crops DIR]
-    python tools/look_analyze.py compare OUT.md OUT.json --ref A.json B.json ... --ours X.json Y.json ...
+    python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48]
+                                         [--matrix auto|bt601|bt709]       # the person and the stage apart
+    python tools/look_analyze.py compare OUT.md OUT.json --ref A.json B.json ... --ours X.json Y.json ... [--regions]
     python tools/look_analyze.py figure strip TABLE.json OUT.png
     python tools/look_analyze.py figure profiles OUT.png A.json B.json ...
-    python tools/look_analyze.py crops VIDEO OUT.png --at S S ... [--box X0,Y0,X1,Y1] [--size 320x180]
-    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion]
+    python tools/look_analyze.py crops VIDEO OUT.png --at S S ... [--box X0,Y0,X1,Y1] [--size 320x180] [--matrix ...]
+    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion|regions] [--model ...]
     python tools/look_analyze.py text VIDEO MEASURE.json [--frames 24]      # where the text is (EasyOCR on the CPU)
 
 `measure` reads the video twice with ffmpeg: once every frame at a tiny size (the cuts between shots, the flashes, the
@@ -33,6 +35,13 @@ picture).  On each pair it measures, idea by idea (the names of the numbers star
 
 The measures of every sampled frame, of every shot (its medians, for shots with two samples or more) and of the whole
 video go into OUT.json with the noise floor of each: how much it changes between the two frames of a pair (almost the same picture) and over the frames of the video.
+
+These read the whole frame, so they read what the frame holds as well as how it was filtered: a small bright person on
+a dark stage reads dark, "split toned" (the stage's colour against the person's) and "vignetted" (the dark stage at the
+corners) before any filter.  `regions` reads the person and the stage apart (the person's mask from an anime person
+model, skytnt/anime-seg's ISNet, on the CPU): each one's tone and colour, the light along the person's outline (a rim
+light inside it, the person's glow outside it), the stage's blur against the person's, and the glow of the stage's
+lights and of the person's.
 `compare` puts videos side by side (the references' median and quartiles, ours, and how far ours lies outside the
 references' quartiles in units of their spread) as a table; `figure`, `crops` and `annotate` draw the figures.
 """
@@ -407,7 +416,7 @@ def _components(mask):
     return labels, n, sizes
 
 
-def bloom(rgb, unit=1.0, compact=False):
+def bloom(rgb, unit=1.0, compact=False, sources=None, rings=None):
     """the glow round the brightest parts of a frame (Y' over BLOOM_SOURCE), read from the mean linear luminance in
     rings at each distance from them, over the level it falls to further out (the background)
 
@@ -417,11 +426,15 @@ def bloom(rgb, unit=1.0, compact=False):
     BLOOM_AT (how far the glow reaches; nan without glow); bloom.halo_red / halo_blue: how
     much more of the glow's light than of the source's is red (or blue): a red halo round a white light, as film's
     halation, is positive.  compact: only small sources (under 0.2 % of the frame each: highlights, lamps, sparkles),
-    whose rings do not come near a big one.  profile: the share at each ring (for the figures)."""
+    whose rings do not come near a big one.  sources / rings (masks): only the sources where sources is true, read
+    only on the pixels where rings is true (the person's glow on the stage, the stage's lights off the person).
+    profile: the share at each ring (for the figures)."""
     rgb = np.asarray(rgb, np.float64)
     nan = {"bloom.strength": float("nan"), "bloom.r50": float("nan"), "bloom.r10": float("nan"),
            "bloom.halo_red": float("nan"), "bloom.halo_blue": float("nan"), "bloom.sources": 0.0, "profile": []}
     src = luma(rgb) >= BLOOM_SOURCE
+    if sources is not None:
+        src &= np.asarray(sources, bool)
     ndi = _ndi()
     far_from_big = None
     if compact:
@@ -439,6 +452,8 @@ def bloom(rgb, unit=1.0, compact=False):
     dist = ndi.distance_transform_edt(~src)                      # image pixels
     d720 = dist / unit
     use = ~src if far_from_big is None else (~src & far_from_big)
+    if rings is not None:
+        use &= np.asarray(rings, bool)
     back = use & (d720 >= BLOOM_BACK[0]) & (d720 < BLOOM_BACK[1])
     if back.sum() < 50:
         back = use & (d720 >= BLOOM_REACH / 2)
@@ -783,31 +798,25 @@ def blur_map(gray, pre=DOF_PRE):
     return sigma, m0
 
 
-def dof_blocks(gray, unit=1.0, extras=None):
-    """depth of field read in blocks (the edges Canny finds keep to what is in focus; a blurred background has weak
-    edges): on the frame made DOF_LINES lines tall, each block of DOF_BLOCK px whose Y' spreads at least DOF_CONTRAST is
-    read by the median blur of its steepest DOF_TOP of pixels (720 line pixels; blurs under about 2 px are not told
-    apart at this size)
-
-    dof.fg_blur / bg_blur: the 25 and 75 % points over the blocks (the sharp side, what is in focus, and the soft
-    side); dof.ratio: (bg + 1) / (fg + 1): about 1 to 1.3 when all is in focus (a sharp step reads 0 to 2 px at this
-    size, by where it falls on the pixels), several with a blurred background (soft light, haze or glow behind the
-    subject read the same); dof.soft_blocks: the share of blocks softer than SOFT_EDGE; dof.blocks: how many blocks
-    hold detail.  extras gets the block map."""
+def _blur_blocks(gray, unit=1.0, cover=None):
+    """the blocks of dof_blocks: (the blur of each block in 720 line pixels, nan where it holds no detail; the share of
+    each block that cover (a mask the size of the frame) covers, or None; the block's size in the frame's pixels), or
+    None when the frame holds fewer than 2 x 2 blocks"""
     g = np.asarray(gray, np.float64)
     f = max(1, int(round(g.shape[0] / float(DOF_LINES))))
+    c = None if cover is None else np.asarray(cover, np.float64)
     if f > 1:
         hh, ww = (g.shape[0] // f) * f, (g.shape[1] // f) * f
         g = g[:hh, :ww].reshape(hh // f, f, ww // f, f).mean(axis=(1, 3))
+        if c is not None:
+            c = c[:hh, :ww].reshape(hh // f, f, ww // f, f).mean(axis=(1, 3))
         unit = unit / f
     sigma, mag = blur_map(g)
     b = max(6, int(round(DOF_BLOCK * unit)))
     h, w = g.shape
     ny, nx = h // b, w // b
-    out = {"dof.fg_blur": float("nan"), "dof.bg_blur": float("nan"), "dof.ratio": float("nan"),
-           "dof.soft_blocks": float("nan"), "dof.blocks": 0.0}
     if ny < 2 or nx < 2:
-        return out
+        return None
 
     def tiles(a):
         return a[:ny * b, :nx * b].reshape(ny, b, nx, b).transpose(0, 2, 1, 3).reshape(ny, nx, b * b)
@@ -820,10 +829,31 @@ def dof_blocks(gray, unit=1.0, extras=None):
     steep = np.take_along_axis(ts, order, axis=2)
     block = np.median(steep, axis=2) / unit
     block[~textured] = np.nan
-    vals = np.sort(block[textured])
+    share = tiles(c).mean(axis=2) if c is not None else None
+    return block, share, b * f
+
+
+def dof_blocks(gray, unit=1.0, extras=None):
+    """depth of field read in blocks (the edges Canny finds keep to what is in focus; a blurred background has weak
+    edges): on the frame made DOF_LINES lines tall, each block of DOF_BLOCK px whose Y' spreads at least DOF_CONTRAST is
+    read by the median blur of its steepest DOF_TOP of pixels (720 line pixels; blurs under about 2 px are not told
+    apart at this size)
+
+    dof.fg_blur / bg_blur: the 25 and 75 % points over the blocks (the sharp side, what is in focus, and the soft
+    side); dof.ratio: (bg + 1) / (fg + 1): about 1 to 1.3 when all is in focus (a sharp step reads 0 to 2 px at this
+    size, by where it falls on the pixels), several with a blurred background (soft light, haze or glow behind the
+    subject read the same); dof.soft_blocks: the share of blocks softer than SOFT_EDGE; dof.blocks: how many blocks
+    hold detail.  extras gets the block map."""
+    out = {"dof.fg_blur": float("nan"), "dof.bg_blur": float("nan"), "dof.ratio": float("nan"),
+           "dof.soft_blocks": float("nan"), "dof.blocks": 0.0}
+    got = _blur_blocks(gray, unit)
+    if got is None:
+        return out
+    block, _, size = got
+    vals = np.sort(block[np.isfinite(block)])
     out["dof.blocks"] = float(len(vals))
     if extras is not None:
-        extras["dof_map"] = (block, b * f)
+        extras["dof_map"] = (block, size)
     if len(vals) < 6:
         return out
     fg, bg = (float(v) for v in np.percentile(vals, [25, 75]))
@@ -1392,6 +1422,221 @@ def measure_frame(rgb0, rgb1=None, unit=1.0, full=True, seed=0, extras=None):
     return {k: float(v) for k, v in m.items()}
 
 
+# ---- the person and the stage apart -----------------------------------------------------------------------------------
+#
+# The measures above read the whole frame.  A small bright person on a dark stage (our front view: the person is 3 to
+# 7 % of the frame) and a close-up in a bright set (the references: often half the frame) differ in what the frame
+# holds before any filter: the whole frame's tone is mostly the stage's, its "split toning" is the stage's colour against
+# the person's, its "vignette" is where the stage is dark.  These read the person (its mask: an anime person model, or
+# a layer) and the stage apart.
+
+PERSON_INNER = 3.0                # 720 line px: the person is read this far inside its outline (the edge mixes with
+STAGE_GAP = 12.0                  # the stage), the stage this far outside it (the person's glow, the mask's error)
+REGION_LEAST = 0.005              # a region under this share of the frame is not read
+RIM_EDGE = (3.0, 6.0)             # 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px,
+RIM_CORE = (12.0, 20.0)           # against the light further in along the same normal
+HALO_EDGE = (1.0, 4.0)            # 720 line px inside the outline: the person's own light at its edge, the source of
+HALO_NEAR = (3.0, 8.0)            # the glow it throws on the stage just outside,
+HALO_FAR = (24.0, 40.0)           # against the stage further out
+HALO_LEAST = 0.05                 # linear luminance: the edge brighter than the far stage by at least this
+OUTLINE_POINTS = 3000             # outline points read per frame at most
+SEG_SIZE = 1024                   # the person model's input (square, the frame letterboxed into it)
+
+REGION_CONCEPTS = ("frame", "person", "stage", "edge")
+REGION_CONCEPT_LABELS = {"frame": "構図", "person": "人物", "stage": "舞台（人物の外）", "edge": "人物の縁"}
+REGION_MEASURES = {
+    "frame.person_share": ("frame", "人物の面積の割合（構図）", ""),
+    "contrast.person_stage": ("frame", "人物と舞台の明るさの差（L* の中央の差）", "L*"),
+    "person.L_p10": ("person", "人物の暗い側（L* の 10 % 点）", "L*"),
+    "person.L_p50": ("person", "人物の明るさの中央（L*）", "L*"),
+    "person.L_p90": ("person", "人物の明るい側（L* の 90 % 点）", "L*"),
+    "person.chroma": ("person", "人物の彩度（C*ab の平均）", "C*"),
+    "person.cast_hue": ("person", "人物の色かぶりの色相", "度"),
+    "person.cast_chroma": ("person", "人物の色かぶりの強さ", "C*"),
+    "person.teal_orange": ("person", "人物の中の影と光の色の開き（人物の明るい 1/4 が暗い 1/4 よりオレンジ寄り）", "C*"),
+    "stage.L_p10": ("stage", "舞台の暗い側（L* の 10 % 点）", "L*"),
+    "stage.L_p50": ("stage", "舞台の明るさの中央（L*）", "L*"),
+    "stage.L_p90": ("stage", "舞台の明るい側（L* の 90 % 点）", "L*"),
+    "stage.chroma": ("stage", "舞台の彩度（C*ab の平均）", "C*"),
+    "stage.cast_hue": ("stage", "舞台の色かぶりの色相", "度"),
+    "stage.cast_chroma": ("stage", "舞台の色かぶりの強さ", "C*"),
+    "stage.teal_orange": ("stage", "舞台の中の影と光の色の開き", "C*"),
+    "dof.person_blur": ("stage", "人物の区画のぼけ（中央）", "px"),
+    "dof.stage_blur": ("stage", "舞台の区画のぼけ（中央）", "px"),
+    "dof.stage_ratio": ("stage", "舞台と人物の鮮鋭さの比（(舞台 + 1) / (人物 + 1)）", ""),
+    "bloom.stage_strength": ("stage", "舞台の光のグローの強さ（人物の外の光源、4 px 先）", ""),
+    "bloom.stage_r50": ("stage", "舞台の光のグローの届き", "px"),
+    "rim.ratio": ("edge", "縁の明るさ / 内側の明るさ（縁の 3〜6 px と 12〜20 px、中央。リムライトで 1 より大）", ""),
+    "rim.p90": ("edge", "縁の明るさ / 内側の明るさの 90 % 点（強い縁の光）", ""),
+    "halo.share": ("edge", "人物のまわりのにじみ（外 3〜8 px の光の上がり / 縁の光、中央）", ""),
+    "bloom.person_strength": ("edge", "人物の光源が人物の外に落とすグローの強さ（4 px 先）", ""),
+    "bloom.person_r50": ("edge", "人物のグローの届き", "px"),
+}
+
+
+def _region_stats(L, a, b, sel, prefix, out):
+    """tone and colour of the pixels sel: the 10 / 50 / 90 % points of L*, the mean C*ab, the cast, and how much more
+    orange its brightest quarter is than its darkest (split toning inside the region)"""
+    Ls = L[sel]
+    p10, p50, p90 = (float(v) for v in np.percentile(Ls, [10, 50, 90]))
+    aa, bb = a[sel], b[sel]
+    lo, hi = np.percentile(Ls, [25, 75])
+    dark, bright = Ls <= lo, Ls >= hi
+
+    def along(s):
+        return float(aa[s].mean() * ORANGE[0] + bb[s].mean() * ORANGE[1])
+
+    out.update({prefix + ".L_p10": p10, prefix + ".L_p50": p50, prefix + ".L_p90": p90,
+                prefix + ".chroma": float(np.hypot(aa, bb).mean()), prefix + ".cast_hue": _hue(aa.mean(), bb.mean()),
+                prefix + ".cast_chroma": float(math.hypot(aa.mean(), bb.mean())),
+                prefix + ".teal_orange": along(bright) - along(dark)})
+
+
+def _outline(person, unit, seed):
+    """points on the person's outline (pixels of the person with a 4-neighbour outside) and the unit normal into the
+    person there (from the mask smoothed by 2 px)"""
+    ndi = _ndi()
+    edge = person & ~ndi.binary_erosion(person)
+    ys, xs = np.nonzero(edge)
+    if len(ys) > OUTLINE_POINTS:
+        pick = np.random.default_rng(seed).choice(len(ys), OUTLINE_POINTS, replace=False)
+        ys, xs = ys[pick], xs[pick]
+    s = ndi.gaussian_filter(person.astype(np.float64), 2.0 * unit)
+    gy, gx = np.gradient(s)
+    g = np.hypot(gx[ys, xs], gy[ys, xs])
+    ok = g > 1e-6
+    return ys[ok], xs[ok], gy[ys, xs][ok] / g[ok], gx[ys, xs][ok] / g[ok]
+
+
+def _along(img, ys, xs, ny, nx, ts, order=1):
+    """img sampled at the points moved by each distance in ts along the normals: (points, distances)"""
+    py = ys[:, None] + ny[:, None] * ts[None, :]
+    px = xs[:, None] + nx[:, None] * ts[None, :]
+    return _ndi().map_coordinates(img, [py.ravel(), px.ravel()], order=order, mode="nearest").reshape(py.shape), py, px
+
+
+def silhouette(Y, person, unit=1.0, seed=0):
+    """the light along the person's outline (Y: linear luminance), read on the normals of its outline points
+
+    rim.ratio / rim.p90: the light RIM_EDGE inside the outline over the light RIM_CORE inside, on normals that stay in
+    the person that far (thin parts left out): 1 for an evenly lit person, over 1 with a rim light; the median and the
+    90 % point over the points.  halo.share: the light HALO_NEAR outside over the stage HALO_FAR outside, as a share of
+    the person's edge (HALO_EDGE inside) over that stage, on normals that stay off the person and in the frame and where
+    the edge is brighter than the stage: 0 without a glow round the person, the glow's share at a few px with one."""
+    out = {"rim.ratio": float("nan"), "rim.p90": float("nan"), "rim.points": 0.0, "halo.share": float("nan"),
+           "halo.points": 0.0}
+    if person.sum() < 50 or (~person).sum() < 50:
+        return out
+    ys, xs, ny, nx = _outline(person, unit, seed)
+    if len(ys) < 10:
+        return out
+    h, w = person.shape
+    pf = person.astype(np.float64)
+
+    def span(lo, hi):
+        return np.arange(lo, hi + 0.5, 1.0) * unit
+
+    t_in = span(RIM_EDGE[0], RIM_CORE[1])
+    inside, _, _ = _along(pf, ys, xs, ny, nx, t_in, order=0)
+    y_in, _, _ = _along(Y, ys, xs, ny, nx, t_in)
+    keep = inside.min(axis=1) > 0.5
+    e_sel = (t_in >= RIM_EDGE[0] * unit) & (t_in <= RIM_EDGE[1] * unit)
+    c_sel = (t_in >= RIM_CORE[0] * unit) & (t_in <= RIM_CORE[1] * unit)
+    edge, core = y_in[:, e_sel].mean(axis=1), y_in[:, c_sel].mean(axis=1)
+    keep &= core > 1e-4
+    if keep.sum() >= 10:
+        ratio = edge[keep] / core[keep]
+        out.update({"rim.ratio": float(np.median(ratio)), "rim.p90": float(np.percentile(ratio, 90)),
+                    "rim.points": float(keep.sum())})
+    t_out = span(1.0, HALO_FAR[1])
+    off, py, px = _along(pf, ys, xs, -ny, -nx, t_out, order=0)
+    y_out, _, _ = _along(Y, ys, xs, -ny, -nx, t_out)
+    in_frame = (py.min(axis=1) >= 0) & (px.min(axis=1) >= 0) & (py.max(axis=1) <= h - 1) & (px.max(axis=1) <= w - 1)
+    y_edge, _, _ = _along(Y, ys, xs, ny, nx, span(*HALO_EDGE))
+    n_sel = (t_out >= HALO_NEAR[0] * unit) & (t_out <= HALO_NEAR[1] * unit)
+    f_sel = (t_out >= HALO_FAR[0] * unit) & (t_out <= HALO_FAR[1] * unit)
+    near, far, src = y_out[:, n_sel].mean(axis=1), y_out[:, f_sel].mean(axis=1), y_edge.mean(axis=1)
+    keep = (off.max(axis=1) < 0.5) & in_frame & (src - far >= HALO_LEAST)
+    if keep.sum() >= 10:
+        out.update({"halo.share": float(np.median((near[keep] - far[keep]) / (src[keep] - far[keep]))),
+                    "halo.points": float(keep.sum())})
+    return out
+
+
+def region_measures(rgb, mask, unit=1.0, seed=0):
+    """the measures of the person (mask >= 0.5) and of the stage (the rest, STAGE_GAP outside the person) of one frame
+    (REGION_MEASURES): their tone and colour apart, the light along the person's outline (rim and glow), the blur of
+    the stage's blocks against the person's (depth of field), the glow of the stage's lights and of the person's"""
+    rgb = np.asarray(rgb, np.float64)
+    ndi = _ndi()
+    person = np.asarray(mask, np.float64) >= 0.5
+    out = {k: float("nan") for k in REGION_MEASURES}
+    out.update({"rim.points": 0.0, "halo.points": 0.0})
+    out["frame.person_share"] = float(person.mean())
+    lab = rgb_to_lab(rgb)
+    L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
+    least = REGION_LEAST * person.size
+    if person.any():
+        inner = ndi.distance_transform_edt(person) > PERSON_INNER * unit
+        stage = ndi.distance_transform_edt(~person) > STAGE_GAP * unit
+    else:
+        inner, stage = person, np.ones_like(person)
+    if inner.sum() >= least:
+        _region_stats(L, a, b, inner, "person", out)
+    if stage.sum() >= least:
+        _region_stats(L, a, b, stage, "stage", out)
+    out["contrast.person_stage"] = out["person.L_p50"] - out["stage.L_p50"]
+    Y = _luminance(srgb_to_linear(rgb))
+    if person.sum() >= least:
+        out.update(silhouette(Y, person, unit, seed))
+    got = _blur_blocks(luma(rgb), unit, cover=person)
+    if got is not None:
+        block, share, _ = got
+        on_person = np.isfinite(block) & (share >= 0.8)
+        on_stage = np.isfinite(block) & (share <= 0.05)
+        if on_person.sum() >= 3 and on_stage.sum() >= 3:
+            pb, sb = float(np.median(block[on_person])), float(np.median(block[on_stage]))
+            out.update({"dof.person_blur": pb, "dof.stage_blur": sb, "dof.stage_ratio": (sb + 1.0) / (pb + 1.0)})
+    if person.any():
+        b_p = bloom(rgb, unit, sources=person, rings=~person)
+        out["bloom.person_strength"], out["bloom.person_r50"] = b_p["bloom.strength"], b_p["bloom.r50"]
+    if stage.sum() >= least:
+        b_s = bloom(rgb, unit, sources=stage, rings=stage)
+        out["bloom.stage_strength"], out["bloom.stage_r50"] = b_s["bloom.strength"], b_s["bloom.r50"]
+    return out
+
+
+_SESSIONS = {}
+
+
+def seg_session(model, threads=6):
+    """the person model (an ONNX file, e.g. skytnt/anime-seg's isnetis.onnx) on the CPU, loaded once"""
+    key = (os.path.abspath(model), threads)
+    if key not in _SESSIONS:
+        import onnxruntime as ort
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = threads
+        so.inter_op_num_threads = 1
+        _SESSIONS[key] = ort.InferenceSession(model, so, providers=["CPUExecutionProvider"])
+    return _SESSIONS[key]
+
+
+def person_mask(rgb_u8, session=None, model=None, size=SEG_SIZE):
+    """the person's mask (0..1, the frame's size) from the person model: the frame letterboxed into a size x size
+    square (RGB in 0..1, as the model was trained), the answer cut back out and made the frame's size"""
+    cv2 = _cv2()
+    sess = session or seg_session(model)
+    img = np.asarray(rgb_u8, np.float32) / 255.0
+    h0, w0 = img.shape[:2]
+    h, w = (size, int(round(size * w0 / float(h0)))) if h0 > w0 else (int(round(size * h0 / float(w0))), size)
+    ph, pw = size - h, size - w
+    inp = np.zeros((size, size, 3), np.float32)
+    inp[ph // 2:ph // 2 + h, pw // 2:pw // 2 + w] = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    got = sess.run(None, {sess.get_inputs()[0].name: inp.transpose(2, 0, 1)[None]})[0]
+    m = np.asarray(got, np.float32).reshape(size, size)[ph // 2:ph // 2 + h, pw // 2:pw // 2 + w]
+    return np.clip(cv2.resize(m, (w0, h0), interpolation=cv2.INTER_LINEAR), 0.0, 1.0)
+
+
 # ---- summaries over frames, comparisons ---------------------------------------------------------------------------
 
 BOOTSTRAP = 400
@@ -1448,13 +1693,13 @@ def summarise(rows, seed=0):
     return out
 
 
-def compare(refs, ours):
+def compare(refs, ours, measures=None):
     """rows of the table: per measure the references' per-video medians (their median, quartiles, least and most) and
     each of ours with how far it lies outside the references' quartiles, in units of their spread (the quartile
     distance, at least twice the references' median floor and 5 % of their median): 0 inside, + above, - below
-    given by side"""
+    given by side.  measures: MEASURES (the default) or REGION_MEASURES"""
     rows = []
-    for key, (concept, label, unit) in MEASURES.items():
+    for key, (concept, label, unit) in (measures or MEASURES).items():
         vals = [r["summary"].get(key, {}).get("median", float("nan")) for r in refs]
         floors = [r["summary"].get(key, {}).get("floor_pair", float("nan")) for r in refs]
         good = [v for v in vals if v is not None and np.isfinite(v)]
@@ -1501,17 +1746,18 @@ def _fmt(v):
 SIDE_JA = {"above": "上へ", "below": "下へ", "inside": "中", "none": "-"}
 
 
-def table_md(rows, ours_labels):
+def table_md(rows, ours_labels, concepts=None, concept_labels=None):
     """the comparison as a markdown table, idea by idea (the references' median [quartiles], ours, and how far outside
     their quartiles ours lie in units of their spread)"""
     lines = []
     head = "| 物差し | 名 | 参考 中央値 [四分位] | " + " | ".join(ours_labels) + " | 参考の外の距離（" + " → ".join(ours_labels) + "） |"
     sep = "| --- | --- | --- | " + " | ".join("---" for _ in ours_labels) + " | --- |"
-    for concept in CONCEPTS:
+    labels = concept_labels or CONCEPT_LABELS
+    for concept in (concepts or CONCEPTS):
         part = [r for r in rows if r["concept"] == concept]
         if not part:
             continue
-        lines += ["", "### " + CONCEPT_LABELS[concept], "", head, sep]
+        lines += ["", "### " + labels[concept], "", head, sep]
         for r in part:
             ref = "%s [%s, %s]" % (_fmt(r.get("ref_median")), _fmt(r.get("ref_q25")), _fmt(r.get("ref_q75"))) \
                 if r.get("ref_n") else "-"
@@ -1819,6 +2065,67 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
     return result
 
 
+def _sha256(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def measure_regions(path, out, label=None, start=None, end=None, frames=48, height=720, matrix="auto", model=None,
+                    threads=6, mask_fn=None, fps=30, seed=0, log=None):
+    """the person and the stage read apart (REGION_MEASURES) on frames spread evenly over a video (or a folder of
+    frames), inside its letterbox bars: the person's mask from the person model (model: its ONNX file) or from
+    mask_fn(frame uint8) -> mask; OUT.json holds each frame's measures and their summary (as measure's)"""
+    if mask_fn is None and not model:
+        raise ValueError("regions needs the person model (--model isnetis.onnx) or a mask function")
+    info = probe(path, fps=fps)
+    mat = matrix_for(info, matrix)
+    start = float(start or 0.0)
+    end = float(end) if end else info["duration"]
+    duration = max(0.0, end - start)
+    rate = info["fps"]
+    total = int(math.floor(duration * rate + 1e-6))
+    lo, hi = int(0.5 * rate), total - 1 - int(0.5 * rate)
+    if hi <= lo:
+        lo, hi = 0, max(0, total - 1)
+    ns = sorted(set(int(round(x)) for x in np.linspace(lo, hi, max(1, int(frames)))))
+    got = dict(read_frames(path, info, ns, height=height, matrix=mat, start=start, duration=duration, as_uint8=True))
+    ns = [n for n in ns if n in got]
+    if not ns:
+        raise ValueError("no frames read from %s" % path)
+    stack = np.array([luma(got[n].astype(np.float64) / 255.0) for n in ns])
+    bars = find_bars(stack)
+    x0, y0, x1, y1 = active_box(bars, stack.shape[1:])
+    unit = stack.shape[1] / REFERENCE_HEIGHT
+    if mask_fn is None:
+        session = seg_session(model, threads)
+
+        def mask_fn(a):
+            return person_mask(a, session=session)
+    rows = []
+    for n in ns:
+        a = np.ascontiguousarray(got[n][y0:y1, x0:x1])
+        m = mask_fn(a)
+        rows.append({"n": int(n), "t": start + n / float(rate), "shot": 0,
+                     "m": {k: float(v) for k, v in region_measures(a.astype(np.float64) / 255.0, m, unit, seed=seed + n).items()}})
+        if log:
+            log("frame %d person %.3f" % (n, rows[-1]["m"]["frame.person_share"]))
+    summary = summarise(rows, seed=seed)
+    with_person = sum(1 for r in rows if np.isfinite(r["m"].get("person.L_p50", float("nan"))))
+    result = {"label": label or os.path.splitext(os.path.basename(path.rstrip("/\\")))[0], "path": path,
+              "probe": info if not info.get("folder") else {k: v for k, v in info.items() if k != "files"},
+              "range": [start, end], "analysis_height": int(stack.shape[1]), "unit": unit, "matrix": mat,
+              "box": [int(x0), int(y0), int(x1), int(y1)], "frames_with_person": with_person,
+              "model": {"path": model, "sha256": _sha256(model)} if model else None,
+              "frames": rows, "summary": summary}
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
+    return result
+
+
 # ---- text on the frame ------------------------------------------------------------------------------------------------
 
 TEXT_LEAST = 8.0                  # 720 line pixels: a box of text at least this tall is counted
@@ -2045,10 +2352,12 @@ def contact_sheet(path, out, times, box=None, size=(320, 180), height=720, matri
     return out
 
 
-def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scale=1.0):
+def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scale=1.0, model=None):
     """a frame (cropped to box, 720 line pixels) with what a measure saw drawn on it: dof, the edges coloured by their
     blur (blue sharp, red soft); bloom, the bright sources outlined and rings 4, 16 and 48 px out; ca, the shift of red
-    and blue against green as arrows (drawn 20 times longer); bars, the picture inside the bars"""
+    and blue against green as arrows (drawn 20 times longer); bars, the picture inside the bars; regions (model: the
+    person model's ONNX), the person's outline, where the stage is read from, and some of the normals the rim (yellow,
+    inside) and the glow round the person (green, outside) are read on"""
     from PIL import Image, ImageDraw
     info = probe(path)
     mat = matrix_for(info, matrix)
@@ -2130,6 +2439,30 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
         x0, y0, x1, y1 = active_box(bars, a.shape)
         d.rectangle([x0, y0, x1 - 1, y1 - 1], outline=(0, 255, 0), width=2)
         note = "黒帯の内側（緑）: %d x %d" % (x1 - x0, y1 - y0)
+    elif what == "regions":
+        if not model:
+            raise ValueError("annotate regions needs the person model (--model)")
+        ndi = _ndi()
+        m = person_mask(a, model=model)
+        person = m >= 0.5
+        r = region_measures(rgb, m, unit)
+        stage = ndi.distance_transform_edt(~person) > STAGE_GAP * unit
+        arr = np.asarray(im).copy()
+        arr[stage & ~ndi.binary_erosion(stage)] = (0, 255, 255)
+        arr[person & ~ndi.binary_erosion(person)] = (255, 0, 255)
+        im = Image.fromarray(arr)
+        d = ImageDraw.Draw(im)
+        if person.any() and (~person).any():
+            ys, xs, ny, nx = _outline(person, unit, 0)
+            for i in range(0, len(ys), max(1, len(ys) // 40)):
+                y, x = ys[i], xs[i]
+                d.line([x + nx[i] * RIM_EDGE[0] * unit, y + ny[i] * RIM_EDGE[0] * unit,
+                        x + nx[i] * RIM_CORE[1] * unit, y + ny[i] * RIM_CORE[1] * unit], fill=(255, 220, 0), width=1)
+                d.line([x - nx[i] * HALO_NEAR[0] * unit, y - ny[i] * HALO_NEAR[0] * unit,
+                        x - nx[i] * HALO_FAR[1] * unit, y - ny[i] * HALO_FAR[1] * unit], fill=(0, 220, 0), width=1)
+        note = "人物の輪郭（紫）・舞台はこの外（水色）・縁の比を読む線（黄、内）とにじみを読む線（緑、外）。人物 %.3f・" \
+               "人物 L* %.1f・舞台 L* %.1f・縁の比 %.2f・にじみ %.3f" % (
+                   r["frame.person_share"], r["person.L_p50"], r["stage.L_p50"], r["rim.ratio"], r["halo.share"])
     if box:
         im = im.crop(box)
     if scale != 1.0:
@@ -2192,11 +2525,24 @@ def main(argv=None):
     m.add_argument("--full-every", type=int, default=4, help="the slower measures (fringes, distortion) every this "
                    "many pairs")
     m.add_argument("--fps", type=int, default=30, help="the rate of a folder of frames")
+    g = sub.add_parser("regions", help="the person and the stage read apart (the person model's mask)")
+    g.add_argument("input")
+    g.add_argument("out")
+    g.add_argument("--model", required=True, help="the person model's ONNX file (skytnt/anime-seg isnetis.onnx)")
+    g.add_argument("--label")
+    g.add_argument("--from", dest="start", type=float)
+    g.add_argument("--to", dest="end", type=float)
+    g.add_argument("--frames", type=int, default=48, help="frames spread evenly over the video")
+    g.add_argument("--height", type=int, default=720)
+    g.add_argument("--matrix", default="auto", choices=("auto", "bt601", "bt709", "bt2020"))
+    g.add_argument("--threads", type=int, default=6, help="CPU threads of the model")
+    g.add_argument("--fps", type=int, default=30, help="the rate of a folder of frames")
     c = sub.add_parser("compare", help="the references and ours side by side")
     c.add_argument("md")
     c.add_argument("json")
     c.add_argument("--ref", nargs="+", required=True)
     c.add_argument("--ours", nargs="+", required=True)
+    c.add_argument("--regions", action="store_true", help="the measures of regions (the person and the stage apart)")
     f = sub.add_parser("figure", help="figures")
     f.add_argument("kind", choices=("strip", "profiles"))
     f.add_argument("out")
@@ -2211,6 +2557,8 @@ def main(argv=None):
     s.add_argument("--box", type=_box)
     s.add_argument("--size", type=_size, default=(320, 180))
     s.add_argument("--label")
+    s.add_argument("--matrix", default="auto", choices=("auto", "bt601", "bt709", "bt2020"),
+                   help="our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do")
     x = sub.add_parser("text", help="add where and how big the text is to a measure JSON (EasyOCR, CPU)")
     x.add_argument("input")
     x.add_argument("measure_json")
@@ -2219,9 +2567,11 @@ def main(argv=None):
     a.add_argument("input")
     a.add_argument("out")
     a.add_argument("--at", type=float, required=True)
-    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion"), default="dof")
+    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion", "regions"), default="dof")
     a.add_argument("--box", type=_box)
     a.add_argument("--scale", type=float, default=1.0)
+    a.add_argument("--model", help="regions: the person model's ONNX file")
+    a.add_argument("--matrix", default="auto", choices=("auto", "bt601", "bt709", "bt2020"))
     args = ap.parse_args(argv)
     if args.cmd == "measure":
         r = measure_video(args.input, args.out, label=args.label, start=args.start, end=args.end, pairs=args.pairs,
@@ -2230,13 +2580,23 @@ def main(argv=None):
         print("measured %s: %d pairs, %d cuts, bars %s, fps %s (moves at %s)" % (
             r["label"], len(r["frames"]), len(r["time"]["cuts"]), r["frame"]["bars"], r["frame"]["fps"],
             r["frame"]["fps_effective"]))
+    elif args.cmd == "regions":
+        r = measure_regions(args.input, args.out, label=args.label, start=args.start, end=args.end, frames=args.frames,
+                            height=args.height, matrix=args.matrix, model=args.model, threads=args.threads, fps=args.fps)
+        s = r["summary"]
+        print("regions of %s: %d frames, %d with the person, person %.3f, person L* %.1f, stage L* %.1f" % (
+            r["label"], len(r["frames"]), r["frames_with_person"], s["frame.person_share"]["median"],
+            s["person.L_p50"]["median"], s["stage.L_p50"]["median"]))
     elif args.cmd == "compare":
         refs = [_load(p) for p in args.ref]
         ours = [_load(p) for p in args.ours]
-        rows = compare(refs, ours)
+        rows = compare(refs, ours, REGION_MEASURES if args.regions else MEASURES)
         labels = [o["label"] for o in ours]
         with open(args.md, "w", encoding="utf-8") as fh:
-            fh.write(table_md(rows, labels))
+            if args.regions:
+                fh.write(table_md(rows, labels, REGION_CONCEPTS, REGION_CONCEPT_LABELS))
+            else:
+                fh.write(table_md(rows, labels))
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump({"refs": [r["label"] for r in refs], "ours": labels, "rows": rows}, fh, ensure_ascii=False,
                       indent=1, allow_nan=True)
@@ -2251,13 +2611,14 @@ def main(argv=None):
             results = [_load(p) for p in args.inputs]
             figure_profiles(args.out, results, labels={o: True for o in args.ours})
     elif args.cmd == "crops":
-        contact_sheet(args.input, args.out, args.at, box=args.box, size=args.size, label=args.label)
+        contact_sheet(args.input, args.out, args.at, box=args.box, size=args.size, label=args.label, matrix=args.matrix)
     elif args.cmd == "text":
         d = measure_text(args.input, args.measure_json, frames=args.frames)
         print("text of %s: %s" % (d["label"], {k: round(v["median"], 3) for k, v in d["summary"].items()
                                               if k.startswith("text.")}))
     elif args.cmd == "annotate":
-        annotate(args.input, args.out, args.at, what=args.what, box=args.box, scale=args.scale)
+        annotate(args.input, args.out, args.at, what=args.what, box=args.box, scale=args.scale, matrix=args.matrix,
+                 model=args.model)
     return 0
 
 

@@ -736,6 +736,34 @@ class VideoTest(unittest.TestCase):
         self.assertLess(row.max(), 204 / 255.0 + 0.01)
         self.assertGreater(row.min(), 51 / 255.0 - 0.01)
 
+    def test_the_person_and_the_stage_of_a_video(self):
+        def middle_third(a):                                   # a stand-in for the person model
+            m = np.zeros(a.shape[:2])
+            m[:, a.shape[1] // 3:2 * a.shape[1] // 3] = 1.0
+            return m
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            synthetic_video(path, cuts=(), flash=10 ** 6)
+            out = os.path.join(tmp, "r.json")
+            with self.assertRaises(ValueError):
+                LA.measure_regions(path, out)                  # neither the model nor a mask
+            LA.measure_regions(path, out, label="syn", frames=6, height=180, mask_fn=middle_third)
+            with open(out, encoding="utf-8") as f:
+                d = json.load(f)
+        self.assertEqual(d["box"], [0, 20, 320, 160])          # read inside the letterbox bars
+        self.assertEqual(len(d["frames"]), 6)
+        self.assertEqual(d["frames_with_person"], 6)
+        s = d["summary"]
+        self.assertAlmostEqual(s["frame.person_share"]["median"], 1 / 3.0, delta=0.01)
+        for key in LA.REGION_MEASURES:
+            self.assertIn(key, s, key)
+        rows = LA.compare([d, d], [d], LA.REGION_MEASURES)
+        self.assertEqual([r["key"] for r in rows], list(LA.REGION_MEASURES))
+        table = LA.table_md(rows, ["syn"], LA.REGION_CONCEPTS, LA.REGION_CONCEPT_LABELS)
+        self.assertIn("### 人物", table)
+        self.assertIn("person.L_p50", table)
+
     def test_colours_come_back_as_they_went_in(self):
         # tagged BT.709 read as BT.709: the grey blocks come back within a few steps of 255
         with tempfile.TemporaryDirectory() as tmp:
@@ -746,6 +774,143 @@ class VideoTest(unittest.TestCase):
         want = frames[10].astype(np.float64) / 255.0
         self.assertLess(float(np.abs(ndi.uniform_filter(got - want, (9, 9, 1))).mean()), 2.0 / 255)
 
+
+def scene(h=720, w=1280, person_lab=(70.0, 10.0, 20.0), stage_lab=(20.0, 5.0, -25.0), radius=200.0, centre=None):
+    """a stage of one colour and a round person of another (CIE L*a*b*): the picture, the person's mask and each
+    pixel's distance from the person's centre"""
+    lab = np.zeros((h, w, 3))
+    lab[...] = stage_lab
+    yy, xx = np.mgrid[0:h, 0:w]
+    cy, cx = centre or (h / 2.0, w / 2.0)
+    d = np.hypot(yy - cy, xx - cx)
+    m = d <= radius
+    lab[m] = person_lab
+    return LA.lab_to_rgb(lab), m.astype(np.float64), d
+
+
+@unittest.skipUnless(LA, NEEDS)
+class RegionTest(unittest.TestCase):
+    """the person and the stage read apart (the person's mask given): a dark stage round a bright person must not read
+    as the grade of the whole picture"""
+
+    def test_the_person_and_the_stage_are_read_apart(self):
+        picture, mask, _ = scene()
+        r = LA.region_measures(picture, mask)
+        self.assertAlmostEqual(r["person.L_p50"], 70.0, delta=1.0)
+        self.assertAlmostEqual(r["stage.L_p50"], 20.0, delta=1.0)
+        self.assertAlmostEqual(r["frame.person_share"], mask.mean(), delta=0.005)
+        self.assertAlmostEqual(r["contrast.person_stage"], 50.0, delta=1.5)
+        # a warm person on a blue stage: the whole frame's split toning reads the two colours as its shadows and its
+        # highlights; inside the person and inside the stage there is none
+        whole = LA.colour(picture, LA.rgb_to_lab(picture))["split.teal_orange"]
+        self.assertGreater(whole, 15.0)
+        self.assertLess(abs(r["person.teal_orange"]), 1.0)
+        self.assertLess(abs(r["stage.teal_orange"]), 1.0)
+
+    def test_split_toning_inside_the_person(self):
+        picture, mask, _ = scene()
+        lab = LA.rgb_to_lab(picture)
+        inside = mask > 0.5
+        x = np.arange(lab.shape[1], dtype=np.float64)
+        ramp = (40.0 + 52.0 * np.clip((x - 440.0) / 400.0, 0.0, 1.0))[None, :].repeat(lab.shape[0], axis=0)
+        lab[inside, 0] = ramp[inside]
+        lab[inside, 1:] = 0.0
+        lo, hi = np.percentile(ramp[inside], [25, 75])
+        dark, bright = inside & (ramp <= lo), inside & (ramp >= hi)  # the person's darkest and brightest quarters
+        lab[dark, 1], lab[dark, 2] = -8.0, -8.0                   # teal shadows
+        lab[bright, 1], lab[bright, 2] = 8.0, 12.0                # orange lights
+        r = LA.region_measures(LA.lab_to_rgb(lab), mask)
+        self.assertGreater(r["person.teal_orange"], 12.0)
+        self.assertLess(abs(r["stage.teal_orange"]), 1.0)
+        self.assertGreater(r["person.L_p90"] - r["person.L_p10"], 30.0)
+
+    def test_a_rim_light_brightens_the_inside_of_the_outline(self):
+        picture, mask, d = scene(person_lab=(50.0, 0.0, 0.0), stage_lab=(15.0, 0.0, 0.0))
+        lab = LA.rgb_to_lab(picture)
+        rim = (d <= 200.0) & (d > 194.0)                          # 0 to 6 px inside the outline
+        lab[rim, 0] = 80.0
+        lit = LA.region_measures(LA.lab_to_rgb(lab), mask)
+        plain = LA.region_measures(picture, mask)
+        self.assertGreater(lit["rim.ratio"], 1.5)
+        self.assertAlmostEqual(plain["rim.ratio"], 1.0, delta=0.05)
+        # an outline (a dark line 1.5 px wide on the edge, as MMD draws) is no rim and no shadow of the edge
+        outlined = LA.rgb_to_lab(picture)
+        outlined[(d <= 200.0) & (d > 198.5), 0] = 5.0
+        self.assertAlmostEqual(LA.region_measures(LA.lab_to_rgb(outlined), mask)["rim.ratio"], 1.0, delta=0.05)
+
+    def test_a_glow_round_the_person_is_read_outside_the_outline(self):
+        picture, mask, _ = scene(person_lab=(95.0, 0.0, 0.0), stage_lab=(10.0, 0.0, 0.0))
+        lin = LA.srgb_to_linear(picture)
+        halos = []
+        for k in (0.0, 0.3, 0.6):
+            glow = k * ndi.gaussian_filter(mask, 14.0)            # a glow of the person, added in linear light
+            glowing = np.clip(LA.linear_to_srgb(lin + glow[..., None]), 0.0, 1.0)
+            halos.append(LA.region_measures(glowing, mask)["halo.share"])
+        self.assertLess(abs(halos[0]), 0.01)
+        self.assertGreater(halos[1], 0.05)
+        self.assertAlmostEqual(halos[2] / halos[1], 2.0, delta=0.5)
+        # a light of the stage far from the person is not the person's glow
+        far = lin.copy()
+        far[40:80, 40:80] = 1.0
+        far = far + 0.6 * ndi.gaussian_filter(far * (far >= 0.99), (14.0, 14.0, 0.0))
+        far = np.clip(LA.linear_to_srgb(far), 0.0, 1.0)
+        self.assertLess(abs(LA.region_measures(far, mask)["halo.share"]), 0.01)
+
+    def test_background_blur_is_read_on_the_stage_only(self):
+        tex = ndi.gaussian_filter(blocks(720, 1280, seed=13, n=1600, low=0.1, high=0.9), 1.0)
+        person = ndi.gaussian_filter(blocks(720, 1280, seed=14, n=1600, low=0.1, high=0.9), 1.0)
+        mask = np.zeros((720, 1280))
+        mask[160:560, 440:840] = 1.0
+        sharp = np.where(mask > 0.5, person, tex)
+        soft = np.where(mask > 0.5, person, ndi.gaussian_filter(tex, 8.0))
+        r_soft = LA.region_measures(rgb(soft), mask)
+        r_sharp = LA.region_measures(rgb(sharp), mask)
+        self.assertLess(r_soft["dof.person_blur"], 2.5)
+        self.assertAlmostEqual(r_soft["dof.stage_blur"], 8.0, delta=3.0)
+        self.assertGreater(r_soft["dof.stage_ratio"], 2.5)
+        self.assertLess(r_sharp["dof.stage_ratio"], 1.6)
+
+    def test_the_glow_of_the_stage_lights_and_of_the_person_apart(self):
+        # small lights on the stage with a glow, and a bright person without one
+        base = highlights(720, 1280, [(2 * y, 2 * x) for y, x in POINTS if x > 300], 8)
+        lights = add_glow(base, 8.0, 1.0)
+        mask = np.zeros((720, 1280))
+        mask[200:600, 60:400] = 1.0
+        lights[200:600, 60:400] = 0.95
+        r = LA.region_measures(lights, mask)
+        self.assertGreater(r["bloom.stage_strength"], 0.05)
+        self.assertLess(r["bloom.person_strength"], 0.01)
+
+    def test_no_person_leaves_the_person_measures_empty(self):
+        picture, _, _ = scene()
+        r = LA.region_measures(picture, np.zeros(picture.shape[:2]))
+        self.assertEqual(r["frame.person_share"], 0.0)
+        self.assertTrue(math.isnan(r["person.L_p50"]))
+        self.assertTrue(math.isnan(r["rim.ratio"]))
+        self.assertTrue(np.isfinite(r["stage.L_p50"]))
+        for key in LA.REGION_MEASURES:
+            self.assertIn(key, r, key)
+
+    def test_the_model_sees_the_frame_letterboxed_and_its_mask_comes_back_in_place(self):
+        # a stand-in for the model that answers its own input's red: the mask must come back where the red was
+        class Echo:
+            def get_inputs(self):
+                return [type("I", (), {"name": "img", "shape": [1, 3, 1024, 1024]})()]
+
+            def run(self, outputs, feed):
+                x = feed["img"]
+                self.seen = x.shape
+                return [x[:, :1]]
+
+        frame = np.zeros((720, 1280, 3), np.uint8)
+        frame[100:300, 900:1100, 0] = 255
+        echo = Echo()
+        m = LA.person_mask(frame, session=echo)
+        self.assertEqual(echo.seen, (1, 3, 1024, 1024))
+        self.assertEqual(m.shape, (720, 1280))
+        self.assertGreater(m[110:290, 910:1090].min(), 0.9)
+        self.assertLess(m[:90].max(), 0.1)
+        self.assertLess(m[:, :880].max(), 0.1)
 
 
 def _ocr_ready():
