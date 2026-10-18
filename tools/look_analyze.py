@@ -2134,9 +2134,21 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
         im = im.crop(box)
     if scale != 1.0:
         im = im.resize((int(im.size[0] * scale), int(im.size[1] * scale)), Image.LANCZOS)
-    canvas = Image.new("RGB", (im.size[0], im.size[1] + 22), (255, 255, 255))
-    canvas.paste(im, (0, 22))
-    ImageDraw.Draw(canvas).text((4, 3), "%.1f s  %s" % (t, note), fill=(0, 0, 0), font=_font(12))
+    font = _font(12)
+    lines, line = [], ""
+    probe_draw = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    for ch in "%.1f s  %s" % (t, note):                  # wrapped to the picture's width (a small crop keeps it all)
+        if probe_draw.textlength(line + ch, font=font) > im.size[0] - 8:
+            lines.append(line)
+            line = ""
+        line += ch
+    lines.append(line)
+    head = 4 + 15 * len(lines)
+    canvas = Image.new("RGB", (im.size[0], im.size[1] + head), (255, 255, 255))
+    canvas.paste(im, (0, head))
+    draw = ImageDraw.Draw(canvas)
+    for i, text in enumerate(lines):
+        draw.text((4, 2 + 15 * i), text, fill=(0, 0, 0), font=font)
     canvas.save(out)
     return out
 
