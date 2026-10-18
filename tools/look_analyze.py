@@ -756,10 +756,19 @@ DOF_CONTRAST = 0.10               # those whose Y' spreads at least this (5 to 9
 DOF_TOP = 0.02                    # each by the blur of its steepest 2 % of pixels
 
 
-def blur_map(gray):
-    """the blur (image pixels) edges() would read at every pixel, and the gradient there (its top over 3 x 3)"""
+DOF_PRE = 0.0                     # image px: blur the frame by this first (and take it out after); 0 none
+DOF_LINES = 180                   # depth of field is read on the frame made this small (averaging whole pixels): the
+                                  # noise and the coding blocks of a compressed video, which read sharp, average out,
+                                  # while a background blurred by several pixels stays blurred
+
+
+def blur_map(gray, pre=DOF_PRE):
+    """the blur (image pixels) edges() would read at every pixel of the frame blurred by pre (pre taken out after), and
+    the gradient there (its top over 3 x 3)"""
     ndi = _ndi()
     g = np.asarray(gray, np.float64)
+    if pre:
+        g = ndi.gaussian_filter(g, pre)
     m0 = ndi.maximum_filter(_gradient(g)[2], size=3)
     sigma = None
     for s0, top in reversed(list(zip(REBLUR, SWITCH))):
@@ -768,21 +777,30 @@ def blur_map(gray):
             r = m0 / np.maximum(m1, 1e-12)
             est = np.sqrt(np.clip(s0 * s0 / np.maximum(r * r - 1.0, 1e-9) - SOBEL_VAR, 0.0, None))
         sigma = est if sigma is None else np.where(est <= top, est, sigma)
+    if pre:
+        sigma = np.sqrt(np.clip(sigma * sigma - pre * pre, 0.0, None))
     return sigma, m0
 
 
 def dof_blocks(gray, unit=1.0, extras=None):
     """depth of field read in blocks (the edges Canny finds keep to what is in focus; a blurred background has weak
-    edges): each block of DOF_BLOCK px whose Y' spreads at least DOF_CONTRAST is read by the median blur of its
-    steepest DOF_TOP of pixels (720 line pixels)
+    edges): on the frame made DOF_LINES lines tall, each block of DOF_BLOCK px whose Y' spreads at least DOF_CONTRAST is
+    read by the median blur of its steepest DOF_TOP of pixels (720 line pixels; blurs under about 2 px are not told
+    apart at this size)
 
-    dof.fg_blur: the median of the sharpest fifth of the blocks (what is in focus); dof.bg_blur: the median of the
-    softer half; dof.ratio: bg over fg (fg at least 0.5 px): about 1 when all is in focus, several with a blurred
-    background (or with soft light, haze or glow behind the subject, which read the same); dof.soft_blocks: the share
-    of blocks softer than SOFT_EDGE; dof.blocks: how many blocks hold detail.  extras gets the block map."""
+    dof.fg_blur / bg_blur: the 25 and 75 % points over the blocks (the sharp side, what is in focus, and the soft
+    side); dof.ratio: (bg + 1) / (fg + 1): about 1 to 1.3 when all is in focus (a sharp step reads 0 to 2 px at this
+    size, by where it falls on the pixels), several with a blurred background (soft light, haze or glow behind the
+    subject read the same); dof.soft_blocks: the share of blocks softer than SOFT_EDGE; dof.blocks: how many blocks
+    hold detail.  extras gets the block map."""
     g = np.asarray(gray, np.float64)
+    f = max(1, int(round(g.shape[0] / float(DOF_LINES))))
+    if f > 1:
+        hh, ww = (g.shape[0] // f) * f, (g.shape[1] // f) * f
+        g = g[:hh, :ww].reshape(hh // f, f, ww // f, f).mean(axis=(1, 3))
+        unit = unit / f
     sigma, mag = blur_map(g)
-    b = max(8, int(round(DOF_BLOCK * unit)))
+    b = max(6, int(round(DOF_BLOCK * unit)))
     h, w = g.shape
     ny, nx = h // b, w // b
     out = {"dof.fg_blur": float("nan"), "dof.bg_blur": float("nan"), "dof.ratio": float("nan"),
@@ -804,12 +822,11 @@ def dof_blocks(gray, unit=1.0, extras=None):
     vals = np.sort(block[textured])
     out["dof.blocks"] = float(len(vals))
     if extras is not None:
-        extras["dof_map"] = (block, b)
+        extras["dof_map"] = (block, b * f)
     if len(vals) < 6:
         return out
-    fg = float(np.median(vals[:max(1, len(vals) // 5)]))
-    bg = float(np.median(vals[len(vals) // 2:]))
-    out.update({"dof.fg_blur": fg, "dof.bg_blur": bg, "dof.ratio": bg / max(fg, 0.5),
+    fg, bg = (float(v) for v in np.percentile(vals, [25, 75]))
+    out.update({"dof.fg_blur": fg, "dof.bg_blur": bg, "dof.ratio": (bg + 1.0) / (fg + 1.0),
                 "dof.soft_blocks": float((vals > SOFT_EDGE).mean())})
     return out
 
@@ -1272,9 +1289,9 @@ MEASURES = {
     "dof.median": ("optics", "縁のぼけの中央", "px"),
     "dof.soft": ("optics", "柔らかい縁のぼけ（90 % 点。被写界深度の外のぼけ）", "px"),
     "dof.soft_share": ("optics", "ぼけた縁（3 px 超）の割合（被写界深度）", ""),
-    "dof.fg_blur": ("optics", "ピントの合った所のぼけ（鋭い 1/5 の区画の中央）", "px"),
-    "dof.bg_blur": ("optics", "背景のぼけ（柔らかい半分の区画の中央）", "px"),
-    "dof.ratio": ("optics", "人物と背景の鮮鋭さの比（背景のぼけ / ピントの所のぼけ）", ""),
+    "dof.fg_blur": ("optics", "鋭い側の区画のぼけ（区画の 25 % 点。ピントの合った所）", "px"),
+    "dof.bg_blur": ("optics", "柔らかい側の区画のぼけ（75 % 点。背景）", "px"),
+    "dof.ratio": ("optics", "人物と背景の鮮鋭さの比（(背景 + 1) / (ピント + 1)）", ""),
     "dof.soft_blocks": ("optics", "ぼけた区画（3 px 超）の割合", ""),
     "motion.shutter": ("optics", "シャッター（動く縁の伸びから。0.5 が 180 度）", ""),
     "motion.shutter_p75": ("optics", "シャッターの上側（動く縁の 75 % 点）", ""),
