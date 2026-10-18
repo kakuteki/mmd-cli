@@ -669,3 +669,404 @@ def glitch(gray):
     shift = lags[best]
     torn = ok & (np.abs(shift) >= GLITCH_SHIFT) & (c_best >= 0.5) & (c_zero <= 0.5 * c_best)
     return {"glitch.tears": float(torn.sum())}
+
+
+# ---- optics of one frame: the blur of edges, depth of field, motion blur, colour fringes, distortion -------------------
+
+EDGE_POINTS = 4000                # edges read per frame at most (a random choice, the same for the same frame)
+EDGE_LEAST = 0.03                 # an edge's gradient (Y' per pixel, Sobel) at least this
+SOBEL_VAR = 0.5                   # px^2: the Sobel gradient and the pixel grid widen a step by this (measured on
+                                  # synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70)
+REBLUR = (1.0, 3.0)               # px: the two re-blurs; the wider is used for edges softer than SOFT_SWITCH
+SOFT_SWITCH = 2.5
+
+
+def _gradient(gray):
+    ndi = _ndi()
+    gx, gy = ndi.sobel(gray, axis=1) / 8.0, ndi.sobel(gray, axis=0) / 8.0
+    return gx, gy, np.hypot(gx, gy)
+
+
+def edges(gray, unit=1.0, seed=0, points=EDGE_POINTS):
+    """the edges of a Y' frame (Canny's thin lines of the strongest gradient) with each one's blur
+
+    The blur is read as Zhuo and Sim (2011) do: blurring the frame again by a known s0 lowers an edge's gradient by
+    sqrt(sigma^2 + s0^2) / sigma, so sigma follows from the ratio of the two gradients, whatever the edge's contrast
+    (the Sobel gradient's own width taken out).  Returns arrays y, x (pixels), nx, ny (the unit normal, towards the
+    bright side), mag (the gradient) and sigma (the blur, as a Gaussian's standard deviation, in 720 line pixels)."""
+    cv2, ndi = _cv2(), _ndi()
+    g = np.asarray(gray, np.float64)
+    gx, gy, mag = _gradient(g)
+    u8 = np.clip(ndi.gaussian_filter(g, 0.7) * 255.0, 0, 255).astype(np.uint8)
+    hi = max(EDGE_LEAST * 255.0 * 8.0, float(np.percentile(mag, 90)) * 255.0 * 8.0)
+    canny = cv2.Canny(u8, hi / 2.0, hi, L2gradient=True, apertureSize=3) > 0
+    canny[:3], canny[-3:], canny[:, :3], canny[:, -3:] = False, False, False, False
+    sel = canny & (mag >= EDGE_LEAST)
+    ys, xs = np.nonzero(sel)
+    if len(ys) > points:
+        pick = np.random.default_rng(seed).choice(len(ys), points, replace=False)
+        ys, xs = ys[pick], xs[pick]
+    peak = ndi.maximum_filter(mag, size=3)            # Canny's line may lie a pixel off the raw gradient's top
+    m0 = peak[ys, xs]
+    sigmas = {}
+    for s0 in REBLUR:
+        m1 = ndi.maximum_filter(_gradient(ndi.gaussian_filter(g, s0))[2], size=3)[ys, xs]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            r = m0 / m1
+            est2 = s0 * s0 / np.maximum(r * r - 1.0, 1e-9)
+        sigmas[s0] = np.sqrt(np.clip(est2 - SOBEL_VAR, 0.0, None))
+    sigma = np.where(sigmas[REBLUR[0]] <= SOFT_SWITCH, sigmas[REBLUR[0]], sigmas[REBLUR[1]])
+    sx, sy, smag = _gradient(ndi.gaussian_filter(g, 1.0))      # the normal from the smoothed frame (steadier)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        nx, ny = sx[ys, xs] / smag[ys, xs], sy[ys, xs] / smag[ys, xs]
+    good = np.isfinite(sigma) & (sigma < 40.0 * unit) & np.isfinite(nx) & np.isfinite(ny)
+    return {"y": ys[good], "x": xs[good], "nx": nx[good], "ny": ny[good], "mag": m0[good],
+            "sigma": sigma[good] / unit, "shape": g.shape}
+
+
+SOFT_EDGE = 3.0                   # 720 line pixels: an edge blurred more than this is soft (out of focus)
+
+
+def depth_of_field(e):
+    """depth of field from the blur of a frame's edges (720 line pixels): dof.sharp, dof.median, dof.soft: the 10, 50
+    and 90 % points (an MMD frame without depth of field has every edge near its sharpest); dof.soft_share: the share
+    of edges softer than SOFT_EDGE; dof.edges: how many were read"""
+    s = np.asarray(e["sigma"])
+    if len(s) < 30:
+        return {"dof.sharp": float("nan"), "dof.median": float("nan"), "dof.soft": float("nan"),
+                "dof.soft_share": float("nan"), "dof.edges": float(len(s))}
+    p10, p50, p90 = np.percentile(s, [10, 50, 90])
+    return {"dof.sharp": float(p10), "dof.median": float(p50), "dof.soft": float(p90),
+            "dof.soft_share": float((s > SOFT_EDGE).mean()), "dof.edges": float(len(s))}
+
+
+SHORT = (8.0, 16.0)               # 720 line pixels: the near sides of an edge (sharpening, width) and
+LONG = (28.0, 40.0)               # the far sides (diffusion), where a step's flat sides are read
+STEP_LEAST = 0.12                 # Y': a step read for its profile rises at least this,
+FLAT_MOST = 0.04                  # and each side's spread stays under this
+INNER = 4.0                       # diffusion: the share of the step not reached within this of the edge (720 px)
+CORE_MOST = 3.0                   # diffusion is read on edges whose core is at most this blurred (720 px)
+PROFILE_POINTS = 1500
+
+
+def _profiles(gray, e, half, unit, idx):
+    ndi = _ndi()
+    t = np.arange(-half, half + 1.0)                                   # 720 line pixels
+    ys = e["y"][idx][:, None] + e["ny"][idx][:, None] * t[None, :] * unit
+    xs = e["x"][idx][:, None] + e["nx"][idx][:, None] * t[None, :] * unit
+    return t, ndi.map_coordinates(gray, [ys.ravel(), xs.ravel()], order=1, mode="nearest").reshape(ys.shape)
+
+
+def _steps(t, p, sides):
+    """the profiles that are clean steps between flat sides at |t| in sides: normalised to 0 (dark side) .. 1"""
+    far_lo = (t >= -sides[1]) & (t <= -sides[0])
+    far_hi = (t >= sides[0]) & (t <= sides[1])
+    lo, hi = p[:, far_lo].mean(axis=1), p[:, far_hi].mean(axis=1)
+    flat = (p[:, far_lo].std(axis=1) <= FLAT_MOST) & (p[:, far_hi].std(axis=1) <= FLAT_MOST)
+    ok = flat & (hi - lo >= STEP_LEAST)
+    q = (p[ok] - lo[ok, None]) / (hi - lo)[ok, None]
+    return ok, q
+
+
+def _cross(t, q, level, start, direction):
+    """where a profile q (over t) first reaches level going from start in direction (+1 or -1), interpolated"""
+    i = int(np.argmin(np.abs(t - start)))
+    rng = range(i, len(t) - 1) if direction > 0 else range(i, 0, -1)
+    for k in rng:
+        k2 = k + direction
+        a, b = q[k], q[k2]
+        if (a - level) * (b - level) <= 0 and a != b:
+            return t[k] + (level - a) * (t[k2] - t[k]) / (b - a)
+    return float("nan")
+
+
+def _middle(t, q):
+    """where a step's profile crosses its half nearest the edge found"""
+    up, down = _cross(t, q, 0.5, 0.0, +1), _cross(t, q, 0.5, 0.0, -1)
+    if np.isfinite(up) and np.isfinite(down):
+        return up if abs(up) <= abs(down) else down
+    return up if np.isfinite(up) else down
+
+
+def _width(t, q):
+    """the 10 to 90 % rise of a step's profile about its middle"""
+    mid = _middle(t, q)
+    if not np.isfinite(mid):
+        return float("nan")
+    return _cross(t, q, 0.9, mid, +1) - _cross(t, q, 0.1, mid, -1)
+
+
+def edge_profiles(gray, e, unit=1.0, seed=0):
+    """what the edges' profiles across them show (sampled along each edge's normal, 720 line pixels)
+
+    sharp.width: the 10 to 90 % rise of clean steps (flat sides 8 to 16 px out); sharp.overshoot: how far the profile
+    goes past its flat sides next to the edge (the halo of sharpening, as a share of the step); diffusion.share: on
+    steps with flat sides 28 to 40 px out and a sharp core, the share of the step not reached within INNER px of the
+    edge, less what the core's own blur leaves there (a veil over the frame: the sharp core stays, a wide soft skirt is
+    added); diffusion.radius: how far out that skirt reaches half of the rest; profile.short / long: how many steps."""
+    g = np.asarray(gray, np.float64)
+    n = len(e["y"])
+    out = {"sharp.width": float("nan"), "sharp.overshoot": float("nan"), "diffusion.share": float("nan"),
+           "diffusion.radius": float("nan"), "profile.short": 0.0, "profile.long": 0.0}
+    if n == 0:
+        return out
+    idx = np.arange(n)
+    if n > PROFILE_POINTS:
+        idx = np.random.default_rng(seed).choice(n, PROFILE_POINTS, replace=False)
+    t, p = _profiles(g, e, SHORT[1], unit, idx)
+    ok, q = _steps(t, p, SHORT)
+    out["profile.short"] = float(ok.sum())
+    if ok.sum() >= 10:
+        widths, overs = [], []
+        near_hi = (t >= SHORT[0]) & (t <= SHORT[1])
+        near_lo = (t >= -SHORT[1]) & (t <= -SHORT[0])
+        inner_hi = (t >= 0) & (t < SHORT[0])
+        inner_lo = (t <= 0) & (t > -SHORT[0])
+        for row in q:
+            wd = _width(t, row)
+            if np.isfinite(wd):
+                widths.append(wd)
+            o_hi = row[inner_hi].max() - row[near_hi].mean()
+            o_lo = row[near_lo].mean() - row[inner_lo].min()
+            overs.append(max(0.0, (o_hi + o_lo) / 2.0))
+        if widths:
+            out["sharp.width"] = float(np.median(widths))
+        out["sharp.overshoot"] = float(np.median(overs))
+    t, p = _profiles(g, e, LONG[1], unit, idx)
+    ok, q = _steps(t, p, LONG)
+    core = e["sigma"][idx][ok]
+    keep = core <= CORE_MOST
+    out["profile.long"] = float(keep.sum())
+    if keep.sum() >= 10:
+        q, core = q[keep], core[keep]
+        shares, radii = [], []
+        for row, c in zip(q, core):
+            mid = _middle(t, row)
+            if not np.isfinite(mid) or abs(mid) > INNER:
+                continue                                        # its middle is not near the edge found
+            q_hi, q_lo = float(np.interp(mid + INNER, t, row)), float(np.interp(mid - INNER, t, row))
+            share = math.erf(INNER / (max(c, 1e-3) * math.sqrt(2.0))) - (q_hi - q_lo)
+            shares.append(share)
+            if share >= 0.05:
+                r_hi = _cross(t, row, q_hi + 0.5 * (1.0 - q_hi), mid + INNER, +1)
+                r_lo = _cross(t, row, 0.5 * q_lo, mid - INNER, -1)
+                vals = [v for v in (r_hi - mid, mid - r_lo) if np.isfinite(v)]
+                if vals:
+                    radii.append(float(np.mean(vals)))
+        if len(shares) >= 10:
+            out["diffusion.share"] = float(np.median(shares))
+        if radii:
+            out["diffusion.radius"] = float(np.median(radii))
+    return out
+
+
+MOVING_LEAST = 3.0                # 720 line pixels a frame: an edge moving across itself at least this is read for
+STILL_MOST = 0.5                  # motion blur, against edges moving less than this; a pixel moving at least
+MOVING_PIXEL = 1.0                # this counts as moving
+
+
+def flow(gray0, gray1):
+    """the optical flow from one Y' frame to the next (Farneback), pixels a frame: H x W x 2 (x, y)"""
+    cv2 = _cv2()
+    a = np.clip(np.asarray(gray0) * 255.0, 0, 255).astype(np.uint8)
+    b = np.clip(np.asarray(gray1) * 255.0, 0, 255).astype(np.uint8)
+    return cv2.calcOpticalFlowFarneback(a, b, None, 0.5, 5, 21, 4, 7, 1.5, 0)
+
+
+def motion(gray0, gray1, e, unit=1.0, f=None, seed=0):
+    """motion and motion blur between two frames (the second the next different picture)
+
+    motion.speed: the median speed of the moving edges (720 line pixels a frame); motion.moving: the share of pixels
+    moving at least MOVING_PIXEL; motion.shutter: how long the shutter was open as a share of the frame time, from the
+    10 to 90 % width of edges moving across themselves against the width of still ones: a box blur of length L widens
+    a step by 0.8 L, so shutter = sqrt(w_moving^2 - w_still^2) / (0.8 x the edge's motion across itself) (0 without
+    motion blur, 0.5 for a 180 degree shutter).  f: the flow if already made."""
+    g0 = np.asarray(gray0, np.float64)
+    if f is None:
+        f = flow(gray0, gray1)
+    speed = np.hypot(f[..., 0], f[..., 1]) / unit
+    out = {"motion.speed": float("nan"), "motion.moving": float((speed >= MOVING_PIXEL).mean()),
+           "motion.shutter": float("nan"), "motion.edges": 0.0}
+    n = len(e["y"])
+    if n == 0:
+        return out
+    fx, fy = f[e["y"], e["x"], 0], f[e["y"], e["x"], 1]
+    across = np.abs(fx * e["nx"] + fy * e["ny"]) / unit
+    sp = np.hypot(fx, fy) / unit
+    moving = np.nonzero((across >= MOVING_LEAST) & (np.abs(fx * e["nx"] + fy * e["ny"]) >= 0.7 * np.hypot(fx, fy)))[0]
+    still = np.nonzero(sp < STILL_MOST)[0]
+    if len(moving):
+        out["motion.speed"] = float(np.median(sp[moving]))
+    if len(moving) < 10 or len(still) < 10:
+        return out
+    rng = np.random.default_rng(seed)
+    if len(moving) > PROFILE_POINTS:
+        moving = rng.choice(moving, PROFILE_POINTS, replace=False)
+    if len(still) > PROFILE_POINTS:
+        still = rng.choice(still, PROFILE_POINTS, replace=False)
+
+    def widths(idx, half):
+        t, p = _profiles(g0, e, half, unit, idx)
+        sides = (half * 0.6, half)
+        ok, q = _steps(t, p, sides)
+        return ok, np.array([_width(t, row) for row in q])
+
+    ok_s, w_s = widths(still, SHORT[1])
+    w_still = np.nanmedian(w_s) if np.isfinite(w_s).sum() >= 5 else float("nan")
+    half = float(min(80.0, max(SHORT[1], 1.5 * np.percentile(across[moving], 90))))
+    ok_m, w_m = widths(moving, half)
+    u = across[moving][ok_m]
+    good = np.isfinite(w_m)
+    out["motion.edges"] = float(good.sum())
+    if good.sum() < 5 or not np.isfinite(w_still):
+        return out
+    s = np.sqrt(np.clip(w_m[good] ** 2 - w_still ** 2, 0.0, None)) / (0.8 * u[good])
+    out["motion.shutter"] = float(np.median(s))
+    return out
+
+
+CA_SCALES = np.linspace(-0.012, 0.012, 25)     # the radial scales of red and blue against green searched
+
+
+def aberration(rgb, unit=1.0):
+    """colour fringes: how red and blue lie against green, read from the channels' gradients
+
+    ca.red_x / red_y, ca.blue_x / blue_y: the shift of the whole channel (phase correlation; 720 line pixels, + right
+    and + down); ca.red_radial / blue_radial: after that, the channel's scale about the centre as the move it makes at
+    the corner of a 720 line picture (720 line pixels; + outward), as a lens's lateral colour does."""
+    cv2 = _cv2()
+    img = np.asarray(rgb, np.float64)
+    h, w = img.shape[:2]
+    grads = [np.float32(_gradient(img[..., c])[2]) for c in range(3)]
+    win = cv2.createHanningWindow((w, h), cv2.CV_32F)
+    out = {}
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+    r = np.hypot((yy - cy) / (h / 2.0), (xx - cx) / (w / 2.0))
+    outer = (r >= 0.45) & (r <= 1.2)
+    corner = math.hypot(w / 2.0, h / 2.0) / unit
+    for name, c in (("red", 0), ("blue", 2)):
+        (dx, dy), _ = cv2.phaseCorrelate(grads[1], grads[c], win)
+        out["ca.%s_x" % name] = float(dx / unit)
+        out["ca.%s_y" % name] = float(dy / unit)
+        best = []
+        for s in CA_SCALES:
+            mx = np.float32(cx + (xx - cx) * (1.0 + s) + dx)
+            my = np.float32(cy + (yy - cy) * (1.0 + s) + dy)
+            back = cv2.remap(grads[c], mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+            a, b = grads[1][outer], back[outer]
+            a, b = a - a.mean(), b - b.mean()
+            best.append(float((a * b).sum() / max(math.sqrt((a * a).sum() * (b * b).sum()), 1e-12)))
+        k = int(np.argmax(best))
+        s = CA_SCALES[k]
+        if 0 < k < len(best) - 1:
+            y0, y1, y2 = best[k - 1], best[k], best[k + 1]
+            den = y0 - 2 * y1 + y2
+            if den < 0:
+                s = s + 0.5 * (y0 - y2) / den * (CA_SCALES[1] - CA_SCALES[0])
+        out["ca.%s_radial" % name] = float(s * corner)
+    return out
+
+
+LINE_LEAST = 0.2                  # distortion: segments at least this long (of the picture's height), and at least
+LINE_OFF_CENTRE = 0.2             # this far from the centre (of the half diagonal), are read for their bend
+
+
+K1_SEARCH = np.linspace(-0.4, 0.4, 161)
+
+
+def _undistort(px, py, k1):
+    """points seen through r_d = r_u (1 + k1 r_u^2) put back where a straight lens would show them"""
+    rd = np.hypot(px, py)
+    ru = rd.copy()
+    for _ in range(8):
+        ru = rd / (1.0 + k1 * ru * ru)
+    scale = np.where(rd > 0, ru / np.maximum(rd, 1e-12), 1.0)
+    return px * scale, py * scale
+
+
+def _distort(px, py, k1):
+    r2 = px * px + py * py
+    return px * (1.0 + k1 * r2), py * (1.0 + k1 * r2)
+
+
+def _reprojection(px, py, groups, k1):
+    """the squared distance (in the frame) of the edge points from straight lines put through them where a lens
+    without distortion would have shown them: the lines fitted there, the points' feet on them seen through k1 again"""
+    ux, uy = _undistort(px, py, k1)
+    total = 0.0
+    for idx in groups:
+        pts = np.stack([ux[idx], uy[idx]], axis=1)
+        c = pts.mean(axis=0)
+        _, _, vt = np.linalg.svd(pts - c, full_matrices=False)
+        d = vt[0]
+        foot = c + ((pts - c) @ d)[:, None] * d[None, :]
+        fx, fy = _distort(foot[:, 0], foot[:, 1], k1)
+        total += float(((fx - px[idx]) ** 2 + (fy - py[idx]) ** 2).sum())
+    return total
+
+
+def distortion(gray, unit=1.0):
+    """the bend of straight lines (the plumb-line way): long straight segments (Hough) and the edge points along each
+    (those whose own normal lies along the segment's, each side of a line apart, placed to a part of a pixel), then
+    the k1 of r_d = r_u (1 + k1 r_u^2) (r over the half diagonal) under which straight lines fit them best, the fit
+    measured in the frame (where they were seen): distortion.k1 (negative for barrel, the middle of a line bowed
+    away from the centre; positive for pincushion), distortion.segments (how many were read)"""
+    cv2, ndi = _cv2(), _ndi()
+    g = np.asarray(gray, np.float64)
+    h, w = g.shape
+    u8 = np.clip(ndi.gaussian_filter(g, 0.7) * 255.0, 0, 255).astype(np.uint8)
+    canny = cv2.Canny(u8, 40, 100, L2gradient=True)
+    segs = cv2.HoughLinesP(canny, 1, math.pi / 720.0, threshold=int(0.15 * h), minLineLength=int(LINE_LEAST * h),
+                           maxLineGap=int(0.02 * h) + 2)
+    out = {"distortion.k1": float("nan"), "distortion.segments": 0.0}
+    if segs is None:
+        return out
+    ys, xs = np.nonzero(canny)
+    sx, sy, smag = _gradient(ndi.gaussian_filter(g, 1.0))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        gnx, gny = sx[ys, xs] / smag[ys, xs], sy[ys, xs] / smag[ys, xs]
+    ok = np.isfinite(gnx) & np.isfinite(gny)
+    ys, xs, gnx, gny = ys[ok], xs[ok], gnx[ok], gny[ok]
+    # each edge point moved along its normal to the top of a parabola through the gradient there (sub-pixel)
+    m = [ndi.map_coordinates(smag, [ys + k * gny, xs + k * gnx], order=1, mode="nearest") for k in (-1.0, 0.0, 1.0)]
+    den = m[0] - 2.0 * m[1] + m[2]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        step = np.where(den < 0, np.clip(0.5 * (m[0] - m[2]) / den, -1.0, 1.0), 0.0)
+    fy_, fx_ = ys + step * gny, xs + step * gnx
+    half = math.hypot(w / 2.0, h / 2.0)
+    cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+    py, px = (fy_ - cy) / half, (fx_ - cx) / half
+    groups = []
+    for x1, y1, x2, y2 in segs[:, 0, :]:
+        a = np.array([(x1 - cx) / half, (y1 - cy) / half])
+        b = np.array([(x2 - cx) / half, (y2 - cy) / half])
+        length = float(np.hypot(*(b - a)))
+        if length <= 0:
+            continue
+        tdir = (b - a) / length
+        nrm = np.array([-tdir[1], tdir[0]])
+        mid = (a + b) / 2.0
+        if abs(float(mid @ nrm)) < LINE_OFF_CENTRE:
+            continue                                            # a line through the middle does not bend
+        rel = np.stack([px - mid[0], py - mid[1]], axis=1)
+        along, across = rel @ tdir, rel @ nrm
+        band = (np.abs(along) <= length / 2.0) & (np.abs(across) <= 4.0 / half)
+        facing = gnx * nrm[0] + gny * nrm[1]
+        for side in (facing >= 0.9, facing <= -0.9):    # each side of a line apart (a line's width is no bend)
+            idx = np.nonzero(band & side)[0]
+            if len(idx) >= 0.6 * length * half:
+                groups.append(idx)
+    out["distortion.segments"] = float(len(groups))
+    if len(groups) < 3:
+        return out
+    costs = [_reprojection(px, py, groups, k1) for k1 in K1_SEARCH]
+    k = int(np.argmin(costs))
+    k1 = float(K1_SEARCH[k])
+    if 0 < k < len(costs) - 1:
+        y0, y1, y2 = costs[k - 1], costs[k], costs[k + 1]
+        den = y0 - 2 * y1 + y2
+        if den > 0:
+            k1 += 0.5 * (y0 - y2) / den * float(K1_SEARCH[1] - K1_SEARCH[0])
+    out["distortion.k1"] = k1
+    return out

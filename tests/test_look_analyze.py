@@ -383,5 +383,152 @@ class TextureTest(unittest.TestCase):
         self.assertEqual(LA.glitch(clean)["glitch.tears"], 0)
 
 
+def steps_picture(h=360, w=640, seed=21):
+    """big flat rectangles (steps with wide flat sides), well apart: clean edges to read blur from"""
+    rng = np.random.default_rng(seed)
+    img = np.full((h, w), 0.45)
+    for _ in range(14):
+        y0, x0 = rng.integers(0, h - 90), rng.integers(0, w - 120)
+        img[y0:y0 + rng.integers(60, 90), x0:x0 + rng.integers(80, 120)] = rng.choice([0.15, 0.8])
+    return img
+
+
+def moving_frames(shutter, speed=12.0, h=360, w=640):
+    """two frames of a bright bar moving right by speed pixels a frame over a still background with still blocks
+    above it, each frame the mean of the bar's positions while a shutter open for that share of the frame is open"""
+    still = np.full((h, w), 0.3)
+    still[20:120, 60:200], still[40:140, 300:420], still[30:110, 480:600] = 0.7, 0.12, 0.85
+    frames = []
+    for f in range(2):
+        acc = np.zeros((h, w))
+        subs = 32
+        for k in range(subs):
+            x = 180.0 + speed * (f + shutter * k / subs)
+            img = still.copy()
+            xs = np.arange(w)
+            cover = np.clip(np.minimum(xs + 1 - x, x + 140 - xs), 0, 1)        # a bar 140 wide, its edges antialiased
+            img[200:320] = img[200:320] * (1 - cover) + 0.9 * cover
+            acc += img
+        frames.append(acc / subs)
+    return frames
+
+
+def barrel(gray, k1):
+    """gray seen through a lens with radial distortion r_d = r_u (1 + k1 r_u^2) (r over the half diagonal; k1 < 0 is
+    barrel, the middle of a straight line bowed away from the centre)"""
+    h, w = gray.shape
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+    cy, cx, half = (h - 1) / 2.0, (w - 1) / 2.0, math.hypot(w / 2.0, h / 2.0)
+    dy, dx = (yy - cy) / half, (xx - cx) / half
+    rd = np.hypot(dx, dy)
+    ru = rd.copy()
+    for _ in range(20):                                   # solve rd = ru (1 + k1 ru^2) for ru
+        ru = rd / (1.0 + k1 * ru * ru)
+    scale = np.where(rd > 0, ru / np.maximum(rd, 1e-12), 1.0)
+    # what falls outside the picture is left blank (stretching its border would draw straight streaks)
+    return ndi.map_coordinates(gray, [cy + dy * scale * half, cx + dx * scale * half], order=1, mode="constant",
+                               cval=float(np.median(gray)))
+
+
+def grid(h=360, w=640, step=40):
+    img = np.full((h, w), 0.85)
+    for y in range(step // 2, h, step):
+        img[y - 1:y + 1] = 0.15
+    for x in range(step // 2, w, step):
+        img[:, x - 1:x + 1] = 0.15
+    return ndi.gaussian_filter(img, 0.6)
+
+
+@unittest.skipUnless(LA, NEEDS)
+class OpticsTest(unittest.TestCase):
+    unit = 0.5
+
+    def test_edge_blur_reads_the_blur_of_a_step(self):
+        sharp = steps_picture()
+        got = []
+        for sigma in (1.0, 2.0, 4.0):
+            e = LA.edges(ndi.gaussian_filter(sharp, sigma), unit=self.unit)
+            got.append(float(np.median(e["sigma"])))
+            self.assertAlmostEqual(got[-1], sigma / self.unit, delta=0.25 * sigma / self.unit)
+        self.assertLess(got[0], got[1])
+        self.assertLess(got[1], got[2])
+
+    def test_depth_of_field_is_sharp_edges_and_soft_edges_in_one_frame(self):
+        # the left half in focus, the right half blurred by 4 pixels (8 of a 720 line picture)
+        sharp = steps_picture()
+        soft = ndi.gaussian_filter(sharp, 4.0)
+        both = sharp.copy()
+        both[:, 320:] = soft[:, 320:]
+        dof = LA.depth_of_field(LA.edges(both, unit=self.unit))
+        flat = LA.depth_of_field(LA.edges(ndi.gaussian_filter(sharp, 0.7), unit=self.unit))
+        self.assertLess(dof["dof.sharp"], 2.5)
+        self.assertAlmostEqual(dof["dof.soft"], 8.0, delta=2.5)
+        self.assertGreater(dof["dof.soft_share"], 0.25)
+        self.assertLess(flat["dof.soft_share"], 0.05)
+        self.assertLess(flat["dof.soft"] - flat["dof.sharp"], 1.5)
+
+    def test_sharpening_leaves_a_halo_on_both_sides_of_an_edge(self):
+        picture = ndi.gaussian_filter(steps_picture(), 1.0)
+        unsharp = picture + 0.8 * (picture - ndi.gaussian_filter(picture, 2.0))
+        plain = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
+        sharpened = LA.edge_profiles(unsharp, LA.edges(unsharp, unit=self.unit), unit=self.unit)
+        self.assertLess(plain["sharp.overshoot"], 0.02)
+        self.assertGreater(sharpened["sharp.overshoot"], 0.08)
+        self.assertAlmostEqual(plain["sharp.width"], 2.563 * 1.0 / self.unit, delta=1.0)   # 10-90 % of a 1 px blur
+
+    def test_diffusion_is_a_veil_round_a_sharp_edge(self):
+        picture = ndi.gaussian_filter(steps_picture(), 0.7)
+        for alpha in (0.15, 0.3):
+            veiled = (1 - alpha) * picture + alpha * ndi.gaussian_filter(picture, 10.0)
+            d = LA.edge_profiles(veiled, LA.edges(veiled, unit=self.unit), unit=self.unit)
+            # the share of the step that lies beyond 4 pixels (720 line) of the edge: alpha less the little of the
+            # wide blur that falls within those 4 pixels (2 here); the steps' far sides are 14 to 20 pixels out, where
+            # the veil has not quite come to its end, so a little less is read
+            want = alpha * (1 - math.erf(2.0 / (10.0 * math.sqrt(2))))
+            self.assertAlmostEqual(d["diffusion.share"], want, delta=0.06)
+            self.assertGreater(d["diffusion.radius"], 6.0)
+        clean = LA.edge_profiles(picture, LA.edges(picture, unit=self.unit), unit=self.unit)
+        self.assertLess(clean["diffusion.share"], 0.04)
+
+    def test_motion_blur_gives_the_shutter(self):
+        for shutter in (0.0, 0.5, 1.0):
+            a, b = moving_frames(shutter)
+            m = LA.motion(a, b, LA.edges(a, unit=self.unit), unit=self.unit)
+            self.assertAlmostEqual(m["motion.speed"], 24.0, delta=3.0)        # 12 pixels a frame at 360 lines
+            self.assertAlmostEqual(m["motion.shutter"], shutter, delta=0.15, msg=shutter)
+
+    def test_colour_fringes_shifted_and_scaled(self):
+        grey = ndi.gaussian_filter(blocks(360, 640, seed=7, n=150), 0.8)
+        shifted = rgb(grey)
+        shifted[..., 0] = ndi.shift(grey, (0, 2.0), order=1, mode="nearest")      # red 2 px right
+        shifted[..., 2] = ndi.shift(grey, (0, -2.0), order=1, mode="nearest")     # blue 2 px left
+        ca = LA.aberration(shifted, unit=self.unit)
+        self.assertAlmostEqual(ca["ca.red_x"], 4.0, delta=0.5)       # 720 line pixels
+        self.assertAlmostEqual(ca["ca.blue_x"], -4.0, delta=0.5)
+        self.assertAlmostEqual(ca["ca.red_y"], 0.0, delta=0.5)
+        h, w = grey.shape
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+        cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+        scaled = rgb(grey)
+        s = 1.004
+        scaled[..., 0] = ndi.map_coordinates(grey, [cy + (yy - cy) / s, cx + (xx - cx) / s], order=1, mode="nearest")
+        ca = LA.aberration(scaled, unit=self.unit)
+        self.assertAlmostEqual(ca["ca.red_radial"], 0.004 * math.hypot(640, 360), delta=0.6)
+        self.assertAlmostEqual(ca["ca.blue_radial"], 0.0, delta=0.4)
+        clean = LA.aberration(rgb(grey), unit=self.unit)
+        for key in ("ca.red_x", "ca.red_y", "ca.blue_x", "ca.red_radial"):
+            self.assertAlmostEqual(clean[key], 0.0, delta=0.2, msg=key)
+
+    def test_straight_lines_bend_by_the_lens_distortion(self):
+        # k1 of r_d = r_u (1 + k1 r_u^2): negative for barrel (lines bow away from the centre), positive for pincushion
+        g = grid()
+        none = LA.distortion(g, unit=self.unit)
+        self.assertGreater(none["distortion.segments"], 6)
+        self.assertAlmostEqual(none["distortion.k1"], 0.0, delta=0.01)
+        for k1, tol in ((-0.05, 0.02), (-0.15, 0.04), (0.1, 0.03)):
+            got = LA.distortion(barrel(g, k1), unit=self.unit)
+            self.assertAlmostEqual(got["distortion.k1"], k1, delta=tol, msg=k1)
+
+
 if __name__ == "__main__":
     unittest.main()
