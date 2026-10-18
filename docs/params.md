@@ -1437,24 +1437,24 @@
 | DOF_MOST | 3.0 |  | 1127 | a stage nearer the camera than the focus blurs at most this many times stage.dof |  |  |  |  |  |  |  |  |
 | DOF_LEVELS | 2.0 ** 0.5 |  | 1128 | defocus blurs the picture at levels of blur this far apart (and 0.5 px the first) |  |  |  |  |  |  |  |  |
 | floor_depth(height) | 0.0 |  | 1159 |  |  |  |  |  |  |  |  |  |
-| LAMP_LIFT | 0.15 | units | 1215 | MMD units: the edge lamps stand this far above the floor |  | ○ |  |  |  |  |  | retarget |
-| LAMP_LEAST | 0.75 | px | 1216 | pixels: a lamp's core is never narrower (smaller, it would fall between the pixels) |  |  |  |  |  |  |  |  |
-| LAMP_COLOURS.cool | (150.0, 180.0, 255.0) |  | 1217 | the specks' colours |  |  |  |  |  |  |  |  |
-| LAMP_COLOURS.warm | (255.0, 214.0, 150.0) |  | 1217 | the specks' colours |  |  |  |  |  |  |  |  |
-| lamp_places(size) | (1280, 720) |  | 1220 |  |  |  |  |  |  |  |  |  |
-| FRESNEL_R0 | 0.04 |  | 1294 | a polished floor's share of the light it mirrors, looked at straight down (Schlick's) |  |  |  |  |  |  |  |  |
-| mirrored(height) | 0.0 |  | 1297 |  |  |  |  |  |  |  |  |  |
-| moments(shutter) | 1.0 |  | 1336 |  |  |  |  |  |  |  |  |  |
-| moments(subframes) | 1 |  | 1336 |  |  |  |  |  |  |  |  |  |
-| SHARP_ENOUGH | 1.0 | px | 1344 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
-| floor_moves(height) | 0.0 |  | 1347 |  |  |  |  |  |  |  |  |  |
-| floor_moments(height) | 0.0 |  | 1358 |  |  |  |  |  |  |  |  |  |
-| stage_image(shutter) | 1.0 |  | 1369 |  |  |  |  |  |  |  |  |  |
-| stage_image(subframes) | 1 |  | 1369 |  |  |  |  |  |  |  |  |  |
-| write_stage(jobs) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| write_stage(shutter) | 1.0 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| write_stage(subframes) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1516 |  |  |  |  |  |  |  |  |  |
+| LAMP_LIFT | 0.15 | units | 1220 | MMD units: the edge lamps stand this far above the floor |  | ○ |  |  |  |  |  | retarget |
+| LAMP_LEAST | 0.75 | px | 1221 | pixels: a lamp's core is never narrower (smaller, it would fall between the pixels) |  |  |  |  |  |  |  |  |
+| LAMP_COLOURS.cool | (150.0, 180.0, 255.0) |  | 1222 | the specks' colours |  |  |  |  |  |  |  |  |
+| LAMP_COLOURS.warm | (255.0, 214.0, 150.0) |  | 1222 | the specks' colours |  |  |  |  |  |  |  |  |
+| lamp_places(size) | (1280, 720) |  | 1225 |  |  |  |  |  |  |  |  |  |
+| FRESNEL_R0 | 0.04 |  | 1299 | a polished floor's share of the light it mirrors, looked at straight down (Schlick's) |  |  |  |  |  |  |  |  |
+| mirrored(height) | 0.0 |  | 1302 |  |  |  |  |  |  |  |  |  |
+| moments(shutter) | 1.0 |  | 1341 |  |  |  |  |  |  |  |  |  |
+| moments(subframes) | 1 |  | 1341 |  |  |  |  |  |  |  |  |  |
+| SHARP_ENOUGH | 1.0 | px | 1349 | px: a floor that moves less while the shutter is open is drawn once, at its middle |  |  |  |  |  |  |  |  |
+| floor_moves(height) | 0.0 |  | 1352 |  |  |  |  |  |  |  |  |  |
+| floor_moments(height) | 0.0 |  | 1363 |  |  |  |  |  |  |  |  |  |
+| stage_image(shutter) | 1.0 |  | 1374 |  |  |  |  |  |  |  |  |  |
+| stage_image(subframes) | 1 |  | 1374 |  |  |  |  |  |  |  |  |  |
+| write_stage(jobs) | 1 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| write_stage(shutter) | 1.0 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| write_stage(subframes) | 1 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1521 |  |  |  |  |  |  |  |  |  |
 
 ## mv_look.py（18. 描画と後処理、104）
 
@@ -1553,17 +1553,17 @@
 | world_inputs(jobs) | 1 |  | 1121 |  |  |  |  |  |  |  |  |  |
 | world_inputs(shutter) | 0.5 |  | 1121 |  |  |  |  |  |  |  |  |  |
 | world_inputs(subframes) | 1 |  | 1121 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1339 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1354 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1356 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1358 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1360 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1374 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1375 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1385 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1348 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1363 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1365 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1367 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1369 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1383 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1384 | as for render |  |  |  |  |  |  |  |  |
 | --encoder | "x264" |  | 1394 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1396 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1398 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1403 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1405 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1407 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
