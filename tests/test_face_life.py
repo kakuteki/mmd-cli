@@ -921,6 +921,62 @@ class SeedTest(unittest.TestCase):
         self.assertNotEqual(a, c)
 
 
+def darting_eyes(starts, degrees=24.0):
+    """the 両目 rotation per frame: level, but at each of `starts` a saccade of `degrees` to the side in 3 frames, held
+    for 40 frames and back in 3 (saccades large enough to bring blinks: BIG_SACCADE)"""
+    yaw = np.zeros(F)
+    for s in starts:
+        yaw[s:s + 3] = np.linspace(0.0, degrees, 4)[1:]
+        yaw[s + 3:s + 43] = degrees
+        yaw[s + 43:s + 46] = np.linspace(degrees, 0.0, 4)[1:]
+    eyes = still_eyes()
+    eyes[:, 1] = np.sin(np.radians(yaw) / 2)
+    eyes[:, 3] = np.cos(np.radians(yaw) / 2)
+    return eyes
+
+
+class StreamsTest(unittest.TestCase):
+    """the mouth draws from a stream of its own: how many draws the blinks take (they follow the gaze's saccades and
+    shifts) does not move it, and the expressions are drawn before the blinks.  Before (v11, 2026-10-18) another gaze
+    moved the breathing mouth: at 96.9 s of the MV, outside the lyric lines, the breath rose into a sung onset and the
+    mouth opened 135 ms before the voice (review v11revf)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.still = face_life.plan(inputs(), seed=0)
+        cls.darting = face_life.plan(inputs(eyes=darting_eyes(range(300, 1700, 97))), seed=0)
+
+    @staticmethod
+    def keys_of(result, names):
+        return sorted((k.name, k.frame, round(k.weight, 6)) for k in result.motion.morphs if k.name in names)
+
+    def test_another_gaze_brings_other_blinks(self):
+        """the premise: the blinks took another number of draws"""
+        before = [b["start"] for b in self.still.report["blink"]["new"]["list"]]
+        after = [b["start"] for b in self.darting.report["blink"]["new"]["list"]]
+        self.assertNotEqual(before, after)
+
+    def test_the_mouth_does_not_follow_the_gaze(self):
+        self.assertEqual(self.keys_of(self.still, set(face_life.VOWELS)), self.keys_of(self.darting, set(face_life.VOWELS)))
+        breath = tracks(self.still.motion)["あ"][1000:1500]
+        self.assertGreater(float(breath.max()), 0.04)                 # it breathes there (PlanTest)
+
+    def test_the_expressions_do_not_follow_the_gaze(self):
+        names = (set(face_life.EXPRESSIONS) | {face_life.CORNERS_UP[0], face_life.CORNERS_DOWN[0]}) - {face_life.SMILE}
+        self.assertEqual(self.keys_of(self.still, names), self.keys_of(self.darting, names))
+        # 笑い is lowered under a blink so the eye shuts no further than the author's (cap_smile): away from the blinks
+        # of both it is the same
+        a, b = tracks(self.still.motion), tracks(self.darting.motion)
+        shut = (a[face_life.BLINK] >= 0.5) | (b[face_life.BLINK] >= 0.5)
+        near = np.convolve(shut.astype(float), np.ones(5), mode="same") > 0
+        self.assertGreater(float(a[face_life.SMILE][~near].max()), 0.3)
+        np.testing.assert_allclose(a[face_life.SMILE][~near], b[face_life.SMILE][~near], atol=1e-6)
+
+    def test_another_seed_breathes_otherwise(self):
+        other = tracks(face_life.plan(inputs(), seed=5).motion)["あ"][1000:1500]
+        self.assertGreater(float(np.abs(other - tracks(self.still.motion)["あ"][1000:1500]).max()), 0.01)
+
+
 class WakeUpTest(unittest.TestCase):
     def test_eyes_that_open_after_the_body_starts_open_before_it(self):
         result = face_life.plan(inputs(body_start=60), seed=0)

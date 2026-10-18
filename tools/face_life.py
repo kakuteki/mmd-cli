@@ -8,6 +8,13 @@ FACE is the face motion to rewrite (the KAZUSA "Face&Lips" of the MV: expression
 it is loaded after, GAZE the 両目 motion loaded after both (tools/eye_gaze.py), MODEL the model (its morph names, and
 its bones for the forward kinematics of the head).  --audio is the song (read with ffmpeg; the voice), --cues the text
 cues of the MV (the lyric lines).  OUT is a face motion to load in place of FACE.  The same seed gives the same file.
+The draws: the expressions first (the envelope's keys and 6 a change: as many for one FACE and one length of the
+dance; the gaze plays no part), then the blinks on the same stream (how many follows the gaze's shifts and saccades);
+the mouth's breathing draws from a stream of its own (MOUTH_STREAM, the human style), so that another gaze brings
+other blinks but leaves the mouth as it was (v11, 2026-10-18: the layers before this tool changed, the gaze had other
+saccades, the breath moved, and at 96.9 s of the MV it rose into a sung onset outside the lines: the mouth opened
+135 ms before the voice).  The expressions still follow the dance where they should (kimes, the head's turns) and
+笑い is lowered under a blink (cap_smile).  The v7 style keeps its one stream (v7 byte for byte).
 
 Why (the analyses a10, a11 and a12 of the MV v2): the face held two expressions for 8 to 11 seconds each, completely
 still most of that time, and switched brows, eyes and mouth together in 5 frames; every blink was the same 5-frame
@@ -248,6 +255,8 @@ LEAD = 15                       # frames the eyes are open before the body moves
 WAKE_BEFORE, WAKE_AFTER, WAKE_OPEN = 15, 45, 10
 BODY_MOVES = (3.0, 0.1)         # degrees / model units the head has moved from frame 0 when the body starts (more
                                 # than breathing at rest moves it)
+MOUTH_STREAM = "face_life mouth %s"     # the seed (formatted with --seed) of the mouth's own stream (its breathing,
+                                        # the human style): random.Random of a text is the same on every run
 MEASURE_SEED = 1234             # the circular shifts of the chance levels
 SHIFTS = 2000
 
@@ -587,7 +596,8 @@ def plan(inp, seed=0, hold=None, style="human"):
     or "v7" (STYLES)"""
     if style not in STYLES:
         raise ValueError("the style is one of %s, not %r" % (", ".join(STYLES), style))
-    rng = random.Random(seed)
+    rng = random.Random(seed)                   # the expressions (the envelope first), then the blinks
+    mouth_rng = rng if style == "v7" else random.Random(MOUTH_STREAM % (seed,))
     frames = inp.frames
     original = morph_keys(inp.face)
     hold = check_hold(hold, original, inp.morphs)
@@ -607,7 +617,7 @@ def plan(inp, seed=0, hold=None, style="human"):
         allowed = np.maximum(1.0, track(keys.get(BLINK, []), frames) + track(keys.get(SMILE, []), frames))
         expressions[SMILE], capped = cap_smile(expressions[SMILE], track(blink, frames), allowed, frames)
         blink_info["smile_frames_capped"] = capped
-    vowels, mouth_info = rewrite_mouth(keys, frames, onsets, phrases, inp, rng)
+    vowels, mouth_info = rewrite_mouth(keys, frames, onsets, phrases, inp, mouth_rng)
     new = dict(keys)
     new.update(expressions)
     if blink is not None:
