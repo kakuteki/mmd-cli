@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2377（定数 1866・引数 132・関数の既定 379。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 429（retarget 268・rig 69・踊りだけ 104）、記録の出所つき 84。
+- 数: 全部 2379（定数 1868・引数 132・関数の既定 379。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 429（retarget 268・rig 69・踊りだけ 104）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -2145,7 +2145,7 @@
 | --sub | 16 |  | 931 |  |  |  |  |  |  |  |  |  |
 | --shutter | 0.5 |  | 932 |  |  |  |  |  |  |  |  |  |
 
-### look_analyze.py（確かめ・部品、161）
+### look_analyze.py（確かめ・部品、163）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2257,59 +2257,61 @@
 | EDGE_OUT | (12.0, 20.0) |  | 1668 | ... against the stage's just outside it, past her glow and the mask's error |  |  |  |  |  |  |  |  |
 | MERGE_DE | 15.0 |  | 1669 | CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity) |  |  |  |  |  |  |  |  |
 | SEG_SIZE | 1024 |  | 1670 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
-| _along(order) | 1 |  | 1750 |  |  |  |  |  |  |  |  |  |
-| silhouette(seed) | 0 |  | 1757 |  |  |  |  |  |  |  |  |  |
-| silhouette(unit) | 1.0 |  | 1757 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(seed) | 0 |  | 1811 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(unit) | 1.0 |  | 1811 |  |  |  |  |  |  |  |  |  |
-| region_measures(seed) | 0 |  | 1839 |  |  |  |  |  |  |  |  |  |
-| region_measures(unit) | 1.0 |  | 1839 |  |  |  |  |  |  |  |  |  |
-| seg_session(threads) | 6 |  | 1887 |  |  |  |  |  |  |  |  |  |
-| BOOTSTRAP | 400 |  | 1917 |  |  |  |  |  |  |  |  |  |
-| _trimmed_rms(keep) | 0.9 |  | 1920 |  |  |  |  |  |  |  |  |  |
-| summarise(seed) | 0 |  | 1928 |  |  |  |  |  |  |  |  |  |
-| probe(fps) | 30 |  | 2062 |  |  |  |  |  |  |  |  |  |
-| read_frames(start) | 0.0 |  | 2143 |  |  |  |  |  |  |  |  |  |
-| THUMB | (64, 36) |  | 2168 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
-| read_thumbs(start) | 0.0 |  | 2171 |  |  |  |  |  |  |  |  |  |
-| measure_video(height) | 720 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(jobs) | 1 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(pairs) | 120 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(fps) | 30 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(full_every) | 4 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(pair_every) | 4 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(seed) | 0 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| layer_masks(start) | 0.0 |  | 2358 |  |  |  |  |  |  |  |  |  |
-| measure_regions(frames) | 48 |  | 2380 |  |  |  |  |  |  |  |  |  |
-| measure_regions(height) | 720 |  | 2380 |  |  |  |  |  |  |  |  |  |
-| measure_regions(fps) | 30 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| measure_regions(seed) | 0 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| measure_regions(threads) | 6 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| TEXT_LEAST | 8.0 |  | 2442 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
-| text_summary(unit) | 1.0 |  | 2466 |  |  |  |  |  |  |  |  |  |
-| measure_text(frames) | 24 |  | 2495 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(height) | 720 |  | 2636 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(size) | (320, 180) |  | 2636 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 720 |  | 2666 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2666 |  |  |  |  |  |  |  |  |  |
-| --pairs | 120 |  | 2848 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2849 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2850 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 2851 |  |  |  |  |  |  |  |  |  |
-| --pair-every | 4 |  | 2852 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
-| --full-every | 4 |  | 2854 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 2856 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --frames | 48 | frames | 2866 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2867 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2868 |  |  |  |  |  |  |  |  |  |
-| --threads | 6 |  | 2869 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
-| --fps | 30 |  | 2870 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --size | (320, 180) |  | 2889 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2891 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
-| --frames | 24 | frames | 2896 |  |  |  |  |  |  |  |  |  |
-| --what | "dof" |  | 2901 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2903 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2905 |  |  |  |  |  |  |  |  |  |
+| FACE_CHEEK | ((0.55, 0.85), (0.25, 0.75)) |  | 1671 | rows and columns of a face's box read for the light on her skin: the cheeks |  |  |  |  |  |  |  |  |
+| FACE_LEAST | 20 | px | 1674 | pixels of the cheeks on the person at least, for a face to be read |  |  |  |  |  | ○ |  |  |
+| _along(order) | 1 |  | 1757 |  |  |  |  |  |  |  |  |  |
+| silhouette(seed) | 0 |  | 1764 |  |  |  |  |  |  |  |  |  |
+| silhouette(unit) | 1.0 |  | 1764 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(seed) | 0 |  | 1818 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(unit) | 1.0 |  | 1818 |  |  |  |  |  |  |  |  |  |
+| region_measures(seed) | 0 |  | 1846 |  |  |  |  |  |  |  |  |  |
+| region_measures(unit) | 1.0 |  | 1846 |  |  |  |  |  |  |  |  |  |
+| seg_session(threads) | 6 |  | 1911 |  |  |  |  |  |  |  |  |  |
+| BOOTSTRAP | 400 |  | 1941 |  |  |  |  |  |  |  |  |  |
+| _trimmed_rms(keep) | 0.9 |  | 1944 |  |  |  |  |  |  |  |  |  |
+| summarise(seed) | 0 |  | 1952 |  |  |  |  |  |  |  |  |  |
+| probe(fps) | 30 |  | 2086 |  |  |  |  |  |  |  |  |  |
+| read_frames(start) | 0.0 |  | 2167 |  |  |  |  |  |  |  |  |  |
+| THUMB | (64, 36) |  | 2192 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
+| read_thumbs(start) | 0.0 |  | 2195 |  |  |  |  |  |  |  |  |  |
+| measure_video(height) | 720 |  | 2255 |  |  |  |  |  |  |  |  |  |
+| measure_video(jobs) | 1 |  | 2255 |  |  |  |  |  |  |  |  |  |
+| measure_video(pairs) | 120 |  | 2255 |  |  |  |  |  |  |  |  |  |
+| measure_video(fps) | 30 |  | 2256 |  |  |  |  |  |  |  |  |  |
+| measure_video(full_every) | 4 |  | 2256 |  |  |  |  |  |  |  |  |  |
+| measure_video(pair_every) | 4 |  | 2256 |  |  |  |  |  |  |  |  |  |
+| measure_video(seed) | 0 |  | 2256 |  |  |  |  |  |  |  |  |  |
+| layer_masks(start) | 0.0 |  | 2382 |  |  |  |  |  |  |  |  |  |
+| measure_regions(frames) | 48 |  | 2420 |  |  |  |  |  |  |  |  |  |
+| measure_regions(height) | 720 |  | 2420 |  |  |  |  |  |  |  |  |  |
+| measure_regions(fps) | 30 |  | 2421 |  |  |  |  |  |  |  |  |  |
+| measure_regions(seed) | 0 |  | 2421 |  |  |  |  |  |  |  |  |  |
+| measure_regions(threads) | 6 |  | 2421 |  |  |  |  |  |  |  |  |  |
+| TEXT_LEAST | 8.0 |  | 2487 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
+| text_summary(unit) | 1.0 |  | 2511 |  |  |  |  |  |  |  |  |  |
+| measure_text(frames) | 24 |  | 2540 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(height) | 720 |  | 2681 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(size) | (320, 180) |  | 2681 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 720 |  | 2711 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2711 |  |  |  |  |  |  |  |  |  |
+| --pairs | 120 |  | 2893 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2894 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2895 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 2896 |  |  |  |  |  |  |  |  |  |
+| --pair-every | 4 |  | 2897 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
+| --full-every | 4 |  | 2899 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 2901 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --frames | 48 | frames | 2913 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2914 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2915 |  |  |  |  |  |  |  |  |  |
+| --threads | 6 |  | 2916 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
+| --fps | 30 |  | 2917 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --size | (320, 180) |  | 2936 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2938 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
+| --frames | 24 | frames | 2943 |  |  |  |  |  |  |  |  |  |
+| --what | "dof" |  | 2948 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2950 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2952 |  |  |  |  |  |  |  |  |  |
 
 ### typo_analyze.py（確かめ・部品、126）
 
