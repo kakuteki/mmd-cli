@@ -487,8 +487,10 @@ STILL_SCALE = 0.006               # and growing or shrinking less than this a fr
 MOVE_LEAST = (3.0, 0.15)          # px and heights: a text comes from at least the larger of these away to have moved
 SCALE_LEAST = 1.15                # it comes at least this much larger or smaller to have zoomed
 ROTATE_LEAST = 6.0                # degrees turned to have rotated
-STAGGER_LEAST = 2                 # frames between the first and the last character to come one after another,
+STAGGER_LEAST = 3                 # frames (and half a frame a character) between the first and the last character to
+#                                   come one after another,
 STAGGER_ORDER = 0.7               # with the order along the line at least this (Spearman)
+STAGGER_R2 = 0.6                  # and a straight line through the characters' times fitting at least this well
 BLUR_LEAST = 0.6                  # edges this much softer than the reference's while the strokes stand out: a blur
 SHARP_FULL = 0.8                  # a text is whole only with its edges at least this sharp against the reference's
 
@@ -1020,30 +1022,36 @@ def _glitch(rgb, y, rgb_ref, y_ref, rb, t, s):
     torn = 0
     if abs(s - 1.0) < 0.05:
         dx, dy = int(round(t[0])), int(round(t[1]))
-        rows = tears = 0
-        for row in range(y0, y1):
-            rr = row - dy
-            a0, a1 = x0 - dx - TEAR_REACH, x1 - dx + TEAR_REACH
-            if not (0 <= rr < y_ref.shape[0]) or a0 < 0 or a1 > y_ref.shape[1]:
-                continue
-            now = y[row, x0:x1]
-            if now.std() < 0.03:
+        ry0, ry1 = int(max(0, rb["y0"])), int(min(y_ref.shape[0], math.ceil(rb["y1"])))
+        rx0, rx1 = int(max(0, rb["x0"])), int(min(y_ref.shape[1], math.ceil(rb["x1"])))
+        rows = 0
+        torn_rows = []
+        for rr in range(ry0, ry1):
+            row = rr + dy
+            a0, a1 = rx0 - TEAR_REACH, rx1 + TEAR_REACH
+            b0, b1 = rx0 + dx, rx1 + dx
+            if not (0 <= row < y.shape[0]) or a0 < 0 or a1 > y_ref.shape[1] or b0 < 0 or b1 > y.shape[1]:
                 continue
             ref_row = y_ref[rr, a0:a1]
-            best = (0, -2.0)
+            mid = ref_row[TEAR_REACH:TEAR_REACH + (rx1 - rx0)]
+            if mid.std() < 0.06:                              # a row with little of the text in it
+                continue
+            now = y[row, b0:b1]
+            vals = {}
             for k2 in range(-TEAR_REACH, TEAR_REACH + 1):
-                seg = ref_row[TEAR_REACH - k2: TEAR_REACH - k2 + (x1 - x0)]
-                if len(seg) != len(now):
-                    continue
+                seg = ref_row[TEAR_REACH - k2: TEAR_REACH - k2 + (rx1 - rx0)]
                 u, v = now - now.mean(), seg - seg.mean()
                 den = math.sqrt(float((u * u).sum() * (v * v).sum()))
-                rk = float((u * v).sum() / den) if den > 1e-12 else -1.0
-                if rk > best[1]:
-                    best = (k2, rk)
+                vals[k2] = float((u * v).sum() / den) if den > 1e-12 else -1.0
             rows += 1
-            if abs(best[0]) >= TEAR_SHIFT and best[1] > 0.5:
-                tears += 1
-        torn = int(rows > 0 and tears / float(rows) >= TEAR_SHARE)
+            k_best = max(vals, key=vals.get)
+            # moved, matching well there, and clearly better than where it should be
+            if abs(k_best) >= TEAR_SHIFT and vals[k_best] > 0.6 and vals[k_best] - vals[0] > 0.25:
+                torn_rows.append(rr)
+        # a tear moves a band of rows together: at least two neighbouring rows
+        band = sum(1 for i, r_ in enumerate(torn_rows) if (i > 0 and torn_rows[i - 1] == r_ - 1) or
+                   (i + 1 < len(torn_rows) and torn_rows[i + 1] == r_ + 1))
+        torn = int(rows > 0 and band / float(rows) >= TEAR_SHARE)
     return split, torn
 
 
@@ -1162,9 +1170,17 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
     st = None
     if part and len(part[0]["alpha_k"]) >= 3:
         times = []
+        seq = part if entering else list(reversed(part))
         for k in range(len(part[0]["alpha_k"])):
-            ok = [r["n"] for r in part if np.isfinite(r["alpha_k"][k]) and r["alpha_k"][k] > 0.5]
-            times.append((ok[0] if entering else ok[-1]) if ok else np.nan)
+            # the frame from which it stands out by half to the end of the phase (going out: back from the end)
+            when = np.nan
+            for r in reversed(seq):
+                v = r["alpha_k"][k]
+                if v is not None and np.isfinite(v) and v > 0.5:
+                    when = r["n"]
+                else:
+                    break
+            times.append(when)
         times = np.array(times, np.float64)
         good = np.isfinite(times)
         if good.sum() >= 3:
@@ -1182,7 +1198,8 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
             st = {"spread_frames": spread, "per_char_s": float(slope) / fps, "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0,
                   "rho": rho, "order": ("top_to_bottom" if slope > 0 else "bottom_to_top") if vertical else
                   ("left_to_right" if slope > 0 else "right_to_left")}
-            if spread >= STAGGER_LEAST and abs(rho) >= STAGGER_ORDER:
+            least = max(STAGGER_LEAST, 0.5 * len(tt))
+            if spread >= least and abs(rho) >= STAGGER_ORDER and st["r2"] >= STAGGER_R2:
                 kinds.append("stagger")
     out["stagger"] = st
     splits = [r["split_px"] for r in moving]
@@ -1191,7 +1208,7 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
     out["glitch"] = {"split_px": float(max(splits)) if splits else 0.0,
                      "split_var": float(max(splits) - min(splits + [rest["split_px"]])) if splits else 0.0,
                      "torn_frames": int(sum(r["torn"] for r in moving)), "flicker": int(flicker)}
-    if out["glitch"]["split_var"] >= GLITCH_SPLIT or out["glitch"]["torn_frames"] >= 1 or flicker >= 1:
+    if out["glitch"]["split_var"] >= GLITCH_SPLIT or out["glitch"]["torn_frames"] >= 2 or flicker >= 1:
         kinds.append("glitch")
     sharp = [r["sharp"] for r in moving if np.isfinite(r["sharp"]) and r["ink_vis"] > 0.5]
     if sharp and min(sharp) < BLUR_LEAST:
