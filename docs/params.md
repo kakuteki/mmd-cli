@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2394（定数 1879・引数 132・関数の既定 383。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 431（retarget 268・rig 69・踊りだけ 106）、記録の出所つき 84。
+- 数: 全部 2396（定数 1881・引数 132・関数の既定 383。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 431（retarget 268・rig 69・踊りだけ 106）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 328 | 13 | 14 | 26 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 330 | 13 | 14 | 26 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1373,7 +1373,7 @@
 | run(seed) | 0 |  | 2001 |  |  |  |  |  |  |  |  |  |
 | --seed | 0 |  | 2093 | the pupil's unrest (default 0) |  |  |  |  |  |  |  |  |
 
-## mv_chunks.py（18. 描画と後処理、28）
+## mv_chunks.py（18. 描画と後処理、30）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1392,19 +1392,21 @@
 | LAYER_BPP | 1.6 |  | 109 | a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42 |  |  |  |  |  |  |  |  |
 | WORLD_BPP | 0.5 |  | 110 | a frame of the stage in the world (tools/mv_world.py, PNG): 0.41 |  |  |  |  |  |  |  |  |
 | MP4_BPP | 0.1 |  | 111 | a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song |  |  |  | ○ |  |  |  | dance |
-| avi_bytes(bytes_per_pixel) | 4 |  | 198 |  |  |  |  |  |  |  |  |  |
-| chunk_disk(workers) | 1 |  | 203 |  |  |  |  |  |  |  |  |  |
-| disk_summary(workers) | 1 |  | 223 |  |  |  |  |  |  |  |  |  |
-| _look_check(shutter) | 0.5 |  | 535 |  |  |  |  |  |  |  |  |  |
-| _look_check(subframes) | 1 |  | 535 |  |  |  |  |  |  |  |  |  |
-| _chunk_call(workers) | 1 |  | 845 |  |  |  |  |  |  |  |  |  |
-| write(workers) | 1 |  | 1216 |  |  |  |  |  |  |  |  |  |
-| --lead | 120 | frames | 1283 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
-| --fps | 240 |  | 1284 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
-| --shutter | 0.5 |  | 1288 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
-| --tag | "final" |  | 1291 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
-| --workers | 1 |  | 1292 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1294 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
+| MMD_POLL_S | 30 | s | 114 | "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render machine's rule, COMMON.md: 3), looking ever… |  |  |  |  |  |  |  |  |
+| MMD_WAIT_MIN | 60 |  | 115 |  |  |  |  |  |  |  |  |  |
+| avi_bytes(bytes_per_pixel) | 4 |  | 202 |  |  |  |  |  |  |  |  |  |
+| chunk_disk(workers) | 1 |  | 207 |  |  |  |  |  |  |  |  |  |
+| disk_summary(workers) | 1 |  | 227 |  |  |  |  |  |  |  |  |  |
+| _look_check(shutter) | 0.5 |  | 544 |  |  |  |  |  |  |  |  |  |
+| _look_check(subframes) | 1 |  | 544 |  |  |  |  |  |  |  |  |  |
+| _chunk_call(workers) | 1 |  | 883 |  |  |  |  |  |  |  |  |  |
+| write(workers) | 1 |  | 1258 |  |  |  |  |  |  |  |  |  |
+| --lead | 120 | frames | 1325 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
+| --fps | 240 |  | 1326 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
+| --shutter | 0.5 |  | 1330 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
+| --tag | "final" |  | 1333 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
+| --workers | 1 |  | 1334 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1336 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
 ## mv_world.py（18. 描画と後処理、54）
 

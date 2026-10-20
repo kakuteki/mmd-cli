@@ -2163,6 +2163,120 @@ class StageWorkersDriverTest(unittest.TestCase):
         self.assertIn("STOP", text)
 
 
+class MmdLimitPlanTest(unittest.TestCase):
+    """"mmd_limit" (render12): before every MMD the driver waits while that many MikuMikuDance (anyone's) run on the machine
+    (the rule of the shared render machine: 3).  Without it the scripts are those of before"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def driver(self, plan, workers=1):
+        summary = mv_chunks.write(mv_chunks.check_plan(dict(plan)), mv_chunks.plan_chunks(SPANS, 120),
+                                  os.path.join(self.tmp, "s%d" % len(os.listdir(self.tmp))), "t", 240, 0.5, workers=workers)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            return f.read()
+
+    def test_mmd_limit_is_a_whole_number_from_1_or_left_out(self):
+        self.assertIsNone(mv_chunks.check_plan(dict(PLAN))["mmd_limit"])
+        self.assertEqual(mv_chunks.check_plan(dict(PLAN, mmd_limit=3))["mmd_limit"], 3)
+        for bad in (0, -1, 2.5, "3", True):
+            with self.assertRaises(ValueError, msg=bad) as ctx:
+                mv_chunks.check_plan(dict(PLAN, mmd_limit=bad))
+            self.assertIn("mmd_limit", str(ctx.exception))
+
+    def test_every_mmd_waits_for_its_turn_first(self):
+        # in every Run-Chunk, a wait before each MMD batch: her batch, and with stage_mmd the stage's batch too
+        for plan, workers, batches in ((dict(PLAN, mmd_limit=3), 1, 1), (dict(PLAN, mmd_limit=3), 2, 1),
+                                       (dict(CITY_PLAN, mmd_limit=3), 1, 2), (dict(CITY_PLAN, mmd_limit=3), 2, 2)):
+            text = self.driver(plan, workers)
+            body = text[text.index("function Run-Chunk("):]
+            body = body[:body.index("\n}\n")]
+            lines = [l.strip() for l in body.splitlines()]
+            runs = [i for i, l in enumerate(lines) if " -m mmd_cli --out " in l]
+            self.assertEqual(len(runs), batches, (plan.get("stage_mmd"), workers))
+            for i in runs:
+                waits = [j for j, l in enumerate(lines[:i]) if l.startswith("Wait-Mmd ")]
+                self.assertTrue(waits, lines[i])
+                # the wait comes after the MMD before it (each MMD waits for its own turn)
+                self.assertTrue(all(j > k for k in runs if k < i for j in waits[-1:]), (lines[i], waits, runs))
+            self.assertIn("$mmdLimit = 3", text)
+        self.assertNotIn("Wait-Mmd", self.driver(dict(PLAN)))
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class WaitMmdTest(unittest.TestCase):
+    """Wait-Mmd of the driver run by itself: it returns at once while fewer than the limit run; with as many running it waits,
+    goes on once one ends, and after the wait it is given stops the run (exit 3).  Stand-ins of MikuMikuDance: ping copied to
+    a MikuMikuDance.exe"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        ping = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE")
+        if not os.path.isfile(ping):
+            self.skipTest("needs PING.EXE")
+        self.exe = os.path.join(self.tmp, "MikuMikuDance.exe")
+        shutil.copy2(ping, self.exe)
+        summary = mv_chunks.write(mv_chunks.check_plan(dict(PLAN, mmd_limit=3)), mv_chunks.plan_chunks(SPANS, 120),
+                                  os.path.join(self.tmp, "s"), "t", 240, 0.5)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            self.function = DiskReserveTest.function(f.read(), "Wait-Mmd")
+
+    def running(self):
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq MikuMikuDance.exe", "/FO", "CSV", "/NH"], capture_output=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.decode("mbcs", "replace")
+        return sum(1 for line in out.splitlines() if line.startswith('"MikuMikuDance.exe"'))
+
+    def fake_mmd(self, seconds):
+        proc = subprocess.Popen([self.exe, "-n", str(seconds), "127.0.0.1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.addCleanup(proc.wait, 10)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def wait(self, limit, minutes, end_after=None, proc=None, clear=None):
+        script = os.path.join(self.tmp, "wait.ps1")
+        with open(script, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write("$mmdLimit = %d\n$mmdWait = %s\n$mmdPoll = 0.2\n%s\n$t = [Diagnostics.Stopwatch]::StartNew()\n"
+                    "Wait-Mmd 't_01' @(%s)\n'went after {0:N1} s' -f $t.Elapsed.TotalSeconds\nexit 0\n"
+                    % (limit, minutes, self.function, mv_chunks._ps(clear) if clear else ""))
+        p = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if end_after is not None:
+            time.sleep(end_after)
+            proc.kill()
+        out = p.communicate(timeout=120)[0].decode("utf-8", "replace")
+        return p.returncode, out
+
+    def test_it_goes_at_once_under_the_limit(self):
+        code, text = self.wait(self.running() + 1, 1)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went after", text)
+        self.assertNotIn("waiting", text)
+
+    def test_it_waits_while_as_many_run_and_goes_on_when_one_ends(self):
+        mmd = self.fake_mmd(120)
+        code, text = self.wait(self.running(), 1, end_after=2.5, proc=mmd)
+        self.assertEqual(code, 0, text)
+        self.assertIn("t_01: waiting, ", text)
+        went = float(re.search(r"went after ([\d.]+) s", text).group(1))
+        self.assertGreaterEqual(went, 2.0, text)
+
+    def test_after_its_wait_it_stops_the_run_with_exit_3_and_clears_what_it_is_given(self):
+        self.fake_mmd(120)
+        pictures = os.path.join(self.tmp, "pictures", "t_01")
+        os.makedirs(pictures)
+        with open(os.path.join(pictures, "mmd_00100.png"), "w") as f:
+            f.write("picture")
+        code, text = self.wait(self.running(), 0.05, clear=pictures)     # 3 seconds
+        self.assertEqual(code, 3, text)
+        self.assertIn("t_01 STOP: ", text)
+        self.assertNotIn("went after", text)
+        self.assertFalse(os.path.exists(pictures))
+
+
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
 class FloorReserveTest(unittest.TestCase):
     """the free space of the workers with a free space kept (keep_free_gb): a chunk starts when the disk holds its peak and the

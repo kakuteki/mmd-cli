@@ -86,7 +86,7 @@ UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
 OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
-            "stage_jobs", "self_shadow", "stage_set", "stage_pictures", "stage_mmd", "keep_free_gb")
+            "stage_jobs", "self_shadow", "stage_set", "stage_pictures", "stage_mmd", "keep_free_gb", "mmd_limit")
 SELF_SHADOWS = ("mmd", "soft")
 MME_DLLS = ("d3d9.dll", "MMHack.dll", "MMEffect.dll")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
@@ -109,6 +109,10 @@ PICTURE_BPP = 1.5                       # MMD's picture of the stage, unpacked (
 LAYER_BPP = 1.6                         # a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42
 WORLD_BPP = 0.5                         # a frame of the stage in the world (tools/mv_world.py, PNG): 0.41
 MP4_BPP = 0.1                           # a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song
+# "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render
+# machine's rule, COMMON.md: 3), looking every MMD_POLL_S seconds, and after MMD_WAIT_MIN minutes stops the run (exit 3)
+MMD_POLL_S = 30
+MMD_WAIT_MIN = 60
 
 
 def _whole(value):
@@ -383,6 +387,11 @@ def check_plan(plan):
     if keep is not None and (isinstance(keep, bool) or not isinstance(keep, (int, float)) or not math.isfinite(keep) or keep < 0):
         raise ValueError("keep_free_gb is the free space (GB of 1024^3 bytes) the driver keeps on the disk of out, from 0, or null "
                          "for none, not %r" % (keep,))
+    # "mmd_limit" (render12): wait before every MMD while this many MikuMikuDance run (anyone's); none for the plans of before
+    full.setdefault("mmd_limit", None)
+    if full["mmd_limit"] is not None and (not _whole(full["mmd_limit"]) or full["mmd_limit"] < 1):
+        raise ValueError("mmd_limit is how many MikuMikuDance may run on the machine before one more starts (it waits while that "
+                         "many run), a whole number from 1, or null, not %r" % (full["mmd_limit"],))
     # "self_shadow": how the model's own body shadow is drawn.  "soft": through MME (beside "mmd") with the effect of
     # tools/mme_shadow.py beside "model"; "mmd": MMD's own.  Either way the driver checks it before MMD renders (mme_shadow
     # verify); without the entry nothing is checked (the plans of before)
@@ -646,10 +655,37 @@ def _helper_lines():
 
 
 def _keep_lines(plan):
-    """with a free space kept (render12): the bytes kept, in the variable the checks of the disk read"""
-    if plan.get("keep_free_gb") is None:
-        return []
-    return ["$keep = [decimal]%d" % int(round(plan["keep_free_gb"] * GB))]
+    """with a free space kept (render12): the bytes kept, in the variable the checks of the disk read; with mmd_limit the limit,
+    the wait and the poll of Wait-Mmd"""
+    lines = []
+    if plan.get("keep_free_gb") is not None:
+        lines.append("$keep = [decimal]%d" % int(round(plan["keep_free_gb"] * GB)))
+    if plan.get("mmd_limit") is not None:
+        lines += ["$mmdLimit = %d" % plan["mmd_limit"], "$mmdWait = %d" % MMD_WAIT_MIN, "$mmdPoll = %d" % MMD_POLL_S]
+    return lines
+
+
+WAIT_MMD = ["function Wait-Mmd($name, [string[]]$clear) {",
+            "    # (mmd_limit) MMD starts only while fewer than $mmdLimit MikuMikuDance run on this machine (anyone's); while as",
+            "    # many run it waits, and after $mmdWait minutes what it is given to clear goes and it stops the run (exit 3;",
+            "    # -Resume goes on from this chunk)",
+            "    $waited = [Diagnostics.Stopwatch]::StartNew()",
+            "    $told = $false",
+            "    while ($true) {",
+            "        $n = @(Get-Process -Name MikuMikuDance -ErrorAction SilentlyContinue).Count",
+            "        if ($n -lt $mmdLimit) {",
+            "            if ($told) { '{0}: {1} MikuMikuDance run now, going on after {2:N0} s' -f $name, $n, $waited.Elapsed.TotalSeconds }",
+            "            return",
+            "        }",
+            "        if (-not $told) { '{0}: waiting, {1} MikuMikuDance run (it starts one while fewer than {2} run)' -f $name, $n, $mmdLimit; $told = $true }",
+            "        if ($waited.Elapsed.TotalMinutes -ge $mmdWait) {",
+            "            foreach ($c in @($clear)) { if ($c) { Remove-Item -LiteralPath $c -Recurse -Force -ErrorAction SilentlyContinue } }",
+            "            '{0} STOP: {1} MikuMikuDance still run after {2} minutes: not started (-Resume goes on from this chunk)' -f $name, $n, $mmdWait",
+            "            exit 3",
+            "        }",
+            "        Start-Sleep -Milliseconds ([int]($mmdPoll * 1000))",
+            "    }",
+            "}"]
 
 
 def _stage_setup_lines(plan):
@@ -758,6 +794,8 @@ def _run_chunk_lines(plan, workers):
         skipped, finished = [], ["    '{0} {1} frames (want {2}), {3} s' -f $name, $n, $want, [int]$sw.Elapsed.TotalSeconds"]
         clock = "[int]$sw.Elapsed.TotalSeconds"
     stop = ["    if ($LASTEXITCODE -ne 0) { Stop-Launched $json }"] if plan.get("self_shadow") == "soft" else []
+    # (mmd_limit) every MMD waits first while as many MikuMikuDance run as the plan allows; the disk is measured after the wait
+    wait = ["    Wait-Mmd $name @()"] if plan.get("mmd_limit") is not None else []
     signature = "function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold"
     stage, cleared, drawn = [], [], []
     if staged:
@@ -780,7 +818,7 @@ def _run_chunk_lines(plan, workers):
                   "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
                   "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
                   "    }"]
-                 + free +
+                 + wait + free +
                  # the stage over the frames the chunk shows: its batch, the plain MMD, its pictures; the stage's AVI goes then
                  ["    $said = Invoke-Native %s @sbatch" % py,
                   "    if ($LASTEXITCODE -ne 0) { '{0} STOP: tools/stage_layer.py could not write the batch of the stage ({1}):' -f $name, (Why $LASTEXITCODE); $said; exit 1 }",
@@ -793,9 +831,9 @@ def _run_chunk_lines(plan, workers):
                   "    if ($got -ne $shown) { '{0} STOP: {1} pictures of the stage, want {2}; the AVI of the stage is kept: {3}' -f $name, $got, $shown, $savi; exit 1 }",
                   "    try { Remove-Item -LiteralPath $savi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $savi, $_ }",
                   "    '{0}: the stage drawn, {1} pictures, {2} s' -f $name, $got, %s" % clock]
-                 + again)
+                 + ["    Wait-Mmd $name @($pics)"] * len(wait) + again)
         drawn = ["    '{0}: her AVI drawn, {1} s' -f $name, %s" % clock]
-        free = []
+        free, wait = [], []
     after = ["    foreach ($done in @($pics, $work)) {",
              "        try { Remove-Item -LiteralPath $done -Recurse -Force -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $done, $_ }",
              "    }"] if staged else []
@@ -825,7 +863,7 @@ def _run_chunk_lines(plan, workers):
              "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
              "    }",
              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }"]
-            + stage + free +
+            + stage + wait + free +
             ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py] + stop +
             ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }"]
             + drawn +
@@ -900,6 +938,8 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, enco
     lines += _helper_lines() + _stamp_lines()
     if plan.get("keep_free_gb") is not None:
         lines += USED + NEED_FREE
+    if plan.get("mmd_limit") is not None:
+        lines += WAIT_MMD
     # the self shadow (with "self_shadow" in the plan), and the look at the rate the fold will draw it at
     lines += _shadow_check_lines(plan)
     lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
@@ -975,6 +1015,8 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "    return $lock",
               "}"]
     lines += _floor_reserve_lines() if keep else _reserve_lines()
+    if plan.get("mmd_limit") is not None:
+        lines += WAIT_MMD
     lines += ["function Release($name) {",
               "    $lock = Lock-Disk",
               "    try { Remove-Item -LiteralPath (Join-Path $run ('busy_' + $name)) -Force -ErrorAction SilentlyContinue } finally { $lock.Close() }",
