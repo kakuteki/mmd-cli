@@ -13,10 +13,13 @@ between the shots, placed on the song's structure.
     python tools/mograph_layer.py draw JOB.json         (write_particles with jobs runs these)
 
 Why (2026-10-21, mograph): the motion graphics of the channel @PizaCG, measured by tools/mograph_analyze.py over nine of its
-videos (typoref, the median [quartiles] a minute): zoom punches 2.91 [2.28, 5.88] (0.23 of them on a beat), a shake of the
-picture of 1.63 [1.47, 2.24] px a frame, fades 0.76 [0.58, 1.17], dissolves 0.39 [0, 1.42], glitch frames 0.29 [0, 0.97],
-white flashes 2.01 [0.85, 2.50] lifting Y' by 0.195 for 0.12 s, and 93 [77, 117] particles a frame, 0.38 of them bokeh.  Our
-v11 r2 had none of these (its shake 0.36 to 1.05, its particles 17 to 19).
+videos (the median [quartiles], as the review typorev corrected them): zoom punches 2.5 [1.7, 5.1] a minute (about 2 by eye,
+most of them the MMD camera's own quick zooms), flashes 0.80 [0, 1.69] a minute (stage LEDs and lasers among them: the
+editor's white flashes are fewer), a shake of 1.41 [1.26, 1.93] px (the fast motion of a frame, 720 line px), fades 0.76
+[0.58, 1.17] and dissolves 0.39 [0, 1.42] a minute, cuts 24.6 a minute that come 0.077 s (2.3 frames) before the beat in five of
+the nine.  The counts of glitch frames and of particles are no targets (the measure misses glitches in colourful pictures and
+counts the lyrics, windows and signs as particles): glitches few, particles restrained, by eye, never over the dancer.  Our
+v11 r2 had none of these.
 
 The section (DEFAULTS: the look's values override them; an unknown name or a value of the wrong kind is an error):
   on          1 draws it.  0 (the default) draws nothing: the look's ffmpeg argv is the one of before, byte for byte
@@ -73,10 +76,12 @@ DEFAULTS = {
     # (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches;
     # split 6 on v7 read as none, 2026-10-21)
     "glitch": {"frames": 2, "split": 14.0, "bands": 3, "shift": 40.0, "seed": 5},
-    # (the specks in the air round her, near the focus, sharp: the references' many small spots; the lights far behind her,
-    # blurred into bokeh by stage.dof.  One box for both, 2026-10-21 first try, blurred nearly all of them: 15 spots more)
+    # (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into
+    # bokeh by stage.dof.  One box for both, 2026-10-21's first try, blurred nearly all of them; a speck box 54 deep put a third
+    # of them out of focus, and a light box up to 50 high lay above the frame of the front camera, which looks down on her:
+    # 9 of 40 in the picture)
     "particles": {"specks": 0, "lights": 0, "seed": 9, "brightness": 1.0, "size": 1.0, "drift": [0.25, 0.06, 0.0],
-                  "box": [-38.0, 0.5, -32.0, 38.0, 34.0, 22.0], "light_box": [-60.0, 2.0, 22.0, 60.0, 50.0, 140.0],
+                  "box": [-34.0, 0.5, -16.0, 34.0, 30.0, 14.0], "light_box": [-70.0, 0.5, 40.0, 70.0, 22.0, 150.0],
                   "clear": 9.0, "front": 0.35},
     "busy": [],
     "events": [],
@@ -95,6 +100,11 @@ SPRITE_LEAST = 0.6               # px: the least spread (a standard deviation) o
 BUSY_RAMP = 1.0                  # s: a busy span's level comes and goes over this
 DEFAULT_SHAKE_RATIO = (0.6, 1.37)   # the vertical jolt: this share of the horizontal one, ringing this many times as fast
 ARGV_MOST = 30000                # characters: a longer ffmpeg command goes past Windows' command line (32767)
+CUT_LEAD = 0.077                 # s: a change of picture at a section's start comes this much before its first beat, as the
+                                 # references' cuts do (five of nine, [0.034, 0.108]: typorev)
+# the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the interludes
+PLAN_PARTICLES = {"specks": 100, "lights": 24}
+PLAN_BUSY = 1.3
 
 
 # ---- the section ---------------------------------------------------------------------------------------------------
@@ -597,8 +607,10 @@ class Field:
         self.sway_hz = 0.05 + 0.15 * rng.random((n, 3))
         self.phase = rng.random((n, 3)) * 2.0 * math.pi
         speck = self.kind == "speck"
-        self.radius = np.where(speck, 0.035 + 0.035 * rng.random(n), 0.12 + 0.20 * rng.random(n)) * float(p["size"])
-        self.bright = np.where(speck, 0.35 + 0.6 * rng.random(n), 0.25 + 0.35 * rng.random(n)) * float(p["brightness"])
+        # (the lights 0.45 to 0.85 bright: their blur spreads them over 4 to 5 px, and at 0.25 to 0.6 the brightest stood
+        # 0.2 over the street, too faint to see as lights; 2026-10-21)
+        self.radius = np.where(speck, 0.035 + 0.035 * rng.random(n), 0.20 + 0.25 * rng.random(n)) * float(p["size"])
+        self.bright = np.where(speck, 0.35 + 0.6 * rng.random(n), 0.45 + 0.40 * rng.random(n)) * float(p["brightness"])
         self.twinkle_hz = 0.15 + 0.45 * rng.random(n)
         self.twinkle_phase = rng.random(n) * 2.0 * math.pi
         pick = rng.random(n)
@@ -797,20 +809,29 @@ def load_structure(path):
     return doc
 
 
+def frame_time(frame):
+    """the time to write for an event that starts on `frame` of the song (30 a second): a third of a millisecond or more under
+    the frame's own time, floored to the millisecond, so that round(t x fps) and ceil(t x fps) both give that frame (the
+    flares of the look of 2026-10 started their punch a frame after their picture at 44.467 and 225.8 s: lookfrom)"""
+    return math.floor((int(frame) / float(SONG_FPS) - 0.0003) * 1000.0) / 1000.0
+
+
 def plan(structure, level=1.0, particles=None):
     """the "mograph" section placed on the song (see the rules in the code; every event says why in its note):
 
-    * a white flash and a punch on the first beat of each title word (the hook: light and text change there too), and on
-      the first beat of each chorus;
-    * a punch on the first beat of each pre-chorus (B), of each chorus's second half and of the bridge's second half;
+    * a white flash and a punch on the first beat of each title word (the hook: light and text change there too);
+    * a punch on the first beat of each chorus and of each pre-chorus (B): with the title words about 2 a minute, as the
+      references' editors punch (typorev: 2.5 [1.7, 5.1] a minute measured, most of them the camera's own zooms);
     * a shake where the dancer comes down from a jump (the landings) and on the strongest accents of the song that the dance
       stops on (a deceleration of 5.5 times the dance's mean or more), one within half a second;
-    * a dip to black before the band comes in (picture back on its first beat with a flash) and at the break, and the end
-      fading to black from the last bar line on;
+    * a dip to black before the band comes in (the picture back at once) and at the break, and the end fading to black from
+      the last bar line on;
     * a dissolve into the second verse and into the bridge (sections that start without a cut of their own);
+    * these changes of picture CUT_LEAD before their beat, as the references cut;
     * a glitch of two frames on the last beat before the third chorus and one at the outro;
-    * the particles, busier (1.6 times) over the interludes.
-    No punch or shake lands within half a second of where the skirt flares (the underwear checks look there)"""
+    * the particles, a little busier (1.3 times) over the interludes.
+    Every event starts on the frame of its moment (round(t x 30)) and is written as that frame's frame_time.  No punch or
+    shake lands within half a second of where the skirt flares (the underwear checks look there)"""
     beat = structure["beat"]
 
     def at(b):
@@ -824,7 +845,7 @@ def plan(structure, level=1.0, particles=None):
         return any(t - 0.5 < s < end + 0.5 for s in skirt)
 
     def add(kind, t, note, **values):
-        e = {"kind": kind, "t": round(float(t), 3), "note": note}
+        e = {"kind": kind, "t": frame_time(frame_of(t, SONG_FPS)), "note": note}
         e.update(values)
         events.append(e)
     punch = DEFAULTS["punch"]
@@ -835,17 +856,13 @@ def plan(structure, level=1.0, particles=None):
             add("punch", h["t"], "title word %d (beat %d)" % (h["n"], h["beat"]), amount=0.12)
     for sid in ("chorus1", "chorus2", "chorus3"):
         s = sections.get(sid)
-        if s:
-            add("flash", s["t"], "%s, first beat (beat %d)" % (sid, s["beat"]), strength=0.22)
-            if not near_skirt(s["t"], punch_len):
-                add("punch", s["t"], "%s, first beat (beat %d)" % (sid, s["beat"]))
-    picks = [(sections[sid]["t"], "%s, first beat (beat %d)" % (sid, sections[sid]["beat"])) for sid in ("pre1", "pre2", "bridge2")
-             if sid in sections]
-    picks += [(h["t"], "chorus half (beat %d)" % h["beat"]) for h in structure.get("chorus_halves", [])]
-    for t, note in sorted(picks):
-        if not near_skirt(t, punch_len):
+        if s and not near_skirt(s["t"], punch_len):
+            add("punch", s["t"], "%s, first beat (beat %d)" % (sid, s["beat"]))
+    for sid in ("pre1", "pre2"):
+        s = sections.get(sid)
+        if s and not near_skirt(s["t"], punch_len):
             # (0.09: tools/mograph_analyze.py counts a punch from a zoom of 0.08 in the log, 8.3 %, within three frames)
-            add("punch", t, note, amount=0.09)
+            add("punch", s["t"], "%s, first beat (beat %d)" % (sid, s["beat"]), amount=0.09)
     shakes = []
     for land in structure.get("landings", []):
         shakes.append((float(land["t"]), "landing (%d frames in the air)" % land["air_frames"]))
@@ -858,24 +875,27 @@ def plan(structure, level=1.0, particles=None):
             continue
         add("shake", t, note)
         last = t
+    def change(sid):
+        """the frame of the change of picture at a section's start: CUT_LEAD before its first beat"""
+        return frame_of(sections[sid]["t"] - CUT_LEAD, SONG_FPS)
     if "band" in sections:
-        t = sections["band"]["t"]
         out, hold = 18, 3
-        add("fade", t - (out + hold) / float(SONG_FPS), "dip before the band comes in (beat %d)" % sections["band"]["beat"],
+        add("fade", (change("band") - out - hold) / float(SONG_FPS),
+            "dip before the band comes in (beat %d): back at once, %.3f s before the beat" % (sections["band"]["beat"], CUT_LEAD),
             out=out, hold=hold, back=0)
-        add("flash", t, "the band comes in (beat %d), back from black" % sections["band"]["beat"])
     if "break" in sections:
-        t = sections["break"]["t"]
-        add("fade", t - 13 / float(SONG_FPS), "dip at the break (beat %d), the low end drops" % sections["break"]["beat"],
+        add("fade", (change("break") - 13) / float(SONG_FPS),
+            "dip at the break (beat %d), the low end drops: black %.3f s before the beat" % (sections["break"]["beat"], CUT_LEAD),
             out=13, hold=4, back=30)
     if "end" in sections:
         # over a bar (1.7 s): tools/mograph_analyze.py reads a fade to black that falls by 0.1 of Y' within the second before
         # the black, and v7's dark picture faded over two bars fell by 0.03
-        add("fade", sections["end"]["t"], "the end: to black over the last bar line's bar (beat %d) on" % sections["end"]["beat"],
-            out=51, hold=-1, back=0)
+        add("fade", change("end") / float(SONG_FPS),
+            "the end: to black over the last bar line's bar (beat %d) on" % sections["end"]["beat"], out=51, hold=-1, back=0)
     for sid in ("verse2", "bridge"):
         if sid in sections:
-            add("dissolve", sections[sid]["t"], "into %s (beat %d)" % (sid, sections[sid]["beat"]))
+            add("dissolve", change(sid) / float(SONG_FPS),
+                "into %s (beat %d), %.3f s before the beat" % (sid, sections[sid]["beat"], CUT_LEAD))
     if "chorus3" in sections:
         b = sections["chorus3"]["beat"] - 1
         add("glitch", at(b), "the last beat before chorus3 (beat %d)" % b, frames=2)
@@ -883,8 +903,8 @@ def plan(structure, level=1.0, particles=None):
         add("glitch", sections["outro"]["t"], "outro (beat %d)" % sections["outro"]["beat"], frames=1)
     section = copy.deepcopy(DEFAULTS)
     section["on"] = 1
-    section["particles"].update(particles or {"specks": 110, "lights": 22})
-    section["busy"] = [[round(i["from"], 3), round(i["to"], 3), 1.6] for i in structure["interludes"]]
+    section["particles"].update(particles or PLAN_PARTICLES)
+    section["busy"] = [[round(i["from"], 3), round(i["to"], 3), PLAN_BUSY] for i in structure["interludes"]]
     if level != 1.0:
         for e in events:
             if e["kind"] in ("punch", "shake", "flash"):

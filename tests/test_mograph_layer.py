@@ -72,8 +72,13 @@ STRUCTURE = {
     "end": {"from": 97.7, "to": 100.0},
     "landings": [{"t": 30.0, "air_frames": 8}, {"t": 30.3, "air_frames": 6}, {"t": 60.0, "air_frames": 9}],
     "accents": [{"t": 20.06, "decel": 6.0}, {"t": 30.1, "decel": 7.0}, {"t": 70.0, "decel": 3.0}],
-    "skirt": [at(80) + 0.3],
+    "skirt": [at(80) + 0.3, at(128) + 0.3],
 }
+
+
+def fr(seconds):
+    """the frame of the song (30 a second) an event at `seconds` starts on"""
+    return ML.frame_of(seconds, 30)
 
 
 def picture_look(**mograph):
@@ -145,56 +150,78 @@ class PlanTest(unittest.TestCase):
     def kind(self, kind):
         return [e for e in self.events if e["kind"] == kind]
 
-    def test_a_flash_and_a_punch_on_the_first_beat_of_every_title_word_and_every_chorus(self):
-        flashes = {e["t"] for e in self.kind("flash")}
-        punches = {e["t"] for e in self.kind("punch")}
+    def frames(self, kind):
+        return sorted(fr(e["t"]) for e in self.kind(kind))
+
+    def test_every_event_is_written_as_its_frames_time_so_round_and_ceil_agree(self):
+        # (a flare's punch began a frame after its picture where a time sat a hair over its frame: lookfrom, 2026-10-21)
+        for e in self.events:
+            for fps in (30, 60, 240):                    # (under the frame by 0.3 to 1.3 ms: half a frame at 240 is 2.1)
+                x = e["t"] * fps
+                self.assertEqual(math.ceil(x), round(x), (e, fps))
+            self.assertEqual(e["t"], round(e["t"], 3), e)
+        self.assertEqual(ML.frame_time(1334), 44.466)                          # the coordinator's 44.466 and 225.799
+        self.assertEqual(ML.frame_time(6774), 225.799)
+
+    def test_a_flash_on_the_first_beat_of_every_title_word_and_nowhere_else(self):
+        # (the references' flashes are 0.8 a minute, and of those the editor's white ones fewer: typorev's targets)
+        self.assertEqual(self.frames("flash"), sorted(fr(h["t"]) for h in STRUCTURE["hooks"]))
+
+    def test_a_punch_on_every_title_word_every_chorus_and_the_pre_choruses_only(self):
+        punches = self.frames("punch")
         for h in STRUCTURE["hooks"]:
-            self.assertIn(h["t"], flashes)
-            self.assertIn(h["t"], punches)
-        for sid in ("chorus1", "chorus2", "chorus3"):
-            t = [s for s in STRUCTURE["sections"] if s["id"] == sid][0]["t"]
-            self.assertIn(t, flashes)
-            self.assertIn(t, punches)
+            self.assertIn(fr(h["t"]), punches)
+        for sid in ("chorus1", "chorus2", "chorus3", "pre1"):
+            self.assertIn(fr([s for s in STRUCTURE["sections"] if s["id"] == sid][0]["t"]), punches, sid)
+        for b in (80, 160, 208, 184):                    # the choruses' halves and the bridge's second half: none
+            self.assertNotIn(fr(at(b)), punches, b)
+        # (three choruses and two pre-choruses: pre2's is next to the skirt, below)
+        self.assertEqual(len(punches), len(STRUCTURE["hooks"]) + 5 - 1)
 
     def test_every_punch_and_flash_is_on_a_beat_and_every_event_says_why(self):
         for e in self.kind("punch") + self.kind("flash"):
-            beat = (e["t"] - FIRST) / PERIOD
-            self.assertAlmostEqual(beat, round(beat), delta=0.01, msg=e)
+            beat = round((e["t"] - FIRST) / PERIOD)
+            self.assertEqual(fr(e["t"]), fr(FIRST + beat * PERIOD), e)
         for e in self.events:
             self.assertTrue(e.get("note"), e)
 
     def test_no_punch_or_shake_where_the_skirt_flares(self):
-        skirt = STRUCTURE["skirt"][0]
-        for e in self.kind("punch") + self.kind("shake"):
-            a, b = ML.event_frames(e, 30)
-            self.assertFalse(a / 30.0 - 0.5 < skirt < b / 30.0 + 0.5, e)
-        self.assertNotIn(at(80), {e["t"] for e in self.kind("punch")})        # the chorus half next to it is left out
+        for skirt in STRUCTURE["skirt"]:
+            for e in self.kind("punch") + self.kind("shake"):
+                a, b = ML.event_frames(e, 30)
+                self.assertFalse(a / 30.0 - 0.5 < skirt < b / 30.0 + 0.5, e)
+        self.assertNotIn(fr(at(128)), self.frames("punch"))                  # pre2's, next to it, is left out
+        self.assertIn(fr(at(48)), self.frames("punch"))
 
     def test_shakes_on_landings_and_strong_accents_half_a_second_apart(self):
-        times = [e["t"] for e in self.kind("shake")]
-        self.assertIn(30.0, times)
-        self.assertNotIn(30.1, times)                    # within half a second of the landing at 30.0
-        self.assertNotIn(30.3, times)
-        self.assertIn(60.0, times)
-        self.assertIn(20.06, times)                      # an accent the dance stops on
-        self.assertNotIn(70.0, times)                    # one it does not (deceleration 3)
-        self.assertTrue(all(b - a >= 0.5 for a, b in zip(times, times[1:])))
+        shakes = self.frames("shake")
+        self.assertIn(fr(30.0), shakes)
+        self.assertNotIn(fr(30.1), shakes)               # within half a second of the landing at 30.0
+        self.assertNotIn(fr(30.3), shakes)
+        self.assertIn(fr(60.0), shakes)
+        self.assertIn(fr(20.06), shakes)                 # an accent the dance stops on
+        self.assertNotIn(fr(70.0), shakes)               # one it does not (deceleration 3)
+        self.assertTrue(all(b - a >= 15 for a, b in zip(shakes, shakes[1:])))
 
     def test_the_fades_dissolves_and_glitches_go_where_the_song_changes(self):
-        band = at(16)
+        def lead(b):
+            # the frame of the change: the references' cuts come CUT_LEAD (0.077 s, 2.3 frames) before the beat
+            return fr(at(b) - ML.CUT_LEAD)
+        for b in (16, 112, 176, 192, 228):
+            self.assertIn(fr(at(b)) - lead(b), (2, 3), b)
         fades = self.kind("fade")
-        dip = [e for e in fades if e["t"] < band < e["t"] + 1.0][0]
-        black_from = ML.frame_of(dip["t"], 30) + dip["out"]
-        self.assertEqual(black_from + dip["hold"], ML.frame_of(band, 30))  # black to the band's first beat, then back at once
-        self.assertEqual(dip["back"], 0)
-        self.assertIn(band, {e["t"] for e in self.kind("flash")})
-        end = [e for e in fades if e["hold"] == -1]
-        self.assertEqual([e["t"] for e in end], [at(228)])                   # the end: to black from the last bar line on
-        self.assertEqual(sorted(e["t"] for e in self.kind("dissolve")), [at(112), at(176)])
-        self.assertEqual(sorted(e["t"] for e in self.kind("glitch")), [at(199), at(216)])
+        dip = [e for e in fades if e["back"] == 0 and e["hold"] >= 0][0]
+        # black until the change before the band's first beat, then back at once, without a flash
+        self.assertEqual(fr(dip["t"]) + dip["out"] + dip["hold"], lead(16))
+        self.assertNotIn(fr(at(16)), self.frames("flash"))
+        brk = [e for e in fades if e["hold"] == 4][0]
+        self.assertEqual(fr(brk["t"]) + brk["out"], lead(192))                 # black at the break
+        self.assertEqual([fr(e["t"]) for e in fades if e["hold"] == -1], [lead(228)])   # the end, from the last bar line on
+        self.assertEqual(self.frames("dissolve"), [lead(112), lead(176)])
+        self.assertEqual(self.frames("glitch"), [fr(at(199)), fr(at(216))])
 
     def test_the_particles_are_busier_over_the_interludes(self):
-        self.assertEqual(self.section["busy"], [[40.0, 47.5, 1.6], [82.0, 85.5, 1.6]])
+        self.assertEqual(self.section["busy"], [[40.0, 47.5, 1.3], [82.0, 85.5, 1.3]])
         self.assertGreater(self.section["particles"]["specks"], 0)
 
     def test_the_plan_is_a_table_to_edit_by_hand(self):
@@ -702,6 +729,28 @@ class ParticleTest(unittest.TestCase):
         bright = int((inside & (w * field.bright > 0.3)).sum())      # those well above the analyzer's 0.12 of Y'
         self.assertGreater(found, 0.6 * bright)
         self.assertLessEqual(found, int((inside & (w > 0)).sum()) + 2)
+
+    @unittest.skipUnless(MA, "needs OpenCV and SciPy (tools/mograph_analyze.py)")
+    def test_the_lights_far_behind_her_read_as_bokeh_and_most_of_them_show(self):
+        # (the light box of 2026-10-21's first two tries lay above the frame of the fixed front camera, which looks down on
+        # her: 9 of 40 in the picture, and so faint, 0.2 at most, that the measure found 3)
+        look = mv_look.merge_look({"stage": {"world": 1, "dof": 6.5}, "mograph": {"on": 1, "particles": {"specks": 0, "lights": 40}}})
+        field = ML.Field(look["mograph"])
+        size = (1280, 720)
+        down = fk.CameraState(0, (0.0, 12.0, 0.0), 45.0, (16.0, 0.0, 0.0), 30.0)     # the window's degrees: looking down 16
+        for camera in (view(size=size), ML.world_tool().View(down, size)):
+            p, w = field.at(3.0)
+            u, v, depth = camera.project(p)
+            inside = (depth > 8) & (u > 20) & (u < 1260) & (v > 20) & (v < 700) & (w > 0.5)
+            self.assertGreater(int(inside.sum()), 0.5 * len(p))
+            back, front = field.draw(camera, 3.0, look, size)
+            card = numpy.full((720, 1280, 3), 20.0)
+            for layer in (back, front):
+                a = layer[..., 3:] / 255.0
+                card = card * (1 - a) + layer[..., :3] * a
+            read = MA.particles(card / 255.0)
+            self.assertGreater(read["particle.count"], 0.6 * int(inside.sum()))
+            self.assertGreater(read["particle.bokeh"], 0.7)
 
 
 @unittest.skipUnless(ML, "needs numpy and Pillow")
