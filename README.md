@@ -3059,7 +3059,7 @@ python tools/typo_analyze.py sign VIDEO TRACK.json                              
 python tools/typo_analyze.py style VIDEO TRACK.json                                 # 見た目と書体だけを読み直す（追跡は残す、TRACK.json に書く）
 python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS]       # 歌声の立ち上がり、伴奏の拍と小節
 python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json [--events EVENTS.json]   # 文字の種類と声・拍との時刻
-python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME]
+python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME] [--core]
 python tools/typo_analyze.py compare OUT.md OUT.json --ref A.json ... --ours X.json ...
 python tools/typo_analyze.py figure timeline|layout|trigger OUT.png --track T.json ... --sync S.json ... [--voice V.json]
 python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0,y0,x1,y1]
@@ -3101,7 +3101,11 @@ python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0
   (9) 裂けの読みに箱の上下の余白の行（文字が無く、後ろの格子線だけ）が入っていた → 文字の強い行の 90 % 点の 0.35 倍以上の行だけ。(10) 箱を縦に横切る
   踊り手の脚・文字に触れた下線 → 箱の高さの 1.15 倍より高い切れと線の画素を除いてから塗りを読む。(11) 場面か画面か: 後ろの絵の一歩を文字の場所を平均で
   埋めて読むと埋めた所が動かず一歩が 0 へ引かれる（1.3 px を 0.6 px と読む）・1 コマの文字の一歩は 1 px 刻み・止まっている間は 3 コマおきで一歩を読まない →
-  文字の場所を外して横と上下の部分ごとに読み、間 3 コマ以内でも読み、6〜15 コマの区間で足して比べる。
+  文字の場所を外して横と上下の部分ごとに読み、間 3 コマ以内でも読み、6〜15 コマの区間で足して比べる。(12) 奥行きのある夜の街では看板の動きと
+  横の絵のいちばん強い動きが合わず場面の中と読めない → 同じ印影の文字が 3 回以上・大きさ 1.3 倍以上違って見えたら看板（歌い直す行は大きさが同じ）。
+  (13) 文字のまわりのグローが細い横画の太さに入り明朝をゴシックと読む・太い書体に照合が引かれる → 覆いの裾 0.25 以下を切る、照合は芯（0.75 以上）で。
+- summary --core: 0.3 秒以上出ていて箱が絵の縁から 1 % 以上離れた歌詞の行だけ（縁で切れた文字・数コマの切れ端を除く）。参考の歌詞の行は止まらない
+  （止まって全部見える間の中央 0〜0.1 秒、私たちの v7 は 2.9 秒）ので、止まっていることは求めない。
 - 私たちの v7 での答え合わせ（合図の表 `cues_mv.json` が答え、歌詞の合図 48）: 見つけたのは 48。出始めの誤差は中央 0 コマ（±1 コマ以内 83 %・±2 コマ 92 %）、
   消えるコマは中央 -0.5（71 %・79 %）。入りの下からの移動 44/48・フェード 38/48、偽のグリッチ 1/48・偽のぼかし 入り 1・出 1、書体はゴシック 48/48、
   塗りの L* 中央 96.7（白）。字形の照合（font_match）は 12 行で、Noto Sans JP が一番 8 行（太さ 700 が一番 6 行）、一致の度合い 0.69 以上の 7 行では 6 行が正しい。
