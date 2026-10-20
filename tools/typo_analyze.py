@@ -5,6 +5,7 @@ looks like, and how it goes with the voice and the beat.
                                         [--craft-onnx craft.onnx] [--threads 3]          # the text of sampled frames
     python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--craft-onnx ...] [--threads 3] [--no-style]
                                         # every text frame by frame: when and how it comes, stays and goes, its look
+    python tools/typo_analyze.py sign VIDEO TRACK.json                     # add the texts' signatures (older runs)
     python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS] [--offset S]
                                         # the voice's syllable onsets and phrases, the beat and the bar
     python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json      # the texts against the voice and the beat
@@ -970,7 +971,10 @@ def _measure_segment(frames, ys, ns, track, ref_i, tmpl, fps, start, bounds):
             row.update({"bg_dx": bdx, "bg_dy": bdy, "bg_resp": resp})
         series.append(row)
         prev = n
-    return _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds)
+    m = _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds)
+    y0_, y1_, x0_, x1_ = _ink_region(y_ref, rb, 0.1)
+    m["sig"] = signature_of(y_ref[y0_:y1_, x0_:x1_])
+    return m
 
 
 def _grad(y, scale=1.0):
@@ -1713,6 +1717,29 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
     return result
 
 
+def sign_video(path, tr, out=None):
+    """the signature of every text of a track run read from its reference frame at the run's height (for runs made
+    before measure_track wrote them); OUT.json (or the run itself) gets them"""
+    LA = _tool("look_analyze")
+    info = LA.probe(path, fps=tr["fps"])
+    refs = sorted(set(t["frames"]["ref"] for t in tr["texts"]))
+    height = tr["height"]
+    frames = dict(LA.read_frames(path, info, refs, height=None if height == info["height"] else height,
+                                 matrix=LA.matrix_for(info), start=tr["range"][0], as_uint8=True))
+    for t in tr["texts"]:
+        a = frames.get(t["frames"]["ref"])
+        if a is None:
+            continue
+        y = _luma(a)
+        y0, y1, x0, x1 = _ink_region(y, t["ref"]["box"], 0.1)
+        if y1 > y0 and x1 > x0:
+            t["sig"] = signature_of(y[y0:y1, x0:x1])
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(tr, f, ensure_ascii=False, indent=1)
+    return tr
+
+
 # ---- the voice and the beat ------------------------------------------------------------------------------------------
 #
 # The voice: the separated singing (demucs htdemucs), read as tools/lip_check.py reads it (16 kHz, the power of 300 to
@@ -1877,6 +1904,34 @@ MARK_WIDTH = 0.03                 # if it is as wide each time (within this shar
 SIZE_RANGE = (0.012, 0.35)        # a lyric's characters are this tall at least and at most (share of the picture)
 
 
+SIG_H = 16                        # px: a text's signature is its box's picture this tall (as wide as its shape says,
+SIG_W = 160                       # at most this)
+MARK_SAME = 0.8                   # two signatures correlating at least this are the same text
+
+
+def signature_of(y_box):
+    """a text's signature: the picture of its box (Y', 0..1) made SIG_H tall, as bytes in a dict (shape, data)"""
+    cv2 = _cv2()
+    a = np.asarray(y_box, np.float64)
+    h, w = a.shape
+    sw = int(max(4, min(SIG_W, round(w * SIG_H / float(max(h, 1))))))
+    small = cv2.resize(a.astype(np.float32), (sw, SIG_H), interpolation=cv2.INTER_AREA)
+    return {"h": SIG_H, "w": sw, "data": [int(v) for v in np.clip(small * 255.0 + 0.5, 0, 255).astype(np.uint8).ravel()]}
+
+
+def _sig_ncc(a, b):
+    """how alike two signatures are (normalised correlation, the second made the size of the first)"""
+    cv2 = _cv2()
+    A = np.array(a["data"], np.float32).reshape(a["h"], a["w"])
+    B = np.array(b["data"], np.float32).reshape(b["h"], b["w"])
+    if B.shape != A.shape:
+        B = cv2.resize(B, (A.shape[1], A.shape[0]), interpolation=cv2.INTER_AREA)
+    A = A - A.mean()
+    B = B - B.mean()
+    den = math.sqrt(float((A * A).sum() * (B * B).sum()))
+    return float((A * B).sum() / den) if den > 1e-9 else 0.0
+
+
 def _marks(texts, duration):
     """the texts that come back to one place again and again (MARK_PLACE, MARK_TIMES) or stay MARK_SHARE of the video"""
     out = set()
@@ -1890,8 +1945,14 @@ def _marks(texts, duration):
             continue
         for g in groups:
             q = texts[g[0]]["place"]
-            # one place, one size, and one width (the same text again: lines of lyrics in one place differ in width)
-            if abs(pl["x"] - q["x"]) <= MARK_PLACE[0] and abs(pl["y"] - q["y"]) <= MARK_PLACE[1] and                     abs(pl["h"] / max(q["h"], 1e-9) - 1) <= MARK_PLACE[2] and                     abs(pl.get("w", 0) - q.get("w", 0)) <= MARK_WIDTH * max(pl.get("w", 0), q.get("w", 0), 1e-9):
+            # one place, one size, and the same text again: its signature alike (or, without signatures, as wide;
+            # Japanese set full width makes lines of as many characters as wide, so the signature decides when there)
+            same_place = abs(pl["x"] - q["x"]) <= MARK_PLACE[0] and abs(pl["y"] - q["y"]) <= MARK_PLACE[1] and                 abs(pl["h"] / max(q["h"], 1e-9) - 1) <= MARK_PLACE[2]
+            if t.get("sig") and texts[g[0]].get("sig"):
+                same = same_place and _sig_ncc(texts[g[0]]["sig"], t["sig"]) >= MARK_SAME
+            else:
+                same = same_place and abs(pl.get("w", 0) - q.get("w", 0)) <= MARK_WIDTH * max(pl.get("w", 0), q.get("w", 0), 1e-9)
+            if same:
                 g.append(i)
                 break
         else:
@@ -2307,6 +2368,9 @@ def main(argv=None):
     p.add_argument("--craft-onnx", default=None)
     p.add_argument("--threads", type=int, default=3)
     p.add_argument("--no-style", action="store_true", help="not the look (colour, outline, typeface)")
+    p = sub.add_parser("sign", help="add the texts' signatures to a track run (made before they were written)")
+    p.add_argument("video")
+    p.add_argument("track")
     p = sub.add_parser("voice", help="the onsets and phrases of a separated voice, and the beat of the accompaniment")
     p.add_argument("vocals")
     p.add_argument("out")
@@ -2394,6 +2458,13 @@ def main(argv=None):
         with open(args.out_md, "w", encoding="utf-8") as f:
             f.write("# 歌詞の文字: 参考 %d 本と私たち\n\n参考: %s\n%s" % (len(refs), ", ".join(r["label"] for r in refs), md))
         print(json.dumps({"ok": True, "out": args.out_md, "rows": len(rows)}))
+        return 0
+    if args.cmd == "sign":
+        with open(args.track, encoding="utf-8") as f:
+            tr = json.load(f)
+        sign_video(args.video, tr, args.track)
+        print(json.dumps({"ok": True, "out": args.track, "texts": len(tr["texts"]),
+                          "signed": sum(1 for t in tr["texts"] if t.get("sig"))}))
         return 0
     if args.cmd == "voice":
         r = voice_file(args.vocals, args.out, accompaniment=args.accompaniment, offset=args.offset)

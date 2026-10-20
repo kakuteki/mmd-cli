@@ -782,6 +782,24 @@ class SyncTest(unittest.TestCase):
         r = TA.sync(texts + [lyric], voice, beats=None, fps=30.0, duration=60.0)
         self.assertEqual([x["kind"] for x in r["texts"]], ["mark"] * 4 + ["lyric"])
 
+    def test_lines_as_wide_as_each_other_are_no_mark_when_they_read_otherwise(self):
+        # Japanese is set full width: lines of as many characters are as wide; what they show tells them apart
+        voice = self.voice(((0.5, 59.0),), total=60.0)
+        rng = np.random.default_rng(3)
+        texts = []
+        for k, a in enumerate((2.0, 15.0, 30.0, 45.0)):
+            t = self.text(a, a + 0.1, a + 4.0)
+            t["place"] = {"x": 0.25, "y": 0.83, "h": 0.07, "w": 0.37}
+            t["sig"] = TA.signature_of(rng.uniform(0, 1, (16, 84)))
+            texts.append(t)
+        r = TA.sync(texts, voice, beats=None, fps=30.0, duration=60.0)
+        self.assertEqual([x["kind"] for x in r["texts"]], ["lyric"] * 4)
+        logo = rng.uniform(0, 1, (16, 84))
+        for t in texts:
+            t["sig"] = TA.signature_of(logo + rng.normal(0, 0.02, logo.shape))
+        r = TA.sync(texts, voice, beats=None, fps=30.0, duration=60.0)
+        self.assertEqual([x["kind"] for x in r["texts"]], ["mark"] * 4)
+
     def test_a_text_that_comes_and_goes_with_the_shot_is_in_the_scene(self):
         voice = self.voice(((0.5, 19.0),), total=20.0)
         sign = self.text(4.0, 4.0, 7.0)
