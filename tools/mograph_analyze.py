@@ -389,6 +389,7 @@ PARTICLE_SIGMAS = (1.2, 1.8, 2.7, 4.0, 6.0, 9.0, 13.0)    # 720 line px
 PARTICLE_LEAST = 0.12             # Y' a particle stands above the ground round it (the ring 2.5 to 4 sigma out)
 PARTICLE_LOG = 0.04               # its scale-normalised Laplacian at least this
 BOKEH_SIGMA = 4.0                 # 720 line px: a particle this wide or wider is bokeh (a defocused light)
+PARTICLE_ROUND = 3.0              # the larger of a particle's two curvatures at most this many times the smaller
 LINE_LEAST = 0.15                 # of the frame's height: a long line
 LINE_JOIN = (3.0, 6.0)            # degrees and 720 line px: segments this parallel and near are one line's two edges
 AXIS = 3.0                        # degrees from level or upright: on the frame's axes
@@ -402,6 +403,8 @@ def particles(rgb, unit=1.0, mask=None):
     y = _luma(np.asarray(rgb, np.float64))
     sig = [s * unit for s in PARTICLE_SIGMAS]
     stack = np.array([-(s * s) * ndi.gaussian_laplace(y, s) for s in sig])
+    hess = [(ndi.gaussian_filter(y, s, order=(0, 2)), ndi.gaussian_filter(y, s, order=(2, 0)),
+             ndi.gaussian_filter(y, s, order=(1, 1))) for s in sig]
     found = []
     for k, s in enumerate(sig):
         lo, hi = max(0, k - 1), min(len(sig), k + 2)
@@ -420,7 +423,14 @@ def particles(rgb, unit=1.0, mask=None):
             if not ring.size:
                 continue
             core = y[y0:y1, x0:x1][rr <= max(1.0, 0.5 * s)].mean()
-            if core - np.median(ring) >= PARTICLE_LEAST:
+            # round: curved as much across as along (the Hessian's two eigenvalues within PARTICLE_ROUND of each other);
+            # a thin line is curved across only (a floor of grid lines read as rows of spots, our stage)
+            a_, b_, c_ = hess[k][0][yy, xx], hess[k][1][yy, xx], hess[k][2][yy, xx]
+            det = a_ * b_ - c_ * c_
+            if det <= 0 or (a_ + b_) ** 2 / det >= (PARTICLE_ROUND + 1.0) ** 2 / PARTICLE_ROUND:
+                continue
+            # and above its ring all round (its 80 % point): where two lines cross, their four arms light the ring
+            if core - np.percentile(ring, 80) >= PARTICLE_LEAST:
                 found.append((float(stack[k, yy, xx]), xx, yy, s))
     # one per spot: the strongest response within its own size
     found.sort(reverse=True)

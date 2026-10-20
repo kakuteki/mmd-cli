@@ -198,6 +198,22 @@ class ElementsTest(unittest.TestCase):
         self.assertAlmostEqual(p["particle.count"], 48, delta=5)
         self.assertAlmostEqual(p["particle.bokeh"], 8 / 48.0, delta=0.08)
 
+    def test_thin_lines_are_no_particles(self):
+        # our stage: a floor of thin light grid lines on a dark ground (each line read as a row of small spots)
+        img = np.full((720, 1280, 3), 0.05)
+        for x in range(0, 1280, 64):
+            img[:, x:x + 2] = 0.45
+        for k in range(12):
+            cv2.line(img, (0, 400 + 25 * k), (1279, 380 + 27 * k), (0.4, 0.45, 0.5), 1)
+        rng = np.random.default_rng(6)
+        yy, xx = np.mgrid[0:720, 0:1280]
+        for _ in range(10):                                         # and ten real spots away from the lines
+            x, y = rng.uniform(20, 1260), rng.uniform(20, 380)
+            x = 32 + 64 * int(x // 64)                              # between two upright lines
+            img += 0.7 * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.5 ** 2))[..., None]
+        p = MG.particles(np.clip(img, 0, 1), unit=1.0)
+        self.assertAlmostEqual(p["particle.count"], 10, delta=2)
+
     def test_a_plain_picture_has_no_particles(self):
         rng = np.random.default_rng(5)
         img = np.full((720, 1280, 3), 0.3) + rng.normal(0, 0.005, (720, 1280, 3))
