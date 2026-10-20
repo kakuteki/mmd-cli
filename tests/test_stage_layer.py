@@ -598,6 +598,10 @@ class FrameTest(unittest.TestCase):
         self.assertLessEqual(max(gains), 1.0 + 1e-9)                         # a sign dips, it does not flare
         self.assertGreater(float(numpy.std(gains)), 0.005)                   # and it does flicker
         numpy.testing.assert_array_equal(stage_layer.stage_frame(flick, st, t=1.5), stage_layer.stage_frame(flick, st, t=1.5))
+        # a material's flicker is its own: it does not change with how many materials a camera sees (camera D moving)
+        light = dict(look["light"], flicker=0.1)
+        for t in (0.4, 2.0, 7.3):
+            numpy.testing.assert_array_equal(stage_layer.flicker_gains(light, 5, t), stage_layer.flicker_gains(light, 12, t)[:5])
         # another seed, another flicker
         other = dict(look, light=dict(look["light"], flicker=0.1, flicker_seed=8))
         self.assertFalse(numpy.array_equal(stage_layer.stage_frame(other, st, t=1.5), stage_layer.stage_frame(flick, st, t=1.5)))

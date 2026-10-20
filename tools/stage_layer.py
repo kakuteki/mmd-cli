@@ -784,17 +784,21 @@ FLICKER_FAST = (6.0, 13.0)        # ... and the buzz inside it
 
 def flicker_gains(light, materials, t):
     """[materials]: the gain of each material's own light at `t` seconds (look light.flicker, light3): 1 - share x d^2,
-    d the product of a slow swell and a fast buzz (each 0.5 + 0.5 sin, their rates and phases drawn per material from
-    light.flicker_seed): a lit sign dips now and then and never passes its light"""
+    d the product of a slow swell and a fast buzz (each 0.5 + 0.5 sin), their rates and phases drawn for each material
+    from light.flicker_seed and its own index (so a material's flicker does not change with how many a camera sees): a lit
+    sign dips now and then and never passes its light"""
     share = float(light.get("flicker", 0.0))
+    gains = np.ones(materials)
     if share <= 0:
-        return np.ones(materials)
-    rng = np.random.default_rng(int(light.get("flicker_seed", 0)))
-    slow = rng.uniform(*FLICKER_SLOW, size=materials)
-    fast = rng.uniform(*FLICKER_FAST, size=materials)
-    phase = rng.uniform(0.0, 2.0 * math.pi, size=(2, materials))
-    d = (0.5 + 0.5 * np.sin(2.0 * math.pi * slow * t + phase[0])) * (0.5 + 0.5 * np.sin(2.0 * math.pi * fast * t + phase[1]))
-    return 1.0 - share * d * d
+        return gains
+    seed = int(light.get("flicker_seed", 0))
+    for m in range(materials):
+        rng = np.random.default_rng([seed, m])
+        slow, fast = rng.uniform(*FLICKER_SLOW), rng.uniform(*FLICKER_FAST)
+        p0, p1 = rng.uniform(0.0, 2.0 * math.pi, size=2)
+        d = (0.5 + 0.5 * math.sin(2.0 * math.pi * slow * t + p0)) * (0.5 + 0.5 * math.sin(2.0 * math.pi * fast * t + p1))
+        gains[m] = 1.0 - share * d * d
+    return gains
 
 
 def stage_frame(look, s, state=None, t=None):

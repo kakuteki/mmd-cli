@@ -1474,26 +1474,26 @@
 | COVERED | 0.05 |  | 689 | a neighbourhood where the known pixels' Gaussian weight is under this is faded out |  |  |  |  |  |  |  |  |
 | FLICKER_SLOW | (0.25, 0.8) | Hz | 781 | Hz: the swell of a sign's flicker, drawn per material from this range ... |  |  |  |  | ○ |  |  | rig |
 | FLICKER_FAST | (6.0, 13.0) |  | 782 | ... and the buzz inside it |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 |  | 863 | MMD's frames of the song (mv_world.SONG_FPS) |  |  |  |  |  |  |  |  |
-| __init__(shutter) | 1.0 |  | 876 |  |  |  |  |  |  |  |  |  |
-| __init__(subframes) | 1 |  | 876 |  |  |  |  |  |  |  |  |  |
-| CHECK_STEP | 0.25 | units | 1076 | MMD units: a capsule is checked as balls this far apart along its axis |  | ○ |  |  |  |  |  | retarget |
-| FLOOR_TOLERANCE | 0.06 | units | 1077 | MMD units (about 5 mm): a ball of her body this far into a face reaches into it |  | ○ |  |  |  |  |  | retarget |
-| UNDER | 0.1 / 8.0 | units | 1078 | MMD units (0.1 cm, tools/sink_check.py's UNDER_CM): a shoe lower than the floor by more is in it |  | ○ |  |  |  |  |  | retarget |
-| FLOOR_LOOK | 3.0 |  | 1079 | the floor under a sole is looked for from this far above it ... |  |  |  |  |  |  |  |  |
-| FLOOR_DOWN | 60.0 |  | 1080 | ... down to this far below it (a foot high in a kick still has its floor under it) |  |  |  |  |  |  |  |  |
-| SOLE_BAND | 0.4 | units | 1081 | MMD units: a shoe's vertices this near its lowest are its sole (where it stands) |  | ○ |  |  |  |  |  | retarget |
-| SOLE_POINTS | 24 |  | 1082 | at most this many of them are looked under |  |  |  |  |  |  |  |  |
-| VIEW_REACH | 150.0 |  | 1083 | a camera's sight is checked this far: the inside of a thing it stands in lies nearer |  |  |  |  |  |  |  |  |
-| check_placement(body_margin) | 4.0 |  | 1086 |  |  |  |  |  |  |  |  |  |
-| check_placement(size) | (1280, 720) |  | 1086 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1268 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1285 |  |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 1286 |  |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1287 |  |  |  |  |  |  |  |  |  |
-| --shutter | 1.0 |  | 1288 |  |  |  |  |  |  |  |  |  |
-| --from | 0 |  | 1300 | the first frame of the song (default 0) |  |  |  | ○ |  |  |  | dance |
-| --size | "1280x720" |  | 1302 |  |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 |  | 867 | MMD's frames of the song (mv_world.SONG_FPS) |  |  |  |  |  |  |  |  |
+| __init__(shutter) | 1.0 |  | 880 |  |  |  |  |  |  |  |  |  |
+| __init__(subframes) | 1 |  | 880 |  |  |  |  |  |  |  |  |  |
+| CHECK_STEP | 0.25 | units | 1080 | MMD units: a capsule is checked as balls this far apart along its axis |  | ○ |  |  |  |  |  | retarget |
+| FLOOR_TOLERANCE | 0.06 | units | 1081 | MMD units (about 5 mm): a ball of her body this far into a face reaches into it |  | ○ |  |  |  |  |  | retarget |
+| UNDER | 0.1 / 8.0 | units | 1082 | MMD units (0.1 cm, tools/sink_check.py's UNDER_CM): a shoe lower than the floor by more is in it |  | ○ |  |  |  |  |  | retarget |
+| FLOOR_LOOK | 3.0 |  | 1083 | the floor under a sole is looked for from this far above it ... |  |  |  |  |  |  |  |  |
+| FLOOR_DOWN | 60.0 |  | 1084 | ... down to this far below it (a foot high in a kick still has its floor under it) |  |  |  |  |  |  |  |  |
+| SOLE_BAND | 0.4 | units | 1085 | MMD units: a shoe's vertices this near its lowest are its sole (where it stands) |  | ○ |  |  |  |  |  | retarget |
+| SOLE_POINTS | 24 |  | 1086 | at most this many of them are looked under |  |  |  |  |  |  |  |  |
+| VIEW_REACH | 150.0 |  | 1087 | a camera's sight is checked this far: the inside of a thing it stands in lies nearer |  |  |  |  |  |  |  |  |
+| check_placement(body_margin) | 4.0 |  | 1090 |  |  |  |  |  |  |  |  |  |
+| check_placement(size) | (1280, 720) |  | 1090 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1272 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1289 |  |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 1290 |  |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1291 |  |  |  |  |  |  |  |  |  |
+| --shutter | 1.0 |  | 1292 |  |  |  |  |  |  |  |  |  |
+| --from | 0 |  | 1304 | the first frame of the song (default 0) |  |  |  | ○ |  |  |  | dance |
+| --size | "1280x720" |  | 1306 |  |  |  |  |  |  |  |  |  |
 
 ## mv_look.py（18. 描画と後処理、138）
 
