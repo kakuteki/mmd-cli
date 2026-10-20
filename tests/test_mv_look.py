@@ -964,6 +964,19 @@ class NightLightLookTest(unittest.TestCase):
         # MMD's default light on both sides: nothing to say
         mv_look.merge_look({"stage": world, "light": {"person": self.NIGHT}})
 
+    def test_without_her_shadow_on_the_floor_her_light_may_come_from_anywhere(self):
+        # (light3rev) the one light is asked only where her shadow falls on the floor (stage.shadow above 0)
+        night = dict(self.NIGHT, direction=[-0.75, -0.55, 0.35])
+        look = mv_look.merge_look({"stage": {"world": 1, "floor": 1, "shadow": 0.0}, "light": {"person": night}})
+        self.assertEqual(look["light"]["person"]["direction"], [-0.75, -0.55, 0.35])
+
+    def test_a_grade_shift_past_its_range_is_refused_where_the_curve_still_rises(self):
+        # (light3rev) a shift is -0.2 to 0.2 of the coded values: 0.21 in the shadows (0.46 under the middle's 0.5) and -0.21 in
+        # the highlights (0.54 over it) keep the curve rising, so only the range refuses them
+        for bad in ({"shadows": [0.21, 0.0, 0.0]}, {"highs": [0.0, 0.0, -0.21]}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"light": {"grade": bad}})
+
     def test_the_core_is_a_share_of_the_signs_light_past_white(self):
         for bad in ({"core": -0.1}, {"core": 4.5}):
             with self.assertRaises(ValueError):
@@ -985,18 +998,28 @@ class NightLightLookTest(unittest.TestCase):
         look = mv_look.merge_look({"light": {"flicker": 0.08}, "stage": {"world": 1}, "layer": {"on": 1}})
         self.assertEqual(look["light"]["flicker"], 0.08)
 
+    def test_a_flicker_over_its_signs_light_is_refused_on_the_stage_of_a_model_too(self):
+        # (light3rev) above, 1.5 without the stage of a model is refused by the missing stage alone, its range unchecked;
+        # with the stage of a model a share over 1 would take a sign's light under 0 (1 - share x d^2)
+        with self.assertRaises(ValueError):
+            mv_look.merge_look({"light": {"flicker": 1.5}, "stage": {"world": 1}, "layer": {"on": 1}})
+        look = mv_look.merge_look({"light": {"flicker": 1.0}, "stage": {"world": 1}, "layer": {"on": 1}})
+        self.assertEqual(look["light"]["flicker"], 1.0)
+
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class GradeRenderTest(unittest.TestCase):
     """light3: the grade rendered for real on a grey box (her) over a black stage: the middle tones lean as the look says, the
-    picture stays RGB to the end (no detour through Y'CbCr: a grey stays grey), and a grade of nothing is no grade"""
+    picture stays RGB to the end (no detour through Y'CbCr: a grey stays grey), and a grade of nothing is no grade.  Beside
+    the grey an orange box (light3rev): a saturation under 1 takes its colour out"""
 
     @classmethod
     def setUpClass(cls):
         cls.folder = tempfile.mkdtemp()
         cls.fg = os.path.join(cls.folder, "fg.avi")
         source = ("color=c=black@0.0:s=%dx%d:r=30,format=rgba,"
-                  "drawbox=x=100:y=40:w=120:h=100:color=0x808080@1.0:t=fill:replace=1" % SIZE)
+                  "drawbox=x=100:y=40:w=120:h=100:color=0x808080@1.0:t=fill:replace=1,"
+                  "drawbox=x=236:y=40:w=64:h=100:color=0xC06040@1.0:t=fill:replace=1" % SIZE)
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "6", "-c:v", "rawvideo",
                         "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
         cls.frames = {}
@@ -1004,7 +1027,8 @@ class GradeRenderTest(unittest.TestCase):
                 "plate": {"base": [0, 0, 0], "haze": [0, 0, 0], "pool": [0, 0, 0]}, "lens": {"vignette": 0, "grain": 0}}
         for name, light in (("bare", {}), ("none", {"light": {"grade": {"saturation": 1.0}}}),
                             ("blue", {"light": {"grade": {"mids": [-0.06, -0.04, 0.1]}}}),
-                            ("grey", {"light": {"grade": {"saturation": 1.6}}})):
+                            ("grey", {"light": {"grade": {"saturation": 1.6}}}),
+                            ("pale", {"light": {"grade": {"saturation": 0.5}}})):
             look = os.path.join(cls.folder, name + ".json")
             with open(look, "w", encoding="utf-8") as f:
                 json.dump(dict(base, **light), f)
@@ -1035,6 +1059,16 @@ class GradeRenderTest(unittest.TestCase):
         bare, grey = self.box("bare"), self.box("grey")
         self.assertLess(numpy.abs(grey - bare).max(), 1.5, (bare, grey))
         self.assertLess(numpy.ptp(grey), 1.5)
+
+    def test_a_saturation_under_1_takes_colour_out(self):
+        # (light3rev) 0.5 about the luma: the orange box keeps about half its spread of r, g and b
+        def spread(name):
+            c = self.frames[name][60:120, 248:288].reshape(-1, 3).mean(axis=0)
+            return float(c.max() - c.min())
+        bare, pale = spread("bare"), spread("pale")
+        self.assertGreater(bare, 80.0)
+        self.assertLess(pale, 0.65 * bare, (bare, pale))
+        self.assertGreater(pale, 0.35 * bare, (bare, pale))
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")

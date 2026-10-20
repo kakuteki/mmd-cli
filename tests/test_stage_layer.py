@@ -421,6 +421,21 @@ def scene_still(look, size=(320, 180)):
     return stage_layer.still(look, spec, m, table, v, picture, s.seen.astype(numpy.float64)), s
 
 
+def two_signs_still(look, size=(320, 180)):
+    """(light3rev) lit_scene's floor and camera with two signs side by side on its wall (materials 1 and 2, both emissive):
+    the floor 100 grey, the signs 200"""
+    mats = [stage_layer.Material("floor"), stage_layer.Material("sign", power=105.0), stage_layer.Material("sign2", power=105.0)]
+    tris = quad(0.0, -60, 60, -60, 120) + wall(20.0, -10, -1, 0, 8) + wall(20.0, 1, 10, 0, 8)
+    m = mesh(tris, materials=mats, face_material=[0, 0, 1, 1, 2, 2])
+    v = view(look_at=(0.0, 4.0, 0.0), distance=40.0, angles=(10.0, 0.0, 0.0), size=size)
+    depth, face = stage_layer.rasterize(v, m)
+    s = stage_layer.surface(v, depth, face, m)
+    picture = numpy.where((s.material == 0)[..., None], 100.0, numpy.where((s.material >= 1)[..., None], 200.0, 0.0)) * numpy.ones(3)
+    spec = stage_layer.check_set({"model": "unused.pmx", "emissive": ["sign", "sign2"], "lamps": [[0.0, 30.0, 10.0]]})
+    table = stage_layer.emissive_table(m, spec)
+    return stage_layer.still(look, spec, m, table, v, picture, s.seen.astype(numpy.float64)), s
+
+
 class State:
     """what Figure.state gives the stage: her capsules and their parts"""
 
@@ -577,6 +592,27 @@ class FrameTest(unittest.TestCase):
         self.assertGreater(shares[0], shares[1] + 0.1)
         sky = ~s.seen
         numpy.testing.assert_allclose(img[sky], plain[sky], atol=1e-9)      # (the sky is no nearer for it)
+
+    def test_each_sign_flickers_on_its_own_and_a_frame_without_a_time_does_not(self):
+        # (light3rev) two signs side by side: each dips at its own rate and phase (not in step), and a frame drawn without a
+        # time of the song (a still) is the steady one, flicker or not
+        look = layer_look(night=0.3, emissive=1.2)
+        st, s = two_signs_still(look)
+        flick = dict(look, light=dict(look["light"], flicker=0.3))
+        steady = stage_layer.stage_frame(look, st)
+        a, b = s.material == 1, s.material == 2
+        self.assertTrue(a.any() and b.any())
+        ga, gb = [], []
+        for t in numpy.arange(0.0, 8.0, 1.0 / 30.0):
+            img = stage_layer.stage_frame(flick, st, t=float(t))
+            ga.append(float(numpy.median(img[a][:, 0] / steady[a][:, 0])))
+            gb.append(float(numpy.median(img[b][:, 0] / steady[b][:, 0])))
+        ga, gb = numpy.array(ga), numpy.array(gb)
+        self.assertGreater(float(numpy.std(ga)), 0.005)
+        self.assertGreater(float(numpy.std(gb)), 0.005)
+        self.assertGreater(float(numpy.abs(ga - gb).max()), 0.05)
+        self.assertLess(float(numpy.corrcoef(ga, gb)[0, 1]), 0.9)
+        numpy.testing.assert_array_equal(stage_layer.stage_frame(flick, st), steady)
 
     def test_the_signs_flicker_by_a_share_of_their_light_and_nothing_else_does(self):
         # light3 (look light.flicker): each emissive material's light dips by at most that share, one gain a material, the
@@ -746,6 +782,60 @@ class DrawerTest(unittest.TestCase):
         stage_layer.Drawer(look, self.spec, self.SIZE, 30, self.cut, self.pictures, Figure(), 16, 0.5).frame(5)
         self.assertEqual(len(asked), 1)
         self.assertAlmostEqual(asked[0], 5.0 + 3.5 / 16.0, places=9)
+
+
+@unittest.skipUnless(stage_layer, "needs Pillow and numpy")
+class FlickerDrawerTest(unittest.TestCase):
+    """(light3rev) a frame of the video shows the signs' flicker (look light.flicker) at the song's time it shows: at 30 fps,
+    16 subframes and a shutter of 0.5, the middle of the open shutter, in seconds of the song"""
+    SIZE = (160, 90)
+
+    @classmethod
+    def setUpClass(cls):
+        from mmd_cli.formats import vmd
+        cls.folder = tempfile.mkdtemp()
+        f = cls.folder
+        with open(os.path.join(f, "stage.pmx"), "wb") as fh:
+            fh.write(pmx_bytes([(-60, 0, -60), (-60, 0, 120), (60, 0, 120), (60, 0, -60),
+                                (-10, 0, 20), (-10, 8, 20), (10, 8, 20), (10, 0, 20)],
+                               [(0, 1, 2), (0, 2, 3), (4, 5, 6), (4, 6, 7)],
+                               [("floor", 0, 5.0, 1.0, 2), ("sign", 0, 105.0, 1.0, 2)]))
+        cls.spec = stage_layer.check_set({"model": os.path.join(f, "stage.pmx"), "emissive": ["sign"]})
+        path = os.path.join(f, "still.vmd")
+        with open(path, "wb") as fh:
+            fh.write(vmd.dumps(vmd.Motion.for_camera(cameras=[
+                vmd.CameraKey(frame=k, distance=-40.0, position=(0.0, 4.0, 0.0), rotation=(-math.radians(10.0), 0.0, 0.0), fov=30)
+                for k in (0, 40)])))
+        cls.track = mv_world.camera_track(path)
+        cls.pictures = os.path.join(f, "pictures")
+        os.makedirs(cls.pictures)
+        for k in range(41):
+            grey = numpy.full((cls.SIZE[1], cls.SIZE[0], 4), (150, 150, 150, 255), numpy.uint8)
+            Image.fromarray(grey, "RGBA").save(os.path.join(cls.pictures, stage_layer.PICTURE % k))
+
+    @classmethod
+    def tearDownClass(cls):
+        __import__("shutil").rmtree(cls.folder, ignore_errors=True)
+
+    def test_the_signs_flicker_at_the_songs_time_of_the_frame(self):
+        look = layer_look(night=1.0)
+        flick = dict(look, light=dict(look["light"], flicker=0.5))
+        plain = stage_layer.Drawer(look, self.spec, self.SIZE, 30, self.track, self.pictures, None, 16, 0.5)
+        lit = stage_layer.Drawer(flick, self.spec, self.SIZE, 30, self.track, self.pictures, None, 16, 0.5)
+        m = stage_layer.set_mesh(self.spec)
+        wanted, drawn = [], []
+        for index in (3, 11, 20, 29):
+            v = plain.view_of(index)
+            depth, face = stage_layer.rasterize(v, m)
+            sign = stage_layer.surface(v, depth, face, m).material == 1
+            self.assertTrue(sign.any())
+            a, _ = plain.frame(index)
+            b, _ = lit.frame(index)
+            drawn.append(float(numpy.median(b[sign][:, 0] / a[sign][:, 0])))
+            wanted.append(float(stage_layer.flicker_gains(flick["light"], 2, (index + 3.5 / 16.0) / 30.0)[1]))
+        self.assertGreater(max(wanted) - min(wanted), 0.01)                 # the times read differ in their flicker
+        for d, w in zip(drawn, wanted):
+            self.assertAlmostEqual(d, w, places=6)
 
 
 class Moving:

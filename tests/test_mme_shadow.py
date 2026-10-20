@@ -502,6 +502,17 @@ class NightTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=other):
                 mme_shadow.effect(light=self.NIGHT, **other)
 
+    def test_settings_the_effect_would_read_wrongly_are_refused(self):
+        # (light3rev) a colour of four values (its fourth moved every colour after it along the effect's tables), a section of
+        # eleven (the last dropped), two sections at one time, a light along the floor (the key's direction must come from
+        # above, as the floor's shadow light must)
+        for bad in ({"key": [1, 1, 1, 0.5]}, {"rim": [0.2, 0.3, 0.5, 0.0]},
+                    {"sections": [[0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0.5]]},
+                    {"sections": [[3, 1, 1, 1, 0, 0, 0, 0, 0, 0], [3, 0.5, 0.5, 0.5, 0, 0, 0, 0, 0, 0]]},
+                    {"direction": [1.0, 0.0, 0.0]}):
+            with self.assertRaises(ValueError, msg=bad):
+                mme_shadow.night(dict(self.NIGHT, **bad))
+
     def test_prepare_and_write_take_the_look(self):
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, True)
@@ -555,6 +566,33 @@ class LightVmdTest(unittest.TestCase):
             self.assertAlmostEqual(a, b, places=6)
         with self.assertRaises(ValueError):
             mme_shadow.light_vmd(cam, None, out)
+
+    def test_a_dancers_motion_is_refused_and_the_command_writes_the_looks_light(self):
+        # (light3rev) only a motion of the camera and the light takes the night's light; the command
+        # light-vmd CAMERA LOOK OUT reads the look's light.person and leaves the camera's file as it was
+        sys.path.insert(0, ROOT)
+        from mmd_cli.formats import vmd
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        dance = os.path.join(folder, "dance.vmd")
+        vmd.dump(vmd.Motion(model_name="White", bones=[vmd.BoneKey("センター", 0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))]), dance)
+        with self.assertRaises(ValueError):
+            mme_shadow.light_vmd(dance, {"on": 1}, os.path.join(folder, "dance_light.vmd"))
+        cam = os.path.join(folder, "cam.vmd")
+        keys = [vmd.CameraKey(frame=f, distance=-45.0, position=(0.0, 10.0, 0.0), rotation=(0.1, 0.0, 0.0)) for f in (0, 7742)]
+        vmd.dump(vmd.Motion.for_camera(cameras=keys), cam)
+        look = os.path.join(folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"light": {"person": {"on": 1, "direction": [-0.65, -0.8, 0.35]}}}, f)
+        out = os.path.join(folder, "cam_light.vmd")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mme_shadow.main(["light-vmd", cam, look, out]), 0)
+        m = vmd.load(out)
+        self.assertEqual([k.frame for k in m.cameras], [0, 7742])
+        self.assertEqual(len(m.lights), 1)
+        for a, b in zip(m.lights[0].direction, (-0.65, -0.8, 0.35)):
+            self.assertAlmostEqual(a, b, places=6)
+        self.assertEqual(vmd.load(cam).lights, [])
 
 
 class FilesTest(unittest.TestCase):
