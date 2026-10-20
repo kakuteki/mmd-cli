@@ -8,7 +8,7 @@
     python tools/look_analyze.py figure strip TABLE.json OUT.png
     python tools/look_analyze.py figure profiles OUT.png A.json B.json ...
     python tools/look_analyze.py crops VIDEO OUT.png --at S S ... [--box X0,Y0,X1,Y1] [--size 320x180] [--matrix ...]
-    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion|regions] [--model ...]
+    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion|regions|lighting] [--model ...]
     python tools/look_analyze.py text VIDEO MEASURE.json [--frames 24]      # where the text is (EasyOCR on the CPU)
 
 `measure` reads the video twice with ffmpeg: once every frame at a tiny size (the cuts between shots, the flashes, the
@@ -580,6 +580,212 @@ def light(rgb, lab):
     return {"light.key_hue": _hue(a, b), "light.key_chroma": float(math.hypot(a, b)),
             "light.lr": float((right - left) / max(right + left, 1e-9)),
             "light.tb": float((upper - lower) / max(upper + lower, 1e-9))}
+
+
+# ---- the lighting of a frame and of a video (typoref, 2026-10-20) ------------------------------------------------------
+#
+# The light falling in the scene: shafts of light (beams, the light of a spotlight seen in haze or fog) and pools of
+# light (spots), read on the frame made small (BEAM_LINES lines) as what rises above the slowly varying light round it,
+# soft inside (SOFT_PLATEAU: not a lit window, a sign or a bar of light);
+# how many colours the bright parts of a frame have; over a video, how many colours its key light takes and how often
+# it changes them, how much it flickers and strobes, and how fast its brightest part moves.
+
+BEAM_LINES = 180                  # the frame is read this many lines tall (averaging whole pixels)
+BEAM_BG = 18.0                    # px at BEAM_LINES: the light round a part is the frame blurred by this
+BEAM_LEAST = 0.01                 # linear luminance: a part rises at least this above the light round it,
+BEAM_SHARE = 0.2                  # and at least this share of the frame's highest rise (its 99.9th percentile)
+BEAM_ELONG = 3.0                  # a beam: this many times longer than wide (second moments),
+BEAM_LENGTH = 0.25                # at least this long (share of the frame's height),
+BEAM_WIDTH = 0.02                 # and at least this wide at half its rise (a painted line or a bar is thinner)
+SPOT_ELONG = 3.0                  # a spot: rounder than this (a pool on the floor seen at a slant is 2 to 3 times wider
+#                                   than deep),
+SPOT_AREA = 0.003                 # covering at least this share of the frame,
+SPOT_WIDTH = 0.04                 # and at least this wide at half its rise
+SOFT_PLATEAU = 0.45               # beams and spots are soft: under this share of a part rises to 3/4 of its highest (a
+#                                   Gaussian pool 0.18, a Gaussian shaft 0.4; a lit window or a bar of light, flat inside,
+#                                   0.7 and more)
+COLOUR_BINS = 36                  # hue bins of the bright, coloured pixels (10 degrees)
+COLOUR_LEAST = 0.10               # a colour of the light holds at least this share of their chroma
+STROBE_GAP = 0.35                 # s between the starts of flashes of one strobe at most, and
+STROBE_LEAST = 3                  # this many flashes at least
+FLICKER_WINDOW = 0.25             # s: the flicker is the mean Y' less its mean over this
+PALETTE_LEAST = 0.05              # a colour of the key light holds at least this share of the coloured frames
+CHANGE_HUE = 40.0                 # degrees between shots' key light: a change of colour
+KEY_COLOURED = 15.0               # C*: the key light is coloured above this
+
+
+def beams(rgb, unit=1.0, extras=None):
+    """the shafts and pools of light of a frame (rgb 0..1): beam.count, beam.share (of the frame), beam.length (of its
+    height), beam.angle (from the vertical, degrees), spot.count, spot.share.  extras (a dict) gets the label map at
+    BEAM_LINES and the labels of the beams and of the spots (for annotate)"""
+    cv2 = _cv2()
+    ndi = _ndi()
+    lin = _luminance(srgb_to_linear(np.asarray(rgb, np.float64)))
+    h, w = lin.shape
+    hs = BEAM_LINES
+    ws = max(8, int(round(w * hs / float(h))))
+    small = cv2.resize(lin.astype(np.float32), (ws, hs), interpolation=cv2.INTER_AREA).astype(np.float64)
+    b = ndi.gaussian_filter(small, 1.0)
+    r = b - ndi.gaussian_filter(small, BEAM_BG)
+    top = float(np.percentile(r, 99.9))
+    th = max(BEAM_LEAST, BEAM_SHARE * top)
+    lab, n = ndi.label(r > th, structure=np.ones((3, 3)))
+    out = {"beam.count": 0, "beam.share": 0.0, "beam.length": float("nan"), "beam.angle": float("nan"),
+           "spot.count": 0, "spot.share": 0.0}
+    lengths, angles, beam_area, spot_area = [], [], 0, 0
+    for k, sl in enumerate(ndi.find_objects(lab), start=1):
+        if sl is None:
+            continue
+        part = lab[sl] == k
+        area = int(part.sum())
+        if area < 15:
+            continue
+        ys, xs = np.nonzero(part)
+        cov = np.cov(np.stack([xs, ys]).astype(np.float64))
+        vals, vecs = np.linalg.eigh(cov)
+        l2, l1 = max(vals[0], 1e-9), max(vals[1], 1e-9)
+        elong = math.sqrt(l1 / l2)
+        length = 4.0 * math.sqrt(l1) / hs
+        rr = r[sl][part]
+        vx, vy = vecs[0, 1], vecs[1, 1]
+        # its width at half its rise, step by step along it (a beam fades along its length): the pixels of each 1 px
+        # slice across it that reach half that slice's highest
+        along = np.round((xs - xs.mean()) * vx + (ys - ys.mean()) * vy).astype(int)
+        widths = []
+        for k2 in np.unique(along):
+            sel = along == k2
+            if sel.sum() >= 2:
+                widths.append(int((rr[sel] >= 0.5 * rr[sel].max()).sum()))
+        width = float(np.median(widths)) / hs if widths else 0.0
+        angle = abs(math.degrees(math.atan2(vx, vy)))
+        angle = 180.0 - angle if angle > 90.0 else angle
+        soft = float((rr >= 0.75 * rr.max()).sum()) / area < SOFT_PLATEAU
+        if not soft:
+            continue
+        if elong >= BEAM_ELONG and length >= BEAM_LENGTH and width >= BEAM_WIDTH:
+            out["beam.count"] += 1
+            beam_area += area
+            lengths.append(length)
+            angles.append(angle)
+            if extras is not None:
+                extras.setdefault("beam_labels", []).append(k)
+        elif elong < SPOT_ELONG and area >= SPOT_AREA * hs * ws and width >= SPOT_WIDTH:
+            out["spot.count"] += 1
+            spot_area += area
+            if extras is not None:
+                extras.setdefault("spot_labels", []).append(k)
+    if extras is not None:
+        extras["light_map"] = lab
+    out["beam.share"] = beam_area / float(hs * ws)
+    out["spot.share"] = spot_area / float(hs * ws)
+    if lengths:
+        out["beam.length"] = float(np.median(lengths))
+        out["beam.angle"] = float(np.median(angles))
+    return out
+
+
+def light_colours(rgb, lab):
+    """how many colours the bright parts of a frame have: light.colours, the peaks of the hue (chroma-weighted, circular)
+    of its coloured bright pixels (L* in its top 5 % and at least 25, C* at least 15) holding COLOUR_LEAST of their
+    chroma each; light.spread, the circular spread of their hue (degrees)"""
+    L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
+    C = np.hypot(a, b)
+    bright = (L >= max(25.0, float(np.percentile(L, 95)))) & (C >= 15.0)
+    if bright.sum() < 20:
+        return {"light.colours": 0, "light.spread": 0.0}
+    hue = np.degrees(np.arctan2(b[bright], a[bright])) % 360.0
+    wgt = C[bright]
+    hist = np.bincount((hue / (360.0 / COLOUR_BINS)).astype(int) % COLOUR_BINS, weights=wgt, minlength=COLOUR_BINS)
+    hist = hist / hist.sum()
+    sm = np.convolve(np.concatenate([hist[-2:], hist, hist[:2]]), [0.25, 0.5, 1.0, 0.5, 0.25], mode="same")[2:-2] / 2.5
+    peaks = 0
+    for i in range(COLOUR_BINS):
+        if sm[i] >= sm[i - 1] and sm[i] > sm[(i + 1) % COLOUR_BINS]:
+            mass = sum(hist[(i + d) % COLOUR_BINS] for d in (-2, -1, 0, 1, 2))
+            if mass >= COLOUR_LEAST:
+                peaks += 1
+    ang = np.radians(hue)
+    R = math.hypot(float((wgt * np.cos(ang)).sum() / wgt.sum()), float((wgt * np.sin(ang)).sum() / wgt.sum()))
+    spread = math.degrees(math.sqrt(max(0.0, -2.0 * math.log(max(R, 1e-9)))))
+    return {"light.colours": int(peaks), "light.spread": float(spread)}
+
+
+def light_palette(rows, duration):
+    """over a video's sampled frames (rows with light.key_hue and light.key_chroma): lightcol.palette, the colours its key
+    light takes (30 degree bins holding PALETTE_LEAST of the frames where it is coloured); lightcol.colourful, the share of
+    frames whose key light is coloured (C* over 20); lightcol.changes_per_min, the changes of the key light's colour
+    (CHANGE_HUE) from shot to shot a minute"""
+    hues, chromas, shots = [], [], {}
+    for r in rows:
+        hdeg, c = r["m"].get("light.key_hue"), r["m"].get("light.key_chroma")
+        if hdeg is None or c is None or not (np.isfinite(hdeg) and np.isfinite(c)):
+            continue
+        chromas.append(c)
+        if c >= KEY_COLOURED:
+            hues.append(hdeg % 360.0)
+            shots.setdefault(r.get("shot", 0), []).append(hdeg % 360.0)
+    out = {"lightcol.palette": 0, "lightcol.colourful": float(np.mean(np.array(chromas) > 20.0)) if chromas else float("nan"),
+           "lightcol.changes_per_min": 0.0}
+    if hues:
+        counts = np.bincount((np.array(hues) / 30.0).astype(int) % 12, minlength=12) / float(len(hues))
+        out["lightcol.palette"] = int((counts >= PALETTE_LEAST).sum())
+    means = []
+    for k in sorted(shots):
+        a = np.radians(shots[k])
+        means.append(math.degrees(math.atan2(np.sin(a).mean(), np.cos(a).mean())) % 360.0)
+    changes = sum(1 for x, y in zip(means, means[1:]) if min(abs(x - y), 360.0 - abs(x - y)) > CHANGE_HUE)
+    out["lightcol.changes_per_min"] = changes / (duration / 60.0) if duration > 0 else float("nan")
+    return out
+
+
+def flicker(series, fps, flash_events=None):
+    """the flicker of a per-frame mean Y' series: flicker.hf, the rms of the series less its running mean over
+    FLICKER_WINDOW s; strobe.per_min, the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
+    x = np.asarray(series, np.float64)
+    k = max(3, int(round(FLICKER_WINDOW * fps)) | 1)
+    run = np.convolve(np.pad(x, (k // 2, k // 2), mode="edge"), np.ones(k) / k, mode="valid")
+    hf = float(np.sqrt(np.mean((x - run) ** 2))) if x.size else float("nan")
+    events = flash_events if flash_events is not None else flashes(x, fps)[0]
+    starts = [e["start"] / float(fps) for e in events]
+    strobes, run_len = 0, 1
+    for a, b in zip(starts, starts[1:]):
+        if b - a <= STROBE_GAP:
+            run_len += 1
+        else:
+            if run_len >= STROBE_LEAST:
+                strobes += 1
+            run_len = 1
+    if run_len >= STROBE_LEAST:
+        strobes += 1
+    minutes = x.size / float(fps) / 60.0
+    return {"flicker.hf": hf, "strobe.per_min": strobes / minutes if minutes > 0 else float("nan")}
+
+
+def light_motion(thumbs, fps, height_px=None):
+    """how fast the brightest part of the picture moves: lightmove.speed, the median speed (720 line px a second) of the
+    middle of the brightest pixels (Y' over 0.6 and in the top 1 %) of thumbnails (N x h x w, 0..1) over a fifth of a
+    second, leaving out spans with a cut (a frame that changes by more than CUT_LEAST)"""
+    t = np.asarray(thumbs, np.float64)
+    hpx = float(height_px or t.shape[1])
+    cents = []
+    for f in t:
+        on = f >= max(0.6, float(np.percentile(f, 99)))
+        if on.sum() == 0:
+            cents.append(None)
+            continue
+        ys, xs = np.nonzero(on)
+        wgt = f[on]
+        cents.append(((xs * wgt).sum() / wgt.sum(), (ys * wgt).sum() / wgt.sum()))
+    d = _diffs(t)
+    # over a fifth of a second (a thumbnail's pixel steps are coarse), with no cut between
+    k = max(1, int(round(0.2 * fps)))
+    cut_at = np.cumsum(d > CUT_LEAST)
+    speeds = []
+    for i in range(k, len(cents)):
+        if cents[i] is None or cents[i - k] is None or cut_at[i] != cut_at[i - k]:
+            continue
+        speeds.append(math.hypot(cents[i][0] - cents[i - k][0], cents[i][1] - cents[i - k][1]) / k * REFERENCE_HEIGHT / hpx * fps)
+    return {"lightmove.speed": float(np.median(speeds)) if speeds else float("nan")}
 
 
 # ---- texture of one frame ---------------------------------------------------------------------------------------------
@@ -1313,6 +1519,20 @@ MEASURES = {
     "light.key_chroma": ("light", "いちばん明るい 2 % の色の強さ", "C*"),
     "light.lr": ("light", "右が左より明るい割合（光の向きの目安）", ""),
     "light.tb": ("light", "上が下より明るい割合", ""),
+    "beam.count": ("light", "光の筋（ボリュームライト）の本数（1 コマ）", "本"),
+    "beam.share": ("light", "光の筋の面積の割合", ""),
+    "beam.length": ("light", "光の筋の長さ（絵の高さの割合）", ""),
+    "beam.angle": ("light", "光の筋の向き（縦からの角度）", "度"),
+    "spot.count": ("light", "光だまり（スポット）の数（1 コマ）", "個"),
+    "spot.share": ("light", "光だまりの面積の割合", ""),
+    "light.colours": ("light", "明るい所の色の数（1 コマ、色相の山）", "色"),
+    "light.spread": ("light", "明るい所の色相の広がり（円の標準偏差）", "度"),
+    "lightcol.palette": ("light", "主光の色の数（動画全体、30 度ごと）", "色"),
+    "lightcol.colourful": ("light", "主光に色が付いているコマの割合（C* 20 超）", ""),
+    "lightcol.changes_per_min": ("light", "主光の色の変わり（カットごと、1 分あたり）", "回"),
+    "flicker.hf": ("light", "明るさのちらつき（0.25 秒の平均からの差の rms）", "Y'"),
+    "strobe.per_min": ("light", "ストロボ（0.35 秒以内に 3 回以上のフラッシュ、1 分あたり）", "回"),
+    "lightmove.speed": ("light", "いちばん明るい所の動く速さ（カットを除く）", "px/秒"),
     "flash.per_min": ("light", "フラッシュの回数（1 分あたり）", "回"),
     "flash.peak": ("light", "フラッシュの強さ（Y' の上がり）", ""),
     "flash.len_s": ("light", "フラッシュの長さ", "秒"),
@@ -1366,7 +1586,9 @@ MEASURES = {
     "shots.median_s": ("frame", "1 カットの長さの中央", "秒"),
 }
 # read once from the whole video, not from each frame
-VIDEO_LEVEL = {"flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10",
+VIDEO_LEVEL = {"lightcol.palette", "lightcol.colourful", "lightcol.changes_per_min", "flicker.hf", "strobe.per_min",
+               "lightmove.speed",
+               "flash.per_min", "flash.peak", "flash.len_s", "vignette.corner", "vignette.corner_p10",
                "vignette.corner_p95", "text.frames", "text.area", "text.height", "text.top", "text.bottom", "text.corner",
                "frame.aspect",
                "frame.bars_tb", "frame.bars_lr", "frame.fps", "frame.fps_effective", "cuts.per_min", "shots.median_s"}
@@ -1391,6 +1613,8 @@ def measure_frame(rgb0, rgb1=None, unit=1.0, full=True, seed=0, extras=None):
     m.update({k.replace("bloom.", "glow_small."): v for k, v in small.items() if k != "profile"})
     m.update(streaks(rgb0, unit))
     m.update(light(rgb0, lab))
+    m.update(beams(rgb0, unit))
+    m.update(light_colours(rgb0, lab))
     e = edges(g0, unit, seed=seed)
     m.update(depth_of_field(e))
     m.update(dof_blocks(g0, unit))
@@ -1464,6 +1688,10 @@ REGION_MEASURES = {
     "stage.cast_hue": ("stage", "舞台の色かぶりの色相", "度"),
     "stage.cast_chroma": ("stage", "舞台の色かぶりの強さ", "C*"),
     "stage.teal_orange": ("stage", "舞台の中の影と光の色の開き", "C*"),
+    "person.key_hue": ("person", "人物に当たる光の色相（人物の明るい 1 割の a*b*）", "度"),
+    "person.key_chroma": ("person", "人物に当たる光の色の強さ", "C*"),
+    "stage.key_hue": ("stage", "舞台の光の色相（舞台の明るい 1 割の a*b*）", "度"),
+    "stage.key_chroma": ("stage", "舞台の光の色の強さ", "C*"),
     "dof.person_blur": ("stage", "人物の区画のぼけ（中央）", "px"),
     "dof.stage_blur": ("stage", "舞台の区画のぼけ（中央）", "px"),
     "dof.stage_ratio": ("stage", "舞台と人物の鮮鋭さの比（(舞台 + 1) / (人物 + 1)）", ""),
@@ -1482,8 +1710,9 @@ REGION_MEASURES = {
 
 
 def _region_stats(L, a, b, sel, prefix, out):
-    """tone and colour of the pixels sel: the 10 / 50 / 90 % points of L*, the mean C*ab, the cast, and how much more
-    orange its brightest quarter is than its darkest (split toning inside the region)"""
+    """tone and colour of the pixels sel: the 10 / 50 / 90 % points of L*, the mean C*ab, the cast, how much more
+    orange its brightest quarter is than its darkest (split toning inside the region), and the colour of its
+    brightest tenth (the light on it)"""
     Ls = L[sel]
     p10, p50, p90 = (float(v) for v in np.percentile(Ls, [10, 50, 90]))
     aa, bb = a[sel], b[sel]
@@ -1493,6 +1722,9 @@ def _region_stats(L, a, b, sel, prefix, out):
     def along(s):
         return float(aa[s].mean() * ORANGE[0] + bb[s].mean() * ORANGE[1])
 
+    key = Ls >= np.percentile(Ls, 90)                            # the light on it: its brightest tenth
+    out.update({prefix + ".key_hue": _hue(aa[key].mean(), bb[key].mean()),
+                prefix + ".key_chroma": float(math.hypot(aa[key].mean(), bb[key].mean()))})
     out.update({prefix + ".L_p10": p10, prefix + ".L_p50": p50, prefix + ".L_p90": p90,
                 prefix + ".chroma": float(np.hypot(aa, bb).mean()), prefix + ".cast_hue": _hue(aa.mean(), bb.mean()),
                 prefix + ".cast_chroma": float(math.hypot(aa.mean(), bb.mean())),
@@ -2092,6 +2324,12 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
                    "frame.bars_lr": ((bars["left"] + bars["right"]) / unit, 0.0),
                    "frame.fps": (float(rate), 0.0),
                    "frame.fps_effective": (float(eff["frame.fps_effective"]), 0.0)}
+    for k, v in light_palette(rows, duration).items():
+        video_level[k] = (v, float("nan"))
+    for k, v in flicker(series, rate, flash_events).items():
+        video_level[k] = (v, float("nan"))
+    for k, v in light_motion(maps.astype(np.float64) / 255.0, rate, height_px=maps.shape[1]).items():
+        video_level[k] = (v, float("nan"))
     for k, (v, fl) in video_level.items():
         summary[k] = {"median": float(v), "q25": float(v), "q75": float(v), "n": 1, "valid": 1.0, "shots": 1,
                       "floor_pair": float(fl), "ci": [float(v), float(v)]}
@@ -2430,7 +2668,8 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
     blur (blue sharp, red soft); bloom, the bright sources outlined and rings 4, 16 and 48 px out; ca, the shift of red
     and blue against green as arrows (drawn 20 times longer); bars, the picture inside the bars; regions (model: the
     person model's ONNX), the person's outline, where the stage is read from, and some of the normals the rim (yellow,
-    inside) and the glow round the person (green, outside) are read on"""
+    inside) and the glow round the person (green, outside) are read on; lighting, the beams (yellow) and the spots (cyan)
+    the lighting measures found"""
     from PIL import Image, ImageDraw
     info = probe(path)
     mat = matrix_for(info, matrix)
@@ -2463,6 +2702,23 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
         dof = depth_of_field(e)
         note = "縁と区画のぼけ: 青 0 px → 赤 8 px 以上（縁の 90 %% 点 %.1f、区画: ピント %.1f / 背景 %.1f / 比 %.1f）" % (
             dof["dof.soft"], blocks_out["dof.fg_blur"], blocks_out["dof.bg_blur"], blocks_out["dof.ratio"])
+    elif what == "lighting":
+        ex = {}
+        bm = beams(rgb, unit, extras=ex)
+        cols = light_colours(rgb, rgb_to_lab(rgb))
+        lab_map = ex["light_map"]
+        big = np.array(Image.fromarray(lab_map.astype(np.int32)).resize((a.shape[1], a.shape[0]), Image.NEAREST))
+        arr = np.asarray(im).astype(np.float64)
+        for k_ in ex.get("beam_labels", []):
+            sel = big == k_
+            arr[sel] = arr[sel] * 0.45 + np.array([255.0, 230.0, 0.0]) * 0.55
+        for k_ in ex.get("spot_labels", []):
+            sel = big == k_
+            arr[sel] = arr[sel] * 0.45 + np.array([0.0, 230.0, 255.0]) * 0.55
+        im = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+        d = ImageDraw.Draw(im)
+        note = "光の筋（黄）%d 本・光だまり（水色）%d 個、明るい所の色 %d 色（色相の広がり %.0f 度）" % (
+            bm["beam.count"], bm["spot.count"], cols["light.colours"], cols["light.spread"])
     elif what == "bloom":
         ndi = _ndi()
         src = luma(rgb) >= BLOOM_SOURCE
@@ -2642,7 +2898,7 @@ def main(argv=None):
     a.add_argument("input")
     a.add_argument("out")
     a.add_argument("--at", type=float, required=True)
-    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion", "regions"), default="dof")
+    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion", "regions", "lighting"), default="dof")
     a.add_argument("--box", type=_box)
     a.add_argument("--scale", type=float, default=1.0)
     a.add_argument("--model", help="regions: the person model's ONNX file")
