@@ -1009,6 +1009,22 @@ class RegionTest(unittest.TestCase):
         r_gap = LA.region_measures(through, m_gap)
         self.assertAlmostEqual(r_gap["bloom.stage_strength"] / r_alone["bloom.stage_strength"], 1.0, delta=0.2)
 
+    def test_a_person_that_matches_what_lies_behind_her_edge_merges_with_it(self):
+        # a white person on a white sign: her outline does not show (the colours inside and outside it alike); on a dark
+        # stage it does; half of her outline over the sign: half of it merges
+        apart = LA.region_measures(*scene(person_lab=(92.0, 0.0, 2.0), stage_lab=(15.0, 5.0, -20.0))[:2])
+        same = LA.region_measures(*scene(person_lab=(92.0, 0.0, 2.0), stage_lab=(90.0, 1.0, 4.0))[:2])
+        self.assertGreater(apart["edge.dE"], 60.0)
+        self.assertLess(apart["edge.merge"], 0.01)
+        self.assertLess(same["edge.dE"], 5.0)
+        self.assertGreater(same["edge.merge"], 0.99)
+        picture, mask, d = scene(person_lab=(92.0, 0.0, 2.0), stage_lab=(15.0, 5.0, -20.0))
+        lab = LA.rgb_to_lab(picture)
+        right = (~(mask > 0.5)) & (np.arange(picture.shape[1])[None, :] >= picture.shape[1] / 2.0)
+        lab[right] = (90.0, 1.0, 4.0)                              # a white sign behind her right half
+        half = LA.region_measures(LA.lab_to_rgb(lab), mask)
+        self.assertAlmostEqual(half["edge.merge"], 0.5, delta=0.08)
+
     def test_the_stage_is_read_clear_of_the_person_s_edge(self):
         # the model's outline a few px inside the person's: the person's bright edge must not be read as the stage's
         picture, _, d = scene(person_lab=(97.0, 0.0, 0.0), stage_lab=(10.0, 0.0, 0.0), radius=200.0)
