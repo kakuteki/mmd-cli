@@ -3,6 +3,8 @@ looks like, and how it goes with the voice and the beat.
 
     python tools/typo_analyze.py detect VIDEO OUT.json [--from S] [--to S] [--rate 2] [--height 540]
                                         [--craft-onnx craft.onnx] [--threads 3]          # the text of sampled frames
+    python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--craft-onnx ...] [--threads 3] [--no-style]
+                                        # every text frame by frame: when and how it comes, stays and goes, its look
 
 Why (2026-10-20, typoref): the request is to take the lighting, the kinetic typography of the lyrics and the motion
 graphics of the YouTube channel @PizaCG as the reference for our MV.  tools/look_analyze.py measures the look of a frame;
@@ -276,8 +278,10 @@ def detect_video(path, out, start=None, end=None, rate=2.0, height=540, onnx=Non
     box = LA.active_box(bars, stack.shape[1:])
     box = [int(v * 4) for v in box]
     box[2], box[3] = min(box[2], size[0]), min(box[3], size[1])
-    result = {"label": os.path.splitext(os.path.basename(path))[0], "path": path, "probe": info, "range": [start, end],
-              "fps": fps, "rate": rate, "height": int(height), "size": list(size), "matrix": mat,
+    probe_out = info if not info.get("folder") else {k: v for k, v in info.items() if k != "files"}
+    result = {"label": os.path.splitext(os.path.basename(path.rstrip("/").rstrip(os.sep)))[0], "path": path,
+              "probe": probe_out, "range": [start, end], "fps": fps, "rate": rate, "height": int(size[1]),
+              "size": list(size), "matrix": mat,
               "picture": box, "detector": {"onnx": onnx, "threads": threads}, "seconds": round(time.time() - t0, 1),
               "samples": samples}
     result["summary"] = detect_summary(result)
@@ -473,14 +477,22 @@ BLUR_LEAST = 0.6                  # edges this much softer than the reference's 
 SHARP_FULL = 0.8                  # a text is whole only with its edges at least this sharp against the reference's
 
 
+LONG_S = 20.0                     # s: a track longer than this (a watermark, a logo) is read once a second between
+#                                   its windows
+
+
 def refine_plan(track, samples, n_total, fps):
-    """the frames to read for a track: every frame from just after the sample before its first to two samples after
-    it and from two samples before its last to just before the sample after it, every MID_EVERY-th between"""
+    """the frames to read for a track: every frame within two samples of its first and of its last sample, every
+    round(fps / MID_RATE)-th between (once a second for a track longer than LONG_S)"""
     step = samples[1]["n"] - samples[0]["n"] if len(samples) > 1 else max(1, int(round(fps / 2.0)))
     first, last = track["first"], track["last"]
-    want = set(range(max(0, first - step + 1), min(n_total, first + 2 * step + 1)))
-    want |= set(range(max(0, last - 2 * step), min(n_total, last + step)))
+    # from two samples before the first (a faint text the detector missed at the sample before) to two after it, the
+    # same round the last
+    want = set(range(max(0, first - 2 * step + 1), min(n_total, first + 2 * step + 1)))
+    want |= set(range(max(0, last - 2 * step), min(n_total, last + 2 * step)))
     every = max(1, int(round(fps / MID_RATE)))
+    if last - first > LONG_S * fps:
+        every = max(1, int(round(fps)))
     want |= set(range(first, last + 1, every))
     return sorted(n for n in want if 0 <= n < n_total)
 
@@ -619,28 +631,33 @@ def _spearman(a, b):
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
-def measure_track(frames, track, detector, fps, start=0.0, bounds=None):
+def measure_track(frames, track, detector, fps, start=0.0, bounds=None, origin=(0, 0), frame_shape=None):
     """how a track comes, stays and goes (see the section's comment).  frames: {n: RGB uint8} (at least those of
-    refine_plan), track: one of link_tracks, detector: (score, link, ratio) of an RGB picture.  Returns a list of the
-    lines found in the track's band (usually one: another line taking the place of the first is measured apart, see
-    _segments), each with frames (first:
-    the first seen, full: the first whole and still, hold_end: the last, last: the last seen), times (s, from `start`),
-    enter and exit (frames, s, kinds: cut, fade, move, scale, rotate, stagger, blur; dx dy and from: where it came from;
-    scale: its size then against its size at rest; stagger: the characters one after another), ref (the reference's
-    box and characters) and series (per frame).  bounds: the first and last frame of the video read (a text still
-    whole there has not come or gone: its phase is "none", cut_off); by default those of `frames`"""
+    refine_plan), whole frames or pieces of them whose top left corner is at `origin` of a frame `frame_shape` (H, W)
+    big (they must hold the track's band, see _band); track: one of link_tracks; detector: (score, link, ratio) of an
+    RGB picture.  Returns a list of the lines found in the track's band (usually one: another line taking the place of
+    the first is measured apart, see _segments), each with frames (first: the first seen, full: the first whole and
+    still, hold_end: the last, last: the last seen), times (s, from `start`), enter and exit (frames, s, kinds: cut,
+    fade, move, scale, rotate, stagger, blur, glitch; dx dy and from: where it came from; scale: its size then against
+    its size at rest; stagger: the characters one after another; glitch), hold, ref (the reference's box and characters,
+    in the frame's px) and series (per frame).  bounds: the first and last frame of the video read (a text still whole
+    there has not come or gone: its phase is "none", cut_off); by default those of `frames`"""
     ns = sorted(frames)
     bounds = bounds or (ns[0], ns[-1])
-    shape = frames[ns[0]].shape
+    shape = frame_shape or frames[ns[0]].shape[:2]
     bx0, by0, bx1, by1 = _band(track, shape)
-    ref_box = track["box"]
+    ox, oy = origin
+    band = {n: np.ascontiguousarray(frames[n][by0 - oy:by1 - oy, bx0 - ox:bx1 - ox]) for n in ns}
+    tb = dict(track)
+    tb["boxes"] = [_shift(b, -bx0, -by0) for b in track["boxes"]]
+    tb["box"] = _shift(track["box"], -bx0, -by0)
+    ref_box = tb["box"]
     vertical = track["vertical"]
     found = {}
     for n in ns:
-        crop = np.ascontiguousarray(frames[n][by0:by1, bx0:bx1])
-        score, link, ratio = detector(crop)
-        boxes = [_shift(b, bx0, by0) for b in text_boxes(score, link, ratio)]
-        peaks = [(c[0] + bx0, c[1] + by0, c[2], c[3]) for c in char_peaks(score, ratio)]
+        score, link, ratio = detector(band[n])
+        boxes = text_boxes(score, link, ratio)
+        peaks = char_peaks(score, ratio)
         b = _find_in_band(boxes, ref_box, vertical)
         if b is not None:
             m = 0.3 * b["h"]
@@ -649,9 +666,13 @@ def measure_track(frames, track, detector, fps, start=0.0, bounds=None):
             inside = []
         found[n] = (b, inside)
     out = []
-    for part in _segments(frames, ns, found):
-        m = _measure_segment(frames, part, found, track, fps, start, bounds)
+    for part in _segments(band, ns, found):
+        m = _measure_segment(band, part, found, tb, fps, start, bounds)
         if m is not None:
+            m["ref"]["box"] = _shift(m["ref"]["box"], bx0, by0)
+            m["ref"]["chars"] = [[c[0] + bx0, c[1] + by0] + list(c[2:]) for c in m["ref"]["chars"]]
+            m["band"] = [int(bx0), int(by0), int(bx1), int(by1)]
+            m["track"] = track.get("id")
             out.append(m)
     return out
 
@@ -1340,6 +1361,137 @@ def typeface(rgb, box):
     return out
 
 
+# ---- a whole video: every track of a detect run, read frame by frame --------------------------------------------------
+
+def iter_frames(path, info, height, matrix, start=0.0, duration=None):
+    """(n, RGB uint8) of every frame of a video (or a folder of frames) from `start`, read at `height` lines (None: its
+    own size) as tools/look_analyze.py reads them"""
+    LA = _tool("look_analyze")
+    if info.get("folder"):
+        from PIL import Image
+        first = int(round((start or 0.0) * info["fps"]))
+        last = len(info["files"]) if not duration else min(len(info["files"]), first + int(round(duration * info["fps"])))
+        for k, f in enumerate(info["files"][first:last]):
+            with Image.open(os.path.join(path, f)) as im:
+                im = im.convert("RGB")
+                if height and im.size[1] != height:
+                    im = im.resize(LA._scale(info, height), Image.BOX if height < im.size[1] else Image.BICUBIC)
+                yield k, np.asarray(im, np.uint8)
+        return
+    vf, size = LA._vf(info, height, matrix)
+    pre, post = LA._range_args(start, duration)
+    argv = ["ffmpeg", "-v", "error", "-nostdin"] + pre + ["-i", path] + post + \
+           ["-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    for k, a in enumerate(LA._ffmpeg_frames(argv, size)):
+        yield k, a
+
+
+def _place(box, picture):
+    """where a box lies in the picture inside the bars, and how big it is: x, y (its middle as shares of the picture's
+    width and height), h (its short side, the size of its characters, as a share of the picture's height), w (its long
+    side as a share of the picture's width, or of its height for a column)"""
+    x0, y0, x1, y1 = picture
+    pw, ph = float(x1 - x0), float(y1 - y0)
+    return {"x": (box["cx"] - x0) / pw, "y": (box["cy"] - y0) / ph, "h": box["h"] / ph,
+            "w": box["w"] / (ph if box.get("vertical") else pw)}
+
+
+def _compact(series):
+    out = []
+    for r in series:
+        c = {}
+        for k, v in r.items():
+            if isinstance(v, float):
+                c[k] = round(v, 4) if np.isfinite(v) else None
+            elif isinstance(v, list):
+                c[k] = [round(x, 3) if isinstance(x, float) and np.isfinite(x) else (None if isinstance(x, float) else x)
+                        for x in v]
+            else:
+                c[k] = v
+        out.append(c)
+    return out
+
+
+def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=True, log=None):
+    """every text of a video measured (see measure_track) from a detect run (det: its JSON as a dict), then the look of
+    each (text_style, typeface) on its reference frame read at the video's own size.  OUT.json: the texts in the order
+    they come, each with its place in the picture (_place), the times, the phases and the look"""
+    LA = _tool("look_analyze")
+    fps = det["fps"]
+    info = LA.probe(path, fps=fps)
+    start, end = det["range"]
+    duration = end - start
+    height = det["height"]
+    read_height = None if height == info["height"] else height
+    samples = det["samples"]
+    tracks = link_tracks(samples)
+    if info.get("folder"):
+        total = len(info["files"]) - int(round(start * fps))
+    else:
+        total = int(math.floor(duration * fps + 1e-6))
+    shape = (det["size"][1], det["size"][0])
+    by_id = {t["id"]: t for t in tracks}
+    plans = {t["id"]: refine_plan(t, samples, total, fps) for t in tracks}
+    bands = {t["id"]: _band(t, shape) for t in tracks}
+    need = {}
+    for tid, plan in plans.items():
+        for n in plan:
+            need.setdefault(n, []).append(tid)
+    last_n = {tid: (max(plan) if plan else -1) for tid, plan in plans.items()}
+    detector = detector or Craft(onnx=onnx, threads=threads)
+    buf = {tid: {} for tid in plans}
+    texts = []
+    t0 = time.time()
+
+    def finish(tid):
+        frames = buf.pop(tid)
+        if not frames:
+            return
+        x0, y0 = bands[tid][:2]
+        ms = measure_track(frames, by_id[tid], detector, fps, start=start, bounds=(0, total - 1), origin=(x0, y0),
+                           frame_shape=shape)
+        texts.extend(ms)
+        if log:
+            log("track %d: %d frames, %d text(s), %.0f s" % (tid, len(frames), len(ms), time.time() - t0))
+
+    for n, frame in iter_frames(path, info, read_height, det["matrix"], start, None if info.get("folder") else duration):
+        for tid in need.get(n, ()):
+            x0, y0, x1, y1 = bands[tid]
+            buf[tid][n] = frame[y0:y1, x0:x1].copy()
+        for tid in [t for t in list(buf) if last_n[t] <= n]:
+            finish(tid)
+    for tid in list(buf):
+        finish(tid)
+    texts.sort(key=lambda m: (m["frames"]["first"], m["ref"]["box"]["cy"]))
+    for k, m in enumerate(texts):
+        m["id"] = k
+        m["place"] = _place(m["ref"]["box"], det["picture"])
+        m["vertical"] = bool(m["ref"]["box"].get("vertical"))
+        m["n_chars"] = len(m["ref"]["chars"])
+        m["series"] = _compact(m["series"])
+    if style and texts:
+        refs = sorted(set(m["frames"]["ref"] for m in texts))
+        scale = info["height"] / float(height)
+        native = dict(LA.read_frames(path, info, refs, height=None, matrix=det["matrix"], start=start,
+                                     duration=None if info.get("folder") else duration, as_uint8=True))
+        for m in texts:
+            a = native.get(m["frames"]["ref"])
+            if a is None:
+                continue
+            b = dict(m["ref"]["box"])
+            for k in ("x0", "y0", "x1", "y1", "cx", "cy", "w", "h"):
+                b[k] = b[k] * scale
+            m["style"] = text_style(a, b)
+            m["typeface"] = typeface(a, b)
+    result = {"label": det.get("label"), "path": path, "fps": fps, "range": [start, end], "height": height,
+              "size": det["size"], "picture": det["picture"], "native": [info["width"], info["height"]],
+              "tracks": len(tracks), "seconds": round(time.time() - t0, 1), "texts": texts}
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=1)
+    return result
+
+
 # ---- the command line --------------------------------------------------------------------------------------------------
 
 def main(argv=None):
@@ -1355,7 +1507,25 @@ def main(argv=None):
     p.add_argument("--craft-onnx", default=None, help="an ONNX export of CRAFT (onnxruntime); without, torch")
     p.add_argument("--threads", type=int, default=3)
     p.add_argument("--matrix", default="auto", choices=("auto", "bt601", "bt709"))
+    p = sub.add_parser("track", help="every text of a detect run measured frame by frame, and its look")
+    p.add_argument("video")
+    p.add_argument("detect", help="the JSON of a detect run of the same video")
+    p.add_argument("out")
+    p.add_argument("--craft-onnx", default=None)
+    p.add_argument("--threads", type=int, default=3)
+    p.add_argument("--no-style", action="store_true", help="not the look (colour, outline, typeface)")
     args = ap.parse_args(argv)
+    if args.cmd == "track":
+        with open(args.detect, encoding="utf-8") as f:
+            det = json.load(f)
+
+        def log(text):
+            print(text, flush=True)
+        r = track_video(args.video, det, args.out, onnx=args.craft_onnx, threads=args.threads, style=not args.no_style,
+                        log=log)
+        print(json.dumps({"ok": True, "out": args.out, "tracks": r["tracks"], "texts": len(r["texts"]),
+                          "seconds": r["seconds"]}))
+        return 0
     if args.cmd == "detect":
         def log(text):
             print(text, flush=True)

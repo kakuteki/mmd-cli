@@ -412,6 +412,64 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertLess(m["hold"]["split_px"], 1.0)
 
 
+    def test_pieces_of_frames_read_as_the_whole_frames(self):
+        frames = clip_of(lambda n: {"alpha": 0.0} if n < 10 else {"offset": (-60.0 * (1.0 - ease_out((n - 10) / 8.0)), 0.0)})
+        ns = TA.sample_frames(len(frames), self.fps, 2.0)
+        samples = TA.detect_samples({n: frames[n] for n in ns}, pixel_detector, self.fps)
+        track = TA.link_tracks(samples)[0]
+        plan = TA.refine_plan(track, samples, len(frames), self.fps)
+        whole = TA.measure_track({n: frames[n] for n in plan}, track, pixel_detector, self.fps, bounds=(0, 59))
+        x0, y0, x1, y1 = TA._band(track, frames[0].shape)
+        pieces = {n: frames[n][y0 - 5:y1 + 3, :] for n in plan}
+        part = TA.measure_track(pieces, track, pixel_detector, self.fps, bounds=(0, 59), origin=(0, y0 - 5),
+                                frame_shape=frames[0].shape[:2])
+        self.assertEqual(whole[0]["frames"], part[0]["frames"])
+        self.assertAlmostEqual(whole[0]["ref"]["box"]["cy"], part[0]["ref"]["box"]["cy"], places=6)
+        self.assertEqual(whole[0]["enter"]["kinds"], part[0]["enter"]["kinds"])
+
+
+@unittest.skipUnless(TA, NEEDS)
+class VideoTest(unittest.TestCase):
+    """detect and track over a folder of frames (what look_analyze reads as a video), with the stand-in detector"""
+
+    @classmethod
+    def setUpClass(cls):
+        from PIL import Image
+        cls.tmp = tempfile.mkdtemp(prefix="typo_video_")
+        cls.fps = 30.0
+
+        def look(n):
+            if n < 12 or n > 70:
+                return {"alpha": 0.0}
+            if n <= 20:
+                return {"alpha": (n - 12) / 8.0}
+            return {}
+        for n in range(90):
+            args = dict(seed=n)
+            args.update(look(n))
+            Image.fromarray(draw_text(**args)).save(os.path.join(cls.tmp, "f%04d.png" % n))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_detect_then_track(self):
+        det = TA.detect_video(self.tmp, None, rate=2.0, height=None, detector=pixel_detector)
+        self.assertEqual(det["fps"], 30)
+        self.assertEqual(len(det["samples"]), 6)
+        out = TA.track_video(self.tmp, det, None, detector=pixel_detector, style=True)
+        self.assertEqual(len(out["texts"]), 1)
+        t = out["texts"][0]
+        self.assertTrue(12 <= t["frames"]["first"] <= 14, t["frames"])
+        self.assertTrue(19 <= t["frames"]["full"] <= 21, t["frames"])
+        self.assertTrue(69 <= t["frames"]["last"] <= 70, t["frames"])
+        self.assertIn("fade", t["enter"]["kinds"])
+        self.assertEqual(t["exit"]["kinds"], ["cut"])
+        self.assertAlmostEqual(t["place"]["x"], 0.5, delta=0.03)              # the middle of the picture across
+        self.assertAlmostEqual(t["place"]["y"], 120 / 180.0, delta=0.03)
+        self.assertGreater(t["style"]["fill_L"], 85)
+
+
 # ---- the look of the text: drawn with Pillow, its colour, outline, shadow and glow known -----------------------------
 
 WIN_FONTS = "C:/Windows/Fonts"
