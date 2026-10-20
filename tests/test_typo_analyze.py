@@ -701,6 +701,37 @@ class SyncTest(unittest.TestCase):
         self.assertLess(r_off["on_beat"]["share"], 0.05)
         self.assertAlmostEqual(r_on["on_beat"]["chance"], 2 * (1 / 30.0 + 0.01) / 0.5, delta=0.02)
 
+
+    def test_the_summary_of_a_video(self):
+        def tx(i, first, last, y, kinds, h=0.05):
+            return {"id": i, "times": {"first": first, "full": first + 0.2, "hold_end": last - 0.2, "last": last},
+                    "place": {"x": 0.5, "y": y, "h": h, "w": 0.4}, "n_chars": 8, "vertical": False,
+                    "enter": {"kinds": kinds, "s": 0.2, "dx": -30.0, "dy": 0.0, "scale": 1.0, "fade_s": 0.25,
+                              "stagger": None},
+                    "exit": {"kinds": ["fade"], "s": 0.2}, "hold": {"s": last - first - 0.4, "drift_h_per_s": 0.0},
+                    "ref": {"box": {"h": 30.0}}, "style": {"fill_L": 95.0, "fill_C": 3.0, "contrast_L": 80.0, "glow": 0.1,
+                                                           "outline": i == 0, "outline_px": 2.0, "shadow": False,
+                                                           "hollow": False},
+                    "typeface": {"weight": 0.1, "class": "gothic"}}
+        texts = [tx(0, 1.8, 4.2, 0.85, ["fade"]), tx(1, 4.8, 7.2, 0.85, ["fade"]), tx(2, 7.8, 9.0, 0.5, ["move"]),
+                 tx(3, 9.4, 11.0, 0.2, ["cut"])]
+        tr = {"label": "x", "fps": 30.0, "range": [0.0, 12.0], "texts": texts}
+        voice = {"phrases": [[2.0, 4.0], [5.0, 7.0], [8.0, 9.0], [9.5, 11.0]], "onsets": []}
+        sy = TA.sync(texts, voice, beats=None, fps=30.0, duration=12.0)
+        r = TA.typo_summary(tr, sy, voice=voice)
+        s = r["summary"]
+        self.assertEqual(r["lyrics"], 4)
+        self.assertAlmostEqual(s["enter.fade"]["median"], 0.5)
+        self.assertAlmostEqual(s["enter.move"]["median"], 0.25)
+        self.assertAlmostEqual(s["enter.cut"]["median"], 0.25)
+        self.assertAlmostEqual(s["typo.lower"]["median"], 0.5)
+        self.assertAlmostEqual(s["style.outline"]["median"], 0.25)
+        self.assertAlmostEqual(s["sync.lead_s"]["median"], 0.15, delta=0.06)
+        self.assertAlmostEqual(s["typo.per_min"]["median"], 4 / 9.0 * 60.0, delta=0.5)     # 4 lines over 2 to 11 s
+        self.assertGreater(s["typo.on_screen"]["median"], 0.8)
+        self.assertEqual(s["typo.concurrent"]["median"], 1.0)
+        self.assertAlmostEqual(s["enter.move_h"]["median"], 1.0)                          # 30 px at 30 px tall
+
     def test_a_text_that_stays_all_along_is_a_mark(self):
         voice = {"phrases": [[2.0, 4.0]], "onsets": [2.0]}
         r = TA.sync([self.text(0.0, 0.0, 60.0, place_y=0.05)], voice, beats=None, fps=30.0, duration=60.0)

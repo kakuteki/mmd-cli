@@ -8,6 +8,8 @@ looks like, and how it goes with the voice and the beat.
     python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS] [--offset S]
                                         # the voice's syllable onsets and phrases, the beat and the bar
     python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json      # the texts against the voice and the beat
+    python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME]
+    python tools/typo_analyze.py compare OUT.md OUT.json --ref A.json ... --ours X.json ...   # TYPO_MEASURES side by side
 
 Why (2026-10-20, typoref): the request is to take the lighting, the kinetic typography of the lyrics and the motion
 graphics of the YouTube channel @PizaCG as the reference for our MV.  tools/look_analyze.py measures the look of a frame;
@@ -1671,6 +1673,151 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None):
     return out
 
 
+# ---- a video in a few numbers, and videos side by side -----------------------------------------------------------------
+
+TYPO_CONCEPTS = ("amount", "place", "time", "enter", "exit", "look", "sync")
+TYPO_CONCEPT_LABELS = {"amount": "量", "place": "置き場と大きさ", "time": "出ている時間", "enter": "入り", "exit": "出",
+                       "look": "見た目と書体", "sync": "声と拍"}
+KINDS = ("cut", "fade", "move", "scale", "rotate", "stagger", "blur", "glitch")
+KIND_JA = {"cut": "切り替え（1 コマで出る）", "fade": "フェード", "move": "移動", "scale": "拡大縮小", "rotate": "回転",
+           "stagger": "1 文字ずつ", "blur": "ぼかし", "glitch": "グリッチ"}
+TYPO_MEASURES = {
+    "typo.per_min": ("amount", "歌詞の行の数（歌っている間の 1 分あたり）", "行"),
+    "typo.on_screen": ("amount", "歌っている間に歌詞が出ている時間の割合", ""),
+    "typo.concurrent": ("amount", "同時に出ている歌詞の行の数（出ている間の時間で重みを付けた中央）", "行"),
+    "typo.chars": ("amount", "1 行の文字の数", "字"),
+    "typo.size": ("place", "文字の大きさ（字の高さ / 絵の高さ）", ""),
+    "typo.x": ("place", "横の置き場（行の中心、左 0〜右 1）", ""),
+    "typo.y": ("place", "縦の置き場（行の中心、上 0〜下 1）", ""),
+    "typo.lower": ("place", "下 1/3 にある行の割合", ""),
+    "typo.upper": ("place", "上 1/3 にある行の割合", ""),
+    "typo.centred": ("place", "横の真ん中（0.4〜0.6）にある行の割合", ""),
+    "typo.vertical": ("place", "縦書きの行の割合", ""),
+    "typo.show_s": ("time", "1 行が見えている時間（出始めから消えるまで）", "秒"),
+    "typo.hold_s": ("time", "1 行が止まって全部見えている時間", "秒"),
+    "enter.s": ("enter", "入りの長さ（出始めから止まって全部見えるまで）", "秒"),
+    "enter.fade_s": ("enter", "フェードの長さ（0 から 1 に換算、フェードの行だけ）", "秒"),
+    "enter.move_h": ("enter", "移動の距離（字の高さの何倍、移動の行だけ）", ""),
+    "enter.scale": ("enter", "出始めの大きさ / 止まった大きさ（拡大縮小の行だけ）", ""),
+    "enter.stagger_s": ("enter", "1 文字ずつの遅れ（1 字あたり、1 文字ずつの行だけ）", "秒"),
+    "exit.s": ("exit", "出の長さ（止まって全部見える最後から消えるまで）", "秒"),
+    "hold.drift": ("time", "止まっている間のゆっくりした動き（字の高さ / 秒）", ""),
+    "style.fill_L": ("look", "文字の塗りの明るさ（L*）", "L*"),
+    "style.fill_C": ("look", "文字の塗りの彩度（C*ab）", "C*"),
+    "style.contrast_L": ("look", "文字と下地の明るさの差（L*）", "L*"),
+    "style.outline": ("look", "縁取りのある行の割合", ""),
+    "style.outline_px": ("look", "縁取りの太さ（動画の大きさの画素、縁取りの行だけ）", "px"),
+    "style.shadow": ("look", "落ち影のある行の割合", ""),
+    "style.glow": ("look", "文字のまわりのグロー（2〜5 px 外の明るさ / 文字の明るさの上がり）", ""),
+    "style.hollow": ("look", "中抜き（縁の線だけ）の行の割合", ""),
+    "type.mincho": ("look", "明朝の行の割合（横画が縦画の 0.62 倍より細い）", ""),
+    "type.weight": ("look", "書体の太さ（画の太さ / 字の高さ）", ""),
+    "sync.lead_s": ("sync", "文字が出始める時刻の、歌い出しより前の時間（+ 先）", "秒"),
+    "sync.full_lead_s": ("sync", "文字が全部見える時刻の、歌い出しより前の時間", "秒"),
+    "sync.out_lag_s": ("sync", "文字が消える時刻の、歌い終わりより後の時間", "秒"),
+    "sync.paired": ("sync", "歌い出しと組めた行の割合", ""),
+    "sync.on_beat": ("sync", "出始めが拍の上（1 コマ以内）にある行の割合", ""),
+    "sync.on_beat_chance": ("sync", "（拍の上に来る偶然の割合）", ""),
+}
+for _k in KINDS:
+    TYPO_MEASURES["enter." + _k] = ("enter", "入りが%sの行の割合" % KIND_JA[_k], "")
+    TYPO_MEASURES["exit." + _k] = ("exit", "出が%sの行の割合" % KIND_JA[_k], "")
+
+
+def _share_stats(flags, seed=0):
+    """a share as a summary entry: its mean, and the 2.5 and 97.5 % points of the mean over the texts drawn again"""
+    v = np.asarray([1.0 if f else 0.0 for f in flags if f is not None], np.float64)
+    if not v.size:
+        return {"median": float("nan"), "q25": float("nan"), "q75": float("nan"), "n": 0, "valid": 0.0, "shots": 0,
+                "floor_pair": float("nan"), "ci": [float("nan"), float("nan")]}
+    rng = np.random.default_rng(seed)
+    means = [v[rng.integers(0, v.size, v.size)].mean() for _ in range(400)]
+    m = float(v.mean())
+    return {"median": m, "q25": m, "q75": m, "n": int(v.size), "valid": 1.0, "shots": int(v.size),
+            "floor_pair": float("nan"), "ci": [float(x) for x in np.percentile(means, [2.5, 97.5])]}
+
+
+def _one(value, n=1):
+    return {"median": float(value), "q25": float(value), "q75": float(value), "n": n, "valid": 1.0, "shots": 1,
+            "floor_pair": float("nan"), "ci": [float(value), float(value)]}
+
+
+def typo_summary(tr, sy, voice=None, seed=0):
+    """the summary (TYPO_MEASURES, in look_analyze's form: median, quartiles, n, floor_pair, ci) of a video's lyrics
+    from its track run (tr) and its sync run (sy, whose texts are in the order of tr's); the times are read to a frame
+    (floor_pair 1 / fps)"""
+    LA = _tool("look_analyze")
+    fps = float(tr["fps"])
+    kinds = [r["kind"] for r in sy["texts"]]
+    lyr = [(t, r) for t, r in zip(tr["texts"], sy["texts"]) if r["kind"] == "lyric"]
+    rows = []
+    for t, r in lyr:
+        m = {"typo.size": t["place"]["h"], "typo.x": t["place"]["x"], "typo.y": t["place"]["y"],
+             "typo.chars": float(t.get("n_chars", 0)), "typo.show_s": t["times"]["last"] - t["times"]["first"],
+             "typo.hold_s": t["hold"]["s"], "enter.s": t["enter"]["s"], "exit.s": t["exit"]["s"],
+             "hold.drift": t["hold"]["drift_h_per_s"]}
+        e = t["enter"]
+        if "fade" in e["kinds"]:
+            m["enter.fade_s"] = e.get("fade_s", float("nan"))
+        if "move" in e["kinds"]:
+            m["enter.move_h"] = math.hypot(e["dx"], e["dy"]) / max(1e-9, t["ref"]["box"]["h"])
+        if "scale" in e["kinds"]:
+            m["enter.scale"] = e["scale"]
+        if "stagger" in e["kinds"] and e.get("stagger"):
+            m["enter.stagger_s"] = abs(e["stagger"]["per_char_s"])
+        st = t.get("style") or {}
+        for k in ("fill_L", "fill_C", "contrast_L", "glow"):
+            if st.get(k) is not None:
+                m["style." + k] = st[k]
+        if st.get("outline"):
+            m["style.outline_px"] = st.get("outline_px", float("nan"))
+        ty = t.get("typeface") or {}
+        if ty.get("weight") is not None:
+            m["type.weight"] = ty["weight"]
+        for k in ("lead_s", "full_lead_s", "out_lag_s"):
+            if k in r:
+                m["sync." + k] = r[k]
+        rows.append({"m": {k: (float(v) if v is not None else float("nan")) for k, v in m.items()}, "shot": t["id"]})
+    summary = LA.summarise(rows, seed=seed) if rows else {}
+    for k in ("typo.show_s", "typo.hold_s", "enter.s", "exit.s", "enter.fade_s", "enter.stagger_s", "sync.lead_s",
+              "sync.full_lead_s", "sync.out_lag_s"):
+        if k in summary:
+            summary[k]["floor_pair"] = 1.0 / fps
+    texts = [t for t, _ in lyr]
+    for k in KINDS:
+        summary["enter." + k] = _share_stats([k in t["enter"]["kinds"] for t in texts if t["enter"]["kinds"] != ["none"]], seed)
+        summary["exit." + k] = _share_stats([k in t["exit"]["kinds"] for t in texts if t["exit"]["kinds"] != ["none"]], seed)
+    summary["typo.lower"] = _share_stats([t["place"]["y"] > 2 / 3.0 for t in texts], seed)
+    summary["typo.upper"] = _share_stats([t["place"]["y"] < 1 / 3.0 for t in texts], seed)
+    summary["typo.centred"] = _share_stats([0.4 <= t["place"]["x"] <= 0.6 for t in texts], seed)
+    summary["typo.vertical"] = _share_stats([t.get("vertical", False) for t in texts], seed)
+    summary["style.outline"] = _share_stats([(t.get("style") or {}).get("outline") for t in texts], seed)
+    summary["style.shadow"] = _share_stats([(t.get("style") or {}).get("shadow") for t in texts], seed)
+    summary["style.hollow"] = _share_stats([(t.get("style") or {}).get("hollow") for t in texts], seed)
+    summary["type.mincho"] = _share_stats([((t.get("typeface") or {}).get("class") == "mincho")
+                                           if (t.get("typeface") or {}).get("class") else None for t in texts], seed)
+    # the amount, over the time the voice sings (from the first phrase's start to the last's end)
+    phrases = (voice or {}).get("phrases") or []
+    if phrases:
+        a, z = phrases[0][0], phrases[-1][1]
+    else:
+        a, z = tr["range"]
+    span = max(1e-6, z - a)
+    summary["typo.per_min"] = _one(sum(1 for t in texts if t["times"]["last"] >= a and t["times"]["first"] <= z) / span * 60.0,
+                                   len(texts))
+    grid = np.arange(a, z, 1.0 / fps)
+    count = np.zeros(grid.size, int)
+    for t in texts:
+        count += (grid >= t["times"]["first"]) & (grid <= t["times"]["last"])
+    summary["typo.on_screen"] = _one(float((count > 0).mean()) if grid.size else float("nan"), grid.size)
+    summary["typo.concurrent"] = _one(float(np.median(count[count > 0])) if (count > 0).any() else 0.0, grid.size)
+    summary["sync.paired"] = _one(sy.get("lyric_share_paired", float("nan")), len(texts))
+    summary["sync.on_beat"] = _one(sy["on_beat"]["share"], sy["on_beat"].get("n", 0))
+    summary["sync.on_beat_chance"] = _one(sy["on_beat"]["chance"], sy["on_beat"].get("n", 0))
+    return {"label": tr.get("label"), "fps": fps, "lyrics": len(texts), "texts": len(kinds),
+            "kinds": {k: kinds.count(k) for k in sorted(set(kinds))}, "summary": summary}
+
+
 # ---- the command line --------------------------------------------------------------------------------------------------
 
 def main(argv=None):
@@ -1702,7 +1849,47 @@ def main(argv=None):
     p.add_argument("texts", help="the JSON of a track run")
     p.add_argument("voice", help="the JSON of a voice run")
     p.add_argument("out")
+    p = sub.add_parser("summary", help="a video's lyrics in a few numbers (TYPO_MEASURES)")
+    p.add_argument("texts", help="the JSON of a track run")
+    p.add_argument("sync", help="the JSON of a sync run of it")
+    p.add_argument("out")
+    p.add_argument("--voice", default=None, help="the JSON of the voice run (the singing's span)")
+    p.add_argument("--label", default=None)
+    p = sub.add_parser("compare", help="summaries side by side: the references' quartiles and ours")
+    p.add_argument("out_md")
+    p.add_argument("out_json")
+    p.add_argument("--ref", nargs="+", required=True)
+    p.add_argument("--ours", nargs="+", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "summary":
+        with open(args.texts, encoding="utf-8") as f:
+            tr = json.load(f)
+        with open(args.sync, encoding="utf-8") as f:
+            sy = json.load(f)
+        vo = None
+        if args.voice:
+            with open(args.voice, encoding="utf-8") as f:
+                vo = json.load(f)
+        r = typo_summary(tr, sy, voice=vo)
+        if args.label:
+            r["label"] = args.label
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(r, f, ensure_ascii=False, indent=1, allow_nan=True)
+        print(json.dumps({"ok": True, "out": args.out, "lyrics": r["lyrics"], "kinds": r["kinds"]}))
+        return 0
+    if args.cmd == "compare":
+        LA = _tool("look_analyze")
+        refs = [json.load(open(x, encoding="utf-8")) for x in args.ref]
+        ours = [json.load(open(x, encoding="utf-8")) for x in args.ours]
+        rows = LA.compare(refs, ours, measures=TYPO_MEASURES)
+        with open(args.out_json, "w", encoding="utf-8") as f:
+            json.dump({"refs": [r["label"] for r in refs], "ours": [o["label"] for o in ours], "rows": rows}, f,
+                      ensure_ascii=False, indent=1, allow_nan=True)
+        md = LA.table_md(rows, [o["label"] for o in ours], concepts=TYPO_CONCEPTS, concept_labels=TYPO_CONCEPT_LABELS)
+        with open(args.out_md, "w", encoding="utf-8") as f:
+            f.write("# 歌詞の文字: 参考 %d 本と私たち\n\n参考: %s\n%s" % (len(refs), ", ".join(r["label"] for r in refs), md))
+        print(json.dumps({"ok": True, "out": args.out_md, "rows": len(rows)}))
+        return 0
     if args.cmd == "voice":
         r = voice_file(args.vocals, args.out, accompaniment=args.accompaniment, offset=args.offset)
         print(json.dumps({"ok": True, "out": args.out, "phrases": len(r["phrases"]), "onsets": len(r["onsets"]),
