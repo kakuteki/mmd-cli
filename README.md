@@ -632,6 +632,43 @@ python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd 
   読まれる（lookfrom 2026-10-21 で直した。前は `-ss %.3f` の丸めで、始めのコマ番号が 3 で割って 1 余るとき 1 コマ前から読まれ、カメラ D では人物と舞台が
   1 コマずれた。査読 stagecityrev。MMD 自身の AVI と mv_chunks の区間では起きていなかった）。
 
+### 画面の飾りを置く（`tools/mograph_layer.py`、MMD なし）
+
+編集で画面に重ねる飾り（モーショングラフィックス）を、look の `mograph` で付ける（2026-10-21、mograph。加賀さんの指示で @PizaCG を参考に）。
+パンチ（拍の短い寄り）・画面のゆれ・白フラッシュ・フェード（黒へ・黒から）・ディゾルブ・グリッチと、舞台の空気の粒と玉ボケ。
+曲の構成の表（拍の格子・節・タイトル語・着地など）から合図を自動で置き（`plan`）、合図は手で足し引きできる表（`events`）になる。
+`mograph` を書かなければ（既定 `{"on": 0}`）ffmpeg の引数は前とバイト単位で同じ。
+
+```
+python tools/mograph_layer.py plan song_structure.json look_mg.json [--look look.json] [--level 1.0]   # 曲の構成から合図を置いた look
+python tools/mograph_layer.py frame look.json out.png --frame 2585 --camera camera.vmd [--size 1280x720]   # 粒の 1 コマ（左が人物の後ろ、右が前）
+python tools/mograph_layer.py apply VIDEO look.json OUT.mp4 [--from 秒 --to 秒] [--offset 秒]           # 出来た動画に重ねる（測るため。粒なし）
+python tools/mv_look.py render DANCER.avi look_mg.json OUT.mp4 ...                                       # 本番は mv_look が描く
+```
+
+- **合図の表**（`mograph.events`）: `{"kind", "t", ...値, "note"}`。`kind` は punch・shake・flash・fade・dissolve・glitch、`t` は曲の秒、値はその種類の
+  既定（下）を上書きする。`note` は理由の書き込み（plan が書く）。合図のコマは round(t x fps)、長さは曲のコマ（30 fps）で数えるので、60 fps でも同じ秒数、
+  区間に分けて描いても（抜粋の頭のコマも曲のコマで数える）全体と同じコマに同じ絵が出る。
+- **種類と既定**: punch `amount` 0.10（画面の 10 % 寄る）・`rise` 2・`fall` 10 コマ・`centre` [0.5, 0.45]（動かない点。1 回の描画で 1 つ）、
+  shake `amount` 5 px（720 行）・`frames` 10・`hz` 9（揺れの分だけ寄って画面の外を見せない）、flash `strength` 0.27（白へ 27 %）・`frames` 7・`colour`、
+  fade `out` 12・`hold` 2（−1 は最後まで）・`back` 15 コマ・`colour`、dissolve `frames` 12（直前のコマを残して消していく）、glitch `frames` 2・`split` 14 px
+  （赤と青を 28 px 離す）・`bands` 3・`shift` 40 px。
+- **粒**（`mograph.particles`、`stage.world` 1 が要る）: `specks`（小さい粒）と `lights`（柔らかい光の玉）を世界の箱（`box`、MMD の単位）に置き、`drift`（単位/秒）で
+  流す。カメラが動けば舞台と同じに動き（視差）、`stage.dof` と同じ薄いレンズの式でぼけて遠い光は玉ボケになる。人物の場所（`clear` の柱）は空ける。
+  カメラから見て人物より手前の粒は人物の前（覆いは `front` まで）、後ろの粒は人物の後ろに描く。`busy` [[秒, 秒, 倍]] で間奏などに粒を増やす（1 秒で増減）。
+  粒のコマは `WORK/mograph/back_NNNNN.png`・`front_NNNNN.png`（曲の頭からのコマ番号、舞台と同じ）で、`render` は抜粋の分、`prepare` は舞台と同じ区間を描く。
+- **mv_look の絵の中の位置**: 後ろの粒は舞台の上（後ろの文字の前）、前の粒は人物とグローの上、パンチ・ゆれ・グリッチ・ディゾルブはフレアのパンチの後で
+  レンズ（周辺減光・粒状感）の前、フェードと白フラッシュはレンズの後で前の文字の下（歌詞は白くならず、黒へのフェードの上にも残る）。
+- **plan の置き方**: タイトル語の頭の拍に白フラッシュとパンチ（0.12）、各サビの頭にフラッシュ（0.22）とパンチ、Bメロ・サビの後半・Cメロ後半の頭にパンチ（0.09。
+  mograph_analyze が数えるのは 3 コマで対数 0.08 以上）、跳びの着地と踊りが止まる強い音のアクセント（減速 5.5 倍以上）にゆれ（0.5 秒以内は 1 つ）、
+  バンド入りの前に黒へ沈んで拍で白フラッシュとともに戻る、ブレイクで黒へ沈む、終わりは最後の小節線から 1 小節で黒へ、Aメロ2 と Cメロへディゾルブ、
+  サビ3 の前の拍とアウトロの頭にグリッチ、間奏で粒 1.6 倍。スカートが広がる時刻の前後 0.5 秒にはパンチとゆれを置かない。`--level` でパンチ・ゆれ・
+  フラッシュの強さをまとめて変える。
+- 注意: ディゾルブは直前のコマを抜粋の中に持つ（抜粋の頭からディゾルブまでを ffmpeg がメモリに持つ: 1280x720 で 1 コマ 2.8 MB）。抜粋の頭がディゾルブの
+  直前のコマより後なら止まる（区間の頭のカットにディゾルブを置かない）。合図が多くて Windows のコマンド行（32,767 文字）を越える時は、グラフを
+  `OUT.filter_complex.txt` に書いて `-/filter_complex` で渡す（ffmpeg 7 から）。look に古い `flares` があると、合いの手でフレアの光とパンチが白フラッシュと
+  別にもう一度出るので、mograph を使う look では `flares` を `[]` にする。
+
 ### 体に落ちる影をやわらかくする（`tools/mme_shadow.py`、MME）
 
 MikuMikuEffect（MME）0.37 x64 を入れた MMD の写しで、人物の本体の描画（セルフシャドウ表示中の "object_ss"）だけを差し替えるエフェクトを書く。
@@ -3174,7 +3211,16 @@ python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0
 python tools/mograph_analyze.py events VIDEO OUT.json [--voice VOICE.json] [--size 128x72]
 python tools/mograph_analyze.py elements VIDEO OUT.json [--frames 60] [--height 720]
 python tools/mograph_analyze.py compare OUT.md OUT.json --ref EV.json,EL.json ... --ours EV.json,EL.json,LABEL ...
+python tools/mograph_analyze.py safety VIDEO OUT.json [--from 秒 --to 秒] [--size 256x144]     # 明滅の安全（BT.1702-3）
 ```
+
+- safety（2026-10-21、mograph）: Rec. ITU-R BT.1702-3（2023-11）の Guideline 1 で明滅を数える。画面の明るさは NOTE 3・Table 1 のとおり SDR の白 200 cd/m2・
+  BT.1886（200 x V^2.4、V は信号の 0〜1）。絵を 64x36 の区画に分け（明るさは cd/m2 で平均）、区画ごとに 20 cd/m2 以上の変化（暗い側が 160 cd/m2 未満。
+  それより明るい側の 1/17 の Michelson コントラストは HDR だけ）をヒステリシスで数える。1 秒の窓で、画面の 25 % を超える区画が通った変化の数が 6 を超える
+  （3 回を超える明滅）と「許されない並び」（`harmful`）。ほかに `most_flashes_a_second`（25 % を超える面積の 1 秒の最多の明滅）、
+  `most_flashes_a_second_anywhere`（どこか 1 区画）、25 % を超えて同時に起きた変化の数と明滅（前縁のコマ・面積・cd/m2）、前縁どうしの最短の間
+  （勧告は 60 Hz で 334 ms 以上なら明るさと面積によらず可）。飽和した赤（勧告に定義がないので WCAG 2.2 の R/(R+G+B) 0.8 以上・(R−G−B) x 320 の変化 20）も
+  同じ数え方で `red` に。
 
 - events: 全部のコマを 128x72 で読み、カットとフラッシュ（look_analyze と同じ）・黒か白へのフェード・ディゾルブ（変化が 3〜16 コマに広がり、真ん中のコマが
   両端の平均）・カメラの動き（Farneback のフローに相似変換を当てる）から急な寄り引き（3 コマで拡大率の対数 0.08 以上、まわりの 6 倍）と画面のゆれ（移動の
