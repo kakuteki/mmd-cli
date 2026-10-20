@@ -735,6 +735,11 @@ python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd               
   mv_look が断る。
 - MMD は MME の写しにだけ入れる（上）。元の White.pmx は変えない（`prepare` が写しを作る）。`light.person` が無いか `on` 0 ならエフェクトは前と
   バイト単位で同じ（試験は SHA-256）。`verify` は夜の光のエフェクトも soft として通す。
+- 全曲を描くとき（`tools/mv_chunks.py`）: 計画の `"model"` は `prepare --look`（描く look と同じファイル）の写し、`"camera"` は `light-vmd` の写し、
+  `"self_shadow": "soft"` と `"night": true`。`night` があると運転台本の確かめ（`verify ... --look`）が、モデルの隣のエフェクトが look の
+  `light.person` と同じであること（無い look なら無いこと）を MMD を起こす前に見る。
+- 色の区間は MME の TIME で変わるので、区間の切れ目（前置きの 120 コマを含む）をまたいでも描き直しは要らない。look の `light.person` を変えたら
+  `prepare --look` で描き直す（`verify --look` が古いエフェクトを断る）。
 
 ### 体の影を作りとは別の道で測る（`tools/selfshadow_check.py`、査読）
 
