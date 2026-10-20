@@ -607,7 +607,10 @@ def _spearman(a, b):
 TEMPLATE_PAD = 0.15               # heights round the reference's box in its template
 PRESENT_NCC = 0.5                 # the template matches a frame at least this (normalised correlation): the text is there
 LOCAL_SCALES = (0.94, 1.0, 1.06)  # sizes tried round the last frame's
-GLOBAL_SCALES = (0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.12, 1.25, 1.4, 1.6, 1.8, 2.0, 2.3, 2.6, 3.0)
+GLOBAL_SCALES = (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.12, 1.25, 1.4, 1.6, 1.8, 2.0, 2.3, 2.6, 3.0)
+GLOBAL_NCC = 0.75                 # a match found anywhere in the band (not near the last place) must match this well: a
+#                                   small template matches the texture of a busy picture at 0.6 (hinata, a night street)
+RELIABLE_NCC = 0.6                # where a text came from is read on the first frame matching at least this
 SWAP_NCC = 0.5                    # two samples of a track whose texts match less than this are two lines
 BG_LEAST = 1.0                    # px a frame: the picture behind a text moves at least this to tell scene from screen
 WORLD_SHARE = 0.6                 # a text that moves with the picture behind it in this share of those frames is in the
@@ -722,7 +725,7 @@ class _Template:
         if best[0] < max(PRESENT_NCC, 0.85 * last_ncc):
             for sc in GLOBAL_SCALES:
                 v, t = self.match(y, sc)
-                if t is not None and v > best[0]:
+                if t is not None and v >= GLOBAL_NCC and v > best[0]:
                     best = (v, t, sc)
         return best
 
@@ -1141,7 +1144,8 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
                     "fade_s": 0.0, "glitch": {"split_px": 0.0, "split_var": 0.0, "torn_frames": 0, "flicker": 0}})
         return out
     kinds = []
-    edge = part[0] if entering else part[-1]
+    reliable = [r for r in part if r.get("ncc", 1.0) >= RELIABLE_NCC] or [rest]
+    edge = reliable[0] if entering else reliable[-1]
     moving = [r for r in part if r is not rest]
     dx, dy = edge["tx"] - rest["tx"], edge["ty"] - rest["ty"]
     out.update({"dx": dx, "dy": dy, "scale": edge["s"] / max(rest["s"], 1e-9),
