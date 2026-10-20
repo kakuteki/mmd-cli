@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2301（定数 1807・引数 125・関数の既定 369。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 416（retarget 262・rig 63・踊りだけ 103）、記録の出所つき 84。
+- 数: 全部 2310（定数 1816・引数 125・関数の既定 369。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 416（retarget 262・rig 63・踊りだけ 103）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -2244,7 +2244,7 @@
 | --scale | 1.0 |  | 2869 |  |  |  |  |  |  |  |  |  |
 | --matrix | "auto" |  | 2871 |  |  |  |  |  |  |  |  |  |
 
-### typo_analyze.py（確かめ・部品、112）
+### typo_analyze.py（確かめ・部品、121）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2295,71 +2295,80 @@
 | SWAP_NCC | 0.5 |  | 615 | two samples of a track whose texts match less than this are two lines |  |  |  |  |  |  |  |  |
 | BG_LEAST | 1.0 | px | 616 | px a frame: the picture behind a text moves at least this to tell scene from screen |  |  |  |  |  |  |  |  |
 | WORLD_SHARE | 0.6 |  | 617 | a text that moves with the picture behind it in this share of those frames is in the |  |  |  |  |  |  |  |  |
-| _ink_region(pad) | 0.15 |  | 621 |  |  |  |  |  |  |  |  |  |
-| follow(last_ncc) | 1.0 |  | 716 |  |  |  |  |  |  |  |  |  |
-| measure_track(origin) | (0, 0) |  | 797 |  |  |  |  |  |  |  |  |  |
-| measure_track(start) | 0.0 |  | 797 |  |  |  |  |  |  |  |  |  |
-| _grad(scale) | 1.0 |  | 980 |  |  |  |  |  |  |  |  |  |
-| GLITCH_SPLIT | 2.0 | px | 988 | px between red and blue that change within a phase: a colour split |  |  |  |  |  |  |  |  |
-| TEAR_SHIFT | 3 | px | 989 | px: a row of the text moved sideways this much against the reference is torn |  |  |  |  |  |  |  |  |
-| TEAR_SHARE | 0.15 |  | 990 | a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn |  |  |  |  |  |  |  |  |
-| SPLIT_REACH | 8 | px | 991 | px searched for the colour split |  |  |  |  |  |  |  |  |
-| TEAR_REACH | 12 | px | 992 | px searched for a torn row |  |  |  |  |  |  |  |  |
-| TEAR_TEXT_ROW | 0.35 |  | 993 | a row is read for a tear when its spread in the reference is at least this share of |  |  |  |  |  |  |  |  |
-| STYLE_GROUND | (0.6, 1.2) |  | 1256 | heights out from the box: the ring whose colour is the ground |  |  |  |  |  |  |  |  |
-| STYLE_PAD | 0.3 |  | 1257 | heights round the box where the strokes are looked for |  |  |  |  |  |  |  |  |
-| DEEP | 3.0 | px | 1258 | px into the strokes: the fill |  |  |  |  |  |  |  |  |
-| EDGE_BAND | (1.0, 2.5) | px | 1259 | px into the strokes: the edge band (an outline, a shadow's side) |  |  |  |  |  |  |  |  |
-| OUTLINE_DE | 15.0 |  | 1260 | CIEDE76 between the edge band and the fill for another colour at the edge |  |  |  |  |  |  |  |  |
-| SHADOW_ONE_WAY | 0.35 |  | 1261 | the edge pixels of that colour face one way at least this much (mean resultant |  |  |  |  |  |  |  |  |
-| GLOW_AT | (2.0, 5.0) | px | 1263 | px out from the strokes where the glow is read, against the fill's rise |  |  |  |  |  |  |  |  |
-| HOLLOW | 0.8 |  | 1264 | holes of the ground inside the strokes this many times the strokes' area: hollow |  |  |  |  |  |  |  |  |
-| TYPE_HV | 0.62 |  | 1412 | horizontal strokes thinner than this share of the vertical ones: mincho. Measured |  |  |  |  |  |  |  |  |
-| TYPE_PAD | 0.1 |  | 1488 | heights round the box where a text's letters are looked for: farther out lie a rule |  |  |  |  |  |  |  |  |
-| TYPE_CONTRAST | 25.0 |  | 1490 | CIEDE76 between the letters' fill and the ground under which they are not read (a |  |  |  |  |  |  |  |  |
-| LETTER_TALL | 1.15 |  | 1492 | a piece taller than this many box heights is not a letter (a figure behind the text, |  |  |  |  |  |  |  |  |
-| LETTER_RULE | (2.5, 0.3) |  | 1494 | a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter |  |  |  | ○ |  |  |  | dance |
-| _glyph(size) | 160 |  | 1586 |  |  |  |  |  |  |  |  |  |
-| font_match(size) | 160 |  | 1598 |  |  |  |  |  |  |  |  |  |
-| iter_frames(start) | 0.0 |  | 1668 |  |  |  |  |  |  |  |  |  |
-| track_video(threads) | 3 |  | 1717 |  |  |  |  |  |  |  |  |  |
-| PHRASE_DB | -35.0 |  | 1852 | dB re the voice's 99th percentile: the voice sounds above this |  |  |  |  |  |  |  |  |
-| PHRASE_GAP | 0.30 | s | 1853 | s: a quieter gap shorter than this stays inside the phrase |  |  |  |  |  |  |  |  |
-| PHRASE_LEAST | 0.20 | s | 1854 | s: a shorter run is no phrase |  |  |  |  |  |  |  |  |
-| PHRASE_ONSET | (0.05, 0.15) | s | 1855 | s before and after a run's start where its first onset is taken as its start |  |  |  |  |  |  |  |  |
-| voice_events(sr) | 16000 |  | 1858 |  |  |  |  |  |  |  |  |  |
-| read_sound(sr) | 16000 |  | 1922 |  |  |  |  |  |  |  |  |  |
-| voice_file(offset) | 0.0 |  | 1931 |  |  |  |  |  |  |  |  |  |
-| PAIR_REACH | 1.5 | s | 1950 | s: a text and a phrase start further apart than this are not paired |  |  |  |  |  |  |  |  |
-| MARK_SHARE | 0.4 |  | 1951 | a text on the screen this share of the video or more is a mark (a logo, a watermark) |  |  |  |  |  |  |  |  |
-| LYRIC_SOUNDS | 0.5 |  | 1952 | a screen text over which the voice sounds (VOICE_ON) this share of its time is a lyric |  |  |  |  |  |  |  |  |
-| VOICE_ON | -30.0 |  | 1953 | dB re the voice's 99th percentile: the voice sounds |  |  |  |  |  |  |  |  |
-| BEAT_REACH | 0.01 | s | 1954 | s added to a frame either side: an event this near a beat is on it |  |  |  | ○ |  |  |  | dance |
-| LEAD_WINDOW | (-0.5, 1.0) | s | 1955 | s round a text's first frame where the voice's first strong onset is looked for |  |  |  |  |  |  |  |  |
-| STRONG | 75.0 |  | 1956 | a strong onset: its flux at least this percentile of the song's onsets' |  |  |  | ○ |  |  |  | dance |
-| TRIGGER | (-1.0, 1.5) | s | 1957 | s round the texts' first frames over which the voice is averaged |  |  |  |  |  |  |  |  |
-| MARK_PLACE | (0.03, 0.03, 0.25) |  | 2002 | texts within these of each other across, down and in size (shares) are one place |  |  |  |  |  |  |  |  |
-| MARK_TIMES | 3 |  | 2003 | a text that comes back to one place this many times is a mark, |  |  |  |  |  |  |  |  |
-| MARK_WIDTH | 0.03 |  | 2004 | if it is as wide each time (within this share) |  |  |  |  |  |  |  |  |
-| SIZE_RANGE | (0.012, 0.35) |  | 2005 | a lyric's characters are this tall at least and at most (share of the picture) |  |  |  |  |  |  |  |  |
-| SIG_H | 16 | px | 2008 | px: a text's signature is its box's picture this tall (as wide as its shape says, |  |  |  |  |  |  |  |  |
-| SIG_W | 160 |  | 2009 | at most this) |  |  |  |  |  |  |  |  |
-| MARK_SAME | 0.8 |  | 2010 | two signatures correlating at least this are the same text |  |  |  |  |  |  |  |  |
-| sync(fps) | 30.0 |  | 2070 |  |  |  |  |  |  |  |  |  |
-| DISPLAY_H | 0.06 |  | 2197 | a line whose characters are this tall (share of the picture) or more is display type |  |  |  |  |  |  |  |  |
-| _share_stats(seed) | 0 |  | 2200 |  |  |  |  |  |  |  |  |  |
-| _one(n) | 1 |  | 2213 |  |  |  |  |  |  |  |  |  |
-| typo_summary(seed) | 0 |  | 2225 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 540 |  | 2423 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2423 |  |  |  |  |  |  |  |  |  |
-| --rate | 2.0 | frames | 2467 | frames sampled a second |  |  |  |  |  |  |  |  |
-| --height | 540 |  | 2468 | lines the frames are read at |  |  |  |  |  |  |  |  |
-| --threads | 3 |  | 2470 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2471 |  |  |  |  |  |  |  |  |  |
-| --threads | 3 |  | 2477 |  |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 2489 | s added to every time |  |  |  |  |  |  |  |  |
-| --height | 540 |  | 2521 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2523 |  |  |  |  |  |  |  |  |  |
+| BG_GAP | 3 | frames | 619 | frames: the picture's step behind a text is read between frames read this close (the |  |  |  |  |  |  |  |  |
+| BG_PART | 24 | px | 621 | px: a part of the band beside the text (left, right, above, below) this large in both |  |  |  |  |  |  |  |  |
+| BG_SPAN | (6, 15) | frames | 624 | frames: the text's and the picture's steps are added up over spans this long (one |  |  |  |  |  |  |  |  |
+| _ink_region(pad) | 0.15 |  | 628 |  |  |  |  |  |  |  |  |  |
+| follow(last_ncc) | 1.0 |  | 723 |  |  |  |  |  |  |  |  |  |
+| measure_track(origin) | (0, 0) |  | 804 |  |  |  |  |  |  |  |  |  |
+| measure_track(start) | 0.0 |  | 804 |  |  |  |  |  |  |  |  |  |
+| _grad(scale) | 1.0 |  | 999 |  |  |  |  |  |  |  |  |  |
+| GLITCH_SPLIT | 2.0 | px | 1007 | px between red and blue that change within a phase: a colour split |  |  |  |  |  |  |  |  |
+| TEAR_SHIFT | 3 | px | 1008 | px: a row of the text moved sideways this much against the reference is torn |  |  |  |  |  |  |  |  |
+| TEAR_SHARE | 0.15 |  | 1009 | a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn |  |  |  |  |  |  |  |  |
+| SPLIT_REACH | 8 | px | 1010 | px searched for the colour split |  |  |  |  |  |  |  |  |
+| TEAR_REACH | 12 | px | 1011 | px searched for a torn row |  |  |  |  |  |  |  |  |
+| TEAR_TEXT_ROW | 0.35 |  | 1012 | a row is read for a tear when its spread in the reference is at least this share of |  |  |  |  |  |  |  |  |
+| STYLE_GROUND | (0.6, 1.2) |  | 1292 | heights out from the box: the ring whose colour is the ground |  |  |  |  |  |  |  |  |
+| STYLE_PAD | 0.3 |  | 1293 | heights round the box where the strokes are looked for |  |  |  |  |  |  |  |  |
+| DEEP | 3.0 | px | 1294 | px into the strokes: the fill |  |  |  |  |  |  |  |  |
+| EDGE_BAND | (1.0, 2.5) | px | 1295 | px into the strokes: the edge band (an outline, a shadow's side) |  |  |  |  |  |  |  |  |
+| OUTLINE_DE | 15.0 |  | 1296 | CIEDE76 between the edge band and the fill for another colour at the edge |  |  |  |  |  |  |  |  |
+| SHADOW_ONE_WAY | 0.35 |  | 1297 | the edge pixels of that colour face one way at least this much (mean resultant |  |  |  |  |  |  |  |  |
+| GLOW_AT | (2.0, 5.0) | px | 1299 | px out from the strokes where the glow is read, against the fill's rise |  |  |  |  |  |  |  |  |
+| HOLLOW | 0.8 |  | 1300 | holes of the ground inside the strokes this many times the strokes' area: hollow |  |  |  |  |  |  |  |  |
+| TYPE_HV | 0.62 |  | 1448 | horizontal strokes thinner than this share of the vertical ones: mincho. Measured |  |  |  |  |  |  |  |  |
+| TYPE_PAD | 0.1 |  | 1534 | heights round the box where a text's letters are looked for: farther out lie a rule |  |  |  |  |  |  |  |  |
+| TYPE_CONTRAST | 25.0 |  | 1536 | CIEDE76 between the letters' fill and the ground under which they are not read (a |  |  |  |  |  |  |  |  |
+| TYPE_TAIL | 0.25 |  | 1538 | the cover under this (a glow) is none, over 1 - this is whole |  |  |  |  |  |  |  |  |
+| FONT_CORE | 0.75 |  | 1539 | the cover the font match takes as the letters (drawn glyphs cut at a half) |  |  |  |  |  |  |  |  |
+| LETTER_TALL | 1.15 |  | 1540 | a piece taller than this many box heights is not a letter (a figure behind the text, |  |  |  |  |  |  |  |  |
+| LETTER_RULE | (2.5, 0.3) |  | 1542 | a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter |  |  |  | ○ |  |  |  | dance |
+| _glyph(size) | 160 |  | 1637 |  |  |  |  |  |  |  |  |  |
+| font_match(size) | 160 |  | 1649 |  |  |  |  |  |  |  |  |  |
+| iter_frames(start) | 0.0 |  | 1722 |  |  |  |  |  |  |  |  |  |
+| track_video(threads) | 3 |  | 1771 |  |  |  |  |  |  |  |  |  |
+| PHRASE_DB | -35.0 |  | 1906 | dB re the voice's 99th percentile: the voice sounds above this |  |  |  |  |  |  |  |  |
+| PHRASE_GAP | 0.30 | s | 1907 | s: a quieter gap shorter than this stays inside the phrase |  |  |  |  |  |  |  |  |
+| PHRASE_LEAST | 0.20 | s | 1908 | s: a shorter run is no phrase |  |  |  |  |  |  |  |  |
+| PHRASE_ONSET | (0.05, 0.15) | s | 1909 | s before and after a run's start where its first onset is taken as its start |  |  |  |  |  |  |  |  |
+| voice_events(sr) | 16000 |  | 1912 |  |  |  |  |  |  |  |  |  |
+| read_sound(sr) | 16000 |  | 1976 |  |  |  |  |  |  |  |  |  |
+| voice_file(offset) | 0.0 |  | 1985 |  |  |  |  |  |  |  |  |  |
+| PAIR_REACH | 1.5 | s | 2004 | s: a text and a phrase start further apart than this are not paired |  |  |  |  |  |  |  |  |
+| MARK_SHARE | 0.4 |  | 2005 | a text on the screen this share of the video or more is a mark (a logo, a watermark) |  |  |  |  |  |  |  |  |
+| LYRIC_SOUNDS | 0.5 |  | 2006 | a screen text over which the voice sounds (VOICE_ON) this share of its time is a lyric |  |  |  |  |  |  |  |  |
+| VOICE_ON | -30.0 |  | 2007 | dB re the voice's 99th percentile: the voice sounds |  |  |  |  |  |  |  |  |
+| BEAT_REACH | 0.01 | s | 2008 | s added to a frame either side: an event this near a beat is on it |  |  |  | ○ |  |  |  | dance |
+| LEAD_WINDOW | (-0.5, 1.0) | s | 2009 | s round a text's first frame where the voice's first strong onset is looked for |  |  |  |  |  |  |  |  |
+| STRONG | 75.0 |  | 2010 | a strong onset: its flux at least this percentile of the song's onsets' |  |  |  | ○ |  |  |  | dance |
+| TRIGGER | (-1.0, 1.5) | s | 2011 | s round the texts' first frames over which the voice is averaged |  |  |  |  |  |  |  |  |
+| MARK_PLACE | (0.03, 0.03, 0.25) |  | 2056 | texts within these of each other across, down and in size (shares) are one place |  |  |  |  |  |  |  |  |
+| MARK_TIMES | 3 |  | 2057 | a text that comes back to one place this many times is a mark, |  |  |  |  |  |  |  |  |
+| MARK_WIDTH | 0.03 |  | 2058 | if it is as wide each time (within this share) |  |  |  |  |  |  |  |  |
+| SIZE_RANGE | (0.012, 0.35) |  | 2059 | a lyric's characters are this tall at least and at most (share of the picture) |  |  |  |  |  |  |  |  |
+| SIG_H | 16 | px | 2062 | px: a text's signature is its box's picture this tall (as wide as its shape says, |  |  |  |  |  |  |  |  |
+| SIG_W | 160 |  | 2063 | at most this) |  |  |  |  |  |  |  |  |
+| MARK_SAME | 0.8 |  | 2064 | two signatures correlating at least this are the same text |  |  |  |  |  |  |  |  |
+| SIGN_TIMES | 3 |  | 2124 | a text seen this many times or more, |  |  |  |  |  |  |  |  |
+| SIGN_SIZES | 1.3 |  | 2125 | its largest this many times its smallest (the camera near and far): a sign of the scene |  |  |  |  |  |  |  |  |
+| sync(fps) | 30.0 |  | 2152 |  |  |  |  |  |  |  |  |  |
+| DISPLAY_H | 0.06 |  | 2280 | a line whose characters are this tall (share of the picture) or more is display type |  |  |  |  |  |  |  |  |
+| _share_stats(seed) | 0 |  | 2283 |  |  |  |  |  |  |  |  |  |
+| _one(n) | 1 |  | 2296 |  |  |  |  |  |  |  |  |  |
+| CORE_SHOW | 0.3 | s | 2301 | s: a lyric line of the core is on the screen at least this long, |  |  |  |  |  |  |  |  |
+| CORE_EDGE | 0.01 |  | 2302 | its box clear of the picture's edges by this share of the picture. (Standing still |  |  |  |  |  |  |  |  |
+| typo_summary(seed) | 0 |  | 2327 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 540 |  | 2525 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2525 |  |  |  |  |  |  |  |  |  |
+| --rate | 2.0 | frames | 2569 | frames sampled a second |  |  |  |  |  |  |  |  |
+| --height | 540 |  | 2570 | lines the frames are read at |  |  |  |  |  |  |  |  |
+| --threads | 3 |  | 2572 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2573 |  |  |  |  |  |  |  |  |  |
+| --threads | 3 |  | 2579 |  |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 2591 | s added to every time |  |  |  |  |  |  |  |  |
+| --height | 540 |  | 2624 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2626 |  |  |  |  |  |  |  |  |  |
 
 ### mograph_analyze.py（確かめ・部品、37）
 
