@@ -1316,7 +1316,9 @@ def text_style(rgb, box):
     # the fill: the colour of the deepest strokes (an outline lies at their edge, a drop shadow under them)
     deepest = strokes & (depth >= max(1.0, float(np.percentile(depth[strokes], 80))))
     fill = np.median(lab[deepest], axis=0)
-    deep = deep & (np.sqrt(((lab - fill) ** 2).sum(axis=2)) < 2 * OUTLINE_DE)
+    like = deep & (np.sqrt(((lab - fill) ** 2).sum(axis=2)) < 2 * OUTLINE_DE)
+    # deep strokes of two colours (the fill, the median of both, lies far from each): all of them
+    deep = like if like.any() else (deep if deep.any() else deepest)
     band = strokes & (depth >= EDGE_BAND[0]) & (depth <= EDGE_BAND[1])
     holes = ndi.binary_fill_holes(strokes) & ~strokes
     hollow = bool(holes.sum() >= HOLLOW * strokes.sum() and np.median(de[holes]) < OUTLINE_DE) if holes.any() else False
@@ -1734,8 +1736,12 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
             b = dict(m["ref"]["box"])
             for k in ("x0", "y0", "x1", "y1", "cx", "cy", "w", "h"):
                 b[k] = b[k] * scale
-            m["style"] = text_style(a, b)
-            m["typeface"] = typeface(a, b)
+            # one text whose look cannot be read does not lose the run (the error is kept in its place)
+            for key, fn in (("style", text_style), ("typeface", typeface)):
+                try:
+                    m[key] = fn(a, b)
+                except Exception as e:                          # noqa: BLE001
+                    m[key] = {"error": "%s: %s" % (type(e).__name__, e)}
     result = {"label": det.get("label"), "path": path, "fps": fps, "range": [start, end], "height": height,
               "size": det["size"], "picture": det["picture"], "native": [info["width"], info["height"]],
               "tracks": len(tracks), "seconds": round(time.time() - t0, 1), "texts": texts}

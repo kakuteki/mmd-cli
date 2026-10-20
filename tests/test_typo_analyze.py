@@ -511,6 +511,32 @@ class VideoTest(unittest.TestCase):
         self.assertAlmostEqual(t["place"]["y"], 120 / 180.0, delta=0.03)
         self.assertGreater(t["style"]["fill_L"], 85)
 
+    def test_a_look_that_cannot_be_read_does_not_lose_the_run(self):
+        # a run of half an hour lost to one text whose fill could not be read (RE: 踊 2, 10-21)
+        det = TA.detect_video(self.tmp, None, rate=2.0, height=None, detector=pixel_detector)
+        real = TA.text_style
+
+        def broken(rgb, box):
+            raise ValueError("cannot convert float NaN to integer")
+        TA.text_style = broken
+        try:
+            out = TA.track_video(self.tmp, det, None, detector=pixel_detector, style=True)
+        finally:
+            TA.text_style = real
+        self.assertEqual(len(out["texts"]), 1)
+        self.assertIn("error", out["texts"][0]["style"])
+        self.assertIn("weight", out["texts"][0]["typeface"])
+
+    def test_the_fill_of_a_text_whose_deep_strokes_are_all_another_colour(self):
+        # the deepest strokes of one colour, every other deep pixel far from it: the fill is still read
+        a = np.full((120, 300, 3), 20, np.uint8)
+        a[44:64, 60:140] = (250, 30, 30)                       # a red block and a blue one as deep: their mean colour
+        a[44:64, 160:240] = (30, 30, 250)                      # lies far from both
+        box = {"x0": 40.0, "y0": 44.0, "x1": 260.0, "y1": 64.0, "cx": 150.0, "cy": 54.0, "w": 220.0, "h": 20.0,
+               "angle": 0.0, "vertical": False, "score": 1.0, "area": 0.0}
+        st = TA.text_style(a, box)
+        self.assertEqual(len(st["fill_rgb"]), 3)
+
 
 # ---- the look of the text: drawn with Pillow, its colour, outline, shadow and glow known -----------------------------
 
