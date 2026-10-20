@@ -1388,8 +1388,8 @@
 | STAGE_JOBS | 4 |  | 101 | the processes that draw a stage in the world ("world": true) unless stage_jobs says |  |  |  |  |  |  |  |  |
 | KEEP_FREE_GB | 30 |  | 104 | the free space kept on the disk of "out" (render12, 2026-10-21): 30 GB with a stage of a model (the rule of the render machine, _spike/out/stage6/COMMON.md: MMD starts o… |  |  |  |  |  |  |  |  |
 | GB | 1024 ** 3 |  | 105 |  |  |  |  |  |  |  |  |  |
-| PICTURE_BPP | 1.5 |  | 108 | MMD's picture of the stage, unpacked (RGBA PNG): 1.38 |  |  |  |  |  |  |  |  |
-| LAYER_BPP | 1.6 |  | 109 | a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42 |  |  |  |  |  |  |  |  |
+| PICTURE_BPP | 2.0 |  | 108 | MMD's picture of the stage, unpacked (RGBA PNG): 1.38 (stagecity), 1.69 (render12) |  |  |  |  |  |  |  |  |
+| LAYER_BPP | 2.0 |  | 109 | a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42, about 1.8 |  |  |  |  |  |  |  |  |
 | WORLD_BPP | 0.5 |  | 110 | a frame of the stage in the world (tools/mv_world.py, PNG): 0.41 |  |  |  |  |  |  |  |  |
 | MP4_BPP | 0.1 |  | 111 | a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song |  |  |  | ○ |  |  |  | dance |
 | MMD_POLL_S | 30 | s | 114 | "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render machine's rule, COMMON.md: 3), looking ever… |  |  |  |  |  |  |  |  |

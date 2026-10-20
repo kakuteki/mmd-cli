@@ -103,10 +103,10 @@ STAGE_JOBS = 4                          # the processes that draw a stage in the
 # _spike/out/stage6/COMMON.md: MMD starts only with 30 GB free after its AVI), in GB of 1024^3 bytes as PowerShell's 1GB reads it
 KEEP_FREE_GB = 30
 GB = 1024 ** 3
-# the bytes per pixel of what a chunk puts on the disk besides its AVIs, for its peak (measured at 1280x720 on hinata by
-# stagecity on 120 frames of camera D, data/timing.json, with headroom; render12 measured them again on its chunks):
-PICTURE_BPP = 1.5                       # MMD's picture of the stage, unpacked (RGBA PNG): 1.38
-LAYER_BPP = 1.6                         # a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42
+# the bytes per pixel of what a chunk puts on the disk besides its AVIs, for its peak (measured at 1280x720 on hinata, with
+# headroom: stagecity on 120 frames of camera D at 100 s, data/timing.json; render12 on the final camera D at 44.4 s):
+PICTURE_BPP = 2.0                       # MMD's picture of the stage, unpacked (RGBA PNG): 1.38 (stagecity), 1.69 (render12)
+LAYER_BPP = 2.0                         # a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42, about 1.8
 WORLD_BPP = 0.5                         # a frame of the stage in the world (tools/mv_world.py, PNG): 0.41
 MP4_BPP = 0.1                           # a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song
 # "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render
