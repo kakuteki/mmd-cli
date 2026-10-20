@@ -714,6 +714,26 @@ class TypefaceTest(unittest.TestCase):
         heavy = self.features("NotoSansJP-VF.ttf", weight=900)
         self.assertGreater(heavy["weight"], 1.5 * light["weight"])
 
+    def test_a_figure_behind_and_a_rule_of_the_fill_colour_are_not_letters(self):
+        # our v7: the dancer's legs (pale, wide) cross the box behind a white line and its rule is light too: the fill
+        # was read off the legs (the deepest pixels) and the rule's long thin horizontal counted as a stroke
+        a, box = render(font="NotoSansJP-VF.ttf", size=48, weight=700, ground=(25, 28, 50))
+        a = a.copy()
+        x = int(box["x0"] + 0.55 * box["w"])
+        a[:, x:x + 56] = (225, 160, 168)                       # a leg from the top of the picture to the bottom
+        a[int(box["y0"]):int(box["y1"]), :] = np.where(        # the letters stay in front of it
+            render(font="NotoSansJP-VF.ttf", size=48, weight=700, ground=(0, 0, 0))[0][int(box["y0"]):int(box["y1"]), :] > 128,
+            255, a[int(box["y0"]):int(box["y1"]), :])
+        y = int(box["y1"] + 0.08 * box["h"])
+        a[y:y + 2, int(box["x0"] + 0.2 * box["w"]):int(box["x0"] + 0.8 * box["w"])] = (250, 245, 235)
+        mask, _, (ox, oy), _ = TA._letters_of(a, box)
+        ys, xs = np.nonzero(mask)
+        self.assertLess(float(((xs + ox >= x) & (xs + ox < x + 56)).mean()), 0.25)      # the letters, not the leg
+        tf = TA.typeface(a, box)
+        self.assertEqual(tf["class"], "gothic", tf)
+        self.assertGreater(tf["hv"], 0.7, tf)
+        self.assertLess(tf["stroke_px"], 8.0, tf)                                     # the letters' strokes (about 5 px)
+
     def test_a_rule_under_the_line_is_not_a_stroke_of_its_letters(self):
         # our lyric style: a thin accent rule a little under the line, wider than it (its long thin horizontal read
         # the gothic lines of our v7 as mincho)

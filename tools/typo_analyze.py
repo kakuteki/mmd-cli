@@ -1489,6 +1489,23 @@ TYPE_PAD = 0.1                    # heights round the box where a text's letters
 #                                   under the line, a shadow's blur, more of the picture behind
 TYPE_CONTRAST = 25.0              # CIEDE76 between the letters' fill and the ground under which they are not read (a
 #                                   text half faded in, a grey line on a grey ground)
+LETTER_TALL = 1.15                # a piece taller than this many box heights is not a letter (a figure behind the text,
+#                                   the dancer's legs across the box in our v7)
+LETTER_RULE = (2.5, 0.3)          # a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter
+
+
+def _not_letters(mask, hb):
+    """the pieces of a mask (8-connected) that cannot be letters: taller than LETTER_TALL heights, or a rule"""
+    ndi = _ndi()
+    lab, n = ndi.label(mask, structure=np.ones((3, 3), bool))
+    drop = np.zeros(n + 1, bool)
+    for k, sl in enumerate(ndi.find_objects(lab), start=1):
+        if sl is None:
+            continue
+        hh, ww = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        if hh > LETTER_TALL * hb or (ww > LETTER_RULE[0] * hb and hh < LETTER_RULE[1] * hb):
+            drop[k] = True
+    return drop[lab]
 
 
 def _letters_of(rgb, box, pad=TYPE_PAD):
@@ -1519,6 +1536,8 @@ def _letters_of(rgb, box, pad=TYPE_PAD):
     ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
     de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
     strokes = near & (de > max(_otsu(de[near]), 8.0))
+    # the fill from the pieces that can be letters (a figure behind is wider and deeper than any stroke)
+    strokes &= ~_not_letters(strokes, hb)
     if strokes.sum() < 20:
         return None
     depth = ndi.distance_transform_edt(strokes)
@@ -1528,7 +1547,10 @@ def _letters_of(rgb, box, pad=TYPE_PAD):
     t = np.clip(((lab - ground) * seg).sum(axis=-1) / max(contrast ** 2, 1e-9), 0.0, 1.0)
     off = np.sqrt(((lab - (ground + t[..., None] * seg)) ** 2).sum(axis=-1))
     cover = np.where(near & (off < max(OUTLINE_DE, 0.2 * contrast)), t, 0.0)
-    return cover >= 0.5, cover, (x0, y0), contrast
+    mask = cover >= 0.5
+    gone = _not_letters(mask, hb)
+    cover[gone] = 0.0
+    return mask & ~gone, cover, (x0, y0), contrast
 
 
 def _weight_axes(font, weight):
