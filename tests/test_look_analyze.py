@@ -345,6 +345,145 @@ class LightTest(unittest.TestCase):
 
 
 @unittest.skipUnless(LA, NEEDS)
+class LightingTest(unittest.TestCase):
+    """the lighting of a frame (beams, pools of light, how many colours its lights have) and of a video (its palette of
+    light colours, how often they change, flicker and strobes, how the light moves): typoref, 2026-10-20"""
+
+    def dark(self, h=360, w=640, level=0.04, seed=3):
+        rng = np.random.default_rng(seed)
+        return np.full((h, w, 3), level) + rng.normal(0, 0.004, (h, w, 3))
+
+    def beam(self, img, x0, y0, angle_deg, length, width, amount=0.35, colour=(1.0, 1.0, 1.0)):
+        """a soft shaft of light from (x0, y0) going down at angle_deg from the vertical, Gaussian across"""
+        h, w = img.shape[:2]
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+        a = math.radians(angle_deg)
+        ux, uy = math.sin(a), math.cos(a)
+        along = (xx - x0) * ux + (yy - y0) * uy
+        across = -(xx - x0) * uy + (yy - y0) * ux
+        on = (along >= 0) & (along <= length)
+        fall = np.exp(-across ** 2 / (2 * (width / 2.0) ** 2)) * on * np.clip(1.0 - along / (1.3 * length), 0, 1)
+        for c in range(3):
+            img[..., c] += amount * colour[c] * fall
+        return img
+
+    def test_a_shaft_of_light_is_a_beam(self):
+        img = self.beam(self.dark(), 320, 0, 20.0, 300, 26)
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5)
+        self.assertEqual(b["beam.count"], 1)
+        self.assertAlmostEqual(b["beam.angle"], 20.0, delta=6.0)
+        self.assertGreater(b["beam.length"], 0.6)                   # of the picture's height
+        self.assertEqual(b["spot.count"], 0)
+
+    def test_the_beams_parts_are_handed_out_for_the_figure(self):
+        img = self.beam(self.dark(), 320, 0, 20.0, 300, 26)
+        ex = {}
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5, extras=ex)
+        self.assertEqual(len(ex["beam_labels"]), b["beam.count"])
+        part = ex["light_map"] == ex["beam_labels"][0]
+        self.assertGreater(part.sum(), 100)
+
+    def test_a_thin_hard_line_is_no_beam(self):
+        img = self.dark()
+        img[100:103, 50:600] = 0.9                                  # a painted line on a road, a bar of light
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5)
+        self.assertEqual(b["beam.count"], 0)
+
+    def test_hard_bright_things_are_no_beams_nor_spots(self):
+        # a lit window and an LED bar: bright, flat inside, hard edged (not light in the air or a pool on the floor)
+        img = self.dark()
+        img[150:200, 300:360] = 0.85                                 # a window
+        img[40:60, 100:560] = 0.9                                    # a wide bar of light
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5)
+        self.assertEqual((b["beam.count"], b["spot.count"]), (0, 0))
+
+    def test_a_round_pool_of_light_is_a_spot(self):
+        img = self.dark()
+        yy, xx = np.mgrid[0:360, 0:640]
+        img += 0.3 * np.exp(-((xx - 300) ** 2 / (2 * 50.0 ** 2) + (yy - 280) ** 2 / (2 * 22.0 ** 2)))[..., None]
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5)
+        self.assertEqual(b["spot.count"], 1)
+        self.assertEqual(b["beam.count"], 0)
+
+    def test_nothing_is_nothing(self):
+        b = LA.beams(np.clip(self.dark(), 0, 1), unit=0.5)
+        self.assertEqual((b["beam.count"], b["spot.count"]), (0, 0))
+
+    def test_the_colours_of_the_lights(self):
+        img = self.dark()
+        for x0, col in ((100, (1.0, 0.1, 0.6)), (320, (0.1, 0.9, 1.0)), (540, (1.0, 0.6, 0.1))):
+            img = self.beam(img, x0, 0, 0.0, 300, 30, amount=0.5, colour=col)
+        three = LA.light_colours(np.clip(img, 0, 1), LA.rgb_to_lab(np.clip(img, 0, 1)))
+        one = self.beam(self.dark(), 320, 0, 0.0, 300, 30, amount=0.5, colour=(0.1, 0.9, 1.0))
+        single = LA.light_colours(np.clip(one, 0, 1), LA.rgb_to_lab(np.clip(one, 0, 1)))
+        self.assertEqual(three["light.colours"], 3)
+        self.assertEqual(single["light.colours"], 1)
+        self.assertGreater(three["light.spread"], 3 * max(single["light.spread"], 5.0))
+
+    def test_palette_and_changes_of_the_light_colour(self):
+        rows = []
+        hues = [330.0] * 20 + [200.0] * 20 + [40.0] * 20 + [330.0] * 20
+        for i, hdeg in enumerate(hues):
+            rows.append({"t": i * 1.5, "shot": i // 20, "m": {"light.key_hue": hdeg - 360.0 if hdeg > 180 else hdeg,
+                                                              "light.key_chroma": 30.0}})
+        v = LA.light_palette(rows, duration=120.0)
+        self.assertEqual(v["lightcol.palette"], 3)
+        self.assertAlmostEqual(v["lightcol.colourful"], 1.0)
+        self.assertAlmostEqual(v["lightcol.changes_per_min"], 1.5, delta=0.01)       # 3 changes in 2 minutes
+
+    def test_flicker_and_strobe(self):
+        fps = 30
+        rng = np.random.default_rng(5)
+        calm = 0.3 + 0.003 * rng.standard_normal(fps * 20)
+        strobe = calm.copy()
+        for k in range(8):                                          # 8 flashes 0.2 s apart: a strobe
+            strobe[300 + 6 * k:300 + 6 * k + 2] += 0.35
+        f_calm = LA.flicker(calm, fps)
+        f_strobe = LA.flicker(strobe, fps)
+        self.assertEqual(f_calm["strobe.per_min"], 0.0)
+        self.assertAlmostEqual(f_strobe["strobe.per_min"], 3.0, delta=0.01)          # one strobe in 20 s
+        self.assertGreater(f_strobe["flicker.hf"], 5 * max(f_calm["flicker.hf"], 1e-3))
+
+    def test_cuts_are_no_flicker(self):
+        # typorev: a cut is a step of the picture's mean light; read over their cuts, the references' flicker was 0.016 at
+        # the median, 0.0098 with the frames next to a cut left out (Cinderella / Miku 0.012 and 0.0027)
+        fps = 30
+        rng = np.random.default_rng(6)
+        calm = 0.3 + 0.003 * rng.standard_normal(fps * 20)
+        cuts = list(range(40, fps * 20, 75))                        # a cut every 2.5 s
+        shots = calm.copy()
+        for k, c in enumerate(cuts):
+            shots[c:] += 0.12 if k % 2 == 0 else -0.09                  # each shot lit another way
+        read_over = LA.flicker(shots, fps)["flicker.hf"]
+        read_apart = LA.flicker(shots, fps, cuts=cuts)["flicker.hf"]
+        steady = LA.flicker(calm, fps)["flicker.hf"]
+        self.assertGreater(read_over, 3 * steady)                       # read over the cuts, the steps are flicker
+        self.assertLess(read_apart, 1.5 * steady)
+        # a strobe inside a shot is still flicker
+        strobe = shots.copy()
+        for k in range(8):
+            strobe[300 + 6 * k:300 + 6 * k + 2] += 0.35
+        self.assertGreater(LA.flicker(strobe, fps, cuts=cuts)["flicker.hf"], 5 * steady)
+
+    def test_the_light_moves(self):
+        fps = 30
+        thumbs = []
+        for i in range(90):
+            t = np.full((36, 64), 0.05)
+            x = 5 + int(i * 0.5)                                    # a light sweeping across, half a thumbnail px a frame
+            t[10:14, x:x + 4] = 0.95
+            thumbs.append(t)
+        still = [np.full((36, 64), 0.05) for _ in range(90)]
+        for t in still:
+            t[10:14, 20:24] = 0.95
+        moving = LA.light_motion(np.array(thumbs), fps, height_px=36)
+        resting = LA.light_motion(np.array(still), fps, height_px=36)
+        # 0.5 thumbnail px a frame at 30 fps, a thumbnail 36 rows for 720 lines: 0.5 * 30 * 20 = 300 px/s
+        self.assertAlmostEqual(moving["lightmove.speed"], 300.0, delta=40.0)
+        self.assertLess(resting["lightmove.speed"], 5.0)
+
+
+@unittest.skipUnless(LA, NEEDS)
 class TextureTest(unittest.TestCase):
     unit = 0.5
 
@@ -789,6 +928,29 @@ class VideoTest(unittest.TestCase):
         self.assertIn("### 人物", table)
         self.assertIn("person.L_p50", table)
 
+    def test_the_faces_of_a_video_are_read_when_asked(self):
+        def middle_third(a):
+            m = np.zeros(a.shape[:2])
+            m[:, a.shape[1] // 3:2 * a.shape[1] // 3] = 1.0
+            return m
+
+        def one_face(a):                                       # a stand-in for the face finder: a box on the person
+            h, w = a.shape[:2]
+            return [(w // 2 - 12, h // 2 - 12, 24, 24)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            synthetic_video(path, cuts=(), flash=10 ** 6)
+            out = os.path.join(tmp, "r.json")
+            d = LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third, faces=one_face)
+            self.assertTrue(math.isfinite(d["summary"]["face.L"]["median"]))
+            self.assertEqual(d["summary"]["face.count"]["median"], 1.0)
+            plain = LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third)
+            self.assertTrue(math.isnan(plain["summary"]["face.L"]["median"]))
+            with self.assertRaises(ValueError):                # a face finder that cannot be loaded is no silent nothing
+                LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third,
+                                   faces=os.path.join(tmp, "no_such_cascade.xml"))
+
     def test_the_person_of_our_own_render_is_read_from_her_layer(self):
         # look2 (2026-10-18): the person model took the bright floor line under v11's dancer for part of her on some frames,
         # and whether it did changed with the stage's blur (the halo read 0.7 and 1.8 for the same dancer and glow).  Our
@@ -897,6 +1059,42 @@ class RegionTest(unittest.TestCase):
         self.assertGreater(whole, 15.0)
         self.assertLess(abs(r["person.teal_orange"]), 1.0)
         self.assertLess(abs(r["stage.teal_orange"]), 1.0)
+
+    def test_the_light_on_the_face_is_read_apart_from_the_costume(self):
+        # typorev: the references' person read 44.6 L* against ours 76, their faces 78 against ours 80: the references'
+        # dark costumes, not their light.  The cheeks of a face found on the person (its box's rows 0.55 to 0.85,
+        # columns 0.25 to 0.75) read the light on her whatever she wears
+        for costume in (15.0, 85.0):
+            picture, mask, _ = scene(person_lab=(costume, 0.0, 0.0), stage_lab=(20.0, 0.0, 0.0))
+            lab = LA.rgb_to_lab(picture)
+            lab[300:380, 600:680] = (78.0, 14.0, 10.0)                  # a face of skin lit to 78
+            r = LA.region_measures(LA.lab_to_rgb(lab), mask, faces=[(600, 300, 80, 80), (790, 300, 100, 100)])
+            self.assertAlmostEqual(r["face.L"], 78.0, delta=1.0)
+            self.assertAlmostEqual(r["face.chroma"], math.hypot(14.0, 10.0), delta=1.0)
+            self.assertAlmostEqual(r["face.hue"], math.degrees(math.atan2(10.0, 14.0)), delta=3.0)
+            # a box whose middle is off her, though its cheeks touch her edge (another dancer beside her): not hers
+            self.assertEqual(r["face.count"], 1)
+            self.assertAlmostEqual(r["person.L_p50"], costume, delta=2.0)
+        self.assertTrue(math.isnan(LA.region_measures(picture, mask)["face.L"]))        # no faces given: none read
+
+    def test_the_colour_of_the_light_on_the_person_and_on_the_stage(self):
+        # the person's brightest tenth lit red, the stage's lit blue (the rest grey): each region's key light
+        picture, mask, _ = scene()
+        lab = LA.rgb_to_lab(picture)
+        inside = mask > 0.5
+        out = ~inside
+        lab[..., 1:] = 0.0
+        rng = np.random.default_rng(2)
+        lab[..., 0] = np.where(inside, 50.0, 20.0) + rng.uniform(-3, 3, lab.shape[:2])
+        lit_p = inside & (rng.uniform(size=inside.shape) < 0.08)
+        lit_s = out & (rng.uniform(size=inside.shape) < 0.08)
+        lab[lit_p, 0], lab[lit_p, 1], lab[lit_p, 2] = 75.0, 45.0, 25.0          # red light: hue about 29 degrees
+        lab[lit_s, 0], lab[lit_s, 1], lab[lit_s, 2] = 45.0, 10.0, -45.0         # blue light: hue about 283 degrees
+        r = LA.region_measures(LA.lab_to_rgb(lab), mask)
+        self.assertAlmostEqual(r["person.key_hue"] % 360.0, 29.0, delta=8.0)
+        self.assertAlmostEqual(r["stage.key_hue"] % 360.0, 283.0, delta=8.0)            # -77 degrees
+        self.assertGreater(r["person.key_chroma"], 25.0)
+        self.assertGreater(r["stage.key_chroma"], 25.0)
 
     def test_split_toning_inside_the_person(self):
         picture, mask, _ = scene()
