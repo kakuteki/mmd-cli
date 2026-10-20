@@ -3003,7 +3003,8 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
   色の行列は印のとおり、印がなければ再生側の慣わし（720 行以上は BT.709）。黒帯の内側だけを測る。
 - 考え方: 色調（L* の黒・中央・白の位置、明暗の寄り、コントラスト、細かいコントラスト、白飛び・黒つぶれ）・色（C*ab、Hasler と Süsstrunk の
   色の豊かさ、全体と影・中間・光の色かぶり、ティールとオレンジ、白に近い画素の色温度）・光（明るい所のまわりのグローの強さと届き、にじみの色、
-  小さい光のグロー、明るい縁の裾、光芒の本数と向き、フラッシュ、光の色と向きの目安）・光学（縁のぼけ、区画で読む被写界深度、動く縁のぼけから
+  小さい光のグロー、明るい縁の裾、光芒の本数と向き、フラッシュ、光の色と向きの目安、2026-10-20 typoref から光の筋と光だまり・明るい所の色の数と広がり・
+  主光の色の数とカットごとの変わり・ちらつきとストロボ・明るい所の動く速さ）・光学（縁のぼけ、区画で読む被写界深度、動く縁のぼけから
   シャッター、色収差のずれと倍率、周辺減光、レンズの歪み）・質感（ノイズ、コマごとに変わる粒と大きさ、縁の幅とシャープの縁取り、ディフュージョン、
   スキャンライン、行の裂け）・画面（縦横比と黒帯、fps と実際に絵が変わる fps、カット、文字）。
 - 床: 物差しごとに、対の 2 枚（ほぼ同じ絵）での読みの差（floor_pair）、コマにわたる四分位、場面を引き直した中央値の 95 % 区間を出す。
@@ -3023,7 +3024,8 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
 - `regions`: 人物の領域をアニメの人物の分け方の模型（skytnt/anime-seg の ISNet `isnetis.onnx`、onnxruntime の CPU）で取り、人物（輪郭の 3 px 内側）と
   舞台（人物から 12 px 外）を分けて読む: 両方の L* の 10・50・90 % 点・彩度・色かぶり・中の影と光の色の開き（明るい 1/4 と暗い 1/4）、人物と舞台の明るさの差、
   人物の面積の割合（構図）、輪郭の法線に沿った縁の光（3〜6 px と 12〜20 px の比。リムライトで 1 より大）と外のにじみ（3〜8 px と 24〜40 px、光の割合と
-  L* の差）、舞台と人物の区画のぼけの比、舞台の光源の割合とそのグロー、人物の光源が人物の外に落とすグロー。模型は v10 の 30 コマで、合成の絵と舞台の層の
+  L* の差）、舞台と人物の区画のぼけの比、舞台の光源の割合とそのグロー、人物の光源が人物の外に落とすグロー、人物と舞台に当たる光の色（それぞれの明るい
+  1 割の a*b*、typoref）。模型は v10 の 30 コマで、合成の絵と舞台の層の
   差から取った人物の領域と IoU 中央 0.946・輪郭の距離中央 1.0 px で合い、物差しも両方の領域でほぼ同じ（人物の L* 中央 83.8 と 83.7）。
   `--mask-video LAYER`（2026-10-18 look2、`--model` の代わり）: 私たちの絵では、人物を独りで alpha つきで描いた層（同じコマの並び。look2 の
   畳んだ人物の MOV）から人物を取る。模型は v11 の踊り手の足の下の明るい床の線（橙）を人物の一部として拾うコマがあり、拾うかどうかが舞台の
@@ -3044,6 +3046,68 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
   colorspace=bt709:range=tv` にした（上の mv_look の節）。
 - 研究の記録と結果: `_spike/out/stage6/lookref/NOTES.md`（物差しの一覧 `measures.md`）、hinata `C:/work/hibikase/stage6/lookref/`（参考の動画は hinata の `ref/` だけに置き、
   配らない）。査読と人物・舞台を分けた測り直し: `_spike/out/stage6/lookrev/NOTES.md`、hinata `C:/work/hibikase/stage6/lookrev/`（模型は `models/isnetis.onnx`）。
+
+### 参考の動画の歌詞の文字の動きを数にする（`tools/typo_analyze.py`、MMD なし）
+
+参考にする MV（加賀さんの指示 2026-10-20: YouTube の @PizaCG の「照明の感じと歌詞のキネティックタイポグラフィ、モーショングラフィックス」）と私たちの版の
+文字を、同じ物差しで数にする（研究 typoref）。動画は hinata で読む（ffmpeg、色は look_analyze と同じ読み方）。
+
+```
+python tools/typo_analyze.py detect VIDEO OUT.json [--rate 2] [--height 540] [--craft-onnx craft.onnx] [--threads 3]
+python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--no-style]
+python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS]       # 歌声の立ち上がり、伴奏の拍と小節
+python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json [--events EVENTS.json]   # 文字の種類と声・拍との時刻
+python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME]
+python tools/typo_analyze.py compare OUT.md OUT.json --ref A.json ... --ours X.json ...
+python tools/typo_analyze.py figure timeline|layout|trigger OUT.png --track T.json ... --sync S.json ... [--voice V.json]
+python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0,y0,x1,y1]
+```
+
+- detect: 2 秒に 4 コマ（既定 2 fps）を 540 行で読み、文字の検出器 CRAFT（EasyOCR の craft_mlt_25k）を CPU で当てる。onnxruntime で動かすと torch より
+  約 2 割速い（hinata 3 スレッドで 960x540 が約 1.3 秒、1280x736 が約 2.3 秒）。ONNX は torch から書き出す（リポジトリには入れない）。地図（字ごとのガウスと字のつながり）
+  から EasyOCR と同じ読み方で箱を、字ごとの山から字の場所と大きさを取る。
+- track: 見本のコマの箱を見本から見本へつなぎ（重なり・高さの比・速さの予測）、同じ行の語を 1 行にまとめ、1 本ずつ、最初と最後の見本のまわり
+  （見本 2 つ分）は全部のコマを、間は 1 秒に 10 コマを読む。コマごとの追跡は CRAFT を回さず、止まって全部見える見本（基準）の絵のテンプレートの照合
+  （正規化相互相関、大きさ 0.94〜1.06 倍で近くを、合わなければ 0.5〜3 倍で帯全体を 0.75 以上で）。基準の画（Otsu）から、字ごとに下地より浮く量（フェード）、
+  字の枠の中の明るさの和（ぼかしでは減らずフェードでは減る）、縁の鋭さ（ぼかし）、赤と青のずれと行の裂け（グリッチ）を読む。出始め・全部見える最初・
+  最後・消えるコマ、入りと出の種類（切り替え・フェード・移動・拡大縮小・1 文字ずつ・ぼかし・グリッチ）、その量、止まっている間の動き、背景と一緒に動くか
+  （場面の中の文字か、画面に重ねた文字か）。基準のコマを動画の大きさで読み直し、塗り・縁取り（色と太さ）・落ち影（向き）・グロー・中抜きと、書体
+  （画の太さ、横画と縦画の太さの比: 明朝は 0.62 未満）を読む。
+- 見本どうしの照合が 0.5 未満なら別の行（同じ所に次の行）として切り、その間は 2 つのテンプレートのどちらがよく合うかで切れ目のコマを決める。
+- voice: 分けた歌声（demucs htdemucs）を `tools/lip_check.py` と同じに読み（300〜3500 Hz、10 ms ごと）、音節の立ち上がりと強さ、レベルの列を出す。伴奏から
+  librosa で拍、150 Hz 以下の立ち上がりが最も強い位相で小節の頭。
+- sync: 文字の種類（印: 長く出ている・同じ所に同じ幅で何度も出る / 場面の中: 背景と一緒に動く・カットと一緒に出て消える / 歌詞: 字の大きさが絵の 1.2〜35 %
+  で、出ている間の半分以上で歌声が鳴る / その他）。歌詞ごとに、出始めから -0.5〜+1.0 秒の最初の強い立ち上がり（強さ 75 % 点以上）までの時間（+ は文字が先）、
+  全部の歌詞の出始めでそろえた立ち上がりの強さの平均と、その山の時刻（行を組まない読み）。出始めが拍の 1 コマ以内にある割合と偶然の割合。
+- 句（休みで区切った歌声）で行を組まない理由: ヒビカセの歌詞 49 行は行と行の間が中央 -0.05 秒（休みなしに続く）で、休みの句と行の始まりの一致は設定を
+  振っても F1 0.30 まで（typoref の NOTES）。
+- summary・compare: `TYPO_MEASURES`（量・置き場と大きさ・出ている時間・入り・出・見た目と書体・声と拍）を look_analyze と同じ形（中央・四分位・床）で。
+  割合は文字ごとの平均と、文字を引き直した 95 % 区間。時刻の床は 1 コマ。
+- font_match: 1 文字ずつの画（その字の枠の中、インクの外接で切る）を候補の書体の同じ字に合わせて重ね（字間に左右されない）、1 px 太らせた IoU の平均で
+  並べる。可変書体は `PATH@WEIGHT`。描いた字の試験で、正しい書体 0.88〜0.94、次点 0.70〜0.78。
+- 道具でデバッグして直したこと（実データ、夜の街の舞台の参考）: (1) CRAFT は舞台の看板の文字（ネオン）を拾う。1 本 450 跡のうち多くが看板で、CRAFT を
+  コマごとに回すと 1 本 1 時間超 → テンプレートの照合に変えた（1 跡 2 秒前後）。背景と一緒に動くか、カットと一緒に出て消えるかで歌詞から外す。
+  (2) 帯全体の探し直しで小さいテンプレートが看板や路面の模様に 0.6 で合い、出始めの移動・拡大縮小を偽に読んでいた → 0.75 以上・0.5〜3 倍に。
+  (3) 背景が動くと行が裂けたと読んだ → 基準で文字のある行だけ、ずらさない時より明らかに良く合い、隣の行と組で。(4) ノイズで 1 文字ずつと読んだ → 最後まで
+  続いて見える時刻で、広がりと当てはまりも要る。(5) 文字の下に暗い板（文字の後ろの帯）が先に出る行は、まわりの明るさが板で変わるので字の明るさの和が
+  1 を超える（フェードの読みは板の上では弱い）。回転は追わない。
+- 研究の記録と結果: `_spike/out/stage6/typoref/NOTES.md`、hinata `C:/work/hibikase/stage6/typoref/`（参考の動画は `ref/` だけ、配らない）。
+
+### 画面の切り替えと飾りを数にする（`tools/mograph_analyze.py`、MMD なし）
+
+```
+python tools/mograph_analyze.py events VIDEO OUT.json [--voice VOICE.json] [--size 128x72]
+python tools/mograph_analyze.py elements VIDEO OUT.json [--frames 60] [--height 720]
+python tools/mograph_analyze.py compare OUT.md OUT.json --ref EV.json,EL.json ... --ours EV.json,EL.json,LABEL ...
+```
+
+- events: 全部のコマを 128x72 で読み、カットとフラッシュ（look_analyze と同じ）・黒か白へのフェード・ディゾルブ（変化が 3〜16 コマに広がり、真ん中のコマが
+  両端の平均）・カメラの動き（Farneback のフローに相似変換を当てる）から急な寄り引き（3 コマで拡大率の対数 0.08 以上、まわりの 6 倍）と画面のゆれ（移動の
+  0.2 秒の平均からの差の rms）・グリッチのコマ（赤と青のずれ 720 行で 8 px 以上）・色のフラッシュ（平均の彩度が 12 上がって戻る）。それぞれ拍の上の割合と偶然。
+- elements: 間引いたコマで、粒（規格化した LoG の空間と大きさの極大、まわりより Y' 0.12 以上明るい）と玉ボケ（σ 4 px 以上）、長い直線（OpenCV の LSD、太い線の
+  両縁は 1 本、絵の高さの 15 % 以上）。
+- 照明の物差しは look_analyze に足した（光の筋・光だまり・明るい所の色の数・主光の色の数と変わり・ちらつきとストロボ・明るい所の動く速さ・人物と舞台に当たる
+  光の色）。
 
 ### 調整した値の一覧を作る（`tools/param_inventory.py`、MMD なし）
 
