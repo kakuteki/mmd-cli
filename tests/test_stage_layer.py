@@ -681,6 +681,42 @@ class LookTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.mv_look.merge_look({"stage": {"world": 1}, "layer": {"person": 0.8}})          # (it needs layer.on 1)
 
+    def graph(self, layer, spill="W/stage/spill_%05d.png"):
+        stage = {"pattern": "W/stage/stage_%05d.png", "first": 30, "frames": 10, "spill": spill}
+        look = self.mv_look.merge_look({"stage": {"world": 1}, "layer": dict({"on": 1}, **layer)})
+        argv = self.mv_look.ffmpeg_command("fg.avi", "out.mp4", None, None, look, (320, 180), 30, stage=stage, start=1.0,
+                                           duration=10 / 30.0)
+        return argv[argv.index("-filter_complex") + 1]
+
+    def test_the_light_round_her_above_one_is_added_in_steps_ffmpeg_takes(self):
+        import re
+        # (ffmpeg's blend takes an opacity of 0 to 1: 2.0 stopped mv_look with "Value 2.000000 for parameter 'all_opacity'
+        # out of range [0 - 1]", 2026-10-21)
+        for spill, wrap in ((0.8, 0.5), (1.0, 0.0), (2.0, 0.0), (1.5, 2.5), (0.0, 1.25), (3.0, 1.0)):
+            g = self.graph({"spill": spill, "spill_wrap": wrap})
+            steps = [float(v) for v in re.findall(r"blend=all_mode=addition:all_opacity=([0-9.]+)", g)]
+            self.assertTrue(all(0.0 <= v <= 1.0 for v in steps), (spill, wrap, steps))
+            self.assertAlmostEqual(sum(steps), spill + wrap, places=6, msg=(spill, wrap, steps))
+            self.assertEqual(len(steps), max(1, math.ceil(spill)) + (math.ceil(wrap) if wrap > 0 else 0), (spill, wrap, steps))
+        g = self.graph({"spill": 0.8, "spill_wrap": 0.5})              # up to 1: one addition each, as before
+        self.assertIn("[sp_c2][sp_m]blend=all_mode=addition:all_opacity=0.8[sp_lit]", g)
+        self.assertIn("[sp_lit][sp_wrap]blend=all_mode=addition:all_opacity=0.5[sp_lit2]", g)
+
+    def test_the_light_on_her_above_two_is_scaled_by_a_filter_ffmpeg_takes(self):
+        import re
+        # (colorchannelmixer takes a factor of -2 to 2)
+        for person, tint in ((0.8, [1.0, 0.9, 0.8]), (2.0, [1.0, 1.0, 1.0]), (1.5, [1.6, 1.0, 0.5]), (3.0, [1.0, 1.0, 1.0])):
+            g = self.graph({"person": person, "person_tint": tint}, spill=None)
+            for coefficients in re.findall(r"colorchannelmixer=([^,\[]+)", g):
+                for v in re.findall(r"=(-?[0-9.]+)", "=" + coefficients):
+                    self.assertLessEqual(abs(float(v)), 2.0, (person, tint, g))
+            want = [person * c for c in tint]
+            if max(want) <= 2.0:
+                self.assertIn("colorchannelmixer=rr=%s:gg=%s:bb=%s," % tuple(self.mv_look._number(v) for v in want), g)
+            else:
+                self.assertIn("lutrgb=r='val*%s+0.5':g='val*%s+0.5':b='val*%s+0.5'," % tuple(self.mv_look._number(v) for v in want),
+                              g)
+
 
 FFMPEG = __import__("shutil").which("ffmpeg")
 
@@ -727,7 +763,9 @@ class RenderTest(unittest.TestCase):
                         % cls.SIZE, "-frames:v", "12", "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True,
                        stdin=subprocess.DEVNULL)
         cls.outs = {}
-        for name, layer in (("plain", {}), ("spill", {"spill": 1.0, "spill_radius": 60.0}), ("dim", {"person": 0.5})):
+        for name, layer in (("plain", {}), ("spill", {"spill": 1.0, "spill_radius": 60.0}), ("dim", {"person": 0.5}),
+                            ("twice", {"spill": 2.0, "spill_radius": 60.0}),
+                            ("lift", {"person": 2.2, "person_tint": [1.0, 0.5, 0.25]})):
             look = os.path.join(f, "look_%s.json" % name)
             with open(look, "w", encoding="utf-8") as fh:
                 _json.dump({"stage": {"world": 1}, "layer": dict({"on": 1, "night": 0.5}, **layer), "glow": {"strength": 0},
@@ -784,6 +822,27 @@ class RenderTest(unittest.TestCase):
         self.assertLess(float(numpy.abs(dim[away] - plain[away]).mean()), 0.3)                    # and the stage as it was
         self.assertLess(float(diff.mean()), 0.3)                     # (x264 codes the two a little apart)
         self.assertLess(float(numpy.percentile(diff, 99.5)), 3.0)
+
+    def test_twice_the_light_round_her_gives_her_twice_its_light(self):
+        plain = self.frames(self.outs["plain"][2])[6]
+        once = self.frames(self.outs["spill"][2])[6]
+        code, said, out = self.outs["twice"]
+        self.assertEqual(code, 0, said)
+        twice = self.frames(out)[6]
+        her = (slice(70, 110), slice(153, 167))
+        self.assertGreater(float(once[her][:, :, 0].mean() - plain[her][:, :, 0].mean()), 2.0)
+        want = numpy.minimum(255.0, plain + 2.0 * (once - plain))[her].mean(axis=(0, 1))     # (the top of her goes to 255)
+        got = twice[her].mean(axis=(0, 1))
+        for c in range(3):
+            self.assertAlmostEqual(float(got[c]), float(want[c]), delta=2.0, msg=(got, want))
+
+    def test_the_light_on_her_above_two_scales_her_colour(self):
+        code, said, out = self.outs["lift"]
+        self.assertEqual(code, 0, said)
+        her = self.frames(out)[6][70:110, 153:167].mean(axis=(0, 1))
+        self.assertAlmostEqual(float(her[0]), 255.0, delta=3.0)      # 128 x 2.2: as far as it goes
+        self.assertAlmostEqual(float(her[1]), 128.0 * 1.1, delta=3.0)
+        self.assertAlmostEqual(float(her[2]), 128.0 * 0.55, delta=3.0)
 
 
 if __name__ == "__main__":

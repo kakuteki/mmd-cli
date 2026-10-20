@@ -696,7 +696,12 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if layer["on"] and (layer["person"] != 1.0 or list(layer["person_tint"]) != [1.0, 1.0, 1.0]):
         # the light on her at night (the stage of a model): her colour times layer.person in layer.person_tint
         r, g, b = (float(layer["person"]) * float(c) for c in layer["person_tint"])
-        dancer += "colorchannelmixer=rr=%s:gg=%s:bb=%s," % (_number(r), _number(g), _number(b))
+        if max(r, g, b) <= 2.0:
+            dancer += "colorchannelmixer=rr=%s:gg=%s:bb=%s," % (_number(r), _number(g), _number(b))
+        else:
+            # (colorchannelmixer takes a factor of -2 to 2: above, a table a channel, rounded as colorchannelmixer rounds;
+            # lutrgb truncates and clips to 0..255)
+            dancer += "lutrgb=r='val*%s+0.5':g='val*%s+0.5':b='val*%s+0.5'," % (_number(r), _number(g), _number(b))
         lit_dancer = True
     if spill is not None:
         parts += _spill(look["layer"], spill, scale, dancer, w, h)
@@ -766,17 +771,37 @@ def _spill(layer, index, scale, dancer, w, h):
            "[%d:v]scale=%d:%d:flags=bilinear,format=gbrp%s" % (index, w, h, ",split=2[sp_s][sp_w]" if wrap else "[sp_s]"),
            "[sp_a]alphaextract%s" % (",split=3[sp_al][sp_b1][sp_b2]" if wrap else "[sp_al]"),
            "[sp_c]format=gbrp,split=2[sp_c1][sp_c2]",
-           "[sp_c1][sp_s]blend=all_mode=multiply[sp_m]",
-           "[sp_c2][sp_m]blend=all_mode=addition:all_opacity=%s[sp_lit]" % _number(float(layer["spill"]))]
+           "[sp_c1][sp_s]blend=all_mode=multiply[sp_m]"]
+    out += _add_in_steps("sp_c2", "sp_m", float(layer["spill"]), "sp_lit")
     label = "sp_lit"
     if wrap:
         out += ["[sp_b2]gblur=sigma=%s,negate[sp_nb]" % _number(float(layer["spill_wrap_width"]) * scale),
                 "[sp_b1][sp_nb]blend=all_mode=multiply[sp_band]",
                 "[sp_w]format=gbrap[sp_wa]",
-                "[sp_wa][sp_band]alphamerge,premultiply=inplace=1,format=gbrp[sp_wrap]",
-                "[sp_lit][sp_wrap]blend=all_mode=addition:all_opacity=%s[sp_lit2]" % _number(float(layer["spill_wrap"]))]
+                "[sp_wa][sp_band]alphamerge,premultiply=inplace=1,format=gbrp[sp_wrap]"]
+        out += _add_in_steps("sp_lit", "sp_wrap", float(layer["spill_wrap"]), "sp_lit2")
         label = "sp_lit2"
     out.append("[%s][sp_al]alphamerge,format=rgba[lit_dancer]" % label)
+    return out
+
+
+def _add_in_steps(base, light, strength, into):
+    """the filters of [base] + strength x [light] into [into]: ffmpeg's blend takes an opacity of 0 to 1, so a strength above
+    1 is added in steps of 1 and the rest (the light is not negative: adding it in steps clips at 255 as adding it once
+    would); up to 1, one addition"""
+    whole = int(math.floor(strength))
+    rest = strength - whole
+    steps = [1.0] * whole + ([rest] if rest > 1e-9 else [])
+    if len(steps) <= 1:
+        return ["[%s][%s]blend=all_mode=addition:all_opacity=%s[%s]" % (base, light, _number(steps[0] if steps else strength),
+                                                                        into)]
+    lights = ["%s%d" % (light, i) for i in range(len(steps))]
+    out = ["[%s]split=%d%s" % (light, len(steps), "".join("[%s]" % n for n in lights))]
+    label = base
+    for i, (name, opacity) in enumerate(zip(lights, steps)):
+        step = into if i == len(steps) - 1 else "%s_%d" % (into, i)
+        out.append("[%s][%s]blend=all_mode=addition:all_opacity=%s[%s]" % (label, name, _number(opacity), step))
+        label = step
     return out
 
 

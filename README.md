@@ -605,7 +605,8 @@ python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd 
   カメラの注視点）→ グロー（明るい所 `layer.glow`、光る材質 `layer.emissive_glow`）。
 - 人物への光（mv_look のグラフ）: `layer.person`・`person_tint`（人物の色に掛ける夜の光の強さと色）、`layer.spill`（まわりの光る材質の光を
   ぼかした絵（舞台のコマの横の `spill_NNNNN.png`、半分の大きさ）を人物の色に掛けて足す）、`layer.spill_wrap`（同じ光を人物の縁の内側の帯に
-  足す。光の回り込み）。どれも 1・0 なら引数は付かない。
+  足す。光の回り込み）。どれも 1・0 なら引数は付かない。`spill`・`spill_wrap` の 1 を超える分は足し算を重ねる（ffmpeg の
+  `blend` の不透明度は 0〜1）。`person` と `person_tint` の積が 2 を超える色は `lutrgb` で掛ける（`colorchannelmixer` は −2〜2）。
 - 速さ（hinata、1280x720、1 処理）: 深さの絵 0.04 秒（numba。無ければ numpy の版で同じ絵、遅い）、カメラ D のコマ 1.65 秒（カメラが
   変わるたびの分 1.0 秒・コマごと 0.6 秒）、止まったカメラ 0.78 秒。`--jobs N` で N 処理に分ける（各コマは独りで描くので絵は N に依らない）。
 - `check`: 曲全体で、足（MMD の靴の頂点を `sink_check.py` と同じ皮付けで）の下の床の高さと床に沈むコマ・床の無いコマ、体のカプセルが面に入るコマ、
