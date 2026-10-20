@@ -741,7 +741,8 @@ def light_palette(rows, duration):
 def flicker(series, fps, flash_events=None, cuts=None):
     """the flicker of a per-frame mean Y' series: flicker.hf, the rms of the series less its running mean over
     FLICKER_WINDOW s, on the frames away from the cuts (frame numbers: a cut is a step of the mean, not a flicker of the
-    light; typorev: the references' 24 cuts a minute read as 0.016 where RE: 踊's light flickered 0.0045); strobe.per_min,
+    light; typorev: the references' median 0.016 is 0.0098 with their cuts left out, Cinderella / Miku's 0.012 is 0.0027;
+    the flashes stay in: a flash is a flicker of the light); strobe.per_min,
     the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
     x = np.asarray(series, np.float64)
     k = max(3, int(round(FLICKER_WINDOW * fps)) | 1)

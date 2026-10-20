@@ -445,8 +445,8 @@ class LightingTest(unittest.TestCase):
         self.assertGreater(f_strobe["flicker.hf"], 5 * max(f_calm["flicker.hf"], 1e-3))
 
     def test_cuts_are_no_flicker(self):
-        # typorev: a cut is a step of the picture's mean light; the references' 24 cuts a minute read as a flicker of
-        # 0.016 where the light itself flickered 0.0045 (RE: 踊, the frames next to a cut left out)
+        # typorev: a cut is a step of the picture's mean light; read over their cuts, the references' flicker was 0.016 at
+        # the median, 0.0098 with the frames next to a cut left out (Cinderella / Miku 0.012 and 0.0027)
         fps = 30
         rng = np.random.default_rng(6)
         calm = 0.3 + 0.003 * rng.standard_normal(fps * 20)
