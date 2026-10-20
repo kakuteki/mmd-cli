@@ -3055,6 +3055,7 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
 ```
 python tools/typo_analyze.py detect VIDEO OUT.json [--rate 2] [--height 540] [--craft-onnx craft.onnx] [--threads 3]
 python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--no-style]
+python tools/typo_analyze.py sign VIDEO TRACK.json                                  # 印影を後から足す（00f4cb1 より前の追跡、TRACK.json に書く）
 python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS]       # 歌声の立ち上がり、伴奏の拍と小節
 python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json [--events EVENTS.json]   # 文字の種類と声・拍との時刻
 python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME]
@@ -3072,7 +3073,9 @@ python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0
   字の枠の中の明るさの和（ぼかしでは減らずフェードでは減る）、縁の鋭さ（ぼかし）、赤と青のずれと行の裂け（グリッチ）を読む。出始め・全部見える最初・
   最後・消えるコマ、入りと出の種類（切り替え・フェード・移動・拡大縮小・1 文字ずつ・ぼかし・グリッチ）、その量、止まっている間の動き、背景と一緒に動くか
   （場面の中の文字か、画面に重ねた文字か）。基準のコマを動画の大きさで読み直し、塗り・縁取り（色と太さ）・落ち影（向き）・グロー・中抜きと、書体
-  （画の太さ、横画と縦画の太さの比: 明朝は 0.62 未満）を読む。
+  （画の太さ、横画と縦画の太さの比: 明朝は 0.62 未満）を読む。書体と字形の照合は「文字そのもの」で読む: 箱から字の高さの 0.1 倍までで、地の色と塗りの
+  色を結ぶ混ざり色の上にあり塗りに近い画素（下線・後ろの格子線や人物・縁取り・影・グローは入らない）。基準のコマで止まって全部見えていた文字
+  （`whole`）だけを見た目と書体の集計に使う。1 つの文字の見た目が読めなくても追跡の結果は失わない（その文字に `error`）。
 - 見本どうしの照合が 0.5 未満なら別の行（同じ所に次の行）として切り、その間は 2 つのテンプレートのどちらがよく合うかで切れ目のコマを決める。
 - voice: 分けた歌声（demucs htdemucs）を `tools/lip_check.py` と同じに読み（300〜3500 Hz、10 ms ごと）、音節の立ち上がりと強さ、レベルの列を出す。伴奏から
   librosa で拍、150 Hz 以下の立ち上がりが最も強い位相で小節の頭。
@@ -3090,7 +3093,10 @@ python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0
   (2) 帯全体の探し直しで小さいテンプレートが看板や路面の模様に 0.6 で合い、出始めの移動・拡大縮小を偽に読んでいた → 0.75 以上・0.5〜3 倍に。
   (3) 背景が動くと行が裂けたと読んだ → 基準で文字のある行だけ、ずらさない時より明らかに良く合い、隣の行と組で。(4) ノイズで 1 文字ずつと読んだ → 最後まで
   続いて見える時刻で、広がりと当てはまりも要る。(5) 文字の下に暗い板（文字の後ろの帯）が先に出る行は、まわりの明るさが板で変わるので字の明るさの和が
-  1 を超える（フェードの読みは板の上では弱い）。回転は追わない。
+  1 を超える（フェードの読みは板の上では弱い）。回転は追わない。(6) 日本語は全角で字数の同じ行は幅も同じなので、幅では印と歌詞を分けられない
+  （私たちの v7 の歌詞 36 行を印と読んだ）→ 文字の絵の印影（基準の箱を 16 px の高さに）で。(7) 私たちの v7（合図の表が答え）で、下線・床の格子線・人物の脚を
+  画と数えて Noto Sans JP の行の半分近くを明朝と読み、薄いコマの柔らかさをぼかし、格子線が横切る行を裂けたと読んだ → 文字そのもの・2 コマ以上・
+  3 行以上続く帯で元の場所で合わずずれた先でよく合う行だけ。(8) 深い画が 2 色に分かれると塗りの色が NaN になり、30 分の追跡が最後に落ちた → 直した。
 - 研究の記録と結果: `_spike/out/stage6/typoref/NOTES.md`、hinata `C:/work/hibikase/stage6/typoref/`（参考の動画は `ref/` だけ、配らない）。
 
 ### 画面の切り替えと飾りを数にする（`tools/mograph_analyze.py`、MMD なし）
