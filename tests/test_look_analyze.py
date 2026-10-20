@@ -375,6 +375,14 @@ class LightingTest(unittest.TestCase):
         self.assertGreater(b["beam.length"], 0.6)                   # of the picture's height
         self.assertEqual(b["spot.count"], 0)
 
+    def test_the_beams_parts_are_handed_out_for_the_figure(self):
+        img = self.beam(self.dark(), 320, 0, 20.0, 300, 26)
+        ex = {}
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5, extras=ex)
+        self.assertEqual(len(ex["beam_labels"]), b["beam.count"])
+        part = ex["light_map"] == ex["beam_labels"][0]
+        self.assertGreater(part.sum(), 100)
+
     def test_a_thin_hard_line_is_no_beam(self):
         img = self.dark()
         img[100:103, 50:600] = 0.9                                  # a painted line on a road, a bar of light

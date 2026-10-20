@@ -8,7 +8,7 @@
     python tools/look_analyze.py figure strip TABLE.json OUT.png
     python tools/look_analyze.py figure profiles OUT.png A.json B.json ...
     python tools/look_analyze.py crops VIDEO OUT.png --at S S ... [--box X0,Y0,X1,Y1] [--size 320x180] [--matrix ...]
-    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion|regions] [--model ...]
+    python tools/look_analyze.py annotate VIDEO OUT.png --at S [--what bloom|dof|ca|bars|motion|regions|lighting] [--model ...]
     python tools/look_analyze.py text VIDEO MEASURE.json [--frames 24]      # where the text is (EasyOCR on the CPU)
 
 `measure` reads the video twice with ffmpeg: once every frame at a tiny size (the cuts between shots, the flashes, the
@@ -610,9 +610,10 @@ CHANGE_HUE = 40.0                 # degrees between shots' key light: a change o
 KEY_COLOURED = 15.0               # C*: the key light is coloured above this
 
 
-def beams(rgb, unit=1.0):
+def beams(rgb, unit=1.0, extras=None):
     """the shafts and pools of light of a frame (rgb 0..1): beam.count, beam.share (of the frame), beam.length (of its
-    height), beam.angle (from the vertical, degrees), spot.count, spot.share"""
+    height), beam.angle (from the vertical, degrees), spot.count, spot.share.  extras (a dict) gets the label map at
+    BEAM_LINES and the labels of the beams and of the spots (for annotate)"""
     cv2 = _cv2()
     ndi = _ndi()
     lin = _luminance(srgb_to_linear(np.asarray(rgb, np.float64)))
@@ -659,9 +660,15 @@ def beams(rgb, unit=1.0):
             beam_area += area
             lengths.append(length)
             angles.append(angle)
+            if extras is not None:
+                extras.setdefault("beam_labels", []).append(k)
         elif elong < SPOT_ELONG and area >= SPOT_AREA * hs * ws and width >= SPOT_WIDTH:
             out["spot.count"] += 1
             spot_area += area
+            if extras is not None:
+                extras.setdefault("spot_labels", []).append(k)
+    if extras is not None:
+        extras["light_map"] = lab
     out["beam.share"] = beam_area / float(hs * ws)
     out["spot.share"] = spot_area / float(hs * ws)
     if lengths:
@@ -2620,7 +2627,8 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
     blur (blue sharp, red soft); bloom, the bright sources outlined and rings 4, 16 and 48 px out; ca, the shift of red
     and blue against green as arrows (drawn 20 times longer); bars, the picture inside the bars; regions (model: the
     person model's ONNX), the person's outline, where the stage is read from, and some of the normals the rim (yellow,
-    inside) and the glow round the person (green, outside) are read on"""
+    inside) and the glow round the person (green, outside) are read on; lighting, the beams (yellow) and the spots (cyan)
+    the lighting measures found"""
     from PIL import Image, ImageDraw
     info = probe(path)
     mat = matrix_for(info, matrix)
@@ -2653,6 +2661,23 @@ def annotate(path, out, t, what="dof", box=None, height=720, matrix="auto", scal
         dof = depth_of_field(e)
         note = "縁と区画のぼけ: 青 0 px → 赤 8 px 以上（縁の 90 %% 点 %.1f、区画: ピント %.1f / 背景 %.1f / 比 %.1f）" % (
             dof["dof.soft"], blocks_out["dof.fg_blur"], blocks_out["dof.bg_blur"], blocks_out["dof.ratio"])
+    elif what == "lighting":
+        ex = {}
+        bm = beams(rgb, unit, extras=ex)
+        cols = light_colours(rgb, rgb_to_lab(rgb))
+        lab_map = ex["light_map"]
+        big = np.array(Image.fromarray(lab_map.astype(np.int32)).resize((a.shape[1], a.shape[0]), Image.NEAREST))
+        arr = np.asarray(im).astype(np.float64)
+        for k_ in ex.get("beam_labels", []):
+            sel = big == k_
+            arr[sel] = arr[sel] * 0.45 + np.array([255.0, 230.0, 0.0]) * 0.55
+        for k_ in ex.get("spot_labels", []):
+            sel = big == k_
+            arr[sel] = arr[sel] * 0.45 + np.array([0.0, 230.0, 255.0]) * 0.55
+        im = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+        d = ImageDraw.Draw(im)
+        note = "光の筋（黄）%d 本・光だまり（水色）%d 個、明るい所の色 %d 色（色相の広がり %.0f 度）" % (
+            bm["beam.count"], bm["spot.count"], cols["light.colours"], cols["light.spread"])
     elif what == "bloom":
         ndi = _ndi()
         src = luma(rgb) >= BLOOM_SOURCE
@@ -2832,7 +2857,7 @@ def main(argv=None):
     a.add_argument("input")
     a.add_argument("out")
     a.add_argument("--at", type=float, required=True)
-    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion", "regions"), default="dof")
+    a.add_argument("--what", choices=("dof", "bloom", "ca", "bars", "motion", "regions", "lighting"), default="dof")
     a.add_argument("--box", type=_box)
     a.add_argument("--scale", type=float, default=1.0)
     a.add_argument("--model", help="regions: the person model's ONNX file")
