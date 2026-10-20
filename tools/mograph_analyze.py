@@ -519,6 +519,185 @@ def elements_video(path, out=None, start=None, end=None, frames=60, height=720, 
     return res
 
 
+# ---- the flashes that may harm (Rec. ITU-R BT.1702-3, 2023) -------------------------------------------------------------
+# Guideline 1: "A potentially harmful flash occurs when there is a pair of opposing changes in luminance ... When screen
+# luminance of the darker image is below 160 cd/m2, a potentially harmful sequence of flashes occurs where there is a difference
+# of 20 cd/m2 or more between the screen luminance of the darker and the brighter images"; "Isolated single, double, or triple
+# flashes are acceptable, but a sequence of flashes is not permitted when both the following occur: the combined area of
+# flashes occurring concurrently occupies more than 25% of the displayed screen area; and there are more than three flashes
+# (i.e. six changes in luminance as described above) within any one-second period"; "Irrespective of luminance, a transition
+# to or from a saturated red is also potentially harmful".  NOTE 3: SDR pictures shown with peak white at 200 cd/m2; Table 1:
+# the screen luminance of a signal level V (black 0, white 1) is that of Rec. ITU-R BT.1886, 200 x V^2.4.  (The 1/17
+# Michelson contrast for a darker image from 160 cd/m2 is for HDR programmes only.)  A saturated red, which the recommendation
+# does not define, is WCAG 2.2's: R / (R + G + B) of 0.8 or more, its change (R - G - B) x 320 past 20 (linear values).
+
+FLASH_CD = 20.0                   # cd/m2 between the darker and the brighter image
+DARK_BELOW = 160.0                # cd/m2: the darker image below this
+WHITE_CD = 200.0                  # cd/m2 of peak white (SDR)
+QUARTER = 0.25                    # of the screen
+MOST_CHANGES = 6                  # in a second: more is more than three flashes
+RED_SHARE = 0.8
+RED_SCALE = 320.0
+RED_CHANGE = 20.0
+SAFETY_GRID = (64, 36)            # cells over the picture: what flashes is told by area
+
+
+def screen_luminance(v):
+    """cd/m2 of a signal level v (0..1) on the SDR display of BT.1702 (BT.1886, white 200)"""
+    return WHITE_CD * np.clip(np.asarray(v, np.float64), 0.0, 1.0) ** 2.4
+
+
+def _cells(values, grid):
+    """values [h, w] averaged over the cells of `grid` (columns, rows): the area each cell covers alike"""
+    cols, rows = grid
+    h, w = values.shape
+    ys = (np.arange(rows + 1) * h) // rows
+    xs = (np.arange(cols + 1) * w) // cols
+    sums = np.add.reduceat(np.add.reduceat(values, ys[:-1], axis=0), xs[:-1], axis=1)
+    counts = np.outer(np.diff(ys), np.diff(xs))
+    return sums / counts
+
+
+class _Swings:
+    """per cell, the changes of a value with a hysteresis: a change is told on the frame the value has gone `least` from the last
+    extreme the other way, and counts when `counts(low, high)` says so (the darker image below DARK_BELOW).  Rising, the high
+    follows the value up; falling, the low follows it down; before the first change both do"""
+
+    def __init__(self, first, least, counts):
+        self.least, self.counts = least, counts
+        self.lo = np.array(first, np.float64)
+        self.hi = np.array(first, np.float64)
+        self.dir = np.zeros(self.lo.shape, np.int8)    # 0 not yet, +1 rising, -1 falling
+
+    def push(self, v):
+        """(up, down): the cells with a change told on this frame"""
+        d = self.dir
+        self.hi = np.where(d >= 0, np.maximum(self.hi, v), self.hi)
+        self.lo = np.where(d <= 0, np.minimum(self.lo, v), self.lo)
+        rise = (d <= 0) & (v - self.lo >= self.least)              # up from the low
+        fall = (d >= 0) & (self.hi - v >= self.least) & ~rise      # down from the high
+        up = rise & self.counts(self.lo, v)
+        down = fall & self.counts(v, self.hi)
+        self.dir = np.where(rise, 1, np.where(fall, -1, d)).astype(np.int8)
+        self.hi = np.where(rise, v, self.hi)
+        self.lo = np.where(fall, v, self.lo)
+        return up, down
+
+
+def _swing_states(series, least, counts):
+    """[(up, down)] a frame, the cells' changes (the series: [frames, rows, cols])"""
+    sw = _Swings(series[0], least, counts)
+    out = [(np.zeros(series[0].shape, bool), np.zeros(series[0].shape, bool))]
+    for v in series[1:]:
+        out.append(sw.push(v))
+    return out
+
+
+def _flash_report(changes, fps):
+    """the counts of BT.1702's Guideline 1 from the changes of every cell: the most changes in a second that more than a quarter
+    of the screen goes through (most_flashes_a_second: half of it), the same for any one cell, whether a sequence is not
+    permitted (harmful), and the changes and flashes over more than a quarter of the screen at once (their leading edges)"""
+    n = len(changes)
+    ups = np.array([u for u, _ in changes], np.float64)
+    downs = np.array([d for _, d in changes], np.float64)
+    both = ups + downs
+    window = max(1, int(round(fps)))
+    csum = np.concatenate([np.zeros((1,) + both.shape[1:]), np.cumsum(both, axis=0)])
+    most_quarter, most_anywhere, harmful_at = 0, 0, []
+    for end in range(n):
+        start = max(0, end - window + 1)
+        count = csum[end + 1] - csum[start]                    # the cells' changes in the second ending on this frame
+        k_any = int(count.max())
+        most_anywhere = max(most_anywhere, k_any)
+        flat = np.sort(count.ravel())[::-1]
+        need = int(math.floor(QUARTER * flat.size)) + 1        # more than a quarter
+        k_quarter = int(flat[need - 1]) if need <= flat.size else 0
+        most_quarter = max(most_quarter, k_quarter)
+        if k_quarter > MOST_CHANGES:
+            harmful_at.append(end)
+    # the changes over more than a quarter of the screen at once (the cells' changes within a frame either side), one a run, on
+    # its frame of the most
+    area_up, area_down = ups.mean(axis=(1, 2)), downs.mean(axis=(1, 2))
+    big = []
+    for d, area in ((1, area_up), (-1, area_down)):
+        near = np.convolve(area, np.ones(3), mode="same")
+        for a, b in _runs(near > QUARTER):
+            i = a + int(np.argmax(area[a:b]))
+            big.append((i, d, float(near[a:b].max())))
+    big.sort()
+    flashes, i = [], 0
+    while i + 1 < len(big):
+        if big[i][1] != big[i + 1][1]:
+            flashes.append({"frame": big[i][0], "area": min(big[i][2], big[i + 1][2]), "second": big[i + 1][0]})
+            i += 2
+        else:
+            i += 1
+    edges = [f["frame"] for f in flashes]
+    gaps = [(b - a) / float(fps) for a, b in zip(edges, edges[1:])]
+    return {"most_flashes_a_second": most_quarter // 2, "most_changes_a_second": most_quarter,
+            "most_flashes_a_second_anywhere": most_anywhere // 2, "harmful": bool(harmful_at),
+            "harmful_frames": harmful_at[:50], "changes": len(big), "flashes": flashes,
+            "least_gap_s": min(gaps) if gaps else None}
+
+
+def safety_of(frames, fps, grid=SAFETY_GRID):
+    """BT.1702-3's flashes in frames (RGB 0..1, the signal levels: a video read to the full range): the screen luminance of
+    every pixel (BT.1886 on 200 cd/m2 white) averaged over the cells of `grid`, and per cell its changes of FLASH_CD or more
+    whose darker side is below DARK_BELOW; and the saturated red's changes (WCAG 2.2's measure).  See _flash_report"""
+    lum, red = [], []
+    for f in frames:
+        f = np.asarray(f, np.float64)
+        g = (min(grid[0], f.shape[1]), min(grid[1], f.shape[0]))
+        y = f[..., 0] * 0.2126 + f[..., 1] * 0.7152 + f[..., 2] * 0.0722
+        lum.append(_cells(screen_luminance(y), g))
+        lin = np.clip(f, 0.0, 1.0) ** 2.4
+        total = lin.sum(axis=2)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            share = np.where(total > 0, lin[..., 0] / total, 0.0)
+        r = np.maximum(0.0, lin[..., 0] - lin[..., 1] - lin[..., 2]) * RED_SCALE * (share >= RED_SHARE)
+        red.append(_cells(r, g))
+    lum, red = np.array(lum), np.array(red)
+    general_changes = _swing_states(lum, FLASH_CD, lambda lo, hi: lo < DARK_BELOW)
+    general = _flash_report(general_changes, fps)
+    reds = _flash_report(_swing_states(red, RED_CHANGE, lambda lo, hi: np.ones(lo.shape, bool)), fps)
+    for f in general["flashes"]:
+        # the change at its leading edge: over the three frames round it, the median of the cells that changed there
+        a = f["frame"]
+        lo, hi = max(0, a - 2), min(len(lum) - 1, a + 1)
+        changed = np.zeros(lum[0].shape, bool)
+        for k in range(max(0, a - 1), min(len(lum), a + 2)):
+            changed |= general_changes[k][0] | general_changes[k][1]
+        f["cd"] = float(np.median(np.abs(lum[hi] - lum[lo])[changed])) if changed.any() else 0.0
+    return {"fps": fps, "frames": len(lum), "grid": list(lum.shape[1:][::-1]), "general": general, "red": reds,
+            "settings": {"flash_cd": FLASH_CD, "dark_below": DARK_BELOW, "white_cd": WHITE_CD, "quarter": QUARTER,
+                         "most_changes": MOST_CHANGES, "source": "Rec. ITU-R BT.1702-3 (11/2023) Guideline 1, NOTE 3, Table 1"}}
+
+
+def safety_video(path, out=None, start=None, end=None, size=(256, 144), log=None):
+    """safety_of over a video read at `size` (its own matrix and range, to the full range) into cells, OUT.json"""
+    LA = _tool("look_analyze")
+    info = LA.probe(path)
+    mat = LA.matrix_for(info)
+    start = float(start or 0.0)
+    end = float(end) if end else info["duration"]
+    w, h = size
+    rng = "pc" if info.get("color_range") in ("pc", "jpeg") else "tv"
+    vf = "scale=%d:%d:flags=area:in_color_matrix=%s:in_range=%s:out_range=pc,format=rgb24" % (w, h, mat, rng)
+    pre, post = LA._range_args(start, end - start)
+    argv = ["ffmpeg", "-v", "error", "-nostdin"] + pre + ["-i", path] + post + \
+           ["-vf", vf, "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    frames = [a.astype(np.float64) / 255.0 for a in LA._ffmpeg_frames(argv, (w, h))]
+    res = safety_of(frames, info["fps"])
+    for part in ("general", "red"):
+        for f in res[part]["flashes"]:
+            f["t"] = start + f["frame"] / float(info["fps"])
+    res.update({"label": os.path.splitext(os.path.basename(path))[0], "path": path, "range": [start, end], "size": [w, h]})
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False, indent=1)
+    return res
+
+
 MOGRAPH_CONCEPTS = ("change", "camera", "things")
 MOGRAPH_CONCEPT_LABELS = {"change": "画面の切り替え", "camera": "カメラと画面のゆれ", "things": "画面の飾り"}
 MOGRAPH_MEASURES = {
@@ -573,6 +752,12 @@ def main(argv=None):
     p.add_argument("--to", dest="end", type=float, default=None)
     p.add_argument("--frames", type=int, default=60)
     p.add_argument("--height", type=int, default=720)
+    p = sub.add_parser("safety", help="the flashes that may harm (Rec. ITU-R BT.1702-3 Guideline 1)")
+    p.add_argument("video")
+    p.add_argument("out")
+    p.add_argument("--from", dest="start", type=float, default=None)
+    p.add_argument("--to", dest="end", type=float, default=None)
+    p.add_argument("--size", default="256x144", help="the size the video is read at, then put into %dx%d cells" % SAFETY_GRID)
     p = sub.add_parser("compare")
     p.add_argument("out_md")
     p.add_argument("out_json")
@@ -592,6 +777,14 @@ def main(argv=None):
     if args.cmd == "elements":
         r = elements_video(args.video, args.out, args.start, args.end, args.frames, args.height, log)
         print(json.dumps({"ok": True, "out": args.out, "frames": len(r["frames"])}))
+        return 0
+    if args.cmd == "safety":
+        w, h = (int(v) for v in args.size.lower().split("x"))
+        r = safety_video(args.video, args.out, args.start, args.end, (w, h), log)
+        g, red = r["general"], r["red"]
+        print(json.dumps({"ok": True, "out": args.out, "frames": r["frames"], "harmful": g["harmful"] or red["harmful"],
+                          "most_flashes_a_second": g["most_flashes_a_second"], "flashes": len(g["flashes"]),
+                          "red_most_flashes_a_second": red["most_flashes_a_second"], "least_gap_s": g["least_gap_s"]}))
         return 0
     if args.cmd == "compare":
         LA = _tool("look_analyze")
