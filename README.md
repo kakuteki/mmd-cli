@@ -627,7 +627,8 @@ python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd 
   カメラが物の中にいるコマ（視線が 150 単位以内で面の裏に当たる）、カメラと人物の間に面があるコマ（舞台は人物の後ろに敷くので、手前の物は
   絵の上で人物の後ろになってしまう）を時刻つきで数える。
 - `tools/mv_chunks.py` の計画には `"stage_set"` と `"stage_pictures"`（`"world": true` と一緒に）を書くと、各区間の `mv_look render` に渡る。
-  MMD の舞台の絵（`batch --avi` → `unpack`）は区間を描く前に作っておく。
+  MMD の舞台の絵は、計画に `"stage_mmd"`（MME なしの MMD）を書けば駆動台本が区間ごとにその区間の直前に描いて区間の後に消す（`batch --avi` → `unpack`、
+  2026-10-21 render12）。書かなければ前と同じく、区間が見せる全部のコマの絵を `stage_pictures` に前もって作っておく（mv_chunks の節）。
 - 畳んだ 30 fps の人物の層（PNG の MOV など、時刻の刻みが 1 コマより細かいもの）に `mv_look render --from` で抜粋を重ねても、人物は抜粋の始めのコマから
   読まれる（lookfrom 2026-10-21 で直した。前は `-ss %.3f` の丸めで、始めのコマ番号が 3 で割って 1 余るとき 1 コマ前から読まれ、カメラ D では人物と舞台が
   1 コマずれた。査読 stagecityrev。MMD 自身の AVI と mv_chunks の区間では起きていなかった）。
@@ -777,7 +778,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   `self_shadow`（"mmd" か "soft"、既定なし）: 人物の体に落ちる影。"soft" は `tools/mme_shadow.py` のエフェクト（MME 入りの `mmd` と、エフェクトを隣に
   置いた `model`。`mme_shadow.py prepare` で作る）、"mmd" は MMD のまま。駆動台本が描く前に `mme_shadow.py verify` で確かめ、違えば止まる。"soft" では
   `-Resume` が MME の DLL も見て、失敗したバッチが残した MMD を止める。書かなければ台本は前とバイト単位で同じ。
-  `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。
+  `stage_set`・`stage_pictures`（`"world": true` と一緒に。look の `layer.on` 1 の模型の舞台、`tools/stage_layer.py`）と `stage_mmd`
+  （2026-10-21 render12。MME を横に置かない MikuMikuDance.exe の絶対パス）: `stage_mmd` があると、駆動台本は区間ごとに、人物の MMD の前に
+  その区間が見せるコマ（切れ目から終わりまで。助走は描かない）の舞台を描く: `stage_layer.py batch`（計画の大きさ・カメラ・30 fps）→ その MMD →
+  `unpack` で `stage_pictures/<tag>_<NN>/` に絵 → 絵の数がコマ数と合うか確かめて舞台の AVI を消す。その区間は自分の作業フォルダ
+  `out/look_work_<tag>_<NN>` で畳み（層・合図・舞台のコマ。`--workers` でも prepare は使わない: 絵は区間の直前まで無い）、mp4 の枚数が合って
+  作り方の印を書いたら、人物の AVI に続いて絵のフォルダと作業フォルダを消す。失敗したときは調べられるように残し、次の試みの前に消す。
+  失敗した舞台のバッチが開いたままにした MMD は、バッチの答えの PID が `stage_mmd` のときだけ止める（mmd_cli の batch は失敗で quit しない）。
+  `stage_mmd` の横に MME の DLL があれば何も描く前に止まる（舞台は MMD 自身の絵に `stage_layer` が夜を載せる）。`stage_mmd` が無ければ前と同じく、
+  区間が見せる全部のコマの絵を `stage_pictures` に前もって描いておく（look の値だけを変えて描き直すときは MMD の絵を使い回せる。区間ごとの作りは
+  look を変えるたびに舞台も MMD で描き直す）。
+  `keep_free_gb`（2026-10-21 render12。模型の舞台の計画は既定 30、ほかの計画は既定なし = 台本は前とバイト単位で同じ。書けばどの計画でも効く。null で
+  なし）: `out` の入った円盤に残す空き（GB は 1024^3 バイト、PowerShell の 1GB）。駆動台本は MMD を起こす前ごとに空きを測り、区間を始める前
+  （区間ごとの舞台では舞台の MMD の前）は「空き − 区間の山 ≥ これ」、人物の MMD の前は「空き −（山 − その区間の AVI・絵・作業フォルダ・mp4 が今占める量）
+  ≥ これ」でなければ、その区間を始めずに止まる（終了コード 3。舞台の絵を描いた後なら絵を消してから。`-Resume` でその区間から続く）。`--workers` では
+  描いている最中の区間がまだ書く量（同じく山 − 今占める量）を差し引いて比べ、足りなければ空くまで待つ（1 本でも足りなければ 3 で止まる）。人物の MMD の前の
+  確かめは待たずに止まる（ほかの人が書いたときだけ外れる。2 本が互いを待ち続けないように）。区間の山は要約の `disk` に出る（下）。この値の無い計画は、
+  前と同じく AVI ＋ 2 GiB だけを確かめる。
+  `out` と `scripts` は、`-Resume` が見るフォルダ（下）の外に置く（中にあると、書くたびに入力が変わったことになる）。`stage_mmd` のときは
+  `stage_pictures` も外に置く（区間ごとに作っては消すので）。どれも、描画機で set が名指す舞台の模型のフォルダの中にあれば、描く前に止まる。
 - `--shots` は `tools/make_camera.py --report` の報告で、描くカメラと同じショットのもの（`--handheld` はショットを変えない）。
   ショットに抜けや重なりがあれば誤り。区間は 3 枚以上（1〜2 枚の区間は `-c copy` の連結で時刻が乱れる）。`--fps` は MMD が書く
   30・60・120・240・480 のどれかで `--out-fps` 以上、`--shutter` は mv_look と同じく 1 枚以上のサブフレームを取る値だけを通す。
@@ -791,10 +810,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File render_final.ps1 [-Resume]  
   コマンドで前の 0 が残らないように）。繋いだ動画の枚数も数える。
 - `-Resume` は、枚数が合い、作り方の印が同じ区間だけを飛ばす。印はバッチの本文・look のパス・畳みの引数の SHA-256 と、見ているファイルの
   大きさと更新時刻: モーション・カメラ・look・cues・MMD 本体、モデルとアクセサリのフォルダの中身全部（テクスチャ・トゥーン・
-  スフィア）、描画機の `mmd_cli/` と `tools/`（隠しファイルも。Python が書く `__pycache__` は除く）。フォント（mv_text が描画機で
+  スフィア）、描画機の `mmd_cli/` と `tools/`（隠しファイルも。Python が書く `__pycache__` は除く）。模型の舞台では、set の中身と、set が名指す
+  舞台の模型のフォルダの中身全部（描画機で set を読んで足す）、`stage_mmd` 本体と区間ごとの舞台の描き方（バッチと unpack の引数、印に入る）、前もって描いた
+  絵なら `stage_pictures` の中身も（render12。前は見ておらず、絵を描き直しても前の mp4 を残した）。区間ごとに作っては消す絵の置き場は見ない。フォント（mv_text が描画機で
   探す）・MMD の設定・Python とその部品・ffmpeg・見ているフォルダの外のファイル（モデルが別の場所から読むテクスチャ）や中の
   ジャンクションの先は見ないので、それらを変えたら `-Resume` なしで流す。時刻を保たない写し方で入力を写し直すと、中身が同じでも
   描き直しになる（安全側）。
+- 空きを残す計画（`keep_free_gb`）の要約は最後に `disk` を持つ（GB は 1024^3 バイト）: `chunks`（区間ごとの `peak_gb` と内訳: 人物の AVI `avi_gb`・
+  舞台の AVI `stage_avi_gb`・絵 `pictures_gb`・舞台のコマ `stage_gb`・mp4 `mp4_gb`）、`largest_chunk`・`largest_peak_gb`、`mp4_gb`（繋ぐ前の合計。
+  繋ぐときにもう 1 本ぶん）、`start_free_gb`（止まらずに描き終えるのに始める前に要る空き: 残す空き ＋ 前の区間の mp4 ＋ 同時に描く区間の山。`--workers N`
+  では大きい順に N 区間の山を足す上限）、--workers で前もって描いた絵のときは `prepared_stage_gb`（prepare が全区間の舞台のコマを描く分）。区間の山は
+  畳みの間に同時にある物の和（人物の AVI ＋ 絵 ＋ 舞台のコマ ＋ mp4。舞台の AVI は人物の MMD の前に消える）。AVI は大きさと fps と助走から
+  決まり、ほかは 1 画素あたりの見積もり（絵 1.5・模型の舞台のコマ 1.6・世界の舞台のコマ 0.5・mp4 0.1 バイト。hinata の 1280x720 の実測 1.38・1.42・
+  0.41・0.04 に余りを足した）。合図（mv_text）の文字のコマは入れていない。
 - ヒビカセ（7,743 枚・21 区間・240 fps）で 1 区間の AVI は最大 17 GB、全体で約 30 分（hinata 実測）。v7 の場面（モーション 4 本、
   look v3 の 823 枚の光のループ）では 30 fps で 77 分、60 fps で約 100 分かかった（2026-10-13）。
 
