@@ -2198,120 +2198,120 @@
 | CHANGE_HUE | 40.0 | deg | 613 | degrees between shots' key light: a change of colour |  |  |  |  |  |  |  |  |
 | KEY_COLOURED | 15.0 |  | 614 | C*: the key light is coloured above this |  |  |  |  |  |  |  |  |
 | beams(unit) | 1.0 |  | 617 |  |  |  |  |  |  |  |  |  |
-| flat_mask(grow) | 2 |  | 796 |  |  |  |  |  |  |  |  |  |
-| flat_mask(sigma) | 2.0 |  | 796 |  |  |  |  |  |  |  |  |  |
-| grain(unit) | 1.0 |  | 820 |  |  |  |  |  |  |  |  |  |
-| GLITCH_SHIFT | 6 | px | 872 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
-| GLITCH_SEARCH | 32 |  | 873 |  |  |  |  |  |  |  |  |  |
-| EDGE_POINTS | 4000 |  | 900 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
-| EDGE_LEAST | 0.03 |  | 901 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
-| SOBEL_VAR | 0.5 |  | 902 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
-| REBLUR | (1.0, 3.0, 8.0) | px | 904 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
-| SWITCH | (2.5, 6.0, float("inf")) |  | 905 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
-| edges(seed) | 0 |  | 914 |  |  |  |  |  |  |  |  |  |
-| edges(unit) | 1.0 |  | 914 |  |  |  |  |  |  |  |  |  |
-| SOFT_EDGE | 3.0 |  | 960 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
-| DOF_BLOCK | 40.0 |  | 976 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
-| DOF_CONTRAST | 0.10 |  | 977 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
-| DOF_TOP | 0.02 |  | 978 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
-| DOF_PRE | 0.0 |  | 981 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
-| DOF_LINES | 180 |  | 982 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
-| _blur_blocks(unit) | 1.0 |  | 1007 |  |  |  |  |  |  |  |  |  |
-| dof_blocks(unit) | 1.0 |  | 1042 |  |  |  |  |  |  |  |  |  |
-| SHORT | (8.0, 16.0) |  | 1071 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
-| LONG | (28.0, 40.0) |  | 1072 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
-| STEP_LEAST | 0.12 |  | 1073 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
-| FLAT_MOST | 0.04 |  | 1074 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
-| INNER | 4.0 |  | 1075 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
-| DIFFUSION_TOP | 0.65 |  | 1076 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
-| BRIGHT_EDGE | 0.85 |  | 1077 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
-| CORE_MOST | 3.0 |  | 1078 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
-| PROFILE_POINTS | 1500 |  | 1079 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(seed) | 0 |  | 1130 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(unit) | 1.0 |  | 1130 |  |  |  |  |  |  |  |  |  |
-| MOVING_LEAST | 3.0 |  | 1210 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
-| STILL_MOST | 0.5 |  | 1211 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
-| MOVING_PIXEL | 1.0 |  | 1212 | this counts as moving |  |  |  |  |  |  |  |  |
-| MOTION_LEAST | 0.008 |  | 1213 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
-| motion(seed) | 0 |  | 1273 |  |  |  |  |  |  |  |  |  |
-| motion(unit) | 1.0 |  | 1273 |  |  |  |  |  |  |  |  |  |
-| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1324 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
-| aberration(unit) | 1.0 |  | 1327 |  |  |  |  |  |  |  |  |  |
-| LINE_LEAST | 0.2 |  | 1367 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
-| LINE_OFF_CENTRE | 0.2 |  | 1368 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
-| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1371 |  |  |  |  |  |  |  |  |  |
-| distortion(unit) | 1.0 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| measure_frame(seed) | 0 |  | 1599 |  |  |  |  |  |  |  |  |  |
-| measure_frame(unit) | 1.0 |  | 1599 |  |  |  |  |  |  |  |  |  |
-| PERSON_INNER | 3.0 |  | 1657 | 720 line px: the person is read this far inside its outline (the edge mixes with |  |  |  |  |  | ○ |  |  |
-| STAGE_GAP | 12.0 |  | 1658 | the stage), the stage this far outside it (the person's glow, the mask's error) |  |  |  |  |  | ○ |  |  |
-| REGION_LEAST | 0.005 |  | 1659 | a region under this share of the frame is not read |  |  |  |  |  |  |  |  |
-| RIM_EDGE | (3.0, 6.0) |  | 1660 | 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px, |  |  |  |  |  |  |  |  |
-| RIM_CORE | (12.0, 20.0) |  | 1661 | against the light further in along the same normal |  |  |  |  |  |  |  |  |
-| HALO_EDGE | (1.0, 4.0) |  | 1662 | 720 line px inside the outline: the person's own light at its edge, the source of |  |  |  |  |  | ○ |  |  |
-| HALO_NEAR | (3.0, 8.0) |  | 1663 | the glow it throws on the stage just outside, |  |  |  |  |  |  |  |  |
-| HALO_FAR | (24.0, 40.0) |  | 1664 | against the stage further out |  |  |  |  |  |  |  |  |
-| HALO_LEAST | 0.05 |  | 1665 | linear luminance: the edge brighter than the far stage by at least this |  |  |  |  |  |  |  |  |
-| OUTLINE_POINTS | 3000 |  | 1666 | outline points read per frame at most |  |  |  |  |  |  |  |  |
-| EDGE_IN | (3.0, 6.0) |  | 1667 | 720 line px inside the outline: the person's colour at her edge (the rim's band) ... |  |  |  |  |  | ○ |  |  |
-| EDGE_OUT | (12.0, 20.0) |  | 1668 | ... against the stage's just outside it, past her glow and the mask's error |  |  |  |  |  |  |  |  |
-| MERGE_DE | 15.0 |  | 1669 | CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity) |  |  |  |  |  |  |  |  |
-| SEG_SIZE | 1024 |  | 1670 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
-| FACE_CHEEK | ((0.55, 0.85), (0.25, 0.75)) |  | 1671 | rows and columns of a face's box read for the light on her skin: the cheeks |  |  |  |  |  |  |  |  |
-| FACE_LEAST | 20 | px | 1674 | pixels of the cheeks on the person at least, for a face to be read |  |  |  |  |  | ○ |  |  |
-| _along(order) | 1 |  | 1757 |  |  |  |  |  |  |  |  |  |
-| silhouette(seed) | 0 |  | 1764 |  |  |  |  |  |  |  |  |  |
-| silhouette(unit) | 1.0 |  | 1764 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(seed) | 0 |  | 1818 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(unit) | 1.0 |  | 1818 |  |  |  |  |  |  |  |  |  |
-| region_measures(seed) | 0 |  | 1846 |  |  |  |  |  |  |  |  |  |
-| region_measures(unit) | 1.0 |  | 1846 |  |  |  |  |  |  |  |  |  |
-| seg_session(threads) | 6 |  | 1911 |  |  |  |  |  |  |  |  |  |
-| BOOTSTRAP | 400 |  | 1941 |  |  |  |  |  |  |  |  |  |
-| _trimmed_rms(keep) | 0.9 |  | 1944 |  |  |  |  |  |  |  |  |  |
-| summarise(seed) | 0 |  | 1952 |  |  |  |  |  |  |  |  |  |
-| probe(fps) | 30 |  | 2086 |  |  |  |  |  |  |  |  |  |
-| read_frames(start) | 0.0 |  | 2167 |  |  |  |  |  |  |  |  |  |
-| THUMB | (64, 36) |  | 2192 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
-| read_thumbs(start) | 0.0 |  | 2195 |  |  |  |  |  |  |  |  |  |
-| measure_video(height) | 720 |  | 2255 |  |  |  |  |  |  |  |  |  |
-| measure_video(jobs) | 1 |  | 2255 |  |  |  |  |  |  |  |  |  |
-| measure_video(pairs) | 120 |  | 2255 |  |  |  |  |  |  |  |  |  |
-| measure_video(fps) | 30 |  | 2256 |  |  |  |  |  |  |  |  |  |
-| measure_video(full_every) | 4 |  | 2256 |  |  |  |  |  |  |  |  |  |
-| measure_video(pair_every) | 4 |  | 2256 |  |  |  |  |  |  |  |  |  |
-| measure_video(seed) | 0 |  | 2256 |  |  |  |  |  |  |  |  |  |
-| layer_masks(start) | 0.0 |  | 2382 |  |  |  |  |  |  |  |  |  |
-| measure_regions(frames) | 48 |  | 2420 |  |  |  |  |  |  |  |  |  |
-| measure_regions(height) | 720 |  | 2420 |  |  |  |  |  |  |  |  |  |
-| measure_regions(fps) | 30 |  | 2421 |  |  |  |  |  |  |  |  |  |
-| measure_regions(seed) | 0 |  | 2421 |  |  |  |  |  |  |  |  |  |
-| measure_regions(threads) | 6 |  | 2421 |  |  |  |  |  |  |  |  |  |
-| TEXT_LEAST | 8.0 |  | 2487 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
-| text_summary(unit) | 1.0 |  | 2511 |  |  |  |  |  |  |  |  |  |
-| measure_text(frames) | 24 |  | 2540 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(height) | 720 |  | 2681 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(size) | (320, 180) |  | 2681 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 720 |  | 2711 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2711 |  |  |  |  |  |  |  |  |  |
-| --pairs | 120 |  | 2893 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2894 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2895 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 2896 |  |  |  |  |  |  |  |  |  |
-| --pair-every | 4 |  | 2897 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
-| --full-every | 4 |  | 2899 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 2901 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --frames | 48 | frames | 2913 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2914 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2915 |  |  |  |  |  |  |  |  |  |
-| --threads | 6 |  | 2916 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
-| --fps | 30 |  | 2917 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --size | (320, 180) |  | 2936 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2938 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
-| --frames | 24 | frames | 2943 |  |  |  |  |  |  |  |  |  |
-| --what | "dof" |  | 2948 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2950 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2952 |  |  |  |  |  |  |  |  |  |
+| flat_mask(grow) | 2 |  | 801 |  |  |  |  |  |  |  |  |  |
+| flat_mask(sigma) | 2.0 |  | 801 |  |  |  |  |  |  |  |  |  |
+| grain(unit) | 1.0 |  | 825 |  |  |  |  |  |  |  |  |  |
+| GLITCH_SHIFT | 6 | px | 877 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
+| GLITCH_SEARCH | 32 |  | 878 |  |  |  |  |  |  |  |  |  |
+| EDGE_POINTS | 4000 |  | 905 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
+| EDGE_LEAST | 0.03 |  | 906 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
+| SOBEL_VAR | 0.5 |  | 907 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
+| REBLUR | (1.0, 3.0, 8.0) | px | 909 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
+| SWITCH | (2.5, 6.0, float("inf")) |  | 910 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
+| edges(seed) | 0 |  | 919 |  |  |  |  |  |  |  |  |  |
+| edges(unit) | 1.0 |  | 919 |  |  |  |  |  |  |  |  |  |
+| SOFT_EDGE | 3.0 |  | 965 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
+| DOF_BLOCK | 40.0 |  | 981 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
+| DOF_CONTRAST | 0.10 |  | 982 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
+| DOF_TOP | 0.02 |  | 983 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
+| DOF_PRE | 0.0 |  | 986 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
+| DOF_LINES | 180 |  | 987 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
+| _blur_blocks(unit) | 1.0 |  | 1012 |  |  |  |  |  |  |  |  |  |
+| dof_blocks(unit) | 1.0 |  | 1047 |  |  |  |  |  |  |  |  |  |
+| SHORT | (8.0, 16.0) |  | 1076 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
+| LONG | (28.0, 40.0) |  | 1077 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
+| STEP_LEAST | 0.12 |  | 1078 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
+| FLAT_MOST | 0.04 |  | 1079 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
+| INNER | 4.0 |  | 1080 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
+| DIFFUSION_TOP | 0.65 |  | 1081 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
+| BRIGHT_EDGE | 0.85 |  | 1082 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
+| CORE_MOST | 3.0 |  | 1083 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
+| PROFILE_POINTS | 1500 |  | 1084 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(seed) | 0 |  | 1135 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(unit) | 1.0 |  | 1135 |  |  |  |  |  |  |  |  |  |
+| MOVING_LEAST | 3.0 |  | 1215 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
+| STILL_MOST | 0.5 |  | 1216 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
+| MOVING_PIXEL | 1.0 |  | 1217 | this counts as moving |  |  |  |  |  |  |  |  |
+| MOTION_LEAST | 0.008 |  | 1218 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
+| motion(seed) | 0 |  | 1278 |  |  |  |  |  |  |  |  |  |
+| motion(unit) | 1.0 |  | 1278 |  |  |  |  |  |  |  |  |  |
+| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1329 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
+| aberration(unit) | 1.0 |  | 1332 |  |  |  |  |  |  |  |  |  |
+| LINE_LEAST | 0.2 |  | 1372 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
+| LINE_OFF_CENTRE | 0.2 |  | 1373 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
+| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1376 |  |  |  |  |  |  |  |  |  |
+| distortion(unit) | 1.0 |  | 1410 |  |  |  |  |  |  |  |  |  |
+| measure_frame(seed) | 0 |  | 1604 |  |  |  |  |  |  |  |  |  |
+| measure_frame(unit) | 1.0 |  | 1604 |  |  |  |  |  |  |  |  |  |
+| PERSON_INNER | 3.0 |  | 1662 | 720 line px: the person is read this far inside its outline (the edge mixes with |  |  |  |  |  | ○ |  |  |
+| STAGE_GAP | 12.0 |  | 1663 | the stage), the stage this far outside it (the person's glow, the mask's error) |  |  |  |  |  | ○ |  |  |
+| REGION_LEAST | 0.005 |  | 1664 | a region under this share of the frame is not read |  |  |  |  |  |  |  |  |
+| RIM_EDGE | (3.0, 6.0) |  | 1665 | 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px, |  |  |  |  |  |  |  |  |
+| RIM_CORE | (12.0, 20.0) |  | 1666 | against the light further in along the same normal |  |  |  |  |  |  |  |  |
+| HALO_EDGE | (1.0, 4.0) |  | 1667 | 720 line px inside the outline: the person's own light at its edge, the source of |  |  |  |  |  | ○ |  |  |
+| HALO_NEAR | (3.0, 8.0) |  | 1668 | the glow it throws on the stage just outside, |  |  |  |  |  |  |  |  |
+| HALO_FAR | (24.0, 40.0) |  | 1669 | against the stage further out |  |  |  |  |  |  |  |  |
+| HALO_LEAST | 0.05 |  | 1670 | linear luminance: the edge brighter than the far stage by at least this |  |  |  |  |  |  |  |  |
+| OUTLINE_POINTS | 3000 |  | 1671 | outline points read per frame at most |  |  |  |  |  |  |  |  |
+| EDGE_IN | (3.0, 6.0) |  | 1672 | 720 line px inside the outline: the person's colour at her edge (the rim's band) ... |  |  |  |  |  | ○ |  |  |
+| EDGE_OUT | (12.0, 20.0) |  | 1673 | ... against the stage's just outside it, past her glow and the mask's error |  |  |  |  |  |  |  |  |
+| MERGE_DE | 15.0 |  | 1674 | CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity) |  |  |  |  |  |  |  |  |
+| SEG_SIZE | 1024 |  | 1675 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
+| FACE_CHEEK | ((0.55, 0.85), (0.25, 0.75)) |  | 1676 | rows and columns of a face's box read for the light on her skin: the cheeks |  |  |  |  |  |  |  |  |
+| FACE_LEAST | 20 | px | 1679 | pixels of the cheeks on the person at least, for a face to be read |  |  |  |  |  | ○ |  |  |
+| _along(order) | 1 |  | 1762 |  |  |  |  |  |  |  |  |  |
+| silhouette(seed) | 0 |  | 1769 |  |  |  |  |  |  |  |  |  |
+| silhouette(unit) | 1.0 |  | 1769 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(seed) | 0 |  | 1823 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(unit) | 1.0 |  | 1823 |  |  |  |  |  |  |  |  |  |
+| region_measures(seed) | 0 |  | 1851 |  |  |  |  |  |  |  |  |  |
+| region_measures(unit) | 1.0 |  | 1851 |  |  |  |  |  |  |  |  |  |
+| seg_session(threads) | 6 |  | 1916 |  |  |  |  |  |  |  |  |  |
+| BOOTSTRAP | 400 |  | 1946 |  |  |  |  |  |  |  |  |  |
+| _trimmed_rms(keep) | 0.9 |  | 1949 |  |  |  |  |  |  |  |  |  |
+| summarise(seed) | 0 |  | 1957 |  |  |  |  |  |  |  |  |  |
+| probe(fps) | 30 |  | 2091 |  |  |  |  |  |  |  |  |  |
+| read_frames(start) | 0.0 |  | 2172 |  |  |  |  |  |  |  |  |  |
+| THUMB | (64, 36) |  | 2197 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
+| read_thumbs(start) | 0.0 |  | 2200 |  |  |  |  |  |  |  |  |  |
+| measure_video(height) | 720 |  | 2260 |  |  |  |  |  |  |  |  |  |
+| measure_video(jobs) | 1 |  | 2260 |  |  |  |  |  |  |  |  |  |
+| measure_video(pairs) | 120 |  | 2260 |  |  |  |  |  |  |  |  |  |
+| measure_video(fps) | 30 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(full_every) | 4 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(pair_every) | 4 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(seed) | 0 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| layer_masks(start) | 0.0 |  | 2387 |  |  |  |  |  |  |  |  |  |
+| measure_regions(frames) | 48 |  | 2425 |  |  |  |  |  |  |  |  |  |
+| measure_regions(height) | 720 |  | 2425 |  |  |  |  |  |  |  |  |  |
+| measure_regions(fps) | 30 |  | 2426 |  |  |  |  |  |  |  |  |  |
+| measure_regions(seed) | 0 |  | 2426 |  |  |  |  |  |  |  |  |  |
+| measure_regions(threads) | 6 |  | 2426 |  |  |  |  |  |  |  |  |  |
+| TEXT_LEAST | 8.0 |  | 2492 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
+| text_summary(unit) | 1.0 |  | 2516 |  |  |  |  |  |  |  |  |  |
+| measure_text(frames) | 24 |  | 2545 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(height) | 720 |  | 2686 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(size) | (320, 180) |  | 2686 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 720 |  | 2716 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2716 |  |  |  |  |  |  |  |  |  |
+| --pairs | 120 |  | 2898 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2899 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2900 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 2901 |  |  |  |  |  |  |  |  |  |
+| --pair-every | 4 |  | 2902 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
+| --full-every | 4 |  | 2904 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 2906 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --frames | 48 | frames | 2918 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2919 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2920 |  |  |  |  |  |  |  |  |  |
+| --threads | 6 |  | 2921 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
+| --fps | 30 |  | 2922 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --size | (320, 180) |  | 2941 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2943 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
+| --frames | 24 | frames | 2948 |  |  |  |  |  |  |  |  |  |
+| --what | "dof" |  | 2953 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2955 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2957 |  |  |  |  |  |  |  |  |  |
 
 ### typo_analyze.py（確かめ・部品、126）
 

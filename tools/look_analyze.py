@@ -738,13 +738,18 @@ def light_palette(rows, duration):
     return out
 
 
-def flicker(series, fps, flash_events=None):
+def flicker(series, fps, flash_events=None, cuts=None):
     """the flicker of a per-frame mean Y' series: flicker.hf, the rms of the series less its running mean over
-    FLICKER_WINDOW s; strobe.per_min, the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
+    FLICKER_WINDOW s, on the frames away from the cuts (frame numbers: a cut is a step of the mean, not a flicker of the
+    light; typorev: the references' 24 cuts a minute read as 0.016 where RE: 踊's light flickered 0.0045); strobe.per_min,
+    the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
     x = np.asarray(series, np.float64)
     k = max(3, int(round(FLICKER_WINDOW * fps)) | 1)
     run = np.convolve(np.pad(x, (k // 2, k // 2), mode="edge"), np.ones(k) / k, mode="valid")
-    hf = float(np.sqrt(np.mean((x - run) ** 2))) if x.size else float("nan")
+    keep = np.ones(x.size, bool)
+    for c in (cuts or ()):
+        keep[max(0, int(c) - k // 2 - 1):int(c) + k // 2 + 1] = False
+    hf = float(np.sqrt(np.mean((x[keep] - run[keep]) ** 2))) if keep.any() else float("nan")
     events = flash_events if flash_events is not None else flashes(x, fps)[0]
     starts = [e["start"] / float(fps) for e in events]
     strobes, run_len = 0, 1
@@ -2350,7 +2355,7 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
                    "frame.fps_effective": (float(eff["frame.fps_effective"]), 0.0)}
     for k, v in light_palette(rows, duration).items():
         video_level[k] = (v, float("nan"))
-    for k, v in flicker(series, rate, flash_events).items():
+    for k, v in flicker(series, rate, flash_events, cuts=cut_list).items():
         video_level[k] = (v, float("nan"))
     for k, v in light_motion(maps.astype(np.float64) / 255.0, rate, height_px=maps.shape[1]).items():
         video_level[k] = (v, float("nan"))
