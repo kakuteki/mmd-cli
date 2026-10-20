@@ -81,8 +81,10 @@ def hull_of(pts, f):
 
 
 def frame_of_video(video, t, out):
-    """the picture of `video` at t seconds (ffmpeg, exact seek), saved to out"""
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.4f" % t, "-i", video, "-frames:v", "1", out], check=True)
+    """the picture of `video` at t seconds (ffmpeg, exact seek: the first frame from that time), saved to out.  The time goes to
+    the microsecond: with four decimals the time of frame 2 of 30 fps, 0.0667 s, came after it and frame 3 was saved (every frame
+    of 2 mod 3; at 60 fps of 1 mod 3; lookfrom 2026-10-21)"""
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "%.6f" % t, "-i", video, "-frames:v", "1", out], check=True)
     return out
 
 

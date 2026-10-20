@@ -290,7 +290,8 @@ class PhysicsAlignArgvTest(unittest.TestCase):
         scan = mv_look.dancer_input("C:/out/v.avi", 30, 8, 1334 / 30.0, 406 / 30.0, 1214 / 30.0)
         at = fold.index("C:/out/v.avi") + 1
         self.assertEqual([a for a in fold[:at] if a != "-y"][-len(scan):], scan)
-        self.assertEqual(scan, ["-ss", "4.000", "-t", "13.533", "-r", "240", "-i", "C:/out/v.avi"])
+        # the seconds in whole frames of the dancer, to the microsecond (lookfrom 2026-10-21; three decimals before)
+        self.assertEqual(scan, ["-ss", "4.000000", "-t", "13.533333", "-r", "240", "-i", "C:/out/v.avi"])
 
 
 @unittest.skipUnless(mv_look, "needs numpy and Pillow")
