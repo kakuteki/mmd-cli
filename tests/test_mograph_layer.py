@@ -483,11 +483,15 @@ class RenderTest(unittest.TestCase):
 
     @unittest.skipUnless(MA, "needs OpenCV and SciPy (tools/mograph_analyze.py)")
     def test_a_glitch_parts_red_from_blue_on_its_frames_only(self):
-        frames = self.frames("glitch", [{"kind": "glitch", "t": 0.5, "frames": 2, "split": 16.0, "bands": 3, "shift": 40.0}])
-        split = [MA._split(f / 255.0, reach=12) * 720.0 / SIZE[1] for f in frames]
-        self.assertLess(max(split[:15] + split[17:]), 2.0)
+        event = {"kind": "glitch", "t": 0.5, "frames": 2, "split": 16.0, "bands": 3, "shift": 40.0}
+        frames = self.frames("glitch", [event])
+        split = [MA._split(f / 255.0, reach=12) for f in frames]
+        self.assertLess(max(split[:15] + split[17:]), 0.5)
+        planned = {frame: s for frame, s, _ in ML.glitch_frames(dict(ML.DEFAULTS["glitch"], **event), 30, SIZE)}
         for k in (15, 16):
-            self.assertGreater(split[k], 8.0, split)                    # tools/mograph_analyze.py's glitch frame
+            # red one way and blue the other by the frame's split: twice it between them (px of this picture)
+            self.assertAlmostEqual(split[k], 2 * planned[k], delta=1.5, msg=(k, split[k], planned[k]))
+            self.assertGreater(split[k] * 720.0 / SIZE[1], 8.0)          # tools/mograph_analyze.py's glitch frame
 
     def test_an_excerpt_shows_what_the_whole_render_shows_on_its_frames(self):
         events = [{"kind": "punch", "t": 0.5, "amount": 0.2}, {"kind": "flash", "t": 0.55, "frames": 7},
