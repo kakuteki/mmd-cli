@@ -78,6 +78,28 @@ class EventsTest(unittest.TestCase):
         self.assertAlmostEqual(ev["dissolves"][0]["frame"], 45, delta=3)
         self.assertAlmostEqual(ev["dissolves"][0]["frames"], 10, delta=4)
 
+    def test_light_dimming_or_a_line_of_text_fading_in_is_no_dissolve(self):
+        a = scene(12)
+        dim = [a * (1.0 - 0.35 * min(1.0, max(0.0, (i - 40) / 10.0))) for i in range(90)]
+        text = []
+        for i in range(90):
+            f = a.copy()
+            k = min(1.0, max(0.0, (i - 40) / 8.0))
+            f[56:64, 30:98] = f[56:64, 30:98] * (1 - k) + k                 # a white line of text fading in, low in the frame
+            text.append(f)
+        self.assertEqual(self.run_frames(dim)["dissolves"], [])
+        self.assertEqual(self.run_frames(text)["dissolves"], [])
+
+    def test_a_colourful_picture_is_no_glitch(self):
+        a = scene(13)
+        frames = []
+        for i in range(60):
+            f = zoomed(a, 1.1, dx=0.3 * i)
+            f[10:40, 20:50] = [0.95, 0.1, 0.1]                              # a red thing next to a blue one
+            f[10:40, 50:80] = [0.1, 0.2, 0.95]
+            frames.append(f)
+        self.assertEqual(self.run_frames(frames)["glitches"], [])
+
     def test_a_fade_to_black_and_back(self):
         a = scene(5)
         frames = []

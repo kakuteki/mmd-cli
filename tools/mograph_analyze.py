@@ -70,7 +70,9 @@ FADE_WHITE = 0.90                 # over this: white
 FADE_LEAST = 3                    # frames the picture takes going there at least
 DISSOLVE_W = (2, 3, 5, 8)         # half widths (frames) tried for a dissolve
 DISSOLVE_LEAST = 0.05             # mean |Y' change| between its ends at least this
-DISSOLVE_MID = 0.25               # its middle frame within this share of that change of the mean of its ends
+DISSOLVE_MID = 0.25               # its middle frame within this share of that change of the mean of its ends,
+DISSOLVE_ENDS = 0.6               # and its ends two pictures (correlation under this; a picture dimmed, or a line of
+#                                   text come on, correlates with itself)
 PUNCH_LEAST = 0.08                # log scale change within three frames for a zoom punch, and
 PUNCH_OVER = 6.0                  # this many times the scale's usual change round it (a second each side)
 PUNCH_MERGE = 0.3                 # s: punches closer than this are one
@@ -80,6 +82,15 @@ SPLIT_REACH = 6                   # px searched at the read size
 COLOUR_RISE = 12.0                # C*ab over the running median: a colour flash
 COLOUR_LONGEST = 0.6              # s
 BEAT_REACH = 0.01                 # s added to a frame either side: on the beat
+
+
+def _ncc(a, b):
+    a = np.asarray(a, np.float64).ravel()
+    b = np.asarray(b, np.float64).ravel()
+    a = a - a.mean()
+    b = b - b.mean()
+    den = math.sqrt(float((a * a).sum() * (b * b).sum()))
+    return float((a * b).sum() / den) if den > 1e-12 else 1.0
 
 
 def _luma(rgb):
@@ -112,8 +123,20 @@ def _similarity(flow, border=4):
 
 
 def _split(rgb, reach=SPLIT_REACH):
-    """px (at the read size) between the red and the blue edges across the picture: the shift of the column profiles of
-    their horizontal gradients that lines them up best (to a fraction of a px)"""
+    """px (at the read size) between the red and the blue edges across the picture, the same in its left and its right
+    half (red next to blue in the picture parts them in one place only): the smaller of the two halves' splits when
+    they agree in direction, else 0"""
+    w = rgb.shape[1]
+    a = _split_one(rgb[:, :w // 2], reach)
+    b = _split_one(rgb[:, w // 2:], reach)
+    if a * b <= 0:
+        return 0.0
+    return float(min(abs(a), abs(b)))
+
+
+def _split_one(rgb, reach=SPLIT_REACH):
+    """the signed shift (px) of the column profiles of the horizontal gradients of red against blue that lines them
+    up best (to a fraction of a px); 0 when they line up poorly"""
     gr = np.abs(np.diff(rgb[..., 0], axis=1)).sum(axis=0)
     gb = np.abs(np.diff(rgb[..., 2], axis=1)).sum(axis=0)
     n = len(gr)
@@ -126,14 +149,14 @@ def _split(rgb, reach=SPLIT_REACH):
         vals[k] = float((x * y).sum() / den) if den > 1e-12 else -1.0
         if best is None or vals[k] > vals[best]:
             best = k
-    if best is None or vals[best] < 0.3:
+    if best is None or vals[best] < 0.5 or vals[best] - vals.get(0, -1.0) < 0.05:
         return 0.0
     if -reach < best < reach:
         a, b, c = vals[best - 1], vals[best], vals[best + 1]
         den = a - 2 * b + c
         frac = 0.5 * (a - c) / den if abs(den) > 1e-12 else 0.0
-        return abs(best + max(-0.5, min(0.5, frac)))
-    return float(abs(best))
+        return float(best + max(-0.5, min(0.5, frac)))
+    return float(best)
 
 
 class EventReader:
@@ -239,7 +262,7 @@ def _events(r, beats=None, start=0.0):
             if D < DISSOLVE_LEAST:
                 continue
             M = float(np.abs(small[k] - 0.5 * (small[k - w] + small[k + w])).mean())
-            if M <= DISSOLVE_MID * D and d[k - w + 1:k + w + 1].max() < 0.6 * D:
+            if M <= DISSOLVE_MID * D and d[k - w + 1:k + w + 1].max() < 0.6 * D and                     _ncc(small[k - w], small[k + w]) < DISSOLVE_ENDS:
                 marks[k] = True
     dissolves = []
     for a, b in _runs(marks):
