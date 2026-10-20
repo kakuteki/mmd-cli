@@ -194,8 +194,12 @@ class ElementsTest(unittest.TestCase):
             r = np.hypot(xx - x, yy - y)
             img += 0.35 * np.clip((14.0 - r) / 2.0, 0, 1)
         rgb = np.repeat(np.clip(img, 0, 1)[..., None], 3, axis=2)
-        p = MG.particles(rgb, unit=1.0)
+        p = MG.particles(rgb, unit=1.0, points=True)
         self.assertAlmostEqual(p["particle.count"], 48, delta=5)
+        self.assertEqual(len(p["points"]), p["particle.count"])
+        # each found spot lies on a drawn one
+        for x, y, s in p["points"]:
+            self.assertLess(min(math.hypot(x - a, y - b) for a, b in dots + discs), 4.0)
         self.assertAlmostEqual(p["particle.bokeh"], 8 / 48.0, delta=0.08)
 
     def test_thin_lines_are_no_particles(self):

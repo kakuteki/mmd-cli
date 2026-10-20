@@ -395,10 +395,10 @@ LINE_JOIN = (3.0, 6.0)            # degrees and 720 line px: segments this paral
 AXIS = 3.0                        # degrees from level or upright: on the frame's axes
 
 
-def particles(rgb, unit=1.0, mask=None):
+def particles(rgb, unit=1.0, mask=None, points=False):
     """the small round bright spots of a frame (RGB 0..1, unit: its px per 720 line px): particle.count, particle.bokeh
     (the share of them BOKEH_SIGMA wide or wider), particle.size (their median sigma, 720 line px); mask: where not to
-    look (text, the person)"""
+    look (text, the person); points: also where they are (x, y, sigma in the frame's px), to draw them"""
     ndi = _ndi()
     y = _luma(np.asarray(rgb, np.float64))
     sig = [s * unit for s in PARTICLE_SIGMAS]
@@ -441,8 +441,11 @@ def particles(rgb, unit=1.0, mask=None):
         kept.append((v, xx, yy, s))
     sizes = [s / unit for _, _, _, s in kept]
     n = len(kept)
-    return {"particle.count": n, "particle.bokeh": float(np.mean([s >= BOKEH_SIGMA for s in sizes])) if n else 0.0,
-            "particle.size": float(np.median(sizes)) if n else float("nan")}
+    out = {"particle.count": n, "particle.bokeh": float(np.mean([s >= BOKEH_SIGMA for s in sizes])) if n else 0.0,
+           "particle.size": float(np.median(sizes)) if n else float("nan")}
+    if points:
+        out["points"] = [(int(xx), int(yy), float(s)) for _, xx, yy, s in kept]
+    return out
 
 
 def lines(rgb, unit=1.0):
