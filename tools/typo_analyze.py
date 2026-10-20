@@ -1494,10 +1494,29 @@ LETTER_TALL = 1.15                # a piece taller than this many box heights is
 LETTER_RULE = (2.5, 0.3)          # a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter
 
 
+def _runs(mask, axis):
+    """the length of the run of True each pixel of a mask lies in, along an axis (1: across the rows, 0: down the
+    columns)"""
+    m = mask if axis == 1 else mask.T
+    out = np.zeros(m.shape, np.int32)
+    for i in range(m.shape[0]):
+        row = m[i]
+        if not row.any():
+            continue
+        d = np.diff(np.concatenate([[0], row.astype(np.int8), [0]]))
+        for a, b in zip(np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]):
+            out[i, a:b] = b - a
+    return out if axis == 1 else out.T
+
+
 def _not_letters(mask, hb):
-    """the pieces of a mask (8-connected) that cannot be letters: taller than LETTER_TALL heights, or a rule"""
+    """the pixels of a mask that cannot be letters: a rule's (in a run across longer than LETTER_RULE[0] heights and
+    thinner than LETTER_RULE[1] of one: also where it touches the letters), and the pieces (8-connected) taller than
+    LETTER_TALL heights or shaped as a rule"""
     ndi = _ndi()
-    lab, n = ndi.label(mask, structure=np.ones((3, 3), bool))
+    rule = (_runs(mask, 1) > LETTER_RULE[0] * hb) & (_runs(mask, 0) <= max(2.0, 0.12 * hb))
+    rest = mask & ~rule
+    lab, n = ndi.label(rest, structure=np.ones((3, 3), bool))
     drop = np.zeros(n + 1, bool)
     for k, sl in enumerate(ndi.find_objects(lab), start=1):
         if sl is None:
@@ -1505,7 +1524,7 @@ def _not_letters(mask, hb):
         hh, ww = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
         if hh > LETTER_TALL * hb or (ww > LETTER_RULE[0] * hb and hh < LETTER_RULE[1] * hb):
             drop[k] = True
-    return drop[lab]
+    return rule | drop[lab]
 
 
 def _letters_of(rgb, box, pad=TYPE_PAD):

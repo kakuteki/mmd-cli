@@ -734,6 +734,22 @@ class TypefaceTest(unittest.TestCase):
         self.assertGreater(tf["hv"], 0.7, tf)
         self.assertLess(tf["stroke_px"], 8.0, tf)                                     # the letters' strokes (about 5 px)
 
+    def test_a_rule_touching_the_letters_is_not_a_stroke(self):
+        # our v7: the light rule under a line joins the letters where a figure behind meets them: one piece, no rule
+        a, box = render(font="NotoSansJP-VF.ttf", size=48, weight=700, ground=(25, 28, 50))
+        a = a.copy()
+        y = int(box["y1"] + 0.06 * box["h"])
+        x0, x1 = int(box["x0"] + 0.1 * box["w"]), int(box["x0"] + 0.95 * box["w"])
+        a[y:y + 2, x0:x1] = (250, 245, 235)
+        cols = np.nonzero((a[int(box["y1"]) - 3, x0:x1] > 128).all(axis=1))[0]
+        for c in cols[::7]:                                           # bridges from the letters' feet to the rule
+            a[int(box["y1"]) - 3:y, x0 + c] = (250, 245, 235)
+        mask, _, (ox, oy), _ = TA._letters_of(a, box)
+        self.assertLess(float(mask[y - oy:y - oy + 2, x0 - ox:x1 - ox].mean()), 0.3)
+        tf = TA.typeface(a, box)
+        self.assertEqual(tf["class"], "gothic", tf)
+        self.assertGreater(tf["hv"], 0.7, tf)
+
     def test_a_rule_under_the_line_is_not_a_stroke_of_its_letters(self):
         # our lyric style: a thin accent rule a little under the line, wider than it (its long thin horizontal read
         # the gothic lines of our v7 as mincho)
