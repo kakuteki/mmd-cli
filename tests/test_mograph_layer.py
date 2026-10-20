@@ -804,6 +804,28 @@ class WorldParticlesRenderTest(unittest.TestCase):
 
 @unittest.skipUnless(ML and FFMPEG, "needs numpy, Pillow, ffmpeg and ffprobe")
 class ApplyTest(unittest.TestCase):
+    def test_an_excerpt_of_a_finished_video_starts_on_its_own_frame(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        video = os.path.join(folder, "moving.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-filter_complex",
+                        "color=c=0x202020:s=%dx%d:r=30[bg];color=c=white:s=8x60:r=30[box];[bg][box]overlay=x='8+4*n':y=60"
+                        % SIZE, "-frames:v", "70", "-c:v", "libx264", "-crf", "10", "-pix_fmt", "yuv420p", video],
+                       check=True, stdin=subprocess.DEVNULL)
+        look = os.path.join(folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"mograph": {"on": 1, "events": [{"kind": "flash", "t": 0.1}]}}, f)        # (before the excerpt)
+        whole = read_frames(video)
+        for start, to in (("1.0", "1.5"), ("0.7", "1.2"), ("1.3333333", "1.9")):
+            out = os.path.join(folder, "part_%s.mp4" % start)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ML.main(["apply", video, look, out, "--from", start, "--to", to]), 0)
+            part = read_frames(out)
+            first = int(round(float(start) * 30))
+            self.assertEqual(len(part), int(round(float(to) * 30)) - first, start)
+            for k in (0, len(part) - 1):
+                self.assertEqual(box_columns(part[k], row=90, least=150), box_columns(whole[first + k], row=90, least=150), start)
+
     def test_a_shake_over_a_finished_video_never_shows_past_its_edges(self):
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, True)

@@ -68,7 +68,9 @@ DEFAULTS = {
     "flash": {"strength": 0.27, "frames": 7, "colour": [255, 255, 255]},
     "fade": {"out": 12, "hold": 2, "back": 15, "colour": [0, 0, 0]},
     "dissolve": {"frames": 12},
-    "glitch": {"frames": 2, "split": 6.0, "bands": 3, "shift": 30.0, "seed": 5},
+    # (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches;
+    # split 6 on v7 read as none, 2026-10-21)
+    "glitch": {"frames": 2, "split": 14.0, "bands": 3, "shift": 40.0, "seed": 5},
     "particles": {"specks": 0, "lights": 0, "seed": 9, "brightness": 1.0, "size": 1.0, "drift": [0.25, 0.06, 0.0],
                   "box": [-45.0, 0.5, -50.0, 45.0, 40.0, 110.0], "clear": 9.0, "front": 0.35},
     "busy": [],
@@ -858,8 +860,10 @@ def plan(structure, level=1.0, particles=None):
         add("fade", t - 13 / float(SONG_FPS), "dip at the break (beat %d), the low end drops" % sections["break"]["beat"],
             out=13, hold=4, back=30)
     if "end" in sections:
-        add("fade", sections["end"]["t"], "the end: to black from the last bar line (beat %d) on" % sections["end"]["beat"],
-            out=103, hold=-1, back=0)
+        # over a bar (1.7 s): tools/mograph_analyze.py reads a fade to black that falls by 0.1 of Y' within the second before
+        # the black, and v7's dark picture faded over two bars fell by 0.03
+        add("fade", sections["end"]["t"], "the end: to black over the last bar line's bar (beat %d) on" % sections["end"]["beat"],
+            out=51, hold=-1, back=0)
     for sid in ("verse2", "bridge"):
         if sid in sections:
             add("dissolve", sections[sid]["t"], "into %s (beat %d)" % (sid, sections[sid]["beat"]))
@@ -904,9 +908,10 @@ def apply_argv(video, out, section, size, fps, start=None, duration=None, offset
     no_particles = dict(section, particles=dict(section["particles"], specks=0, lights=0))
     graph = Graph(no_particles, size, fps, clip_start, duration)
     argv = ["ffmpeg", "-v", "error", "-y"]
-    # (in whole frames of the video, written to the microsecond, as mv_look.excerpt_seconds takes an excerpt)
+    # (half a frame before its first frame: a finished mp4 seeked to the very time of a frame gave the next one, its time a
+    # hair late in the stream's time base; v7 in segments, 2026-10-21)
     if start is not None:
-        argv += ["-ss", "%.6f" % (int(round((clip_start - offset) * fps)) / float(fps))]
+        argv += ["-ss", "%.6f" % max(0.0, (int(round((clip_start - offset) * fps)) - 0.5) / float(fps))]
     if duration is not None:
         argv += ["-t", "%.6f" % (max(1, int(round(float(duration) * fps))) / float(fps))]
     argv += ["-i", video]
