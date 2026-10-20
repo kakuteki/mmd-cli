@@ -10,6 +10,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -37,6 +38,40 @@ def run(*argv):
         code = mv_inspect.main([str(a) for a in argv])
     lines = out.getvalue().strip().splitlines()
     return code, (json.loads(lines[-1]) if lines and lines[-1].startswith("{") else out.getvalue())
+
+
+GREYS = 30                       # grey_video: frame n is a flat grey of 8 * (n % GREYS)
+
+
+def grey_video(path, fps, frames, size=(64, 36)):
+    """an mp4 as mv_look writes one (libx264, yuv420p; lossless here) whose frame n is a flat grey of 8 * (n % GREYS)"""
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                    "color=c=black:s=%dx%d:r=%d,format=gray,geq=lum='8*mod(N,%d)'" % (size[0], size[1], fps, GREYS),
+                    "-frames:v", str(frames), "-c:v", "libx264", "-crf", "0", "-pix_fmt", "yuv420p", path],
+                   check=True, stdin=subprocess.DEVNULL)
+    return path
+
+
+def grey_of(path):
+    """the frame number (mod GREYS) a picture of grey_video says"""
+    with Image.open(path) as image:
+        return int(round(float(np.asarray(image.convert("L"), dtype=float).mean()) / 8.0)) % GREYS
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+class FrameOfVideoTest(unittest.TestCase):
+    """mark --video takes the picture of frame n at its time n / fps (lookfrom, 2026-10-21).  Written with four decimals, 2 / 30 s
+    was 0.0667, after the frame's own time, and ffmpeg's exact seek (the first frame from that time) took frame 3: at 30 fps
+    every frame of 2 mod 3, at 60 fps every frame of 1 mod 3"""
+
+    def test_the_picture_is_the_frame_of_that_time(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        for fps in (30, 60):
+            video = grey_video(os.path.join(folder, "greys%d.mp4" % fps), fps, 20)
+            for n in range(1, 10):
+                path = mv_inspect.MK.frame_of_video(video, n / float(fps), os.path.join(folder, "f%d_%d.png" % (fps, n)))
+                self.assertEqual(grey_of(path), n, (fps, n))
 
 
 def drop(t):
@@ -130,6 +165,18 @@ class SyntheticTest(unittest.TestCase):
         info = json.loads(text(os.path.join(out, "marks.json")))[0]
         self.assertIn("skirt.floor_over122_frames", info["events"])
         self.assertTrue(0 < info["com_px"][0] < 1280 and 0 < info["com_px"][1] < 720)
+
+    @unittest.skipUnless(shutil.which("ffmpeg"), "needs ffmpeg")
+    def test_mark_on_a_video_takes_the_picture_of_the_frame_it_marks(self):
+        # --at 1.97 s marks frame 59 (1.9667 s) and 3.94 s frame 118 (3.9333 s): the picture is that frame's, not the first one
+        # from the time given (60 and 119; lookfrom 2026-10-21)
+        video = grey_video(os.path.join(self.folder, "greys.mp4"), 30, 150, size=(640, 360))
+        out = os.path.join(self.folder, "marked_video")
+        code, res = run("mark", self.out_a, "--camera", self.camera, "--out", out, "--video", video, "--start", "0",
+                        "--at", "1.97", "3.94")
+        self.assertEqual(code, 0, res)
+        for frame in (59, 118):
+            self.assertEqual(grey_of(os.path.join(out, "frame_%05d.png" % frame)), frame % GREYS, frame)
 
     def test_wrong_input_is_reported(self):
         code, res = run("measure", "--model", self.model, "--motions", os.path.join(self.folder, "nothing.vmd"), "--out",
