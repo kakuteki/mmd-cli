@@ -285,6 +285,109 @@ def surface(view, depth, face, mesh):
     return Surface(points, normals, material, seen, depth)
 
 
+# ---- the set ------------------------------------------------------------------------------------
+
+SET_KEYS = ("model", "root", "offset", "emissive", "lamps", "note")
+
+
+def load_set(path):
+    """the set of a JSON file (the module docstring): its model's path made absolute (a relative one is from the set's
+    folder), root "全ての親", offset [0, 0, 0], no emissive material and no lamp unless it says"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            spec = json.load(f)
+    except OSError as exc:
+        raise ValueError("cannot read the set %s: %s" % (path, exc))
+    except json.JSONDecodeError as exc:
+        raise ValueError("the set %s is not JSON: %s" % (path, exc))
+    return check_set(spec, os.path.dirname(os.path.abspath(path)))
+
+
+def check_set(spec, folder="."):
+    """a set with its defaults, or ValueError for a name it does not know or a value of the wrong kind"""
+    if not isinstance(spec, dict):
+        raise ValueError("a set is a JSON object, not %r" % (spec,))
+    unknown = sorted(set(spec) - set(SET_KEYS))
+    if unknown:
+        raise ValueError("the set has no setting %s (it has: %s)" % (", ".join(map(repr, unknown)), ", ".join(SET_KEYS)))
+    if not isinstance(spec.get("model"), str) or not spec["model"]:
+        raise ValueError("the set needs \"model\": the stage's .pmx")
+    out = {"model": spec["model"] if os.path.isabs(spec["model"]) else os.path.join(folder, spec["model"]),
+           "root": spec.get("root", "全ての親"), "offset": spec.get("offset", [0.0, 0.0, 0.0]),
+           "emissive": spec.get("emissive", []), "lamps": spec.get("lamps", [])}
+    if not isinstance(out["root"], str) or not out["root"]:
+        raise ValueError("the set's root is the name of the bone that places the model, not %r" % (out["root"],))
+    if not (isinstance(out["offset"], list) and len(out["offset"]) == 3 and all(_finite(v) for v in out["offset"])):
+        raise ValueError("the set's offset is [x, y, z] in MMD units, not %r" % (out["offset"],))
+    if not (isinstance(out["emissive"], list) and all(isinstance(n, str) for n in out["emissive"])):
+        raise ValueError("the set's emissive is a list of material names, not %r" % (out["emissive"],))
+    if not (isinstance(out["lamps"], list) and all(isinstance(p, list) and len(p) == 3 and all(_finite(v) for v in p)
+                                                  for p in out["lamps"])):
+        raise ValueError("the set's lamps are [[x, y, z], ...] (world points), not %r" % (out["lamps"],))
+    out["offset"] = [float(v) for v in out["offset"]]
+    out["lamps"] = [[float(v) for v in p] for p in out["lamps"]]
+    return out
+
+
+def _finite(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def set_mesh(spec):
+    """the set's model, placed (its emissive materials checked against it)"""
+    mesh = load_mesh(spec["model"])
+    for name in spec["emissive"]:
+        mesh.material_index(name)
+    return placed(mesh, spec["offset"])
+
+
+# ---- MMD's pictures of the stage ------------------------------------------------------------------
+
+# MMD's menu ids (mmd_cli `menu set`): 215 the axes and the floor grid, 221 the ground shadow, 282 the background black (which
+# gives the picture its alpha: 0 where nothing is drawn), 279 the self shadow (on when a model is loaded)
+STAGE_MENU = (("215", "off"), ("221", "off"), ("282", "on"))
+SELF_SHADOW = "279"
+UNCOMPRESSED = "未圧縮"
+PICTURE = "mmd_%05d.png"          # MMD's picture of the stage at a frame of the video, in a folder of them
+
+
+def batch_lines(spec, camera, size, mmd, avi=None, first=None, last=None, stills=None, folder=None, fps=30):
+    """the lines of an `mmd batch` that draws the set's model alone (no dancer, no MME: a plain MMD) with the camera motion:
+    an uncompressed AVI with alpha of the frames first .. last at `fps` (avi), or a picture of each of `stills` (frames of
+    the song) as folder/PICTURE.  The model is placed by a key of its root bone at frame 0; the axes, the grid, the ground
+    shadow and the self shadow are off (the author of the city street: the ground shadow looks better hidden), the
+    background black"""
+    if (avi is None) == (stills is None):
+        raise ValueError("draw the stage as an AVI (avi, first, last) or as stills (stills, folder)")
+    lines = [["launch", "--headless", "--exe", mmd], ["new"]] + [["menu", "set", m, v] for m, v in STAGE_MENU]
+    lines.append(["model", "load", spec["model"]])
+    if any(abs(v) > 0 for v in spec["offset"]):
+        lines.append(["bone", "set", spec["root"], "--pos"] + ["%.6f" % v for v in spec["offset"]] + ["--frame", "0"])
+    lines += [["menu", "set", SELF_SHADOW, "off"], ["model", "select", "camera"], ["motion", "load", camera, "--frame", "0"]]
+    w, h = (str(int(v)) for v in size)
+    if avi is not None:
+        if first is None or last is None or not 0 <= int(first) <= int(last):
+            raise ValueError("an AVI of the stage needs its first and last frame, first <= last")
+        lines.append(["render", "avi", avi, "--from", str(int(first)), "--to", str(int(last)), "--fps", str(int(fps)),
+                      "--size", w, h, "--codec", UNCOMPRESSED])
+    else:
+        if not folder:
+            raise ValueError("stills of the stage need the folder they go to")
+        for frame in stills:
+            lines += [["frame", "set", str(int(frame))],
+                      ["render", "image", os.path.join(folder, PICTURE % int(frame)).replace("\\", "/"), "--size", w, h]]
+    lines.append(["quit"])
+    return lines
+
+
+def write_batch(lines, path):
+    """an `mmd batch` file of JSON lines"""
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("# the stage alone (tools/stage_layer.py)\n")
+        for line in lines:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
 # ---- the command ----------------------------------------------------------------------------
 
 def main(argv=None):
