@@ -29,8 +29,8 @@ The section (DEFAULTS: the look's values override them; an unknown name or a val
   fade        the picture goes to `colour` over `out` frames, stays `hold` (-1: to the end) and comes back over `back`
   dissolve    the picture of the frame before it stays and fades out over the moving picture over `frames`
   glitch      for `frames` frames red and blue part by twice `split` px and `bands` bands of the picture slide by up to `shift`
-  particles   `specks` small specks and `lights` soft lights in the air of the stage (`box`: x0 y0 z0 x1 y1 z1, MMD units),
-              drifting by `drift` units a second.  They lie in the world (the camera moves past them as past the stage) and
+  particles   `specks` small specks in the air round the dancer (`box`: x0 y0 z0 x1 y1 z1, MMD units: near the focus, sharp)
+              and `lights` soft lights far behind her (`light_box`: blurred into bokeh), drifting by `drift` units a second.  They lie in the world (the camera moves past them as past the stage) and
               blur by their distance from the focus as stage.dof blurs the stage; those nearer the camera than the dancer go in
               front of her, the rest behind (`front` caps the cover of one in front).  `clear` keeps a column of that radius
               round the dancer's place free.  They need stage.world 1
@@ -73,8 +73,11 @@ DEFAULTS = {
     # (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches;
     # split 6 on v7 read as none, 2026-10-21)
     "glitch": {"frames": 2, "split": 14.0, "bands": 3, "shift": 40.0, "seed": 5},
+    # (the specks in the air round her, near the focus, sharp: the references' many small spots; the lights far behind her,
+    # blurred into bokeh by stage.dof.  One box for both, 2026-10-21 first try, blurred nearly all of them: 15 spots more)
     "particles": {"specks": 0, "lights": 0, "seed": 9, "brightness": 1.0, "size": 1.0, "drift": [0.25, 0.06, 0.0],
-                  "box": [-45.0, 0.5, -50.0, 45.0, 40.0, 110.0], "clear": 9.0, "front": 0.35},
+                  "box": [-38.0, 0.5, -32.0, 38.0, 34.0, 22.0], "light_box": [-60.0, 2.0, 22.0, 60.0, 50.0, 140.0],
+                  "clear": 9.0, "front": 0.35},
     "busy": [],
     "events": [],
 }
@@ -169,9 +172,10 @@ def merge(overrides):
                 if key not in section[name]:
                     raise ValueError("mograph.%s has no setting %r (it has: %s)" % (name, key, ", ".join(sorted(section[name]))))
                 section[name][key] = _value("%s.%s" % (name, key), v, DEFAULTS[name][key])
-    box = section["particles"]["box"]
-    if not all(box[k + 3] > box[k] for k in range(3)):
-        raise ValueError("mograph.particles.box is x0, y0, z0, x1, y1, z1 with each end past its start, not %r" % (box,))
+    for name in ("box", "light_box"):
+        box = section["particles"][name]
+        if not all(box[k + 3] > box[k] for k in range(3)):
+            raise ValueError("mograph.particles.%s is x0, y0, z0, x1, y1, z1 with each end past its start, not %r" % (name, box))
     if not section["on"]:
         changed = sorted(k for k in section if k != "on" and section[k] != DEFAULTS[k])
         if changed:
@@ -576,8 +580,6 @@ class Field:
         self.base = {"speck": int(p["specks"]), "light": int(p["lights"])}
         counts = {k: int(math.ceil(n * top)) for k, n in self.base.items()}
         rng = np.random.default_rng(int(p["seed"]))
-        lo, hi = np.array(p["box"][:3], float), np.array(p["box"][3:], float)
-        self.lo, self.size = lo, hi - lo
         kinds, ranks = [], []
         for kind in ("speck", "light"):
             kinds += [kind] * counts[kind]
@@ -585,7 +587,11 @@ class Field:
         n = len(kinds)
         self.kind = np.array(kinds)
         self.rank = np.array(ranks, float)
-        self.start = lo + rng.random((n, 3)) * self.size
+        # each particle in its kind's box: the specks in "box", the lights in "light_box"
+        boxes = {"speck": np.array(p["box"], float), "light": np.array(p["light_box"], float)}
+        self.lo = np.array([boxes[k][:3] for k in kinds]).reshape(n, 3)
+        self.size = np.array([boxes[k][3:] - boxes[k][:3] for k in kinds]).reshape(n, 3)
+        self.start = self.lo + rng.random((n, 3)) * self.size
         self.velocity = np.array(p["drift"], float)[None, :] * (0.6 + 0.8 * rng.random((n, 1))) + rng.normal(0, 0.05, (n, 3))
         self.sway = rng.random((n, 3)) * 0.4
         self.sway_hz = 0.05 + 0.15 * rng.random((n, 3))

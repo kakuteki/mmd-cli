@@ -587,7 +587,11 @@ def one_particle(look, point, kind="speck"):
     for name in ("kind", "rank", "start", "velocity", "sway", "sway_hz", "phase", "radius", "bright", "twinkle_hz",
                  "twinkle_phase", "colour"):
         setattr(field, name, getattr(field, name)[keep])
+    for name in ("lo", "size"):
+        setattr(field, name, getattr(field, name)[keep])
     field.start[0] = numpy.array(point, float)
+    field.lo[0] = field.start[0] - 50.0                     # a box of its own round it: no face (and no fade) near
+    field.size[0] = 100.0
     field.velocity[0] = 0.0
     field.sway[0] = 0.0
     field.twinkle_hz[0] = 0.0
@@ -613,8 +617,11 @@ class ParticleTest(unittest.TestCase):
             pa, wa = a.at(t)
             pb, wb = b.at(t)
             self.assertTrue(numpy.array_equal(pa, pb) and numpy.array_equal(wa, wb))
-            box = look["mograph"]["particles"]["box"]
-            self.assertTrue(((pa >= numpy.array(box[:3])) & (pa <= numpy.array(box[3:]))).all(), t)
+            for kind, name in (("speck", "box"), ("light", "light_box")):
+                box = look["mograph"]["particles"][name]
+                mine = pa[a.kind == kind]
+                self.assertTrue(len(mine) > 0)
+                self.assertTrue(((mine >= numpy.array(box[:3])) & (mine <= numpy.array(box[3:]))).all(), (t, kind))
         other = ML.Field(world_look(seed=4)["mograph"])
         self.assertFalse(numpy.array_equal(other.at(1.0)[0], a.at(1.0)[0]))
 
