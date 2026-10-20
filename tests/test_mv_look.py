@@ -871,10 +871,14 @@ class NightLightLookTest(unittest.TestCase):
         mv_look.merge_look({"stage": world, "light": {"person": self.NIGHT}})
 
     def test_the_flicker_is_a_share_of_the_signs_light(self):
-        self.assertEqual(mv_look.merge_look({"light": {"flicker": 0.08}})["light"]["flicker"], 0.08)
         for bad in ({"flicker": -0.1}, {"flicker": 1.5}, {"flicker_seed": 1.5}, {"glitter": 1}):
             with self.assertRaises(ValueError, msg=bad):
                 mv_look.merge_look({"light": bad})
+        # it flickers the signs of the stage of a model (tools/stage_layer.py): without one it would do nothing, so it is refused
+        with self.assertRaises(ValueError):
+            mv_look.merge_look({"light": {"flicker": 0.08}, "layer": {"on": 0}})
+        look = mv_look.merge_look({"light": {"flicker": 0.08}, "stage": {"world": 1}, "layer": {"on": 1}})
+        self.assertEqual(look["light"]["flicker"], 0.08)
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")

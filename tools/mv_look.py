@@ -227,8 +227,9 @@ DEFAULT_LOOK = {
     "light": {"person": {"on": 0},  # the light on her: MMD draws it through MME (tools/mme_shadow.py prepare --look takes
                                     # it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS);
                                     # here only checked, the dancer comes lit
-              # the grade of the picture under the front text: ffmpeg's colorbalance (r, g, b shifts of -1 to 1 for the
-              # shadows, the middle tones and the highlights, lightness kept) and the saturation about the luma (BT.709)
+              # the grade of the picture under the front text: a curve a channel (r, g, b shifts of -0.2 to 0.2 of the
+              # coded values 0.25, 0.5 and 0.75: the shadows, the middle tones, the highlights) and the saturation about
+              # the luma (BT.709)
               "grade": {"shadows": [0.0, 0.0, 0.0], "mids": [0.0, 0.0, 0.0], "highs": [0.0, 0.0, 0.0], "saturation": 1.0},
               "flicker": 0.0,       # the stage of a model: its lit signs flicker by this share of their light; 0 none
               "flicker_seed": 7},
@@ -296,6 +297,9 @@ def merge_look(overrides):
     _check_lamps(look["lamps"], look["stage"])
     _check_rim(look["rim"])
     _check_layer(look["layer"], look["stage"], look["lamps"])
+    if look["light"]["flicker"] > 0 and not look["layer"]["on"]:
+        raise ValueError("light.flicker makes the lit signs of the stage of a model flicker (tools/stage_layer.py): it needs "
+                         "layer.on 1")
     person = look["light"]["person"]
     if person.get("on") and look["stage"]["world"] and look["stage"]["shadow"] > 0:
         # (light3) her key light is MMD's light (tools/mme_shadow.py light-vmd puts it in the camera's motion), and her
