@@ -945,8 +945,8 @@ class SyncTest(unittest.TestCase):
         self.assertGreater(s["typo.on_screen"]["median"], 0.8)
         self.assertEqual(s["typo.concurrent"]["median"], 1.0)
         self.assertAlmostEqual(s["enter.move_h"]["median"], 1.0)                          # 30 px at 30 px tall
-        # the core: the lines read surely (a text never still and whole, a text cut by the frame's edge, a short one out)
-        texts[2]["whole"] = False
+        # the core: the lines read surely (a text cut by the frame's edge, a piece of a few frames out)
+        texts[2]["times"]["last"] = texts[2]["times"]["first"] + 0.2
         texts[3]["place"]["x"] = 0.98
         c = TA.typo_summary(tr, sy, voice=voice, core=True)
         self.assertEqual(c["lyrics"], 2)

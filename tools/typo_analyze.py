@@ -2280,15 +2280,16 @@ def _one(value, n=1):
             "floor_pair": float("nan"), "ci": [float(value), float(value)]}
 
 
-CORE_HOLD = 0.3                   # s: a lyric line of the core stood still and whole at least this long,
-CORE_EDGE = 0.01                  # its box clear of the picture's edges by this share of the picture
+CORE_SHOW = 0.3                   # s: a lyric line of the core is on the screen at least this long,
+CORE_EDGE = 0.01                  # its box clear of the picture's edges by this share of the picture.  (Standing still
+#                                   is not asked: the references' lines hardly ever stand still, the median of their still
+#                                   run is 0 to 0.1 s against 2.9 s in ours)
 
 
 def is_core(t):
-    """a lyric line read surely: it stood still and whole on its reference frame, for CORE_HOLD s or more, its box clear of
-    the picture's edges (left out: a sign of the scene seen moving with the camera, a text cut by the frame's edge, a
-    piece seen only coming or going)"""
-    if not t.get("whole", True) or t["hold"]["s"] < CORE_HOLD:
+    """a lyric line read surely: on the screen CORE_SHOW s or more, its box clear of the picture's edges (left out: a
+    text cut by the frame's edge, a piece of a few frames)"""
+    if t["times"]["last"] - t["times"]["first"] < CORE_SHOW:
         return False
     p = t["place"]
     e = CORE_EDGE
