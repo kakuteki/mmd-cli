@@ -904,10 +904,11 @@ def apply_argv(video, out, section, size, fps, start=None, duration=None, offset
     no_particles = dict(section, particles=dict(section["particles"], specks=0, lights=0))
     graph = Graph(no_particles, size, fps, clip_start, duration)
     argv = ["ffmpeg", "-v", "error", "-y"]
+    # (in whole frames of the video, written to the microsecond, as mv_look.excerpt_seconds takes an excerpt)
     if start is not None:
-        argv += ["-ss", "%.6f" % (clip_start - offset)]
+        argv += ["-ss", "%.6f" % (int(round((clip_start - offset) * fps)) / float(fps))]
     if duration is not None:
-        argv += ["-t", "%.6f" % duration]
+        argv += ["-t", "%.6f" % (max(1, int(round(float(duration) * fps))) / float(fps))]
     argv += ["-i", video]
     parts = ["[0:v]scale=in_color_matrix=%s:in_range=%s,format=gbrp,setpts=PTS-STARTPTS[src]" % (matrix, colour_range)]
     label = graph.camera(parts, "src")

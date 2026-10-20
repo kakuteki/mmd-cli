@@ -280,7 +280,9 @@ def cmd_mark(args):
         for t in args.at:
             frame = int(round(t * base.FPS))
             path = os.path.join(args.out, "frame_%05d.png" % frame)
-            MK.frame_of_video(args.video, t - args.start, path)
+            # the picture of the frame marked (the nearest to t), at its own time: from t itself it was the next frame whenever t
+            # fell after the frame's time (--at 1.97 marks frame 59, 1.9667 s; lookfrom 2026-10-21)
+            MK.frame_of_video(args.video, frame / base.FPS - args.start, path)
             pictures.append((frame, path))
     if not pictures:
         raise ValueError("mark needs --picture FRAME=PNG or --video with --start and --at")

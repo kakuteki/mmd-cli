@@ -608,19 +608,39 @@ def check_encoder(encoder):
         raise ValueError("the encoder %s (%s) does not work here: %s" % (encoder, args[1], (done.stderr or "").strip()[-300:]))
 
 
+def excerpt_seconds(start, duration, offset, rate):
+    """-ss and -t of the dancer's file (they go before its -r and -i) for an excerpt from `start` lasting `duration` (seconds of
+    the song; either None), the file beginning at `offset` of the song and holding `rate` frames a second (the output's rate
+    times the subframes): both in whole frames of the file, the nearest ones (as the stage, the light and the cues take the
+    excerpt), written to the microsecond.  Written with three decimals they were up to half a millisecond off (lookfrom 2026-10-21,
+    review stagecityrev): 448 / 30 s as 14.933 read a dancer folded beforehand (PNG in a MOV, whose ticks are finer than a frame)
+    from the frame before, for ffmpeg, given the rate before the file, reads from the frame it seeks to, the last one at or before
+    the time (every first frame of 1 mod 3 at 30 fps); and a dancer at 1920 fps lost or gained a subframe"""
+    offset = float(offset or 0.0)
+    if start is not None and start < offset - 1e-9:
+        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
+    args = []
+    if start is not None:
+        args += ["-ss", "%.6f" % (int(round((float(start) - offset) * rate)) / float(rate))]
+    if duration is not None:
+        args += ["-t", "%.6f" % (max(1, int(round(float(duration) * rate))) / float(rate))]
+    return args
+
+
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
                    start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None, encoder="x264",
                    stage=None, shifts=None, particles=None):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
-    rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
-    `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it at that time,
-    and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
-    (tools/mv_chunks.py) then hide in the cuts (review 10).  `encoder` (ENCODERS) changes the arguments from -c:v to the
-    pixel format and nothing else.  `stage` ({"pattern", "first"}: the frames of tools/mv_world.py, numbered by the frame
-    of the video from the song's start, and the excerpt's first) takes the place of the plate and the light for a look
-    whose stage lies in the world.  `shifts` (measure_physics) move the window of the fold; without them, or with shifts
-    of 0, the argv is the one of before.  `particles` ({"back", "front", "first"}: the frames of the look's mograph
+    rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song (in whole frames:
+    excerpt_seconds).  With `light_frames` (the length of the light loop) an excerpt shows the loop where the whole song has it
+    at that time, and a flare that began before the excerpt has its punch part spent: the seams of a song rendered in chunks
+    (tools/mv_chunks.py) then hide in the cuts (review 10).  An excerpt runs its camera (the punch and the parted colours) on the
+    song's clock, so that every frame of it is punched as the whole song punches that frame.  `encoder` (ENCODERS) changes the
+    arguments from -c:v to the pixel format and nothing else.  `stage` ({"pattern", "first"}: the frames of tools/mv_world.py,
+    numbered by the frame of the video from the song's start, and the excerpt's first) takes the place of the plate and the
+    light for a look whose stage lies in the world.  `shifts` (measure_physics) move the window of the fold; without them, or
+    with shifts of 0, the argv is the one of before.  `particles` ({"back", "front", "first"}: the frames of the look's mograph
     particles, tools/mograph_layer.write_particles) when the look has them"""
     w, h = size
     coding = encoder_args(encoder)
@@ -628,16 +648,11 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if (stage is not None) != bool(look["stage"]["world"]):
         raise ValueError("a stage in the world (look stage.world 1) is drawn from its frames, and only such a stage is")
     offset = float(offset or 0.0)
-    if start is not None and start < offset - 1e-9:
-        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
+    seconds = excerpt_seconds(start, duration, offset, fps * subframes)          # (a --from before the file is refused)
     clip_start = float(start) if start is not None else offset
     # the motion graphics (tools/mograph_layer.py), at their places in the graph below; none with mograph.on 0
     mograph = mograph_tool().Graph(look["mograph"], size, fps, clip_start, duration, particles) if look["mograph"]["on"] else None
-    argv = ["ffmpeg", "-v", "error", "-y"]
-    if start is not None:
-        argv += ["-ss", "%.3f" % (clip_start - offset)]
-    if duration is not None:
-        argv += ["-t", "%.3f" % duration]
+    argv = ["ffmpeg", "-v", "error", "-y"] + seconds
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
@@ -673,7 +688,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         layer = "back" if cue.get("layer") == "back" else "front"
         overlays[layer].append((next_input, offset, cue["x"], cue["y"], None))
         next_input += 1
-    flare_starts = []                  # seconds from the excerpt's start; below 0 for a flare that began before it
+    # (seconds from the excerpt's start, below 0 for a flare that began before it; the flare's time in the song)
+    flare_starts = []
     punch_span = look["camera"]["punch_frames"] / float(SONG_FPS)          # frames of the song, whatever the rate
     for at in look["flares"]:
         if not flare_pattern:
@@ -681,7 +697,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         # the punch runs for punch_frames whether or not the flare's picture (flare.frames) is still on
         since = float(at) - clip_start
         if since > -punch_span and (duration is None or since < duration):
-            flare_starts.append(since)
+            flare_starts.append((since, float(at)))
         seen = _visible(float(at), flare_frames, fps, clip_start, duration)
         if seen is None:
             continue
@@ -762,20 +778,34 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     camera = look["camera"]
     span = punch_span
     hits = flare_starts if span > 0 else []
-    if hits and camera["punch"] > 0:
+    shift = int(round(camera["aberration"] * scale))
+    punched, parted = bool(hits) and camera["punch"] > 0, bool(hits) and shift > 0
+    # an excerpt (--from) runs its camera on the song's clock: the times of its frames move to those of the song (the excerpt's
+    # first frame of the song, as the stage and the light take it) for the punch and the parted colours and back after them, and
+    # the flares keep their times of the song, so every frame of it is punched as the whole song punches that frame.  Written as
+    # times of the excerpt to three decimals, a flare at 30.0 s seen from 8.533333 s (frame 256) came at 21.467 s, after the frame
+    # of 21.4667 s: the punch began a frame late, and seen from a frame of 2 mod 3 it was a little smaller on its first frame
+    # (lookfrom 2026-10-21).  Without --from the argv is the one of before
+    song = int(round(clip_start * fps)) if start is not None else None
+    times = [since for since, _ in hits] if song is None else [at for _, at in hits]
+    to_song = back = ""
+    if song and (punched or parted):
+        to_song = "setpts=PTS+round(%d/(%s*TB))," % (song, _number(fps))
+        back = ",setpts=PTS-round(%d/(%s*TB))" % (song, _number(fps))
+    if punched:
         # 1 + punch * (1 - (t - T) / span)^2 from each flare time T on; the picture is scaled about its centre
         amount = "+".join("%s*pow(max(0,1-(%s)/%.3f),2)*gte(t,%.3f)" % (_number(camera["punch"]), _since(at), span, at)
-                          for at in hits)
+                          for at in times)
         sw, sh = "trunc(%d*(1+%s)/2)*2" % (w, amount), "trunc(%d*(1+%s)/2)*2" % (h, amount)
         # crop keeps iw and ih of the first frame it sees, so its x and y come from the same expression of t as the
         # scale: the picture is cut out of the middle of every scaled frame (review 11: (iw-W)/2 left it at the top left)
-        parts.append("[%s]scale=w='%s':h='%s':eval=frame:flags=bilinear,crop=%d:%d:x='(%s-%d)/2':y='(%s-%d)/2'[punch]"
-                     % (state["label"], sw, sh, w, h, sw, w, sh, h))
+        parts.append("[%s]%sscale=w='%s':h='%s':eval=frame:flags=bilinear,crop=%d:%d:x='(%s-%d)/2':y='(%s-%d)/2'%s[punch]"
+                     % (state["label"], to_song, sw, sh, w, h, sw, w, sh, h, "" if parted else back))
+        to_song = ""
         state["label"] = "punch"
-    shift = int(round(camera["aberration"] * scale))
-    if hits and shift > 0:
-        enable = "+".join("between(t,%.3f,%.3f)" % (at, at + span) for at in hits)
-        parts.append("[%s]rgbashift=rh=-%d:bh=%d:enable='%s'[parted]" % (state["label"], shift, shift, enable))
+    if parted:
+        enable = "+".join("between(t,%.3f,%.3f)" % (at, at + span) for at in times)
+        parts.append("[%s]%srgbashift=rh=-%d:bh=%d:enable='%s'%s[parted]" % (state["label"], to_song, shift, shift, enable, back))
         state["label"] = "parted"
     if mograph:
         state["label"] = mograph.camera(parts, state["label"])         # its punches, shakes, glitches and dissolves
@@ -972,16 +1002,7 @@ def window_shift(residue, subframes, taken, period):
 def dancer_input(fg, fps, subframes, start=None, duration=None, offset=0.0):
     """the arguments of ffmpeg_command that read the dancer (the excerpt and the rate of its frames), so that the scan for the
     physics reads the very frames the fold reads"""
-    offset = float(offset or 0.0)
-    if start is not None and start < offset - 1e-9:
-        raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
-    clip_start = float(start) if start is not None else offset
-    args = []
-    if start is not None:
-        args += ["-ss", "%.3f" % (clip_start - offset)]
-    if duration is not None:
-        args += ["-t", "%.3f" % duration]
-    return args + ["-r", _number(fps * subframes), "-i", fg]
+    return excerpt_seconds(start, duration, offset, fps * subframes) + ["-r", _number(fps * subframes), "-i", fg]
 
 
 def lone_counts(frames):
