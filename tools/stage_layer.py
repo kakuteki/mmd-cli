@@ -1050,19 +1050,25 @@ def point_triangle_distance(P, tri):
 
 
 CHECK_STEP = 0.25                 # MMD units: a capsule is checked as balls this far apart along its axis
-FLOOR_TOLERANCE = 0.06            # MMD units (about 5 mm): a sole lower than the floor by more is in it
-FLOOR_LOOK = 3.0                  # the floor under a sole is looked for this far above and below it
+FLOOR_TOLERANCE = 0.06            # MMD units (about 5 mm): a ball of her body this far into a face reaches into it
+UNDER = 0.1 / 8.0                 # MMD units (0.1 cm, tools/sink_check.py's UNDER_CM): a shoe lower than the floor by more is in it
+FLOOR_LOOK = 3.0                  # the floor under a sole is looked for from this far above it ...
+FLOOR_DOWN = 60.0                 # ... down to this far below it (a foot high in a kick still has its floor under it)
+SOLE_BAND = 0.4                   # MMD units: a shoe's vertices this near its lowest are its sole (where it stands)
+SOLE_POINTS = 24                  # at most this many of them are looked under
 VIEW_REACH = 150.0                # a camera's sight is checked this far: the inside of a thing it stands in lies nearer
 
 
-def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin=4.0):
-    """the numbers of where the stage puts her, over `frames` of the song: {"feet": the floor under her soles (the height
-    of the topmost face that looks up under each end of each sole: frames with a sole in the floor, frames with a floor of
-    another height under a sole or none), "body": frames where a ball of her capsules (CHECK_STEP apart) reaches into a face
-    that is not the floor under her (and, apart, into the floor), "cameras": per camera {"inside": frames where a ray of its
-    view meets the back of a face within VIEW_REACH first (it stands in or behind something), "hidden": frames where a face
-    lies between it and a point of her (the stage would be laid behind her there)}}.  `figure`: mv_world.Figure with her
-    body; `cameras`: {name: camera track}"""
+def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin=4.0, soles=None):
+    """the numbers of where the stage puts her, over `frames` of the song: {"feet": the floor under her soles (the top face
+    looking up under each point of each sole, FLOOR_LOOK above it to FLOOR_DOWN below: the frames with a shoe lower than
+    that floor by more than UNDER, the frames with no floor under a sole point, the heights of the floor under her),
+    "body": frames where a ball of her capsules (CHECK_STEP apart) reaches into a face that is not the floor under her
+    (and, apart, into the floor), "cameras": per camera {"inside": frames where a ray of its view meets the back of a face
+    within VIEW_REACH first (it stands in or behind something), "hidden": frames where a face lies between it and a point
+    of her (the stage would be laid behind her there)}}.  `figure`: mv_world.Figure with her body; `cameras`: {name: camera
+    track}; `soles`: frame -> [(the sole's points [k, 3], the shoe's lowest height)] per shoe, MMD's skinned shoes
+    (shoe_soles); without it the soles are her foot capsules' bottoms (rounder than a shoe: they reach a little lower)"""
     world = mv_world()
     P = mesh.positions
     tri_all = P[mesh.faces]
@@ -1077,23 +1083,29 @@ def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin
     groups = figure.body.groups if figure.body is not None else []
     feet_idx = [i for i, g in enumerate(groups) if g.endswith("foot")]
     rows = {"sunk": [], "off_floor": [], "floor_heights": [], "lift": [], "body": [], "body_floor": []}
+    floor_all = np.nonzero(up > 0.9)[0]
     for f, s in states:
         caps = s.capsules
-        soles = []
-        for i in feet_idx:
-            a, b, r = caps[i]
-            for p in (a, b):
-                soles.append((p[0], min(a[1], b[1]) - r, p[2]))
-        soles = np.array(soles)
-        t, k = segment_hits(soles + [0.0, FLOOR_LOOK, 0.0], soles - [0.0, FLOOR_LOOK, 0.0], tri_all[floor_faces])
+        if soles is not None:
+            shoes = soles(f)
+        else:
+            shoes = []
+            for i in feet_idx:
+                a, b, r = caps[i]
+                low = min(a[1], b[1]) - r
+                shoes.append((np.array([(a[0], low, a[2]), (b[0], low, b[2])]), low))
+        points = np.concatenate([pts for pts, _ in shoes])
+        lows = np.concatenate([np.full(len(pts), low) for pts, low in shoes])
+        top = points + [0.0, FLOOR_LOOK, 0.0]
+        t, k = segment_hits(top, points - [0.0, FLOOR_DOWN, 0.0], tri_all[floor_all])
         found = np.isfinite(t)
-        heights = soles[:, 1] + FLOOR_LOOK - 2.0 * FLOOR_LOOK * np.where(found, t, 0.0)
+        heights = top[:, 1] - (FLOOR_LOOK + FLOOR_DOWN) * np.where(found, t, 0.0)
         if not found.all():
             rows["off_floor"].append(f)
-        else:
-            rows["floor_heights"].append(heights)
-            rows["lift"].append(soles[:, 1] - heights)
-            if (soles[:, 1] < heights - FLOOR_TOLERANCE).any():
+        if found.any():
+            rows["floor_heights"].append(heights[found])
+            rows["lift"].append((lows - heights)[found])
+            if (lows[found] < heights[found] - UNDER).any():
                 rows["sunk"].append(f)
         # her body against the faces near her: balls along every capsule
         balls, radii, is_foot = [], [], []
@@ -1121,8 +1133,9 @@ def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin
                                            "off_floor": _spans(rows["off_floor"]), "off_floor_frames": len(rows["off_floor"]),
                                            "floor_height_min": float(heights.min()) if heights.size else None,
                                            "floor_height_max": float(heights.max()) if heights.size else None,
-                                           "sole_above_floor_p01": float(np.percentile(lift, 1)) if lift.size else None,
-                                           "sole_above_floor_min": float(lift.min()) if lift.size else None},
+                                           "lowest_above_floor_p01": float(np.percentile(lift, 1)) if lift.size else None,
+                                           "lowest_above_floor_min": float(lift.min()) if lift.size else None,
+                                           "soles": "skinned shoes" if soles is not None else "foot capsules"},
            "body": {"into_things": _spans(rows["body"]), "into_things_frames": len(rows["body"]),
                     "body_on_floor": _spans(rows["body_floor"]), "body_on_floor_frames": len(rows["body_floor"]),
                     "faces_near_her": int(len(near_her)), "of_them_floor": int(len(floor_faces))},
@@ -1160,6 +1173,36 @@ def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin
         out["cameras"][name] = {"inside": _spans(inside), "inside_frames": len(inside), "hidden": _spans(hidden),
                                 "hidden_frames": len(hidden)}
     return out
+
+
+def shoe_soles(model_path, motion, frames):
+    """frame -> [(sole points [k, 3], lowest height)] for each shoe: the shoes' vertices skinned as MMD poses the legs
+    (tools/sink_check.py's shoe_vertices and skin, the legs by tools/leg_ik.py), the sole being those within SOLE_BAND of the
+    lowest (at most SOLE_POINTS of them, evenly picked)"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sink_check", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                            "sink_check.py"))
+    sink = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sink)
+    from mmd_cli.formats import pmx_edit
+    rig = sink.IK.LegRig.load(model_path)
+    doc = pmx_edit.load(model_path)
+    shoes = {side: sink.shoe_vertices(rig, doc, side) for side in rig.sides}
+    frames = list(frames)
+    out = {}
+    for a in range(0, len(frames), sink.CHUNK):
+        block = frames[a:a + sink.CHUNK]
+        sol = sink.IK.solve(rig, motion, block)
+        for side, (pts, ws, bones) in shoes.items():
+            world = sink.skin(rig, side, sol[side], pts, ws, bones, slice(0, len(block)))
+            for i, f in enumerate(block):
+                v = world[i]
+                low = float(v[:, 1].min())
+                sole = v[v[:, 1] <= low + SOLE_BAND]
+                if len(sole) > SOLE_POINTS:
+                    sole = sole[np.linspace(0, len(sole) - 1, SOLE_POINTS).astype(int)]
+                out.setdefault(f, []).append((sole, low))
+    return lambda f: out[f]
 
 
 def _spans(frames):
@@ -1270,13 +1313,15 @@ def main(argv=None):
             spec = load_set(args.set)
             figure = world.Figure.from_files(args.model, args.motion, body=True)
             last = figure.last if args.to is None else min(int(args.to), figure.last)
+            frames = list(range(int(args.start), last + 1))
+            soles = shoe_soles(args.model, figure.body.motion, frames)
             cameras = {}
             for item in args.camera:
                 name, _, path = item.partition("=")
                 if not path:
                     raise ValueError("--camera is NAME=CAMERA.vmd, not %r" % item)
                 cameras[name] = world.camera_track(path)
-            got = check_placement(set_mesh(spec), figure, list(range(int(args.start), last + 1)), cameras, _size(args.size))
+            got = check_placement(set_mesh(spec), figure, frames, cameras, _size(args.size), soles=soles)
             got.update({"set": os.path.abspath(args.set), "model": os.path.abspath(args.model),
                         "motions": [os.path.abspath(m) for m in args.motion], "offset": spec["offset"]})
             with open(args.out, "w", encoding="utf-8") as f:
