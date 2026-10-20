@@ -1099,3 +1099,15 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   - **全体の試験**（hinata、`typorev/suite/suite_6bf8215.log`、main_suite の作り。判定行は記録と別の手で読んだ）: `Ran 2844 tests in 1693.238s` /
     `OK (skipped=39, expected failures=1)`。取り込みは衝突なし（README・docs/params は自動で合わさった）。
   - 2 段目（照明 light3・文字 kinetic・飾り mograph）には直した狙いの数を渡した（3 本とも typobase 0e00708 から始めていたので typorev を merge して測り直す）。
+- 2026-10-21 **hinata の終わった作業場を NAS へ移した**（加賀さんの指示「NASには確認取らずに移しておｋ」。C: の空き 29.9 GB で全曲の描画を始められなかったため）。
+  - 移した物: `C:/work/hibikase/` の下の 60 フォルダ（stage2〜5 と、stage6 の 10/19 より前に終わった実装・査読の作業場。`stage6/retarget` は `in/` を残す）、
+    233,878 ファイル・59.1 GiB。置き場は NAS（192.168.1.29）`homes/kaga/ヒビカセMV/hinata_作業場の退避/` の下に `C:/work/hibikase/` からの相対パスのまま。
+    一覧 `_record_20261021/jobs_mv.json`、README（戻し方つき）は同じ所。hinata 側の台本と記録は `C:/work/hibikase/stage6/coord/nas/`。
+  - 手順: hinata の rclone（SMB）で写す → `rclone check --download --one-way` で全部読み戻して照合（60 フォルダとも不一致 0）→ 消す直前に大きさで照合し直し、
+    使っているプロセスを見る → 一致したファイルだけを 1 つずつ消し、空のフォルダを深い順に。git のパックなど読み取り専用の 27 個は印を外して消した。
+  - 移さなかった物: 試験（run_suite_td2 が読む v9/build・v11/final・testdata）・組み立ての台本（build_v11_final.ps1 が読む v8・mv・variants・audio・enuta・kazusa・
+    stage6/retarget/in・stage6/softshadow_mme）・動いている担当とその台本が読む作業場（camera・camfinal・kinetic・light3・mograph・render12・stagecity・typoref・typorev・
+    look 系・skirt・lipsync・査読が読む review_camera ほか）・取ってきた元データ（fingers・human_baseline）・v10・out。
+  - **居残り**: 10/17 の wbbalance の測りの台本（`cmd /c ...wbbalance/scripts/run2.bat` と python 1 つ、4 日間 CPU 0 秒）が残っていて、そのフォルダを使用中と読んだ。
+    自分の物なので PID で止めた（止めると台本が残りの行を走らせてログ 5 つに誤りの行を足した → 写し直して照合し直してから消した）。
+  - 空き: 29.9 GB → **111.9 GB**（07:57）。
