@@ -153,6 +153,8 @@ class EventsTest(unittest.TestCase):
         self.assertEqual(len(ev["cuts"]), 9)                         # every 30 frames
         self.assertAlmostEqual(ev["summary"]["cuts.on_beat"], 1.0)
         self.assertLess(ev["summary"]["cuts.on_beat_chance"], 0.3)
+        # the floor of the rate of cuts: 4 in the first half, 5 in the second (of 10 s), half the difference a minute
+        self.assertAlmostEqual(ev["floor"]["cuts.per_min"], abs(4 / (5 / 60.0) - 5 / (5 / 60.0)) / 2.0, delta=0.01)
 
 
 @unittest.skipUnless(MG, NEEDS)

@@ -294,6 +294,22 @@ def _events(r, beats=None, start=0.0):
                "colourflash.per_min": len(colour) / minutes if minutes else float("nan"),
                "shake.rms": float(np.sqrt(np.mean(np.square(hp)))) if len(hp) else float("nan"),
                "camera.zoom_rms": float(np.sqrt(np.mean(np.square(z[~bad])))) if (~bad).any() else float("nan")}
+    # the floor of the rates: half the difference between the video's two halves (the same video, read again)
+    floor = {}
+    half_t = start + n / fps / 2.0
+    half_min = minutes / 2.0
+    frames_of = {"cuts.per_min": times["cuts"], "flash.per_min": times["flashes"], "punches.per_min": times["punches"],
+                 "glitch.per_min": times["glitches"], "colourflash.per_min": times["colour_flashes"],
+                 "fades.per_min": [start + f["frame"] / fps for f in fades],
+                 "dissolves.per_min": [start + d_["frame"] / fps for d_ in dissolves]}
+    for key, ts in frames_of.items():
+        if half_min > 0:
+            a_ = sum(1 for t in ts if t < half_t) / half_min
+            b_ = sum(1 for t in ts if t >= half_t) / half_min
+            floor[key] = abs(a_ - b_) / 2.0
+    if len(hp):
+        h1, h2 = hp[:len(hp) // 2], hp[len(hp) // 2:]
+        floor["shake.rms"] = abs(float(np.sqrt(np.mean(np.square(h1)))) - float(np.sqrt(np.mean(np.square(h2))))) / 2.0             if len(h1) and len(h2) else float("nan")
     for kind in ("cuts", "flashes", "punches", "glitches", "colour_flashes"):
         share, chance = _on_beat(times[kind], (beats or {}).get("beats") if isinstance(beats, dict) else beats, fps)
         key = {"flashes": "flash", "glitches": "glitch", "colour_flashes": "colourflash"}.get(kind, kind)
@@ -301,7 +317,7 @@ def _events(r, beats=None, start=0.0):
         summary[key + ".on_beat_chance"] = chance
     return {"fps": fps, "frames": n, "cuts": [{"frame": int(c)} for c in cut_list], "flashes": flash_events,
             "fades": fades, "dissolves": dissolves, "punches": punches, "glitches": glitches, "colour_flashes": colour,
-            "times": times, "summary": summary}
+            "times": times, "summary": summary, "floor": floor}
 
 
 def events_of(frames, fps, beats=None, start=0.0):
@@ -495,9 +511,10 @@ MOGRAPH_MEASURES = {
 def summary_of(events, elements, label=None):
     """one summary (look_analyze's form) from an events run and an elements run"""
     s = {}
+    fl = (events or {}).get("floor", {})
     for k, v in (events or {}).get("summary", {}).items():
         s[k] = {"median": float(v) if v is not None else float("nan"), "q25": float("nan"), "q75": float("nan"), "n": 1,
-                "floor_pair": float("nan"), "ci": [float("nan"), float("nan")]}
+                "floor_pair": float(fl.get(k, float("nan"))), "ci": [float("nan"), float("nan")]}
     for k, v in (elements or {}).get("summary", {}).items():
         s[k] = v
     return {"label": label or (events or elements or {}).get("label"), "summary": s}
