@@ -449,6 +449,20 @@ class NightTest(unittest.TestCase):
         self.assertIn("tex2D(MMDSampler1, IN.Tex)", body)
         self.assertIn("tex2D(MMDSampler2, IN.SpTex)", body)
 
+    def test_the_outline_takes_the_nights_light_when_asked(self):
+        # MMD draws the outline in the material's edge colour, unlit: on her lit by the night it stood out (the hair's pink).
+        # edge below 1: the outline pass too, its colour times edge and the light between the fill and the key
+        plain = mme_shadow.effect(light=self.NIGHT)
+        self.assertNotIn('MMDPass = "edge"', plain)                       # by default MMD's own outline
+        text = mme_shadow.effect(light=dict(self.NIGHT, edge=0.45))
+        self.assertAlmostEqual(define(text, "NL_EDGE"), 0.45, places=6)
+        self.assertEqual(set(re.findall(r'MMDPass = "(\w+)"', text)), {"object_ss", "edge"})
+        body = _pass_body(text, "float4 NL_EdgePS(")
+        self.assertIn("EdgeColor.rgb * NL_EDGE", body)
+        self.assertIn("lerp(fill, key, 0.5f)", body)
+        with self.assertRaises(ValueError):
+            mme_shadow.effect(light=dict(self.NIGHT, edge=1.5))
+
     def test_sections_give_their_colours_from_their_time_faded_in(self):
         a = [0.0, 1.0, 0.55, 0.3, 0.1, 0.12, 0.3, 0.3, 0.5, 1.0]
         b = [44.467, 0.55, 0.5, 1.0, 0.25, 0.12, 0.1, 1.0, 0.6, 0.3]

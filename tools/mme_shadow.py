@@ -131,6 +131,8 @@ NIGHT_DEFAULTS = {"on": 0,
                   "rim_from": [0.0, -1.0],      # where the rim light comes from in the picture (x right, y down; look.rim)
                   "rim_sided": 1.0,             # 0: all round her outline; 1: only on the side it comes from
                   "rim_albedo": 0.3,            # 0: the rim's own colour; 1: times her colour
+                  "edge": 1.0,                  # the outline: 1 MMD's own (the edge colour, unlit); under 1 its colour
+                                                # times this and the light between the fill and the key
                   "sections": [],               # [[from (s), key r g b, fill r g b, rim r g b], ...]: the colours by time
                   "fade": 0.5}                  # seconds over which a section's colours come in (round its start)
 
@@ -204,6 +206,7 @@ def night(light):
     out["rim_sided"] = _share("rim_sided", s["rim_sided"])
     out["rim_albedo"] = _share("rim_albedo", s["rim_albedo"])
     out["fade"] = _share("fade", s["fade"], 0.0, 10.0, above=True)
+    out["edge"] = _share("edge", s["edge"])
     f = s["rim_from"]
     if (not isinstance(f, (list, tuple)) or len(f) != 2 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in f)
             or not math.hypot(*f) > 0):
@@ -255,9 +258,9 @@ def _night_text(s):
     norm = math.hypot(fx, fy)
     defines = ("#define SS_NIGHT 1\n#define NL_SECTIONS %d\n#define NL_FADE %.6f\n#define NL_FACE %.6f\n"
                "#define NL_RIM_POWER %.6f\n#define NL_RIM_FROM float2(%.6f, %.6f)\n#define NL_RIM_SIDED %.6f\n"
-               "#define NL_RIM_ALBEDO %.6f\n#define NL_LIGHT_DEFAULT %.9f\n"
+               "#define NL_RIM_ALBEDO %.6f\n#define NL_LIGHT_DEFAULT %.9f\n#define NL_EDGE %.6f\n"
                % (len(rows), s["fade"], s["face"], s["rim_power"], fx / norm, -fy / norm, s["rim_sided"], s["rim_albedo"],
-                  LIGHT_DEFAULT))
+                  LIGHT_DEFAULT, s["edge"]))
     return (defines + _array4("NL_KEY", [r[0:4] for r in rows], "%.6g") + _array("NL_FILL", [r[4:7] for r in rows], "%.6g")
             + _array("NL_RIM", [r[7:10] for r in rows], "%.6g"))
 
@@ -301,7 +304,8 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
     tables = _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f")
     if lit is None:
         return head + defines + tables + BODY + TECHS
-    return head + defines + _night_text(lit) + tables + BODY + NIGHT_BODY
+    return (head + defines + _night_text(lit) + tables + BODY + NIGHT_BODY
+            + (NIGHT_EDGE if lit["edge"] < 1.0 else ""))
 
 
 
@@ -728,6 +732,34 @@ NL_TECH(NL_001, false, false, true)
 NL_TECH(NL_101, true, false, true)
 NL_TECH(NL_011, false, true, true)
 NL_TECH(NL_111, true, true, true)
+"""
+
+# the outline under the night's light (edge below 1): MMD's outline pass (MME 0.37's full.fx draws it with the world, view and
+# projection alone and the edge colour), its colour times NL_EDGE and the light between the fill and the key
+NIGHT_EDGE = r"""
+float4 EdgeColor : EDGECOLOR;
+
+float4 NL_EdgeVS(float4 Pos : POSITION) : POSITION
+{
+    return mul(Pos, WorldViewProjMatrix);
+}
+
+float4 NL_EdgePS() : COLOR0
+{
+    float3 key, fill, rim;
+    NL_Colours(key, fill, rim);
+    key *= LightAmbient / NL_LIGHT_DEFAULT;
+    return float4(EdgeColor.rgb * NL_EDGE * lerp(fill, key, 0.5f), EdgeColor.a);
+}
+
+technique NL_Edge < string MMDPass = "edge"; > {
+    pass DrawEdge {
+        AlphaBlendEnable = FALSE;
+        AlphaTestEnable  = FALSE;
+        VertexShader = compile vs_3_0 NL_EdgeVS();
+        PixelShader  = compile ps_3_0 NL_EdgePS();
+    }
+}
 """
 
 
