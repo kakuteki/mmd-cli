@@ -682,6 +682,15 @@ class VerifyTest(unittest.TestCase):
         mme_shadow.write(os.path.join(self.models, "White.fx"), key_share=None)          # --toon: a soft shadow too
         self.assertEqual(mme_shadow.verify(self.exe, self.model, "soft")["self_shadow"], "soft")
 
+    def test_soft_takes_the_nights_effect(self):
+        # light3: the night's light on her is the soft shadow's body pass drawn in the night's colours: a plan that says soft
+        # renders it (its settings say so)
+        self.install()
+        mme_shadow.write(os.path.join(self.models, "White.fx"), light={"on": 1, "fill": [0.2, 0.2, 0.3]})
+        got = mme_shadow.verify(self.exe, self.model, "soft")
+        self.assertEqual(got["self_shadow"], "soft")
+        self.assertIn('"light":', got["settings"])
+
     def test_soft_refuses_the_effects_for_measuring(self):
         # review of softshadow-mme: --debug draws the shadow alone (black and white) or the body lit, --sharp MMD's own
         # test; a plan that says soft must not render either
