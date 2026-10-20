@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import json
 import math
 import os
 import re
@@ -366,6 +367,153 @@ class PlaneTest(unittest.TestCase):
         self.assertNotIn("LightProjMatrix._33", text)
         self.assertIn("LightWorldViewProjMatrix._13", text)
         self.assertAlmostEqual(define(text, "SS_FACING_MIN"), mme_shadow.FACING_MIN, places=6)
+
+
+def array4(text, name):
+    m = re.search(r"static const float4 %s\[(\d+)\] = \{(.*?)\};" % name, text, re.S)
+    rows = re.findall(r"float4\(([^)]*)\)", m.group(2))
+    return int(m.group(1)), [tuple(float(v) for v in r.split(",")) for r in rows]
+
+
+def _pass_body(text, name):
+    """the text of the function `name` of the effect (from its head to the first line that is a lone brace)"""
+    start = text.index(name)
+    end = text.index("\n}\n", start)
+    return text[start:end]
+
+
+class NightTest(unittest.TestCase):
+    """the night's light on her (light3, 2026-10-21; look light.person, @PizaCG's lighting): the effect draws her lit by a
+    key light where MMD's light reaches (the soft shadow and the toon's ramp), a fill in the shade, the face between them,
+    and a rim light by Fresnel, in colours that change by sections of the song (MME's TIME)"""
+
+    NIGHT = {"on": 1, "key": [0.9, 0.8, 0.7], "fill": [0.15, 0.17, 0.3], "face": 0.7, "rim": [0.5, 0.7, 1.0],
+             "rim_power": 2.5, "rim_from": [-0.6, -0.8], "rim_sided": 1.0, "rim_albedo": 0.3, "sections": [], "fade": 0.5}
+    # the default effect's text before light3 (0e00708: the soft shadow of v11 r2, the file hinata's model_soft holds)
+    BEFORE = "9b06ebd688c245ef9ba3e676b27207ffd90e41ca648cc7a1fe91ebe38088bfdd"
+
+    def test_without_the_night_the_effect_is_byte_for_byte_the_one_of_before(self):
+        before = mme_shadow.effect()
+        self.assertEqual(hashlib.sha256(before.encode("ascii")).hexdigest(), self.BEFORE)
+        self.assertEqual(mme_shadow.effect(light=None), before)
+        self.assertEqual(mme_shadow.effect(light={"on": 0}), before)
+        self.assertEqual(mme_shadow.effect(light=dict(self.NIGHT, on=0)), before)
+        self.assertNotIn("NL_", before)
+
+    def test_the_night_settings_reach_the_shader(self):
+        text = mme_shadow.effect(light=self.NIGHT)
+        self.assertTrue(text.isascii())
+        self.assertEqual(define(text, "SS_NIGHT"), 1)
+        self.assertAlmostEqual(define(text, "NL_FACE"), 0.7, places=6)
+        self.assertAlmostEqual(define(text, "NL_RIM_POWER"), 2.5, places=6)
+        self.assertAlmostEqual(define(text, "NL_RIM_SIDED"), 1.0, places=6)
+        self.assertAlmostEqual(define(text, "NL_RIM_ALBEDO"), 0.3, places=6)
+        self.assertAlmostEqual(define(text, "NL_FADE"), 0.5, places=6)
+        # MMD's light colour scales the key: its default (154 of 255) is 1
+        self.assertAlmostEqual(define(text, "NL_LIGHT_DEFAULT"), 154.0 / 255.0, places=6)
+        self.assertIn("LightAmbient / NL_LIGHT_DEFAULT", text)
+        n, keys = array4(text, "NL_KEY")
+        self.assertEqual(n, 1)
+        self.assertEqual(keys, [(0.0, 0.9, 0.8, 0.7)])
+        self.assertEqual(array(text, "NL_FILL")[1], [(0.15, 0.17, 0.3)])
+        self.assertEqual(array(text, "NL_RIM")[1], [(0.5, 0.7, 1.0)])
+        # rim_from is the picture's (x right, y down, as look.rim.from); the shader's view space has y up
+        m = re.search(r"^#define NL_RIM_FROM float2\(([^,]+), ([^)]+)\)$", text, re.M)
+        self.assertAlmostEqual(float(m.group(1)), -0.6, places=5)
+        self.assertAlmostEqual(float(m.group(2)), 0.8, places=5)
+        settings = json.loads(text.splitlines()[2].split("Settings:")[1])
+        self.assertEqual(settings["light"]["key"], [0.9, 0.8, 0.7])
+        # the body's pass only, now drawn by the night's pixel shader; the soft shadow's own techniques are not there
+        self.assertEqual(set(re.findall(r'MMDPass = "(\w+)"', text)), {"object_ss"})
+        combos = re.findall(r"^NL_TECH\(NL_(\d{3}), (true|false), (true|false), (true|false)\)$", text, re.M)
+        self.assertEqual(len(combos), 8)
+        self.assertNotIn("\nSS_TECH(SS_", text)
+
+    def test_the_night_draws_key_fill_face_and_rim(self):
+        body = _pass_body(mme_shadow.effect(light=self.NIGHT), "float4 NL_PS(")
+        # where MMD's light reaches (the soft shadow and the toon's ramp) her colour times the key, in the shade times the
+        # fill in the toon's hue (its luma 1)
+        self.assertIn("SoftShadow(zc, uv, plane, IN.ZCalcTex.w)", body)
+        self.assertIn("saturate(dot(nrm, -LightDirection) * TOON_SLOPE)", body)
+        self.assertIn("lerp(fill * hue, key, comp)", body)
+        # the materials MMD shades not (no toon, or a white one: the face, the eyes) between the fill and the key
+        self.assertIn("lerp(fill, key, NL_FACE)", body)
+        self.assertIn("tluma < 0.999f", body)
+        # the rim: Fresnel, on the side it comes from
+        self.assertIn("pow(1.0f - saturate(dot(nrm, v)), NL_RIM_POWER)", body)
+        self.assertIn("NL_RIM_FROM", body)
+        # her colour under a white light: MMD's lit colour of the material (ambient + emissive, at most 1), the texture and
+        # the sphere map read through MMD's own samplers as the soft shadow reads them
+        self.assertIn("saturate(MaterialAmbient + MaterialEmissive)", body)
+        self.assertIn("tex2D(MMDSampler1, IN.Tex)", body)
+        self.assertIn("tex2D(MMDSampler2, IN.SpTex)", body)
+
+    def test_sections_give_their_colours_from_their_time_faded_in(self):
+        a = [0.0, 1.0, 0.55, 0.3, 0.1, 0.12, 0.3, 0.3, 0.5, 1.0]
+        b = [44.467, 0.55, 0.5, 1.0, 0.25, 0.12, 0.1, 1.0, 0.6, 0.3]
+        night = dict(self.NIGHT, sections=[a, b], fade=0.4)
+        text = mme_shadow.effect(light=night)
+        n, keys = array4(text, "NL_KEY")
+        self.assertEqual(n, 2)
+        self.assertEqual(keys[1], tuple(b[:4]))
+        self.assertEqual(array(text, "NL_FILL")[1][1], tuple(b[4:7]))
+        self.assertEqual(array(text, "NL_RIM")[1][1], tuple(b[7:10]))
+        self.assertIn("float NL_Time : TIME < bool SyncInEditMode = true; >;", text)
+        self.assertIn("saturate((NL_Time - NL_KEY[i].x) / NL_FADE + 0.5f)", text)
+        s = mme_shadow.night(night)
+        for t, want in ((10.0, a), (44.467 - 0.2, a), (44.467 + 0.2, b), (200.0, b)):
+            key, fill, rim = mme_shadow.section_colours(s, t)
+            for got, w in ((key, want[1:4]), (fill, want[4:7]), (rim, want[7:10])):
+                for g, x in zip(got, w):
+                    self.assertAlmostEqual(g, x, places=9, msg=t)
+        key, _, _ = mme_shadow.section_colours(s, 44.467)
+        for g, x, y in zip(key, a[1:4], b[1:4]):
+            self.assertAlmostEqual(g, 0.5 * (x + y), places=9)
+        # without sections the night is one section of its own colours from 0 s
+        s = mme_shadow.night(self.NIGHT)
+        self.assertEqual(mme_shadow.section_colours(s, 123.0), ([0.9, 0.8, 0.7], [0.15, 0.17, 0.3], [0.5, 0.7, 1.0]))
+
+    def test_wrong_night_settings_are_refused(self):
+        for bad in ({"on": 2}, {"key": [1, 1]}, {"key": [1, -0.1, 1]}, {"fill": [0, 0, 9]}, {"face": 1.5},
+                    {"rim_power": 0}, {"rim_from": [0, 0]}, {"rim_sided": -0.1}, {"rim_albedo": 2},
+                    {"sections": [[0, 1, 1, 1, 0, 0, 0, 0, 0]]}, {"sections": [[5, 1, 1, 1, 0, 0, 0, 0, 0, 0],
+                                                                                [3, 1, 1, 1, 0, 0, 0, 0, 0, 0]]},
+                    {"sections": [[-1, 1, 1, 1, 0, 0, 0, 0, 0, 0]]}, {"fade": 0}, {"colour": [1, 1, 1]}):
+            with self.assertRaises(ValueError, msg=bad):
+                mme_shadow.effect(light=dict(self.NIGHT, **bad))
+        # the night is drawn with the soft shadow: not with the effects for measuring
+        for other in ({"debug": "shadow"}, {"sharp": True}):
+            with self.assertRaises(ValueError, msg=other):
+                mme_shadow.effect(light=self.NIGHT, **other)
+
+    def test_prepare_and_write_take_the_look(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        models = os.path.join(folder, "Rin")
+        os.makedirs(models)
+        model = os.path.join(models, "White.pmx")
+        with open(model, "wb") as f:
+            f.write(b"PMX")
+        look = os.path.join(folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"glow": {"radius": 6}, "light": {"person": self.NIGHT}}, f)
+        got = mme_shadow.prepare(model, os.path.join(folder, "out"), variant="night", look=look)
+        with open(got["effect"], encoding="ascii") as f:
+            text = f.read()
+        self.assertEqual(define(text, "SS_NIGHT"), 1)
+        self.assertEqual(json.loads(text.splitlines()[2].split("Settings:")[1])["light"]["fill"], [0.15, 0.17, 0.3])
+        # a look without the night's light on her writes the soft shadow of before
+        plain = os.path.join(folder, "plain.json")
+        with open(plain, "w", encoding="utf-8") as f:
+            json.dump({"glow": {"radius": 6}}, f)
+        got = mme_shadow.prepare(model, os.path.join(folder, "out"), variant="plain", look=plain)
+        with open(got["effect"], encoding="ascii", newline="") as f:
+            self.assertEqual(f.read().replace("\r\n", "\n"), mme_shadow.effect())
+        out = os.path.join(folder, "w.fx")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mme_shadow.main(["write", out, "--look", look]), 0)
+        with open(out, encoding="ascii") as f:
+            self.assertEqual(define(f.read(), "SS_NIGHT"), 1)
 
 
 class FilesTest(unittest.TestCase):

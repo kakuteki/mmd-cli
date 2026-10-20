@@ -2,7 +2,7 @@
 shading but reads the self shadow map at many points weighted by a Gaussian, and the files round it.
 
     python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.35 | --toon]
-                                     [--debug [shadow|lit]] [--sharp]
+                                     [--debug [shadow|lit]] [--sharp] [--look LOOK.json]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py check MMD.exe
     python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd
@@ -52,6 +52,16 @@ reads the floor) is set to 1 - key_share, on the shadowed side and in the shadow
 --key-share 0.35: the shade keeps 0.65 (option D, Kaga-san's choice of 2026-10-17), lighter than the floor's shadow
 (0.40: stage.shadow_key 0.6); --key-share 0.6 is option A, the shade as dark as the floor's.  A material whose toon is
 white (here the face and the eyes: MMD draws no shade on them) is left so.  --toon keeps MMD's toon colours as they are.
+
+The night's light on her (light3, 2026-10-21; --look LOOK.json takes the look's light.person, `night` says what it may
+hold): with it on, the body's pass is drawn by NIGHT_BODY instead.  Her colour under a white light (the material's lit
+colour, the texture, the sphere map) times the key light where MMD's light reaches her (the soft shadow and the toon's
+ramp above, so the shadows fall from the key) and times the fill in the shade (in the toon's hue); the materials MMD
+shades not (the face, the eyes) between the fill and the key (face); a rim light by Fresnel, (1 - n.v)^rim_power, on the
+side of her outline it comes from in the picture (rim_from); MMD's light colour scales the key (its default 154 is 1).
+The colours can change by sections of the song (sections: from that time, faded in over fade seconds), read from MME's
+TIME (the song's time of the frame drawn).  The key's direction is MMD's light (the self shadow map's).  Without it, or
+with "on" 0, the file is the one of before byte for byte.
 
 --sharp writes the same file with one point and no blur and MMD's toon colours: MMD's own test (to check that the
 shading is MMD's).  --debug draws the shadow alone (white lit, black shadowed, opaque) for tools/shadow_measure.py;
@@ -104,6 +114,21 @@ SEARCH_INNER = 0.03       # the innermost point of the search, a share of its ra
                           # the pixel is small, 0.38 units at 1.5 for 5 degrees)
 SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
                           # light at 8 units: the hips above the knees)
+# the night's light on her (light3, 2026-10-21; look light.person): drawn by the body's pass itself, see NIGHT_BODY
+LIGHT_DEFAULT = 154.0 / 255.0     # MMD's light colour by default (what MME gives as the light's AMBIENT: measured on
+                                  # hinata, a light of 200, 100, 50 read 199, 100, 50; its DIFFUSE is 0, its SPECULAR 0.6)
+NIGHT_MOST = 4.0                  # a colour of the night is r, g, b of 0 to this (over 1: brighter than MMD's white)
+NIGHT_DEFAULTS = {"on": 0,
+                  "key": [1.0, 1.0, 1.0],       # the key light: her colour times this where MMD's light reaches her
+                  "fill": [0.35, 0.35, 0.35],   # the fill: her colour times this in the shade (in the toon's hue)
+                  "face": 0.75,                 # the face and the eyes (MMD shades them not): from the fill (0) to the key (1)
+                  "rim": [0.0, 0.0, 0.0],       # the rim light: this colour times Fresnel's (1 - n.v)^rim_power; 0 none
+                  "rim_power": 3.0,
+                  "rim_from": [0.0, -1.0],      # where the rim light comes from in the picture (x right, y down; look.rim)
+                  "rim_sided": 1.0,             # 0: all round her outline; 1: only on the side it comes from
+                  "rim_albedo": 0.3,            # 0: the rim's own colour; 1: times her colour
+                  "sections": [],               # [[from (s), key r g b, fill r g b, rim r g b], ...]: the colours by time
+                  "fade": 0.5}                  # seconds over which a section's colours come in (round its start)
 
 
 def taps(n):
@@ -139,10 +164,102 @@ def _array(name, rows, fmt):
     return "static const float3 %s[%d] = {\n%s\n};\n" % (name, len(rows), body)
 
 
+def _colour(name, value, most=NIGHT_MOST):
+    if (not isinstance(value, (list, tuple)) or len(value) != 3
+            or not all(isinstance(c, (int, float)) and not isinstance(c, bool) and math.isfinite(c) and 0 <= c <= most
+                       for c in value)):
+        raise ValueError("light.person.%s is r, g, b from 0 to %g, not %r" % (name, most, value))
+    return [float(c) for c in value]
+
+
+def _share(name, value, low=0.0, high=1.0, above=False):
+    if (not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value)
+            or value > high or value < low or (above and value <= low)):
+        raise ValueError("light.person.%s is %s %g to %g, not %r" % (name, "above" if above else "from", low, high, value))
+    return float(value)
+
+
+def night(light):
+    """the night's light on her (look light.person) checked and completed with NIGHT_DEFAULTS, or None when it is off (no
+    light, or "on" 0: the soft shadow of before).  ValueError on an unknown name or a wrong value"""
+    if light is None:
+        return None
+    if not isinstance(light, dict):
+        raise ValueError("light.person is an object, not %r" % (light,))
+    unknown = sorted(set(light) - set(NIGHT_DEFAULTS))
+    if unknown:
+        raise ValueError("light.person has no setting %r (it has: %s)" % (unknown[0], ", ".join(sorted(NIGHT_DEFAULTS))))
+    s = dict(NIGHT_DEFAULTS, **light)
+    if s["on"] not in (0, 1) or isinstance(s["on"], bool):
+        raise ValueError("light.person.on is 0 or 1, not %r" % (s["on"],))
+    out = {"on": int(s["on"])}
+    for name in ("key", "fill", "rim"):
+        out[name] = _colour(name, s[name])
+    out["face"] = _share("face", s["face"])
+    out["rim_power"] = _share("rim_power", s["rim_power"], 0.0, 32.0, above=True)
+    out["rim_sided"] = _share("rim_sided", s["rim_sided"])
+    out["rim_albedo"] = _share("rim_albedo", s["rim_albedo"])
+    out["fade"] = _share("fade", s["fade"], 0.0, 10.0, above=True)
+    f = s["rim_from"]
+    if (not isinstance(f, (list, tuple)) or len(f) != 2 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in f)
+            or not math.hypot(*f) > 0):
+        raise ValueError("light.person.rim_from is the way the rim light comes from in the picture (x right, y down), not %r"
+                         % (f,))
+    out["rim_from"] = [float(v) for v in f]
+    sections = []
+    for row in s["sections"]:
+        if not isinstance(row, (list, tuple)) or len(row) != 10:
+            raise ValueError("a section of light.person.sections is [from (s), key r g b, fill r g b, rim r g b], not %r" % (row,))
+        t = _share("sections' from", row[0], 0.0, 1e6)
+        if sections and t <= sections[-1][0]:
+            raise ValueError("light.person.sections must come in the order of their times (%g after %g)" % (t, sections[-1][0]))
+        sections.append([t] + _colour("sections' key", row[1:4]) + _colour("sections' fill", row[4:7])
+                        + _colour("sections' rim", row[7:10]))
+    out["sections"] = sections
+    return out if out["on"] else None
+
+
+def section_colours(settings, t):
+    """(key, fill, rim) of the night (`night`'s answer) at `t` seconds of the song, as the effect works them out: from the
+    first section on, each section's colours faded in over `fade` seconds round its start (half before, half after).
+    Without sections the night's own colours all through"""
+    rows = settings["sections"] or [[0.0] + settings["key"] + settings["fill"] + settings["rim"]]
+    key, fill, rim = list(rows[0][1:4]), list(rows[0][4:7]), list(rows[0][7:10])
+    for row in rows[1:]:
+        w = min(1.0, max(0.0, (t - row[0]) / settings["fade"] + 0.5))
+        key = [a + (b - a) * w for a, b in zip(key, row[1:4])]
+        fill = [a + (b - a) * w for a, b in zip(fill, row[4:7])]
+        rim = [a + (b - a) * w for a, b in zip(rim, row[7:10])]
+    return key, fill, rim
+
+
+def _array4(name, rows, fmt):
+    body = ",\n".join("    float4(%s)" % ", ".join(fmt % v for v in row) for row in rows)
+    return "static const float4 %s[%d] = {\n%s\n};\n" % (name, len(rows), body)
+
+
+def _night_text(s):
+    """the defines and tables of the night (`night`'s answer) for NIGHT_BODY"""
+    rows = s["sections"] or [[0.0] + s["key"] + s["fill"] + s["rim"]]
+    fx, fy = s["rim_from"]
+    norm = math.hypot(fx, fy)
+    defines = ("#define SS_NIGHT 1\n#define NL_SECTIONS %d\n#define NL_FADE %.6f\n#define NL_FACE %.6f\n"
+               "#define NL_RIM_POWER %.6f\n#define NL_RIM_FROM float2(%.6f, %.6f)\n#define NL_RIM_SIDED %.6f\n"
+               "#define NL_RIM_ALBEDO %.6f\n#define NL_LIGHT_DEFAULT %.9f\n"
+               % (len(rows), s["fade"], s["face"], s["rim_power"], fx / norm, -fy / norm, s["rim_sided"], s["rim_albedo"],
+                  LIGHT_DEFAULT))
+    return (defines + _array4("NL_KEY", [r[0:4] for r in rows], "%.6g") + _array("NL_FILL", [r[4:7] for r in rows], "%.6g")
+            + _array("NL_RIM", [r[7:10] for r in rows], "%.6g"))
+
+
 def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS["taps"],
            search_taps=DEFAULTS["search_taps"], contact=DEFAULTS["contact"], debug=False, sharp=False,
-           key_share=DEFAULTS["key_share"]):
-    """the text of the effect file (see the module docstring).  key_share None: MMD's toon colours"""
+           key_share=DEFAULTS["key_share"], light=None):
+    """the text of the effect file (see the module docstring).  key_share None: MMD's toon colours.  light: the night's light
+    on her (look light.person, `night`): with it on the body's pass is drawn by NIGHT_BODY; off, the text of before"""
+    lit = night(light)
+    if lit is not None and (debug or sharp):
+        raise ValueError("the night's light is drawn with the soft shadow, not with --debug or --sharp")
     if debug not in DEBUGS:
         raise ValueError("--debug is shadow or lit, not %r" % (debug,))
     if key_share is not None and (isinstance(key_share, bool) or not 0 <= key_share < 1):
@@ -160,6 +277,8 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
     debug = {0: False, 1: "shadow", 2: "lit", 3: "toon"}[DEBUGS[debug]]
     settings = {"blur": blur, "min_blur": min_blur, "taps": n_taps, "search_taps": search_taps, "contact": bool(contact),
                 "debug": debug, "sharp": bool(sharp), "key_share": key_share}
+    if lit is not None:
+        settings["light"] = lit
     head = ("// soft_self_shadow.fx: MMD's body pass with the self shadow (object_ss) read at many points of the shadow map\n"
             "// weighted by a Gaussian.  Written by tools/mme_shadow.py (mmd-cli) from MME 0.37's REFERENCE.txt; the other\n"
             "// passes are MMD's own.  Settings: %s\n" % json.dumps(settings, sort_keys=True))
@@ -169,7 +288,10 @@ def effect(blur=DEFAULTS["blur"], min_blur=DEFAULTS["min_blur"], n_taps=DEFAULTS
                % (math.radians(blur), min_blur, len(kernel), len(search), 1 if contact else 0, DEBUGS[debug], SEARCH,
                   0 if key_share is None else 1, 1.0 if key_share is None else 1.0 - key_share, FACING_MIN, KERNEL_SIGMAS,
                   HARMONIC))
-    return (head + defines + _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f") + BODY)
+    tables = _array("KERNEL", kernel, "%.7f") + _array("SEARCH", search, "%.7f")
+    if lit is None:
+        return head + defines + tables + BODY + TECHS
+    return head + defines + _night_text(lit) + tables + BODY + NIGHT_BODY
 
 
 
@@ -476,7 +598,10 @@ float4 SS_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, unif
     return ans;
 }
 
-#define SS_TECH(name, tex, sph, toon) \
+"""
+
+# the techniques of the soft shadow (the night's take their place: NIGHT_BODY)
+TECHS = r"""#define SS_TECH(name, tex, sph, toon) \
     technique name < string MMDPass = "object_ss"; bool UseTexture = tex; bool UseSphereMap = sph; bool UseToon = toon; > { \
         pass DrawObject { \
             VertexShader = compile vs_3_0 SS_VS(tex, sph, toon); \
@@ -492,6 +617,107 @@ SS_TECH(SS_001, false, false, true)
 SS_TECH(SS_101, true, false, true)
 SS_TECH(SS_011, false, true, true)
 SS_TECH(SS_111, true, true, true)
+"""
+
+# the body's pass drawn with the night's light on her (light3, 2026-10-21; `night`, look light.person), in place of TECHS
+NIGHT_BODY = r"""
+// ---- the night's light on her (tools/mme_shadow.py night: look light.person) ----
+// MME's TIME: the song's time at the frame drawn, seconds from frame 0 (the AVI's frames too)
+float NL_Time : TIME < bool SyncInEditMode = true; >;
+
+// the colours of the section the song is in: from the first section on, each one's faded in over NL_FADE seconds round
+// its start, half before and half after (tools/mme_shadow.py section_colours works them out the same way)
+void NL_Colours(out float3 key, out float3 fill, out float3 rim)
+{
+    key = NL_KEY[0].yzw;
+    fill = NL_FILL[0];
+    rim = NL_RIM[0];
+    for (int i = 1; i < NL_SECTIONS; i++) {
+        float w = saturate((NL_Time - NL_KEY[i].x) / NL_FADE + 0.5f);
+        key = lerp(key, NL_KEY[i].yzw, w);
+        fill = lerp(fill, NL_FILL[i], w);
+        rim = lerp(rim, NL_RIM[i], w);
+    }
+}
+
+float4 NL_PS(SS_OUT IN, uniform bool useTexture, uniform bool useSphereMap, uniform bool useToon) : COLOR0
+{
+    float3 nrm = normalize(IN.Normal);
+    // her colour under a white light: the material's as MMD lights it (ambient + emissive, at most 1), the texture and the
+    // sphere map, read through MMD's own samplers as the soft shadow reads them
+    float4 albedo = float4(saturate(MaterialAmbient + MaterialEmissive), MaterialDiffuse.a);
+    if (useTexture) {
+        float4 tc = tex2D(MMDSampler1, IN.Tex);
+#if SS_MORPHS
+        tc = tc * TextureMulValue + TextureAddValue;
+#endif
+        albedo *= tc;
+    }
+    if (useSphereMap) {
+        float4 sc = tex2D(MMDSampler2, IN.SpTex);
+#if SS_MORPHS
+        sc = sc * SphereMulValue + SphereAddValue;
+#endif
+        albedo.rgb = spadd ? albedo.rgb + sc.rgb : albedo.rgb * sc.rgb;
+    }
+    float3 key, fill, rim;
+    NL_Colours(key, fill, rim);
+    // MMD's light colour scales the key (its default, 154 of 255, is 1): the light keys of a camera motion still work
+    key *= LightAmbient / NL_LIGHT_DEFAULT;
+    float3 toon = MaterialToon;
+    float tluma = dot(toon, float3(0.2126f, 0.7152f, 0.0722f));
+    float3 rgb;
+    if (useToon && tluma < 0.999f) {
+        // where MMD's light reaches her: the soft shadow and the toon's ramp, as the soft shadow draws them
+        float3 zc = IN.ZCalcTex.xyz / IN.ZCalcTex.w;
+        float2 uv = float2((1.0f + zc.x) * 0.5f, (1.0f - zc.y) * 0.5f);
+        float comp = 1.0f;
+        if (all(saturate(uv) == uv)) {
+            float2 plane = PlaneSlope(normalize(IN.ObjNormal), zc);
+            comp = SoftShadow(zc, uv, plane, IN.ZCalcTex.w);
+        }
+        comp = min(saturate(dot(nrm, -LightDirection) * TOON_SLOPE), comp);
+        // in the shade the fill, in the toon's hue (its luma made 1)
+        float3 hue = toon / max(tluma, 1e-4f);
+        rgb = albedo.rgb * lerp(fill * hue, key, comp);
+    } else {
+        // MMD shades these not (no toon or a white one: the face, the eyes): between the fill and the key
+        rgb = albedo.rgb * lerp(fill, key, NL_FACE);
+    }
+    // the rim light: Fresnel's (1 - n.v)^power, on the side of her outline it comes from in the picture
+    float3 v = normalize(IN.Eye);
+    float fres = pow(1.0f - saturate(dot(nrm, v)), NL_RIM_POWER);
+    float2 nv = mul(nrm, (float3x3)ViewMatrix).xy;
+    float len = length(nv);
+    float side = len > 1e-4f ? saturate(0.5f + 0.5f * dot(nv / len, NL_RIM_FROM)) : 0.5f;
+    side = lerp(1.0f, side * side, NL_RIM_SIDED);
+    rgb += rim * (fres * side) * lerp(float3(1.0f, 1.0f, 1.0f), albedo.rgb, NL_RIM_ALBEDO);
+    // MMD's specular, added as MMD adds it (this model has none)
+    float3 HalfVector = normalize(v + -LightDirection);
+    rgb += pow(max(0, dot(HalfVector, nrm)), SpecularPower) * SpecularColor;
+    float4 ans = float4(rgb, albedo.a);
+    if (transp) {
+        ans.a = 0.5f;
+    }
+    return ans;
+}
+
+#define NL_TECH(name, tex, sph, toon) \
+    technique name < string MMDPass = "object_ss"; bool UseTexture = tex; bool UseSphereMap = sph; bool UseToon = toon; > { \
+        pass DrawObject { \
+            VertexShader = compile vs_3_0 SS_VS(tex, sph, toon); \
+            PixelShader  = compile ps_3_0 NL_PS(tex, sph, toon); \
+        } \
+    }
+
+NL_TECH(NL_000, false, false, false)
+NL_TECH(NL_100, true, false, false)
+NL_TECH(NL_010, false, true, false)
+NL_TECH(NL_110, true, true, false)
+NL_TECH(NL_001, false, false, true)
+NL_TECH(NL_101, true, false, true)
+NL_TECH(NL_011, false, true, true)
+NL_TECH(NL_111, true, true, true)
 """
 
 
@@ -578,12 +804,28 @@ def _sync(src, dst):
                 shutil.copy2(a, b)
 
 
-def prepare(model, outdir, variant=None, **settings):
+def look_light(path):
+    """the night's light on her of a look file (its light.person), None when the look has none.  The look is read as
+    JSON only (tools/mv_look.py checks the rest of it)"""
+    with open(path, encoding="utf-8") as f:
+        look = json.load(f)
+    if not isinstance(look, dict):
+        raise ValueError("the look %s is not a JSON object" % path)
+    light = look.get("light", {})
+    if not isinstance(light, dict):
+        raise ValueError("the look's light is an object, not %r" % (light,))
+    return light.get("person")
+
+
+def prepare(model, outdir, variant=None, look=None, **settings):
     """the model's folder copied into OUTDIR (and again each file that changed since: review of softshadow-mme, a copy
     kept once would draw a model rebuilt since as it was) and the effect beside the copy of MODEL: <model name>.fx, or with
     `variant` a copy of the model named <model name>[<variant>.fx].pmx beside <variant>.fx (MME takes the effect named in
-    brackets in the model's file name: several effects for one model side by side).  The paths of the model to load and
-    of the effect"""
+    brackets in the model's file name: several effects for one model side by side).  With `look` (a look file) the effect
+    draws its night's light on her (light.person; none or off: the soft shadow of before).  The paths of the model to load
+    and of the effect"""
+    if look is not None:
+        settings["light"] = look_light(look)
     model = os.path.abspath(model)
     src = os.path.dirname(model)
     dst = os.path.join(os.path.abspath(outdir), os.path.basename(src))
@@ -692,12 +934,16 @@ def _options(s):
                    help="draw the shadow alone (shadow, for tools/shadow_measure.py), the body lit everywhere (lit) or "
                         "the toon's share of the light where a shade shows (toon, for tools/selfshadow_check.py against)")
     s.add_argument("--sharp", action="store_true", help="MMD's own shadow test (one point) and toon colours")
+    s.add_argument("--look", help="a look file: the effect draws its night's light on her (light.person; light3)")
 
 
 def _settings(a):
-    return {"blur": a.blur, "min_blur": a.min_blur, "n_taps": a.taps, "search_taps": a.search_taps,
-            "contact": not a.no_contact, "debug": a.debug, "sharp": a.sharp,
-            "key_share": None if a.toon else a.key_share}
+    out = {"blur": a.blur, "min_blur": a.min_blur, "n_taps": a.taps, "search_taps": a.search_taps,
+           "contact": not a.no_contact, "debug": a.debug, "sharp": a.sharp,
+           "key_share": None if a.toon else a.key_share}
+    if a.look:
+        out["light"] = look_light(a.look)
+    return out
 
 
 def main(argv=None):
