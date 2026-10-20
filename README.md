@@ -675,7 +675,9 @@ python tools/mv_look.py render DANCER.avi look_mg.json OUT.mp4 ...              
   直前のコマより後なら止まる（区間の頭のカットにディゾルブを置かない）。合図が多くて Windows のコマンド行（32,767 文字）を越える時は、グラフを
   `OUT.filter_complex.txt` に書いて `-/filter_complex` で渡す（ffmpeg 7 から）。look に古い `flares` があると、合いの手でフレアの光とパンチが白フラッシュと
   別にもう一度出るので、mograph を使う look では `flares` を `[]` にする。そのとき `tools/eye_optics.py` は look のフレアから目の反応を作るので、
-  白フラッシュの時刻を `--flares` で渡す。
+  白フラッシュの時刻を `--flares` で渡す。`apply --from --to` の抜粋は 1 秒前から読んでコマ番号 round((t + 探した位置) x fps) で選ぶ（入力の `-ss`・`-t` は
+  最初に読んだコマの時刻から数え、コマの時刻がわずかに早い動画で 1 コマ多く読む: v7 は 58 秒あたりから 1/15360 秒の 5 目盛り早く、40〜60 秒が 601 コマだった）。
+  音は同じ区間を別に読んで AAC にする。
 
 ### 体に落ちる影をやわらかくする（`tools/mme_shadow.py`、MME）
 
