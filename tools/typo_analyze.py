@@ -2103,6 +2103,34 @@ def _marks(texts, duration):
     return out
 
 
+SIGN_TIMES = 3                    # a text seen this many times or more,
+SIGN_SIZES = 1.3                  # its largest this many times its smallest (the camera near and far): a sign of the scene
+
+
+def _signs(texts):
+    """the texts seen again and again at other sizes: groups of alike signatures (MARK_SAME) of SIGN_TIMES or more whose
+    largest is SIGN_SIZES times their smallest or more.  A sign of the scene is seen from near and far; a lyric line sung
+    again keeps its size (a style), wherever it is put"""
+    groups = []
+    for i, t in enumerate(texts):
+        if not t.get("sig") or "h" not in (t.get("place") or {}):
+            continue
+        for g in groups:
+            if _sig_ncc(texts[g[0]]["sig"], t["sig"]) >= MARK_SAME:
+                g.append(i)
+                break
+        else:
+            groups.append([i])
+    out = set()
+    for g in groups:
+        if len(g) < SIGN_TIMES:
+            continue
+        hs = [texts[i]["place"]["h"] for i in g]
+        if max(hs) >= SIGN_SIZES * max(min(hs), 1e-9):
+            out.update(g)
+    return out
+
+
 def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
     """each text against the voice and the beat.  Its kind: mark (on the screen MARK_SHARE of the video or more, or a
     text that comes back to one place again and again: a logo, a watermark, _marks), scene (it moves with the picture
@@ -2124,6 +2152,7 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
         duration = max([t["times"]["last"] for t in texts] + [1.0])
     rows = []
     marks = _marks(texts, duration)
+    signs = _signs(texts)
     cut_t = np.asarray(cuts or [], np.float64)
     near_cut = (1.0 / fps) + 0.01
     for i, t in enumerate(texts):
@@ -2134,7 +2163,7 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
         at_cuts = cut_t.size and np.min(np.abs(cut_t - a)) <= near_cut and np.min(np.abs(cut_t - (z + 1.0 / fps))) <= near_cut
         if i in marks:
             row["kind"] = "mark"
-        elif space == "scene" or (at_cuts and space != "screen"):
+        elif space == "scene" or (at_cuts and space != "screen") or i in signs:
             row["kind"] = "scene"
         elif size is not None and not (SIZE_RANGE[0] <= size <= SIZE_RANGE[1]):
             row["kind"] = "other"

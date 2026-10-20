@@ -982,6 +982,27 @@ class SyncTest(unittest.TestCase):
         r = TA.sync(texts, voice, beats=None, fps=30.0, duration=60.0)
         self.assertEqual([x["kind"] for x in r["texts"]], ["mark"] * 4)
 
+    def test_a_sign_seen_again_at_other_sizes_is_in_the_scene(self):
+        # the night street's neon sign (RE: 踊): the camera comes back to it from near and far; it is still in each shot
+        voice = self.voice(((0.5, 59.0),), total=60.0)
+        rng = np.random.default_rng(5)
+        sign = rng.uniform(0, 1, (16, 90))
+        texts = []
+        for a, (x, y, h) in zip((3.0, 18.0, 33.0, 48.0), ((0.4, 0.2, 0.03), (0.6, 0.3, 0.05), (0.3, 0.15, 0.08), (0.5, 0.25, 0.04))):
+            t = self.text(a, a + 0.1, a + 3.0)
+            t["place"] = {"x": x, "y": y, "h": h, "w": 0.2}
+            t["sig"] = TA.signature_of(sign + rng.normal(0, 0.02, sign.shape))
+            texts.append(t)
+        # a chorus line sung again, in one size, left and right in turn (our v7): a lyric each time
+        line = rng.uniform(0, 1, (16, 84))
+        for a, x in zip((6.0, 21.0, 36.0, 51.0), (0.25, 0.75, 0.25, 0.75)):
+            t = self.text(a, a + 0.1, a + 3.0)
+            t["place"] = {"x": x, "y": 0.83, "h": 0.07, "w": 0.37}
+            t["sig"] = TA.signature_of(line + rng.normal(0, 0.02, line.shape))
+            texts.append(t)
+        r = TA.sync(texts, voice, beats=None, fps=30.0, duration=60.0)
+        self.assertEqual([x["kind"] for x in r["texts"]], ["scene"] * 4 + ["lyric"] * 4)
+
     def test_a_text_that_comes_and_goes_with_the_shot_is_in_the_scene(self):
         voice = self.voice(((0.5, 19.0),), total=20.0)
         sign = self.text(4.0, 4.0, 7.0)
