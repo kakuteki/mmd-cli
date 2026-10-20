@@ -1595,48 +1595,48 @@
 | DEFAULT_LOOK.layer.spill_radius | 40.0 |  | 224 | how far round her the light is gathered from, pixels of a 720 line picture |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.layer.spill_wrap_width | 6.0 |  | 225 | the band's width, pixels of a 720 line picture |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.light.person.on | 0 |  | 227 | the light on her: MMD draws it through MME (tools/mme_shadow.py prepare --look takes it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS)… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.light.grade.highs | [0.0, 0.0, 0.0] |  | 232 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.light.grade.mids | [0.0, 0.0, 0.0] |  | 232 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.light.grade.saturation | 1.0 |  | 232 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.light.grade.shadows | [0.0, 0.0, 0.0] |  | 232 | the grade of the picture under the front text: ffmpeg's colorbalance (r, g, b shifts of -1 to 1 for the shadows, the middle tones and the highlights, lightness kept) and… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.light.flicker | 0.0 |  | 233 | the stage of a model: its lit signs flicker by this share of their light; 0 none |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.light.flicker_seed | 7 |  | 234 |  |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 236 |  |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 237 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 | frames | 238 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
-| GRADE_AT | (0.25, 0.5, 0.75) |  | 312 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
-| GRADE_MOST | 0.2 |  | 313 | a shift is -this to this |  |  |  |  |  |  |  |  |
-| FLARE_HEIGHT | 0.42 |  | 595 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 696 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 697 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 697 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 697 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 1006 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 1007 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 1008 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 1009 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 1010 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 1011 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 1052 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 1148 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 1351 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 1400 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 1401 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 1402 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1653 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1668 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1670 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1672 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1674 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1688 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1689 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1699 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1708 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1710 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1712 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.light.grade.highs | [0.0, 0.0, 0.0] |  | 233 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.light.grade.mids | [0.0, 0.0, 0.0] |  | 233 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.light.grade.saturation | 1.0 |  | 233 | it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS); here only checked, the dancer comes lit the grade of the picture under the front te… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.light.grade.shadows | [0.0, 0.0, 0.0] |  | 233 | the grade of the picture under the front text: a curve a channel (r, g, b shifts of -0.2 to 0.2 of the coded values 0.25, 0.5 and 0.75: the shadows, the middle tones, th… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.light.flicker | 0.0 |  | 234 | the stage of a model: its lit signs flicker by this share of their light; 0 none |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.light.flicker_seed | 7 |  | 235 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 237 |  |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 238 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 239 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
+| GRADE_AT | (0.25, 0.5, 0.75) |  | 316 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
+| GRADE_MOST | 0.2 |  | 317 | a shift is -this to this |  |  |  |  |  |  |  |  |
+| FLARE_HEIGHT | 0.42 |  | 599 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
+| ffmpeg_command(flare_frames) | 0 | frames | 700 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 701 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 701 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 701 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 1010 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 1011 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 1012 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 1013 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 1014 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 1015 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 1056 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 1152 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 1355 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 1404 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 1405 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 1406 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1409 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1409 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1409 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1657 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1672 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1674 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1676 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1678 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1692 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1693 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1703 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1712 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1714 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1716 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
