@@ -448,6 +448,37 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertNotIn("blur", m["enter"]["kinds"])
         self.assertNotIn("glitch", m["enter"]["kinds"])
 
+    def test_the_picture_sliding_in_the_margin_of_the_box_is_no_tear(self):
+        # our v7: the box has a few rows above and below the letters; there the stage's grid lines slide sideways under
+        # a still line, and those rows read as torn (the letters' own rows match where they are)
+        rng = np.random.default_rng(3)
+        h, w = 120, 360
+        xx = np.arange(w)
+
+        def ground(n):
+            stripes = 0.12 + 0.16 * (np.sin(2 * np.pi * (xx - 6 * n) / 23.0) > 0.6)    # lines sliding 6 px a frame
+            return np.repeat(stripes[None, :], h, axis=0) + rng.normal(0, 0.003, (h, w))
+
+        letters = np.zeros((h, w))
+        for k in range(9):                                       # strokes of letters on rows 50 to 75
+            x0 = 40 + 31 * k
+            letters[50:75, x0:x0 + 4] = 1.0
+            letters[50 + (k * 7) % 20:54 + (k * 7) % 20, x0:x0 + 22] = 1.0
+        box = {"x0": 36.0, "x1": 326.0, "y0": 44.0, "y1": 81.0, "cx": 181.0, "cy": 62.5, "w": 290.0, "h": 37.0}
+
+        def frame(n, tear=False):
+            lt = letters.copy()
+            if tear:
+                lt[55:65] = np.roll(lt[55:65], 6, axis=1)
+            y = ground(n) * (1 - lt) + 0.95 * lt
+            return y, np.repeat(y[..., None] * 255.0, 3, axis=2)
+        y_ref, rgb_ref = frame(0)
+        for n in (1, 2, 3):
+            y, rgb = frame(n)
+            self.assertEqual(TA._glitch(rgb, y, rgb_ref, y_ref, box, (0.0, 0.0), 1.0)[1], 0, n)
+        y, rgb = frame(2, tear=True)
+        self.assertEqual(TA._glitch(rgb, y, rgb_ref, y_ref, box, (0.0, 0.0), 1.0)[1], 1)
+
     def test_a_line_only_seen_moving_is_not_whole(self):
         # never still: its look is read off a frame of its motion (the look of the lyrics is read on the whole ones)
         m = self.measure(clip_of(lambda n: {"alpha": 0.0} if n < 10 or n > 50 else {"offset": (3.0 * (n - 30), 0.0)}))
@@ -510,6 +541,17 @@ class VideoTest(unittest.TestCase):
         self.assertAlmostEqual(t["place"]["x"], 0.5, delta=0.03)              # the middle of the picture across
         self.assertAlmostEqual(t["place"]["y"], 120 / 180.0, delta=0.03)
         self.assertGreater(t["style"]["fill_L"], 85)
+
+    def test_the_look_read_again_after_the_tracking(self):
+        det = TA.detect_video(self.tmp, None, rate=2.0, height=None, detector=pixel_detector)
+        out = TA.track_video(self.tmp, det, None, detector=pixel_detector, style=True)
+        first = dict(out["texts"][0]["style"])
+        for t in out["texts"]:
+            t.pop("style", None)
+            t.pop("typeface", None)
+        again = TA.restyle_video(self.tmp, json.loads(json.dumps(out)))
+        self.assertAlmostEqual(again["texts"][0]["style"]["fill_L"], first["fill_L"], places=6)
+        self.assertIn("class", again["texts"][0]["typeface"])
 
     def test_a_look_that_cannot_be_read_does_not_lose_the_run(self):
         # a run of half an hour lost to one text whose fill could not be read (踊 / Odo, Eks4OJ1d56U, 10-21)

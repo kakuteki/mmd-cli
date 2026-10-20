@@ -990,6 +990,9 @@ TEAR_SHIFT = 3                    # px: a row of the text moved sideways this mu
 TEAR_SHARE = 0.15                 # a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn
 SPLIT_REACH = 8                   # px searched for the colour split
 TEAR_REACH = 12                   # px searched for a torn row
+TEAR_TEXT_ROW = 0.35              # a row is read for a tear when its spread in the reference is at least this share of
+#                                   the text's strong rows' (90 % point): the box's margin rows above and below the
+#                                   letters hold the picture, whose lines slide sideways under a still text (our v7)
 
 
 def _best_shift(a, b, reach):
@@ -1033,6 +1036,8 @@ def _glitch(rgb, y, rgb_ref, y_ref, rb, t, s):
         rx0, rx1 = int(max(0, rb["x0"])), int(min(y_ref.shape[1], math.ceil(rb["x1"])))
         rows = 0
         torn_rows = []
+        spread = y_ref[ry0:ry1, max(0, rx0):rx1].std(axis=1) if ry1 > ry0 and rx1 > rx0 else np.zeros(0)
+        least = max(0.06, TEAR_TEXT_ROW * float(np.percentile(spread, 90))) if spread.size else 0.06
         for rr in range(ry0, ry1):
             row = rr + dy
             a0, a1 = rx0 - TEAR_REACH, rx1 + TEAR_REACH
@@ -1041,7 +1046,7 @@ def _glitch(rgb, y, rgb_ref, y_ref, rb, t, s):
                 continue
             ref_row = y_ref[rr, a0:a1]
             mid = ref_row[TEAR_REACH:TEAR_REACH + (rx1 - rx0)]
-            if mid.std() < 0.06:                              # a row with little of the text in it
+            if mid.std() < least:                             # a row with little of the text in it
                 continue
             now = y[row, b0:b1]
             vals = {}
@@ -1725,23 +1730,7 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
         m["n_chars"] = len(m["ref"]["chars"])
         m["series"] = _compact(m["series"])
     if style and texts:
-        refs = sorted(set(m["frames"]["ref"] for m in texts))
-        scale = info["height"] / float(height)
-        native = dict(LA.read_frames(path, info, refs, height=None, matrix=det["matrix"], start=start,
-                                     duration=None if info.get("folder") else duration, as_uint8=True))
-        for m in texts:
-            a = native.get(m["frames"]["ref"])
-            if a is None:
-                continue
-            b = dict(m["ref"]["box"])
-            for k in ("x0", "y0", "x1", "y1", "cx", "cy", "w", "h"):
-                b[k] = b[k] * scale
-            # one text whose look cannot be read does not lose the run (the error is kept in its place)
-            for key, fn in (("style", text_style), ("typeface", typeface)):
-                try:
-                    m[key] = fn(a, b)
-                except Exception as e:                          # noqa: BLE001
-                    m[key] = {"error": "%s: %s" % (type(e).__name__, e)}
+        _looks_of(path, info, texts, height, det["matrix"], start, None if info.get("folder") else duration)
     result = {"label": det.get("label"), "path": path, "fps": fps, "range": [start, end], "height": height,
               "size": det["size"], "picture": det["picture"], "native": [info["width"], info["height"]],
               "tracks": len(tracks), "seconds": round(time.time() - t0, 1), "texts": texts}
@@ -1749,6 +1738,43 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
         with open(out, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=1)
     return result
+
+
+def _looks_of(path, info, texts, height, matrix, start, duration):
+    """the look (text_style) and the typeface of each text on its reference frame read at the video's own size (the
+    texts' boxes are at `height` lines); one text whose look cannot be read does not lose the run (its error is kept)"""
+    LA = _tool("look_analyze")
+    refs = sorted(set(m["frames"]["ref"] for m in texts))
+    scale = info["height"] / float(height)
+    native = dict(LA.read_frames(path, info, refs, height=None, matrix=matrix, start=start, duration=duration,
+                                 as_uint8=True))
+    for m in texts:
+        a = native.get(m["frames"]["ref"])
+        if a is None:
+            continue
+        b = dict(m["ref"]["box"])
+        for k in ("x0", "y0", "x1", "y1", "cx", "cy", "w", "h"):
+            b[k] = b[k] * scale
+        for key, fn in (("style", text_style), ("typeface", typeface)):
+            try:
+                m[key] = fn(a, b)
+            except Exception as e:                          # noqa: BLE001
+                m[key] = {"error": "%s: %s" % (type(e).__name__, e)}
+    return texts
+
+
+def restyle_video(path, tr, out=None):
+    """the look and the typeface of every text of a track run read again (after a change to how they are read: the
+    tracking stays); OUT.json (or the run itself) gets them"""
+    LA = _tool("look_analyze")
+    info = LA.probe(path, fps=tr["fps"])
+    start, end = tr["range"]
+    _looks_of(path, info, tr["texts"], tr["height"], LA.matrix_for(info), start,
+              None if info.get("folder") else end - start)
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(tr, f, ensure_ascii=False, indent=1)
+    return tr
 
 
 def sign_video(path, tr, out=None):
@@ -2412,6 +2438,9 @@ def main(argv=None):
     p = sub.add_parser("sign", help="add the texts' signatures to a track run (made before they were written)")
     p.add_argument("video")
     p.add_argument("track")
+    p = sub.add_parser("style", help="read the look and the typeface of a track run's texts again (the tracking stays)")
+    p.add_argument("video")
+    p.add_argument("track")
     p = sub.add_parser("voice", help="the onsets and phrases of a separated voice, and the beat of the accompaniment")
     p.add_argument("vocals")
     p.add_argument("out")
@@ -2499,6 +2528,14 @@ def main(argv=None):
         with open(args.out_md, "w", encoding="utf-8") as f:
             f.write("# 歌詞の文字: 参考 %d 本と私たち\n\n参考: %s\n%s" % (len(refs), ", ".join(r["label"] for r in refs), md))
         print(json.dumps({"ok": True, "out": args.out_md, "rows": len(rows)}))
+        return 0
+    if args.cmd == "style":
+        with open(args.track, encoding="utf-8") as f:
+            tr = json.load(f)
+        restyle_video(args.video, tr, args.track)
+        print(json.dumps({"ok": True, "out": args.track, "texts": len(tr["texts"]),
+                          "errors": sum(1 for t in tr["texts"] if "error" in (t.get("style") or {}) or
+                                        "error" in (t.get("typeface") or {}))}))
         return 0
     if args.cmd == "sign":
         with open(args.track, encoding="utf-8") as f:
