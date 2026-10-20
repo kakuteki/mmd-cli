@@ -702,7 +702,8 @@ def _stage_setup_lines(plan):
              "ConvertFrom-Json -ErrorAction Stop).model } catch { }",
              "if (-not $stageModel) { 'STOP: could not read the model of the stage set {0}' -f $stageSet; exit 1 }",
              "if (-not [IO.Path]::IsPathRooted($stageModel)) { $stageModel = Join-Path (Split-Path -Parent $stageSet) $stageModel }",
-             "$stageFolder = ((Split-Path -Parent $stageModel) -replace '\\\\', '/').TrimEnd('/')",
+             "# the full path (a model named from the set's folder, ../stage/city.pmx, keeps no ..: the folder is compared below)",
+             "$stageFolder = (([IO.Path]::GetFullPath($stageModel) | Split-Path -Parent) -replace '\\\\', '/').TrimEnd('/')",
              "$folders += $stageFolder"]
     mine = [plan["out"]] + ([plan["stage_pictures"]] if plan.get("stage_mmd") else [])
     lines += ["foreach ($p in @(%s)) {" % ", ".join(_ps(p) for p in mine),

@@ -2005,17 +2005,20 @@ class StageDriverTest(unittest.TestCase):
         self.assertEqual(drawn("nothing changed again"), 0)
 
     def test_an_output_or_pictures_folder_inside_the_stage_models_folder_stops_the_run(self):
-        # -Resume watches the folder of the stage's model (only the set names it, read on the render machine)
-        for change in ({"out": self.base + "/stagemodel/out"}, {"stage_pictures": self.base + "/stagemodel/pictures"}):
-            with self.subTest(change=change):
-                if "out" in change:
-                    self.out = change["out"]
-                self.write(**change)
-                code, text, calls = self.run_driver()
-                self.assertEqual(code, 1, text)
-                self.assertIn("inside", text)
-                self.assertEqual(calls, [])
-                self.out = self.base + "/out"
+        # -Resume watches the folder of the stage's model (only the set names it, read on the render machine), named in the set
+        # by its full path or from the set's folder
+        for model in (self.base + "/stagemodel/city.pmx", "../stagemodel/city.pmx"):
+            self.put("sets/city.json", json.dumps({"model": model}))
+            for change in ({"out": self.base + "/stagemodel/out"}, {"stage_pictures": self.base + "/stagemodel/pictures"}):
+                with self.subTest(model=model, change=change):
+                    if "out" in change:
+                        self.out = change["out"]
+                    self.write(**change)
+                    code, text, calls = self.run_driver()
+                    self.assertEqual(code, 1, text)
+                    self.assertIn("inside", text)
+                    self.assertEqual(calls, [])
+                    self.out = self.base + "/out"
 
     def test_a_failed_stage_stops_the_run_before_mmd_draws_her(self):
         self.write()
