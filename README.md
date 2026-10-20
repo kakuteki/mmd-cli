@@ -596,6 +596,8 @@ python tools/mv_world.py frame camera.vmd look.json out.png --frame 3085 [--mode
     丸めて 128 の灰色が 126 になった）。どちらも RGB のまま（YUV を経ない）。ffmpeg の `colorbalance` は明るさを max+min で測り、真ん中の灰色
     （128）には中間の重みが 0 で効かなかったので使わない。
   - `light.flicker`（0〜1）・`flicker_seed`: 模型の舞台の光る材質（看板）の光を材質ごとにちらつかせる（`tools/stage_layer.py`）。
+  - `light.core`（0〜4）: 光る材質の光が白を越えた分（いちばん明るいチャンネルの 255 を越えた分）× core を全チャンネルに足す（露出を越えた
+    ネオンや街灯の芯が白く飛ぶ。白の内の看板は色のまま）。模型の舞台（`layer.on` 1）が要る。
 
 ### 模型の舞台を人物の後ろに置く（`tools/stage_layer.py`、MMD で舞台だけを描いて）
 
@@ -640,6 +642,9 @@ python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd 
 - 看板のちらつき（look の `light.flicker`、light3）: 光る材質ごとに、遅いうねり（0.25〜0.8 Hz）と速いうなり（6〜13 Hz）の積の 2 乗だけ光を
   下げる（明るさ 1 − flicker × それ。元の光を越えない。速さと位相は `light.flicker_seed` から材質ごと）。そのあとのグロー（`layer.glow`・
   `emissive_glow`）も一緒にちらつく。床の鏡と人物に回す光（spill）はちらつかない（静止したカメラの間はまとめて作るため）。0 なら前と同じ。
+- 看板の芯（look の `light.core`、light3）: ちらつきの後、光る材質の画素の光がいちばん明るいチャンネルで 255 を越えた分 × core を全チャンネルに
+  足す（赤いネオン 200, 60, 40 を光る材質 3 倍で 600, 180, 120 → core 0.5 で 772.5, 352.5, 292.5 = 白）。グローはその後なので芯の白も光る。
+  床の鏡と spill は芯を写さない（色のまま）。0 なら前と同じ。
 - `tools/mv_chunks.py` の計画には `"stage_set"` と `"stage_pictures"`（`"world": true` と一緒に）を書くと、各区間の `mv_look render` に渡る。
   MMD の舞台の絵（`batch --avi` → `unpack`）は区間を描く前に作っておく。
 - 畳んだ 30 fps の人物の層（PNG の MOV など、時刻の刻みが 1 コマより細かいもの）に `mv_look render --from` で抜粋を重ねても、人物は抜粋の始めのコマから

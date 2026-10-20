@@ -606,6 +606,37 @@ class FrameTest(unittest.TestCase):
         other = dict(look, light=dict(look["light"], flicker=0.1, flicker_seed=8))
         self.assertFalse(numpy.array_equal(stage_layer.stage_frame(other, st, t=1.5), stage_layer.stage_frame(flick, st, t=1.5)))
 
+    def test_a_signs_light_past_white_whitens_its_core(self):
+        # light3 (look light.core): a lit sign's light past white (its brightest channel over 255) spills into its other
+        # channels by that share, as an overexposed core goes white; a sign within white, the floor and the sky keep theirs
+        m, v = lit_scene((320, 180))
+        depth, face = stage_layer.rasterize(v, m)
+        s = stage_layer.surface(v, depth, face, m)
+        red = numpy.array([200.0, 60.0, 40.0])
+        picture = numpy.where((s.material == 0)[..., None], 100.0 * numpy.ones(3),
+                              numpy.where((s.material == 1)[..., None], red, 0.0))
+        spec = stage_layer.check_set({"model": "unused.pmx", "emissive": ["sign"], "lamps": [[0.0, 30.0, 10.0]]})
+        table = stage_layer.emissive_table(m, spec)
+        sign, rest = s.material == 1, s.material != 1
+        self.assertTrue(sign.any())
+        for gain, past in ((3.0, 600.0 - 255.0), (1.0, 0.0)):
+            look = layer_look(night=0.3, emissive=gain)
+            st = stage_layer.still(look, spec, m, table, v, picture, s.seen.astype(numpy.float64))
+            plain = stage_layer.stage_frame(look, st)
+            cored = stage_layer.stage_frame(dict(look, light=dict(look["light"], core=0.5)), st)
+            numpy.testing.assert_array_equal(cored[rest], plain[rest])
+            numpy.testing.assert_allclose(cored[sign], plain[sign] + 0.5 * past, atol=1e-9)
+        numpy.testing.assert_allclose(plain[sign][0], red, atol=1e-9)                    # within white: as it was
+        bright = numpy.asarray(stage_layer.as_picture(stage_layer.stage_frame(
+            dict(look, layer=dict(look["layer"], emissive=3.0), light=dict(look["light"], core=0.5)),
+            stage_layer.still(dict(look, layer=dict(look["layer"], emissive=3.0)), spec, m, table, v, picture,
+                              s.seen.astype(numpy.float64)))))
+        self.assertTrue((bright[sign] == 255).all())                                      # 772.5, 352.5, 292.5: white
+        numpy.testing.assert_array_equal(
+            numpy.asarray(stage_layer.as_picture(stage_layer.stage_frame(dict(look, layer=dict(look["layer"], emissive=3.0)),
+                stage_layer.still(dict(look, layer=dict(look["layer"], emissive=3.0)), spec, m, table, v, picture,
+                                  s.seen.astype(numpy.float64)))))[sign][0], [255, 180, 120])  # without it: the red clipped
+
     def test_the_glows_spread_the_bright_and_the_emissive(self):
         look = layer_look(night=1.0, emissive=1.2, emissive_glow=0.5, glow=1.0, glow_threshold=200.0)
         st, s = scene_still(look)

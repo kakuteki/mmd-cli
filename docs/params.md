@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2412（定数 1898・引数 132・関数の既定 382。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 435（retarget 268・rig 70・踊りだけ 109）、記録の出所つき 84。
+- 数: 全部 2413（定数 1899・引数 132・関数の既定 382。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 435（retarget 268・rig 70・踊りだけ 109）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 346 | 13 | 15 | 29 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py | 347 | 13 | 15 | 29 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1474,28 +1474,28 @@
 | COVERED | 0.05 |  | 689 | a neighbourhood where the known pixels' Gaussian weight is under this is faded out |  |  |  |  |  |  |  |  |
 | FLICKER_SLOW | (0.25, 0.8) | Hz | 781 | Hz: the swell of a sign's flicker, drawn per material from this range ... |  |  |  |  | ○ |  |  | rig |
 | FLICKER_FAST | (6.0, 13.0) |  | 782 | ... and the buzz inside it |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 |  | 867 | MMD's frames of the song (mv_world.SONG_FPS) |  |  |  |  |  |  |  |  |
-| __init__(shutter) | 1.0 |  | 880 |  |  |  |  |  |  |  |  |  |
-| __init__(subframes) | 1 |  | 880 |  |  |  |  |  |  |  |  |  |
-| CHECK_STEP | 0.25 | units | 1080 | MMD units: a capsule is checked as balls this far apart along its axis |  | ○ |  |  |  |  |  | retarget |
-| FLOOR_TOLERANCE | 0.06 | units | 1081 | MMD units (about 5 mm): a ball of her body this far into a face reaches into it |  | ○ |  |  |  |  |  | retarget |
-| UNDER | 0.1 / 8.0 | units | 1082 | MMD units (0.1 cm, tools/sink_check.py's UNDER_CM): a shoe lower than the floor by more is in it |  | ○ |  |  |  |  |  | retarget |
-| FLOOR_LOOK | 3.0 |  | 1083 | the floor under a sole is looked for from this far above it ... |  |  |  |  |  |  |  |  |
-| FLOOR_DOWN | 60.0 |  | 1084 | ... down to this far below it (a foot high in a kick still has its floor under it) |  |  |  |  |  |  |  |  |
-| SOLE_BAND | 0.4 | units | 1085 | MMD units: a shoe's vertices this near its lowest are its sole (where it stands) |  | ○ |  |  |  |  |  | retarget |
-| SOLE_POINTS | 24 |  | 1086 | at most this many of them are looked under |  |  |  |  |  |  |  |  |
-| VIEW_REACH | 150.0 |  | 1087 | a camera's sight is checked this far: the inside of a thing it stands in lies nearer |  |  |  |  |  |  |  |  |
-| check_placement(body_margin) | 4.0 |  | 1090 |  |  |  |  |  |  |  |  |  |
-| check_placement(size) | (1280, 720) |  | 1090 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1272 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 1289 |  |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 1290 |  |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1291 |  |  |  |  |  |  |  |  |  |
-| --shutter | 1.0 |  | 1292 |  |  |  |  |  |  |  |  |  |
-| --from | 0 |  | 1304 | the first frame of the song (default 0) |  |  |  | ○ |  |  |  | dance |
-| --size | "1280x720" |  | 1306 |  |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 |  | 872 | MMD's frames of the song (mv_world.SONG_FPS) |  |  |  |  |  |  |  |  |
+| __init__(shutter) | 1.0 |  | 885 |  |  |  |  |  |  |  |  |  |
+| __init__(subframes) | 1 |  | 885 |  |  |  |  |  |  |  |  |  |
+| CHECK_STEP | 0.25 | units | 1085 | MMD units: a capsule is checked as balls this far apart along its axis |  | ○ |  |  |  |  |  | retarget |
+| FLOOR_TOLERANCE | 0.06 | units | 1086 | MMD units (about 5 mm): a ball of her body this far into a face reaches into it |  | ○ |  |  |  |  |  | retarget |
+| UNDER | 0.1 / 8.0 | units | 1087 | MMD units (0.1 cm, tools/sink_check.py's UNDER_CM): a shoe lower than the floor by more is in it |  | ○ |  |  |  |  |  | retarget |
+| FLOOR_LOOK | 3.0 |  | 1088 | the floor under a sole is looked for from this far above it ... |  |  |  |  |  |  |  |  |
+| FLOOR_DOWN | 60.0 |  | 1089 | ... down to this far below it (a foot high in a kick still has its floor under it) |  |  |  |  |  |  |  |  |
+| SOLE_BAND | 0.4 | units | 1090 | MMD units: a shoe's vertices this near its lowest are its sole (where it stands) |  | ○ |  |  |  |  |  | retarget |
+| SOLE_POINTS | 24 |  | 1091 | at most this many of them are looked under |  |  |  |  |  |  |  |  |
+| VIEW_REACH | 150.0 |  | 1092 | a camera's sight is checked this far: the inside of a thing it stands in lies nearer |  |  |  |  |  |  |  |  |
+| check_placement(body_margin) | 4.0 |  | 1095 |  |  |  |  |  |  |  |  |  |
+| check_placement(size) | (1280, 720) |  | 1095 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1277 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1294 |  |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 1295 |  |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1296 |  |  |  |  |  |  |  |  |  |
+| --shutter | 1.0 |  | 1297 |  |  |  |  |  |  |  |  |  |
+| --from | 0 |  | 1309 | the first frame of the song (default 0) |  |  |  | ○ |  |  |  | dance |
+| --size | "1280x720" |  | 1311 |  |  |  |  |  |  |  |  |  |
 
-## mv_look.py（18. 描画と後処理、138）
+## mv_look.py（18. 描画と後処理、139）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1601,42 +1601,43 @@
 | DEFAULT_LOOK.light.grade.shadows | [0.0, 0.0, 0.0] |  | 233 | the grade of the picture under the front text: a curve a channel (r, g, b shifts of -0.2 to 0.2 of the coded values 0.25, 0.5 and 0.75: the shadows, the middle tones, th… |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.light.flicker | 0.0 |  | 234 | the stage of a model: its lit signs flicker by this share of their light; 0 none |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.light.flicker_seed | 7 |  | 235 |  |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 237 |  |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 238 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 | frames | 239 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
-| GRADE_AT | (0.25, 0.5, 0.75) |  | 316 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
-| GRADE_MOST | 0.2 |  | 317 | a shift is -this to this |  |  |  |  |  |  |  |  |
-| FLARE_HEIGHT | 0.42 |  | 599 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 719 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 720 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 720 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 720 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 1040 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 1041 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 1042 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 1043 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 1044 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 1045 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 1086 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 1173 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 1376 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 1425 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 1426 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 1427 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1678 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1693 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1695 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1697 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1699 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1713 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1714 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1724 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1733 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1735 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1737 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.light.core | 0.0 |  | 236 | ... and their light past white spills into their other channels by this share (an overexposed core goes white: the cores of neon and lamps); 0 none |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 239 |  |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 240 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 241 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
+| GRADE_AT | (0.25, 0.5, 0.75) |  | 321 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
+| GRADE_MOST | 0.2 |  | 322 | a shift is -this to this |  |  |  |  |  |  |  |  |
+| FLARE_HEIGHT | 0.42 |  | 607 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
+| ffmpeg_command(flare_frames) | 0 | frames | 727 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 728 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 728 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 728 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 1048 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 1049 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 1050 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 1051 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 1052 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 1053 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 1094 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 1181 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 1384 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 1433 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 1434 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 1435 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1438 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1438 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1438 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1686 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1701 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1703 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1705 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1707 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1721 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1722 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1732 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1741 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1743 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1745 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 

@@ -804,7 +804,7 @@ def flicker_gains(light, materials, t):
 def stage_frame(look, s, state=None, t=None):
     """the stage of a frame (an RGB picture as floats) from its Still and her state (mv_world.Figure.state: her capsules
     for her shadow), in this order: the night's light (the Still; its lit signs flickering at `t` seconds of the song by
-    look light.flicker), her shadow on the surfaces round her, the floor's mirror, the sky, the haze, the blur by depth
+    look light.flicker, their light past white whitening their cores by light.core), her shadow on the surfaces round her, the floor's mirror, the sky, the haze, the blur by depth
     (stage.dof, focused at the camera's look-at point as mv_world focuses), the glow"""
     stage, layer = look["stage"], look["layer"]
     unit = s.view.size[1] / REFERENCE_HEIGHT
@@ -813,6 +813,11 @@ def stage_frame(look, s, state=None, t=None):
     if t is not None and float(light.get("flicker", 0.0)) > 0 and s.emissive.any():
         gains = flicker_gains(light, int(s.surf.material.max()) + 1, float(t))
         img[s.emissive] *= gains[s.surf.material[s.emissive]][:, None]
+    if float(light.get("core", 0.0)) > 0 and s.emissive.any():
+        # (light3, look light.core) a lit sign's light past white spills into its other channels, as an overexposed core
+        # goes white: each channel gains core x (the brightest channel - 255); a sign within white keeps its colour
+        e = img[s.emissive]
+        img[s.emissive] = e + float(light["core"]) * np.clip(e.max(axis=1) - 255.0, 0.0, None)[:, None]
     if state is not None and float(stage["shadow"]) > 0 and getattr(state, "capsules", None):
         world = mv_world()
         plain = s.surf.seen & ~s.emissive

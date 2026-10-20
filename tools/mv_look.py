@@ -232,7 +232,9 @@ DEFAULT_LOOK = {
               # the luma (BT.709)
               "grade": {"shadows": [0.0, 0.0, 0.0], "mids": [0.0, 0.0, 0.0], "highs": [0.0, 0.0, 0.0], "saturation": 1.0},
               "flicker": 0.0,       # the stage of a model: its lit signs flicker by this share of their light; 0 none
-              "flicker_seed": 7},
+              "flicker_seed": 7,
+              "core": 0.0},         # ... and their light past white spills into their other channels by this share (an
+                                    # overexposed core goes white: the cores of neon and lamps); 0 none
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -300,6 +302,9 @@ def merge_look(overrides):
     if look["light"]["flicker"] > 0 and not look["layer"]["on"]:
         raise ValueError("light.flicker makes the lit signs of the stage of a model flicker (tools/stage_layer.py): it needs "
                          "layer.on 1")
+    if look["light"]["core"] > 0 and not look["layer"]["on"]:
+        raise ValueError("light.core whitens the cores of the lit signs of the stage of a model (tools/stage_layer.py): it "
+                         "needs layer.on 1")
     person = look["light"]["person"]
     if person.get("on") and look["stage"]["world"] and look["stage"]["shadow"] > 0:
         # (light3) her key light is MMD's light (tools/mme_shadow.py light-vmd puts it in the camera's motion), and her
@@ -363,6 +368,9 @@ def _merge_light(value):
         raise ValueError("light.flicker is a share of the signs' light, 0 to 1: not %r" % (light["flicker"],))
     if int(light["flicker_seed"]) != light["flicker_seed"]:
         raise ValueError("light.flicker_seed is a whole number, not %r" % (light["flicker_seed"],))
+    if not 0.0 <= light["core"] <= 4.0:
+        raise ValueError("light.core is the share of the signs' light past white spilt into their other channels, 0 to 4: "
+                         "not %r" % (light["core"],))
     return light
 
 

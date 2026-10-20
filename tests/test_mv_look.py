@@ -964,6 +964,17 @@ class NightLightLookTest(unittest.TestCase):
         # MMD's default light on both sides: nothing to say
         mv_look.merge_look({"stage": world, "light": {"person": self.NIGHT}})
 
+    def test_the_core_is_a_share_of_the_signs_light_past_white(self):
+        for bad in ({"core": -0.1}, {"core": 4.5}):
+            with self.assertRaises(ValueError):
+                mv_look.merge_look({"light": bad, "stage": {"world": 1}, "layer": {"on": 1}})
+        # it whitens the cores of the lit signs of the stage of a model (tools/stage_layer.py): without one it is refused
+        with self.assertRaises(ValueError):
+            mv_look.merge_look({"light": {"core": 0.5}, "layer": {"on": 0}})
+        look = mv_look.merge_look({"light": {"core": 0.5}, "stage": {"world": 1}, "layer": {"on": 1}})
+        self.assertEqual(look["light"]["core"], 0.5)
+        self.assertEqual(mv_look.merge_look({})["light"]["core"], 0.0)
+
     def test_the_flicker_is_a_share_of_the_signs_light(self):
         for bad in ({"flicker": -0.1}, {"flicker": 1.5}, {"flicker_seed": 1.5}, {"glitter": 1}):
             with self.assertRaises(ValueError, msg=bad):
