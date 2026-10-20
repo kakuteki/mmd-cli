@@ -1475,6 +1475,16 @@ $log = $env:STUB_LOG + '.' + $PID
 Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
 """ + STAGE_STUB + r"""
 if ($args[0] -eq '-m') {
+    if ($env:STUB_MMD_OVERLAP) {
+        # (render12) the MMD batches of the run under way at once: a mark in the folder while this one runs; the marks are
+        # counted when it starts and when it ends (two that overlap: one of them starts while the other's mark is there)
+        $mark = Join-Path $env:STUB_MMD_OVERLAP ('run_' + $PID)
+        Set-Content -LiteralPath $mark -Value 'running'
+        Add-Content -LiteralPath (Join-Path $env:STUB_MMD_OVERLAP ('seen_' + $PID)) -Value @(Get-ChildItem -LiteralPath $env:STUB_MMD_OVERLAP -Filter 'run_*').Count
+        Start-Sleep -Milliseconds 2000
+        Add-Content -LiteralPath (Join-Path $env:STUB_MMD_OVERLAP ('seen_' + $PID)) -Value @(Get-ChildItem -LiteralPath $env:STUB_MMD_OVERLAP -Filter 'run_*').Count
+        Remove-Item -LiteralPath $mark
+    }
     if ($env:STUB_SLOW -and (($args -join ' ') -like ('*' + $env:STUB_SLOW + '*'))) { Start-Sleep -Seconds 3 }
     if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) { $global:LASTEXITCODE = 1; return }
     $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
@@ -1523,6 +1533,19 @@ Set-Content -LiteralPath $args[-1] -Value $sum
 $global:LASTEXITCODE = 0
 """,
 }
+
+
+class MmdOverlap(object):
+    """what the stand-in batches of STUB_MMD_OVERLAP counted (render12)"""
+
+    @staticmethod
+    def seen(folder):
+        out = []
+        for name in sorted(os.listdir(folder)):
+            if name.startswith("seen_"):
+                with open(os.path.join(folder, name), encoding="utf-8-sig") as f:
+                    out += [int(l) for l in f if l.strip()]
+        return out
 
 
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
@@ -1592,6 +1615,19 @@ class WorkersDriverTest(unittest.TestCase):
                 # chunk 00 takes 3 s: the others are rendered meanwhile by another process
                 busy = [pid for pid, made in calls.items() if self.batches(made)]
                 self.assertGreaterEqual(len(busy), 2, calls)
+
+    def test_with_mmd_limit_the_workers_never_run_two_mmd_at_once(self):
+        # (mmd_limit, render12) two workers would count the same MikuMikuDance and start two: their batches go one at a time
+        self.write(mmd_limit=99)
+        marks = os.path.join(self.tmp, "marks")
+        os.makedirs(marks)
+        code, text, calls = self.run_driver(STUB_MMD_OVERLAP=marks)
+        self.assertEqual(code, 0, text)
+        seen = MmdOverlap.seen(marks)
+        self.assertEqual(len(seen), 3 * 2, seen)                       # 3 chunks, 2 counts each
+        self.assertEqual(max(seen), 1, (seen, text))
+        self.assertEqual(self.rendered(calls), ["t_00", "t_01", "t_02"])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
 
     def test_the_layers_are_prepared_once_and_every_chunk_folds_with_them(self):
         self.write()
@@ -2158,6 +2194,22 @@ class StageWorkersDriverTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual(self.steps(self.every(calls)), [])
 
+    def test_with_mmd_limit_the_workers_never_run_two_mmd_at_once(self):
+        # (mmd_limit) the batches of the stage and of her, in both workers, one at a time: each stand-in batch marks itself
+        # for 2 s and counts the marks when it starts and ends (the limit is far above the MikuMikuDance of this machine)
+        self.write(mmd_limit=99)
+        marks = os.path.join(self.tmp, "marks")
+        os.makedirs(marks)
+        code, text, calls = self.run_driver(STUB_MMD_OVERLAP=marks)
+        self.assertEqual(code, 0, text)
+        seen = MmdOverlap.seen(marks)
+        self.assertEqual(len(seen), 3 * 2 * 2, seen)                   # 3 chunks, 2 batches each, 2 counts each
+        self.assertEqual(max(seen), 1, (seen, text))
+        self.assertGreaterEqual(len([pid for pid, made in calls.items() if self.batches(made)]), 2)
+        self.assertIn("waiting for the MMD of another worker of this run", text)
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
     def test_a_free_space_beyond_the_disk_stops_the_run_before_any_mmd(self):
         self.write(keep_free_gb=10 ** 9)                      # an exabyte
         code, text, calls = self.run_driver()
@@ -2199,12 +2251,41 @@ class MmdLimitPlanTest(unittest.TestCase):
             runs = [i for i, l in enumerate(lines) if " -m mmd_cli --out " in l]
             self.assertEqual(len(runs), batches, (plan.get("stage_mmd"), workers))
             for i in runs:
-                waits = [j for j, l in enumerate(lines[:i]) if l.startswith("Wait-Mmd ")]
+                # one worker waits (Wait-Mmd); a worker of --workers takes the run's lock and waits in it (Lock-Mmd)
+                waits = [j for j, l in enumerate(lines[:i]) if l.startswith("Wait-Mmd " if workers == 1 else "Lock-Mmd ")]
                 self.assertTrue(waits, lines[i])
                 # the wait comes after the MMD before it (each MMD waits for its own turn)
                 self.assertTrue(all(j > k for k in runs if k < i for j in waits[-1:]), (lines[i], waits, runs))
             self.assertIn("$mmdLimit = 3", text)
         self.assertNotIn("Wait-Mmd", self.driver(dict(PLAN)))
+
+    def test_the_workers_hold_one_lock_from_the_count_until_their_mmd_quits(self):
+        # two workers that count the MikuMikuDance at once see the same number and would both start one (render12 saw 2 run,
+        # then 4: the two workers of r12g woke from their wait together).  A worker takes the run's lock (mmd.lock) before it
+        # counts and keeps it until its MMD has quit; it never waits for the disk while it holds it (Reserve waits for the
+        # chunks under way, whose MMD may wait for the lock)
+        for plan, batches in ((dict(PLAN, mmd_limit=3), 1), (dict(CITY_PLAN, mmd_limit=3), 2)):
+            with self.subTest(stage=bool(plan.get("stage_mmd"))):
+                text = self.driver(plan, 2)
+                self.assertIn("function Lock-Mmd(", text)
+                self.assertIn("function Unlock-Mmd", text)
+                self.assertIn("'mmd.lock'", text)
+                body = text[text.index("function Run-Chunk("):]
+                body = body[:body.index("\n}\n")]
+                lines = [l.strip() for l in body.splitlines()]
+                runs = [i for i, l in enumerate(lines) if " -m mmd_cli --out " in l]
+                self.assertEqual(len(runs), batches)
+                for i in runs:
+                    j = [n for n, l in enumerate(lines[:i]) if l.startswith("Lock-Mmd ")][-1]
+                    held = lines[j:i]
+                    self.assertFalse([l for l in held if "Reserve " in l or l.startswith("Unlock-Mmd")], held)
+                    after = lines[i + 1:]
+                    k = [n for n, l in enumerate(after) if l.startswith("Unlock-Mmd")][0]
+                    # the lock goes once the batch is over (a failed batch's MMD stopped first), before the run can stop
+                    self.assertFalse([l for l in after[:k] if "STOP" in l or "exit " in l or "Lock-Mmd " in l], after[:k + 1])
+        # one worker, or no limit: no lock (the scripts of before)
+        for plan, workers in ((dict(PLAN, mmd_limit=3), 1), (dict(CITY_PLAN, mmd_limit=3), 1), (dict(CITY_PLAN), 2), (dict(PLAN), 2)):
+            self.assertNotIn("Lock-Mmd", self.driver(plan, workers))
 
 
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")

@@ -1399,14 +1399,14 @@
 | disk_summary(workers) | 1 |  | 227 |  |  |  |  |  |  |  |  |  |
 | _look_check(shutter) | 0.5 |  | 544 |  |  |  |  |  |  |  |  |  |
 | _look_check(subframes) | 1 |  | 544 |  |  |  |  |  |  |  |  |  |
-| _chunk_call(workers) | 1 |  | 884 |  |  |  |  |  |  |  |  |  |
-| write(workers) | 1 |  | 1259 |  |  |  |  |  |  |  |  |  |
-| --lead | 120 | frames | 1326 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
-| --fps | 240 |  | 1327 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
-| --shutter | 0.5 |  | 1331 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
-| --tag | "final" |  | 1334 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
-| --workers | 1 |  | 1335 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1337 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
+| _chunk_call(workers) | 1 |  | 913 |  |  |  |  |  |  |  |  |  |
+| write(workers) | 1 |  | 1288 |  |  |  |  |  |  |  |  |  |
+| --lead | 120 | frames | 1355 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
+| --fps | 240 |  | 1356 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
+| --shutter | 0.5 |  | 1360 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
+| --tag | "final" |  | 1363 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
+| --workers | 1 |  | 1364 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1366 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
 ## mv_world.py（18. 描画と後処理、54）
 

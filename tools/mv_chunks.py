@@ -686,6 +686,27 @@ WAIT_MMD = ["function Wait-Mmd($name, [string[]]$clear) {",
             "        Start-Sleep -Milliseconds ([int]($mmdPoll * 1000))",
             "    }",
             "}"]
+# (mmd_limit with --workers, render12) two workers that counted at once saw the same number and both started an MMD (r12g:
+# 2 ran, then 4).  A worker opens mmd.lock in the folder of the run for itself before it counts and keeps it until its MMD has
+# quit, so the run has one MMD at a time.  It takes the lock after its disk is reserved and never waits for the disk while it
+# holds it (Reserve waits for the chunks under way, whose MMD may be waiting for the lock)
+LOCK_MMD = ["function Lock-Mmd($name, [string[]]$clear) {",
+            "    # (mmd_limit, --workers) the run's MMD one at a time: mmd.lock for this worker alone (FileShare None), then the count",
+            "    # (Wait-Mmd); Unlock-Mmd after the MMD has quit.  It waits for the lock while another worker's MMD runs",
+            "    $waited = [Diagnostics.Stopwatch]::StartNew()",
+            "    $told = $false",
+            "    while ($true) {",
+            "        $script:mmdHold = Hold (Join-Path $run 'mmd.lock')",
+            "        if ($script:mmdHold) { break }",
+            "        if (-not $told) { '{0}: waiting for the MMD of another worker of this run' -f $name; $told = $true }",
+            "        Start-Sleep -Milliseconds 200",
+            "    }",
+            "    if ($told) { '{0}: the other worker''s MMD has quit, going on after {1:N0} s' -f $name, $waited.Elapsed.TotalSeconds }",
+            "    Wait-Mmd $name $clear",
+            "}",
+            "function Unlock-Mmd {",
+            "    if ($script:mmdHold) { $script:mmdHold.Close(); $script:mmdHold = $null }",
+            "}"]
 
 
 def _stage_setup_lines(plan):
@@ -797,6 +818,13 @@ def _run_chunk_lines(plan, workers):
     stop = ["    if ($LASTEXITCODE -ne 0) { Stop-Launched $json }"] if plan.get("self_shadow") == "soft" else []
     # (mmd_limit) every MMD waits first while as many MikuMikuDance run as the plan allows; the disk is measured after the wait
     wait = ["    Wait-Mmd $name @()"] if plan.get("mmd_limit") is not None else []
+    # (mmd_limit with --workers) the disk is reserved first, then the run's lock is taken and the count made in it (Lock-Mmd),
+    # the disk is checked once more after the wait (with a free space kept), and the lock goes once the MMD has quit
+    locked = workers and plan.get("mmd_limit") is not None
+    unlock = ["    Unlock-Mmd"] if locked else []
+    recheck = ["    Need-Still $name @()"] if locked and keep else []
+    if locked:
+        free, wait = free + ["    Lock-Mmd $name @()"] + recheck, []
     signature = "function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold"
     stage, cleared, drawn = [], [], []
     if staged:
@@ -824,15 +852,16 @@ def _run_chunk_lines(plan, workers):
                  ["    $said = Invoke-Native %s @sbatch" % py,
                   "    if ($LASTEXITCODE -ne 0) { '{0} STOP: tools/stage_layer.py could not write the batch of the stage ({1}):' -f $name, (Why $LASTEXITCODE); $said; exit 1 }",
                   "    Invoke-Native %s -m mmd_cli --out $sjson batch $stxt | Out-Null" % py,
-                  "    if ($LASTEXITCODE -ne 0) { $code = $LASTEXITCODE; Stop-Stage $sjson; $global:LASTEXITCODE = $code }",
-                  "    if ($LASTEXITCODE -ne 0) { '{0} STOP: MMD could not draw the stage ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $sjson; exit 1 }",
+                  "    if ($LASTEXITCODE -ne 0) { $code = $LASTEXITCODE; Stop-Stage $sjson; $global:LASTEXITCODE = $code }"]
+                 + unlock +
+                 ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: MMD could not draw the stage ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $sjson; exit 1 }",
                   "    $said = Invoke-Native %s @sunpack" % py,
                   "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the AVI of the stage could not be unpacked ({1}); it is kept: {2}' -f $name, (Why $LASTEXITCODE), $savi; $said; exit 1 }",
                   "    $got = @(Get-ChildItem -LiteralPath $pics -Filter 'mmd_*.png' -File -ErrorAction SilentlyContinue).Count",
                   "    if ($got -ne $shown) { '{0} STOP: {1} pictures of the stage, want {2}; the AVI of the stage is kept: {3}' -f $name, $got, $shown, $savi; exit 1 }",
                   "    try { Remove-Item -LiteralPath $savi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $savi, $_ }",
                   "    '{0}: the stage drawn, {1} pictures, {2} s' -f $name, $got, %s" % clock]
-                 + ["    Wait-Mmd $name @($pics)"] * len(wait) + again)
+                 + ["    Wait-Mmd $name @($pics)"] * len(wait) + (["    Lock-Mmd $name @($pics)"] if locked else []) + again)
         drawn = ["    '{0}: her AVI drawn, {1} s' -f $name, %s" % clock]
         free, wait = [], []
     after = ["    foreach ($done in @($pics, $work)) {",
@@ -865,7 +894,7 @@ def _run_chunk_lines(plan, workers):
              "    }",
              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }"]
             + stage + wait + free +
-            ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py] + stop +
+            ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py] + stop + unlock +
             ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }"]
             + drawn +
             ["    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
@@ -1017,7 +1046,7 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "}"]
     lines += _floor_reserve_lines() if keep else _reserve_lines()
     if plan.get("mmd_limit") is not None:
-        lines += WAIT_MMD
+        lines += WAIT_MMD + LOCK_MMD
     lines += ["function Release($name) {",
               "    $lock = Lock-Disk",
               "    try { Remove-Item -LiteralPath (Join-Path $run ('busy_' + $name)) -Force -ErrorAction SilentlyContinue } finally { $lock.Close() }",
