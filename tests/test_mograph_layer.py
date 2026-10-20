@@ -114,6 +114,7 @@ class SectionTest(unittest.TestCase):
         for bad in ({"on": 2}, {"on": True}, {"punch": {"amonut": 0.1}}, {"punch": {"amount": 0.9}},
                     {"punch": {"rise": 0}}, {"punch": {"rise": 1.5}}, {"punch": {"centre": [0.5]}},
                     {"punch": {"centre": [1.2, 0.5]}}, {"shake": {"hz": 20}}, {"flash": {"colour": [300, 0, 0]}},
+                    {"flash": {"light": -0.1}}, {"flash": {"light": 5.0}},
                     {"fade": {"hold": -2}}, {"glitch": {"bands": -1}}, {"particles": {"box": [0, 0, 0, 1, -1, 1]}},
                     {"events": [{"kind": "zoom", "t": 1.0}]}, {"events": [{"kind": "punch", "t": -1.0}]},
                     {"events": [{"kind": "punch", "t": 1.0, "strength": 0.3}]}, {"events": [{"kind": "flash"}]},
@@ -166,6 +167,14 @@ class PlanTest(unittest.TestCase):
     def test_a_flash_on_the_first_beat_of_every_title_word_and_nowhere_else(self):
         # (the references' flashes are 0.8 a minute, and of those the editor's white ones fewer: typorev's targets)
         self.assertEqual(self.frames("flash"), sorted(fr(h["t"]) for h in STRUCTURE["hooks"]))
+
+    def test_the_title_words_flash_with_light_not_a_veil(self):
+        # (the references' 51 flashes leave the dark of the picture where it was and raise its spread, 1.16 [1.00, 1.59] times;
+        # a veil towards white lifted the dark of the night more than the mean and lowered the spread to 0.78: a grey haze.
+        # review mographrev 2026-10-21)
+        for e in self.kind("flash"):
+            self.assertGreater(e["light"], 0.0, e)
+            self.assertEqual(e["strength"], 0.0, e)
 
     def test_a_punch_on_every_title_word_every_chorus_and_the_pre_choruses_only(self):
         punches = self.frames("punch")
@@ -259,7 +268,7 @@ class PlanTest(unittest.TestCase):
     def test_the_level_scales_the_strength_of_punches_shakes_and_flashes(self):
         soft = ML.events_of(ML.plan(copy.deepcopy(STRUCTURE), level=0.5))
         for a, b in zip(self.events, soft):
-            key = {"punch": "amount", "shake": "amount", "flash": "strength"}.get(a["kind"])
+            key = {"punch": "amount", "shake": "amount", "flash": "light"}.get(a["kind"])
             if key:
                 self.assertAlmostEqual(b[key], a[key] * 0.5, places=4)
 
@@ -361,6 +370,14 @@ class GraphTest(unittest.TestCase):
         flare_punch, persp, glitch, lens, veil, front = (g.index(p) for p in (
             "eval=frame:flags=bilinear", "perspective=", "geq=r='r(", "vignette=", "s=1x1", "overlay=x=16:y=140"))
         self.assertTrue(flare_punch < persp < glitch < lens < veil < front, (flare_punch, persp, glitch, lens, veil, front))
+
+    def test_a_flash_of_light_goes_after_the_lens_under_the_front_text(self):
+        look = {"lens": {"vignette": 0.3, "grain": 3}, "mograph": {"on": 1, "events": [
+            {"kind": "flash", "t": 1.0, "strength": 0.0, "light": 0.8}, {"kind": "fade", "t": 1.2}]}}
+        g = self.graph(look)
+        lens, light, fade, front = (g.index(p) for p in ("vignette=", "geq=r='min(255,r(X,Y)*(1+(", "s=1x1", "overlay=x=16:y=140"))
+        self.assertTrue(lens < light < fade < front, (lens, light, fade, front))
+        self.assertEqual(g.count("s=1x1"), 1)                            # the fade's veil only: the flash draws no veil
 
     def test_an_event_outside_the_excerpt_adds_nothing(self):
         look = {"mograph": {"on": 1, "events": [{"kind": "punch", "t": 5.0}, {"kind": "flash", "t": 5.0}]}}
@@ -538,6 +555,36 @@ class RenderTest(unittest.TestCase):
             quarters = [float(luma(frames[k])[r, c].mean() - luma(frames[10])[r, c].mean())
                         for r in (slice(0, 90), slice(90, 180)) for c in (slice(0, 100), slice(220, 320))]
             self.assertLess(max(quarters) - min(quarters), 0.02, (k, quarters))
+
+    def test_a_flash_of_light_lifts_the_middle_keeps_black_and_white_and_falls_as_its_envelope(self):
+        frames = self.frames("light", [{"kind": "flash", "t": 0.5, "strength": 0.0, "light": 1.0, "frames": 6}])
+        plate = [float(f[10:170, 10:100].mean()) for f in frames]
+        box = [float(f[60:120, 140:180].mean()) for f in frames]
+        a = plate[10]
+        for x in range(-1, 8):
+            want = a + ML.flash_value(x, 1.0, 6) * a * (255.0 - a) / 255.0             # the grey screened with itself
+            self.assertAlmostEqual(plate[15 + x], want, delta=3, msg=("plate", x))
+            self.assertGreater(box[15 + x], 250, x)                       # white stays white
+        look = dict(picture_look(events=[{"kind": "flash", "t": 0.5, "strength": 0.0, "light": 1.0, "frames": 6}]),
+                    plate={"base": [4, 4, 4], "haze": [0, 0, 0], "pool": [0, 0, 0], "vignette": 0})
+        dark = read_frames(render(self.folder, "light_dark", look, self.still))
+        self.assertLess(float(dark[15][10:170, 10:100].mean()) - float(dark[10][10:170, 10:100].mean()), 6)   # black stays dark
+
+    def test_a_coloured_flash_of_light_lifts_its_own_colour(self):
+        frames = self.frames("light_red", [{"kind": "flash", "t": 0.5, "strength": 0.0, "light": 1.0, "frames": 6,
+                                            "colour": [255, 0, 0]}])
+        before, lit = frames[10][:, :100].mean(axis=(0, 1)), frames[15][:, :100].mean(axis=(0, 1))
+        self.assertAlmostEqual(lit[0], before[0] * (1 + (255 - before[0]) / 255.0), delta=4)      # red screened with itself
+        self.assertAlmostEqual(lit[2], before[2], delta=3)                                         # blue as it was
+
+    def test_a_flash_of_light_lifts_every_quarter_alike_behind_the_lens(self):
+        look = dict(picture_look(events=[{"kind": "flash", "t": 0.5, "strength": 0.0, "light": 0.8, "frames": 6}]),
+                    lens={"vignette": 0.3, "grain": 3})
+        frames = read_frames(render(self.folder, "light_lens", look, self.still))
+        for k in range(15, 21):
+            quarters = [float(luma(frames[k])[r, c].mean() / luma(frames[12])[r, c].mean())
+                        for r in (slice(0, 90), slice(90, 180)) for c in (slice(0, 100), slice(220, 320))]
+            self.assertLess(max(quarters) - min(quarters), 0.03, (k, quarters))
 
     def test_a_flash_lifts_every_quarter_alike_behind_the_lens(self):
         # (b32007d: the veil drawn 2 x 2 left the lower left quarter unlit from the flash's second frame on when the lens's

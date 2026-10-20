@@ -27,8 +27,9 @@ The section (DEFAULTS: the look's values override them; an unknown name or a val
               within `rise` frames of the song and eases back over `fall`
   shake       the picture jolts by `amount` px (of a 720 line picture) and rings at `hz` for `frames`, dying away; it is
               zoomed in as far as the jolt reaches, so that its edges never show
-  flash       the picture lifts towards `colour` by `strength` (0..1 of the way) on its first frame and falls back over
-              `frames`
+  flash       the picture lifts towards `colour` by `strength` (0..1 of the way: a veil) and is screened with itself by
+              `light` (a + light x a (1 - a) a channel, times `colour` / 255, clipped: light, which leaves the black black and
+              the white white and lifts the middle) on its first frame, and falls back over `frames`
   fade        the picture goes to `colour` over `out` frames, stays `hold` (-1: to the end) and comes back over `back`
   dissolve    the picture of the frame before it stays and fades out over the moving picture over `frames`
   glitch      for `frames` frames red and blue part by twice `split` px and `bands` bands of the picture slide by up to `shift`
@@ -70,7 +71,7 @@ DEFAULTS = {
     "shake": {"amount": 5.0, "frames": 10, "hz": 9.0},
     # (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references'
     # last 0.119 s, 3.6 frames.  7 gave 2 on window A of the previews)
-    "flash": {"strength": 0.27, "frames": 9, "colour": [255, 255, 255]},
+    "flash": {"strength": 0.27, "frames": 9, "colour": [255, 255, 255], "light": 0.0},
     "fade": {"out": 12, "hold": 2, "back": 15, "colour": [0, 0, 0]},
     "dissolve": {"frames": 12},
     # (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches;
@@ -87,6 +88,7 @@ DEFAULTS = {
     "events": [],
 }
 LIMITS = {"punch.amount": (0.0, 0.5), "shake.amount": (0.0, 40.0), "shake.hz": (0.1, 14.9), "flash.strength": (0.0, 1.0),
+          "flash.light": (0.0, 4.0),
           "glitch.split": (0.0, 40.0), "glitch.shift": (0.0, 200.0), "particles.brightness": (0.0, 4.0),
           "particles.size": (0.05, 10.0), "particles.front": (0.0, 1.0), "particles.clear": (0.0, 100.0)}
 WHOLE = {"punch.rise": 1, "punch.fall": 1, "shake.frames": 1, "flash.frames": 1, "fade.out": 0, "fade.hold": -1,
@@ -104,6 +106,14 @@ CUT_LEAD = 0.077                 # s: a change of picture at a section's start c
                                  # references' cuts do (five of nine, [0.034, 0.108]: typorev)
 # the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the interludes
 PLAN_PARTICLES = {"specks": 100, "lights": 24}
+# the plan's flashes are of light, not a veil: the references' 51 flashes (typorev's events of the nine videos) leave the dark of
+# the picture where it was (its darkest 5 % lifted 0.0 [0.0, 0.004] of the mean's lift) and raise the spread of Y' 1.16 [1.00,
+# 1.59] times; the veil of 0.27 lifted the night's dark 1.12-1.22 times the mean and lowered the spread to 0.76-0.79, a grey
+# haze.  The picture screened with itself by 1.1 lifts the mean of the title words' frames by about 0.16 (the references' median
+# lift 0.162), the dark 0.37-0.61 of that, the spread 1.15-1.21 times and the brightest 5 % by 0.20-0.28 (the references' 0.076
+# [0.014, 0.24]), and blows 2-4 % of the picture to white; a gain (times 1.85) blew 4-8 %, her white dress and face (review
+# mographrev 2026-10-21: ref_flash, flash_model2)
+FLASH_LIGHT = 1.1
 PLAN_BUSY = 1.3
 
 
@@ -525,15 +535,19 @@ class Graph:
         1 x 1 and scaled up: its alpha is one number a frame.  Drawn 2 x 2, geq of ffmpeg 8.0 on hinata left one of the four
         pixels unlit from the flash's second frame on, inside mv_look's graph: a quarter of the picture did not flash)"""
         w, h = self.size
+        label = self._light(parts, label)
+
+        def veiled(e):
+            return e["kind"] == "fade" or e["strength"] > 0
         groups = []
         for kind in ("fade", "flash"):
             colours = []
             for e in self.events:
-                if e["kind"] == kind and list(e["colour"]) not in colours:
+                if e["kind"] == kind and veiled(e) and list(e["colour"]) not in colours:
                     colours.append(list(e["colour"]))
             groups += [(kind, c) for c in colours]
         for i, (kind, colour) in enumerate(groups):
-            mine = [e for e in self.events if e["kind"] == kind and list(e["colour"]) == colour]
+            mine = [e for e in self.events if e["kind"] == kind and veiled(e) and list(e["colour"]) == colour]
             terms = []
             for e in mine:
                 X = self._x(e, "N")
@@ -548,6 +562,24 @@ class Graph:
                       "[%s][mg_v%d]overlay=format=gbrp:shortest=1:enable='%s'[mg_veiled%d]" % (label, i, self._enable(mine), i)]
             label = "mg_veiled%d" % i
         return label
+
+    def _light(self, parts, label):
+        """the flashes of light: every channel screened with itself, a + k a (1 - a) with k the light x the envelope x colour /
+        255, clipped (before the veils, so that a fade to black stays black)"""
+        mine = [e for e in self.events if e["kind"] == "flash" and e["light"] > 0]
+        if not mine:
+            return label
+        terms = [[], [], []]
+        for e in mine:
+            envelope = _flash_expr(self._x(e, "N"), e["light"], song_span(e["frames"], self.fps))
+            for c in range(3):
+                share = float(e["colour"][c]) / 255.0
+                if share > 0:
+                    terms[c].append(envelope if share == 1.0 else "%s*%s" % (_n(share), envelope))
+        k = ["+".join(t) or "0" for t in terms]
+        parts.append("[%s]geq=r='min(255,r(X,Y)*(1+(%s)*(255-r(X,Y))/255))':g='min(255,g(X,Y)*(1+(%s)*(255-g(X,Y))/255))':"
+                     "b='min(255,b(X,Y)*(1+(%s)*(255-b(X,Y))/255))':enable='%s'[mg_light]" % (label, k[0], k[1], k[2], self._enable(mine)))
+        return "mg_light"
 
 
 def long_argv(argv, path):
@@ -821,7 +853,9 @@ def frame_time(frame):
 def plan(structure, level=1.0, particles=None):
     """the "mograph" section placed on the song (see the rules in the code; every event says why in its note):
 
-    * a white flash and a punch on the first beat of each title word (the hook: light and text change there too);
+    * a flash of light (FLASH_LIGHT: the picture screened with itself, its black left black and its white white, as the
+      references' flashes leave the dark; not a veil towards white) and a punch on the first beat of each title word (the
+      hook: light and text change there too);
     * a punch on the first beat of each chorus and of each pre-chorus (B): with the title words about 2 a minute, as the
       references' editors punch (typorev: 2.5 [1.7, 5.1] a minute measured, most of them the camera's own zooms);
     * a shake where the dancer comes down from a jump (the landings) and on the strongest accents of the song that the dance
@@ -853,7 +887,7 @@ def plan(structure, level=1.0, particles=None):
     punch = DEFAULTS["punch"]
     punch_len = punch["rise"] + punch["fall"]
     for h in structure["hooks"]:
-        add("flash", h["t"], "title word %d (beat %d)" % (h["n"], h["beat"]))
+        add("flash", h["t"], "title word %d (beat %d): light, not a veil" % (h["n"], h["beat"]), strength=0.0, light=FLASH_LIGHT)
         if not near_skirt(h["t"], punch_len):
             add("punch", h["t"], "title word %d (beat %d)" % (h["n"], h["beat"]), amount=0.12)
     for sid in ("chorus1", "chorus2", "chorus3"):
@@ -910,8 +944,8 @@ def plan(structure, level=1.0, particles=None):
     if level != 1.0:
         for e in events:
             if e["kind"] in ("punch", "shake", "flash"):
-                key = {"punch": "amount", "shake": "amount", "flash": "strength"}[e["kind"]]
-                e[key] = round(float(e.get(key, DEFAULTS[e["kind"]][key])) * level, 4)
+                for key in {"punch": ("amount",), "shake": ("amount",), "flash": ("strength", "light")}[e["kind"]]:
+                    e[key] = round(float(e.get(key, DEFAULTS[e["kind"]][key])) * level, 4)
     section["events"] = sorted(events, key=lambda e: (e["t"], KINDS.index(e["kind"])))
     return merge({k: v for k, v in section.items() if v != DEFAULTS[k] or k == "on"})
 

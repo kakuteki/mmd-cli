@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2475（定数 1954・引数 136・関数の既定 385。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 440（retarget 271・rig 69・踊りだけ 112）、記録の出所つき 84。
+- 数: 全部 2478（定数 1957・引数 136・関数の既定 385。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 440（retarget 271・rig 69・踊りだけ 112）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py | 398 | 16 | 14 | 32 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py | 401 | 16 | 14 | 32 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1733,88 +1733,91 @@
 | KEY.noise | 1 |  | 27 |  |  |  |  |  |  |  |  |  |
 | KEY.noise_enabled | 0 |  | 27 |  |  |  |  |  |  |  |  |  |
 
-## mograph_layer.py（18. 描画と後処理、78）
+## mograph_layer.py（18. 描画と後処理、81）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SONG_FPS | 30 | frames | 64 | the frames the section counts in: MMD's, of the song (mv_look.SONG_FPS) |  |  |  |  |  |  |  |  |
-| REFERENCE_HEIGHT | 720.0 |  | 65 | lengths are pixels of a 720 line picture (mv_look) |  |  |  |  |  |  |  |  |
-| DEFAULTS.on | 0 |  | 68 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.punch.amount | 0.10 |  | 69 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.punch.centre | [0.5, 0.45] |  | 69 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.punch.fall | 10 |  | 69 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.punch.rise | 2 |  | 69 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.shake.amount | 5.0 |  | 70 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.shake.frames | 10 |  | 70 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.shake.hz | 9.0 |  | 70 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.flash.colour | [255, 255, 255] | frames | 73 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
-| DEFAULTS.flash.frames | 9 | frames | 73 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
-| DEFAULTS.flash.strength | 0.27 | frames | 73 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
-| DEFAULTS.fade.back | 15 |  | 74 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.fade.colour | [0, 0, 0] |  | 74 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.fade.hold | 2 |  | 74 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.fade.out | 12 |  | 74 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.dissolve.frames | 12 |  | 75 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.glitch.bands | 3 |  | 78 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
-| DEFAULTS.glitch.frames | 2 |  | 78 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
-| DEFAULTS.glitch.seed | 5 |  | 78 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
-| DEFAULTS.glitch.shift | 40.0 |  | 78 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
-| DEFAULTS.glitch.split | 14.0 |  | 78 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
-| DEFAULTS.particles.brightness | 1.0 |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.drift | [0.25, 0.06, 0.0] |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.lights | 0 |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.seed | 9 |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.size | 1.0 |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.specks | 0 |  | 83 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.box | [-34.0, 0.5, -16.0, 34.0, 30.0, 14.0] |  | 84 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.light_box | [-70.0, 0.5, 40.0, 70.0, 22.0, 150.0] |  | 84 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.clear | 9.0 |  | 85 |  |  |  |  |  |  |  |  |  |
-| DEFAULTS.particles.front | 0.35 |  | 85 |  |  |  |  |  |  |  |  |  |
-| LIMITS.flash.strength | (0.0, 1.0) |  | 89 |  |  |  |  |  |  |  |  |  |
-| LIMITS.punch.amount | (0.0, 0.5) |  | 89 |  |  |  |  |  |  |  |  |  |
-| LIMITS.shake.amount | (0.0, 40.0) |  | 89 |  |  |  |  |  |  |  |  |  |
-| LIMITS.shake.hz | (0.1, 14.9) |  | 89 |  |  |  |  |  |  |  |  |  |
-| LIMITS.glitch.shift | (0.0, 200.0) |  | 90 |  |  |  |  |  |  |  |  |  |
-| LIMITS.glitch.split | (0.0, 40.0) |  | 90 |  |  |  |  |  |  |  |  |  |
-| LIMITS.particles.brightness | (0.0, 4.0) |  | 90 |  |  |  |  |  |  |  |  |  |
-| LIMITS.particles.clear | (0.0, 100.0) |  | 91 |  |  |  |  |  |  |  |  |  |
-| LIMITS.particles.front | (0.0, 1.0) |  | 91 |  |  |  |  |  |  |  |  |  |
-| LIMITS.particles.size | (0.05, 10.0) |  | 91 |  |  |  |  |  |  |  |  |  |
-| WHOLE.fade.hold | -1 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.fade.out | 0 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.flash.frames | 1 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.punch.fall | 1 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.punch.rise | 1 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.shake.frames | 1 |  | 92 |  |  |  |  |  |  |  |  |  |
-| WHOLE.dissolve.frames | 1 |  | 93 |  |  |  |  |  |  |  |  |  |
-| WHOLE.fade.back | 0 |  | 93 |  |  |  |  |  |  |  |  |  |
-| WHOLE.glitch.bands | 0 |  | 93 |  |  |  |  |  |  |  |  |  |
-| WHOLE.glitch.frames | 1 |  | 93 |  |  |  |  |  |  |  |  |  |
-| WHOLE.glitch.seed | 0 |  | 93 |  |  |  |  |  |  |  |  |  |
-| WHOLE.particles.lights | 0 |  | 94 |  |  |  |  |  |  |  |  |  |
-| WHOLE.particles.seed | 0 |  | 94 |  |  |  |  |  |  |  |  |  |
-| WHOLE.particles.specks | 0 |  | 94 |  |  |  |  |  |  |  |  |  |
-| MARGIN | 1.15 |  | 95 | a shake's zoom covers this many times its reach (bilinear sampling needs a pixel more) |  |  |  |  |  |  |  |  |
-| FRONT_GAP | 2.0 | units | 96 | MMD units: a particle this much nearer the camera than the dancer's place is in front |  | ○ |  | ○ |  |  |  | retarget |
-| NEAR_FADE | (3.0, 8.0) | units | 97 | MMD units from the eye: none nearer than the first, all of it past the second |  | ○ |  |  |  |  |  | retarget |
-| EDGE_FADE | 3.0 | units | 98 | MMD units: particles fade within this of the box's faces (they wrap round there) |  | ○ |  |  |  |  |  | retarget |
-| SPRITE_LEAST | 0.6 | px | 99 | px: the least spread (a standard deviation) of a particle on the picture |  |  |  |  |  |  |  |  |
-| BUSY_RAMP | 1.0 | s | 100 | s: a busy span's level comes and goes over this |  |  |  |  |  |  |  |  |
-| DEFAULT_SHAKE_RATIO | (0.6, 1.37) |  | 101 | the vertical jolt: this share of the horizontal one, ringing this many times as fast |  |  |  |  |  |  |  |  |
-| ARGV_MOST | 30000 |  | 102 | characters: a longer ffmpeg command goes past Windows' command line (32767) |  |  |  |  |  |  |  |  |
-| CUT_LEAD | 0.077 | s | 103 | s: a change of picture at a section's start comes this much before its first beat, as the references' cuts do (five of nine, [0.034, 0.108]: typorev) |  |  |  | ○ |  |  |  | dance |
-| PLAN_PARTICLES.lights | 24 |  | 106 | references' cuts do (five of nine, [0.034, 0.108]: typorev) the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the in… |  |  |  |  |  |  |  |  |
-| PLAN_PARTICLES.specks | 100 |  | 106 | the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the interludes |  |  |  |  |  |  |  |  |
-| PLAN_BUSY | 1.3 |  | 107 |  |  |  |  |  |  |  |  |  |
-| SPECK_COLOURS | ((255.0, 240.0, 214.0), (255.0, 255.0, 255.0), (214.0, 228.… |  | 579 |  |  |  |  |  |  |  |  |  |
-| LIGHT_COLOURS | ((255.0, 196.0, 120.0), (255.0, 160.0, 186.0), (150.0, 214.… |  | 580 |  |  |  |  |  |  |  |  |  |
-| particle_frame(shutter) | 1.0 |  | 721 |  |  |  |  |  |  |  |  |  |
-| particle_frame(subframes) | 1 |  | 721 |  |  |  |  |  |  |  |  |  |
-| plan(level) | 1.0 |  | 821 |  |  |  |  |  |  |  |  |  |
-| apply_argv(offset) | 0.0 |  | 933 |  |  |  |  |  |  |  |  |  |
-| --level | 1.0 |  | 989 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 995 |  |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1002 |  |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 65 | the frames the section counts in: MMD's, of the song (mv_look.SONG_FPS) |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 66 | lengths are pixels of a 720 line picture (mv_look) |  |  |  |  |  |  |  |  |
+| DEFAULTS.on | 0 |  | 69 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.punch.amount | 0.10 |  | 70 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.punch.centre | [0.5, 0.45] |  | 70 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.punch.fall | 10 |  | 70 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.punch.rise | 2 |  | 70 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.shake.amount | 5.0 |  | 71 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.shake.frames | 10 |  | 71 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.shake.hz | 9.0 |  | 71 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.flash.colour | [255, 255, 255] | frames | 74 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
+| DEFAULTS.flash.frames | 9 | frames | 74 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
+| DEFAULTS.flash.light | 0.0 | frames | 74 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
+| DEFAULTS.flash.strength | 0.27 | frames | 74 | (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references' last 0.119 s, 3.6 frames. 7 gave 2 on window A of t… |  |  |  |  |  |  |  |  |
+| DEFAULTS.fade.back | 15 |  | 75 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.fade.colour | [0, 0, 0] |  | 75 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.fade.hold | 2 |  | 75 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.fade.out | 12 |  | 75 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.dissolve.frames | 12 |  | 76 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.glitch.bands | 3 |  | 79 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
+| DEFAULTS.glitch.frames | 2 |  | 79 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
+| DEFAULTS.glitch.seed | 5 |  | 79 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
+| DEFAULTS.glitch.shift | 40.0 |  | 79 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
+| DEFAULTS.glitch.split | 14.0 |  | 79 | (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches; split 6 on v7 read as none, 2026-10-21) |  |  |  | ○ |  |  |  | dance |
+| DEFAULTS.particles.brightness | 1.0 |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.drift | [0.25, 0.06, 0.0] |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.lights | 0 |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.seed | 9 |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.size | 1.0 |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.specks | 0 |  | 84 | (the specks in the air round her, near the focus, sharp; the lights far behind her, low over the street, blurred into bokeh by stage.dof. One box for both, 2026-10-21's … |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.box | [-34.0, 0.5, -16.0, 34.0, 30.0, 14.0] |  | 85 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.light_box | [-70.0, 0.5, 40.0, 70.0, 22.0, 150.0] |  | 85 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.clear | 9.0 |  | 86 |  |  |  |  |  |  |  |  |  |
+| DEFAULTS.particles.front | 0.35 |  | 86 |  |  |  |  |  |  |  |  |  |
+| LIMITS.flash.strength | (0.0, 1.0) |  | 90 |  |  |  |  |  |  |  |  |  |
+| LIMITS.punch.amount | (0.0, 0.5) |  | 90 |  |  |  |  |  |  |  |  |  |
+| LIMITS.shake.amount | (0.0, 40.0) |  | 90 |  |  |  |  |  |  |  |  |  |
+| LIMITS.shake.hz | (0.1, 14.9) |  | 90 |  |  |  |  |  |  |  |  |  |
+| LIMITS.flash.light | (0.0, 4.0) |  | 91 |  |  |  |  |  |  |  |  |  |
+| LIMITS.glitch.shift | (0.0, 200.0) |  | 92 |  |  |  |  |  |  |  |  |  |
+| LIMITS.glitch.split | (0.0, 40.0) |  | 92 |  |  |  |  |  |  |  |  |  |
+| LIMITS.particles.brightness | (0.0, 4.0) |  | 92 |  |  |  |  |  |  |  |  |  |
+| LIMITS.particles.clear | (0.0, 100.0) |  | 93 |  |  |  |  |  |  |  |  |  |
+| LIMITS.particles.front | (0.0, 1.0) |  | 93 |  |  |  |  |  |  |  |  |  |
+| LIMITS.particles.size | (0.05, 10.0) |  | 93 |  |  |  |  |  |  |  |  |  |
+| WHOLE.fade.hold | -1 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.fade.out | 0 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.flash.frames | 1 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.punch.fall | 1 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.punch.rise | 1 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.shake.frames | 1 |  | 94 |  |  |  |  |  |  |  |  |  |
+| WHOLE.dissolve.frames | 1 |  | 95 |  |  |  |  |  |  |  |  |  |
+| WHOLE.fade.back | 0 |  | 95 |  |  |  |  |  |  |  |  |  |
+| WHOLE.glitch.bands | 0 |  | 95 |  |  |  |  |  |  |  |  |  |
+| WHOLE.glitch.frames | 1 |  | 95 |  |  |  |  |  |  |  |  |  |
+| WHOLE.glitch.seed | 0 |  | 95 |  |  |  |  |  |  |  |  |  |
+| WHOLE.particles.lights | 0 |  | 96 |  |  |  |  |  |  |  |  |  |
+| WHOLE.particles.seed | 0 |  | 96 |  |  |  |  |  |  |  |  |  |
+| WHOLE.particles.specks | 0 |  | 96 |  |  |  |  |  |  |  |  |  |
+| MARGIN | 1.15 |  | 97 | a shake's zoom covers this many times its reach (bilinear sampling needs a pixel more) |  |  |  |  |  |  |  |  |
+| FRONT_GAP | 2.0 | units | 98 | MMD units: a particle this much nearer the camera than the dancer's place is in front |  | ○ |  | ○ |  |  |  | retarget |
+| NEAR_FADE | (3.0, 8.0) | units | 99 | MMD units from the eye: none nearer than the first, all of it past the second |  | ○ |  |  |  |  |  | retarget |
+| EDGE_FADE | 3.0 | units | 100 | MMD units: particles fade within this of the box's faces (they wrap round there) |  | ○ |  |  |  |  |  | retarget |
+| SPRITE_LEAST | 0.6 | px | 101 | px: the least spread (a standard deviation) of a particle on the picture |  |  |  |  |  |  |  |  |
+| BUSY_RAMP | 1.0 | s | 102 | s: a busy span's level comes and goes over this |  |  |  |  |  |  |  |  |
+| DEFAULT_SHAKE_RATIO | (0.6, 1.37) |  | 103 | the vertical jolt: this share of the horizontal one, ringing this many times as fast |  |  |  |  |  |  |  |  |
+| ARGV_MOST | 30000 |  | 104 | characters: a longer ffmpeg command goes past Windows' command line (32767) |  |  |  |  |  |  |  |  |
+| CUT_LEAD | 0.077 | s | 105 | s: a change of picture at a section's start comes this much before its first beat, as the references' cuts do (five of nine, [0.034, 0.108]: typorev) |  |  |  | ○ |  |  |  | dance |
+| PLAN_PARTICLES.lights | 24 |  | 108 | references' cuts do (five of nine, [0.034, 0.108]: typorev) the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the in… |  |  |  |  |  |  |  |  |
+| PLAN_PARTICLES.specks | 100 |  | 108 | the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the interludes |  |  |  |  |  |  |  |  |
+| FLASH_LIGHT | 1.1 |  | 116 | the plan's flashes are of light, not a veil: the references' 51 flashes (typorev's events of the nine videos) leave the dark of the picture where it was (its darkest 5 %… |  |  |  |  |  |  |  |  |
+| PLAN_BUSY | 1.3 |  | 117 |  |  |  |  |  |  |  |  |  |
+| SPECK_COLOURS | ((255.0, 240.0, 214.0), (255.0, 255.0, 255.0), (214.0, 228.… |  | 611 |  |  |  |  |  |  |  |  |  |
+| LIGHT_COLOURS | ((255.0, 196.0, 120.0), (255.0, 160.0, 186.0), (150.0, 214.… |  | 612 |  |  |  |  |  |  |  |  |  |
+| particle_frame(shutter) | 1.0 |  | 753 |  |  |  |  |  |  |  |  |  |
+| particle_frame(subframes) | 1 |  | 753 |  |  |  |  |  |  |  |  |  |
+| plan(level) | 1.0 |  | 853 |  |  |  |  |  |  |  |  |  |
+| apply_argv(offset) | 0.0 |  | 967 |  |  |  |  |  |  |  |  |  |
+| --level | 1.0 |  | 1023 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 1029 |  |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1036 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
