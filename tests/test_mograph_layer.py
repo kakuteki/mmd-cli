@@ -887,6 +887,40 @@ class ApplyTest(unittest.TestCase):
             for k in (0, len(part) - 1):
                 self.assertEqual(box_columns(part[k], row=90, least=150), box_columns(whole[first + k], row=90, least=150), start)
 
+    def test_an_excerpt_reads_its_own_frames_where_the_frames_lie_a_hair_early(self):
+        # (v7's frames from 40 s on lie a third of a millisecond before their times: its excerpt 40-60 s read 601 frames, the
+        # last one 60.0 s's, and every effect after it came a frame late in the whole song laid in excerpts; 2026-10-21)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        video = os.path.join(folder, "early.mp4")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-filter_complex",
+                        "color=c=0x202020:s=%dx%d:r=30[bg];color=c=white:s=8x60:r=30[box];[bg][box]overlay=x='8+4*n':y=60,"
+                        "settb=1/15360,setpts='N*512-gte(N,30)*5'[v];sine=frequency=440:sample_rate=48000:duration=3[a]" % SIZE,
+                        "-map", "[v]", "-map", "[a]", "-frames:v", "70", "-fps_mode", "passthrough", "-enc_time_base:v", "1/15360",
+                        "-video_track_timescale", "15360", "-c:v", "libx264", "-crf", "10", "-pix_fmt", "yuv420p", "-c:a", "aac", video],
+                       check=True, stdin=subprocess.DEVNULL)
+        pts = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts", "-of", "csv=p=0",
+                              video], capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout.split()
+        self.assertEqual(pts[29:31], ["14848", "15355"])                 # (the frames from 1 s on lie 5 ticks early)
+        look = os.path.join(folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"mograph": {"on": 1, "events": [{"kind": "flash", "t": 2.2}]}}, f)        # (after the excerpts)
+        whole = read_frames(video)
+        for start, to in (("0.0", "1.0"), ("0.5", "1.0"), ("0.2", "1.5"), ("1.1", "1.6")):
+            out = os.path.join(folder, "part_%s.mp4" % start)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(ML.main(["apply", video, look, out, "--from", start, "--to", to]), 0)
+            part = read_frames(out)
+            first = int(round(float(start) * 30))
+            want = int(round(float(to) * 30)) - first
+            self.assertEqual(len(part), want, start)
+            for k in (0, len(part) - 1):
+                self.assertEqual(box_columns(part[k], row=90, least=150), box_columns(whole[first + k], row=90, least=150), start)
+            # the sound of the same span (within a frame)
+            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration", "-of",
+                                    "csv=p=0", out], capture_output=True, text=True, check=True, stdin=subprocess.DEVNULL).stdout
+            self.assertAlmostEqual(float(probe.strip()), want / 30.0, delta=1.5 / 30.0, msg=start)
+
     def test_a_shake_over_a_finished_video_never_shows_past_its_edges(self):
         folder = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, folder, True)

@@ -937,20 +937,34 @@ def apply_argv(video, out, section, size, fps, start=None, duration=None, offset
     no_particles = dict(section, particles=dict(section["particles"], specks=0, lights=0))
     graph = Graph(no_particles, size, fps, clip_start, duration)
     argv = ["ffmpeg", "-v", "error", "-y"]
-    # (half a frame before its first frame: a finished mp4 seeked to the very time of a frame gave the next one, its time a
-    # hair late in the stream's time base; v7 in segments, 2026-10-21)
-    if start is not None:
-        argv += ["-ss", "%.6f" % max(0.0, (int(round((clip_start - offset) * fps)) - 0.5) / float(fps))]
-    if duration is not None:
-        argv += ["-t", "%.6f" % (max(1, int(round(float(duration) * fps))) / float(fps))]
+    first = int(round((clip_start - offset) * fps))          # the excerpt's first frame, of the video
+    count = None if duration is None else max(1, int(round(float(duration) * fps)))
+    pick, audio = "", "0:a?"
+    if start is not None or count is not None:
+        # the excerpt's frames picked by their number, round((t + seek) x fps), from a seek a second before: a seek and a -t
+        # that end on times read a frame more where the frames lie a hair before their times (v7 from 58 s on lies 5 ticks of
+        # 1/15360 s early: its excerpt 40-60 s read 601 frames, and the effects after it came a frame late; 2026-10-21)
+        seek = max(0.0, first / float(fps) - 1.0) if start is not None else 0.0
+        if seek > 0:
+            argv += ["-ss", "%.6f" % seek]
+        if count is not None:
+            argv += ["-t", "%.6f" % ((first + count + 1) / float(fps) - seek)]
+        argv += ["-i", video]
+        index = "round((t+%s)*%s)" % (_n(seek), _n(fps))
+        within = "gte(%s,%d)" % (index, first) + ("*lte(%s,%d)" % (index, first + count - 1) if count is not None else "")
+        pick = "select='%s',setpts=N/(%s*TB)," % (within, _n(fps))
+        # and the sound of the very same span, from the same file read again (its own seek, cut to the sample and encoded)
+        argv += ["-ss", "%.6f" % (first / float(fps))] + (["-t", "%.6f" % (count / float(fps))] if count is not None else [])
+        audio = "1:a?"
     argv += ["-i", video]
-    parts = ["[0:v]scale=in_color_matrix=%s:in_range=%s,format=gbrp,setpts=PTS-STARTPTS[src]" % (matrix, colour_range)]
+    parts = ["[0:v]%sscale=in_color_matrix=%s:in_range=%s,format=gbrp,setpts=PTS-STARTPTS[src]" % (pick, matrix, colour_range)]
     label = graph.camera(parts, "src")
     label = graph.veils(parts, label)
     parts.append("[%s]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:"
                  "color_trc=bt709:colorspace=bt709:range=tv[out]" % label)
-    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-map", "0:a?", "-c:a", "copy", "-r", str(fps),
-             "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
+    argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-map", audio] + \
+        (["-c:a", "copy"] if audio == "0:a?" else ["-c:a", "aac", "-b:a", "192k"]) + \
+        ["-r", str(fps), "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
 
 
