@@ -741,14 +741,18 @@ python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd               
   （MME の光の AMBIENT = パネルの値 / 256、既定 154 で 1）がキーを掛ける（カメラの動きの光のキーもそのまま効く）。
 - 色の区間 `sections`（[始まり秒, キー r g b, フィル r g b, 縁 r g b] の並び、時刻の順）: MME の TIME（描いているコマの曲の時刻。AVI の
   480 fps の 1 枚にも）で、各区間の色を始まりの前後 `fade` 秒でフェードして入れる（`section_colours` が同じ計算）。区間が無ければ `key`・`fill`・`rim`。
+  最初の区間は 0 秒から（エフェクトも `section_colours` も最初の区間の色を曲の頭から使い、その時刻を見ない。0 秒より後から始める区間は断る:
+  査読 light3rev）。拍で変わり始めさせるなら、書く時刻は拍 + `fade` / 2（フェードは時刻の前後に半分ずつ）。
 - キーの向き `direction` は MMD の光（光の行く向き、y は負）。体の影のマップも MMD の光から作るので、影はキーから落ちる。`light-vmd` がカメラの
   動きの写しの 0 コマに光のキー（色 154、この向き）を入れる（カメラの元の光のキーは外す）。床の影（`stage.shadow_light`）は同じ向きでないと
-  mv_look が断る。
+  mv_look が断る。`verify ... --look LOOK --camera CAMERA` は、カメラの動きの光のキーの向きがどれも夜の向きと同じか（キーが無ければ MMD の既定
+  (−0.5, −1, 0.5)。長さは揃えて比べる。光の色はキーを掛ける作りなので見ない）を確かめる（査読 light3rev: 元のカメラのまま描くと、人物のキーと
+  体の影は MMD の既定の向き、床の影は夜の向きになり、merge_look も `verify --look` も通っていた）。
 - MMD は MME の写しにだけ入れる（上）。元の White.pmx は変えない（`prepare` が写しを作る）。`light.person` が無いか `on` 0 ならエフェクトは前と
   バイト単位で同じ（試験は SHA-256）。`verify` は夜の光のエフェクトも soft として通す。
 - 全曲を描くとき（`tools/mv_chunks.py`）: 計画の `"model"` は `prepare --look`（描く look と同じファイル）の写し、`"camera"` は `light-vmd` の写し、
-  `"self_shadow": "soft"` と `"night": true`。`night` があると運転台本の確かめ（`verify ... --look`）が、モデルの隣のエフェクトが look の
-  `light.person` と同じであること（無い look なら無いこと）を MMD を起こす前に見る。
+  `"self_shadow": "soft"` と `"night": true`。`night` があると運転台本の確かめ（`verify ... --look ... --camera ...`）が、モデルの隣のエフェクトが
+  look の `light.person` と同じであること（無い look なら無いこと）と、計画のカメラの光が夜の向きであることを MMD を起こす前に見る。
 - 色の区間は MME の TIME（曲の時刻）で決まるので、mv_chunks の区切り（各区切りの前置きのコマも）とは関係なく曲の時刻どおりに変わる。look の
   `light.person` を変えたら `prepare --look` でエフェクトを書き直して描き直す（`verify --look` が古いエフェクトを断る）。
 

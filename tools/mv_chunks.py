@@ -33,8 +33,8 @@ PLAN.json names the files on the render machine, as absolute paths with forward 
 optional: "self_shadow" (none: not checked; "mmd": MMD's own self shadow; "soft": the soft one of tools/mme_shadow.py
 through MME, which needs "mmd" with MME beside it and "model" with the effect beside it: tools/mme_shadow.py prepare; the
 driver checks either before MMD renders, and with "soft" -Resume watches MME's files too), "night" (false; true: the
-effect beside "model" draws the look's night, tools/mme_shadow.py prepare --look, and the check compares it with "look"; it
-needs "soft"),
+effect beside "model" draws the look's night, tools/mme_shadow.py prepare --look, and the check compares it with "look" and
+the light of "camera" with the night's direction, light-vmd; it needs "soft"),
 "accessories" ([]), "cues" (none), "menu" (merged over 215 off, 221 off, 282 on; 282 = background black,
 which gives the AVI its alpha and must stay on), "size" ([1280, 720]), "codec" ("未圧縮"), "avi_bytes_per_pixel" (4
 for the uncompressed BGRA; another codec needs it, measured on one AVI), "mmd_cli_home", "python" ("python"),
@@ -304,7 +304,8 @@ def check_plan(plan):
         raise ValueError("self_shadow is \"mmd\" (MMD's own) or \"soft\" (tools/mme_shadow.py through MME), not %r"
                          % (full["self_shadow"],))
     # "night" (light3): the effect beside "model" draws the look's night (light.person, tools/mme_shadow.py prepare --look);
-    # the driver's check compares the effect with the plan's look.  It needs "soft"; without it the check is the one of before
+    # the driver's check compares the effect with the plan's look, and the light of the plan's camera with the night's
+    # direction (light-vmd; review light3rev).  It needs "soft"; without it the check is the one of before
     full.setdefault("night", False)
     if not isinstance(full["night"], bool):
         raise ValueError("night is true or false, not %r" % (full["night"],))
@@ -442,7 +443,7 @@ def _shadow_check_lines(plan):
         return []
     return ["$shadow = Invoke-Native %s tools/mme_shadow.py verify %s %s %s%s"
             % (_python(plan), _ps(plan["mmd"]), _ps(plan["model"]), plan["self_shadow"],
-               " --look %s" % _ps(plan["look"]) if plan.get("night") else ""),
+               " --look %s --camera %s" % (_ps(plan["look"]), _ps(plan["camera"])) if plan.get("night") else ""),
             "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the self shadow check (not found?)' -f %s; exit 1 }"
             % _ps(plan["python"]),
             "if ($LASTEXITCODE -ne 0) { 'STOP: MMD would not draw the self shadow as the plan says (%s, {0}):' -f "

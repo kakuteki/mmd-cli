@@ -788,5 +788,110 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(mme_shadow.verify(self.exe, self.model, "mmd")["self_shadow"], "mmd")   # no effect on the model
 
 
+class NightCameraTest(unittest.TestCase):
+    """review light3rev: her key light is MMD's light, which the camera's motion carries (light-vmd writes it); the floor's
+    shadow falls from stage.shadow_light, which mv_look holds to light.person.direction.  A plan that renders with the camera
+    as it was (no light key: MMD's own light) passed every check and lit her from MMD's default direction under a floor shadow
+    from the look's.  verify --look --camera holds the camera's light to the look's night"""
+
+    NIGHT = {"on": 1, "direction": [-0.65, -0.8, 0.35], "fill": [0.2, 0.2, 0.3],
+             "sections": [[0, 1, 0.9, 0.8, 0.2, 0.2, 0.3, 0.4, 0.6, 1.0]]}
+
+    def setUp(self):
+        sys.path.insert(0, ROOT)
+        from mmd_cli.formats import vmd
+        self.vmd = vmd
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.mmd = os.path.join(self.folder, "mmd")
+        os.makedirs(self.mmd)
+        self.exe = os.path.join(self.mmd, "MikuMikuDance.exe")
+        open(self.exe, "wb").close()
+        for name in mme_shadow.MME_FILES:
+            with open(os.path.join(self.mmd, name), "wb") as f:
+                f.write(name.encode())
+        self.addCleanup(setattr, mme_shadow, "MME_FILES", dict(mme_shadow.MME_FILES))
+        mme_shadow.MME_FILES = {n: hashlib.sha256(n.encode()).hexdigest() for n in mme_shadow.MME_FILES}
+        models = os.path.join(self.folder, "models")
+        os.makedirs(models)
+        self.model = os.path.join(models, "White.pmx")
+        open(self.model, "wb").close()
+        self.fx = os.path.join(models, "White.fx")
+        self.look = os.path.join(self.folder, "look.json")
+        with open(self.look, "w", encoding="utf-8") as f:
+            json.dump({"light": {"person": self.NIGHT}}, f)
+        mme_shadow.write(self.fx, light=self.NIGHT)
+        keys = [vmd.CameraKey(frame=f, distance=-45.0, position=(0.0, 10.0, 0.0), rotation=(0.1, 0.0, 0.0)) for f in (0, 100)]
+        self.bare = self.camera("bare.vmd", keys, [])
+        self.lit = os.path.join(self.folder, "lit.vmd")
+        mme_shadow.light_vmd(self.bare, self.NIGHT, self.lit)
+        self.keys = keys
+
+    def camera(self, name, keys, lights):
+        path = os.path.join(self.folder, name)
+        self.vmd.dump(self.vmd.Motion.for_camera(cameras=keys, lights=lights), path)
+        return path
+
+    def test_the_camera_of_light_vmd_passes(self):
+        got = mme_shadow.verify(self.exe, self.model, "soft", look=self.look, camera=self.lit)
+        self.assertEqual(got["self_shadow"], "soft")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mme_shadow.main(["verify", self.exe, self.model, "soft", "--look", self.look,
+                                              "--camera", self.lit]), 0)
+
+    def test_the_camera_as_it_was_is_refused(self):
+        # no light key: MMD keeps its own light, (-0.5, -1, 0.5), not the night's
+        with self.assertRaises(ValueError) as cm:
+            mme_shadow.verify(self.exe, self.model, "soft", look=self.look, camera=self.bare)
+        self.assertIn("light-vmd", str(cm.exception))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mme_shadow.main(["verify", self.exe, self.model, "soft", "--look", self.look,
+                                              "--camera", self.bare]), 2)
+
+    def test_a_light_key_of_another_direction_is_refused(self):
+        light = self.vmd.LightKey(0, (154.0 / 256.0,) * 3, (-0.65, -0.8, 0.35))
+        other = self.vmd.LightKey(3000, (154.0 / 256.0,) * 3, (0.3, -0.9, 0.2))
+        for lights in ([other], [light, other]):
+            path = self.camera("other.vmd", self.keys, lights)
+            with self.assertRaises(ValueError, msg=lights):
+                mme_shadow.verify(self.exe, self.model, "soft", look=self.look, camera=path)
+        # the same direction scaled (MMD lights along it) and a light colour of its own (it scales the key) pass
+        scaled = self.vmd.LightKey(0, (0.8, 0.7, 0.6), (-1.3, -1.6, 0.7))
+        mme_shadow.verify(self.exe, self.model, "soft", look=self.look, camera=self.camera("scaled.vmd", self.keys, [scaled]))
+
+    def test_mmds_own_light_needs_no_key_when_the_night_shines_so(self):
+        night = dict(self.NIGHT, direction=[-0.5, -1.0, 0.5])
+        with open(self.look, "w", encoding="utf-8") as f:
+            json.dump({"light": {"person": night}}, f)
+        mme_shadow.write(self.fx, light=night)
+        mme_shadow.verify(self.exe, self.model, "soft", look=self.look, camera=self.bare)
+
+    def test_a_look_without_the_night_says_nothing_of_the_camera(self):
+        plain = os.path.join(self.folder, "plain.json")
+        with open(plain, "w", encoding="utf-8") as f:
+            json.dump({"glow": {"radius": 6}}, f)
+        mme_shadow.write(self.fx)
+        mme_shadow.verify(self.exe, self.model, "soft", look=plain, camera=self.bare)
+        # the camera is checked against a look: without one it is refused, not passed over
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft", camera=self.bare)
+
+
+class NightSectionsStartTest(unittest.TestCase):
+    """review light3rev: the effect (NL_Colours) and section_colours take the first section's colours from the song's start,
+    whatever its time, and leave the night's own key, fill and rim unused: a first section written at 44.467 s lit the
+    whole song before it in that section's colours.  The first section starts at 0"""
+
+    ROW = [1.0, 0.9, 0.8, 0.2, 0.2, 0.3, 0.4, 0.6, 1.0]
+
+    def test_the_first_section_starts_at_0(self):
+        mme_shadow.night({"on": 1, "sections": [[0.0] + self.ROW, [44.467] + self.ROW]})
+        for first in (44.467, 0.5, 1e-3):
+            with self.assertRaises(ValueError, msg=first):
+                mme_shadow.night({"on": 1, "sections": [[first] + self.ROW]})
+            with self.assertRaises(ValueError, msg=first):
+                mme_shadow.effect(light={"on": 1, "sections": [[first] + self.ROW, [first + 10.0] + self.ROW]})
+
+
 if __name__ == "__main__":
     unittest.main()

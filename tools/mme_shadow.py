@@ -6,7 +6,7 @@ shading but reads the self shadow map at many points weighted by a Gaussian, and
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd
     python tools/mme_shadow.py check MMD.exe
-    python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd [--look LOOK.json]
+    python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd [--look LOOK.json [--camera CAMERA.vmd]]
 
 What it changes, and what not.  MMD draws a model in passes; MME lets an effect file replace any of them, and draws the
 others with MMD's own shaders (REFERENCE.txt of MME 0.37, 1.2 and the Tips).  This effect has techniques for one pass
@@ -228,6 +228,12 @@ def night(light):
             raise ValueError("light.person.sections must come in the order of their times (%g after %g)" % (t, sections[-1][0]))
         sections.append([t] + _colour("sections' key", row[1:4]) + _colour("sections' fill", row[4:7])
                         + _colour("sections' rim", row[7:10]))
+    if sections and sections[0][0] != 0.0:
+        # (review light3rev) the effect (NL_Colours) and section_colours take the first section's colours from the song's
+        # start whatever its time, and the night's own key, fill and rim go unused: a first section at 44.467 s lit the song
+        # before it in its own colours
+        raise ValueError("light.person.sections start at 0 s (the first section's colours are the song's from its start), "
+                         "not at %g" % sections[0][0])
     out["sections"] = sections
     return out if out["on"] else None
 
@@ -866,6 +872,22 @@ def light_vmd(camera, light, out):
     return {"camera": camera, "out": out, "direction": s["direction"], "cameras": len(motion.cameras)}
 
 
+MMD_LIGHT = (-0.5, -1.0, 0.5)     # MMD's light after `new`: a camera's motion without light keys leaves it so
+
+
+def camera_light(camera):
+    """[(frame, direction)]: the directions of MMD's light that the motion of the camera and the light `camera` gives, its
+    light keys' (none: MMD's own, MMD_LIGHT, at frame 0)"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from mmd_cli.formats import vmd
+    motion = vmd.load(camera)
+    if not motion.is_camera:
+        raise ValueError("%s is not a motion of the camera and the light" % camera)
+    return [(k.frame, tuple(k.direction)) for k in motion.lights] or [(0, MMD_LIGHT)]
+
+
 def look_light(path):
     """the night's light on her of a look file (its light.person), None when the look has none.  The look is read as
     JSON only (tools/mv_look.py checks the rest of it)"""
@@ -944,11 +966,17 @@ def effect_of(model):
     return plain if os.path.isfile(plain) else None
 
 
-def verify(exe, model, want, look=None):
+def verify(exe, model, want, look=None, camera=None):
     """does MMD at EXE render MODEL the way `want` says?  "soft": MME is installed beside EXE and MODEL has an effect this
     tool wrote; "mmd": MMD's own self shadow (no MME beside EXE, or no effect on MODEL).  With `look` (light3; the look file
     the render uses) the effect must draw that look's night (its light.person, or none when the look has none): an effect
-    written for another look would light her otherwise.  ValueError when not"""
+    written for another look would light her otherwise.  With `camera` too (the motion of the camera and the light the render
+    loads; review light3rev) MMD's light must shine along the night's direction at every light key (light-vmd writes it):
+    her key light and her body's shadows come from MMD's light, her shadow on the floor from the look (stage.shadow_light,
+    which mv_look holds to the night's direction), and the camera as it was (no light key) lit her from MMD's own direction
+    under a floor shadow from the night's.  ValueError when not"""
+    if camera is not None and look is None:
+        raise ValueError("--camera is held to the night of --look: give the look the render uses")
     mme = check(exe)
     fx = effect_of(model)
     if want == "soft":
@@ -979,6 +1007,13 @@ def verify(exe, model, want, look=None):
                                  % (fx, "the night %s" % json.dumps(values["light"], sort_keys=True) if values.get("light")
                                     else "no night", look, "the night %s" % json.dumps(wanted, sort_keys=True) if wanted
                                     else "no night"))
+            if camera is not None and wanted is not None:
+                want_dir = _unit(wanted["direction"])
+                for frame, d in camera_light(camera):
+                    if not any(d) or max(abs(a - b) for a, b in zip(_unit(d), want_dir)) > 1e-4:
+                        raise ValueError("the camera %s gives MMD's light the direction %s (frame %d), the look's night shines "
+                                         "along %s: write the camera with tools/mme_shadow.py light-vmd"
+                                         % (camera, [round(v, 4) for v in d], frame, wanted["direction"]))
         return {"self_shadow": "soft", "effect": fx.replace("\\", "/"), "settings": settings[0]}
     if want == "mmd":
         # MME of another build than the one this tool knows applies the effect all the same (review of softshadow-mme)
@@ -1039,6 +1074,8 @@ def main(argv=None):
     s.add_argument("model")
     s.add_argument("want", choices=("soft", "mmd"))
     s.add_argument("--look", help="the look file the render uses: the effect must draw its night (light.person; light3)")
+    s.add_argument("--camera", help="with --look, the camera's motion the render loads: its light must be the night's "
+                                    "(light-vmd; review light3rev)")
     a = p.parse_args(argv)
     try:
         if a.command == "write":
@@ -1048,7 +1085,7 @@ def main(argv=None):
         elif a.command == "light-vmd":
             out = dict({"ok": True}, **light_vmd(a.camera, look_light(a.look), a.out))
         elif a.command == "verify":
-            out = dict({"ok": True}, **verify(a.exe, a.model, a.want, look=a.look))
+            out = dict({"ok": True}, **verify(a.exe, a.model, a.want, look=a.look, camera=a.camera))
         else:
             out = dict({"ok": True}, **check(a.exe))
     except (ValueError, OSError) as exc:

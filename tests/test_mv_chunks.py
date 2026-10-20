@@ -536,10 +536,19 @@ class SelfShadowPlanTest(unittest.TestCase):
             verify = [line for line in lines if "tools/mme_shadow.py verify" in line]
             self.assertEqual(len(verify), 1)
             self.assertTrue(verify[0].endswith("verify 'C:/MMD/MikuMikuDance.exe' 'C:/MMD/UserFile/Model/Rin/White.pmx' soft "
-                                               "--look 'C:/work/song/look.json'"), verify[0])
+                                               "--look 'C:/work/song/look.json' --camera 'C:/work/song/camera.vmd'"), verify[0])
             plain = [line for line in self.written(dict(PLAN, self_shadow="soft"), "soft%d" % workers,
                                                    workers=workers).splitlines() if "tools/mme_shadow.py verify" in line]
             self.assertTrue(plain[0].endswith("White.pmx' soft"), plain[0])
+
+    def test_with_the_night_the_check_holds_the_cameras_light_too(self):
+        # review light3rev: with "night" the driver's check also gives the plan's camera, whose light must be the night's
+        # (tools/mme_shadow.py verify --camera: light-vmd writes it); without "night" the line is the one of before
+        for workers in (1, 2):
+            lines = self.written(dict(PLAN, self_shadow="soft", night=True), "nightcam%d" % workers, workers=workers).splitlines()
+            verify = [line for line in lines if "tools/mme_shadow.py verify" in line]
+            self.assertEqual(len(verify), 1)
+            self.assertTrue(verify[0].endswith("--look 'C:/work/song/look.json' --camera 'C:/work/song/camera.vmd'"), verify[0])
 
     def test_soft_watches_mmes_files_beside_mmd(self):
         soft = mv_chunks._inputs(mv_chunks.check_plan(dict(PLAN, self_shadow="soft")))
