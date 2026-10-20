@@ -452,7 +452,13 @@ def link_tracks(samples):
                 break
     out = []
     for k, t in enumerate(sorted(tracks, key=lambda t: (t["samples"][0], t["parts"][0]["cy"]))):
-        out.append({"id": k, "samples": t["samples"], "boxes": t["parts"], "box": _median_box(t["parts"]),
+        chars = []
+        for i, b in zip(t["samples"], t["parts"]):
+            m = 0.3 * b["h"]
+            chars.append([list(c) for c in samples[i].get("chars", [])
+                          if b["x0"] - m <= c[0] <= b["x1"] + m and b["y0"] - m <= c[1] <= b["y1"] + m])
+        out.append({"id": k, "samples": t["samples"], "ns": [samples[i]["n"] for i in t["samples"]], "boxes": t["parts"],
+                    "chars": chars, "box": _median_box(t["parts"]),
                     "vertical": bool(np.mean([p["vertical"] for p in t["parts"]]) >= 0.5),
                     "first": samples[t["samples"][0]]["n"], "last": samples[t["samples"][-1]]["n"]})
     return out
@@ -461,10 +467,14 @@ def link_tracks(samples):
 # ---- one track frame by frame ------------------------------------------------------------------------------------------
 #
 # The samples say roughly when a text is there.  Its own frames say how it comes and goes: every frame of the windows
-# round its first and its last sample (and every MID_EVERY-th frame between them) is read in a band round it, the
-# detector finds it there, and its strokes (from its clearest frame, the reference) are followed through the frames:
-# where they are (a move, a zoom), how strong they stand out from what is round them (a fade: the strokes' contrast
-# against the reference's, per character: one character after another), how sharp their edges are (a blur).
+# round its first and its last sample (and some frames between them) is read in a band round it.  The text of its
+# clearest sample (the reference: its box and characters from the detector) is followed through the frames by matching
+# its picture (normalised correlation, at several sizes: a template; the detector is not run again, it costs about
+# 0.2 s a frame on hinata's CPU against a few ms): where it is (a move, a zoom), how strongly its strokes stand out from
+# what is round them (a fade: the strokes' contrast against the reference's, per character: one character after
+# another), how sharp their edges are (a blur), and whether it moves with the picture behind it (text in the scene: a
+# sign on a building) or stays put on the screen while that moves (text laid over the picture: lyrics).
+# Turning (rotation) is not followed.
 
 MID_RATE = 10.0                   # frames a second read between the windows (the hold)
 BAND = 1.25                       # heights above and below a line (or beside a column) the band reaches
@@ -475,7 +485,6 @@ STILL_SCALE = 0.006               # and growing or shrinking less than this a fr
 MOVE_LEAST = (3.0, 0.15)          # px and heights: a text comes from at least the larger of these away to have moved
 SCALE_LEAST = 1.15                # it comes at least this much larger or smaller to have zoomed
 ROTATE_LEAST = 6.0                # degrees turned to have rotated
-MATCH_REACH = 0.45                # a character found within this share of its size of where it should be is it
 STAGGER_LEAST = 2                 # frames between the first and the last character to come one after another,
 STAGGER_ORDER = 0.7               # with the order along the line at least this (Spearman)
 BLUR_LEAST = 0.6                  # edges this much softer than the reference's while the strokes stand out: a blur
@@ -528,31 +537,6 @@ def _shift(box, dx, dy):
     for k in ("y0", "y1", "cy"):
         b[k] += dy
     return b
-
-
-def _find_in_band(boxes, ref, vertical):
-    """the box of a band that is the track (ref: its median box): the line through it (the parts of one line joined),
-    by overlap, else the nearest on its row (column) of a like height"""
-    cands = [b for b in boxes if b["vertical"] == vertical and
-             max(b["h"], ref["h"]) / max(1e-9, min(b["h"], ref["h"])) <= LINK_HEIGHT * 1.6]
-    if not cands:
-        return None
-    best = max(cands, key=lambda b: _overlap(b, ref))
-    if _overlap(best, ref) < LINK_OVERLAP:
-        on_row = [b for b in cands if abs((b["cx"] if vertical else b["cy"]) - (ref["cx"] if vertical else ref["cy"]))
-                  <= 0.6 * max(b["h"], ref["h"])]
-        if not on_row:
-            return None
-        best = min(on_row, key=lambda b: abs((b["cy"] if vertical else b["cx"]) - (ref["cy"] if vertical else ref["cx"])))
-    line = [best]
-    grown = True
-    while grown:
-        grown = False
-        for b in cands:
-            if b not in line and any(_same_line(b, x) for x in line):
-                line.append(b)
-                grown = True
-    return _union(line)
 
 
 def _otsu(values):
@@ -608,26 +592,6 @@ def _transform_points(px, py, centre, t, s):
     return cx + t[0] + s * (px - cx), cy + t[1] + s * (py - cy)
 
 
-def _match(pred, peaks, reach):
-    """one to one, the nearest first: pairs (i of pred, j of peaks) within reach"""
-    if not len(pred) or not len(peaks):
-        return []
-    p = np.asarray(pred, np.float64)
-    q = np.asarray([[c[0], c[1]] for c in peaks], np.float64)
-    d = np.hypot(p[:, None, 0] - q[None, :, 0], p[:, None, 1] - q[None, :, 1])
-    pairs, used_i, used_j = [], set(), set()
-    for k in np.argsort(d, axis=None):
-        i, j = divmod(int(k), d.shape[1])
-        if d[i, j] > reach:
-            break
-        if i in used_i or j in used_j:
-            continue
-        used_i.add(i)
-        used_j.add(j)
-        pairs.append((i, j))
-    return pairs
-
-
 def _spearman(a, b):
     ra = np.argsort(np.argsort(a)).astype(np.float64)
     rb = np.argsort(np.argsort(b)).astype(np.float64)
@@ -636,54 +600,14 @@ def _spearman(a, b):
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
-def measure_track(frames, track, detector, fps, start=0.0, bounds=None, origin=(0, 0), frame_shape=None):
-    """how a track comes, stays and goes (see the section's comment).  frames: {n: RGB uint8} (at least those of
-    refine_plan), whole frames or pieces of them whose top left corner is at `origin` of a frame `frame_shape` (H, W)
-    big (they must hold the track's band, see _band); track: one of link_tracks; detector: (score, link, ratio) of an
-    RGB picture.  Returns a list of the lines found in the track's band (usually one: another line taking the place of
-    the first is measured apart, see _segments), each with frames (first: the first seen, full: the first whole and
-    still, hold_end: the last, last: the last seen), times (s, from `start`), enter and exit (frames, s, kinds: cut,
-    fade, move, scale, rotate, stagger, blur, glitch; dx dy and from: where it came from; scale: its size then against
-    its size at rest; stagger: the characters one after another; glitch), hold, ref (the reference's box and characters,
-    in the frame's px) and series (per frame).  bounds: the first and last frame of the video read (a text still whole
-    there has not come or gone: its phase is "none", cut_off); by default those of `frames`"""
-    ns = sorted(frames)
-    bounds = bounds or (ns[0], ns[-1])
-    shape = frame_shape or frames[ns[0]].shape[:2]
-    bx0, by0, bx1, by1 = _band(track, shape)
-    ox, oy = origin
-    band = {n: np.ascontiguousarray(frames[n][by0 - oy:by1 - oy, bx0 - ox:bx1 - ox]) for n in ns}
-    tb = dict(track)
-    tb["boxes"] = [_shift(b, -bx0, -by0) for b in track["boxes"]]
-    tb["box"] = _shift(track["box"], -bx0, -by0)
-    ref_box = tb["box"]
-    vertical = track["vertical"]
-    found = {}
-    for n in ns:
-        score, link, ratio = detector(band[n])
-        boxes = text_boxes(score, link, ratio)
-        peaks = char_peaks(score, ratio)
-        b = _find_in_band(boxes, ref_box, vertical)
-        if b is not None:
-            m = 0.3 * b["h"]
-            inside = [c for c in peaks if b["x0"] - m <= c[0] <= b["x1"] + m and b["y0"] - m <= c[1] <= b["y1"] + m]
-        else:
-            inside = []
-        found[n] = (b, inside)
-    out = []
-    for part in _segments(band, ns, found):
-        m = _measure_segment(band, part, found, tb, fps, start, bounds)
-        if m is not None:
-            m["ref"]["box"] = _shift(m["ref"]["box"], bx0, by0)
-            m["ref"]["chars"] = [[c[0] + bx0, c[1] + by0] + list(c[2:]) for c in m["ref"]["chars"]]
-            m["band"] = [int(bx0), int(by0), int(bx1), int(by1)]
-            m["track"] = track.get("id")
-            out.append(m)
-    return out
-
-
-SWAP_NCC = 0.5                    # a line whose strokes match the frame before less than this (normalised correlation),
-SWAP_KEEP = 0.7                   # in this frame and the next, which match each other at least this, is another line
+TEMPLATE_PAD = 0.15               # heights round the reference's box in its template
+PRESENT_NCC = 0.5                 # the template matches a frame at least this (normalised correlation): the text is there
+LOCAL_SCALES = (0.94, 1.0, 1.06)  # sizes tried round the last frame's
+GLOBAL_SCALES = (0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.12, 1.25, 1.4, 1.6, 1.8, 2.0, 2.3, 2.6, 3.0)
+SWAP_NCC = 0.5                    # two samples of a track whose texts match less than this are two lines
+BG_LEAST = 1.0                    # px a frame: the picture behind a text moves at least this to tell scene from screen
+WORLD_SHARE = 0.6                 # a text that moves with the picture behind it in this share of those frames is in the
+#                                   scene; one that stays put while it moves, laid over it (on the screen)
 
 
 def _ink_region(y, box, pad=0.15):
@@ -708,12 +632,15 @@ def _ncc_strokes(y_a, box_a, y_b, box_b):
     yy, xx = yy + y0, xx + x0
     a = y_a[yy, xx]
     a = a - a.mean()
-    shifts = {(0.0, 0.0), (box_b["cx"] - box_a["cx"], box_b["cy"] - box_a["cy"]),
-              (box_b["x0"] - box_a["x0"], box_b["y0"] - box_a["y0"]), (box_b["x1"] - box_a["x1"], box_b["y1"] - box_a["y1"])}
+    k = box_b["h"] / max(1e-9, box_a["h"])                 # a text grown or shrunk between them
+    ca = (box_a["cx"], box_a["cy"])
+    ways = {(0.0, 0.0, 1.0), (box_b["cx"] - box_a["cx"], box_b["cy"] - box_a["cy"], 1.0),
+            (box_b["x0"] - box_a["x0"], box_b["y0"] - box_a["y0"], 1.0), (box_b["x1"] - box_a["x1"], box_b["y1"] - box_a["y1"], 1.0),
+            (box_b["cx"] - box_a["cx"], box_b["cy"] - box_a["cy"], k)}
     best = float("nan")
-    for dx, dy in shifts:
-        yb = np.clip(np.round(yy + dy).astype(int), 0, y_b.shape[0] - 1)
-        xb = np.clip(np.round(xx + dx).astype(int), 0, y_b.shape[1] - 1)
+    for dx, dy, sc in ways:
+        yb = np.clip(np.round(ca[1] + dy + sc * (yy - ca[1])).astype(int), 0, y_b.shape[0] - 1)
+        xb = np.clip(np.round(ca[0] + dx + sc * (xx - ca[0])).astype(int), 0, y_b.shape[1] - 1)
         b = y_b[yb, xb]
         b = b - b.mean()
         den = math.sqrt(float((a * a).sum() * (b * b).sum()))
@@ -723,63 +650,231 @@ def _ncc_strokes(y_a, box_a, y_b, box_b):
     return best
 
 
-def _segments(frames, ns, found):
-    """the frames of a track parted where another line takes its place (SWAP_*): a list of lists of frame numbers"""
-    present = [n for n in ns if found[n][0] is not None]
-    if not present:
-        return []
-    cuts = []
-    ys = {}
+class _Template:
+    """the picture of a text round its box on the reference frame, matched against other frames at a size s and an
+    offset t of its middle: the box's middle lies at c + t on a frame where the text is s times as large"""
 
-    def y_of(n):
-        if n not in ys:
-            ys[n] = _luma(frames[n])
-        return ys[n]
+    def __init__(self, y_ref, box):
+        y0, y1, x0, x1 = _ink_region(y_ref, box, TEMPLATE_PAD)
+        self.img = np.ascontiguousarray(y_ref[y0:y1, x0:x1], np.float32)
+        self.c = (box["cx"], box["cy"])
+        self.off = (box["cx"] - x0, box["cy"] - y0)          # the box's middle inside the template
+        self.h = box["h"]
+        self._sized = {}
 
-    for i in range(1, len(present)):
-        a, b = present[i - 1], present[i]
-        ba, bb = found[a][0], found[b][0]
-        r = _ncc_strokes(y_of(a), ba, y_of(b), bb)
-        if not (r < SWAP_NCC):
-            continue
-        if i + 1 < len(present):
-            c = present[i + 1]
-            r_ac = _ncc_strokes(y_of(a), ba, y_of(c), found[c][0])
-            r_bc = _ncc_strokes(y_of(b), bb, y_of(c), found[c][0])
-            if not (r_ac < SWAP_NCC and r_bc >= SWAP_KEEP):
-                continue
-        cuts.append(b)
-    parts, cur = [], []
-    edges = set(cuts)
-    for n in ns:
-        if n in edges and cur:
-            parts.append(cur)
-            cur = []
-        cur.append(n)
-    if cur:
-        parts.append(cur)
-    return [p for p in parts if any(found[n][0] is not None for n in p)]
+    def sized(self, s):
+        key = round(s, 3)
+        if key not in self._sized:
+            cv2 = _cv2()
+            th, tw = self.img.shape
+            w, h = max(4, int(round(tw * s))), max(4, int(round(th * s)))
+            self._sized[key] = cv2.resize(self.img, (w, h), interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR)
+        return self._sized[key]
+
+    def match(self, y, s, around=None, reach=None):
+        """(ncc, t) of the best place at size s: anywhere, or with the middle within reach px of `around`"""
+        cv2 = _cv2()
+        tm = self.sized(s)
+        th, tw = tm.shape
+        oy, ox = self.off[1] * s, self.off[0] * s
+        if around is None:
+            y0, x0, y1, x1 = 0, 0, y.shape[0], y.shape[1]
+        else:
+            cx, cy = around
+            y0 = int(max(0, math.floor(cy - oy - reach)))
+            x0 = int(max(0, math.floor(cx - ox - reach)))
+            y1 = int(min(y.shape[0], math.ceil(cy - oy + th + reach)))
+            x1 = int(min(y.shape[1], math.ceil(cx - ox + tw + reach)))
+        sub = y[y0:y1, x0:x1]
+        # a text partly out of the band (coming in from the side) matches with its outside part on the band's mean:
+        # the band is padded by half the template where the search reaches its edge
+        top = th // 2 if y0 == 0 else 0
+        bottom = th // 2 if y1 == y.shape[0] else 0
+        left = tw // 2 if x0 == 0 else 0
+        right = tw // 2 if x1 == y.shape[1] else 0
+        py, px = top, left
+        if top or bottom or left or right:
+            sub = cv2.copyMakeBorder(np.ascontiguousarray(sub, np.float32), top, bottom, left, right, cv2.BORDER_CONSTANT,
+                                     value=float(sub.mean()))
+        if sub.shape[0] < th or sub.shape[1] < tw:
+            return -1.0, None
+        r = cv2.matchTemplate(np.ascontiguousarray(sub, np.float32), tm, cv2.TM_CCOEFF_NORMED)
+        _, val, _, loc = cv2.minMaxLoc(r)
+        if not np.isfinite(val):
+            return -1.0, None
+        mx, my = x0 + loc[0] - px + ox, y0 + loc[1] - py + oy
+        return float(val), (mx - self.c[0], my - self.c[1])
+
+    def follow(self, y, t_prev, s_prev, speed, last_ncc=1.0):
+        """(ncc, t, s) on a frame: near where the text was (sizes LOCAL_SCALES round its last), and anywhere in the band
+        (GLOBAL_SCALES) when that matches under PRESENT_NCC or well under the last frame's match"""
+        around = (self.c[0] + t_prev[0], self.c[1] + t_prev[1])
+        reach = max(4.0, 0.8 * self.h * s_prev) + 2.0 * speed
+        best = (-1.0, t_prev, s_prev)
+        for k in LOCAL_SCALES:
+            v, t = self.match(y, s_prev * k, around, reach)
+            if t is not None and v > best[0]:
+                best = (v, t, s_prev * k)
+        if best[0] < max(PRESENT_NCC, 0.85 * last_ncc):
+            for sc in GLOBAL_SCALES:
+                v, t = self.match(y, sc)
+                if t is not None and v > best[0]:
+                    best = (v, t, sc)
+        return best
 
 
-def _measure_segment(frames, ns, found, track, fps, start, bounds):
-    """measure_track for the frames ns of one line (see measure_track)"""
-    vertical = track["vertical"]
-    present = [n for n in ns if found[n][0] is not None]
-    if not present:
-        return None
-    # the reference: the frame of the middle half of the present ones whose box is most like the median, the
-    # strongest of those
-    mid = present[len(present) // 4: max(len(present) // 4 + 1, 3 * len(present) // 4)]
-    med = _median_box([found[n][0] for n in mid])
+def _sample_parts(ys, track):
+    """the samples of a track parted where its text changes (another line in the same place): lists of the indices of
+    its samples (SWAP_NCC between neighbours)"""
+    parts = [[0]]
+    for i in range(1, len(track["ns"])):
+        a, b = track["ns"][i - 1], track["ns"][i]
+        r = _ncc_strokes(ys[a], track["boxes"][i - 1], ys[b], track["boxes"][i]) if a in ys and b in ys else float("nan")
+        if r < SWAP_NCC:
+            parts.append([i])
+        else:
+            parts[-1].append(i)
+    return parts
+
+
+def _clarity(y, box):
+    """how clearly a text stands on a frame: its strokes' contrast with the ground times the sharpness of their edges"""
+    sy, sx, sign, ground = stroke_mask(y, box, [])
+    if len(sy) < 8:
+        return 0.0
+    contrast = float(((y[sy, sx] - ground) * sign).mean())
+    on = np.zeros(y.shape, bool)
+    on[sy, sx] = True
+    edge = on & ~_ndi().binary_erosion(on)
+    ey, ex = np.nonzero(edge)
+    g = _edge_sharpness(_grad(y, 1.0), ey, ex) if len(ey) else 0.0
+    return max(0.0, contrast) * max(0.0, g)
+
+
+def _ref_sample(track, idx, ys):
+    """of the samples idx of a track, the reference: of the middle half of them (of all for three or fewer), those with
+    nearly the most characters (a whole line, not one still coming a character at a time) and a box where most of the
+    samples' boxes are (at rest, not still sliding in), the clearest (_clarity)"""
+    pool = idx if len(idx) <= 3 else idx[len(idx) // 4: max(len(idx) // 4 + 1, 3 * len(idx) // 4)]
+    most = max(len(track["chars"][i]) for i in pool)
+    pool = [i for i in pool if len(track["chars"][i]) >= 0.8 * most]      # the whole line, not one still coming
+    # at rest: its box where most of the samples' boxes are (not one still sliding in)
+    med = _median_box([track["boxes"][i] for i in idx])
 
     def unlike(b):
-        return (abs(b["cx"] - med["cx"]) + abs(b["cy"] - med["cy"])) / med["h"] + abs(b["h"] / med["h"] - 1) * 4 + \
-            abs(b["w"] / med["w"] - 1) * 2
+        return (abs(b["cx"] - med["cx"]) + abs(b["cy"] - med["cy"])) / med["h"] + abs(b["h"] / med["h"] - 1) * 4
+    least = min(unlike(track["boxes"][i]) for i in pool)
+    pool = [i for i in pool if unlike(track["boxes"][i]) <= least + 0.3]
+    clear = {i: _clarity(ys[track["ns"][i]], track["boxes"][i]) if track["ns"][i] in ys else 0.0 for i in pool}
+    return max(pool, key=lambda i: clear[i])
 
-    ref_n = min(mid, key=lambda n: (round(unlike(found[n][0]), 2), -found[n][0]["score"]))
-    rb, rchars = found[ref_n]
-    y_ref = _luma(frames[ref_n])
+
+def _follow_all(tmpl, ys, ns, ref_n):
+    """{n: (ncc, t, s)} of a template followed from the reference frame forward and back through the frames ns (a frame
+    where it is not found keeps the last place, with its low ncc)"""
+    out = {ref_n: (1.0, (0.0, 0.0), 1.0)}
+    for order in ([n for n in ns if n > ref_n], [n for n in reversed(ns) if n < ref_n]):
+        t_prev, s_prev, speed, n_prev, last = (0.0, 0.0), 1.0, 0.0, ref_n, 1.0
+        for n in order:
+            v, t, sc = tmpl.follow(ys[n], t_prev, s_prev, speed, last)
+            if v >= PRESENT_NCC:
+                speed = math.hypot(t[0] - t_prev[0], t[1] - t_prev[1]) / max(1, abs(n - n_prev))
+                t_prev, s_prev, n_prev, last = t, sc, n, v
+                out[n] = (v, t, sc)
+            else:
+                out[n] = (v, t_prev, s_prev)
+    return out
+
+
+def measure_track(frames, track, fps, start=0.0, bounds=None, origin=(0, 0), frame_shape=None):
+    """how a track comes, stays and goes (see the section's comment).  frames: {n: RGB uint8} (at least those of
+    refine_plan), whole frames or pieces of them whose top left corner is at `origin` of a frame `frame_shape` (H, W)
+    big (they must hold the track's band, see _band); track: one of link_tracks.  Returns a list of the lines found in
+    the track (usually one: another line taking the place of the first is measured apart), each with frames (first: the
+    first seen, full: the first whole and still, hold_end: the last, last: the last seen), times (s, from `start`), enter
+    and exit (frames, s, kinds: cut, fade, move, scale, stagger, blur, glitch; dx dy and from: where it came from;
+    scale: its size then against its size at rest; stagger: the characters one after another; glitch), hold, space
+    (whether it moves with the picture behind it), ref (the reference's box and characters, in the frame's px) and
+    series (per frame).  bounds: the first and last frame of the video read (a text still whole there has not come or
+    gone: its phase is "none", cut_off); by default those of `frames`"""
+    ns = sorted(frames)
+    bounds = bounds or (ns[0], ns[-1])
+    shape = frame_shape or frames[ns[0]].shape[:2]
+    bx0, by0, bx1, by1 = _band(track, shape)
+    ox, oy = origin
+    band = {n: np.ascontiguousarray(frames[n][by0 - oy:by1 - oy, bx0 - ox:bx1 - ox]) for n in ns}
+    ys = {n: _luma(band[n]) for n in ns}
+    tb = dict(track)
+    tb["boxes"] = [_shift(b, -bx0, -by0) for b in track["boxes"]]
+    tb["box"] = _shift(track["box"], -bx0, -by0)
+    tb["chars"] = [[[c[0] - bx0, c[1] - by0] + list(c[2:]) for c in cs] for cs in track.get("chars", [[] for _ in track["boxes"]])]
+    tb["ns"] = track.get("ns") or [track["first"]]
+    have = [i for i, n in enumerate(tb["ns"]) if n in ys]
+    if not have:
+        return []
+    parts = [[i for i in p if i in have] for p in _sample_parts(ys, {"ns": tb["ns"], "boxes": tb["boxes"]})]
+    parts = [p for p in parts if p]
+    refs = [_ref_sample(tb, p, ys) for p in parts]
+    tmpls = [_Template(ys[tb["ns"][r]], tb["boxes"][r]) for r in refs]
+    # the frames of each part: up to where the next part's text matches better than this part's
+    edges = []
+    for k in range(len(parts) - 1):
+        a, b = tb["ns"][parts[k][-1]], tb["ns"][parts[k + 1][0]]
+        between = [n for n in ns if a < n < b]
+        cut = b
+        if between:
+            fa = _follow_all(tmpls[k], ys, between, a)
+            fb = _follow_all(tmpls[k + 1], ys, between, b)
+            for n in between:
+                if fb[n][0] > fa[n][0]:
+                    cut = n
+                    break
+        edges.append(cut)
+    out = []
+    for k, p in enumerate(parts):
+        lo = edges[k - 1] if k > 0 else ns[0]
+        hi = edges[k] - 1 if k < len(edges) else ns[-1]
+        part_ns = [n for n in ns if lo <= n <= hi]
+        ref_i = refs[k]
+        m = _measure_segment(band, ys, part_ns, tb, ref_i, tmpls[k], fps, start, bounds)
+        if m is not None:
+            m["ref"]["box"] = _shift(m["ref"]["box"], bx0, by0)
+            m["ref"]["chars"] = [[c[0] + bx0, c[1] + by0] + list(c[2:]) for c in m["ref"]["chars"]]
+            m["band"] = [int(bx0), int(by0), int(bx1), int(by1)]
+            m["track"] = track.get("id")
+            out.append(m)
+    return out
+
+
+def _background_shift(y_a, y_b, box):
+    """how the picture behind a text moves from one frame to the next (px, and the phase correlation's response): the
+    frames' band with the text's box (grown by half its height) filled with the band's mean"""
+    cv2 = _cv2()
+    a = np.array(y_a, np.float32)
+    b = np.array(y_b, np.float32)
+    h = box["h"]
+    y0, y1 = int(max(0, box["y0"] - 0.5 * h)), int(min(a.shape[0], box["y1"] + 0.5 * h))
+    x0, x1 = int(max(0, box["x0"] - 0.5 * h)), int(min(a.shape[1], box["x1"] + 0.5 * h))
+    a[y0:y1, x0:x1] = a.mean()
+    b[y0:y1, x0:x1] = b.mean()
+    win = cv2.createHanningWindow((a.shape[1], a.shape[0]), cv2.CV_32F)
+    (dx, dy), resp = cv2.phaseCorrelate(a, b, win)
+    return float(dx), float(dy), float(resp)
+
+
+def _measure_segment(frames, ys, ns, track, ref_i, tmpl, fps, start, bounds):
+    """measure_track for the frames ns of one line, its reference the sample ref_i of the track"""
+    if not ns:
+        return None
+    ref_n = track["ns"][ref_i]
+    if ref_n not in ns:
+        return None
+    rb = track["boxes"][ref_i]
+    rchars = [tuple(c) for c in track["chars"][ref_i]]
+    y_ref = ys[ref_n]
     sy, sx, sign, ground = stroke_mask(y_ref, rb, rchars)
+    if len(sy) < 4:
+        return None
     # the strokes' inside (all four neighbours strokes too: a little off still reads the stroke) and their edge
     on = np.zeros(y_ref.shape, bool)
     on[sy, sx] = True
@@ -815,46 +910,12 @@ def _measure_segment(frames, ns, found, track, fps, start, bounds):
     else:
         own_c = np.zeros(len(cx_all), int)
     ink_ref = np.array([((y_ref[cy_all[own_c == k], cx_all[own_c == k]] - ground) * sign).sum() for k in range(n_chars)])
+    followed = _follow_all(tmpl, ys, ns, ref_n)
     series = []
-    t_prev, s_prev = (0.0, 0.0), 1.0
-    reach = MATCH_REACH * (np.median([c[3] for c in rchars]) if rchars else rb["h"])
+    prev = None
     for n in ns:
-        b, peaks = found[n]
-        hyps = [(t_prev, s_prev)]
-        if b is not None:
-            s_b = b["h"] / rb["h"]
-            hyps.append(((b["cx"] - rb["cx"], b["cy"] - rb["cy"]), s_b))
-            if vertical:
-                hyps.append(((b["cx"] - rb["cx"], b["y0"] - centre[1] - s_b * (rb["y0"] - centre[1])), s_b))
-                hyps.append(((b["cx"] - rb["cx"], b["y1"] - centre[1] - s_b * (rb["y1"] - centre[1])), s_b))
-            else:
-                hyps.append(((b["x0"] - centre[0] - s_b * (rb["x0"] - centre[0]), b["cy"] - rb["cy"]), s_b))
-                hyps.append(((b["x1"] - centre[0] - s_b * (rb["x1"] - centre[0]), b["cy"] - rb["cy"]), s_b))
-        best = None
-        for t, s in hyps:
-            px, py = _transform_points(char_xy[:, 0], char_xy[:, 1], centre, t, s) if len(char_xy) else ([], [])
-            pairs = _match(list(zip(px, py)), peaks, reach * s)
-            res = float(np.mean([math.hypot(px[i] - peaks[j][0], py[i] - peaks[j][1]) for i, j in pairs])) if pairs else 0.0
-            key = (len(pairs), -res)
-            if best is None or key > best[0]:
-                best = (key, t, s, pairs)
-        _, t, s, pairs = best
-        if len(pairs) >= 3:
-            # the size from how far apart the characters found lie against how far apart they lie at rest
-            ia = np.array([i for i, _ in pairs])
-            q = np.array([[peaks[j][0], peaks[j][1]] for _, j in pairs], np.float64)
-            spread_ref = np.hypot(*(char_xy[ia] - char_xy[ia].mean(axis=0)).T).mean()
-            spread_now = np.hypot(*(q - q.mean(axis=0)).T).mean()
-            if spread_ref > 0.5 * rb["h"]:
-                s = float(spread_now / spread_ref)
-        if len(pairs) >= 2:
-            px, py = _transform_points(char_xy[:, 0], char_xy[:, 1], centre, t, s)
-            dx = float(np.median([peaks[j][0] - px[i] for i, j in pairs]))
-            dy = float(np.median([peaks[j][1] - py[i] for i, j in pairs]))
-            t = (t[0] + dx, t[1] + dy)
-        elif b is None:
-            t, s = t_prev, s_prev
-        y = _luma(frames[n])
+        ncc, t, s = followed[n]
+        y = ys[n]
         mx, my = _transform_points(sx.astype(np.float64), sy.astype(np.float64), centre, t, s)
         inside = (mx >= 0) & (mx <= y.shape[1] - 1) & (my >= 0) & (my <= y.shape[0] - 1)
         mxi = np.clip(np.round(mx).astype(int), 0, y.shape[1] - 1)
@@ -870,7 +931,8 @@ def _measure_segment(frames, ns, found, track, fps, start, bounds):
                             if np.any((own == k) & inside) and ref_contrast[k] > 1e-6 else np.nan
                             for k in range(n_chars)])
         weight = float(np.nansum(np.clip(np.nan_to_num(ref_contrast), 0, None)))
-        alpha = float(np.nansum(np.nan_to_num(alpha_k) * np.clip(np.nan_to_num(ref_contrast), 0, None)) / weight)             if weight > 1e-9 else 0.0
+        alpha = float(np.nansum(np.nan_to_num(alpha_k) * np.clip(np.nan_to_num(ref_contrast), 0, None)) / weight) \
+            if weight > 1e-9 else 0.0
         seen = alpha_k[np.isfinite(alpha_k) & (alpha_k > 0.5)]
         alpha_vis = float(np.median(seen)) if seen.size else float(np.nanmax(alpha_k)) if np.isfinite(alpha_k).any() else 0.0
         # the edges of the characters that stand out, read on the gradient's highest within about a pixel of where they
@@ -892,12 +954,15 @@ def _measure_segment(frames, ns, found, track, fps, start, bounds):
         vis_ink = ink_k[np.isfinite(ink_k) & (ink_k > 0.5)]
         ink_vis = float(np.median(vis_ink)) if vis_ink.size else (float(np.nanmax(ink_k)) if np.isfinite(ink_k).any() else 0.0)
         split_px, torn = _glitch(frames[n], y, frames[ref_n], y_ref, rb, t, s)
-        series.append({"n": int(n), "present": b is not None, "tx": float(t[0]), "ty": float(t[1]), "s": float(s),
-                       "split_px": split_px, "torn": torn,
-                       "angle": float(b["angle"]) if b is not None else float("nan"), "alpha": alpha,
-                       "alpha_vis": alpha_vis, "alpha_k": [float(a) for a in alpha_k], "matched": len(pairs),
-                       "sharp": float(sharp), "ink_vis": ink_vis, "ink_k": [float(a) for a in ink_k]})
-        t_prev, s_prev = t, s
+        row = {"n": int(n), "present": bool(ncc >= PRESENT_NCC), "ncc": float(ncc), "tx": float(t[0]), "ty": float(t[1]),
+               "s": float(s), "split_px": split_px, "torn": torn, "angle": float("nan"), "alpha": alpha,
+               "alpha_vis": alpha_vis, "alpha_k": [float(a) for a in alpha_k], "sharp": float(sharp),
+               "ink_vis": ink_vis, "ink_k": [float(a) for a in ink_k], "bg_dx": float("nan"), "bg_dy": float("nan")}
+        if prev is not None and n - prev == 1:
+            bdx, bdy, resp = _background_shift(ys[prev], y, here)
+            row.update({"bg_dx": bdx, "bg_dy": bdy, "bg_resp": resp})
+        series.append(row)
+        prev = n
     return _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds)
 
 
@@ -1026,12 +1091,32 @@ def _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds
     times = {k: start + v / float(fps) for k, v in frames.items()}
     held = series[a:b + 1]
     dur = max(1, held[-1]["n"] - held[0]["n"]) / float(fps)
+    # scene or screen: in the frames where the picture behind it moves, does the text move with it or stay put
+    follows = stays = moving = 0
+    for i in range(1, len(series)):
+        r, q = series[i], series[i - 1]
+        if r["n"] - q["n"] != 1 or not (r["present"] and q["present"]) or not np.isfinite(r["bg_dx"]):
+            continue
+        bg = math.hypot(r["bg_dx"], r["bg_dy"])
+        if bg < BG_LEAST:
+            continue
+        moving += 1
+        tdx, tdy = r["tx"] - q["tx"], r["ty"] - q["ty"]
+        tol = max(0.75, 0.35 * bg)
+        if math.hypot(tdx - r["bg_dx"], tdy - r["bg_dy"]) <= tol:
+            follows += 1
+        elif math.hypot(tdx, tdy) <= tol:
+            stays += 1
+    space = {"frames": moving, "follows": follows / float(moving) if moving else float("nan"),
+             "stays": stays / float(moving) if moving else float("nan")}
+    space["kind"] = ("scene" if moving and space["follows"] >= WORLD_SHARE else
+                     "screen" if moving and space["stays"] >= WORLD_SHARE else "unknown")
     hold = {"s": (held[-1]["n"] - held[0]["n"]) / float(fps),
             "split_px": float(np.median([r["split_px"] for r in held])),
             "torn_frames": int(sum(r["torn"] for r in held)),
             "drift_h_per_s": math.hypot(held[-1]["tx"] - held[0]["tx"], held[-1]["ty"] - held[0]["ty"]) / h / dur,
             "scale_change": held[-1]["s"] / max(held[0]["s"], 1e-9)}
-    return {"frames": frames, "times": times, "enter": enter, "exit": leave, "hold": hold,
+    return {"frames": frames, "times": times, "enter": enter, "exit": leave, "hold": hold, "space": space,
             "ref": {"box": rb, "chars": [list(c) for c in rchars]}, "series": series}
 
 
@@ -1443,7 +1528,6 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
         for n in plan:
             need.setdefault(n, []).append(tid)
     last_n = {tid: (max(plan) if plan else -1) for tid, plan in plans.items()}
-    detector = detector or Craft(onnx=onnx, threads=threads)
     buf = {tid: {} for tid in plans}
     texts = []
     t0 = time.time()
@@ -1453,7 +1537,7 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
         if not frames:
             return
         x0, y0 = bands[tid][:2]
-        ms = measure_track(frames, by_id[tid], detector, fps, start=start, bounds=(0, total - 1), origin=(x0, y0),
+        ms = measure_track(frames, by_id[tid], fps, start=start, bounds=(0, total - 1), origin=(x0, y0),
                            frame_shape=shape)
         texts.extend(ms)
         if log:
@@ -1558,7 +1642,7 @@ def beat_events(x, sr):
     env = librosa.onset.onset_strength(y=y, sr=sr)
     tempo, frames = librosa.beat.beat_track(onset_envelope=env, sr=sr, units="frames", trim=False)
     beats = librosa.frames_to_time(frames, sr=sr)
-    low = librosa.onset.onset_strength(y=y, sr=sr, fmax=150.0, n_mels=32)
+    low = librosa.onset.onset_strength(y=y, sr=sr, fmax=150.0, n_mels=8)
     best, phase = -1.0, 0
     for k in range(4):
         idx = frames[k::4]

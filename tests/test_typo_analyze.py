@@ -238,6 +238,9 @@ def pixel_detector(rgb, least=0.5):
     return score, link, 2.0
 
 
+GLYPH_HOLES = ((-0.45, -0.45), (0.45, -0.45), (-0.45, 0.45), (0.45, 0.45), (0.0, 0.0), (0.0, -0.5), (-0.5, 0.0))
+
+
 def draw_text(h=180, w=320, n_chars=6, size=16, centre=(160.0, 120.0), alpha=1.0, offset=(0.0, 0.0), scale=1.0,
               char_alpha=None, bg=0.15, seed=0, colour=(1.0, 1.0, 1.0), blur=0.0, ring=False, split=0.0, tear=None):
     """a frame (uint8) with a line of n block characters of `size` px centred on `centre`, moved by `offset`, scaled by
@@ -263,6 +266,11 @@ def draw_text(h=180, w=320, n_chars=6, size=16, centre=(160.0, 120.0), alpha=1.0
             inside = (np.abs(xs - x) <= half) & (np.abs(yy - y) <= half)
             if ring:
                 inside &= ~((np.abs(xs - x) <= half * 0.5) & (np.abs(yy - y) <= half * 0.5))
+            else:
+                # every character its own: a small hole somewhere else in each (a line of like blocks would match
+                # itself moved by a character)
+                hx, hy = GLYPH_HOLES[k % len(GLYPH_HOLES)]
+                inside &= ~((np.abs(xs - x - hx * half) <= half * 0.3) & (np.abs(yy - y - hy * half) <= half * 0.3))
             inside = inside.astype(np.float64)
             if blur > 0:
                 inside = ndi.gaussian_filter(inside, blur)
@@ -296,7 +304,7 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertEqual(len(tracks), 1, [t["samples"] for t in tracks])
         plan = TA.refine_plan(tracks[0], samples, len(frames), self.fps)
         got = {n: frames[n] for n in plan}
-        out = TA.measure_track(got, tracks[0], pixel_detector, self.fps, bounds=(0, len(frames) - 1))
+        out = TA.measure_track(got, tracks[0], self.fps, bounds=(0, len(frames) - 1))
         self.assertEqual(len(out), texts, [m["frames"] for m in out])
         return out[0] if texts == 1 else out
 
@@ -418,10 +426,10 @@ class TrackMeasureTest(unittest.TestCase):
         samples = TA.detect_samples({n: frames[n] for n in ns}, pixel_detector, self.fps)
         track = TA.link_tracks(samples)[0]
         plan = TA.refine_plan(track, samples, len(frames), self.fps)
-        whole = TA.measure_track({n: frames[n] for n in plan}, track, pixel_detector, self.fps, bounds=(0, 59))
+        whole = TA.measure_track({n: frames[n] for n in plan}, track, self.fps, bounds=(0, 59))
         x0, y0, x1, y1 = TA._band(track, frames[0].shape)
         pieces = {n: frames[n][y0 - 5:y1 + 3, :] for n in plan}
-        part = TA.measure_track(pieces, track, pixel_detector, self.fps, bounds=(0, 59), origin=(0, y0 - 5),
+        part = TA.measure_track(pieces, track, self.fps, bounds=(0, 59), origin=(0, y0 - 5),
                                 frame_shape=frames[0].shape[:2])
         self.assertEqual(whole[0]["frames"], part[0]["frames"])
         self.assertAlmostEqual(whole[0]["ref"]["box"]["cy"], part[0]["ref"]["box"]["cy"], places=6)
