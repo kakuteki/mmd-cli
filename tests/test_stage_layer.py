@@ -359,6 +359,25 @@ class ReflectionTest(unittest.TestCase):
         # nothing is mirrored but on the floor
         self.assertFalse(got[s.material != 0].any())
 
+    def test_a_raised_floor_mirrors_what_stands_on_it_at_its_own_height(self):
+        # (stagecityrev) a pavement 1.5 up with a bright wall standing on it: the wall's points 1, 3 and 5 over the
+        # pavement are seen 1, 3 and 5 under its plane (y = 3 - y); mirrored in the plane y = 0 they would land elsewhere
+        # (the street of stagecity has its road at 0.111 and its pavements at 1.1 to 1.2)
+        mats = [stage_layer.Material("floor"), stage_layer.Material("sign", power=105.0)]
+        m = mesh(quad(1.5, -60, 60, -60, 120) + wall(20.0, -10, 10, 1.5, 9.5), materials=mats, face_material=[0, 0, 1, 1])
+        v = view(look_at=(0.0, 5.5, 0.0), distance=40.0, angles=(10.0, 0.0, 0.0), size=(320, 180))
+        depth, face = stage_layer.rasterize(v, m)
+        s = stage_layer.surface(v, depth, face, m)
+        colour = numpy.where((s.material == 1)[..., None], 240.0, 10.0) * numpy.ones(3)
+        self.assertEqual(stage_layer.floor_levels(s), [1.5])
+        mirror, got = stage_layer.reflection(v, s, colour, [1.5])
+        for over in (1.0, 3.0, 5.0):
+            u, w, _ = v.project([(0.0, 1.5 - over, 20.0)])
+            at = (int(round(w[0])), int(round(u[0])))
+            self.assertEqual(int(s.material[at]), 0, over)                      # (a pixel of the pavement)
+            self.assertTrue(got[at], over)
+            self.assertAlmostEqual(float(mirror[at][0]), 240.0, places=6)
+
     def test_the_gaps_between_mirrored_points_are_filled(self):
         img = numpy.zeros((40, 40, 3))
         got = numpy.zeros((40, 40), bool)
@@ -509,6 +528,56 @@ class FrameTest(unittest.TestCase):
         u, w, _ = v.project([(0.0, 0.0, 0.0)])
         self.assertLess(float(numpy.abs(a[int(round(w[0])), int(round(u[0]))] - b[int(round(w[0])), int(round(u[0]))]).max()), 1.0)
 
+    def test_the_blur_by_depth_is_focused_at_the_cameras_distance_to_its_look_at_point(self):
+        # (stagecityrev) a chequered floor (the flat one of scene_still shows no blur at all): along the row where the floor
+        # lies at the camera's distance to its look-at point it keeps its contrast, twice as far it loses it
+        m, v = lit_scene()
+        depth, face = stage_layer.rasterize(v, m)
+        s = stage_layer.surface(v, depth, face, m)
+        cells = (numpy.floor(numpy.nan_to_num(s.points[..., 0]) / 2.0) + numpy.floor(numpy.nan_to_num(s.points[..., 2]) / 2.0)) % 2
+        floor = s.material == 0
+        picture = numpy.where(floor[..., None], numpy.where(cells[..., None] > 0, 150.0, 50.0), 200.0) * numpy.ones(3)
+        spec = stage_layer.check_set({"model": "unused.pmx", "emissive": ["sign"]})
+        table = stage_layer.emissive_table(m, spec)
+
+        def drawn(look):
+            return stage_layer.stage_frame(look, stage_layer.still(look, spec, m, table, v, picture, s.seen.astype(numpy.float64)))
+        a = drawn(layer_look(night=1.0))
+        b = drawn(layer_look(stage={"dof": 24.0}, night=1.0))
+        # (the floor's depth is the same along a row; read on its left part, clear of the wall that stands in the middle)
+        left = s.depth[:, 50]
+
+        def contrast(img, row):
+            return float(img[row, 10:90, 0].std())
+        for want, keeps in ((v.distance, True), (2.0 * v.distance, False)):
+            row = int(numpy.nanargmin(numpy.where(floor[:, 50], numpy.abs(left - want), numpy.nan)))
+            self.assertLess(abs(float(left[row]) - want), 0.05 * want, (want, row))
+            self.assertTrue(floor[row, 10:90].all(), (want, row))
+            self.assertGreater(contrast(a, row), 30.0)
+            if keeps:
+                self.assertGreater(contrast(b, row) / contrast(a, row), 0.9, (want, row))
+            else:
+                self.assertLess(contrast(b, row) / contrast(a, row), 0.7, (want, row))
+
+    def test_the_haze_takes_the_stage_toward_its_colour_the_more_the_farther(self):
+        # (stagecityrev) layer.haze: 1 - exp(-haze x depth) of the way to layer.haze_colour; the far wall more than the near floor
+        look = layer_look(night=1.0, haze=0.01)
+        st, s = scene_still(look)
+        img = stage_layer.stage_frame(look, st)
+        plain = stage_layer.stage_frame(layer_look(night=1.0), scene_still(layer_look(night=1.0))[0])
+        colour = numpy.asarray(look["layer"]["haze_colour"], dtype=numpy.float64)
+        m, v = lit_scene()
+        shares = []
+        for point in ((0.0, 4.0, 20.0), (0.0, 0.0, -5.0)):             # the wall (emissive) and the floor before it
+            u, w, d = v.project([point])
+            at = (int(round(w[0])), int(round(u[0])))
+            share = float(((plain[at] - img[at]) / (plain[at] - colour)).mean())
+            self.assertAlmostEqual(share, 1.0 - math.exp(-0.01 * float(s.depth[at])), delta=0.01, msg=point)
+            shares.append(share)
+        self.assertGreater(shares[0], shares[1] + 0.1)
+        sky = ~s.seen
+        numpy.testing.assert_allclose(img[sky], plain[sky], atol=1e-9)      # (the sky is no nearer for it)
+
     def test_the_glows_spread_the_bright_and_the_emissive(self):
         look = layer_look(night=1.0, emissive=1.2, emissive_glow=0.5, glow=1.0, glow_threshold=200.0)
         st, s = scene_still(look)
@@ -552,6 +621,59 @@ class PictureTest(unittest.TestCase):
             stage_layer.check_set({"model": "a.pmx", "offst": [0, 0, 0]})
         with self.assertRaises(ValueError):
             stage_layer.check_set({"model": "a.pmx", "offset": [0, 0]})
+
+
+@unittest.skipUnless(stage_layer, "needs Pillow and numpy")
+class DrawerTest(unittest.TestCase):
+    """(stagecityrev) which of MMD's pictures a frame of the video is drawn over, and the camera it may be drawn for: MMD draws
+    the stage at whole frames of the song, the dancer at 16 (or 8) subframes of each"""
+    SIZE = (160, 90)
+
+    @classmethod
+    def setUpClass(cls):
+        from mmd_cli.formats import vmd
+        cls.folder = tempfile.mkdtemp()
+        f = cls.folder
+        with open(os.path.join(f, "stage.pmx"), "wb") as fh:
+            fh.write(pmx_bytes([(-60, 0, -60), (-60, 0, 120), (60, 0, 120), (60, 0, -60)], [(0, 1, 2), (0, 2, 3)],
+                               [("floor", 0, 5.0, 1.0, 2)]))
+        cls.spec = stage_layer.check_set({"model": os.path.join(f, "stage.pmx")})
+
+        def camera(name, keys):
+            path = os.path.join(f, name)
+            with open(path, "wb") as fh:
+                fh.write(vmd.dumps(vmd.Motion.for_camera(cameras=[
+                    vmd.CameraKey(frame=k, distance=-40.0, position=(x, 4.0, 0.0), rotation=(-math.radians(10.0), 0.0, 0.0), fov=30)
+                    for k, x in keys])))
+            return mv_world.camera_track(path)
+        cls.cut = camera("cut.vmd", [(k, 0.5 * k) for k in range(13)])         # a key on every frame (the camera D's way)
+        cls.moving = camera("moving.vmd", [(0, 0.0), (12, 30.0)])               # one move over 12 frames
+        # MMD's pictures: frame k all grey 20 + 10 k (opaque: no sky)
+        cls.pictures = os.path.join(f, "pictures")
+        os.makedirs(cls.pictures)
+        for k in range(13):
+            grey = numpy.full((cls.SIZE[1], cls.SIZE[0], 4), (20 + 10 * k,) * 3 + (255,), numpy.uint8)
+            Image.fromarray(grey, "RGBA").save(os.path.join(cls.pictures, stage_layer.PICTURE % k))
+
+    @classmethod
+    def tearDownClass(cls):
+        __import__("shutil").rmtree(cls.folder, ignore_errors=True)
+
+    def drawer(self, track, fps, subframes):
+        return stage_layer.Drawer(layer_look(night=1.0), self.spec, self.SIZE, fps, track, self.pictures, None, subframes, 0.5)
+
+    def test_a_frame_of_the_video_is_drawn_over_mmds_picture_of_the_frame_of_the_song_it_shows(self):
+        # at 30 fps frame n shows the song's frame n, at 60 fps frames 2n and 2n + 1 both show n (each from its own subframes)
+        for fps, subframes, index, song in ((30, 16, 5, 5), (30, 16, 9, 9), (60, 8, 10, 5), (60, 8, 11, 5)):
+            img, _ = self.drawer(self.cut, fps, subframes).frame(index)
+            self.assertAlmostEqual(float(numpy.median(img)), 20.0 + 10.0 * song, delta=0.5, msg=(fps, index))
+
+    def test_a_camera_that_moves_while_the_shutter_is_open_is_refused(self):
+        # MMD's picture of the stage holds one camera; a dancer folded from subframes over which the camera moves would slide
+        # on it
+        with self.assertRaises(ValueError):
+            self.drawer(self.moving, 30, 16).frame(5)
+        self.drawer(self.cut, 30, 16).frame(5)                       # a key on every frame: it stands still between them
 
 
 class Moving:
@@ -604,6 +726,15 @@ class CheckTest(unittest.TestCase):
         off = stage_layer.check_placement(mesh(self.FLOOR), Moving(step=2.5), range(30), {})
         self.assertEqual(off["feet"]["off_floor"][0]["frames"][1], 29)
         self.assertGreater(off["feet"]["off_floor_frames"], 0)
+
+    def test_a_sole_high_in_a_kick_or_a_jump_still_has_its_floor_under_it(self):
+        # (stagecityrev) soles 10 up: the floor is looked for far enough down to find it (looked for only 3 down, 152 frames
+        # of the song were counted "no floor"), and a sole over its floor is not in it
+        got = stage_layer.check_placement(mesh(self.FLOOR), Moving(lift=10.0), range(3), {})
+        self.assertEqual(got["feet"]["off_floor_frames"], 0)
+        self.assertEqual(got["feet"]["sunk_frames"], 0)
+        self.assertAlmostEqual(got["feet"]["floor_height_max"], 0.111, places=9)
+        self.assertGreater(got["feet"]["lowest_above_floor_min"], 9.0)
 
     def test_a_post_she_walks_into_is_counted(self):
         post = box((9.0, 0.111, -0.5), (10.0, 30.0, 0.5))
@@ -843,6 +974,62 @@ class RenderTest(unittest.TestCase):
         self.assertAlmostEqual(float(her[0]), 255.0, delta=3.0)      # 128 x 2.2: as far as it goes
         self.assertAlmostEqual(float(her[1]), 128.0 * 1.1, delta=3.0)
         self.assertAlmostEqual(float(her[2]), 128.0 * 0.55, delta=3.0)
+
+    def test_a_stage_of_a_model_prepared_once_gives_the_video_of_the_work_folder_and_is_refused_when_out_of_date(self):
+        # (stagecityrev) tools/mv_chunks.py --workers prepares the stage once (mv_look prepare) and renders every chunk
+        # --prepared: the same video as a render with its own work folder; refused when MMD's pictures were drawn again
+        # after it (the key knows them by name, size and time) or a frame of the light round her is gone
+        import contextlib
+        import io
+        import json as _json
+        import shutil as _shutil
+        f = os.path.join(self.folder, "prepared")
+        os.makedirs(f)
+        pictures = os.path.join(f, "pictures")
+        _shutil.copytree(self.pictures, pictures)
+        look = os.path.join(f, "look.json")
+        with open(look, "w", encoding="utf-8") as fh:
+            _json.dump({"stage": {"world": 1}, "layer": {"on": 1, "night": 0.5, "spill": 1.0, "spill_radius": 60.0},
+                        "glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0}}, fh)
+        world = ["--camera", self.camera, "--stage-set", os.path.join(self.folder, "set.json"), "--stage-pictures", pictures]
+        prep = os.path.join(f, "prep")
+
+        def run(argv):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = self.mv_look.main(argv)
+            return code, stream.getvalue()
+
+        def prepared(name):
+            return run(["render", self.fg, look, os.path.join(f, name), "--prepared", prep, "--from", "0", "--to", "0.4"] + world)
+        code, said = run(["prepare", look, prep, "--size", "%dx%d" % self.SIZE, "--fps", "30", "--from", "0", "--to", "0.4"] + world)
+        self.assertEqual(code, 0, said)
+        code, said = prepared("a.mp4")
+        self.assertEqual(code, 0, said)
+        code, said = run(["render", self.fg, look, os.path.join(f, "b.mp4"), "--work", os.path.join(f, "work"), "--from", "0",
+                          "--to", "0.4"] + world)
+        self.assertEqual(code, 0, said)
+        a, b = self.frames(os.path.join(f, "a.mp4")), self.frames(os.path.join(f, "b.mp4"))
+        self.assertEqual(len(a), 12)
+        self.assertEqual(len(b), 12)
+        for x, y in zip(a, b):
+            numpy.testing.assert_array_equal(x, y)
+        # a frame of the light round her gone
+        spill = sorted(n for n in os.listdir(os.path.join(prep, "stage")) if n.startswith("spill_"))
+        self.assertEqual(len(spill), 12)
+        aside = os.path.join(f, spill[3])
+        os.replace(os.path.join(prep, "stage", spill[3]), aside)
+        code, said = prepared("c.mp4")
+        self.assertEqual(code, 2, said)
+        os.replace(aside, os.path.join(prep, "stage", spill[3]))
+        self.assertEqual(prepared("d.mp4")[0], 0)
+        # MMD's picture of the stage drawn again (another picture: another size and time)
+        redrawn = numpy.zeros((self.SIZE[1], self.SIZE[0], 4), numpy.uint8)
+        redrawn[..., 3] = 255
+        redrawn[self.material == 0] = (90, 110, 100, 255)
+        Image.fromarray(redrawn, "RGBA").save(os.path.join(pictures, stage_layer.PICTURE % 0))
+        code, said = prepared("e.mp4")
+        self.assertEqual(code, 2, said)
 
 
 if __name__ == "__main__":
