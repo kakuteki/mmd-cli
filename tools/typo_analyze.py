@@ -1446,11 +1446,12 @@ def text_style(rgb, box):
 
 
 TYPE_HV = 0.62                    # horizontal strokes thinner than this share of the vertical ones: mincho.  Measured
-#                                   on the letters of drawn text (48 to 120 px): gothic 0.72 to 1.00 (Noto Sans JP, Yu Gothic, Meiryo,
-#                                   MS Gothic, BIZ UDGothic, HG Gothic M, HG Soei Kaku Pop, UD Digi Kyokasho), mincho 0.24 to
-#                                   0.55 (Yu Mincho, MS Mincho, Noto Serif JP, HG Mincho B); BIZ UDMincho (0.77), the textbook
-#                                   and brush faces (HG Kyokasho 0.77, HG Gyosho 0.81 to 0.86, HG Seikaisho 0.58 to 0.76) read
-#                                   as gothic: the width of the strokes alone does not tell them
+#                                   on the letters of drawn text (48 to 120 px): gothic 0.72 to 1.03 (Noto Sans JP, Yu Gothic,
+#                                   Meiryo, MS Gothic, BIZ UDGothic, HG Gothic M, HG Soei Kaku Pop, UD Digi Kyokasho), mincho
+#                                   0.25 to 0.53 (Yu Mincho, MS Mincho, Noto Serif JP, HG Mincho B); with a glow round them
+#                                   (44 px, sigma 2 to 5) mincho 0.27 to 0.64; BIZ UDMincho (0.72 to 0.78), the textbook and
+#                                   brush faces (HG Kyokasho 0.80 to 0.93, HG Gyosho 0.85 to 0.87, HG Seikaisho 0.62 to 0.64)
+#                                   read as gothic: the width of the strokes alone does not tell them
 
 
 def typeface(rgb, box):
@@ -1504,6 +1505,15 @@ def typeface(rgb, box):
             gone |= vals[:, j] < 0.1
             keep[:, j] &= ~gone
     widths = (vals * keep).sum(axis=1) * 0.5
+    # the width from edge to edge: where the cover falls fastest on each side of the stroke's middle (a glow round the
+    # letters adds cover outside the edge, read as width; the edge stays where the cover falls fastest)
+    dv = np.diff(vals, axis=1)
+    if dv.shape[1] > 2 * mid - 1:
+        left = np.argmax(dv[:, :mid], axis=1)
+        right = mid + np.argmin(dv[:, mid:], axis=1)
+        edge_w = (right - left) * 0.5
+        ok = (edge_w > 0) & (dv[np.arange(len(left)), left] > 0.05) & (dv[np.arange(len(right)), right] < -0.05)
+        widths = np.where(ok, np.minimum(widths, edge_w), widths)
     vert = widths[ang < 20.0]
     horiz = widths[ang > 70.0]
     weight = float(np.median(widths)) / tall
@@ -1525,6 +1535,7 @@ TYPE_PAD = 0.1                    # heights round the box where a text's letters
 #                                   under the line, a shadow's blur, more of the picture behind
 TYPE_CONTRAST = 25.0              # CIEDE76 between the letters' fill and the ground under which they are not read (a
 #                                   text half faded in, a grey line on a grey ground)
+TYPE_TAIL = 0.25                  # the cover under this (a glow) is none, over 1 - this is whole
 LETTER_TALL = 1.15                # a piece taller than this many box heights is not a letter (a figure behind the text,
 #                                   the dancer's legs across the box in our v7)
 LETTER_RULE = (2.5, 0.3)          # a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter
@@ -1601,6 +1612,9 @@ def _letters_of(rgb, box, pad=TYPE_PAD):
     contrast = float(np.sqrt((seg * seg).sum()))
     t = np.clip(((lab - ground) * seg).sum(axis=-1) / max(contrast ** 2, 1e-9), 0.0, 1.0)
     off = np.sqrt(((lab - (ground + t[..., None] * seg)) ** 2).sum(axis=-1))
+    # the share covered, its tails cut (TYPE_TAIL each side, linear between): a glow round the letters lies low on the
+    # mix and would add to the strokes' widths; an anti-aliased edge keeps its sum
+    t = np.clip((t - TYPE_TAIL) / (1.0 - 2.0 * TYPE_TAIL), 0.0, 1.0)
     cover = np.where(near & (off < max(OUTLINE_DE, 0.2 * contrast)), t, 0.0)
     mask = cover >= 0.5
     gone = _not_letters(mask, hb)

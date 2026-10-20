@@ -742,6 +742,15 @@ class TypefaceTest(unittest.TestCase):
         heavy = self.features("NotoSansJP-VF.ttf", weight=900)
         self.assertGreater(heavy["weight"], 1.5 * light["weight"])
 
+    def test_a_glow_round_mincho_does_not_make_it_gothic(self):
+        # the references' lyrics glow (glow 0.12 to 0.20): the glow's light round the thin horizontals read as their width
+        for font in ("yumin.ttf", "NotoSerifJP-VF.ttf"):
+            for glow in ((2, 1.0), (3, 1.5), (5, 2.0)):
+                a, box = render(font=font, size=44, weight=500 if font.startswith("Noto") else None, glow=glow,
+                                ground=(20, 22, 40))
+                tf = TA.typeface(a, box)
+                self.assertEqual(tf["class"], "mincho", (font, glow, tf))
+
     def test_a_figure_behind_and_a_rule_of_the_fill_colour_are_not_letters(self):
         # our v7: the dancer's legs (pale, wide) cross the box behind a white line and its rule is light too: the fill
         # was read off the legs (the deepest pixels) and the rule's long thin horizontal counted as a stroke
