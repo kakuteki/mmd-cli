@@ -2251,6 +2251,24 @@ def _one(value, n=1):
             "floor_pair": float("nan"), "ci": [float(value), float(value)]}
 
 
+CORE_HOLD = 0.3                   # s: a lyric line of the core stood still and whole at least this long,
+CORE_EDGE = 0.01                  # its box clear of the picture's edges by this share of the picture
+
+
+def is_core(t):
+    """a lyric line read surely: it stood still and whole on its reference frame, for CORE_HOLD s or more, its box clear of
+    the picture's edges (left out: a sign of the scene seen moving with the camera, a text cut by the frame's edge, a
+    piece seen only coming or going)"""
+    if not t.get("whole", True) or t["hold"]["s"] < CORE_HOLD:
+        return False
+    p = t["place"]
+    e = CORE_EDGE
+    if t.get("vertical"):
+        return e <= p["x"] <= 1 - e and p["y"] - p["w"] / 2.0 >= e and p["y"] + p["w"] / 2.0 <= 1 - e
+    return (p["x"] - p["w"] / 2.0 >= e and p["x"] + p["w"] / 2.0 <= 1 - e and p["y"] - p["h"] / 2.0 >= e and
+            p["y"] + p["h"] / 2.0 <= 1 - e)
+
+
 def _looks(t):
     """(style, typeface) of a text when it stood whole on its reference frame (else both empty)"""
     if not t.get("whole", True):
@@ -2258,14 +2276,14 @@ def _looks(t):
     return t.get("style") or {}, t.get("typeface") or {}
 
 
-def typo_summary(tr, sy, voice=None, seed=0):
+def typo_summary(tr, sy, voice=None, seed=0, core=False):
     """the summary (TYPO_MEASURES, in look_analyze's form: median, quartiles, n, floor_pair, ci) of a video's lyrics
     from its track run (tr) and its sync run (sy, whose texts are in the order of tr's); the times are read to a frame
-    (floor_pair 1 / fps)"""
+    (floor_pair 1 / fps).  core: only the lines read surely (is_core)"""
     LA = _tool("look_analyze")
     fps = float(tr["fps"])
     kinds = [r["kind"] for r in sy["texts"]]
-    lyr = [(t, r) for t, r in zip(tr["texts"], sy["texts"]) if r["kind"] == "lyric"]
+    lyr = [(t, r) for t, r in zip(tr["texts"], sy["texts"]) if r["kind"] == "lyric" and (not core or is_core(t))]
     rows = []
     for t, r in lyr:
         m = {"typo.size": t["place"]["h"], "typo.x": t["place"]["x"], "typo.y": t["place"]["y"],
@@ -2534,6 +2552,7 @@ def main(argv=None):
     p.add_argument("out")
     p.add_argument("--voice", default=None, help="the JSON of the voice run (the singing's span)")
     p.add_argument("--label", default=None)
+    p.add_argument("--core", action="store_true", help="only the lines read surely (stood still and whole, clear of the edges)")
     p = sub.add_parser("compare", help="summaries side by side: the references' quartiles and ours")
     p.add_argument("out_md")
     p.add_argument("out_json")
@@ -2586,7 +2605,7 @@ def main(argv=None):
         if args.voice:
             with open(args.voice, encoding="utf-8") as f:
                 vo = json.load(f)
-        r = typo_summary(tr, sy, voice=vo)
+        r = typo_summary(tr, sy, voice=vo, core=args.core)
         if args.label:
             r["label"] = args.label
         with open(args.out, "w", encoding="utf-8") as f:

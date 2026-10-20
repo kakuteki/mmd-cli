@@ -945,6 +945,12 @@ class SyncTest(unittest.TestCase):
         self.assertGreater(s["typo.on_screen"]["median"], 0.8)
         self.assertEqual(s["typo.concurrent"]["median"], 1.0)
         self.assertAlmostEqual(s["enter.move_h"]["median"], 1.0)                          # 30 px at 30 px tall
+        # the core: the lines read surely (a text never still and whole, a text cut by the frame's edge, a short one out)
+        texts[2]["whole"] = False
+        texts[3]["place"]["x"] = 0.98
+        c = TA.typo_summary(tr, sy, voice=voice, core=True)
+        self.assertEqual(c["lyrics"], 2)
+        self.assertAlmostEqual(c["summary"]["enter.fade"]["median"], 1.0)
 
     def test_a_small_text_that_comes_back_to_one_place_is_a_mark(self):
         voice = self.voice(((0.5, 59.0),), total=60.0)
