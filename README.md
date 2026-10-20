@@ -577,6 +577,55 @@ python tools/mv_world.py frame camera.vmd look.json out.png --frame 3085 [--mode
   2 GB 未満・1 コマ 0.12 秒。全曲 7,743 コマは 1 処理で約 41 分、`--jobs 4` で 12〜15 分。
   舞台のコマは 1 枚約 380 KB（1280x720 の PNG）で、全曲を prepare すると 30 fps で約 2.9 GB、60 fps で約 5.8 GB。
 
+### 模型の舞台を人物の後ろに置く（`tools/stage_layer.py`、MMD で舞台だけを描いて）
+
+MMD 用に作られた舞台の模型（.pmx の街・会場・部屋）を、`mv_world.py` の後処理の舞台（幕・光条・網目の床）の代わりに人物の後ろへ置く（2026-10-20、stagecity）。
+舞台は MMD（MME なしの写し）で人物と同じカメラ・同じコマで描き、模型の幾何をこの道具でもう一度描いて（`rasterize`: 各画素の一番手前の面。
+`mv_world.View` と同じ投影）、その深さ・材質・面の向き・世界の点で夜の見せ方・人物の影・ぼかしを付ける。幾何は MMD の絵に画素単位で重なる:
+材質ごとに 1 色で塗った模型の写しを MMD に描かせた材質の地図と、色の混ざらない画素の 99.2〜99.7 % が一致し、ずらさない時が最大（1 画素ずらすと 98.2〜99.5 %）。
+食い違うのは縁の混ざった画素と通りの奥の地平の帯（査読 stagecityrev）。「幾何の境目が MMD の強い境目から 1 画素以内」の割合（97〜98 %）は、MMD の絵の
+4 割の画素が強い境目なので 1 画素ずらしても同じ値になり、重なりの確かめには使えない。
+look の `layer.on` 1 で選ぶ。書かなければ（既定 0）舞台は `mv_world.py` のまま、ffmpeg の引数も舞台のコマも前とバイト単位で同じ。
+
+```
+python tools/stage_layer.py info SET.json OUT.json                        # 模型の材質・面の数・印
+python tools/stage_layer.py batch SET.json camera.vmd OUT.txt --mmd MMD.exe [--size 1280x720] (--avi A.avi --from F --to F | --stills F ... --folder DIR)
+python tools/stage_layer.py unpack A.avi DIR --first F                    # MMD の AVI を曲のコマ番号の PNG に（DIR/mmd_NNNNN.png）
+python tools/stage_layer.py frame SET.json look.json camera.vmd DIR OUT.png --frame N [--model rin.pmx --motion ...] [--subframes 16 --shutter 0.5]
+python tools/stage_layer.py check SET.json OUT.json --model rin.pmx --motion ... --camera NAME=camera.vmd ...   # 置き場所の数え（曲全体）
+python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd --model rin.pmx --motion ... --stage-set SET.json --stage-pictures DIR
+```
+
+- **set**（JSON）: `model`（.pmx。ファイルは変えない）、`root`（置き場所を決める骨、既定「全ての親」）、`offset`（その骨を 0 コマで動かす量）、
+  `emissive`（自分で光る材質の名前。看板・灯った窓。作者が AutoLuminous 用に分けた材質）、`lamps`（模型の街灯の光る所、世界の点）。
+- MMD の描き方（`batch`）: 模型だけ、軸と床・地面影・セルフシャドウは切る、背景黒化（何も無い所は alpha 0）。セルフシャドウを切るので、
+  模型の物（街灯の柱・建物・日よけ）は影を落とさない（落ちる影は人物の影だけ）。カメラが 1 コマの中で動かない
+  （キーが毎コマ（間隔 1 コマ）、または動かない）なら、30 fps で描けば 480 fps で描いて畳んだ人物と同じコマになる（MMD はカメラを曲のコマの頭でしか
+  動かさない。カメラ D は 7,743 キーが全部間隔 1 コマで、480 fps の畳みで断るコマは 0）。シャッターの開いている間にカメラが動くコマは断る。
+  止まったカメラは絵が 1 枚あればよい（同じカメラの前のコマの絵を使う）。
+- 1 コマの作り（`stage_frame`）: 夜の暗さ（`layer.night`・`tint`。光る材質は `layer.emissive`）→ 街灯の光（`layer.lamp`・`lamp_colour`・
+  `lamp_reach`・`lamp_spot`。下向きの円錐と距離の減り、面の向き。影は落とさない）→ 人物の影（`stage.shadow` などの柔らかい影。平らな床は
+  `mv_world` の格子、段・縁石・壁は面の点ごと。光る材質には落とさない）→ 平らな床の鏡（`layer.reflect`・`reflect_blur`。見えている明るい所を
+  床の面で写す画面の上の鏡、Fresnel の割合）→ 夜空（何も描かれていない所）→ 霞（`layer.haze`）→ 深さでぼかす（`stage.dof`、焦点は
+  カメラの注視点）→ グロー（明るい所 `layer.glow`、光る材質 `layer.emissive_glow`）。
+- 人物への光（mv_look のグラフ）: `layer.person`・`person_tint`（人物の色に掛ける夜の光の強さと色）、`layer.spill`（まわりの光る材質の光を
+  ぼかした絵（舞台のコマの横の `spill_NNNNN.png`、半分の大きさ）を人物の色に掛けて足す）、`layer.spill_wrap`（同じ光を人物の縁の内側の帯に
+  足す。光の回り込み）。どれも 1・0 なら引数は付かない。`spill`・`spill_wrap` の 1 を超える分は足し算を重ねる（ffmpeg の
+  `blend` の不透明度は 0〜1）。`person` と `person_tint` の積が 2 を超える色は `lutrgb` で掛ける（`colorchannelmixer` は −2〜2）。
+- 速さ（hinata、1280x720、1 処理）: 深さの絵 0.04 秒（numba。無ければ numpy の版で同じ絵、遅い）、カメラ D のコマ 1.65 秒（カメラが
+  変わるたびの分 1.0 秒・コマごと 0.6 秒）、止まったカメラ 0.78 秒。`--jobs N` で N 処理に分ける（各コマは独りで描くので絵は N に依らない）。
+- `check`: 曲全体で、足（MMD の靴の頂点を `sink_check.py` と同じ皮付けで）の下の床の高さと床に沈むコマ・床の無いコマ、体のカプセルが面に入るコマ、
+  カメラが物の中にいるコマ（視線が 150 単位以内で面の裏に当たる）、カメラと人物の間に面があるコマ（舞台は人物の後ろに敷くので、手前の物は
+  絵の上で人物の後ろになってしまう）を時刻つきで数える。
+- `tools/mv_chunks.py` の計画には `"stage_set"` と `"stage_pictures"`（`"world": true` と一緒に）を書くと、各区間の `mv_look render` に渡る。
+  MMD の舞台の絵（`batch --avi` → `unpack`）は区間を描く前に作っておく。
+- 注意（査読 stagecityrev、main からある mv_look の性質）: 畳んだ 30 fps の人物の層（PNG の MOV など、時刻が 1/30 刻み）に `mv_look render --from` で
+  抜粋を重ねると、人物は `-ss %.3f -r 30 -i` で読まれ、3 桁に丸めて切り下がる時刻（コマ番号を 3 で割って 1 余る所、例 448/30 → 14.933）では
+  **1 コマ前**から読まれる（舞台は正しいコマ）。カメラ D では人物と舞台が 1 コマずれ、影も 1 コマ先に出る。抜粋の始め（`--from` − `--offset`）を
+  3 で割り切れるコマにすれば当たらない。MMD 自身の 30 fps の AVI では起きなかった。mv_chunks の区間は AVI の頭から切れ目まで前置きの 120 コマ（4.000 秒）
+  なので当たらない（切れ目が 120 コマより前で AVI が 0 から始まる区間は当たりうるが、480 fps の AVI では 1 枚 = 1/16 コマ）。
+  直すなら `-ss` を 6 桁で書く（6 桁と、0.5 ミリ秒足して 3 桁に丸めた書き方は、畳んだ層の試した 14 コマの全部で正しい）。
+
 ### 体に落ちる影をやわらかくする（`tools/mme_shadow.py`、MME）
 
 MikuMikuEffect（MME）0.37 x64 を入れた MMD の写しで、人物の本体の描画（セルフシャドウ表示中の "object_ss"）だけを差し替えるエフェクトを書く。

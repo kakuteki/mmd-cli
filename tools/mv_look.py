@@ -72,6 +72,18 @@ from PIL import Image, ImageDraw, ImageFilter
 
 
 _WORLD = []
+_LAYER = []
+
+
+def layer_tool():
+    """tools/stage_layer.py (loaded from its file, once), only for a look whose stage is a model (layer.on 1)"""
+    if not _LAYER:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stage_layer.py")
+        spec = importlib.util.spec_from_file_location("stage_layer", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LAYER.append(module)
+    return _LAYER[0]
 
 
 def world_tool():
@@ -166,6 +178,36 @@ DEFAULT_LOOK = {
               "seed": 11,
               "glow": 0.0,          # the lamps' glow round each: its middle is this share of the lamp's colour; 0 none
               "glow_radius": 8.0},  # its radius (a standard deviation), pixels of a 720 line picture
+    # the stage of a model (stagecity, 2026-10-20; tools/stage_layer.py, which says how): a street, a hall or a room modelled
+    # for MMD and drawn by MMD with the dancer's camera, in place of the cyc, the beams, the specks and the floor of
+    # tools/mv_world.py (the plate, beams, bokeh and lamps sections then draw nothing).  It needs stage.world 1 and
+    # stage.floor 1 (MMD renders the dancer without a floor; the model has its own); her shadow (stage.shadow and the
+    # settings of the soft shadow) falls on its surfaces and stage.dof blurs it by its depth
+    "layer": {"on": 0,              # 1: the stage is a model (render needs --stage-set and --stage-pictures)
+              "night": 1.0,         # the share of MMD's light the model keeps where it gives no light of its own
+              "tint": [1.0, 1.0, 1.0],          # ... in this colour (r, g, b factors; a night: a little blue)
+              "emissive": 1.0,      # the light of the set's emissive materials (signs, lit windows): MMD's colour times this
+              "lamp": 0.0,          # the set's lamps light what is near them (MMD's colour times their light); 0 none
+              "lamp_colour": [255.0, 214.0, 170.0],
+              "lamp_reach": 40.0,   # MMD units: a lamp's light falls to a half at this distance
+              "lamp_spot": 2.0,     # it throws its light down: (cos of the angle from straight down)^this; 0 all round
+              "reflect": 0.0,       # the level floors mirror the stage (its lit parts) by Fresnel's share times this; 0 none
+              "reflect_blur": 6.0,  # how rough the mirror is, pixels of a 720 line picture
+              "sky_top": [4.0, 7.0, 20.0],      # where MMD drew nothing: the night sky, 0.5 radians above the horizon
+              "sky_horizon": [18.0, 22.0, 42.0],              # ... and at (and below) the horizon
+              "haze": 0.0,          # haze by depth: 1 - exp(-haze x depth) of haze_colour; 0 none
+              "haze_colour": [14.0, 16.0, 34.0],
+              "glow": 0.0,          # a glow round what is brighter than glow_threshold (of 255), after the blur; 0 none
+              "glow_threshold": 204.0,
+              "glow_radius": 10.0,  # pixels of a 720 line picture
+              "emissive_glow": 0.0,  # a glow round the emissive materials (as AutoLuminous makes them glow); 0 none
+              "emissive_glow_radius": 14.0,
+              "person": 1.0,        # the light on her: her colour (as MMD drew her) times this ...
+              "person_tint": [1.0, 1.0, 1.0],   # ... in this colour (r, g, b factors)
+              "spill": 0.0,         # the street's light on her: her colour times (1 + this x the light round her); 0 none
+              "spill_wrap": 0.0,    # and round her outline (a light wrap): the light round her added in a band inside it
+              "spill_radius": 40.0,  # how far round her the light is gathered from, pixels of a 720 line picture
+              "spill_wrap_width": 6.0},         # the band's width, pixels of a 720 line picture
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -226,7 +268,47 @@ def merge_look(overrides):
     _check_stage(look["stage"])
     _check_lamps(look["lamps"], look["stage"])
     _check_rim(look["rim"])
+    _check_layer(look["layer"], look["stage"], look["lamps"])
     return look
+
+
+def _check_layer(layer, stage, lamps):
+    """the values of the layer section that tools/stage_layer.py can draw, and what a stage of a model needs of the rest"""
+    if layer["on"] not in (0, 1):
+        raise ValueError("layer.on is 0 or 1, not %r" % (layer["on"],))
+    default = DEFAULT_LOOK["layer"]
+    if not layer["on"]:
+        changed = sorted(k for k in layer if k != "on" and layer[k] != default[k])
+        if changed:
+            raise ValueError("layer.%s draws the stage of a model: it needs layer.on 1" % changed[0])
+        return
+    for key in ("night", "emissive", "lamp", "reflect_blur", "haze", "glow", "emissive_glow", "spill", "spill_wrap", "person"):
+        if not (math.isfinite(layer[key]) and layer[key] >= 0):
+            raise ValueError("layer.%s is from 0, not %r" % (key, layer[key]))
+    for key in ("lamp_reach", "glow_radius", "emissive_glow_radius", "spill_radius", "spill_wrap_width"):
+        if not (math.isfinite(layer[key]) and layer[key] > 0):
+            raise ValueError("layer.%s is above 0, not %r" % (key, layer[key]))
+    if not (math.isfinite(layer["lamp_spot"]) and layer["lamp_spot"] >= 0):
+        raise ValueError("layer.lamp_spot is from 0, not %r" % (layer["lamp_spot"],))
+    if not 0 <= layer["reflect"] <= 1:
+        raise ValueError("layer.reflect is 0 (none) to 1 (a mirror), not %r" % (layer["reflect"],))
+    if not 0 <= layer["glow_threshold"] <= 255:
+        raise ValueError("layer.glow_threshold is 0 to 255, not %r" % (layer["glow_threshold"],))
+    for key in ("tint", "lamp_colour", "sky_top", "sky_horizon", "haze_colour", "person_tint"):
+        if not all(math.isfinite(c) and c >= 0 for c in layer[key]):
+            raise ValueError("layer.%s is r, g, b from 0, not %r" % (key, layer[key]))
+    if not (stage["world"] and stage["floor"]):
+        raise ValueError("layer.on 1 lays the stage of a model in the world: it needs stage.world 1 and stage.floor 1 (MMD "
+                         "renders the dancer without a floor; the model has its own)")
+    if stage["shadow"] > 0 and not stage["shadow_soft"]:
+        raise ValueError("the stage of a model takes her soft shadow (stage.shadow_soft 1); the shadows of v8 and v9 lie on "
+                         "mv_world's floor only")
+    others = [name for name, on in (("stage.pool", stage["pool"] > 0), ("stage.reflect", stage["reflect"] > 0),
+                                    ("stage.floor_plane", list(stage["floor_plane"]) != list(DEFAULT_LOOK["stage"]["floor_plane"])),
+                                    ("lamps.cyc", lamps["cyc"] > 0), ("lamps.edge_step", lamps["edge_step"] > 0)) if on]
+    if others:
+        raise ValueError("%s lights mv_world's stage, which the stage of a model replaces (its light: layer.lamp, layer.reflect, "
+                         "layer.emissive)" % others[0])
 
 
 def _check_rim(rim):
@@ -532,12 +614,21 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     # -r before the dancer: her frames are put on the same clock as the layers.  MMD writes 30 fps as
     # 10000000/333333 (30.00003), so her frames come a hair early; left like that, the last frame of the stage
     # falls after her last frame and is dropped (7742 of 7743 on the whole song)
+    spill = None
     if stage is not None:
         # every frame of the stage is its own (the camera moves): the excerpt reads them from its first
         argv += ["-r", _number(fps * subframes), "-i", fg, "-framerate", str(fps), "-start_number", str(int(stage["first"])),
                  "-i", stage["pattern"]]
         next_input = 2
         phase = 0
+        if look["layer"]["on"] and (look["layer"]["spill"] > 0 or look["layer"]["spill_wrap"] > 0):
+            # the stage of a model: the light round every pixel, for the street's light on her (tools/stage_layer.py)
+            if not stage.get("spill"):
+                raise ValueError("layer.spill and layer.spill_wrap light her with the light round her, which the stage's "
+                                 "frames did not come with (tools/stage_layer.py write_stage)")
+            argv += ["-framerate", str(fps), "-start_number", str(int(stage["first"])), "-i", stage["spill"]]
+            spill = next_input
+            next_input += 1
     else:
         argv += ["-r", _number(fps * subframes), "-i", fg, "-loop", "1", "-framerate", str(fps), "-i", plate_path]
         # the light is one loop repeated over the whole song: an excerpt drops the loop's first frames up to its song time
@@ -599,10 +690,26 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     scale = h / REFERENCE_HEIGHT
     rim = look["rim"]
     rim_on = rim["strength"] > 0 and rim["width"] > 0
+    dancer = "[0:v]%sformat=rgba," % _fold(subframes, taken, fps, shifts)
+    lit_dancer = spill is not None
+    layer = look["layer"]
+    if layer["on"] and (layer["person"] != 1.0 or list(layer["person_tint"]) != [1.0, 1.0, 1.0]):
+        # the light on her at night (the stage of a model): her colour times layer.person in layer.person_tint
+        r, g, b = (float(layer["person"]) * float(c) for c in layer["person_tint"])
+        if max(r, g, b) <= 2.0:
+            dancer += "colorchannelmixer=rr=%s:gg=%s:bb=%s," % (_number(r), _number(g), _number(b))
+        else:
+            # (colorchannelmixer takes a factor of -2 to 2: above, a table a channel, rounded as colorchannelmixer rounds;
+            # lutrgb truncates and clips to 0..255)
+            dancer += "lutrgb=r='val*%s+0.5':g='val*%s+0.5':b='val*%s+0.5'," % (_number(r), _number(g), _number(b))
+        lit_dancer = True
+    if spill is not None:
+        parts += _spill(look["layer"], spill, scale, dancer, w, h)
+        dancer = "[lit_dancer]"
     if glow["strength"] > 0 and glow["radius"] > 0:
         t = int(glow["threshold"])
         curve = "clip((val-%d)*255/(255-%d),0,255)" % (t, t)
-        parts += ["[0:v]%sformat=rgba,split=%s" % (_fold(subframes, taken, fps, shifts), "3[fg][fgb][fgr]" if rim_on else "2[fg][fgb]"),
+        parts += ["%ssplit=%s" % (dancer, "3[fg][fgb][fgr]" if rim_on else "2[fg][fgb]"),
                   "[%s][fg]overlay=shortest=1:format=auto,format=gbrp[comp]" % state["label"],
                   "color=c=black:s=%dx%d:r=%s[blk]" % (w, h, fps),
                   "[blk][fgb]overlay=shortest=1,format=gbrp[fgk]",
@@ -610,7 +717,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["[0:v]%sformat=rgba%s" % (_fold(subframes, taken, fps, shifts), ",split=2[fg][fgr]" if rim_on else "[fg]"),
+        parts += ["%s%s" % (dancer, "split=2[fg][fgr]" if rim_on else "null[fg]") if lit_dancer else
+                  "[0:v]%sformat=rgba%s" % (_fold(subframes, taken, fps, shifts), ",split=2[fg][fgr]" if rim_on else "[fg]"),
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"
     if rim_on:
@@ -651,6 +759,50 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     argv += ["-filter_complex", ";".join(parts), "-map", "[out]", "-an", "-r", str(fps)] + coding
     argv += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out]
     return argv
+
+
+def _spill(layer, index, scale, dancer, w, h):
+    """the filters of the street's light on her (look layer.spill, layer.spill_wrap; the stage of a model) from the dancer's
+    chain `dancer` (her fold, ending in a comma) into [lit_dancer]: the light round every pixel (input `index`, half size)
+    as S, her colour C and alpha A: C + spill x C x S / 255 everywhere on her, and + spill_wrap x S in the band A (1 - A
+    blurred by spill_wrap_width) inside her outline (a light wrap: the background's light reaches round her edge)"""
+    wrap = float(layer["spill_wrap"]) > 0
+    out = ["%ssplit=2[sp_c][sp_a]" % dancer,
+           "[%d:v]scale=%d:%d:flags=bilinear,format=gbrp%s" % (index, w, h, ",split=2[sp_s][sp_w]" if wrap else "[sp_s]"),
+           "[sp_a]alphaextract%s" % (",split=3[sp_al][sp_b1][sp_b2]" if wrap else "[sp_al]"),
+           "[sp_c]format=gbrp,split=2[sp_c1][sp_c2]",
+           "[sp_c1][sp_s]blend=all_mode=multiply[sp_m]"]
+    out += _add_in_steps("sp_c2", "sp_m", float(layer["spill"]), "sp_lit")
+    label = "sp_lit"
+    if wrap:
+        out += ["[sp_b2]gblur=sigma=%s,negate[sp_nb]" % _number(float(layer["spill_wrap_width"]) * scale),
+                "[sp_b1][sp_nb]blend=all_mode=multiply[sp_band]",
+                "[sp_w]format=gbrap[sp_wa]",
+                "[sp_wa][sp_band]alphamerge,premultiply=inplace=1,format=gbrp[sp_wrap]"]
+        out += _add_in_steps("sp_lit", "sp_wrap", float(layer["spill_wrap"]), "sp_lit2")
+        label = "sp_lit2"
+    out.append("[%s][sp_al]alphamerge,format=rgba[lit_dancer]" % label)
+    return out
+
+
+def _add_in_steps(base, light, strength, into):
+    """the filters of [base] + strength x [light] into [into]: ffmpeg's blend takes an opacity of 0 to 1, so a strength above
+    1 is added in steps of 1 and the rest (the light is not negative: adding it in steps clips at 255 as adding it once
+    would); up to 1, one addition"""
+    whole = int(math.floor(strength))
+    rest = strength - whole
+    steps = [1.0] * whole + ([rest] if rest > 1e-9 else [])
+    if len(steps) <= 1:
+        return ["[%s][%s]blend=all_mode=addition:all_opacity=%s[%s]" % (base, light, _number(steps[0] if steps else strength),
+                                                                        into)]
+    lights = ["%s%d" % (light, i) for i in range(len(steps))]
+    out = ["[%s]split=%d%s" % (light, len(steps), "".join("[%s]" % n for n in lights))]
+    label = base
+    for i, (name, opacity) in enumerate(zip(lights, steps)):
+        step = into if i == len(steps) - 1 else "%s_%d" % (into, i)
+        out.append("[%s][%s]blend=all_mode=addition:all_opacity=%s[%s]" % (label, name, _number(opacity), step))
+        label = step
+    return out
 
 
 def _rim(rim, scale, label):
@@ -1011,6 +1163,16 @@ def prepared_key(look, size, fps, cues_path, world=None):
         files += [("camera", world["camera"]), ("model", world["model"])] + [("motion", m) for m in world["motions"]]
         files += [("fk", os.path.join(package, "fk.py")), ("vmd", os.path.join(package, "formats", "vmd.py")),
                   ("pmx", os.path.join(package, "formats", "pmx.py"))]
+        if "layer" in world:
+            # the stage of a model: its set, its model, the code that draws it and MMD's pictures of it (by name, size and
+            # time: they are many)
+            spec = layer_tool().load_set(world["layer"]["set"])
+            files += [("stage_layer", os.path.join(here, "stage_layer.py")), ("pmx_edit", os.path.join(package, "formats", "pmx_edit.py")),
+                      ("set", world["layer"]["set"]), ("stage_model", spec["model"])]
+            listing = sorted((name, os.path.getsize(os.path.join(world["layer"]["pictures"], name)),
+                              os.stat(os.path.join(world["layer"]["pictures"], name)).st_mtime_ns)
+                             for name in os.listdir(world["layer"]["pictures"]))
+            digest.update(("\0pictures\0%s" % json.dumps(listing)).encode("utf-8"))
     for label, path in files:
         digest.update(("\0%s\0" % label).encode("ascii"))
         if path is None:
@@ -1055,7 +1217,9 @@ def prepare(look, work, size, fps, cues_path=None, world=None, spans=None):
     layers = write_layers(look, work, size, fps)
     plan = text_plan(cues_path, work, size, fps) if cues_path else None
     note = {"key": prepared_key(look, size, fps, cues_path, world), "work": _slashes(work), "layers": layers, "text": plan}
-    if world is not None:
+    if world is not None and "layer" in world:
+        note["stage"] = layer_tool().write_stage(look, work, size, fps, world, None, None, spans=ranges)
+    elif world is not None:
         note["stage"] = world_tool().write_stage(look, work, size, fps, world["track"], None, None, layers["light_frames"],
                                                  world["subframes"], world["shutter"], world["figure"], world["jobs"], world,
                                                  spans=ranges)
@@ -1098,9 +1262,10 @@ def load_prepared(work, look, size, fps, cues_path=None, world=None):
         whole = os.path.isfile(layers["plate"])
     else:
         whole = isinstance(stage, dict) and isinstance(stage.get("spans"), list) and len(stage["spans"]) > 0
+        patterns = [stage["pattern"]] + ([stage["spill"]] if whole and stage.get("spill") else []) if whole else []
         for span in (stage.get("spans") or []) if whole else []:
             if not (isinstance(span, list) and len(span) == 2 and all(isinstance(v, int) for v in span) and span[0] >= 0
-                    and _whole_sequence(stage["pattern"], span[1], span[0])):
+                    and all(_whole_sequence(p, span[1], span[0]) for p in patterns)):
                 whole = False
     if not whole or not all(_whole_sequence(p, n) for p, n in sequences):
         raise ValueError("the layers in %s are not as `prepare` left them (a frame is missing or one too many): %s" % (work, again))
@@ -1118,13 +1283,26 @@ FLOOR_SHARE = 0.05
 FLOOR_SAMPLES = 8
 
 
-def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter=0.5, jobs=1):
+def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter=0.5, jobs=1, stage_set=None,
+                 stage_pictures=None):
     """what a stage in the world is drawn from (None for a look fixed to the picture, which reads none of it): the camera
     motion MMD renders with and, when the floor takes her pool of light or her shadows, the dancer (model and motions in the
-    order MMD loads them), the shutter of the fold (the floor's motion blur), and how many processes draw its frames"""
+    order MMD loads them), the shutter of the fold (the floor's motion blur), and how many processes draw its frames.  A
+    stage of a model (layer.on 1) also needs its set and the folder of MMD's pictures of it (tools/stage_layer.py)"""
     stage = look["stage"]
     if not stage["world"]:
+        if stage_set or stage_pictures:
+            raise ValueError("--stage-set and --stage-pictures are the stage of a model: the look needs layer.on 1")
         return None
+    if look["layer"]["on"]:
+        if not stage_set or not stage_pictures:
+            raise ValueError("the look's stage is a model (layer.on 1): give its set, --stage-set SET.json, and the folder of "
+                             "MMD's pictures of it, --stage-pictures DIR (tools/stage_layer.py batch and unpack)")
+        if not os.path.isdir(stage_pictures):
+            raise ValueError("no folder of MMD's pictures of the stage: %s" % stage_pictures)
+        layer_tool().load_set(stage_set)
+    elif stage_set or stage_pictures:
+        raise ValueError("--stage-set and --stage-pictures are the stage of a model: the look needs layer.on 1")
     if not camera:
         raise ValueError("the look places the stage in the world (stage.world 1): give the camera motion MMD renders with, "
                          "--camera CAMERA.vmd (tools/mv_chunks.py gives it with \"world\": true in the plan)")
@@ -1133,6 +1311,8 @@ def world_inputs(look, camera=None, model=None, motions=(), subframes=1, shutter
         raise ValueError("--jobs is the number of processes that draw the stage, from 1, not %r" % (jobs,))
     world = {"camera": os.path.abspath(camera), "model": None, "motions": [], "figure": None,
              "subframes": int(subframes), "shutter": float(shutter), "jobs": jobs}
+    if look["layer"]["on"]:
+        world["layer"] = {"set": os.path.abspath(stage_set), "pictures": os.path.abspath(stage_pictures)}
     world["track"] = world_tool().camera_track(world["camera"])
     if stage["dof"] > 0 and not stage["dof_focus"]:
         # (look2rev) the focus is then the camera's own distance to its look-at point, which a key at the point (0) or beyond it
@@ -1210,7 +1390,8 @@ def render(args):
     fps = args.fps or fps
     taken = check_shutter(args.subframes, args.shutter)
     encoder_args(args.encoder)
-    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs, args.stage_set,
+                         args.stage_pictures)
     if world is not None and look["stage"]["floor"]:
         share = floor_share(fg)
         if share > FLOOR_SHARE:
@@ -1249,12 +1430,14 @@ def render(args):
                                  "prepare the span of every chunk" % (work, ", ".join("%d to %d" % (f, f + n - 1)
                                                                                       for f, n in drawn["spans"]),
                                                                       first, first + count - 1))
-            stage = {"pattern": drawn["pattern"], "first": first, "frames": count}
+            stage = {"pattern": drawn["pattern"], "first": first, "frames": count, "spill": drawn.get("spill")}
     else:
         work = os.path.abspath(args.work or out + ".work")
         layers = write_layers(look, work, size, fps)
         plan = text_plan(args.cues, work, size, fps) if args.cues else None
-        if world is not None:
+        if world is not None and "layer" in world:
+            stage = layer_tool().write_stage(look, work, size, fps, world, first, count)
+        elif world is not None:
             stage = world_tool().write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
                                              world["subframes"], world["shutter"], world["figure"], world["jobs"], world)
     folder = os.path.dirname(out)
@@ -1293,7 +1476,7 @@ def layers_command(args):
         raise ValueError("layers needs --size WxH and --fps N")
     check_encoder(args.encoder)
     # a stage in the world: its camera and dancer are read here, so that a wrong one stops a run before MMD renders
-    world_inputs(look, args.camera, args.model, args.motion)
+    world_inputs(look, args.camera, args.model, args.motion, stage_set=args.stage_set, stage_pictures=args.stage_pictures)
     return write_layers(look, os.path.abspath(args.work), parse_size(args.size), args.fps)
 
 
@@ -1326,7 +1509,8 @@ def prepare_command(args):
         raise ValueError("--from and --to go together: the span of the song whose stage to prepare")
     spans = [tuple(span) for span in args.span] + ([] if args.start is None else [(args.start, args.to)])
     stage_spans(spans, args.fps)
-    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs)
+    world = world_inputs(look, args.camera, args.model, args.motion, args.subframes, args.shutter, args.jobs, args.stage_set,
+                         args.stage_pictures)
     note = prepare(look, args.work, parse_size(args.size), args.fps, args.cues, world, spans)
     plan = note["text"]
     result = dict(note["layers"], work=note["work"], cues=len(plan["cues"]) if plan else 0,
@@ -1342,6 +1526,8 @@ def _world_arguments(s):
     s.add_argument("--model", help="a stage in the world with a pool of light or shadows: the dancer's model (.pmx)")
     s.add_argument("--motion", action="append", default=[],
                    help="... and her motions (.vmd), each with its own --motion, in the order MMD loads them")
+    s.add_argument("--stage-set", help="a stage of a model (layer.on 1): its set (tools/stage_layer.py)")
+    s.add_argument("--stage-pictures", help="... and the folder of MMD's pictures of it (tools/stage_layer.py batch, unpack)")
 
 
 def _jobs_argument(s):

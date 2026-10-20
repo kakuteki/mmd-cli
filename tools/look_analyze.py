@@ -1440,6 +1440,9 @@ HALO_NEAR = (3.0, 8.0)            # the glow it throws on the stage just outside
 HALO_FAR = (24.0, 40.0)           # against the stage further out
 HALO_LEAST = 0.05                 # linear luminance: the edge brighter than the far stage by at least this
 OUTLINE_POINTS = 3000             # outline points read per frame at most
+EDGE_IN = (3.0, 6.0)              # 720 line px inside the outline: the person's colour at her edge (the rim's band) ...
+EDGE_OUT = (12.0, 20.0)           # ... against the stage's just outside it, past her glow and the mask's error
+MERGE_DE = 15.0                   # CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity)
 SEG_SIZE = 1024                   # the person model's input (square, the frame letterboxed into it)
 
 REGION_CONCEPTS = ("frame", "person", "stage", "edge")
@@ -1473,6 +1476,8 @@ REGION_MEASURES = {
     "halo.dL": ("edge", "人物のまわりのにじみの見え方（外 3〜8 px と 24〜40 px の L* の差。暗い舞台ほど同じ光で大きい）", "L*"),
     "bloom.person_strength": ("edge", "人物の光源が人物の外に落とすグローの強さ（4 px 先）", ""),
     "bloom.person_r50": ("edge", "人物のグローの届き", "px"),
+    "edge.dE": ("edge", "縁の内（3〜6 px）と外（12〜20 px）の色の差 ΔE*ab の中央（小さいほど人物が後ろの舞台に紛れる）", "ΔE"),
+    "edge.merge": ("edge", "縁の内と外の色の差が 15 未満の点の割合（人物の縁が後ろの舞台と同じ色で見えにくい所）", ""),
 }
 
 
@@ -1571,6 +1576,34 @@ def silhouette(Y, person, unit=1.0, seed=0):
     return out
 
 
+def edge_contrast(lab, person, unit=1.0, seed=0):
+    """how far the person's colour at her outline (EDGE_IN inside) lies from the stage's right behind it (EDGE_OUT
+    outside), read on the normals of the outline points that stay in the person and off it that far, in the frame: the
+    median CIE76 dE*ab (edge.dE) and the share of the points under MERGE_DE (edge.merge: where her edge does not stand out
+    from what lies behind it: a white dress against a white sign)"""
+    out = {"edge.dE": float("nan"), "edge.merge": float("nan")}
+    if person.sum() < 50 or (~person).sum() < 50:
+        return out
+    ys, xs, ny, nx = _outline(person, unit, seed)
+    if len(ys) < 10:
+        return out
+    h, w = person.shape
+    pf = person.astype(np.float64)
+    t_in = np.arange(EDGE_IN[0], EDGE_IN[1] + 0.5, 1.0) * unit
+    t_out = np.arange(EDGE_OUT[0], EDGE_OUT[1] + 0.5, 1.0) * unit
+    inside, _, _ = _along(pf, ys, xs, ny, nx, t_in, order=0)
+    off, py, px = _along(pf, ys, xs, -ny, -nx, t_out, order=0)
+    keep = (inside.min(axis=1) > 0.5) & (off.max(axis=1) < 0.5)
+    keep &= (py.min(axis=1) >= 0) & (px.min(axis=1) >= 0) & (py.max(axis=1) <= h - 1) & (px.max(axis=1) <= w - 1)
+    if keep.sum() < 10:
+        return out
+    near = np.stack([_along(lab[..., k], ys, xs, ny, nx, t_in)[0].mean(axis=1) for k in range(3)], axis=1)
+    far = np.stack([_along(lab[..., k], ys, xs, -ny, -nx, t_out)[0].mean(axis=1) for k in range(3)], axis=1)
+    de = np.linalg.norm(near - far, axis=1)[keep]
+    out.update({"edge.dE": float(np.median(de)), "edge.merge": float((de < MERGE_DE).mean())})
+    return out
+
+
 def region_measures(rgb, mask, unit=1.0, seed=0):
     """the measures of the person (mask >= 0.5) and of the stage (the rest, STAGE_GAP outside the person) of one frame
     (REGION_MEASURES): their tone and colour apart, the light along the person's outline (rim and glow), the blur of
@@ -1597,6 +1630,7 @@ def region_measures(rgb, mask, unit=1.0, seed=0):
     Y = _luminance(srgb_to_linear(rgb))
     if person.sum() >= least:
         out.update(silhouette(Y, person, unit, seed))
+        out.update(edge_contrast(lab, person, unit, seed))
     got = _blur_blocks(luma(rgb), unit, cover=person)
     if got is not None:
         block, share, _ = got

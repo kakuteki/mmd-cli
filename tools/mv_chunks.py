@@ -77,7 +77,7 @@ UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
 OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
-            "stage_jobs", "self_shadow")
+            "stage_jobs", "self_shadow", "stage_set", "stage_pictures")
 SELF_SHADOWS = ("mmd", "soft")
 MME_DLLS = ("d3d9.dll", "MMHack.dll", "MMEffect.dll")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
@@ -281,6 +281,19 @@ def check_plan(plan):
                          % (full["stage_jobs"],))
     if full["stage_jobs"] > 1 and not full["world"]:
         raise ValueError("stage_jobs draws a stage in the world: it goes with \"world\": true")
+    # "stage_set" and "stage_pictures" (stagecity, 2026-10-20): a stage of a model (a look with layer.on 1, tools/stage_layer.py):
+    # its set and the folder of MMD's pictures of it (drawn before, for every frame the chunks show), handed to every fold
+    full.setdefault("stage_set", None)
+    full.setdefault("stage_pictures", None)
+    if (full["stage_set"] is None) != (full["stage_pictures"] is None):
+        raise ValueError("stage_set and stage_pictures go together: the set of a stage of a model and the folder of MMD's "
+                         "pictures of it (tools/stage_layer.py)")
+    if full["stage_set"] is not None:
+        for key in ("stage_set", "stage_pictures"):
+            if not _absolute(full[key]):
+                raise ValueError("%s must be an absolute path on the render machine, not %r" % (key, full[key]))
+        if not full["world"]:
+            raise ValueError("a stage of a model lies in the world: stage_set goes with \"world\": true")
     # "self_shadow": how the model's own body shadow is drawn.  "soft": through MME (beside "mmd") with the effect of
     # tools/mme_shadow.py beside "model"; "mmd": MMD's own.  Either way the driver checks it before MMD renders (mme_shadow
     # verify); without the entry nothing is checked (the plans of before)
@@ -358,6 +371,8 @@ def _world_args(plan):
         args += ["--motion", motion]
     if plan["stage_jobs"] > 1:
         args += ["--jobs", plan["stage_jobs"]]
+    if plan.get("stage_set"):
+        args += ["--stage-set", plan["stage_set"], "--stage-pictures", plan["stage_pictures"]]
     return [str(a) for a in args]
 
 

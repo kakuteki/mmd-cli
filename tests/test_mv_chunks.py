@@ -415,6 +415,29 @@ class WorldPlanTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 mv_chunks.check_plan(dict(self.WORLD, **bad))
 
+    def test_a_stage_of_a_model_hands_mv_look_its_set_and_mmds_pictures_of_it(self):
+        # "stage_set" and "stage_pictures" (tools/stage_layer.py: a look with layer.on 1): every fold and the look check pass
+        # them on after the camera and the dancer; without them the folds are those of before
+        city = dict(self.WORLD, stage_set="C:/work/song/stage/city.json", stage_pictures="C:/work/song/stage/pictures")
+        chunk = mv_chunks.plan_chunks(SPANS, lead=120)[1]
+        fold = mv_chunks.fold_args(mv_chunks.check_plan(city), "t", chunk, 240, 0.5)
+        world = mv_chunks.fold_args(mv_chunks.check_plan(self.WORLD), "t", chunk, 240, 0.5)
+        self.assertEqual(fold, world + ["--stage-set", "C:/work/song/stage/city.json", "--stage-pictures",
+                                        "C:/work/song/stage/pictures"])
+        folder = os.path.join(self.tmp, "city")
+        summary = mv_chunks.write(mv_chunks.check_plan(city), mv_chunks.plan_chunks(SPANS, 120), folder, "t", 240, 0.5)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            check = [l for l in f.read().splitlines() if l.startswith("$check = ")]
+        self.assertTrue(check[0].endswith("--stage-set 'C:/work/song/stage/city.json' --stage-pictures "
+                                          "'C:/work/song/stage/pictures'"), check)
+        for bad in ({"stage_set": "C:/work/song/stage/city.json"},                       # the pictures missing
+                    {"stage_pictures": "C:/work/song/stage/pictures"},                   # the set missing
+                    {"stage_set": "stage/city.json", "stage_pictures": "C:/work/song/stage/pictures"}):   # not absolute
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.check_plan(dict(self.WORLD, **bad))
+        with self.assertRaises(ValueError):                         # a stage of a model lies in the world
+            mv_chunks.check_plan(dict(PLAN, stage_set="C:/work/song/stage/city.json", stage_pictures="C:/work/song/stage/p"))
+
     def test_the_workers_prepare_the_stage_of_their_chunks_with_their_shutter(self):
         driver = self.written("two", workers=2)
         prepare = [l for l in driver.splitlines() if "tools/mv_look.py prepare" in l]
