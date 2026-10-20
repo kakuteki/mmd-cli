@@ -577,6 +577,17 @@ python tools/mv_world.py frame camera.vmd look.json out.png --frame 3085 [--mode
   2 GB 未満・1 コマ 0.12 秒。全曲 7,743 コマは 1 処理で約 41 分、`--jobs 4` で 12〜15 分。
   舞台のコマは 1 枚約 380 KB（1280x720 の PNG）で、全曲を prepare すると 30 fps で約 2.9 GB、60 fps で約 5.8 GB。
 
+- 夜の光（look の `light`、light3、2026-10-21）: 書かなければ何も変わらない（引数も同じ）。
+  - `light.person`: 人物に当たる夜の光（キー・フィル・顔・縁の光・区間の色・キーの向き・輪郭）。MMD が MME で描く
+    （`tools/mme_shadow.py prepare --look` が同じ look から読む。下の「夜の人物の光」）。この道具は確かめるだけで、グラフは変えない。
+    `on` 1 で、舞台が世界にあり影を落とすとき、床の影の向き `stage.shadow_light` は `light.person.direction` と同じでないと断る（光は 1 つ）。
+  - `light.grade`: 前の文字の下の色調（人物とグロー・縁の光の後、パンチ・周辺減光・前の文字・フレアの前）。`shadows`・`mids`・`highs` は
+    r, g, b のずらし（−0.2〜0.2）で、チャンネルごとの曲線（ffmpeg の `curves`、0 と 1 は動かさず 0.25・0.5・0.75 をずらす。真ん中の灰色は
+    `mids` の分だけ色づく）。`saturation` は輝度（BT.709 の重み）のまわりの行列（`colorchannelmixer`、16 ビットで掛ける: 8 ビットでは 1 項ずつ
+    丸めて 128 の灰色が 126 になった）。どちらも RGB のまま（YUV を経ない）。ffmpeg の `colorbalance` は明るさを max+min で測り、真ん中の灰色
+    （128）には中間の重みが 0 で効かなかったので使わない。
+  - `light.flicker`（0〜1）・`flicker_seed`: 模型の舞台の光る材質（看板）の光を材質ごとにちらつかせる（`tools/stage_layer.py`）。
+
 ### 模型の舞台を人物の後ろに置く（`tools/stage_layer.py`、MMD で舞台だけを描いて）
 
 MMD 用に作られた舞台の模型（.pmx の街・会場・部屋）を、`mv_world.py` の後処理の舞台（幕・光条・網目の床）の代わりに人物の後ろへ置く（2026-10-20、stagecity）。
@@ -617,6 +628,9 @@ python tools/mv_look.py render DANCER.avi look.json OUT.mp4 --camera camera.vmd 
 - `check`: 曲全体で、足（MMD の靴の頂点を `sink_check.py` と同じ皮付けで）の下の床の高さと床に沈むコマ・床の無いコマ、体のカプセルが面に入るコマ、
   カメラが物の中にいるコマ（視線が 150 単位以内で面の裏に当たる）、カメラと人物の間に面があるコマ（舞台は人物の後ろに敷くので、手前の物は
   絵の上で人物の後ろになってしまう）を時刻つきで数える。
+- 看板のちらつき（look の `light.flicker`、light3）: 光る材質ごとに、遅いうねり（0.25〜0.8 Hz）と速いうなり（6〜13 Hz）の積の 2 乗だけ光を
+  下げる（明るさ 1 − flicker × それ。元の光を越えない。速さと位相は `light.flicker_seed` から材質ごと）。そのあとのグロー（`layer.glow`・
+  `emissive_glow`）も一緒にちらつく。床の鏡と人物に回す光（spill）はちらつかない（静止したカメラの間はまとめて作るため）。0 なら前と同じ。
 - `tools/mv_chunks.py` の計画には `"stage_set"` と `"stage_pictures"`（`"world": true` と一緒に）を書くと、各区間の `mv_look render` に渡る。
   MMD の舞台の絵（`batch --avi` → `unpack`）は区間を描く前に作っておく。
 - 注意（査読 stagecityrev、main からある mv_look の性質）: 畳んだ 30 fps の人物の層（PNG の MOV など、時刻が 1/30 刻み）に `mv_look render --from` で
@@ -696,6 +710,31 @@ python tools/shadow_measure.py SHADOW.avi [--box X0,Y0,X1,Y1] [--out OUT.json] [
   この道具が書いたエフェクトかを見るだけで、コンパイルが通るかは見ない。
 - MME の入手: BowlRoll の file 35013（x64 0.37、zip 632,614 バイト、SHA-256 f490764d…f492e4）。同梱の MMEffect.txt の条件では、使うことと作った動画の
   配布は商用・非商用を問わず自由（本体の転載は非商用に限り連絡不要）。DLL は署名なし。入れた MMD の写しと記録は `_spike/out/stage6/softshadow_mme/NOTES.md`。
+
+#### 夜の人物の光（`mme_shadow.py --look`・`light-vmd`、light3）
+
+加賀さんの指示（2026-10-20）「照明の感じと歌詞のキネティックタイポグラフィ、モーショングラフィックスは https://www.youtube.com/@PizaCG このチャンネルを
+参考にして」の照明。人物の光は MMD の中で描く（後処理ではなく）: 上の体の影のエフェクトの本体の描画（"object_ss"）をそのまま使い、look の
+`light.person` があればその色で描く。
+
+```
+python tools/mme_shadow.py prepare MODEL.pmx OUTDIR --variant night --look LOOK.json   # LOOK の light.person で描くエフェクト
+python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd                       # カメラの動きに光（向き）のキーを入れた写し
+```
+
+- 描き方（`NIGHT_BODY`）: 白い光の下の彼女の色（材質の明るい色 = 環境色 + 発光色を 1 で頭打ち、テクスチャ、スフィア。MMD 自身の標本器で）に、
+  MMD の光が届く所（柔らかい影とトゥーンの傾き。体の影と同じ計算）はキー `key`、陰はフィル `fill`（トゥーンの色相を輝度 1 にして掛ける）を掛ける。
+  陰を描かない材質（トゥーンが無いか白い: 顔・目）はフィルとキーの間（`face`、0 フィル〜1 キー）。縁の光はフレネル（1 − n·v）^`rim_power` に
+  `rim` の色、絵の上で `rim_from`（x 右・y 下）の側だけ（`rim_sided`、0 は全周）、`rim_albedo` で彼女の色を掛ける割合。輪郭（MMD の edge）は
+  `edge` が 1 なら MMD のまま、1 未満で輪郭の色 × `edge` × フィルとキーの間（暗い人物の上で髪のピンクの輪郭が浮いていた）。MMD の光の色
+  （MME の光の AMBIENT = パネルの値 / 256、既定 154 で 1）がキーを掛ける（カメラの動きの光のキーもそのまま効く）。
+- 色の区間 `sections`（[始まり秒, キー r g b, フィル r g b, 縁 r g b] の並び、時刻の順）: MME の TIME（描いているコマの曲の時刻。AVI の
+  480 fps の 1 枚にも）で、各区間の色を始まりの前後 `fade` 秒でフェードして入れる（`section_colours` が同じ計算）。区間が無ければ `key`・`fill`・`rim`。
+- キーの向き `direction` は MMD の光（光の行く向き、y は負）。体の影のマップも MMD の光から作るので、影はキーから落ちる。`light-vmd` がカメラの
+  動きの写しの 0 コマに光のキー（色 154、この向き）を入れる（カメラの元の光のキーは外す）。床の影（`stage.shadow_light`）は同じ向きでないと
+  mv_look が断る。
+- MMD は MME の写しにだけ入れる（上）。元の White.pmx は変えない（`prepare` が写しを作る）。`light.person` が無いか `on` 0 ならエフェクトは前と
+  バイト単位で同じ（試験は SHA-256）。`verify` は夜の光のエフェクトも soft として通す。
 
 ### 体の影を作りとは別の道で測る（`tools/selfshadow_check.py`、査読）
 
