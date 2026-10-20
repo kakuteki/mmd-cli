@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2399（定数 1887・引数 132・関数の既定 380。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 434（retarget 268・rig 70・踊りだけ 108）、記録の出所つき 84。
+- 数: 全部 2412（定数 1898・引数 132・関数の既定 382。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 435（retarget 268・rig 70・踊りだけ 109）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -1607,36 +1607,36 @@
 | GRADE_AT | (0.25, 0.5, 0.75) |  | 316 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
 | GRADE_MOST | 0.2 |  | 317 | a shift is -this to this |  |  |  |  |  |  |  |  |
 | FLARE_HEIGHT | 0.42 |  | 599 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 700 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 701 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 701 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 701 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 1010 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 1011 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 1012 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 1013 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 1014 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 1015 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 1056 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 1152 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 1355 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 1404 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 1406 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1409 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1409 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1409 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1657 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1672 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1674 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1676 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1678 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1692 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1693 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1703 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1712 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1714 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1716 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| ffmpeg_command(flare_frames) | 0 | frames | 719 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 720 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 720 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 720 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 1040 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 1041 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 1042 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 1043 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 1044 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 1045 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 1086 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 1173 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 1376 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 1425 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 1426 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 1427 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1430 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1430 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1678 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1693 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1695 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1697 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1699 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1713 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1714 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1724 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1733 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1735 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1737 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
@@ -2172,7 +2172,7 @@
 | --sub | 16 |  | 931 |  |  |  |  |  |  |  |  |  |
 | --shutter | 0.5 |  | 932 |  |  |  |  |  |  |  |  |  |
 
-### look_analyze.py（確かめ・部品、161）
+### look_analyze.py（確かめ・部品、163）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2225,294 +2225,307 @@
 | CHANGE_HUE | 40.0 | deg | 613 | degrees between shots' key light: a change of colour |  |  |  |  |  |  |  |  |
 | KEY_COLOURED | 15.0 |  | 614 | C*: the key light is coloured above this |  |  |  |  |  |  |  |  |
 | beams(unit) | 1.0 |  | 617 |  |  |  |  |  |  |  |  |  |
-| flat_mask(grow) | 2 |  | 796 |  |  |  |  |  |  |  |  |  |
-| flat_mask(sigma) | 2.0 |  | 796 |  |  |  |  |  |  |  |  |  |
-| grain(unit) | 1.0 |  | 820 |  |  |  |  |  |  |  |  |  |
-| GLITCH_SHIFT | 6 | px | 872 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
-| GLITCH_SEARCH | 32 |  | 873 |  |  |  |  |  |  |  |  |  |
-| EDGE_POINTS | 4000 |  | 900 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
-| EDGE_LEAST | 0.03 |  | 901 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
-| SOBEL_VAR | 0.5 |  | 902 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
-| REBLUR | (1.0, 3.0, 8.0) | px | 904 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
-| SWITCH | (2.5, 6.0, float("inf")) |  | 905 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
-| edges(seed) | 0 |  | 914 |  |  |  |  |  |  |  |  |  |
-| edges(unit) | 1.0 |  | 914 |  |  |  |  |  |  |  |  |  |
-| SOFT_EDGE | 3.0 |  | 960 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
-| DOF_BLOCK | 40.0 |  | 976 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
-| DOF_CONTRAST | 0.10 |  | 977 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
-| DOF_TOP | 0.02 |  | 978 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
-| DOF_PRE | 0.0 |  | 981 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
-| DOF_LINES | 180 |  | 982 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
-| _blur_blocks(unit) | 1.0 |  | 1007 |  |  |  |  |  |  |  |  |  |
-| dof_blocks(unit) | 1.0 |  | 1042 |  |  |  |  |  |  |  |  |  |
-| SHORT | (8.0, 16.0) |  | 1071 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
-| LONG | (28.0, 40.0) |  | 1072 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
-| STEP_LEAST | 0.12 |  | 1073 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
-| FLAT_MOST | 0.04 |  | 1074 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
-| INNER | 4.0 |  | 1075 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
-| DIFFUSION_TOP | 0.65 |  | 1076 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
-| BRIGHT_EDGE | 0.85 |  | 1077 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
-| CORE_MOST | 3.0 |  | 1078 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
-| PROFILE_POINTS | 1500 |  | 1079 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(seed) | 0 |  | 1130 |  |  |  |  |  |  |  |  |  |
-| edge_profiles(unit) | 1.0 |  | 1130 |  |  |  |  |  |  |  |  |  |
-| MOVING_LEAST | 3.0 |  | 1210 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
-| STILL_MOST | 0.5 |  | 1211 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
-| MOVING_PIXEL | 1.0 |  | 1212 | this counts as moving |  |  |  |  |  |  |  |  |
-| MOTION_LEAST | 0.008 |  | 1213 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
-| motion(seed) | 0 |  | 1273 |  |  |  |  |  |  |  |  |  |
-| motion(unit) | 1.0 |  | 1273 |  |  |  |  |  |  |  |  |  |
-| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1324 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
-| aberration(unit) | 1.0 |  | 1327 |  |  |  |  |  |  |  |  |  |
-| LINE_LEAST | 0.2 |  | 1367 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
-| LINE_OFF_CENTRE | 0.2 |  | 1368 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
-| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1371 |  |  |  |  |  |  |  |  |  |
-| distortion(unit) | 1.0 |  | 1405 |  |  |  |  |  |  |  |  |  |
-| measure_frame(seed) | 0 |  | 1599 |  |  |  |  |  |  |  |  |  |
-| measure_frame(unit) | 1.0 |  | 1599 |  |  |  |  |  |  |  |  |  |
-| PERSON_INNER | 3.0 |  | 1657 | 720 line px: the person is read this far inside its outline (the edge mixes with |  |  |  |  |  | ○ |  |  |
-| STAGE_GAP | 12.0 |  | 1658 | the stage), the stage this far outside it (the person's glow, the mask's error) |  |  |  |  |  | ○ |  |  |
-| REGION_LEAST | 0.005 |  | 1659 | a region under this share of the frame is not read |  |  |  |  |  |  |  |  |
-| RIM_EDGE | (3.0, 6.0) |  | 1660 | 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px, |  |  |  |  |  |  |  |  |
-| RIM_CORE | (12.0, 20.0) |  | 1661 | against the light further in along the same normal |  |  |  |  |  |  |  |  |
-| HALO_EDGE | (1.0, 4.0) |  | 1662 | 720 line px inside the outline: the person's own light at its edge, the source of |  |  |  |  |  | ○ |  |  |
-| HALO_NEAR | (3.0, 8.0) |  | 1663 | the glow it throws on the stage just outside, |  |  |  |  |  |  |  |  |
-| HALO_FAR | (24.0, 40.0) |  | 1664 | against the stage further out |  |  |  |  |  |  |  |  |
-| HALO_LEAST | 0.05 |  | 1665 | linear luminance: the edge brighter than the far stage by at least this |  |  |  |  |  |  |  |  |
-| OUTLINE_POINTS | 3000 |  | 1666 | outline points read per frame at most |  |  |  |  |  |  |  |  |
-| EDGE_IN | (3.0, 6.0) |  | 1667 | 720 line px inside the outline: the person's colour at her edge (the rim's band) ... |  |  |  |  |  | ○ |  |  |
-| EDGE_OUT | (12.0, 20.0) |  | 1668 | ... against the stage's just outside it, past her glow and the mask's error |  |  |  |  |  |  |  |  |
-| MERGE_DE | 15.0 |  | 1669 | CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity) |  |  |  |  |  |  |  |  |
-| SEG_SIZE | 1024 |  | 1670 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
-| _along(order) | 1 |  | 1750 |  |  |  |  |  |  |  |  |  |
-| silhouette(seed) | 0 |  | 1757 |  |  |  |  |  |  |  |  |  |
-| silhouette(unit) | 1.0 |  | 1757 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(seed) | 0 |  | 1811 |  |  |  |  |  |  |  |  |  |
-| edge_contrast(unit) | 1.0 |  | 1811 |  |  |  |  |  |  |  |  |  |
-| region_measures(seed) | 0 |  | 1839 |  |  |  |  |  |  |  |  |  |
-| region_measures(unit) | 1.0 |  | 1839 |  |  |  |  |  |  |  |  |  |
-| seg_session(threads) | 6 |  | 1887 |  |  |  |  |  |  |  |  |  |
-| BOOTSTRAP | 400 |  | 1917 |  |  |  |  |  |  |  |  |  |
-| _trimmed_rms(keep) | 0.9 |  | 1920 |  |  |  |  |  |  |  |  |  |
-| summarise(seed) | 0 |  | 1928 |  |  |  |  |  |  |  |  |  |
-| probe(fps) | 30 |  | 2062 |  |  |  |  |  |  |  |  |  |
-| read_frames(start) | 0.0 |  | 2143 |  |  |  |  |  |  |  |  |  |
-| THUMB | (64, 36) |  | 2168 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
-| read_thumbs(start) | 0.0 |  | 2171 |  |  |  |  |  |  |  |  |  |
-| measure_video(height) | 720 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(jobs) | 1 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(pairs) | 120 |  | 2231 |  |  |  |  |  |  |  |  |  |
-| measure_video(fps) | 30 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(full_every) | 4 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(pair_every) | 4 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| measure_video(seed) | 0 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| layer_masks(start) | 0.0 |  | 2358 |  |  |  |  |  |  |  |  |  |
-| measure_regions(frames) | 48 |  | 2380 |  |  |  |  |  |  |  |  |  |
-| measure_regions(height) | 720 |  | 2380 |  |  |  |  |  |  |  |  |  |
-| measure_regions(fps) | 30 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| measure_regions(seed) | 0 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| measure_regions(threads) | 6 |  | 2381 |  |  |  |  |  |  |  |  |  |
-| TEXT_LEAST | 8.0 |  | 2442 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
-| text_summary(unit) | 1.0 |  | 2466 |  |  |  |  |  |  |  |  |  |
-| measure_text(frames) | 24 |  | 2495 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(height) | 720 |  | 2636 |  |  |  |  |  |  |  |  |  |
-| contact_sheet(size) | (320, 180) |  | 2636 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 720 |  | 2666 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2666 |  |  |  |  |  |  |  |  |  |
-| --pairs | 120 |  | 2848 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2849 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2850 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 2851 |  |  |  |  |  |  |  |  |  |
-| --pair-every | 4 |  | 2852 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
-| --full-every | 4 |  | 2854 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
-| --fps | 30 |  | 2856 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --frames | 48 | frames | 2866 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 2867 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2868 |  |  |  |  |  |  |  |  |  |
-| --threads | 6 |  | 2869 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
-| --fps | 30 |  | 2870 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
-| --size | (320, 180) |  | 2889 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2891 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
-| --frames | 24 | frames | 2896 |  |  |  |  |  |  |  |  |  |
-| --what | "dof" |  | 2901 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2903 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2905 |  |  |  |  |  |  |  |  |  |
+| flat_mask(grow) | 2 |  | 802 |  |  |  |  |  |  |  |  |  |
+| flat_mask(sigma) | 2.0 |  | 802 |  |  |  |  |  |  |  |  |  |
+| grain(unit) | 1.0 |  | 826 |  |  |  |  |  |  |  |  |  |
+| GLITCH_SHIFT | 6 | px | 878 | pixels: a torn row is moved at least this much against the row above |  |  |  |  |  |  |  |  |
+| GLITCH_SEARCH | 32 |  | 879 |  |  |  |  |  |  |  |  |  |
+| EDGE_POINTS | 4000 |  | 906 | edges read per frame at most (a random choice, the same for the same frame) |  |  |  |  |  |  |  |  |
+| EDGE_LEAST | 0.03 |  | 907 | an edge's gradient (Y' per pixel, Sobel) at least this |  |  |  |  |  |  |  |  |
+| SOBEL_VAR | 0.5 |  | 908 | px^2: the Sobel gradient and the pixel grid widen a step by this (measured on synthetic steps blurred by 0 to 8 px: est^2 - true^2 = 0.51 to 0.70) |  |  |  |  |  |  |  |  |
+| REBLUR | (1.0, 3.0, 8.0) | px | 910 | px: the re-blurs; an edge is read with the narrowest whose reading stays under |  |  |  |  |  |  |  |  |
+| SWITCH | (2.5, 6.0, float("inf")) |  | 911 | its switch (a narrow re-blur hardly lowers a soft edge's gradient) |  |  |  |  |  |  |  |  |
+| edges(seed) | 0 |  | 920 |  |  |  |  |  |  |  |  |  |
+| edges(unit) | 1.0 |  | 920 |  |  |  |  |  |  |  |  |  |
+| SOFT_EDGE | 3.0 |  | 966 | 720 line pixels: an edge blurred more than this is soft (out of focus) |  |  |  |  |  |  |  |  |
+| DOF_BLOCK | 40.0 |  | 982 | 720 line pixels: depth of field is read in blocks this wide, |  |  |  |  |  |  |  |  |
+| DOF_CONTRAST | 0.10 |  | 983 | those whose Y' spreads at least this (5 to 95 %: they hold detail), |  |  |  |  |  |  |  |  |
+| DOF_TOP | 0.02 |  | 984 | each by the blur of its steepest 2 % of pixels |  |  |  |  |  |  |  |  |
+| DOF_PRE | 0.0 |  | 987 | image px: blur the frame by this first (and take it out after); 0 none |  |  |  |  |  |  |  |  |
+| DOF_LINES | 180 |  | 988 | depth of field is read on the frame made this small (averaging whole pixels): the noise and the coding blocks of a compressed video, which read sharp, average out, while… |  |  |  |  |  |  |  |  |
+| _blur_blocks(unit) | 1.0 |  | 1013 |  |  |  |  |  |  |  |  |  |
+| dof_blocks(unit) | 1.0 |  | 1048 |  |  |  |  |  |  |  |  |  |
+| SHORT | (8.0, 16.0) |  | 1077 | 720 line pixels: the near sides of an edge (sharpening, width) and |  |  |  |  |  |  |  |  |
+| LONG | (28.0, 40.0) |  | 1078 | the far sides (diffusion), where a step's flat sides are read |  |  |  |  |  |  |  |  |
+| STEP_LEAST | 0.12 |  | 1079 | Y': a step read for its profile rises at least this, |  |  |  |  |  |  |  |  |
+| FLAT_MOST | 0.04 |  | 1080 | and each side's spread stays under this |  |  |  |  |  |  |  |  |
+| INNER | 4.0 |  | 1081 | diffusion: the share of the step not reached within this of the edge (720 px) |  |  |  |  |  |  |  |  |
+| DIFFUSION_TOP | 0.65 |  | 1082 | Y': diffusion is read on steps whose bright side is at most this (a glow of the |  |  |  |  |  |  |  |  |
+| BRIGHT_EDGE | 0.85 |  | 1083 | bright parts does not reach them); the glow's own skirt on steps from this up |  |  |  |  |  |  |  |  |
+| CORE_MOST | 3.0 |  | 1084 | diffusion is read on edges whose core is at most this blurred (720 px) |  |  |  |  |  |  |  |  |
+| PROFILE_POINTS | 1500 |  | 1085 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(seed) | 0 |  | 1136 |  |  |  |  |  |  |  |  |  |
+| edge_profiles(unit) | 1.0 |  | 1136 |  |  |  |  |  |  |  |  |  |
+| MOVING_LEAST | 3.0 |  | 1216 | 720 line pixels a frame: an edge moving across itself at least this is read for |  |  |  |  |  |  |  |  |
+| STILL_MOST | 0.5 |  | 1217 | motion blur, against edges moving less than this; a pixel moving at least |  |  |  |  |  |  |  |  |
+| MOVING_PIXEL | 1.0 |  | 1218 | this counts as moving |  |  |  |  |  |  |  |  |
+| MOTION_LEAST | 0.008 |  | 1219 | Y' per pixel: the weakest moving edge read for motion blur (a 0.3 step blurred over 30 px still shows) |  |  |  |  |  |  |  |  |
+| motion(seed) | 0 |  | 1279 |  |  |  |  |  |  |  |  |  |
+| motion(unit) | 1.0 |  | 1279 |  |  |  |  |  |  |  |  |  |
+| CA_SCALES | np.linspace(-0.012, 0.012, 25) |  | 1330 | the radial scales of red and blue against green searched |  |  |  |  |  |  |  |  |
+| aberration(unit) | 1.0 |  | 1333 |  |  |  |  |  |  |  |  |  |
+| LINE_LEAST | 0.2 |  | 1373 | distortion: segments at least this long (of the picture's height), and at least |  |  |  |  |  |  |  |  |
+| LINE_OFF_CENTRE | 0.2 |  | 1374 | this far from the centre (of the half diagonal), are read for their bend |  |  |  |  |  |  |  |  |
+| K1_SEARCH | np.linspace(-0.4, 0.4, 161) |  | 1377 |  |  |  |  |  |  |  |  |  |
+| distortion(unit) | 1.0 |  | 1411 |  |  |  |  |  |  |  |  |  |
+| measure_frame(seed) | 0 |  | 1605 |  |  |  |  |  |  |  |  |  |
+| measure_frame(unit) | 1.0 |  | 1605 |  |  |  |  |  |  |  |  |  |
+| PERSON_INNER | 3.0 |  | 1663 | 720 line px: the person is read this far inside its outline (the edge mixes with |  |  |  |  |  | ○ |  |  |
+| STAGE_GAP | 12.0 |  | 1664 | the stage), the stage this far outside it (the person's glow, the mask's error) |  |  |  |  |  | ○ |  |  |
+| REGION_LEAST | 0.005 |  | 1665 | a region under this share of the frame is not read |  |  |  |  |  |  |  |  |
+| RIM_EDGE | (3.0, 6.0) |  | 1666 | 720 line px inside the outline: the edge's light, past an outline of 1 to 2 px, |  |  |  |  |  |  |  |  |
+| RIM_CORE | (12.0, 20.0) |  | 1667 | against the light further in along the same normal |  |  |  |  |  |  |  |  |
+| HALO_EDGE | (1.0, 4.0) |  | 1668 | 720 line px inside the outline: the person's own light at its edge, the source of |  |  |  |  |  | ○ |  |  |
+| HALO_NEAR | (3.0, 8.0) |  | 1669 | the glow it throws on the stage just outside, |  |  |  |  |  |  |  |  |
+| HALO_FAR | (24.0, 40.0) |  | 1670 | against the stage further out |  |  |  |  |  |  |  |  |
+| HALO_LEAST | 0.05 |  | 1671 | linear luminance: the edge brighter than the far stage by at least this |  |  |  |  |  |  |  |  |
+| OUTLINE_POINTS | 3000 |  | 1672 | outline points read per frame at most |  |  |  |  |  |  |  |  |
+| EDGE_IN | (3.0, 6.0) |  | 1673 | 720 line px inside the outline: the person's colour at her edge (the rim's band) ... |  |  |  |  |  | ○ |  |  |
+| EDGE_OUT | (12.0, 20.0) |  | 1674 | ... against the stage's just outside it, past her glow and the mask's error |  |  |  |  |  |  |  |  |
+| MERGE_DE | 15.0 |  | 1675 | CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity) |  |  |  |  |  |  |  |  |
+| SEG_SIZE | 1024 |  | 1676 | the person model's input (square, the frame letterboxed into it) |  |  |  |  |  | ○ |  |  |
+| FACE_CHEEK | ((0.55, 0.85), (0.25, 0.75)) |  | 1677 | rows and columns of a face's box read for the light on her skin: the cheeks |  |  |  |  |  |  |  |  |
+| FACE_LEAST | 20 | px | 1680 | pixels of the cheeks on the person at least, for a face to be read |  |  |  |  |  | ○ |  |  |
+| _along(order) | 1 |  | 1763 |  |  |  |  |  |  |  |  |  |
+| silhouette(seed) | 0 |  | 1770 |  |  |  |  |  |  |  |  |  |
+| silhouette(unit) | 1.0 |  | 1770 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(seed) | 0 |  | 1824 |  |  |  |  |  |  |  |  |  |
+| edge_contrast(unit) | 1.0 |  | 1824 |  |  |  |  |  |  |  |  |  |
+| region_measures(seed) | 0 |  | 1852 |  |  |  |  |  |  |  |  |  |
+| region_measures(unit) | 1.0 |  | 1852 |  |  |  |  |  |  |  |  |  |
+| seg_session(threads) | 6 |  | 1917 |  |  |  |  |  |  |  |  |  |
+| BOOTSTRAP | 400 |  | 1947 |  |  |  |  |  |  |  |  |  |
+| _trimmed_rms(keep) | 0.9 |  | 1950 |  |  |  |  |  |  |  |  |  |
+| summarise(seed) | 0 |  | 1958 |  |  |  |  |  |  |  |  |  |
+| probe(fps) | 30 |  | 2092 |  |  |  |  |  |  |  |  |  |
+| read_frames(start) | 0.0 |  | 2173 |  |  |  |  |  |  |  |  |  |
+| THUMB | (64, 36) |  | 2198 | every frame at this size: the cuts, flashes, repeats and the corners' darkening |  |  |  |  |  |  |  |  |
+| read_thumbs(start) | 0.0 |  | 2201 |  |  |  |  |  |  |  |  |  |
+| measure_video(height) | 720 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(jobs) | 1 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(pairs) | 120 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| measure_video(fps) | 30 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| measure_video(full_every) | 4 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| measure_video(pair_every) | 4 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| measure_video(seed) | 0 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| layer_masks(start) | 0.0 |  | 2388 |  |  |  |  |  |  |  |  |  |
+| measure_regions(frames) | 48 |  | 2426 |  |  |  |  |  |  |  |  |  |
+| measure_regions(height) | 720 |  | 2426 |  |  |  |  |  |  |  |  |  |
+| measure_regions(fps) | 30 |  | 2427 |  |  |  |  |  |  |  |  |  |
+| measure_regions(seed) | 0 |  | 2427 |  |  |  |  |  |  |  |  |  |
+| measure_regions(threads) | 6 |  | 2427 |  |  |  |  |  |  |  |  |  |
+| TEXT_LEAST | 8.0 |  | 2493 | 720 line pixels: a box of text at least this tall is counted |  |  |  |  |  |  |  |  |
+| text_summary(unit) | 1.0 |  | 2517 |  |  |  |  |  |  |  |  |  |
+| measure_text(frames) | 24 |  | 2546 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(height) | 720 |  | 2687 |  |  |  |  |  |  |  |  |  |
+| contact_sheet(size) | (320, 180) |  | 2687 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 720 |  | 2717 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2717 |  |  |  |  |  |  |  |  |  |
+| --pairs | 120 |  | 2899 | pairs of frames to measure, spread over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2900 | the analysis height (lengths are given at 720 lines) |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2901 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 2902 |  |  |  |  |  |  |  |  |  |
+| --pair-every | 4 |  | 2903 | measure the second picture too every this many pairs (the noise floor) |  |  |  |  |  |  |  |  |
+| --full-every | 4 |  | 2905 | the slower measures (fringes, distortion) every this many pairs |  |  |  |  |  |  |  |  |
+| --fps | 30 |  | 2907 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --frames | 48 | frames | 2919 | frames spread evenly over the video |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 2920 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2921 |  |  |  |  |  |  |  |  |  |
+| --threads | 6 |  | 2922 | CPU threads of the model |  |  |  |  | ○ |  |  | rig |
+| --fps | 30 |  | 2923 | the rate of a folder of frames |  |  |  |  |  |  |  |  |
+| --size | (320, 180) |  | 2942 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2944 | our untagged mp4 are BT.601 (as made): auto reads them as BT.709, as players do |  |  |  |  |  |  |  |  |
+| --frames | 24 | frames | 2949 |  |  |  |  |  |  |  |  |  |
+| --what | "dof" |  | 2954 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2956 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2958 |  |  |  |  |  |  |  |  |  |
 
-### typo_analyze.py（確かめ・部品、121）
-
-| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| TEXT_TH | 0.7 |  | 73 | a box's highest region score reaches this (EasyOCR's text_threshold) |  |  |  |  |  |  |  |  |
-| LOW_TEXT | 0.4 |  | 74 | the region score above this is text (EasyOCR's low_text) |  |  |  |  |  |  |  |  |
-| LINK_TH | 0.4 |  | 75 | the link score above this joins characters (EasyOCR's link_threshold) |  |  |  |  |  |  |  |  |
-| LEAST_AREA | 10 |  | 76 | map px: smaller parts are noise (EasyOCR) |  |  |  |  |  |  |  |  |
-| VERTICAL | 50.0 | deg | 77 | degrees: a box whose long side stands steeper than this is a column of text |  |  |  |  |  |  |  |  |
-| PEAK_LEAST | 0.5 |  | 78 | a character is a peak of the region score at least this high |  |  |  |  |  |  |  |  |
-| PEAK_WINDOW | 3 |  | 79 | map px: a peak is the highest in this square round it |  |  |  |  |  |  |  |  |
-| HALF_MAX_DIAMETER | 0.754 |  | 80 | the width of a character's peak at half its height, as a share of the character's |  |  |  |  |  |  |  |  |
-| text_boxes(ratio) | 2.0 |  | 101 |  |  |  |  |  |  |  |  |  |
-| char_peaks(ratio) | 2.0 |  | 147 |  |  |  |  |  |  |  |  |  |
-| CRAFT_MEAN | np.array([0.485, 0.456, 0.406], np.float32) * 255.0 |  | 189 |  |  |  |  |  |  |  |  |  |
-| CRAFT_STD | np.array([0.229, 0.224, 0.225], np.float32) * 255.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| __init__(threads) | 3 |  | 199 |  |  |  |  |  |  |  |  |  |
-| detect_video(height) | 540 |  | 251 |  |  |  |  |  |  |  |  |  |
-| detect_video(rate) | 2.0 |  | 251 |  |  |  |  |  |  |  |  |  |
-| detect_video(threads) | 3 |  | 251 |  |  |  |  |  |  |  |  |  |
-| LINK_OVERLAP | 0.3 |  | 330 | a box continues a track when it covers this share of the smaller of the two, |  |  |  |  |  |  |  |  |
-| LINK_HEIGHT | 1.6 |  | 331 | their heights are within this ratio, |  |  |  |  |  |  |  |  |
-| LINK_REACH | 3.0 |  | 332 | or, not overlapping, its centre is within this many heights of where the track goes |  |  |  |  |  |  |  |  |
-| GAP_SAMPLES | 1 |  | 333 | a track may miss this many samples (a blink, a missed detection) |  |  |  |  |  |  |  |  |
-| LINE_SHARE | 0.8 |  | 334 | two tracks together in this share of the samples of the shorter one, |  |  |  |  |  |  |  |  |
-| LINE_GAP | 1.5 |  | 335 | this many heights apart at most along their line, |  |  |  |  |  |  |  |  |
-| LINE_ALIGN | 0.35 |  | 336 | off their common line by this share of the height at most: one line (CRAFT parts a |  |  |  |  |  |  |  |  |
-| MID_RATE | 10.0 | frames | 482 | frames a second read between the windows (the hold) |  |  |  |  |  |  |  |  |
-| BAND | 1.25 |  | 483 | heights above and below a line (or beside a column) the band reaches |  |  |  |  |  |  |  |  |
-| ALPHA_SEEN | 0.15 |  | 484 | a text is seen when its strokes stand out by this share of the reference's |  |  |  |  |  |  |  |  |
-| ALPHA_FULL | 0.85 |  | 485 | ... and is whole from this share on |  |  |  |  |  |  |  |  |
-| STILL | 0.03 |  | 486 | heights a frame: a text moving less than this is still |  |  |  |  |  |  |  |  |
-| STILL_SCALE | 0.006 |  | 487 | and growing or shrinking less than this a frame |  |  |  |  |  |  |  |  |
-| MOVE_LEAST | (3.0, 0.15) | px | 488 | px and heights: a text comes from at least the larger of these away to have moved |  |  |  |  |  |  |  |  |
-| SCALE_LEAST | 1.15 |  | 489 | it comes at least this much larger or smaller to have zoomed |  |  |  |  |  |  |  |  |
-| ROTATE_LEAST | 6.0 | deg | 490 | degrees turned to have rotated |  |  |  |  |  |  |  |  |
-| STAGGER_LEAST | 3 | frames | 491 | frames (and half a frame a character) between the first and the last character to |  |  |  |  |  |  |  |  |
-| STAGGER_ORDER | 0.7 |  | 493 | with the order along the line at least this (Spearman) |  |  |  |  |  |  |  |  |
-| STAGGER_R2 | 0.6 |  | 494 | and a straight line through the characters' times fitting at least this well |  |  |  |  |  |  |  |  |
-| BLUR_LEAST | 0.6 |  | 495 | edges this much softer than the reference's while the strokes stand out: a blur |  |  |  |  |  |  |  |  |
-| SHARP_FULL | 0.8 |  | 496 | a text is whole only with its edges at least this sharp against the reference's |  |  |  |  |  |  |  |  |
-| LONG_S | 20.0 | s | 499 | s: a track longer than this (a watermark, a logo) is read once a second between |  |  |  |  |  |  |  |  |
-| TEMPLATE_PAD | 0.15 |  | 608 | heights round the reference's box in its template |  |  |  |  |  |  |  |  |
-| PRESENT_NCC | 0.5 |  | 609 | the template matches a frame at least this (normalised correlation): the text is there |  |  |  |  |  |  |  |  |
-| LOCAL_SCALES | (0.94, 1.0, 1.06) |  | 610 | sizes tried round the last frame's |  |  |  |  |  |  |  |  |
-| GLOBAL_SCALES | (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.12, 1.25, 1.4, 1.6, 1.8, 2… |  | 611 |  |  |  |  |  |  |  |  |  |
-| GLOBAL_NCC | 0.75 |  | 612 | a match found anywhere in the band (not near the last place) must match this well: a |  |  |  |  |  |  |  |  |
-| RELIABLE_NCC | 0.6 |  | 614 | where a text came from is read on the first frame matching at least this |  |  |  |  |  |  |  |  |
-| SWAP_NCC | 0.5 |  | 615 | two samples of a track whose texts match less than this are two lines |  |  |  |  |  |  |  |  |
-| BG_LEAST | 1.0 | px | 616 | px a frame: the picture behind a text moves at least this to tell scene from screen |  |  |  |  |  |  |  |  |
-| WORLD_SHARE | 0.6 |  | 617 | a text that moves with the picture behind it in this share of those frames is in the |  |  |  |  |  |  |  |  |
-| BG_GAP | 3 | frames | 619 | frames: the picture's step behind a text is read between frames read this close (the |  |  |  |  |  |  |  |  |
-| BG_PART | 24 | px | 621 | px: a part of the band beside the text (left, right, above, below) this large in both |  |  |  |  |  |  |  |  |
-| BG_SPAN | (6, 15) | frames | 624 | frames: the text's and the picture's steps are added up over spans this long (one |  |  |  |  |  |  |  |  |
-| _ink_region(pad) | 0.15 |  | 628 |  |  |  |  |  |  |  |  |  |
-| follow(last_ncc) | 1.0 |  | 723 |  |  |  |  |  |  |  |  |  |
-| measure_track(origin) | (0, 0) |  | 804 |  |  |  |  |  |  |  |  |  |
-| measure_track(start) | 0.0 |  | 804 |  |  |  |  |  |  |  |  |  |
-| _grad(scale) | 1.0 |  | 999 |  |  |  |  |  |  |  |  |  |
-| GLITCH_SPLIT | 2.0 | px | 1007 | px between red and blue that change within a phase: a colour split |  |  |  |  |  |  |  |  |
-| TEAR_SHIFT | 3 | px | 1008 | px: a row of the text moved sideways this much against the reference is torn |  |  |  |  |  |  |  |  |
-| TEAR_SHARE | 0.15 |  | 1009 | a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn |  |  |  |  |  |  |  |  |
-| SPLIT_REACH | 8 | px | 1010 | px searched for the colour split |  |  |  |  |  |  |  |  |
-| TEAR_REACH | 12 | px | 1011 | px searched for a torn row |  |  |  |  |  |  |  |  |
-| TEAR_TEXT_ROW | 0.35 |  | 1012 | a row is read for a tear when its spread in the reference is at least this share of |  |  |  |  |  |  |  |  |
-| STYLE_GROUND | (0.6, 1.2) |  | 1292 | heights out from the box: the ring whose colour is the ground |  |  |  |  |  |  |  |  |
-| STYLE_PAD | 0.3 |  | 1293 | heights round the box where the strokes are looked for |  |  |  |  |  |  |  |  |
-| DEEP | 3.0 | px | 1294 | px into the strokes: the fill |  |  |  |  |  |  |  |  |
-| EDGE_BAND | (1.0, 2.5) | px | 1295 | px into the strokes: the edge band (an outline, a shadow's side) |  |  |  |  |  |  |  |  |
-| OUTLINE_DE | 15.0 |  | 1296 | CIEDE76 between the edge band and the fill for another colour at the edge |  |  |  |  |  |  |  |  |
-| SHADOW_ONE_WAY | 0.35 |  | 1297 | the edge pixels of that colour face one way at least this much (mean resultant |  |  |  |  |  |  |  |  |
-| GLOW_AT | (2.0, 5.0) | px | 1299 | px out from the strokes where the glow is read, against the fill's rise |  |  |  |  |  |  |  |  |
-| HOLLOW | 0.8 |  | 1300 | holes of the ground inside the strokes this many times the strokes' area: hollow |  |  |  |  |  |  |  |  |
-| TYPE_HV | 0.62 |  | 1448 | horizontal strokes thinner than this share of the vertical ones: mincho. Measured |  |  |  |  |  |  |  |  |
-| TYPE_PAD | 0.1 |  | 1534 | heights round the box where a text's letters are looked for: farther out lie a rule |  |  |  |  |  |  |  |  |
-| TYPE_CONTRAST | 25.0 |  | 1536 | CIEDE76 between the letters' fill and the ground under which they are not read (a |  |  |  |  |  |  |  |  |
-| TYPE_TAIL | 0.25 |  | 1538 | the cover under this (a glow) is none, over 1 - this is whole |  |  |  |  |  |  |  |  |
-| FONT_CORE | 0.75 |  | 1539 | the cover the font match takes as the letters (drawn glyphs cut at a half) |  |  |  |  |  |  |  |  |
-| LETTER_TALL | 1.15 |  | 1540 | a piece taller than this many box heights is not a letter (a figure behind the text, |  |  |  |  |  |  |  |  |
-| LETTER_RULE | (2.5, 0.3) |  | 1542 | a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter |  |  |  | ○ |  |  |  | dance |
-| _glyph(size) | 160 |  | 1637 |  |  |  |  |  |  |  |  |  |
-| font_match(size) | 160 |  | 1649 |  |  |  |  |  |  |  |  |  |
-| iter_frames(start) | 0.0 |  | 1722 |  |  |  |  |  |  |  |  |  |
-| track_video(threads) | 3 |  | 1771 |  |  |  |  |  |  |  |  |  |
-| PHRASE_DB | -35.0 |  | 1906 | dB re the voice's 99th percentile: the voice sounds above this |  |  |  |  |  |  |  |  |
-| PHRASE_GAP | 0.30 | s | 1907 | s: a quieter gap shorter than this stays inside the phrase |  |  |  |  |  |  |  |  |
-| PHRASE_LEAST | 0.20 | s | 1908 | s: a shorter run is no phrase |  |  |  |  |  |  |  |  |
-| PHRASE_ONSET | (0.05, 0.15) | s | 1909 | s before and after a run's start where its first onset is taken as its start |  |  |  |  |  |  |  |  |
-| voice_events(sr) | 16000 |  | 1912 |  |  |  |  |  |  |  |  |  |
-| read_sound(sr) | 16000 |  | 1976 |  |  |  |  |  |  |  |  |  |
-| voice_file(offset) | 0.0 |  | 1985 |  |  |  |  |  |  |  |  |  |
-| PAIR_REACH | 1.5 | s | 2004 | s: a text and a phrase start further apart than this are not paired |  |  |  |  |  |  |  |  |
-| MARK_SHARE | 0.4 |  | 2005 | a text on the screen this share of the video or more is a mark (a logo, a watermark) |  |  |  |  |  |  |  |  |
-| LYRIC_SOUNDS | 0.5 |  | 2006 | a screen text over which the voice sounds (VOICE_ON) this share of its time is a lyric |  |  |  |  |  |  |  |  |
-| VOICE_ON | -30.0 |  | 2007 | dB re the voice's 99th percentile: the voice sounds |  |  |  |  |  |  |  |  |
-| BEAT_REACH | 0.01 | s | 2008 | s added to a frame either side: an event this near a beat is on it |  |  |  | ○ |  |  |  | dance |
-| LEAD_WINDOW | (-0.5, 1.0) | s | 2009 | s round a text's first frame where the voice's first strong onset is looked for |  |  |  |  |  |  |  |  |
-| STRONG | 75.0 |  | 2010 | a strong onset: its flux at least this percentile of the song's onsets' |  |  |  | ○ |  |  |  | dance |
-| TRIGGER | (-1.0, 1.5) | s | 2011 | s round the texts' first frames over which the voice is averaged |  |  |  |  |  |  |  |  |
-| MARK_PLACE | (0.03, 0.03, 0.25) |  | 2056 | texts within these of each other across, down and in size (shares) are one place |  |  |  |  |  |  |  |  |
-| MARK_TIMES | 3 |  | 2057 | a text that comes back to one place this many times is a mark, |  |  |  |  |  |  |  |  |
-| MARK_WIDTH | 0.03 |  | 2058 | if it is as wide each time (within this share) |  |  |  |  |  |  |  |  |
-| SIZE_RANGE | (0.012, 0.35) |  | 2059 | a lyric's characters are this tall at least and at most (share of the picture) |  |  |  |  |  |  |  |  |
-| SIG_H | 16 | px | 2062 | px: a text's signature is its box's picture this tall (as wide as its shape says, |  |  |  |  |  |  |  |  |
-| SIG_W | 160 |  | 2063 | at most this) |  |  |  |  |  |  |  |  |
-| MARK_SAME | 0.8 |  | 2064 | two signatures correlating at least this are the same text |  |  |  |  |  |  |  |  |
-| SIGN_TIMES | 3 |  | 2124 | a text seen this many times or more, |  |  |  |  |  |  |  |  |
-| SIGN_SIZES | 1.3 |  | 2125 | its largest this many times its smallest (the camera near and far): a sign of the scene |  |  |  |  |  |  |  |  |
-| sync(fps) | 30.0 |  | 2152 |  |  |  |  |  |  |  |  |  |
-| DISPLAY_H | 0.06 |  | 2280 | a line whose characters are this tall (share of the picture) or more is display type |  |  |  |  |  |  |  |  |
-| _share_stats(seed) | 0 |  | 2283 |  |  |  |  |  |  |  |  |  |
-| _one(n) | 1 |  | 2296 |  |  |  |  |  |  |  |  |  |
-| CORE_SHOW | 0.3 | s | 2301 | s: a lyric line of the core is on the screen at least this long, |  |  |  |  |  |  |  |  |
-| CORE_EDGE | 0.01 |  | 2302 | its box clear of the picture's edges by this share of the picture. (Standing still |  |  |  |  |  |  |  |  |
-| typo_summary(seed) | 0 |  | 2327 |  |  |  |  |  |  |  |  |  |
-| annotate(height) | 540 |  | 2525 |  |  |  |  |  |  |  |  |  |
-| annotate(scale) | 1.0 |  | 2525 |  |  |  |  |  |  |  |  |  |
-| --rate | 2.0 | frames | 2569 | frames sampled a second |  |  |  |  |  |  |  |  |
-| --height | 540 |  | 2570 | lines the frames are read at |  |  |  |  |  |  |  |  |
-| --threads | 3 |  | 2572 |  |  |  |  |  |  |  |  |  |
-| --matrix | "auto" |  | 2573 |  |  |  |  |  |  |  |  |  |
-| --threads | 3 |  | 2579 |  |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 2591 | s added to every time |  |  |  |  |  |  |  |  |
-| --height | 540 |  | 2624 |  |  |  |  |  |  |  |  |  |
-| --scale | 1.0 |  | 2626 |  |  |  |  |  |  |  |  |  |
-
-### mograph_analyze.py（確かめ・部品、37）
+### typo_analyze.py（確かめ・部品、126）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| REFERENCE_HEIGHT | 720.0 |  | 67 |  |  |  |  |  |  |  |  |  |
-| FADE_BLACK | 0.06 |  | 68 | mean Y' under this: black |  |  |  |  |  |  |  |  |
-| FADE_WHITE | 0.90 |  | 69 | over this: white |  |  |  |  |  |  |  |  |
-| FADE_LEAST | 3 | frames | 70 | frames the picture takes going there at least |  |  |  |  |  |  |  |  |
-| DISSOLVE_W | (2, 3, 5, 8) | frames | 71 | half widths (frames) tried for a dissolve |  |  |  |  |  |  |  |  |
-| DISSOLVE_LEAST | 0.05 |  | 72 | mean ／Y' change／ between its ends at least this |  |  |  |  |  |  |  |  |
-| DISSOLVE_MID | 0.25 |  | 73 | its middle frame within this share of that change of the mean of its ends, |  |  |  |  |  |  |  |  |
-| DISSOLVE_ENDS | 0.6 |  | 74 | and its ends two pictures (correlation under this; a picture dimmed, or a line of |  |  |  |  |  |  |  |  |
-| PUNCH_LEAST | 0.08 |  | 76 | log scale change within three frames for a zoom punch, and |  |  |  |  |  |  |  |  |
-| PUNCH_OVER | 6.0 |  | 77 | this many times the scale's usual change round it (a second each side) |  |  |  |  |  |  |  |  |
-| PUNCH_MERGE | 0.3 | s | 78 | s: punches closer than this are one |  |  |  |  |  |  |  |  |
-| SHAKE_WINDOW | 0.2 | s | 79 | s: the shake is the shift less its running mean over this |  |  |  |  |  |  |  |  |
-| GLITCH_SPLIT | 8.0 |  | 80 | 720 line px between red and blue across the picture: a glitch frame |  |  |  |  |  |  |  |  |
-| SPLIT_REACH | 6 | px | 81 | px searched at the read size |  |  |  |  |  |  |  |  |
-| COLOUR_RISE | 12.0 |  | 82 | C*ab over the running median: a colour flash |  |  |  |  |  |  |  |  |
-| COLOUR_LONGEST | 0.6 | s | 83 | s |  |  |  |  |  |  |  |  |
-| BEAT_REACH | 0.01 | s | 84 | s added to a frame either side: on the beat |  |  |  | ○ |  |  |  | dance |
-| _similarity(border) | 4 |  | 106 |  |  |  |  |  |  |  |  |  |
-| finish(start) | 0.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| _events(start) | 0.0 |  | 217 |  |  |  |  |  |  |  |  |  |
-| events_of(start) | 0.0 |  | 346 |  |  |  |  |  |  |  |  |  |
-| events_video(size) | (128, 72) |  | 354 |  |  |  |  |  |  |  |  |  |
-| PARTICLE_SIGMAS | (1.2, 1.8, 2.7, 4.0, 6.0, 9.0, 13.0) |  | 388 | 720 line px |  |  |  |  |  |  |  |  |
-| PARTICLE_LEAST | 0.12 |  | 389 | Y' a particle stands above the ground round it (the ring 2.5 to 4 sigma out) |  |  |  |  |  |  |  |  |
-| PARTICLE_LOG | 0.04 |  | 390 | its scale-normalised Laplacian at least this |  |  |  |  |  |  |  |  |
-| BOKEH_SIGMA | 4.0 |  | 391 | 720 line px: a particle this wide or wider is bokeh (a defocused light) |  |  |  |  |  |  |  |  |
-| PARTICLE_ROUND | 3.0 |  | 392 | the larger of a particle's two curvatures at most this many times the smaller |  |  |  |  |  |  |  |  |
-| LINE_LEAST | 0.15 |  | 393 | of the frame's height: a long line |  |  |  |  |  |  |  |  |
-| LINE_JOIN | (3.0, 6.0) | deg | 394 | degrees and 720 line px: segments this parallel and near are one line's two edges |  |  |  |  |  |  |  |  |
-| AXIS | 3.0 | deg | 395 | degrees from level or upright: on the frame's axes |  |  |  |  |  |  |  |  |
-| particles(unit) | 1.0 |  | 398 |  |  |  |  |  |  |  |  |  |
-| lines(unit) | 1.0 |  | 451 |  |  |  |  |  |  |  |  |  |
-| elements_video(frames) | 60 |  | 491 |  |  |  |  |  |  |  |  |  |
-| elements_video(height) | 720 |  | 491 |  |  |  |  |  |  |  |  |  |
-| --size | "128x72" |  | 568 |  |  |  |  |  |  |  |  |  |
-| --frames | 60 | frames | 574 |  |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 575 |  |  |  |  |  |  |  |  |  |
+| TEXT_TH | 0.7 |  | 74 | a box's highest region score reaches this (EasyOCR's text_threshold) |  |  |  |  |  |  |  |  |
+| LOW_TEXT | 0.4 |  | 75 | the region score above this is text (EasyOCR's low_text) |  |  |  |  |  |  |  |  |
+| LINK_TH | 0.4 |  | 76 | the link score above this joins characters (EasyOCR's link_threshold) |  |  |  |  |  |  |  |  |
+| LEAST_AREA | 10 |  | 77 | map px: smaller parts are noise (EasyOCR) |  |  |  |  |  |  |  |  |
+| VERTICAL | 50.0 | deg | 78 | degrees: a box whose long side stands steeper than this is a column of text |  |  |  |  |  |  |  |  |
+| PEAK_LEAST | 0.5 |  | 79 | a character is a peak of the region score at least this high |  |  |  |  |  |  |  |  |
+| PEAK_WINDOW | 3 |  | 80 | map px: a peak is the highest in this square round it |  |  |  |  |  |  |  |  |
+| HALF_MAX_DIAMETER | 0.754 |  | 81 | the width of a character's peak at half its height, as a share of the character's |  |  |  |  |  |  |  |  |
+| text_boxes(ratio) | 2.0 |  | 102 |  |  |  |  |  |  |  |  |  |
+| char_peaks(ratio) | 2.0 |  | 148 |  |  |  |  |  |  |  |  |  |
+| CRAFT_MEAN | np.array([0.485, 0.456, 0.406], np.float32) * 255.0 |  | 190 |  |  |  |  |  |  |  |  |  |
+| CRAFT_STD | np.array([0.229, 0.224, 0.225], np.float32) * 255.0 |  | 191 |  |  |  |  |  |  |  |  |  |
+| __init__(threads) | 3 |  | 200 |  |  |  |  |  |  |  |  |  |
+| detect_video(height) | 540 |  | 252 |  |  |  |  |  |  |  |  |  |
+| detect_video(rate) | 2.0 |  | 252 |  |  |  |  |  |  |  |  |  |
+| detect_video(threads) | 3 |  | 252 |  |  |  |  |  |  |  |  |  |
+| LINK_OVERLAP | 0.3 |  | 331 | a box continues a track when it covers this share of the smaller of the two, |  |  |  |  |  |  |  |  |
+| LINK_HEIGHT | 1.6 |  | 332 | their heights are within this ratio, |  |  |  |  |  |  |  |  |
+| LINK_REACH | 3.0 |  | 333 | or, not overlapping, its centre is within this many heights of where the track goes |  |  |  |  |  |  |  |  |
+| GAP_SAMPLES | 1 |  | 334 | a track may miss this many samples (a blink, a missed detection) |  |  |  |  |  |  |  |  |
+| LINE_SHARE | 0.8 |  | 335 | two tracks together in this share of the samples of the shorter one, |  |  |  |  |  |  |  |  |
+| LINE_GAP | 1.5 |  | 336 | this many heights apart at most along their line, |  |  |  |  |  |  |  |  |
+| LINE_ALIGN | 0.35 |  | 337 | off their common line by this share of the height at most: one line (CRAFT parts a |  |  |  |  |  |  |  |  |
+| MID_RATE | 10.0 | frames | 483 | frames a second read between the windows (the hold) |  |  |  |  |  |  |  |  |
+| BAND | 1.25 |  | 484 | heights above and below a line (or beside a column) the band reaches |  |  |  |  |  |  |  |  |
+| ALPHA_SEEN | 0.15 |  | 485 | a text is seen when its strokes stand out by this share of the reference's and its |  |  |  |  |  |  |  |  |
+| SEEN_NCC | 0.35 |  | 486 | template matches there at least this, or they stand out by ALPHA_SURE alone. |  |  |  |  |  |  |  |  |
+| ALPHA_SURE | 0.5 |  | 487 | typorev: on RE: 踊's street the strokes' place stood out by 0.26 to 0.37 with no line |  |  |  |  |  |  |  |  |
+| ALPHA_FULL | 0.85 |  | 494 | ... and is whole from this share on |  |  |  |  |  |  |  |  |
+| STILL | 0.03 |  | 495 | heights a frame: a text moving less than this is still |  |  |  |  |  |  |  |  |
+| STILL_SCALE | 0.006 |  | 496 | and growing or shrinking less than this a frame |  |  |  |  |  |  |  |  |
+| MOVE_LEAST | (3.0, 0.15) | px | 497 | px and heights: a text comes from at least the larger of these away to have moved |  |  |  |  |  |  |  |  |
+| SCALE_LEAST | 1.15 |  | 498 | it comes at least this much larger or smaller to have zoomed |  |  |  |  |  |  |  |  |
+| ROTATE_LEAST | 6.0 | deg | 499 | degrees turned to have rotated |  |  |  |  |  |  |  |  |
+| STAGGER_LEAST | 3 | frames | 500 | frames (and half a frame a character) between the first and the last character to |  |  |  |  |  |  |  |  |
+| STAGGER_ORDER | 0.7 |  | 502 | with the order along the line at least this (Spearman) |  |  |  |  |  |  |  |  |
+| STAGGER_R2 | 0.6 |  | 503 | and a straight line through the characters' times fitting at least this well |  |  |  |  |  |  |  |  |
+| BLUR_LEAST | 0.6 |  | 504 | edges this much softer than the reference's while the strokes stand out: a blur |  |  |  |  |  |  |  |  |
+| SHARP_FULL | 0.8 |  | 505 | a text is whole only with its edges at least this sharp against the reference's |  |  |  |  |  |  |  |  |
+| LONG_S | 20.0 | s | 508 | s: a track longer than this (a watermark, a logo) is read once a second between |  |  |  |  |  |  |  |  |
+| TEMPLATE_PAD | 0.15 |  | 617 | heights round the reference's box in its template |  |  |  |  |  |  |  |  |
+| PRESENT_NCC | 0.5 |  | 618 | the template matches a frame at least this (normalised correlation): the text is there |  |  |  |  |  |  |  |  |
+| LOCAL_SCALES | (0.94, 1.0, 1.06) |  | 619 | sizes tried round the last frame's |  |  |  |  |  |  |  |  |
+| GLOBAL_SCALES | (0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.12, 1.25, 1.4, 1.6, 1.8, 2… |  | 620 |  |  |  |  |  |  |  |  |  |
+| GLOBAL_NCC | 0.75 |  | 621 | a match found anywhere in the band (not near the last place) must match this well: a |  |  |  |  |  |  |  |  |
+| RELIABLE_NCC | 0.6 |  | 623 | where a text came from is read on the first frame matching at least this |  |  |  |  |  |  |  |  |
+| SWAP_NCC | 0.5 |  | 624 | two samples of a track whose texts match less than this are two lines |  |  |  |  |  |  |  |  |
+| BG_LEAST | 1.0 | px | 625 | px a frame: the picture behind a text moves at least this to tell scene from screen |  |  |  |  |  |  |  |  |
+| WORLD_SHARE | 0.6 |  | 626 | a text that moves with the picture behind it in this share of those frames is in the |  |  |  |  |  |  |  |  |
+| BG_GAP | 3 | frames | 628 | frames: the picture's step behind a text is read between frames read this close (the |  |  |  |  |  |  |  |  |
+| BG_PART | 24 | px | 630 | px: a part of the band beside the text (left, right, above, below) this large in both |  |  |  |  |  |  |  |  |
+| BG_SPAN | (6, 15) | frames | 633 | frames: the text's and the picture's steps are added up over spans this long (one |  |  |  |  |  |  |  |  |
+| _ink_region(pad) | 0.15 |  | 637 |  |  |  |  |  |  |  |  |  |
+| follow(last_ncc) | 1.0 |  | 732 |  |  |  |  |  |  |  |  |  |
+| measure_track(origin) | (0, 0) |  | 813 |  |  |  |  |  |  |  |  |  |
+| measure_track(start) | 0.0 |  | 813 |  |  |  |  |  |  |  |  |  |
+| _grad(scale) | 1.0 |  | 1008 |  |  |  |  |  |  |  |  |  |
+| GLITCH_SPLIT | 2.0 | px | 1016 | px between red and blue that change within a phase: a colour split |  |  |  |  |  |  |  |  |
+| TEAR_SHIFT | 3 | px | 1017 | px: a row of the text moved sideways this much against the reference is torn |  |  |  |  |  |  |  |  |
+| TEAR_SHARE | 0.15 |  | 1018 | a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn |  |  |  |  |  |  |  |  |
+| SPLIT_REACH | 8 | px | 1019 | px searched for the colour split |  |  |  |  |  |  |  |  |
+| TEAR_REACH | 12 | px | 1020 | px searched for a torn row |  |  |  |  |  |  |  |  |
+| TEAR_TEXT_ROW | 0.35 |  | 1021 | a row is read for a tear when its spread in the reference is at least this share of |  |  |  |  |  |  |  |  |
+| STYLE_GROUND | (0.6, 1.2) |  | 1308 | heights out from the box: the ring whose colour is the ground |  |  |  |  |  |  |  |  |
+| STYLE_PAD | 0.3 |  | 1309 | heights round the box where the strokes are looked for |  |  |  |  |  |  |  |  |
+| DEEP | 3.0 | px | 1310 | px into the strokes: the fill |  |  |  |  |  |  |  |  |
+| EDGE_BAND | (1.0, 2.5) | px | 1311 | px into the strokes: the edge band (an outline, a shadow's side) |  |  |  |  |  |  |  |  |
+| OUTLINE_DE | 15.0 |  | 1312 | CIEDE76 between the edge band and the fill for another colour at the edge |  |  |  |  |  |  |  |  |
+| SHADOW_ONE_WAY | 0.35 |  | 1313 | the edge pixels of that colour face one way at least this much (mean resultant |  |  |  |  |  |  |  |  |
+| GLOW_AT | (2.0, 5.0) | px | 1315 | px out from the strokes where the glow is read, against the fill's rise |  |  |  |  |  |  |  |  |
+| HOLLOW | 0.8 |  | 1316 | holes of the ground inside the strokes this many times the strokes' area: hollow |  |  |  |  |  |  |  |  |
+| TYPE_HV | 0.62 |  | 1464 | horizontal strokes thinner than this share of the vertical ones: mincho. Measured |  |  |  |  |  |  |  |  |
+| TYPE_PAD | 0.1 |  | 1550 | heights round the box where a text's letters are looked for: farther out lie a rule |  |  |  |  |  |  |  |  |
+| TYPE_CONTRAST | 25.0 |  | 1552 | CIEDE76 between the letters' fill and the ground under which they are not read (a |  |  |  |  |  |  |  |  |
+| TYPE_TAIL | 0.25 |  | 1554 | the cover under this (a glow) is none, over 1 - this is whole |  |  |  |  |  |  |  |  |
+| FONT_CORE | 0.75 |  | 1555 | the cover the font match takes as the letters (drawn glyphs cut at a half) |  |  |  |  |  |  |  |  |
+| LETTER_TALL | 1.15 |  | 1556 | a piece taller than this many box heights is not a letter (a figure behind the text, |  |  |  |  |  |  |  |  |
+| LETTER_RULE | (2.5, 0.3) |  | 1558 | a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter |  |  |  | ○ |  |  |  | dance |
+| _glyph(size) | 160 |  | 1653 |  |  |  |  |  |  |  |  |  |
+| font_match(size) | 160 |  | 1665 |  |  |  |  |  |  |  |  |  |
+| iter_frames(start) | 0.0 |  | 1738 |  |  |  |  |  |  |  |  |  |
+| track_video(threads) | 3 |  | 1787 |  |  |  |  |  |  |  |  |  |
+| PHRASE_DB | -35.0 |  | 1965 | dB re the voice's 99th percentile: the voice sounds above this |  |  |  |  |  |  |  |  |
+| PHRASE_GAP | 0.30 | s | 1966 | s: a quieter gap shorter than this stays inside the phrase |  |  |  |  |  |  |  |  |
+| PHRASE_LEAST | 0.20 | s | 1967 | s: a shorter run is no phrase |  |  |  |  |  |  |  |  |
+| PHRASE_ONSET | (0.05, 0.15) | s | 1968 | s before and after a run's start where its first onset is taken as its start |  |  |  |  |  |  |  |  |
+| voice_events(sr) | 16000 |  | 1971 |  |  |  |  |  |  |  |  |  |
+| read_sound(sr) | 16000 |  | 2035 |  |  |  |  |  |  |  |  |  |
+| voice_file(offset) | 0.0 |  | 2044 |  |  |  |  |  |  |  |  |  |
+| PAIR_REACH | 1.5 | s | 2063 | s: a text and a phrase start further apart than this are not paired |  |  |  |  |  |  |  |  |
+| MARK_SHARE | 0.4 |  | 2064 | a text on the screen this share of the video or more is a mark (a logo, a watermark) |  |  |  |  |  |  |  |  |
+| LYRIC_SOUNDS | 0.5 |  | 2065 | a screen text over which the voice sounds (VOICE_ON) this share of its time is a lyric |  |  |  |  |  |  |  |  |
+| VOICE_ON | -30.0 |  | 2066 | dB re the voice's 99th percentile: the voice sounds |  |  |  |  |  |  |  |  |
+| BEAT_REACH | 0.01 | s | 2067 | s added to a frame either side: an event this near a beat is on it |  |  |  | ○ |  |  |  | dance |
+| LEAD_WINDOW | (-0.5, 1.0) | s | 2068 | s round a text's first frame where the voice's first strong onset is looked for |  |  |  |  |  |  |  |  |
+| STRONG | 75.0 |  | 2069 | a strong onset: its flux at least this percentile of the song's onsets' |  |  |  | ○ |  |  |  | dance |
+| TRIGGER | (-1.0, 1.5) | s | 2070 | s round the texts' first frames over which the voice is averaged |  |  |  |  |  |  |  |  |
+| CHANCE_DRAWS | 200 |  | 2071 | the lyrics' first frames moved at random this many times: the chance of a lead, |  |  |  |  |  |  |  |  |
+| CHANCE_SHIFT | (2.0, 8.0) | s | 2072 | each by a shift this long (s) either way, round within the voice's span (typorev: |  |  |  |  |  |  |  |  |
+| _lead_chance(seed) | 0 |  | 2125 |  |  |  |  |  |  |  |  |  |
+| MARK_PLACE | (0.03, 0.03, 0.25) |  | 2166 | texts within these of each other across, down and in size (shares) are one place |  |  |  |  |  |  |  |  |
+| MARK_TIMES | 3 |  | 2167 | a text that comes back to one place this many times is a mark, |  |  |  |  |  |  |  |  |
+| MARK_WIDTH | 0.03 |  | 2168 | if it is as wide each time (within this share) |  |  |  |  |  |  |  |  |
+| SIZE_RANGE | (0.012, 0.35) |  | 2169 | a lyric's characters are this tall at least and at most (share of the picture) |  |  |  |  |  |  |  |  |
+| SIG_H | 16 | px | 2172 | px: a text's signature is its box's picture this tall (as wide as its shape says, |  |  |  |  |  |  |  |  |
+| SIG_W | 160 |  | 2173 | at most this) |  |  |  |  |  |  |  |  |
+| MARK_SAME | 0.8 |  | 2174 | two signatures correlating at least this are the same text |  |  |  |  |  |  |  |  |
+| SIGN_TIMES | 3 |  | 2234 | a text seen this many times or more, |  |  |  |  |  |  |  |  |
+| SIGN_SIZES | 1.3 |  | 2235 | its largest this many times its smallest (the camera near and far): a sign of the scene |  |  |  |  |  |  |  |  |
+| sync(fps) | 30.0 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| DISPLAY_H | 0.06 |  | 2400 | a line whose characters are this tall (share of the picture) or more is display type |  |  |  |  |  |  |  |  |
+| _share_stats(seed) | 0 |  | 2403 |  |  |  |  |  |  |  |  |  |
+| _one(n) | 1 |  | 2416 |  |  |  |  |  |  |  |  |  |
+| CORE_SHOW | 0.3 | s | 2421 | s: a lyric line of the core is on the screen at least this long, |  |  |  |  |  |  |  |  |
+| CORE_EDGE | 0.01 |  | 2422 | its box clear of the picture's edges by this share of the picture. (Standing still |  |  |  |  |  |  |  |  |
+| typo_summary(seed) | 0 |  | 2447 |  |  |  |  |  |  |  |  |  |
+| annotate(height) | 540 |  | 2650 |  |  |  |  |  |  |  |  |  |
+| annotate(scale) | 1.0 |  | 2650 |  |  |  |  |  |  |  |  |  |
+| --rate | 2.0 | frames | 2694 | frames sampled a second |  |  |  |  |  |  |  |  |
+| --height | 540 |  | 2695 | lines the frames are read at |  |  |  |  |  |  |  |  |
+| --threads | 3 |  | 2697 |  |  |  |  |  |  |  |  |  |
+| --matrix | "auto" |  | 2698 |  |  |  |  |  |  |  |  |  |
+| --threads | 3 |  | 2704 |  |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 2719 | s added to every time |  |  |  |  |  |  |  |  |
+| --height | 540 |  | 2752 |  |  |  |  |  |  |  |  |  |
+| --scale | 1.0 |  | 2754 |  |  |  |  |  |  |  |  |  |
+
+### mograph_analyze.py（確かめ・部品、43）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| REFERENCE_HEIGHT | 720.0 |  | 71 |  |  |  |  |  |  |  |  |  |
+| FADE_BLACK | 0.06 |  | 72 | mean Y' under this: black |  |  |  |  |  |  |  |  |
+| FADE_WHITE | 0.90 |  | 73 | over this: white |  |  |  |  |  |  |  |  |
+| FADE_LEAST | 3 | frames | 74 | frames the picture takes going there at least |  |  |  |  |  |  |  |  |
+| DISSOLVE_W | (2, 3, 5, 8) | frames | 75 | half widths (frames) tried for a dissolve |  |  |  |  |  |  |  |  |
+| DISSOLVE_LEAST | 0.05 |  | 76 | mean ／Y' change／ between its ends at least this |  |  |  |  |  |  |  |  |
+| DISSOLVE_MID | 0.25 |  | 77 | its middle frame within this share of that change of the mean of its ends, |  |  |  |  |  |  |  |  |
+| DISSOLVE_ENDS | 0.6 |  | 78 | and its ends two pictures (correlation under this; a picture dimmed, or a line of |  |  |  |  |  |  |  |  |
+| PUNCH_LEAST | 0.08 |  | 80 | log scale change within three frames for a zoom punch, and |  |  |  |  |  |  |  |  |
+| PUNCH_OVER | 6.0 |  | 81 | this many times the scale's usual change round it (a second each side) |  |  |  |  |  |  |  |  |
+| PUNCH_MERGE | 0.3 | s | 82 | s: punches closer than this are one |  |  |  |  |  |  |  |  |
+| SHAKE_WINDOW | 0.2 | s | 83 | s: the shake is the shift less its running mean over this |  |  |  |  |  |  |  |  |
+| GLITCH_SPLIT | 8.0 |  | 84 | 720 line px between red and blue across the picture: a glitch frame |  |  |  |  |  |  |  |  |
+| SPLIT_REACH | 6 | px | 85 | px searched at the read size |  |  |  |  |  |  |  |  |
+| COLOUR_RISE | 12.0 |  | 86 | C*ab over the running median: a colour flash |  |  |  |  |  |  |  |  |
+| COLOUR_LONGEST | 0.6 | s | 87 | s |  |  |  |  |  |  |  |  |
+| BEAT_REACH | 0.01 | s | 88 | s added to a frame either side: on the beat |  |  |  | ○ |  |  |  | dance |
+| CAMERA_ROBUST | 4.685 |  | 89 | the camera's motion is fitted to the flow robustly (Tukey's biweight, 3 rounds): flow |  |  |  |  |  |  |  |  |
+| CAMERA_NOISE | 0.05 | px | 93 | px at the read size: the least robust sigma (the flow's own noise) |  |  |  | ○ |  |  |  | dance |
+| CUT_SAME | 0.95 |  | 94 | a change whose thumbnail correlates with the one before it at least this is the same |  |  |  |  |  |  |  |  |
+| FLASH_SAME | 0.6 |  | 98 | a flash is a light on one shot (the thumbnails before and after it correlate at least |  |  |  |  |  |  |  |  |
+| FLASH_WASH | 0.7 |  | 99 | this) or a white wash (its brightest thumbnail's contrast under this share of the |  |  |  |  |  |  |  |  |
+| _similarity(border) | 4 |  | 124 |  |  |  |  |  |  |  |  |  |
+| read_size(size) | (128, 72) |  | 164 |  |  |  |  |  |  |  |  |  |
+| finish(start) | 0.0 |  | 238 |  |  |  |  |  |  |  |  |  |
+| _events(start) | 0.0 |  | 287 |  |  |  |  |  |  |  |  |  |
+| events_of(start) | 0.0 |  | 438 |  |  |  |  |  |  |  |  |  |
+| events_video(size) | (128, 72) |  | 446 |  |  |  |  |  |  |  |  |  |
+| PARTICLE_SIGMAS | (1.2, 1.8, 2.7, 4.0, 6.0, 9.0, 13.0) |  | 480 | 720 line px |  |  |  |  |  |  |  |  |
+| PARTICLE_LEAST | 0.12 |  | 481 | Y' a particle stands above the ground round it (the ring 2.5 to 4 sigma out) |  |  |  |  |  |  |  |  |
+| PARTICLE_LOG | 0.04 |  | 482 | its scale-normalised Laplacian at least this |  |  |  |  |  |  |  |  |
+| BOKEH_SIGMA | 4.0 |  | 483 | 720 line px: a particle this wide or wider is bokeh (a defocused light) |  |  |  |  |  |  |  |  |
+| PARTICLE_ROUND | 3.0 |  | 484 | the larger of a particle's two curvatures at most this many times the smaller |  |  |  |  |  |  |  |  |
+| LINE_LEAST | 0.15 |  | 485 | of the frame's height: a long line |  |  |  |  |  |  |  |  |
+| LINE_JOIN | (3.0, 6.0) | deg | 486 | degrees and 720 line px: segments this parallel and near are one line's two edges |  |  |  |  |  |  |  |  |
+| AXIS | 3.0 | deg | 487 | degrees from level or upright: on the frame's axes |  |  |  |  |  |  |  |  |
+| particles(unit) | 1.0 |  | 490 |  |  |  |  |  |  |  |  |  |
+| lines(unit) | 1.0 |  | 543 |  |  |  |  |  |  |  |  |  |
+| elements_video(frames) | 60 |  | 583 |  |  |  |  |  |  |  |  |  |
+| elements_video(height) | 720 |  | 583 |  |  |  |  |  |  |  |  |  |
+| --size | "128x72" |  | 664 |  |  |  |  |  |  |  |  |  |
+| --frames | 60 | frames | 670 |  |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 671 |  |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| --size | "hip" |  | 323 | the measures of lengths also measured with her body as large as people's: by the hip's height over the floor (hip, the default) or by the legs (legs); none: not (the mod… |  |  |  |  |  | ○ |  |  |
-| --top | 40 |  | 328 |  |  |  |  |  |  |  |  |  |
-| --reach | 0.95 |  | 356 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
+| --size | "hip" |  | 325 | the measures of lengths also measured with her body as large as people's: by the hip's height over the floor (hip, the default) or by the legs (legs); none: not (the mod… |  |  |  |  |  | ○ |  |  |
+| --top | 40 |  | 330 |  |  |  |  |  |  |  |  |  |
+| --reach | 0.95 |  | 358 | shadow: the pixels whose ratio falls under this at some frame |  |  |  |  |  |  |  |  |
 
 ### param_inventory.py（確かめ・部品、3）
 

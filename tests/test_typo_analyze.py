@@ -366,6 +366,66 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertLessEqual(m["enter"]["frames"], 1)
         self.assertEqual(m["enter"]["kinds"], ["cut"])
 
+    def series_of(self, before, n_frames=60, at=30):
+        """the stored readings of a still line that cuts in at frame `at`: before it, every frame reads `before`
+        (ncc, alpha, ink) - the picture where it will stand; from it, the line whole"""
+        rows = []
+        for n in range(n_frames):
+            ncc, alpha, ink = before if n < at else (1.0, 1.0, 1.0)
+            rows.append({"n": n, "present": ncc >= TA.PRESENT_NCC, "ncc": ncc, "tx": 0.0, "ty": 0.0, "s": 1.0,
+                         "split_px": 0.0, "torn": 0, "angle": float("nan"), "alpha": alpha, "alpha_vis": alpha,
+                         "alpha_k": [alpha] * 6, "sharp": 1.0 if n >= at else float("nan"), "ink_vis": ink,
+                         "ink_k": [ink] * 6, "bg_dx": float("nan"), "bg_dy": float("nan")})
+        return rows
+
+    def phases(self, rows):
+        rb = {"x0": 100.0, "x1": 220.0, "y0": 112.0, "y1": 128.0, "cx": 160.0, "cy": 120.0, "h": 16.0, "w": 120.0}
+        chars = [(110.0 + 20.0 * k, 120.0, 16.0, 0.9) for k in range(6)]
+        return TA._track_summary(rows, {"vertical": False}, rb, chars, 45, self.fps, 0.0, 6, (0, 59))
+
+    def test_the_picture_where_a_line_will_stand_is_not_the_line_coming(self):
+        # typorev: RE: 踊 before two lines cut in (their stored readings): the lit street and the legs where one would
+        # stand stood out by 0.26 to 0.37 of its strokes' contrast while its template matched there at 0.25 to 0.34; the
+        # template of the other (the thin line and the wet street round it) matched the street at 0.5 to 0.6 while the
+        # strokes' place stood out by 0.02 to 0.08.  Either alone saw the lines a second early, coming in by a fade
+        for before in ((0.28, 0.28, 0.68), (0.55, 0.05, 0.6)):
+            m = self.phases(self.series_of(before))
+            self.assertEqual(m["frames"]["first"], 30, (before, m["frames"]))
+            self.assertEqual(m["enter"]["kinds"], ["cut"], (before, m["enter"]))
+            keep = TA._seen
+            TA._seen = lambda r: bool(r["alpha"] > 0.15 or r["present"])           # the rule before typorev
+            try:
+                old = self.phases(self.series_of(before))
+            finally:
+                TA._seen = keep
+            self.assertEqual(old["frames"]["first"], 0, (before, old["frames"]))
+        # a line faint but surely there (both) is seen: a fade over a plain ground
+        rows = self.series_of((0.9, 0.3, 0.3), at=30)
+        for k, r in enumerate(rows[:30]):
+            r.update({"alpha": 0.1 + 0.03 * k, "ink_vis": 0.1 + 0.03 * k, "ncc": 0.6 + 0.01 * k})
+        self.assertEqual(self.phases(rows)["frames"]["first"], 2)
+
+    def test_a_run_read_again_from_its_frames(self):
+        # phases: a run's texts read again from their stored frames by the rules as they are now (the old seen read the
+        # lit place of a line as the line from frame 0; read again, it comes at its cut)
+        rows = self.series_of((0.28, 0.28, 0.68))
+        keep = TA._seen
+        TA._seen = lambda r: bool(r["alpha"] > 0.15 or r["present"])
+        try:
+            old = self.phases(rows)
+        finally:
+            TA._seen = keep
+        self.assertEqual(old["frames"]["first"], 0)
+        text = dict(old, series=TA._compact(rows), vertical=False,
+                    ref={"box": {"x0": 100.0, "x1": 220.0, "y0": 112.0, "y1": 128.0, "cx": 160.0, "cy": 120.0, "h": 16.0,
+                                 "w": 120.0}, "chars": [[110.0 + 20.0 * k, 120.0, 16.0, 0.9] for k in range(6)]})
+        run = json.loads(json.dumps({"fps": self.fps, "range": [0.0, 2.0], "texts": [text]}))
+        again = TA.rephase_run(run)["texts"][0]
+        self.assertEqual(again["frames"]["first"], 30)
+        self.assertEqual(again["enter"]["kinds"], ["cut"])
+        self.assertAlmostEqual(again["times"]["first"], 1.0)
+        self.assertEqual(again["frames"], self.phases(rows)["frames"])
+
     def test_a_line_still_there_at_the_end_has_not_gone(self):
         m = self.measure(clip_of(lambda n: {"alpha": 1.0 if n >= 10 else 0.0}))
         self.assertEqual(m["exit"]["kinds"], ["none"])
@@ -905,6 +965,50 @@ class SyncTest(unittest.TestCase):
         self.assertAlmostEqual(r["trig_lead_s"], 0.2, delta=0.011)
         self.assertEqual(r["paired"], 3)
         self.assertEqual([t["kind"] for t in r["texts"]], ["lyric"] * 3)
+
+    def sparse_voice(self, starts, total=90.0, weak_every=1.6):
+        """a voice singing all along (-10 dB) whose strong onsets are where the lines start and whose few weak ones (the
+        strong ones are the top quarter) fall every weak_every s away from them"""
+        step = 0.01
+        level = np.full(int(total / step), -10.0)
+        onsets = sorted([(s, 5.0) for s in starts] +
+                        [(t, 1.0) for t in np.arange(0.3, total - 0.3, weak_every) if min(abs(t - s) for s in starts) > 0.15])
+        flux = np.zeros(level.size)
+        for t, s in onsets:
+            flux[int(round(t / step))] = s
+        return {"phrases": [[0.2, total - 0.2]], "onsets": [t for t, _ in onsets], "strength": [s for _, s in onsets],
+                "level": list(level), "flux": list(flux), "step": step, "offset": 0.0}
+
+    def test_the_lead_is_read_against_chance(self):
+        # typorev: the references' lead was read without its chance.  Lines 0.2 s ahead of the strong onsets lie nearer
+        # to them than the same lines moved at random; lines put at random do not.  And full_lead_s is lead_s less the
+        # time the line takes to come in, not a second reading of the voice
+        rng = np.random.default_rng(4)
+        starts = list(np.cumsum(rng.uniform(2.5, 4.5, 20)) + 1.0)
+        voice = self.sparse_voice(starts)
+        def spread(texts):                    # each in its own place across: not one place come back to (a mark)
+            for k, t in enumerate(texts):
+                t["place"]["x"] = 0.2 + 0.03 * k
+            return texts
+        locked = spread([self.text(s - 0.2, s + 0.3, s + 2.0) for s in starts])
+        r = TA.sync(locked, voice, beats=None, fps=30.0, duration=90.0)
+        self.assertEqual([x["kind"] for x in r["texts"]], ["lyric"] * 20)
+        self.assertAlmostEqual(r["near_s"]["median"], 0.2, delta=0.01)
+        self.assertLess(r["near_s"]["median"], r["chance"]["near_band"][0])
+        self.assertGreater(r["chance"]["near_s"], 0.5)
+        for row in r["texts"]:
+            self.assertAlmostEqual(row["full_lead_s"], row["lead_s"] - (row["full"] - row["first"]), places=9)
+        loose = spread([self.text(a, a + 0.5, a + 2.0) for a in np.sort(rng.uniform(1.0, 85.0, 20))])
+        r2 = TA.sync(loose, voice, beats=None, fps=30.0, duration=90.0)
+        lo, hi = r2["chance"]["near_band"]
+        self.assertTrue(lo <= r2["near_s"]["median"] <= hi, (r2["near_s"], r2["chance"]))
+        whole = [dict(t, id=k, n_chars=5, vertical=False, hold={"s": 1.0, "drift_h_per_s": 0.0}, ref={"box": {"h": 20.0}},
+                      enter={"kinds": ["fade"], "s": 0.5, "dx": 0.0, "dy": 0.0, "scale": 1.0, "fade_s": 0.5, "stagger": None},
+                      exit={"kinds": ["fade"], "s": 0.2}) for k, t in enumerate(locked)]
+        s = TA.typo_summary({"label": "x", "fps": 30.0, "range": [0.0, 90.0], "texts": whole}, r, voice=voice)["summary"]
+        self.assertAlmostEqual(s["sync.near_s"]["median"], 0.2, delta=0.01)
+        self.assertGreater(s["sync.near_chance"]["median"], 0.5)
+        self.assertIn("sync.lead_chance", s)
 
     def test_a_sign_in_the_scene_is_no_lyric(self):
         voice = self.voice(((2.0, 4.0),))

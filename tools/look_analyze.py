@@ -2,7 +2,7 @@
 
     python tools/look_analyze.py measure VIDEO|FOLDER OUT.json [--label NAME] [--from S] [--to S] [--pairs N]
                                          [--height 720] [--matrix auto|bt601|bt709] [--jobs N] [--crops DIR]
-    python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48]
+    python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48] [--faces CASCADE]
                                          [--matrix auto|bt601|bt709]       # the person and the stage apart
     python tools/look_analyze.py compare OUT.md OUT.json --ref A.json B.json ... --ours X.json Y.json ... [--regions]
     python tools/look_analyze.py figure strip TABLE.json OUT.png
@@ -738,13 +738,19 @@ def light_palette(rows, duration):
     return out
 
 
-def flicker(series, fps, flash_events=None):
+def flicker(series, fps, flash_events=None, cuts=None):
     """the flicker of a per-frame mean Y' series: flicker.hf, the rms of the series less its running mean over
-    FLICKER_WINDOW s; strobe.per_min, the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
+    FLICKER_WINDOW s, on the frames away from the cuts (frame numbers: a cut is a step of the mean, not a flicker of the
+    light; typorev: the references' median 0.016 is 0.0098 with their cuts left out, Cinderella / Miku's 0.012 is 0.0027;
+    the flashes stay in: a flash is a flicker of the light); strobe.per_min,
+    the runs of at least STROBE_LEAST flashes (see flashes) at most STROBE_GAP s apart"""
     x = np.asarray(series, np.float64)
     k = max(3, int(round(FLICKER_WINDOW * fps)) | 1)
     run = np.convolve(np.pad(x, (k // 2, k // 2), mode="edge"), np.ones(k) / k, mode="valid")
-    hf = float(np.sqrt(np.mean((x - run) ** 2))) if x.size else float("nan")
+    keep = np.ones(x.size, bool)
+    for c in (cuts or ()):
+        keep[max(0, int(c) - k // 2 - 1):int(c) + k // 2 + 1] = False
+    hf = float(np.sqrt(np.mean((x[keep] - run[keep]) ** 2))) if keep.any() else float("nan")
     events = flash_events if flash_events is not None else flashes(x, fps)[0]
     starts = [e["start"] / float(fps) for e in events]
     strobes, run_len = 0, 1
@@ -1668,6 +1674,10 @@ EDGE_IN = (3.0, 6.0)              # 720 line px inside the outline: the person's
 EDGE_OUT = (12.0, 20.0)           # ... against the stage's just outside it, past her glow and the mask's error
 MERGE_DE = 15.0                   # CIE76 dE*ab: an edge whose two sides differ by less does not stand out (stagecity)
 SEG_SIZE = 1024                   # the person model's input (square, the frame letterboxed into it)
+FACE_CHEEK = ((0.55, 0.85), (0.25, 0.75))   # rows and columns of a face's box read for the light on her skin: the cheeks
+#                                   (typorev: the references' person read 44.6 L* against ours 76 for their dark costumes;
+#                                   their faces 78 against ours 80)
+FACE_LEAST = 20                   # pixels of the cheeks on the person at least, for a face to be read
 
 REGION_CONCEPTS = ("frame", "person", "stage", "edge")
 REGION_CONCEPT_LABELS = {"frame": "構図", "person": "人物", "stage": "舞台（人物の外）", "edge": "人物の縁"}
@@ -1690,6 +1700,9 @@ REGION_MEASURES = {
     "stage.teal_orange": ("stage", "舞台の中の影と光の色の開き", "C*"),
     "person.key_hue": ("person", "人物に当たる光の色相（人物の明るい 1 割の a*b*）", "度"),
     "person.key_chroma": ("person", "人物に当たる光の色の強さ", "C*"),
+    "face.L": ("person", "顔の肌の明るさ（頬の L* の中央。衣装の色に左右されない人物の明るさ、regions --faces で）", "L*"),
+    "face.chroma": ("person", "顔の肌の彩度（頬の C*ab）", "C*"),
+    "face.hue": ("person", "顔の肌の色相（頬の a*b*）", "度"),
     "stage.key_hue": ("stage", "舞台の光の色相（舞台の明るい 1 割の a*b*）", "度"),
     "stage.key_chroma": ("stage", "舞台の光の色の強さ", "C*"),
     "dof.person_blur": ("stage", "人物の区画のぼけ（中央）", "px"),
@@ -1836,15 +1849,17 @@ def edge_contrast(lab, person, unit=1.0, seed=0):
     return out
 
 
-def region_measures(rgb, mask, unit=1.0, seed=0):
+def region_measures(rgb, mask, unit=1.0, seed=0, faces=None):
     """the measures of the person (mask >= 0.5) and of the stage (the rest, STAGE_GAP outside the person) of one frame
     (REGION_MEASURES): their tone and colour apart, the light along the person's outline (rim and glow), the blur of
-    the stage's blocks against the person's (depth of field), the glow of the stage's lights and of the person's"""
+    the stage's blocks against the person's (depth of field), the glow of the stage's lights and of the person's; with
+    faces (boxes x, y, w, h found on the frame), the light on her skin: the cheeks (FACE_CHEEK) of the faces whose middle
+    lies on the person, their L*, C*ab and hue (the median over the faces; face.count of them)"""
     rgb = np.asarray(rgb, np.float64)
     ndi = _ndi()
     person = np.asarray(mask, np.float64) >= 0.5
     out = {k: float("nan") for k in REGION_MEASURES}
-    out.update({"rim.points": 0.0, "halo.points": 0.0})
+    out.update({"rim.points": 0.0, "halo.points": 0.0, "face.count": 0.0})
     out["frame.person_share"] = float(person.mean())
     lab = rgb_to_lab(rgb)
     L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
@@ -1859,6 +1874,21 @@ def region_measures(rgb, mask, unit=1.0, seed=0):
     if stage.sum() >= least:
         _region_stats(L, a, b, stage, "stage", out)
     out["contrast.person_stage"] = out["person.L_p50"] - out["stage.L_p50"]
+    cheeks = []
+    for (fx, fy, fw, fh) in (faces or ()):
+        cy, cx = int(fy + fh // 2), int(fx + fw // 2)
+        if not (0 <= cy < person.shape[0] and 0 <= cx < person.shape[1]) or not person[cy, cx]:
+            continue                                        # not on her (a face on a sign, another dancer's off her mask)
+        y0, y1 = int(fy + FACE_CHEEK[0][0] * fh), int(fy + FACE_CHEEK[0][1] * fh)
+        x0, x1 = int(fx + FACE_CHEEK[1][0] * fw), int(fx + FACE_CHEEK[1][1] * fw)
+        sel = person[y0:y1, x0:x1]
+        if sel.sum() < FACE_LEAST:
+            continue
+        cheeks.append([float(np.median(ch[y0:y1, x0:x1][sel])) for ch in (L, a, b)])
+    if cheeks:
+        c = np.median(np.array(cheeks), axis=0)
+        out.update({"face.L": float(c[0]), "face.chroma": float(math.hypot(c[1], c[2])), "face.hue": _hue(c[1], c[2]),
+                    "face.count": float(len(cheeks))})
     Y = _luminance(srgb_to_linear(rgb))
     if person.sum() >= least:
         out.update(silhouette(Y, person, unit, seed))
@@ -2326,7 +2356,7 @@ def measure_video(path, out, label=None, start=None, end=None, pairs=120, height
                    "frame.fps_effective": (float(eff["frame.fps_effective"]), 0.0)}
     for k, v in light_palette(rows, duration).items():
         video_level[k] = (v, float("nan"))
-    for k, v in flicker(series, rate, flash_events).items():
+    for k, v in flicker(series, rate, flash_events, cuts=cut_list).items():
         video_level[k] = (v, float("nan"))
     for k, v in light_motion(maps.astype(np.float64) / 255.0, rate, height_px=maps.shape[1]).items():
         video_level[k] = (v, float("nan"))
@@ -2377,13 +2407,30 @@ def layer_masks(path, indices, size, start=0.0, duration=None):
     return {n: np.frombuffer(raw[k * w * h:(k + 1) * w * h], np.uint8).reshape(h, w) / 255.0 for k, n in enumerate(want)}
 
 
+def face_finder(path):
+    """a face finder from an OpenCV cascade file (lbpcascade_animeface.xml, nagadomi, MIT: the faces of anime-like
+    characters, MMD's among them): frame (RGB uint8) -> boxes (x, y, w, h).  ValueError when it cannot be loaded"""
+    cv2 = _cv2()
+    cascade = cv2.CascadeClassifier(path) if path and os.path.exists(path) else None
+    if cascade is None or cascade.empty():
+        raise ValueError("no face finder in %s" % path)
+
+    def find(rgb_u8):
+        gray = cv2.equalizeHist(cv2.cvtColor(np.ascontiguousarray(rgb_u8), cv2.COLOR_RGB2GRAY))
+        least = max(16, int(round(24 * gray.shape[0] / REFERENCE_HEIGHT)))
+        got = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(least, least))
+        return [tuple(int(v) for v in f) for f in (got if len(got) else [])]
+    return find
+
+
 def measure_regions(path, out, label=None, start=None, end=None, frames=48, height=720, matrix="auto", model=None,
-                    threads=6, mask_fn=None, fps=30, seed=0, log=None, mask_video=None):
+                    threads=6, mask_fn=None, fps=30, seed=0, log=None, mask_video=None, faces=None):
     """the person and the stage read apart (REGION_MEASURES) on frames spread evenly over a video (or a folder of
     frames), inside its letterbox bars: the person's mask from the person model (model: its ONNX file), from
     mask_fn(frame uint8) -> mask, or from mask_video, a video of the same frames with the person drawn alone with an alpha
     channel (our own render's dancer layer: the person model took a bright floor line under our dancer for part of her on
-    some frames, look2); OUT.json holds each frame's measures and their summary (as measure's)"""
+    some frames, look2); faces: a face finder's cascade file (face_finder) or a function frame -> boxes, for the light on
+    her skin (face.*); OUT.json holds each frame's measures and their summary (as measure's)"""
     if mask_fn is None and not model and not mask_video:
         raise ValueError("regions needs the person model (--model isnetis.onnx), the person's layer (--mask-video) or a "
                          "mask function")
@@ -2415,12 +2462,15 @@ def measure_regions(path, out, label=None, start=None, end=None, frames=48, heig
 
         def mask_fn(a):
             return person_mask(a, session=session)
+    find_faces = faces if callable(faces) or faces is None else face_finder(faces)
     rows = []
     for n in ns:
         a = np.ascontiguousarray(got[n][y0:y1, x0:x1])
         m = layers[n][y0:y1, x0:x1] if layers is not None else mask_fn(a)
+        boxes = find_faces(a) if find_faces is not None else None
         rows.append({"n": int(n), "t": start + n / float(rate), "shot": 0,
-                     "m": {k: float(v) for k, v in region_measures(a.astype(np.float64) / 255.0, m, unit, seed=seed + n).items()}})
+                     "m": {k: float(v) for k, v in region_measures(a.astype(np.float64) / 255.0, m, unit, seed=seed + n,
+                                                                   faces=boxes).items()}})
         if log:
             log("frame %d person %.3f" % (n, rows[-1]["m"]["frame.person_share"]))
     summary = summarise(rows, seed=seed)
@@ -2431,6 +2481,7 @@ def measure_regions(path, out, label=None, start=None, end=None, frames=48, heig
               "box": [int(x0), int(y0), int(x1), int(y1)], "frames_with_person": with_person,
               "model": {"path": model, "sha256": _sha256(model)} if model and not mask_video else None,
               "mask": {"video": mask_video, "sha256": _sha256(mask_video)} if mask_video else None,
+              "faces": None if faces is None else ("function" if callable(faces) else {"cascade": faces, "sha256": _sha256(faces)}),
               "frames": rows, "summary": summary}
     with open(out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=1, allow_nan=True)
@@ -2860,6 +2911,8 @@ def main(argv=None):
     g.add_argument("--model", help="the person model's ONNX file (skytnt/anime-seg isnetis.onnx)")
     g.add_argument("--mask-video", help="our own render: the person read from her layer, a video of the same frames with "
                                         "her drawn alone with an alpha channel (in place of --model)")
+    g.add_argument("--faces", help="a face finder's cascade file (lbpcascade_animeface.xml): the light on her skin, "
+                                   "face.L / face.chroma / face.hue, whatever her costume")
     g.add_argument("--label")
     g.add_argument("--from", dest="start", type=float)
     g.add_argument("--to", dest="end", type=float)
@@ -2914,11 +2967,11 @@ def main(argv=None):
     elif args.cmd == "regions":
         r = measure_regions(args.input, args.out, label=args.label, start=args.start, end=args.end, frames=args.frames,
                             height=args.height, matrix=args.matrix, model=args.model, threads=args.threads, fps=args.fps,
-                            mask_video=args.mask_video)
+                            mask_video=args.mask_video, faces=args.faces)
         s = r["summary"]
-        print("regions of %s: %d frames, %d with the person, person %.3f, person L* %.1f, stage L* %.1f" % (
+        print("regions of %s: %d frames, %d with the person, person %.3f, person L* %.1f, stage L* %.1f, face L* %.1f" % (
             r["label"], len(r["frames"]), r["frames_with_person"], s["frame.person_share"]["median"],
-            s["person.L_p50"]["median"], s["stage.L_p50"]["median"]))
+            s["person.L_p50"]["median"], s["stage.L_p50"]["median"], s["face.L"]["median"]))
     elif args.cmd == "compare":
         refs = [_load(p) for p in args.ref]
         ours = [_load(p) for p in args.ours]

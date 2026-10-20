@@ -6,6 +6,7 @@ looks like, and how it goes with the voice and the beat.
     python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--craft-onnx ...] [--threads 3] [--no-style]
                                         # every text frame by frame: when and how it comes, stays and goes, its look
     python tools/typo_analyze.py sign VIDEO TRACK.json                     # add the texts' signatures (older runs)
+    python tools/typo_analyze.py phases TRACK.json [OUT.json]             # the phases read again from the stored frames
     python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS] [--offset S]
                                         # the voice's syllable onsets and phrases, the beat and the bar
     python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json      # the texts against the voice and the beat
@@ -481,7 +482,15 @@ def link_tracks(samples):
 
 MID_RATE = 10.0                   # frames a second read between the windows (the hold)
 BAND = 1.25                       # heights above and below a line (or beside a column) the band reaches
-ALPHA_SEEN = 0.15                 # a text is seen when its strokes stand out by this share of the reference's
+ALPHA_SEEN = 0.15                 # a text is seen when its strokes stand out by this share of the reference's and its
+SEEN_NCC = 0.35                   # template matches there at least this, or they stand out by ALPHA_SURE alone.
+ALPHA_SURE = 0.5                  # typorev: on RE: 踊's street the strokes' place stood out by 0.26 to 0.37 with no line
+#                                   there (the template matching at 0.25 to 0.34), and the template matched the street
+#                                   at 0.5 to 0.6 with the strokes standing out by 0.02 to 0.08: either alone (as it was
+#                                   read before, alpha over 0.15 or the template over PRESENT_NCC) saw lines 0.6 to
+#                                   1.0 s before they came
+FADE_FROM = ALPHA_SEEN            # a frame of the coming or going whose strokes stand out by more than this (and less
+#                                   than ALPHA_FULL) is a frame of a fade
 ALPHA_FULL = 0.85                 # ... and is whole from this share on
 STILL = 0.03                      # heights a frame: a text moving less than this is still
 STILL_SCALE = 0.006               # and growing or shrinking less than this a frame
@@ -1100,13 +1109,20 @@ def _edge_sharpness(g, ys, xs):
     return float(np.percentile(g[ys, xs], 75))
 
 
+def _seen(r):
+    """whether a text is seen on a frame of its series (ALPHA_SEEN, SEEN_NCC, ALPHA_SURE)"""
+    a = r["alpha"]
+    ncc = r.get("ncc", 1.0 if r.get("present") else 0.0)
+    return bool(a > ALPHA_SURE or (a > ALPHA_SEEN and ncc is not None and ncc >= SEEN_NCC))
+
+
 def _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds):
     h = rb["h"]
     by_n = {r["n"]: r for r in series}
     ns = [r["n"] for r in series]
     k_ref = ns.index(ref_n)
     split_ref = series[k_ref]["split_px"]
-    seen = [r["alpha"] > ALPHA_SEEN or r["present"] for r in series]
+    seen = [_seen(r) for r in series]
     still = []
     for i, r in enumerate(series):
         if i == 0:
@@ -1216,7 +1232,7 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
         kinds.append("scale")
     if abs(out["rotate"]) >= ROTATE_LEAST:
         kinds.append("rotate")
-    fading = [r for r in moving if ALPHA_SEEN < r["ink_vis"] < ALPHA_FULL]
+    fading = [r for r in moving if FADE_FROM < r["ink_vis"] < ALPHA_FULL]
     out["fade_s"] = 0.0
     if len(fading) >= 2:
         kinds.append("fade")
@@ -1261,7 +1277,7 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
                 kinds.append("stagger")
     out["stagger"] = st
     splits = [r["split_px"] for r in moving]
-    seen_now = [r["alpha"] > ALPHA_SEEN or r["present"] for r in part]
+    seen_now = [_seen(r) for r in part]
     flicker = sum(1 for i in range(1, len(seen_now) - 1) if seen_now[i - 1] and not seen_now[i] and seen_now[i + 1])
     out["glitch"] = {"split_px": float(max(splits)) if splits else 0.0,
                      "split_var": float(max(splits) - min(splits + [rest["split_px"]])) if splits else 0.0,
@@ -1895,6 +1911,49 @@ def sign_video(path, tr, out=None):
     return tr
 
 
+_SERIES_FLOATS = ("ncc", "tx", "ty", "s", "split_px", "angle", "alpha", "alpha_vis", "sharp", "ink_vis", "bg_dx", "bg_dy",
+                  "bg_resp")
+
+
+def _unpack(series):
+    """a stored (compact) series back to the form _track_summary reads (None to nan)"""
+    out = []
+    for r in series:
+        q = dict(r)
+        for k in _SERIES_FLOATS:
+            if q.get(k, 0.0) is None:
+                q[k] = float("nan")
+        for k in ("alpha_k", "ink_k"):
+            if k in q:
+                q[k] = [float("nan") if v is None else v for v in q[k]]
+        q.setdefault("angle", float("nan"))
+        q.setdefault("torn", 0)
+        out.append(q)
+    return out
+
+
+def rephase_run(tr, out=None):
+    """every text's phases (frames, times, enter, exit, hold, space, whole) read again from its stored frames (series)
+    by the rules as they are now (after a change to them, typorev's _seen: the tracking and the look stay);
+    OUT.json (or the run itself) gets them"""
+    fps = float(tr["fps"])
+    start, end = tr["range"]
+    total = int(math.floor((end - start) * fps + 1e-6))
+    for t in tr["texts"]:
+        if not t.get("series"):
+            continue
+        rb = t["ref"]["box"]
+        rchars = [tuple(c) for c in t["ref"]["chars"]]
+        m = _track_summary(_unpack(t["series"]), {"vertical": bool(t.get("vertical"))}, rb, rchars, t["frames"]["ref"],
+                           fps, start, max(1, len(rchars)), (0, max(0, total - 1)))
+        for k in ("frames", "times", "enter", "exit", "hold", "space", "whole"):
+            t[k] = m[k]
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(tr, f, ensure_ascii=False, indent=1)
+    return tr
+
+
 # ---- the voice and the beat ------------------------------------------------------------------------------------------
 #
 # The voice: the separated singing (demucs htdemucs), read as tools/lip_check.py reads it (16 kHz, the power of 300 to
@@ -2009,6 +2068,9 @@ BEAT_REACH = 0.01                 # s added to a frame either side: an event thi
 LEAD_WINDOW = (-0.5, 1.0)         # s round a text's first frame where the voice's first strong onset is looked for
 STRONG = 75.0                     # a strong onset: its flux at least this percentile of the song's onsets'
 TRIGGER = (-1.0, 1.5)             # s round the texts' first frames over which the voice is averaged
+CHANCE_DRAWS = 200                # the lyrics' first frames moved at random this many times: the chance of a lead,
+CHANCE_SHIFT = (2.0, 8.0)         # each by a shift this long (s) either way, round within the voice's span (typorev:
+#                                   the references' lead of 0.0 s was at chance in 8 of 9 videos and read as a sync)
 
 
 def _stats(values):
@@ -2036,6 +2098,54 @@ def _on_beat(times, beats, fps):
     period = float(np.median(np.diff(b)))
     return {"share": float(np.mean(near)), "chance": float(min(1.0, 2 * reach / period)), "n": len(times),
             "phases": phases}
+
+
+def _strong_after(strong_t, times):
+    """for each time a, the first strong onset in a + LEAD_WINDOW less a (nan where none): lead_s's reading"""
+    t = np.asarray(times, np.float64)
+    if not strong_t.size:
+        return np.full(t.size, np.nan)
+    k = np.searchsorted(strong_t, t + LEAD_WINDOW[0] - 1e-9, side="left")
+    ok = k < strong_t.size
+    o = np.where(ok, strong_t[np.minimum(k, strong_t.size - 1)], np.nan)
+    return np.where(ok & (o <= t + LEAD_WINDOW[1] + 1e-9), o - t, np.nan)
+
+
+def _nearest(strong_t, times):
+    """for each time, how far (s) the nearest strong onset lies"""
+    t = np.asarray(times, np.float64)
+    if not strong_t.size:
+        return np.full(t.size, np.nan)
+    k = np.searchsorted(strong_t, t)
+    a = strong_t[np.clip(k - 1, 0, strong_t.size - 1)]
+    b = strong_t[np.clip(k, 0, strong_t.size - 1)]
+    return np.minimum(np.abs(t - a), np.abs(t - b))
+
+
+def _lead_chance(firsts, strong_t, span, draws=CHANCE_DRAWS, seed=0):
+    """the lead (lead_s's reading), its paired share and the distance to the nearest strong onset of the same first
+    frames each moved by a random shift (CHANCE_SHIFT either way, round within span): their medians over the draws and
+    the 2.5 and 97.5 % points (a lead or a distance outside them is a sync with the voice, not the voice's density)"""
+    firsts = np.asarray(firsts, np.float64)
+    nan = float("nan")
+    if not firsts.size or not strong_t.size:
+        return {"lead_s": nan, "lead_band": [nan, nan], "near_s": nan, "near_band": [nan, nan], "paired": nan,
+                "paired_band": [nan, nan], "draws": 0}
+    rng = np.random.default_rng(seed)
+    a, z = span
+    width = max(1e-9, z - a)
+    leads, nears, paired = [], [], []
+    for _ in range(draws):
+        sh = rng.uniform(CHANCE_SHIFT[0], CHANCE_SHIFT[1], firsts.size) * rng.choice([-1.0, 1.0], firsts.size)
+        moved = a + np.mod(firsts + sh - a, width)
+        ld = _strong_after(strong_t, moved)
+        got = ld[np.isfinite(ld)]
+        leads.append(float(np.median(got)) if got.size else nan)
+        paired.append(got.size / float(ld.size))
+        nears.append(float(np.median(_nearest(strong_t, moved))))
+    band = lambda v: [float(x) for x in np.nanpercentile(v, [2.5, 97.5])]      # noqa: E731
+    return {"lead_s": float(np.nanmedian(leads)), "lead_band": band(leads), "near_s": float(np.median(nears)),
+            "near_band": band(nears), "paired": float(np.mean(paired)), "paired_band": band(paired), "draws": draws}
 
 
 def _triggered(series, step, offset, times, window=TRIGGER):
@@ -2171,6 +2281,7 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
     rows = []
     marks = _marks(texts, duration)
     signs = _signs(texts)
+    strong_t = np.sort(onsets[strength >= strong_at]) if onsets.size else onsets
     cut_t = np.asarray(cuts or [], np.float64)
     near_cut = (1.0 / fps) + 0.01
     for i, t in enumerate(texts):
@@ -2200,13 +2311,19 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
                 o = float(onsets[near][0])
                 row["onset"] = o
                 row["lead_s"] = o - a
-                row["full_lead_s"] = o - full
+                row["full_lead_s"] = o - full          # = lead_s less the time it takes to come in (no new reading)
+            nr = float(_nearest(strong_t, [a])[0])
+            if np.isfinite(nr):
+                row["near_s"] = nr
         rows.append(row)
     lyr = [r for r in rows if r["kind"] == "lyric"]
     led = [r for r in lyr if "lead_s" in r]
+    span = (phrases[0][0], phrases[-1][1]) if phrases else (0.0, float(duration))
     out = {"texts": rows, "lyrics": len(lyr), "paired": len(led),
            "lead_s": _stats([r["lead_s"] for r in led]), "full_lead_s": _stats([r["full_lead_s"] for r in led]),
-           "lyric_share_paired": len(led) / float(len(lyr)) if lyr else float("nan")}
+           "lyric_share_paired": len(led) / float(len(lyr)) if lyr else float("nan"),
+           "near_s": _stats([r["near_s"] for r in lyr if "near_s" in r]),
+           "chance": _lead_chance([r["first"] for r in lyr], strong_t, span)}
     if voice.get("flux") and lyr:
         lags, fl = _triggered(voice["flux"], step, off, [r["first"] for r in lyr])
         _, lv = _triggered(voice["level"], step, off, [r["first"] for r in lyr])
@@ -2266,7 +2383,10 @@ TYPO_MEASURES = {
     "type.mincho": ("look", "明朝の行の割合（横画が縦画の 0.62 倍より細い）", ""),
     "type.weight": ("look", "書体の太さ（画の太さ / 字の高さ）", ""),
     "sync.lead_s": ("sync", "文字が出始めてから歌声の強い立ち上がりまでの時間（+ 文字が先、1 行ずつ）", "秒"),
-    "sync.full_lead_s": ("sync", "文字が全部見えてから歌声の強い立ち上がりまでの時間", "秒"),
+    "sync.full_lead_s": ("sync", "文字が全部見えてから歌声の強い立ち上がりまでの時間（= 上の時間 − 入りの長さ。新しく測った数ではない）", "秒"),
+    "sync.lead_chance": ("sync", "（上の lead の偶然の値: 出始めを 2〜8 秒ずらした中央）", "秒"),
+    "sync.near_s": ("sync", "出始めからいちばん近い歌声の強い立ち上がりまでの時間（前後どちらでも、絶対値）", "秒"),
+    "sync.near_chance": ("sync", "（その偶然の値。これより短いと声に合わせて出している）", "秒"),
     "sync.trig_lead_s": ("sync", "文字の出始めでそろえた歌声の立ち上がりの強さが山になる時刻（全部の行をまとめて）", "秒"),
     "sync.paired": ("sync", "出始めの -0.5〜+1.0 秒に歌声の強い立ち上がりがある行の割合", ""),
     "sync.on_beat": ("sync", "出始めが拍の上（1 コマ以内）にある行の割合", ""),
@@ -2355,13 +2475,13 @@ def typo_summary(tr, sy, voice=None, seed=0, core=False):
             m["style.outline_px"] = st.get("outline_px", float("nan"))
         if ty.get("weight") is not None and ty.get("class"):
             m["type.weight"] = ty["weight"]
-        for k in ("lead_s", "full_lead_s"):
+        for k in ("lead_s", "full_lead_s", "near_s"):
             if k in r:
                 m["sync." + k] = r[k]
         rows.append({"m": {k: (float(v) if v is not None else float("nan")) for k, v in m.items()}, "shot": t["id"]})
     summary = LA.summarise(rows, seed=seed) if rows else {}
     for k in ("typo.show_s", "typo.hold_s", "enter.s", "exit.s", "enter.fade_s", "enter.stagger_s", "sync.lead_s",
-              "sync.full_lead_s"):
+              "sync.full_lead_s", "sync.near_s"):
         if k in summary:
             summary[k]["floor_pair"] = 1.0 / fps
     texts = [t for t, _ in lyr]
@@ -2400,6 +2520,11 @@ def typo_summary(tr, sy, voice=None, seed=0, core=False):
     summary["sync.trig_lead_s"]["floor_pair"] = 1.0 / fps
     summary["sync.on_beat"] = _one(sy["on_beat"]["share"], sy["on_beat"].get("n", 0))
     summary["sync.on_beat_chance"] = _one(sy["on_beat"]["chance"], sy["on_beat"].get("n", 0))
+    chance = sy.get("chance") or {}                     # sync runs before typorev have none: nan
+    summary["sync.lead_chance"] = _one(chance.get("lead_s", float("nan")), len(texts))
+    summary["sync.near_chance"] = _one(chance.get("near_s", float("nan")), len(texts))
+    for k in ("sync.lead_chance", "sync.near_chance"):
+        summary[k]["floor_pair"] = 1.0 / fps
     return {"label": tr.get("label"), "fps": fps, "lyrics": len(texts), "texts": len(kinds),
             "kinds": {k: kinds.count(k) for k in sorted(set(kinds))}, "summary": summary}
 
@@ -2584,6 +2709,9 @@ def main(argv=None):
     p = sub.add_parser("style", help="read the look and the typeface of a track run's texts again (the tracking stays)")
     p.add_argument("video")
     p.add_argument("track")
+    p = sub.add_parser("phases", help="read each text's phases again from its stored frames (the tracking stays)")
+    p.add_argument("track")
+    p.add_argument("out", nargs="?", default=None, help="where to write (default: the track run itself)")
     p = sub.add_parser("voice", help="the onsets and phrases of a separated voice, and the beat of the accompaniment")
     p.add_argument("vocals")
     p.add_argument("out")
@@ -2680,6 +2808,12 @@ def main(argv=None):
         print(json.dumps({"ok": True, "out": args.track, "texts": len(tr["texts"]),
                           "errors": sum(1 for t in tr["texts"] if "error" in (t.get("style") or {}) or
                                         "error" in (t.get("typeface") or {}))}))
+        return 0
+    if args.cmd == "phases":
+        with open(args.track, encoding="utf-8") as f:
+            tr = json.load(f)
+        rephase_run(tr, args.out or args.track)
+        print(json.dumps({"ok": True, "out": args.out or args.track, "texts": len(tr["texts"])}))
         return 0
     if args.cmd == "sign":
         with open(args.track, encoding="utf-8") as f:

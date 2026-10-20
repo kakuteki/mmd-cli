@@ -57,6 +57,71 @@ def colour_of_before(argv):
             if a.endswith(COLOUR_NOW) else a for a in argv]
 
 
+# lookfrom (2026-10-21): the camera of an excerpt runs on the song's clock, between these two
+CLOCK_IN = re.compile(r"setpts=PTS\+round\(\d+/\([0-9.]+\*TB\)\),")
+CLOCK_OUT = re.compile(r",setpts=PTS-round\(\d+/\([0-9.]+\*TB\)\)")
+
+
+def excerpt_of_before(argv, clip_start, span):
+    """the argv of an excerpt with what lookfrom (2026-10-21) changed put back as it was: -ss and -t with three decimals of a
+    second (now from whole frames, to the microsecond), and the camera (the punch and the parted colours) on the excerpt's own
+    clock, the time of each flare less the excerpt's start (`clip_start`, its --from) written with three decimals, in place of
+    the song's clock (the times of the song, the frames' times moved by the excerpt's first frame).  `span` is the punch's
+    length in seconds.  For flare times of three decimals or fewer, as the looks write them; nothing else is touched"""
+    out = list(argv)
+    dancer = out.index("-i")
+    for flag in ("-ss", "-t"):
+        if flag in out[:dancer]:
+            at = out.index(flag)
+            out[at + 1] = "%.3f" % float(out[at + 1])
+    at = out.index("-filter_complex") + 1
+    graph = CLOCK_OUT.sub("", CLOCK_IN.sub("", out[at]))
+
+    def since(text):
+        return float(text) - clip_start
+
+    def since_term(match):
+        s = since(match.group(1))
+        return "(t-%.3f)" % s if s >= 0 else "(t+%.3f)" % -s
+    graph = re.sub(r"\(t-([0-9.]+)\)", since_term, graph)
+    graph = re.sub(r"gte\(t,([0-9.]+)\)", lambda m: "gte(t,%.3f)" % since(m.group(1)), graph)
+    graph = re.sub(r"between\(t,([0-9.]+),[0-9.]+\)",
+                   lambda m: "between(t,%.3f,%.3f)" % (since(m.group(1)), since(m.group(1)) + span), graph)
+    out[at] = graph
+    return out
+
+
+def numbered_dancer(path, frames, rate, size=SIZE, box=True):
+    """a dancer of `frames` frames at `rate` (frames a second; "10000000/333333" as MMD writes 30) whose frame n says n where it
+    is see-through (red n % 256, green n // 256, alpha 0: the stage shows through) and, with `box`, has a white box 12 px wide
+    at x = 20 + 4 n (modulo the room there is), over the middle three fifths of the height (opaque).  A .mov holds PNG (a dancer
+    folded beforehand: its frames timed in ticks of 1/15360 s, finer than a frame), an .avi the uncompressed BGRA MMD writes (its
+    frames timed in whole frames)"""
+    folder = path + ".frames"
+    os.makedirs(folder)
+    w, h = size
+    for n in range(frames):
+        image = Image.new("RGBA", size, (n % 256, n // 256, 0, 0))
+        if box:
+            x = 20 + (4 * n) % max(1, w - 32)
+            image.paste((255, 255, 255, 255), (x, h // 5, x + 12, h - h // 5))
+        image.save(os.path.join(folder, "f%05d.png" % n))
+    if path.endswith(".mov"):
+        argv = ["-framerate", str(rate), "-i", os.path.join(folder, "f%05d.png"), "-c:v", "png"]
+    else:
+        argv = ["-framerate", "30" if "/" in str(rate) else str(rate), "-i", os.path.join(folder, "f%05d.png"), "-r", str(rate),
+                "-c:v", "rawvideo", "-pix_fmt", "bgra"]
+    subprocess.run(["ffmpeg", "-v", "error", "-y"] + argv + [path], check=True, stdin=subprocess.DEVNULL)
+    shutil.rmtree(folder)
+
+
+def numbers_read(args):
+    """the numbers the frames of a numbered_dancer say that ffmpeg reads with the input arguments `args` (mv_look.dancer_input)"""
+    raw = subprocess.run(["ffmpeg", "-v", "error"] + args + ["-vf", "crop=1:1:0:0", "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+                         check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+    return [raw[i] + 256 * raw[i + 1] for i in range(0, len(raw) - 3, 4)]
+
+
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")
 class LookSettingsTest(unittest.TestCase):
     def test_a_look_file_overrides_single_values_of_the_default(self):
@@ -392,24 +457,28 @@ class GraphTest(unittest.TestCase):
         self.assertIn("crop=320:180:x='(%s-320)/2'" % width, f)
 
     def test_a_punch_outlives_a_flare_picture_that_ended_before_the_chunk(self):
-        # review 11: the flare at 1.0 s has 4 frames of picture (over at 1.133 s) and 10 of punch (until 1.333 s)
+        # review 11: the flare at 1.0 s has 4 frames of picture (over at 1.133 s) and 10 of punch (until 1.333 s).  The chunk from
+        # 1.2 s (frame 36 of the song) runs its camera on the song's clock (lookfrom): its frames' times are those of the song there
         look = mv_look.merge_look({"flares": [1.0], "flare": {"frames": 4},
                                    "camera": {"punch": 0.05, "punch_frames": 10, "aberration": 8}})
         argv = mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", look, SIZE, 30,
                                       flare_pattern="W/flare_%05d.png", flare_frames=4, start=1.2, light_frames=30)
         self.assertNotIn("W/flare_%05d.png", argv)                       # no picture left to lay over
         f = self.filter_of(argv)
-        self.assertIn("(t+0.200)", f)
-        self.assertIn("between(t,-0.200,0.133)", f)
+        self.assertIn("setpts=PTS+round(36/(30*TB)),scale=", f)
+        self.assertIn("(t-1.000)", f)
+        self.assertIn("between(t,1.000,1.333)", f)
 
     def test_a_flare_that_began_before_the_chunk_has_its_punch_part_spent(self):
-        # review 10: the flare at 1.0 s seen from a chunk that begins at 1.1 s began 0.1 s before the chunk
+        # review 10: the flare at 1.0 s seen from a chunk that begins at 1.1 s (frame 33) began 0.1 s before the chunk: the chunk's
+        # first frame is 1.1 s on the clock of its camera, and the punch is part spent there
         look = {"flares": [1.0], "camera": {"punch": 0.05, "punch_frames": 9, "aberration": 8}}
         f = self.filter_of(self.graph(look=look, start=1.1, light_frames=30))
-        self.assertIn("(t+0.100)", f)
-        self.assertIn("gte(t,-0.100)", f)
+        self.assertIn("setpts=PTS+round(33/(30*TB)),scale=", f)
+        self.assertIn("(t-1.000)", f)
+        self.assertIn("gte(t,1.000)", f)
         self.assertNotIn("(t-0.000)", f)
-        self.assertIn("between(t,-0.100,0.200)", f)
+        self.assertIn("between(t,1.000,1.300)',setpts=PTS-round(33/(30*TB))[parted]", f)
 
     def test_the_punch_lasts_as_many_seconds_at_60_fps(self):
         # punch_frames counts frames of the song (MMD's 30 fps): a version at 60 fps punches in for as long as the one at
@@ -422,15 +491,39 @@ class GraphTest(unittest.TestCase):
             self.assertIn("between(t,1.000,1.300)", f, fps)
 
     def test_a_punch_that_began_before_a_chunk_at_60_fps_runs_on_as_at_30(self):
-        # a flare 0.25 s before the chunk: its punch (9 frames of the song, 0.3 s) is still on at the chunk's start
+        # a flare 0.25 s before the chunk: its punch (9 frames of the song, 0.3 s) is still on at the chunk's start.  The chunk
+        # starts on the frame nearest 1.25 s: 38 of 30 fps (the even one of 37.5, as the stage and the light take it), 75 of 60
         look = mv_look.merge_look({"flares": [1.0], "flare": {"frames": 4},
                                    "camera": {"punch": 0.05, "punch_frames": 9, "aberration": 8}})
-        for fps in (30, 60):
+        for fps, first in ((30, 38), (60, 75)):
             f = self.filter_of(mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", look, SIZE, fps,
                                                       flare_pattern="W/flare_%05d.png", flare_frames=4 * fps // 30,
                                                       start=1.25, light_frames=fps))
-            self.assertIn("(t+0.250)", f, fps)
-            self.assertIn("between(t,-0.250,0.050)", f, fps)
+            self.assertIn("setpts=PTS+round(%d/(%d*TB)),scale=" % (first, fps), f, fps)
+            self.assertIn("pow(max(0,1-(t-1.000)/0.300),2)", f, fps)
+            self.assertIn("between(t,1.000,1.300)", f, fps)
+
+    def test_an_excerpt_runs_its_camera_on_the_song_clock(self):
+        # lookfrom (2026-10-21): the expressions of the punch and of the parted colours in a chunk from frame 256 of the song
+        # (8.533333 s, as mv_chunks writes it) are those of the whole song, between two setpts that move the frames' times to the
+        # song's and back.  Written as times of the chunk with three decimals, the flare at 30.0 s was 21.467 s, after the frame
+        # of 21.4667 s: the punch came a frame late
+        look = {"flares": [30.0], "camera": {"punch": 0.05, "punch_frames": 10, "aberration": 8}}
+        whole = self.filter_of(self.graph(look=look))
+        chunk = self.filter_of(self.graph(look=look, start=8.533333, offset=4.533333, light_frames=30))
+
+        def camera(f):
+            return f[f.index("scale=w='"):f.index("[parted]")]
+        self.assertIn("setpts=PTS+round(256/(30*TB))," + camera(whole) + ",setpts=PTS-round(256/(30*TB))[parted]", chunk)
+        self.assertIn("gte(t,30.000)", camera(whole))
+        self.assertNotIn("21.46", camera(chunk))
+        self.assertIn("setpts=PTS-STARTPTS+round(21.466667/TB)", chunk)  # the flare's picture is laid by the chunk's own clock
+        self.assertNotIn("setpts=PTS+round(", whole)                     # the whole song: as before
+        # no punch, only the parted colours: the clock goes round them alone
+        parted = self.filter_of(self.graph(look={"flares": [30.0], "camera": {"punch": 0, "aberration": 8}}, start=8.533333,
+                                           light_frames=30))
+        self.assertIn("rgbashift=rh=-2:bh=2:enable='between(t,30.000,30.333)',setpts=PTS-round(256/(30*TB))[parted]", parted)
+        self.assertIn("]setpts=PTS+round(256/(30*TB)),rgbashift=", parted)
 
     def test_no_camera_effect_without_a_flare_or_when_it_is_zero(self):
         for look in ({}, {"flares": [1.0], "camera": {"punch": 0, "aberration": 0}}):
@@ -499,7 +592,8 @@ class GraphTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("-start_number", credit - 6) + 1], "3")
         self.assertNotIn("-ss", argv[:argv.index("fg.avi")])
         argv = self.graph(plan=PLAN, offset=0.3, start=0.4, duration=0.3)   # 0.4 .. 0.7 s of the song = 0.1 s into the file
-        self.assertEqual(argv[argv.index("-ss") + 1], "0.100")
+        self.assertEqual(argv[argv.index("-ss") + 1], "0.100000")       # 3 frames into the file, to the microsecond (lookfrom)
+        self.assertEqual(argv[argv.index("-t") + 1], "0.300000")
         self.assertIn("setpts=PTS-STARTPTS+round(0.100000/TB)", self.filter_of(argv))
         with self.assertRaises(ValueError):
             self.graph(plan=PLAN, offset=0.3, start=0.1, duration=0.1)       # before the file begins
@@ -1059,23 +1153,37 @@ class ThirtyArgvTest(unittest.TestCase):
               "default_look_no_blur": "b3483e659532ad12cee21f3ab7101aff4fabed12187656ba181cdd5dae33fba8"}
 
     def argvs(self):
+        """(name, the excerpt's --from or None, argv)"""
         look = mv_look.merge_look(self.V3)
         common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=8, shutter=0.5, light_frames=823)
-        yield "v7_04_flare_on_the_cut", mv_look.ffmpeg_command(
+        yield "v7_04_flare_on_the_cut", 1334 / 30.0, mv_look.ffmpeg_command(
             "C:/out/v7_04.avi", "C:/out/v7_04.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
             start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common)
-        yield "punch_carried_into_a_chunk", mv_look.ffmpeg_command(
+        yield "punch_carried_into_a_chunk", 2610 / 30.0, mv_look.ffmpeg_command(
             "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 30, plan=self.PLAN,
             start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)
-        yield "default_look_no_blur", mv_look.ffmpeg_command(
+        yield "default_look_no_blur", None, mv_look.ffmpeg_command(
             "C:/out/y.avi", "C:/out/y.mp4", "W/plate.png", "W/light/light_%05d.png", mv_look.merge_look({}), (1280, 720), 30)
 
     def test_the_argv_at_30_fps_is_the_one_of_before(self):
-        # but for its last colour conversion (BT.709 and its tags, look2 2026-10-18): with that put back as it was, every
-        # byte of the argv is the one of main 60956b2
-        for name, argv in self.argvs():
+        # but for its last colour conversion (BT.709 and its tags, look2 2026-10-18) and, in a chunk, the seconds of its excerpt
+        # and the clock of its camera (lookfrom 2026-10-21): with those put back as they were, every byte of the argv is the one of
+        # main 60956b2
+        for name, start, argv in self.argvs():
+            if start is not None:
+                argv = excerpt_of_before(argv, start, 10 / 30.0)
             self.assertEqual(hashlib.sha256("\0".join(colour_of_before(argv)).encode("utf-8")).hexdigest(), self.GOLDEN[name],
                              name)
+
+    def test_a_chunk_reads_whole_frames_and_punches_on_the_song_clock(self):
+        # what lookfrom changed in the chunk v7_04 (the flare at 44.467 s, 0.000333 s after its cut at frame 1334)
+        argv = dict((name, argv) for name, _, argv in self.argvs())["v7_04_flare_on_the_cut"]
+        at = argv.index("C:/out/v7_04.avi")
+        self.assertEqual(argv[at - 7:at + 1], ["-ss", "4.000000", "-t", "13.533333", "-r", "240", "-i", "C:/out/v7_04.avi"])
+        f = argv[argv.index("-filter_complex") + 1]
+        self.assertIn("[lit]setpts=PTS+round(1334/(30*TB)),scale=w='trunc(1280*(1+0.04*pow(max(0,1-(t-44.467)/0.333),2)*"
+                      "gte(t,44.467))/2)*2'", f)
+        self.assertIn("rgbashift=rh=-3:bh=3:enable='between(t,44.467,44.800)',setpts=PTS-round(1334/(30*TB))[parted]", f)
 
     def test_the_counts_of_the_layers_at_30_fps_are_those_of_before(self):
         # what write_layers hands the argv at 30 (12 flare frames, the loop of v3 in 823): the values of main 60956b2
@@ -1224,6 +1332,202 @@ class ExcerptRenderTest(unittest.TestCase):
 
 
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class FromFrameTest(unittest.TestCase):
+    """review stagecityrev: a dancer folded beforehand to 30 fps (PNG in a MOV, its frames timed in ticks of 1/15360 s) under an
+    excerpt from frame K of the song.  -ss %.3f wrote 448 / 30 s as 14.933, and with -r before the file ffmpeg reads from the
+    frame it seeks to, the last one at or before that time: the frame before, for every K of 1 mod 3.  An excerpt reads the
+    dancer from its first frame (the one nearest --from, as the stage, the light and the cues take it), from such a MOV and from
+    MMD's AVI alike, and a render lays under every frame the dancer of its frame of the song"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.files = {"mov": os.path.join(cls.folder, "folded.mov"), "avi": os.path.join(cls.folder, "mmd.avi")}
+        numbered_dancer(cls.files["mov"], 48, 30)
+        numbered_dancer(cls.files["avi"], 48, "10000000/333333")
+        cls.look = os.path.join(cls.folder, "look.json")
+        with open(cls.look, "w", encoding="utf-8") as f:
+            json.dump({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                       "lens": {"vignette": 0, "grain": 0}}, f)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def test_an_excerpt_reads_the_dancer_from_its_first_frame(self):
+        for kind, fg in sorted(self.files.items()):
+            for first in range(1, 10):
+                got = numbers_read(mv_look.dancer_input(fg, 30, 1, first / 30.0, 6 / 30.0, 0.0))
+                self.assertEqual(got, list(range(first, first + 6)), (kind, first))
+            # a chunk's file from frame 6 of the song (--offset), the excerpt from frame 10: frame 4 of the file
+            self.assertEqual(numbers_read(mv_look.dancer_input(fg, 30, 1, 10 / 30.0, 3 / 30.0, 0.2)), [4, 5, 6], kind)
+
+    def test_a_from_written_with_three_decimals_reads_the_frame_nearest_it(self):
+        # 0.133 s for frame 4 (3.99 frames): the frame the stage, the light and the cues start on, whatever the file
+        for kind, fg in sorted(self.files.items()):
+            self.assertEqual(numbers_read(mv_look.dancer_input(fg, 30, 1, 0.133, 0.1, 0.0)), [4, 5, 6], kind)
+
+    def box_edges(self, path):
+        """the left edge of the dancer's box in every frame of a render (row 90, the first column of white)"""
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], check=True,
+                             capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1] * 3
+        edges = []
+        for i in range(len(raw) // n):
+            row = numpy.frombuffer(raw[i * n:(i + 1) * n], dtype=numpy.uint8).reshape(SIZE[1], SIZE[0], 3)[90].min(axis=1)
+            white = numpy.nonzero(row > 200)[0]
+            edges.append(int(white[0]) if len(white) else None)
+        return edges
+
+    def render(self, name, fg, *extra):
+        out = os.path.join(self.folder, name + ".mp4")
+        code, result = tool_answer(["render", fg, self.look, out, "--work", os.path.join(self.folder, "work_" + name)] + list(extra))
+        self.assertEqual(code, 0, result)
+        return self.box_edges(out)
+
+    def test_a_render_lays_under_every_frame_the_dancer_of_its_frame_of_the_song(self):
+        # the box of dancer frame j is at x = 20 + 4 j (x264 may move an edge by a pixel; a frame off moves it by 4)
+        whole = self.render("whole", self.files["mov"])
+        self.assertEqual(len(whole), 48)
+        self.assertTrue(all(e is not None and abs(e - (20 + 4 * j)) <= 1 for j, e in enumerate(whole)), whole)
+        for first in (3, 4, 5):
+            part = self.render("from_%d" % first, self.files["mov"], "--from", "%.6f" % (first / 30.0),
+                               "--to", "%.6f" % ((first + 12) / 30.0))
+            self.assertEqual(len(part), 12, first)
+            self.assertTrue(all(e is not None and abs(e - (20 + 4 * (first + k))) <= 1 for k, e in enumerate(part)),
+                            (first, part))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class HighRateExcerptTest(unittest.TestCase):
+    """an excerpt of a dancer at 1920 fps (64 subframes to a frame of 30 fps; `phase` and the fold take it) reads the frames of
+    its span and no others.  Three decimals of a second are two thirds of a subframe there: -ss and -t of 1 / 30 s written as
+    0.033 read from subframe 63 and 63 of them, 2 / 30 s as 0.067 read 129.  (A MOV: ffmpeg's AVI muxer writes 1920 fps as 600)"""
+
+    def test_the_excerpt_reads_whole_frames_of_its_span(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        fg = os.path.join(folder, "fg1920.mov")
+        numbered_dancer(fg, 64 * 5, 1920, size=(16, 8), box=False)
+        for first in (1, 2):
+            for frames in (1, 2):
+                got = numbers_read(mv_look.dancer_input(fg, 30, 64, first / 30.0, frames / 30.0, 0.0))
+                self.assertEqual(got, list(range(64 * first, 64 * (first + frames))), (first, frames))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class CameraClockRenderTest(unittest.TestCase):
+    """lookfrom (2026-10-21): an excerpt punches and parts the colours of every frame as the whole song does that frame.  A black
+    plate with a white line across (60 px above the middle) and one down (at x 100), a see-through dancer, a flare at 1.0 s with a
+    punch of 0.3 and the colours parted by 2 px: in every frame, the row of the line across (the zoom) and how far red lies from
+    blue on the line down.  With its times written as times of the excerpt to three decimals, the punch of an excerpt from frame
+    1 mod 3 of the song began a frame late (1.0 - 1 / 30 s as 0.967, after the frame of 0.9667 s) and the one from 2 mod 3 was a
+    little smaller on its first frame (0.933: 0.3 s from the flare's own time)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.plate = os.path.join(cls.folder, "plate.png")
+        image = Image.new("RGB", SIZE, (0, 0, 0))
+        image.paste((255, 255, 255), (0, 29, SIZE[0], 31))
+        image.paste((255, 255, 255), (100, 0, 102, SIZE[1]))
+        image.save(cls.plate)
+        light = os.path.join(cls.folder, "light")
+        os.makedirs(light)
+        Image.new("RGB", SIZE, (0, 0, 0)).save(os.path.join(light, "light_00000.png"))
+        cls.light = os.path.join(light, "light_%05d.png").replace("\\", "/")
+        flare = os.path.join(cls.folder, "flare")
+        os.makedirs(flare)
+        Image.new("RGBA", SIZE, (0, 0, 0, 0)).save(os.path.join(flare, "flare_00000.png"))
+        cls.flare = os.path.join(flare, "flare_%05d.png").replace("\\", "/")
+        cls.dancers = {}
+        for rate in (30, 120):                                          # 1.6 s, see-through (a folded MOV keeps it small)
+            cls.dancers[rate] = os.path.join(cls.folder, "fg%d.mov" % rate)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black@0.0:s=%dx%d:r=%d,format=rgba"
+                            % (SIZE[0], SIZE[1], rate), "-frames:v", str(rate * 8 // 5), "-c:v", "png", cls.dancers[rate]],
+                           check=True, stdin=subprocess.DEVNULL)
+        cls.look = mv_look.merge_look({"flares": [1.0], "glow": {"strength": 0}, "lens": {"vignette": 0, "grain": 0},
+                                       "flare": {"frames": 1, "strength": 0},
+                                       "camera": {"punch": 0.3, "punch_frames": 10, "aberration": 8}})
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def render(self, name, fps, subframes, **kw):
+        """[(row of the line across, red's column less blue's on the line down)] of every frame"""
+        out = os.path.join(self.folder, name + ".mp4")
+        argv = mv_look.ffmpeg_command(self.dancers[fps * subframes], out, self.plate, self.light, self.look, SIZE, fps,
+                                      flare_pattern=self.flare, flare_frames=1, light_frames=1, subframes=subframes, **kw)
+        subprocess.run(argv, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], check=True,
+                             capture_output=True, stdin=subprocess.DEVNULL).stdout
+        n = SIZE[0] * SIZE[1] * 3
+        found = []
+        for i in range(len(raw) // n):
+            frame = numpy.frombuffer(raw[i * n:(i + 1) * n], dtype=numpy.uint8).reshape(SIZE[1], SIZE[0], 3).astype(float)
+            across = frame[:, 200:240].mean(axis=(1, 2))
+            across = numpy.where(across > 40, across, 0)
+            down = frame[120:160, 40:160]
+            red, blue = down[:, :, 0].sum(axis=0), down[:, :, 2].sum(axis=0)
+            x = numpy.arange(40, 160)
+            found.append((float((across * numpy.arange(SIZE[1])).sum() / across.sum()),
+                          float((red * x).sum() / red.sum() - (blue * x).sum() / blue.sum())))
+        return found
+
+    def test_an_excerpt_punches_and_parts_every_frame_as_the_whole_song(self):
+        for fps, subframes in ((30, 1), (30, 4), (60, 2)):
+            whole = self.render("whole_%d_%d" % (fps, subframes), fps, subframes)
+            self.assertEqual(len(whole), fps * 8 // 5)
+            punched = [j for j, (row, _) in enumerate(whole) if row < 25]
+            parted = [j for j, (_, gap) in enumerate(whole) if gap < -2]
+            self.assertEqual(punched[0], fps, (fps, subframes))                 # from its frame at 1.0 s
+            self.assertEqual(parted, list(range(fps, fps + fps // 3)), (fps, subframes))   # for 10 frames of the song
+            for first in range(1, 7):
+                part = self.render("from_%d_%d_%d" % (first, fps, subframes), fps, subframes, start=first / float(fps),
+                                   duration=(len(whole) - first) / float(fps))
+                self.assertEqual(len(part), len(whole) - first, (fps, subframes, first))
+                for k, ((row, gap), (row0, gap0)) in enumerate(zip(part, whole[first:])):
+                    self.assertAlmostEqual(row, row0, delta=0.2, msg=(fps, subframes, first, first + k))
+                    self.assertAlmostEqual(gap, gap0, delta=1.0, msg=(fps, subframes, first, first + k))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class LengthRenderTest(unittest.TestCase):
+    """lookfrom (2026-10-21): -t comes from whole frames of the dancer, written to the microsecond.  At the rates MMD renders (30
+    to 960 fps) ffmpeg reads a whole number of frames of three decimals' length too (it rounds -t to a frame of the dancer): a
+    render with --to and no --from is the video of before, byte for byte (the argv of before is DefaultArgvTest's)"""
+
+    def test_a_length_of_whole_frames_reads_what_three_decimals_read(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        size = (64, 36)
+        look = mv_look.merge_look({"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                                   "lens": {"vignette": 0, "grain": 0}})
+        layers = mv_look.write_layers(look, os.path.join(folder, "work"), size, 30)
+        for rate in ("10000000/333333", 240, 960):
+            fg = os.path.join(folder, "fg_%s.avi" % str(rate).replace("/", "_"))
+            subframes = 1 if "/" in str(rate) else rate // 30
+            numbered_dancer(fg, 8 * subframes, rate, size=size)
+            for frames in (4, 5):                                       # 0.1333 and 0.1667 s: three decimals cut down and up
+                videos = []
+                for name in ("now", "before"):
+                    out = os.path.join(folder, "%s_%d_%s.mp4" % (subframes, frames, name))
+                    argv = mv_look.ffmpeg_command(fg, out, layers["plate"], layers["light_pattern"], look, size, 30,
+                                                  flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
+                                                  duration=frames / 30.0, subframes=subframes, light_frames=layers["light_frames"])
+                    if name == "before":
+                        argv[argv.index("-t") + 1] = "%.3f" % (frames / 30.0)
+                    subprocess.run(argv, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+                    videos.append(file_bytes(out))
+                self.assertEqual(videos[0], videos[1], (rate, frames))
+                count = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                        "stream=nb_read_frames", "-of", "csv=p=0", out], check=True, capture_output=True,
+                                       text=True, stdin=subprocess.DEVNULL).stdout
+                self.assertEqual(int(count.strip().strip(",")), frames, (rate, frames))
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class SubframeRenderTest(unittest.TestCase):
     """a white box moving 4 px per subframe at 120 fps, folded into 30 fps with a half-open shutter: each output
     frame shows it at two positions 4 px apart, so its two 4 px edges are half covered"""
@@ -1335,17 +1639,93 @@ class SixtyArgvTest(unittest.TestCase):
               "punch_carried_into_a_chunk_60": "f2cc475670d792a2aabac545b46b19083b0a98679938f8db0e90601bf717f587"}
 
     def test_the_argv_at_60_fps_is_the_one_of_before(self):
+        # with the seconds of the excerpt and the clock of its camera put back as they were (lookfrom 2026-10-21, as at 30 fps)
         look = mv_look.merge_look(ThirtyArgvTest.V3)
         common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=24, subframes=4, shutter=0.5, light_frames=1646)
-        argvs = {"v7_04_flare_on_the_cut_60": mv_look.ffmpeg_command(
+        argvs = {"v7_04_flare_on_the_cut_60": (1334 / 30.0, mv_look.ffmpeg_command(
                      "C:/out/v7_04.avi", "C:/out/v7_04.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 60,
-                     plan=ThirtyArgvTest.PLAN, start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common),
-                 "punch_carried_into_a_chunk_60": mv_look.ffmpeg_command(
+                     plan=ThirtyArgvTest.PLAN, start=1334 / 30.0, duration=406 / 30.0, offset=1214 / 30.0, **common)),
+                 "punch_carried_into_a_chunk_60": (2610 / 30.0, mv_look.ffmpeg_command(
                      "C:/out/x.avi", "C:/out/x.mp4", "W/plate.png", "W/light/light_%05d.png", look, (1280, 720), 60,
-                     plan=ThirtyArgvTest.PLAN, start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common)}
-        for name, argv in argvs.items():
+                     plan=ThirtyArgvTest.PLAN, start=2610 / 30.0, duration=40 / 30.0, offset=2490 / 30.0, **common))}
+        for name, (start, argv) in argvs.items():
+            self.assertIn("setpts=PTS+round(%d/(60*TB))," % round(start * 60), argv[argv.index("-filter_complex") + 1], name)
+            argv = excerpt_of_before(argv, start, 10 / 30.0)
             self.assertEqual(hashlib.sha256("\0".join(colour_of_before(argv)).encode("utf-8")).hexdigest(), self.GOLDEN[name],
                              name)
+
+
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class DefaultArgvTest(unittest.TestCase):
+    """lookfrom (2026-10-21) changes what an excerpt (--from) hands ffmpeg only: without --from the argv is the one main 058acae
+    built, byte for byte (the SHA-256 of the argv joined by NUL, written with the tool of 058acae: the default look; the look v3
+    with its cues over the whole song folded at 30 fps and at 60, from a chunk's file without --from, with nvenc and with the
+    physics' shifts; a stage in the world; a stage of a model with its light on her), so a render without --from is the video of
+    before.  With --to alone its length now comes in whole frames to the microsecond: with that put back to three decimals the
+    argv is the one of 058acae too, and LengthRenderTest renders both to the same bytes"""
+
+    V3 = ThirtyArgvTest.V3
+    PLAN = ThirtyArgvTest.PLAN
+    WORLD = {"stage": {"world": 1, "floor": 1, "shadow": 0.6, "dof": 1.5}, "flares": [0.6, 1.0, 44.467], "camera": {"aberration": 3}}
+    LAYER = {"stage": {"world": 1, "floor": 1, "shadow": 0.5}, "flares": [1.0, 44.467],
+             "layer": {"on": 1, "spill": 0.8, "spill_wrap": 1.4, "person": 0.9, "person_tint": [1.0, 0.95, 1.1]},
+             "rim": {"strength": 0.5}}
+    GOLDEN = {"default_look": "698f76371e5021036c89f53abd4cecaa025b63bf87f6b43eab9b279798c31a5b",
+              "v3_whole_song_fold8": "072e34c7f08358e7cc4c5927f6c6b122fa5cef4088170a66187436a92cd06c83",
+              "v3_whole_song_60fps": "e900c7612b506040dd04d2a7e3c3f131dd1891ac3798d7083810a3c828ad8667",
+              "v3_chunk_file_offset_only": "f899678d2e08df873a76c65ad4a3263a680aff4748d4d456ff58ab33d05ed12f",
+              "v3_to_only": "4fc5be99bc1d8de75ff8378507b2a7be0a5f2119b42f44b808be584ec48139a9",
+              "v3_nvenc": "203c53f8a8d1dc67993b2678ca798da59aae9df3d17dee4970cd544529339a8b",
+              "v3_physics_shifts": "9b49ac116eaacecc714702e19d94a0d5e0ec903a58ddb06adec513b407380284",
+              "world_stage_fold16": "55f8bd0ba2675a7ebaf19fec3409c8076aac89f44f242aea5c2e0721b533d52e",
+              "layer_spill_fold16": "c31eb110edb32e52fef3b470e678f35dd1d5aaa7dc97cfb85fc2586b12bb044b"}
+
+    def argvs(self):
+        v3 = mv_look.merge_look(self.V3)
+        common = dict(flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=8, shutter=0.5, light_frames=823)
+        yield "default_look", mv_look.ffmpeg_command(
+            "C:/out/y.avi", "C:/out/y.mp4", "W/plate.png", "W/light/light_%05d.png", mv_look.merge_look({}), (1280, 720), 30,
+            flare_pattern="W/flare/flare_%05d.png", flare_frames=12, light_frames=360)
+        yield "v3_whole_song_fold8", mv_look.ffmpeg_command(
+            "C:/out/w.avi", "C:/out/w.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 30, plan=self.PLAN, **common)
+        yield "v3_whole_song_60fps", mv_look.ffmpeg_command(
+            "C:/out/w.avi", "C:/out/w60.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 60, plan=self.PLAN,
+            flare_pattern="W/flare/flare_%05d.png", flare_frames=24, subframes=4, shutter=0.5, light_frames=1646)
+        yield "v3_chunk_file_offset_only", mv_look.ffmpeg_command(
+            "C:/out/c.avi", "C:/out/c.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 30, plan=self.PLAN,
+            offset=1214 / 30.0, **common)
+        yield "v3_to_only", excerpt_of_before(mv_look.ffmpeg_command(
+            "C:/out/t.avi", "C:/out/t.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 30, plan=self.PLAN,
+            duration=406 / 30.0, **common), 0.0, 10 / 30.0)
+        yield "v3_nvenc", mv_look.ffmpeg_command(
+            "C:/out/w.avi", "C:/out/n.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 30, plan=self.PLAN,
+            encoder="nvenc", **common)
+        yield "v3_physics_shifts", mv_look.ffmpeg_command(
+            "C:/out/w.avi", "C:/out/p.mp4", "W/plate.png", "W/light/light_%05d.png", v3, (1280, 720), 30, plan=self.PLAN,
+            shifts=[(0, 2), (40, 5)], **common)
+        yield "world_stage_fold16", mv_look.ffmpeg_command(
+            "C:/out/s.avi", "C:/out/s.mp4", None, None, mv_look.merge_look(self.WORLD), (1280, 720), 30, plan=self.PLAN,
+            flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=16, shutter=0.5,
+            stage={"pattern": "W/stage/stage_%05d.png", "first": 0})
+        yield "layer_spill_fold16", mv_look.ffmpeg_command(
+            "C:/out/l.avi", "C:/out/l.mp4", None, None, mv_look.merge_look(self.LAYER), (1280, 720), 30, plan=self.PLAN,
+            flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=16, shutter=0.5,
+            stage={"pattern": "W/stage/stage_%05d.png", "first": 0, "spill": "W/stage/spill_%05d.png"})
+
+    def test_without_from_the_argv_is_the_one_of_058acae(self):
+        names = []
+        for name, argv in self.argvs():
+            names.append(name)
+            self.assertEqual(hashlib.sha256("\0".join(argv).encode("utf-8")).hexdigest(), self.GOLDEN[name], name)
+        self.assertEqual(sorted(names), sorted(self.GOLDEN))
+
+    def test_with_to_alone_only_the_length_is_written_otherwise(self):
+        argv = mv_look.ffmpeg_command("C:/out/t.avi", "C:/out/t.mp4", "W/plate.png", "W/light/light_%05d.png",
+                                      mv_look.merge_look(self.V3), (1280, 720), 30, plan=self.PLAN, duration=406 / 30.0,
+                                      flare_pattern="W/flare/flare_%05d.png", flare_frames=12, subframes=8, light_frames=823)
+        self.assertEqual(argv[4:10], ["-t", "13.533333", "-r", "240", "-i", "C:/out/t.avi"])
+        self.assertNotIn("-ss", argv)
+        self.assertNotIn("setpts=PTS+round(", argv[argv.index("-filter_complex") + 1])
 
 
 @unittest.skipUnless(mv_look, "needs Pillow and numpy")

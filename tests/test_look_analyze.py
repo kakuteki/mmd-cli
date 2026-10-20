@@ -444,6 +444,27 @@ class LightingTest(unittest.TestCase):
         self.assertAlmostEqual(f_strobe["strobe.per_min"], 3.0, delta=0.01)          # one strobe in 20 s
         self.assertGreater(f_strobe["flicker.hf"], 5 * max(f_calm["flicker.hf"], 1e-3))
 
+    def test_cuts_are_no_flicker(self):
+        # typorev: a cut is a step of the picture's mean light; read over their cuts, the references' flicker was 0.016 at
+        # the median, 0.0098 with the frames next to a cut left out (Cinderella / Miku 0.012 and 0.0027)
+        fps = 30
+        rng = np.random.default_rng(6)
+        calm = 0.3 + 0.003 * rng.standard_normal(fps * 20)
+        cuts = list(range(40, fps * 20, 75))                        # a cut every 2.5 s
+        shots = calm.copy()
+        for k, c in enumerate(cuts):
+            shots[c:] += 0.12 if k % 2 == 0 else -0.09                  # each shot lit another way
+        read_over = LA.flicker(shots, fps)["flicker.hf"]
+        read_apart = LA.flicker(shots, fps, cuts=cuts)["flicker.hf"]
+        steady = LA.flicker(calm, fps)["flicker.hf"]
+        self.assertGreater(read_over, 3 * steady)                       # read over the cuts, the steps are flicker
+        self.assertLess(read_apart, 1.5 * steady)
+        # a strobe inside a shot is still flicker
+        strobe = shots.copy()
+        for k in range(8):
+            strobe[300 + 6 * k:300 + 6 * k + 2] += 0.35
+        self.assertGreater(LA.flicker(strobe, fps, cuts=cuts)["flicker.hf"], 5 * steady)
+
     def test_the_light_moves(self):
         fps = 30
         thumbs = []
@@ -907,6 +928,29 @@ class VideoTest(unittest.TestCase):
         self.assertIn("### 人物", table)
         self.assertIn("person.L_p50", table)
 
+    def test_the_faces_of_a_video_are_read_when_asked(self):
+        def middle_third(a):
+            m = np.zeros(a.shape[:2])
+            m[:, a.shape[1] // 3:2 * a.shape[1] // 3] = 1.0
+            return m
+
+        def one_face(a):                                       # a stand-in for the face finder: a box on the person
+            h, w = a.shape[:2]
+            return [(w // 2 - 12, h // 2 - 12, 24, 24)]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "v.mp4")
+            synthetic_video(path, cuts=(), flash=10 ** 6)
+            out = os.path.join(tmp, "r.json")
+            d = LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third, faces=one_face)
+            self.assertTrue(math.isfinite(d["summary"]["face.L"]["median"]))
+            self.assertEqual(d["summary"]["face.count"]["median"], 1.0)
+            plain = LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third)
+            self.assertTrue(math.isnan(plain["summary"]["face.L"]["median"]))
+            with self.assertRaises(ValueError):                # a face finder that cannot be loaded is no silent nothing
+                LA.measure_regions(path, out, frames=4, height=180, mask_fn=middle_third,
+                                   faces=os.path.join(tmp, "no_such_cascade.xml"))
+
     def test_the_person_of_our_own_render_is_read_from_her_layer(self):
         # look2 (2026-10-18): the person model took the bright floor line under v11's dancer for part of her on some frames,
         # and whether it did changed with the stage's blur (the halo read 0.7 and 1.8 for the same dancer and glow).  Our
@@ -1015,6 +1059,23 @@ class RegionTest(unittest.TestCase):
         self.assertGreater(whole, 15.0)
         self.assertLess(abs(r["person.teal_orange"]), 1.0)
         self.assertLess(abs(r["stage.teal_orange"]), 1.0)
+
+    def test_the_light_on_the_face_is_read_apart_from_the_costume(self):
+        # typorev: the references' person read 44.6 L* against ours 76, their faces 78 against ours 80: the references'
+        # dark costumes, not their light.  The cheeks of a face found on the person (its box's rows 0.55 to 0.85,
+        # columns 0.25 to 0.75) read the light on her whatever she wears
+        for costume in (15.0, 85.0):
+            picture, mask, _ = scene(person_lab=(costume, 0.0, 0.0), stage_lab=(20.0, 0.0, 0.0))
+            lab = LA.rgb_to_lab(picture)
+            lab[300:380, 600:680] = (78.0, 14.0, 10.0)                  # a face of skin lit to 78
+            r = LA.region_measures(LA.lab_to_rgb(lab), mask, faces=[(600, 300, 80, 80), (790, 300, 100, 100)])
+            self.assertAlmostEqual(r["face.L"], 78.0, delta=1.0)
+            self.assertAlmostEqual(r["face.chroma"], math.hypot(14.0, 10.0), delta=1.0)
+            self.assertAlmostEqual(r["face.hue"], math.degrees(math.atan2(10.0, 14.0)), delta=3.0)
+            # a box whose middle is off her, though its cheeks touch her edge (another dancer beside her): not hers
+            self.assertEqual(r["face.count"], 1)
+            self.assertAlmostEqual(r["person.L_p50"], costume, delta=2.0)
+        self.assertTrue(math.isnan(LA.region_measures(picture, mask)["face.L"]))        # no faces given: none read
 
     def test_the_colour_of_the_light_on_the_person_and_on_the_stage(self):
         # the person's brightest tenth lit red, the stage's lit blue (the rest grey): each region's key light
