@@ -12,17 +12,21 @@ Why (2026-10-20, typoref): the request is to take the lighting, the kinetic typo
 graphics of the YouTube channel @PizaCG as the reference for our MV.  tools/look_analyze.py measures the look of a frame
 and tools/typo_analyze.py the text; this tool measures the rest of what an editor lays on and between the shots.
 
-events: every frame is read small (128 x 72, the colour as tools/look_analyze.py reads it) and kept as a few numbers:
-  the cuts and the flashes of tools/look_analyze.py (on the frame made 32 x 18); a fade: the picture going down to black
+events: every frame is read small (72 lines, as wide as its own shape makes it: 128 for 16:9; the colour as
+  tools/look_analyze.py reads it) and kept as a few numbers: the cuts and the flashes of tools/look_analyze.py (on the
+  frame made 32 x 18; a cut that only darkens or lightens the same picture is a fade's step, and a flash is a light on
+  one shot or a white wash, not a short bright shot between two cuts); a fade: the picture going down to black
   (mean Y' under FADE_BLACK) or up to white (over FADE_WHITE) over at least FADE_LEAST frames and staying there; a
   dissolve: a change spread over 3 to 16 frames whose middle frame is the mean of its ends (a camera move is not:
   its middle is the picture moved, not two pictures over each other); the camera's motion from frame to frame (the
-  similarity transform fitted to the optical flow: shift, scale, turn): a zoom punch is a scale jump of at least
+  similarity transform fitted to the optical flow robustly: what moves on its own, a dancer or a growing line of text,
+  is left out): a zoom punch is a scale jump of at least
   PUNCH_LEAST within three frames, PUNCH_OVER times the scale's change round it (a smooth zoom is not), and the shake is
   the rms of the shift less its running mean over SHAKE_WINDOW; a glitch frame: red and blue drawn apart across the
   picture by at least GLITCH_SPLIT (720 line px); a colour flash: the mean chroma rising by COLOUR_RISE over its
   running median for a short time and coming back.  Each kind's events against the beat (from tools/typo_analyze.py's
-  voice run): the share within a frame of a beat, and the chance of that.
+  voice run): the share within a frame of a beat, and the chance of that; and how they keep one place in the beat
+  (Rayleigh's R and p, and where: s from the beat), which also finds events kept a few frames off the beat.
 elements: particles are the small round bright spots (scale-normalised Laplacian of Gaussian, local maxima over
   space and scale, each standing PARTICLE_LEAST above the ground round it); bokeh are those of radius from BOKEH_SIGMA
   up (a defocused light); long straight lines from OpenCV's line segment detector, the two edges of one thick line
@@ -82,6 +86,20 @@ SPLIT_REACH = 6                   # px searched at the read size
 COLOUR_RISE = 12.0                # C*ab over the running median: a colour flash
 COLOUR_LONGEST = 0.6              # s
 BEAT_REACH = 0.01                 # s added to a frame either side: on the beat
+CAMERA_ROBUST = 4.685             # the camera's motion is fitted to the flow robustly (Tukey's biweight, 3 rounds): flow
+#                                   further than this many robust sigmas from the fit gets no weight (a dancer, a sign
+#                                   or a line of text that moves or grows on its own is not the camera; typorev: a dancer
+#                                   on a still picture read as a shake of 0.4 to 1.0 px in our still front camera)
+CAMERA_NOISE = 0.05               # px at the read size: the least robust sigma (the flow's own noise)
+CUT_SAME = 0.95                   # a change whose thumbnail correlates with the one before it at least this is the same
+#                                   picture made darker or lighter (a fade, a light coming up), not a cut (typorev: a fade
+#                                   to black of a bright picture over 10 frames read as 4 cuts, and the cut next to it
+#                                   threw the fade out)
+FLASH_SAME = 0.6                  # a flash is a light on one shot (the thumbnails before and after it correlate at least
+FLASH_WASH = 0.7                  # this) or a white wash (its brightest thumbnail's contrast under this share of the
+#                                   contrast before and after it; a white flash over a cut is one); a short bright shot
+#                                   between two cuts, neither, is two cuts (typorev: RE:odo 1187, 2282, a close-up of blond
+#                                   hair for a few frames, were read as flashes and their cuts lost)
 
 
 def _ncc(a, b):
@@ -103,13 +121,16 @@ def _mean_lab(rgb):
     return LA.rgb_to_lab(m[None, :])[0]
 
 
-def _similarity(flow, border=4):
-    """the similarity transform (dx, dy, log scale, turn) fitted to an optical flow field (least squares about the
-    middle, the border left out)"""
+def _similarity(flow, border=4, weight=None):
+    """the similarity transform (dx, dy, log scale, turn) fitted to an optical flow field about the middle (the border
+    left out): least squares (weighted by `weight`, all alike by default), then reweighted three times by Tukey's
+    biweight of the flow's distance from the fit (CAMERA_ROBUST), so that what moves on its own (a dancer, a growing
+    line of text) does not move the camera.  (Weighting by the picture's edges was tried and left out: in dark stages
+    the flat background then lost its say and the dancer took the camera, GETCHA 2.57 -> 3.78)"""
     h, w = flow.shape[:2]
     ys, xs = np.mgrid[border:h - border, border:w - border].astype(np.float64)
-    u = flow[border:h - border, border:w - border, 0].ravel()
-    v = flow[border:h - border, border:w - border, 1].ravel()
+    u = flow[border:h - border, border:w - border, 0].ravel().astype(np.float64)
+    v = flow[border:h - border, border:w - border, 1].ravel().astype(np.float64)
     x = (xs - (w - 1) / 2.0).ravel()
     y = (ys - (h - 1) / 2.0).ravel()
     # u = a x - b y + tx ; v = b x + a y + ty
@@ -118,8 +139,35 @@ def _similarity(flow, border=4):
     A[1::2, 0], A[1::2, 1], A[1::2, 3] = y, x, 1.0
     rhs = np.empty(2 * x.size)
     rhs[0::2], rhs[1::2] = u, v
-    (a, b, tx, ty), *_ = np.linalg.lstsq(A, rhs, rcond=None)
+    w0 = np.ones(x.size) if weight is None else np.asarray(weight, np.float64)[border:h - border, border:w - border].ravel()
+    if not (w0 > 1e-6).any():
+        w0 = np.ones(x.size)
+    wt = w0.copy()
+    sol = np.zeros(4)
+    for it in range(4):
+        sw = np.sqrt(np.repeat(wt, 2))
+        sol, *_ = np.linalg.lstsq(A * sw[:, None], rhs * sw, rcond=None)
+        if it == 3:
+            break
+        pred = A @ sol
+        res = np.hypot(u - pred[0::2], v - pred[1::2])
+        sigma = max(CAMERA_NOISE, 1.4826 * float(np.median(res[w0 > 1e-6])))
+        c = CAMERA_ROBUST * sigma
+        k = np.clip(res / c, 0.0, 1.0)
+        wt = w0 * (1.0 - k * k) ** 2
+        if not (wt > 1e-6).any():
+            break
+    a, b, tx, ty = sol
     return float(tx), float(ty), float(math.log(max(1e-6, math.hypot(1.0 + a, b)))), float(math.degrees(math.atan2(b, 1.0 + a)))
+
+
+def read_size(info, size=(128, 72)):
+    """the size events are read at: size's height, the width the video's own shape gives (a 640 x 720 picture read
+    128 x 72 would be stretched twice across, its sideways shake and colour split read twice as large)"""
+    w, h = size
+    if info.get("width") and info.get("height"):
+        w = max(16, int(round(h * float(info["width"]) / float(info["height"]) / 2.0)) * 2)
+    return int(w), int(h)
 
 
 def _split(rgb, reach=SPLIT_REACH):
@@ -206,12 +254,34 @@ def _runs(mask):
 
 
 def _on_beat(times, beats, fps):
+    """the share of the events within a frame (and BEAT_REACH) of a beat, the chance of that, and how they keep one
+    place in the beat (the phase from one beat to the next): (R, p, offset) of Rayleigh's test, R from 0 (anywhere in
+    the beat) to 1 (one place), p its chance, offset the place (s from the nearest beat, - before it).  The share alone
+    misses events kept 2 or 3 frames before the beat (typorev: the references' cuts, R 0.25 to 0.37, p 0.003 to 0.00003,
+    while their share within a frame was at chance)"""
     b = np.asarray(beats or [], np.float64)
+    nan3 = (float("nan"), float("nan"), float("nan"))
     if b.size < 2 or not len(times):
-        return float("nan"), float("nan")
+        return float("nan"), float("nan"), nan3
     reach = 1.0 / fps + BEAT_REACH
     near = [np.min(np.abs(b - t)) <= reach for t in times]
-    return float(np.mean(near)), float(min(1.0, 2 * reach / float(np.median(np.diff(b)))))
+    period = float(np.median(np.diff(b)))
+    ph = []
+    for t in times:
+        k = int(np.searchsorted(b, t))
+        if 0 < k < len(b):
+            ph.append((t - b[k - 1]) / (b[k] - b[k - 1]))
+    lock = nan3
+    if ph:
+        ang = 2.0 * math.pi * np.asarray(ph)
+        C, S = float(np.cos(ang).mean()), float(np.sin(ang).mean())
+        R = math.hypot(C, S)
+        n = len(ph)
+        z = n * R * R
+        p = math.exp(-z) * (1 + (2 * z - z * z) / (4 * n) - (24 * z - 132 * z ** 2 + 76 * z ** 3 - 9 * z ** 4) / (288 * n * n))
+        phase = math.atan2(S, C) / (2.0 * math.pi)                 # -0.5 .. 0.5 of a beat from the beat
+        lock = (float(R), float(max(0.0, min(1.0, p))), float(phase * period))
+    return float(np.mean(near)), float(min(1.0, 2 * reach / period)), lock
 
 
 def _events(r, beats=None, start=0.0):
@@ -221,7 +291,20 @@ def _events(r, beats=None, start=0.0):
     small = np.array(r.small, np.float64)
     series = np.array(r.mean_y)
     chroma = np.array(r.chroma)
-    flash_events, flash_sum = LA.flashes(series, fps)
+    flash_events, _ = LA.flashes(series, fps)
+    # a flash is a light on one shot or a white wash (FLASH_SAME, FLASH_WASH): a short bright shot between two cuts is
+    # two cuts
+    kept = []
+    for e in flash_events:
+        a, b = int(e["start"]), int(e["end"])
+        if a < 1 or b >= n or b <= a:
+            kept.append(e)
+            continue
+        before, after = small[a - 1], small[b]
+        top = small[a + int(np.argmax(series[a:b]))]
+        if _ncc(before, after) >= FLASH_SAME or top.std() < FLASH_WASH * min(before.std(), after.std()):
+            kept.append(e)
+    flash_events = kept
     # colour flashes: the chroma's short rises
     half = max(1, int(round(0.5 * fps)))
     rise = chroma - LA._running_median(chroma, half)
@@ -233,6 +316,13 @@ def _events(r, beats=None, start=0.0):
             colour.append({"frame": int(a), "frames": int(b - a), "rise": float(rise[a:b].max())})
     quiet = list(flash_events) + [{"start": c["frame"], "end": c["frame"] + c["frames"]} for c in colour]
     cut_list, cut_sum = LA.cuts(small, fps, quiet)
+    # the same picture darker or lighter (CUT_SAME) is no cut: a fade (neither picture flat; from a flat black frame to
+    # a picture it is one)
+    cut_list = [c for c in cut_list if not (small[c - 1].std() >= 0.002 and small[c].std() >= 0.002 and
+                                            _ncc(small[c - 1], small[c]) >= CUT_SAME)]
+    bounds = [0] + cut_list + [n]
+    cut_sum = {"cuts.per_min": len(cut_list) / (n / fps / 60.0) if n else float("nan"),
+               "shots.median_s": float(np.median([(b - a) / fps for a, b in zip(bounds[:-1], bounds[1:])]))}
     cut_set = set(cut_list)
     # fades to black and to white
     fades = []
@@ -310,7 +400,8 @@ def _events(r, beats=None, start=0.0):
              "punches": [start + p["frame"] / fps for p in punches], "glitches": [start + g["frame"] / fps for g in glitches],
              "colour_flashes": [start + c["frame"] / fps for c in colour]}
     summary = {"cuts.per_min": cut_sum["cuts.per_min"], "shots.median_s": cut_sum["shots.median_s"],
-               "flash.per_min": flash_sum["flash.per_min"], "fades.per_min": len(fades) / minutes if minutes else float("nan"),
+               "flash.per_min": len(flash_events) / minutes if minutes else float("nan"),
+               "fades.per_min": len(fades) / minutes if minutes else float("nan"),
                "dissolves.per_min": len(dissolves) / minutes if minutes else float("nan"),
                "punches.per_min": len(punches) / minutes if minutes else float("nan"),
                "glitch.per_min": len(glitches) / minutes if minutes else float("nan"),
@@ -334,10 +425,11 @@ def _events(r, beats=None, start=0.0):
         h1, h2 = hp[:len(hp) // 2], hp[len(hp) // 2:]
         floor["shake.rms"] = abs(float(np.sqrt(np.mean(np.square(h1)))) - float(np.sqrt(np.mean(np.square(h2))))) / 2.0             if len(h1) and len(h2) else float("nan")
     for kind in ("cuts", "flashes", "punches", "glitches", "colour_flashes"):
-        share, chance = _on_beat(times[kind], (beats or {}).get("beats") if isinstance(beats, dict) else beats, fps)
+        share, chance, lock = _on_beat(times[kind], (beats or {}).get("beats") if isinstance(beats, dict) else beats, fps)
         key = {"flashes": "flash", "glitches": "glitch", "colour_flashes": "colourflash"}.get(kind, kind)
         summary[key + ".on_beat"] = share
         summary[key + ".on_beat_chance"] = chance
+        summary[key + ".beat_lock"], summary[key + ".beat_lock_p"], summary[key + ".beat_offset_s"] = lock
     return {"fps": fps, "frames": n, "cuts": [{"frame": int(c)} for c in cut_list], "flashes": flash_events,
             "fades": fades, "dissolves": dissolves, "punches": punches, "glitches": glitches, "colour_flashes": colour,
             "times": times, "summary": summary, "floor": floor}
@@ -358,7 +450,7 @@ def events_video(path, out=None, start=None, end=None, size=(128, 72), voice=Non
     mat = LA.matrix_for(info)
     start = float(start or 0.0)
     end = float(end) if end else info["duration"]
-    w, h = size
+    w, h = read_size(info, size)
     rng = "pc" if info.get("color_range") in ("pc", "jpeg") else "tv"
     vf = "scale=%d:%d:flags=area:in_color_matrix=%s:in_range=%s:out_range=pc,format=rgb24" % (w, h, mat, rng)
     pre, post = LA._range_args(start, end - start)
@@ -705,17 +797,21 @@ MOGRAPH_MEASURES = {
     "shots.median_s": ("change", "1 カットの長さの中央", "秒"),
     "cuts.on_beat": ("change", "拍の上（1 コマ以内）のカットの割合", ""),
     "cuts.on_beat_chance": ("change", "（その偶然の割合）", ""),
-    "flash.per_min": ("change", "白いフラッシュ（1 分あたり）", "回"),
+    "cuts.beat_lock": ("change", "カットの拍への揃い（拍の中の位相の集まり R: 0 ばらばら〜1 揃う。1 コマ以内かは問わない）", ""),
+    "cuts.beat_lock_p": ("change", "（その揃いが偶然で出る確からしさ、Rayleigh の検定）", ""),
+    "cuts.beat_offset_s": ("change", "カットが揃う所（拍からの秒、- は拍の前）", "秒"),
+    "flash.per_min": ("change", "明るさの短い山（白いフラッシュのほか、舞台の光や LED の点滅も入る。1 分あたり）", "回"),
     "flash.on_beat": ("change", "拍の上のフラッシュの割合", ""),
     "colourflash.per_min": ("change", "色のフラッシュ（1 分あたり）", "回"),
     "fades.per_min": ("change", "黒か白へのフェード（1 分あたり）", "回"),
     "dissolves.per_min": ("change", "ディゾルブ（重ねての切り替え、1 分あたり）", "回"),
-    "glitch.per_min": ("change", "グリッチのコマ（赤と青のずれ、1 分あたり）", "コマ"),
-    "punches.per_min": ("camera", "急な寄り引き（ズームのパンチ、1 分あたり）", "回"),
+    "glitch.per_min": ("change", "画面全体で赤と青がずれたコマ（1 分あたり。部分の四角・横の筋・文字だけのグリッチは数えない）", "コマ"),
+    "punches.per_min": ("camera", "急な寄り引き（ズームのパンチとカメラの速い寄り引き、1 分あたり）", "回"),
+    "punches.beat_lock": ("camera", "パンチの拍への揃い（R）", ""),
     "punches.on_beat": ("camera", "拍の上のパンチの割合", ""),
     "shake.rms": ("camera", "画面のゆれ（移動の速い成分の rms、720 行の画素/コマ）", "px"),
     "camera.zoom_rms": ("camera", "寄り引きの速さ（1 コマの拡大率の対数の rms）", ""),
-    "particle.count": ("things", "粒（小さい光の点）の数（1 コマ）", "個"),
+    "particle.count": ("things", "小さい明るい点の数（1 コマ。窓・看板・文字の画・髪の照りも数える。飾りの粒だけではない）", "個"),
     "particle.bokeh": ("things", "そのうち玉ボケ（半径の大きい粒）の割合", ""),
     "particle.size": ("things", "粒の大きさ（中央、720 行の画素の sigma）", "px"),
     "lines.count": ("things", "長い直線（絵の高さの 15 % 以上）の数（1 コマ）", "本"),

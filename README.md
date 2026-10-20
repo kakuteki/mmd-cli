@@ -3087,7 +3087,7 @@ python tools/look_analyze.py figure strip FIG.png TABLE.json [--keys ...]       
 python tools/look_analyze.py figure profiles FIG.png A.json ... --ours v10 v11    # グローの広がり・明るさの分布・縁のぼけの分布
 python tools/look_analyze.py crops VIDEO FIG.png --at S S S [--box X0,Y0,X1,Y1] [--size 320x180] [--matrix bt601]   # 小さな切り抜きの並び
 python tools/look_analyze.py annotate VIDEO FIG.png --at S --what dof|bloom|ca|bars|motion|regions [--model M.onnx]   # 物差しが見た所を絵に描く
-python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48] [--matrix bt601]   # 人物と舞台を分けて
+python tools/look_analyze.py regions VIDEO OUT.json --model isnetis.onnx [--from S] [--to S] [--frames 48] [--matrix bt601] [--faces CASCADE]   # 人物と舞台を分けて
 python tools/look_analyze.py compare TABLE.md TABLE.json --ref A.json ... --ours V10.json ... --regions   # regions の比べ
 python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                   # 説明文の名のり（効果・作者・道具）を数える
 ```
@@ -3131,6 +3131,15 @@ python tools/look_credits.py META.jsonl OUT.json [--md OUT.md]                  
   読める模様が舞台に無いとぼけを読まない（暗い舞台の A は dof 6.5 でも舞台の区画のぼけ 0）。同じ dof 6.5 で C27 1.25・C27+ 1.58 と、明かりの有無で
   読みが変わる。人物の区画のぼけも人物が同じまま 0.14〜0.74 と look で動く（グローと舞台の明るさ）。人物のグローの届き（bloom.person_r50）は 6〜90 px と
   読むたびに大きく動くので使わない。
+  `--faces CASCADE`（2026-10-21 査読 typorev）: 人物の上の顔（OpenCV の cascade、lbpcascade_animeface〈nagadomi、MIT、リポジトリに入れない〉。
+  hinata `C:/work/hibikase/stage6/typorev/models/lbpcascade_animeface.xml`）の頬（箱の行 0.55〜0.85・列 0.25〜0.75）の L*・C*ab・色相
+  （`face.L`・`face.chroma`・`face.hue`）。**人物全体の L* の 10・50・90 % 点と人物と舞台の差は衣装の色で決まる**: @PizaCG の参考 9 本の人物 L* の中央
+  44.6 対 私たちの v11 r2 76 は参考の黒い衣装の分で、顔は 78.4 [74.2, 81.4] 対 79.6（見つけた顔は小さな切り抜きでほぼ全部が顔と確かめた）。
+  縁の光の比（rim.ratio・rim.p90）も衣装が暗いほど大きく出る（参考のコマで人物の L* と rim.p90 の順位相関 −0.44、人物の L* 70 以上のコマでは参考 1.48）。
+  明るさの比べは顔で、縁の光は明るい衣装のコマどうしで。光の筋と光だまり（beams）は霞の中の光の筋を読んでいない: 参考で筋の 11〜76 %、だまりの
+  10〜46 % が人物（髪・顔・服）の上、残りは横断歩道の白線・ネオン管・看板・玉ボケ（目で見た）。私たちの v11 r2 正面では筋もだまりも全部が人物の上。
+  光の筋と光だまりの数は照明の狙いに使わない。ちらつき（flicker.hf）はカットの前後を除いて読む（2026-10-21 typorev: カットは画面の平均の明るさの段。
+  参考 9 本の中央は 0.016 → 除いて 0.0098 [0.0087, 0.0128]、シンデレラ〈ミク〉0.012 → 0.0027。フラッシュの多い RE:踊・GETCHA はほぼそのまま）。
 - `look_credits.py`: 説明文の頭の名のり（Model・Motion・Camera・Stage・MME / Effects / 特效・Tools / 使用软件 …、【】の形も）を欄に分け、効果を名で
   （EFFECTS の綴りの一覧）、作者を効果の欄の名で、道具を名で数える。数えるたびに、見つけた行を逐語で残す（出所）。
 - 私たちの mp4 の色: look2（2026-10-18）の前の mv_look の出力は色の印がなく、ffmpeg が BT.601 で YUV にしていた（`scale` の既定）。再生側は印のない
@@ -3151,6 +3160,7 @@ python tools/typo_analyze.py detect VIDEO OUT.json [--rate 2] [--height 540] [--
 python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--no-style]
 python tools/typo_analyze.py sign VIDEO TRACK.json                                  # 印影を後から足す（00f4cb1 より前の追跡、TRACK.json に書く）
 python tools/typo_analyze.py style VIDEO TRACK.json                                 # 見た目と書体だけを読み直す（追跡は残す、TRACK.json に書く）
+python tools/typo_analyze.py phases TRACK.json [OUT.json]                           # 入りと出・止まりを保存したコマの読みから読み直す（動画は要らない）
 python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS]       # 歌声の立ち上がり、伴奏の拍と小節
 python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json [--events EVENTS.json]   # 文字の種類と声・拍との時刻
 python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME] [--core]
@@ -3204,6 +3214,20 @@ python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0
   消えるコマは中央 -0.5（71 %・79 %）。入りの下からの移動 44/48・フェード 38/48、偽のグリッチ 1/48・偽のぼかし 入り 1・出 1、書体はゴシック 48/48、
   塗りの L* 中央 96.7（白）。字形の照合（font_match）は 12 行で、Noto Sans JP が一番 8 行（太さ 700 が一番 6 行）、一致の度合い 0.69 以上の 7 行では 6 行が正しい。
 - 研究の記録と結果: `_spike/out/stage6/typoref/NOTES.md`、hinata `C:/work/hibikase/stage6/typoref/`（参考の動画は `ref/` だけ、配らない）。
+- 査読 typorev（2026-10-21）で直したこと・分かったこと:
+  (14) 「見えた」を字の濃さ（ALPHA_SEEN 0.15）か型の合い（PRESENT_NCC 0.5）の片方で決めていた。RE:踊 の路面と脚は字の無いコマで濃さ 0.26〜0.37
+  （型は 0.25〜0.34）、濡れた路面は型が 0.5〜0.6（濃さ 0.02〜0.08）で、行を 0.6〜1.0 秒早く見えたと読み、入りをフェードとぼかしと読んでいた →
+  両方（濃さ 0.15 超と型 0.35 以上）か、濃さ 0.5 超（ALPHA_SURE）。前の追跡は `phases` で読み直せる（追跡の保存したコマから、動画なし）。
+  (15) sync に偶然の値: 歌詞の出始めを 2〜8 秒ずらした 200 回の lead（`sync.lead_chance`）と、いちばん近い強い立ち上がりまでの時間 `sync.near_s` と
+  その偶然 `sync.near_chance`（near_s がこれより短いと声に合わせて出している）。参考の lead は 9 本中 8 本で偶然と見分けがつかなかった。
+  `sync.full_lead_s` は lead_s から入りの長さを引いた数で、新しく測った数ではない（参考の「−0.49 秒」は入りの長さ）。
+- 読みの正しさ（typorev、答えの分かる合成の動画 24 行と v7 の合図）: 止まる時間は正しい（本当に止まる行で道具 / 答え 1.05、字の高さ 0.044 でも、後ろが
+  流れ・明滅・寄っても）。入りと出の長さは短く読む（合成で答えの 0.67 倍・0.78 倍、v7 で 0.53 倍・0.44 倍: ease の終わりで止まったとする）ので、
+  作り手の設定の秒に写さず、描いた版を同じ道具で測って参考と比べる。入りの種類が合うのは 77 %、出は 64 %（左へ＋フェードを移動だけ、拡大＋フェードを
+  切り替えと読むほか）。打ち出し（1 文字ずつ出ながら行が伸びて動く）は「移動」と読み「1 文字ずつ」と読まない。0.5 秒より短い行は 2 fps の下見で
+  落ちる。`enter.fade_s` は参考では濃さの揺れで傾きが 0 に寄り入りより長くなる（使わない）。
+- 参考の「歌詞」には看板と飾り文字が入る: 夜の街（RE:踊・踊・CH4NGE）の上の方の行の 6〜9 割が看板、シンデレラ（リン）と LUVORATORRRRRY! は歌詞の字幕が
+  無く、交差点の看板・路面の文字と DANCE の飾り文字だけ（目で数えた、typorev の NOTES）。比べには目で歌詞と確かめた帯だけを使う。
 
 ### 画面の切り替えと飾りを数にする（`tools/mograph_analyze.py`、MMD なし）
 
@@ -3230,6 +3254,17 @@ python tools/mograph_analyze.py safety VIDEO OUT.json [--from 秒 --to 秒] [--s
   格子線を 1 コマ 1,650〜2,490 の粒と数えていた）。`particles(..., points=True)` で見つけた場所も返す。
 - 照明の物差しは look_analyze に足した（光の筋・光だまり・明るい所の色の数・主光の色の数と変わり・ちらつきとストロボ・明るい所の動く速さ・人物と舞台に当たる
   光の色）。
+- 査読 typorev（2026-10-21、答えの分かる合成の動画を 720p と 1080p で、参考の指した所を目で）で直したこと: カメラの動きは勝手に動く物（踊り手・伸びる
+  文字の行）を外して当てはめる（Tukey の重み、CAMERA_ROBUST。私たちの止まったカメラで踊り手だけから 0.4〜1.0 px のゆれを読んでいた）。動画は元の縦横比で
+  読む（640x720 を 128x72 に引き伸ばし、横のゆれを 2 倍に読んでいた）。同じ絵が暗くなるだけの変化はカットにしない（CUT_SAME。明るい絵の 10 コマの
+  フェードをカット 4 本と読み、フェードを落としていた）。前後で別の絵になる明るい短いカットはフラッシュにしない（FLASH_SAME・FLASH_WASH。RE:踊 の
+  金髪の寄りの数コマをフラッシュと読んでいた）。拍との合いに、拍の中で揃う度合い（Rayleigh の R と p）と揃う位置（`cuts.beat_lock`・`_p`・
+  `beat_offset_s`）: 参考のカットは 9 本中 5 本で拍の約 0.077 秒（2.3 コマ）前に揃っていた（拍の 1 コマ以内の割合では偶然と同じに見えた）。
+- 読みの正しさと使い方（typorev）: カットは合成で 13/13、参考で目で 17〜18/20 が本物（速い横振りと強い寄りをカットと読むことは残る）。パンチは多めに数え、
+  本物の多くは MMD のカメラの速い寄り引き。フラッシュには LED やレーザーの点滅も入る。ゆれ（shake.rms）は位置の振れ幅でなく 1 コマの速い動き
+  （ばらばらの揺れ σ px で約 2σ）で、背景に模様の少ない絵では踊り手の動きが残る。**グリッチ（画面全体の赤青のずれ）と粒の数（particle.count）は狙いに
+  使わない**: グリッチは色の多い絵で 16 px のずれを拾えず、部分の四角・横筋・文字のグリッチを数えない。粒は文字の画・窓・看板・髪の照りも数える
+  （粒の無い夜の街の合成で 966、v7 の 109 の 87 % は歌詞の文字）。
 
 ### 調整した値の一覧を作る（`tools/param_inventory.py`、MMD なし）
 
