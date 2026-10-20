@@ -382,5 +382,146 @@ class ElementsTest(unittest.TestCase):
         self.assertAlmostEqual(ln["lines.axis"], 2 / 3.0, delta=0.01)          # level or upright
 
 
+def level(v, h=36, w=64):
+    """a grey picture of signal level v (0..1, BT.1886: 200 x v^2.4 cd/m2 on the SDR display of BT.1702)"""
+    return np.full((h, w, 3), float(v))
+
+
+@unittest.skipUnless(MG, NEEDS)
+class SafetyTest(unittest.TestCase):
+    """the flashes of Rec. ITU-R BT.1702-3 (2023), Guideline 1: a flash is a pair of opposing changes of 20 cd/m2 or more
+    where the darker image is below 160 cd/m2 (an SDR picture on a display of 200 cd/m2 white, BT.1886); a sequence of flashes
+    is not permitted when the flashes at the same time cover more than 25 % of the screen and there are more than three (six
+    changes) in any one second"""
+    fps = 30
+
+    def test_the_luminance_of_a_signal_level_is_that_of_the_recommendations_table(self):
+        # Table 1 of BT.1702-3: 10-bit code values 400 (V 0.384) 20.06, 500 (0.498) 37.48, 860 (0.909) 158.93 cd/m2
+        for code, cd in ((400, 20.06), (500, 37.48), (860, 158.93), (940, 200.0)):
+            self.assertAlmostEqual(MG.screen_luminance((code - 64) / 876.0), cd, delta=0.05)
+
+    def test_one_white_flash_over_the_whole_picture_is_one_flash_and_allowed(self):
+        frames = [level(0.3)] * 20 + [level(0.8)] * 3 + [level(0.3)] * 20
+        s = MG.safety_of(frames, self.fps)
+        self.assertEqual(s["general"]["most_flashes_a_second"], 1)
+        self.assertEqual(len(s["general"]["flashes"]), 1)
+        self.assertAlmostEqual(s["general"]["flashes"][0]["area"], 1.0, delta=0.01)
+        self.assertEqual(s["general"]["flashes"][0]["frame"], 20)                 # its leading edge
+        self.assertAlmostEqual(s["general"]["flashes"][0]["cd"], 200 * (0.8 ** 2.4 - 0.3 ** 2.4), delta=0.5)
+        self.assertFalse(s["general"]["harmful"])
+
+    def test_a_strobe_over_the_whole_picture_is_harmful(self):
+        frames = [level(0.2 if (i // 2) % 2 == 0 else 0.7) for i in range(60)]        # 7.5 flashes a second
+        s = MG.safety_of(frames, self.fps)
+        self.assertGreater(s["general"]["most_flashes_a_second"], 3)
+        self.assertTrue(s["general"]["harmful"])
+
+    def test_a_strobe_over_a_small_part_is_not(self):
+        frames = []
+        for i in range(60):
+            img = level(0.2)
+            if (i // 2) % 2:
+                img[:10, :20] = 0.7                                 # 8.7 % of the picture
+            frames.append(img)
+        s = MG.safety_of(frames, self.fps)
+        self.assertFalse(s["general"]["harmful"])
+        self.assertLessEqual(s["general"]["most_flashes_a_second"], 0)            # never a quarter of the picture at once
+        self.assertGreater(s["general"]["most_flashes_a_second_anywhere"], 3)
+
+    def test_a_change_under_20_cd_is_no_flash(self):
+        frames = [level(0.10 if (i // 2) % 2 == 0 else 0.30) for i in range(60)]    # 0.8 to 11.1 cd/m2
+        s = MG.safety_of(frames, self.fps)
+        self.assertEqual(s["general"]["flashes"], [])
+        self.assertEqual(s["general"]["most_flashes_a_second_anywhere"], 0)
+
+    def test_20_cd_is_the_edge(self):
+        def strobe(a, b):
+            return MG.safety_of([level(a if (i // 2) % 2 == 0 else b) for i in range(60)], self.fps)["general"]["harmful"]
+        self.assertTrue(strobe(0.30, 0.49))                     # 11.0 to 36.1 cd/m2: 25
+        self.assertFalse(strobe(0.30, 0.45))                    # 11.0 to 29.3 cd/m2: 18
+
+    def test_a_darker_image_from_160_cd_is_left_to_the_hdr_rule(self):
+        # 0.92 is 163 cd/m2 and 1.0 is 200: 37 apart, but the 20 cd/m2 rule is for a darker image below 160 (the 1/17 Michelson
+        # contrast above it is for HDR programmes only)
+        frames = [level(0.92 if (i // 2) % 2 == 0 else 1.0) for i in range(60)]
+        self.assertFalse(MG.safety_of(frames, self.fps)["general"]["harmful"])
+        frames = [level(0.88 if (i // 2) % 2 == 0 else 1.0) for i in range(60)]        # 147 cd/m2: below 160
+        self.assertTrue(MG.safety_of(frames, self.fps)["general"]["harmful"])
+
+    def test_a_fade_to_black_is_one_change_not_a_flash(self):
+        frames = [level(0.8 * (1 - min(1.0, i / 30.0))) for i in range(60)]
+        s = MG.safety_of(frames, self.fps)
+        self.assertEqual(s["general"]["flashes"], [])
+        self.assertEqual(s["general"]["changes"], 1)
+
+    def test_flashes_whose_leading_edges_lie_a_third_of_a_second_apart_are_counted_apart(self):
+        frames = []
+        for i in range(90):
+            frames.append(level(0.8 if i % 12 in (0, 1) else 0.3))   # a flash every 0.4 s: 2.5 a second
+        s = MG.safety_of(frames, self.fps)
+        self.assertEqual(s["general"]["most_flashes_a_second"], 3)
+        self.assertFalse(s["general"]["harmful"])
+        self.assertAlmostEqual(s["general"]["least_gap_s"], 0.4, delta=0.001)
+
+    def test_a_saturated_red_flicker_is_found(self):
+        frames = []
+        for i in range(60):
+            img = level(0.1)
+            if (i // 3) % 2:
+                img[...] = (0.9, 0.05, 0.05)
+            frames.append(img)
+        s = MG.safety_of(frames, self.fps)
+        self.assertGreater(s["red"]["most_flashes_a_second"], 3)
+        self.assertTrue(s["red"]["harmful"])
+        calm = MG.safety_of([level(0.1)] * 60, self.fps)
+        self.assertEqual(calm["red"]["most_flashes_a_second"], 0)
+
+    def strobe(self, low, high, h=36, w=64, where=None):
+        """two seconds of a picture going between two pictures every two frames (7.5 flashes a second)"""
+        frames = []
+        for i in range(60):
+            img = level(0.0, h, w)
+            img[...] = low
+            if (i // 2) % 2:
+                if where is None:
+                    img[...] = high
+                else:
+                    img[where] = high
+            frames.append(img)
+        return MG.safety_of(frames, self.fps)
+
+    def test_a_coloured_flash_is_judged_by_the_luminance_of_its_three_channels(self):
+        # (the screen's luminance is that of its three primaries, each through BT.1886: full red and blue over black is
+        # 200 x (0.2126 + 0.0722) = 57 cd/m2.  The luma of the signal put through the curve made it 9.8, under the 20 of a flash,
+        # and a strobe of it passed; review mographrev 2026-10-21)
+        s = self.strobe((0.0, 0.0, 0.0), (1.0, 0.0, 1.0))
+        self.assertTrue(s["general"]["harmful"])
+        self.assertAlmostEqual(s["general"]["flashes"][0]["cd"], 200 * (0.2126 + 0.0722), delta=1.0)
+        self.assertEqual(s["red"]["most_flashes_a_second"], 0)                    # half red: no saturated red
+        # a grey is as before
+        self.assertAlmostEqual(self.strobe(0.3, 0.8)["general"]["flashes"][0]["cd"], 200 * (0.8 ** 2.4 - 0.3 ** 2.4), delta=0.5)
+
+    def test_a_quarter_of_the_screen_is_allowed_and_more_is_not(self):
+        # ("the combined area of flashes occurring concurrently occupies more than 25% of the displayed screen area")
+        self.assertFalse(self.strobe(0.2, 0.7, where=(slice(None), slice(0, 16)))["general"]["harmful"])    # 16 of 64 columns
+        self.assertTrue(self.strobe(0.2, 0.7, where=(slice(None), slice(0, 17)))["general"]["harmful"])
+
+    def test_a_fine_pattern_flashes_over_the_area_it_covers(self):
+        # every other column of a 256 x 144 picture: half of every cell of the grid (4 x 4 px) goes from 4.2 to 117 cd/m2, the
+        # cells' mean by 56: a flash over the whole screen, not over none of it
+        s = self.strobe(0.2, 0.8, h=144, w=256, where=(slice(None), slice(1, None, 2)))
+        self.assertTrue(s["general"]["harmful"])
+
+    def test_only_a_saturated_red_makes_a_red_flash(self):
+        # WCAG 2.2's saturated red: R / (R + G + B) of 0.8 or more, linear.  An orange of full red and 0.7 green is 0.70
+        self.assertEqual(self.strobe((0.0, 0.0, 0.0), (1.0, 0.7, 0.0))["red"]["most_flashes_a_second"], 0)
+
+    def test_a_bright_red_flicker_is_a_red_flash_whatever_its_luminance(self):
+        # ("irrespective of luminance": full red and 0.8 red are (R - G - B) x 320 of 320 and 187, 133 apart)
+        s = self.strobe((0.8, 0.0, 0.0), (1.0, 0.0, 0.0))
+        self.assertGreater(s["red"]["most_flashes_a_second"], 3)
+        self.assertTrue(s["red"]["harmful"])
+
+
 if __name__ == "__main__":
     unittest.main()
