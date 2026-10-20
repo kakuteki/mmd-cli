@@ -388,7 +388,574 @@ def write_batch(lines, path):
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
+def unpack_avi(avi, folder, first):
+    """MMD's AVI of the stage (frames first, first + 1, ...) as folder/PICTURE, RGBA (its alpha kept); the number written"""
+    import subprocess
+    os.makedirs(folder, exist_ok=True)
+    done = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", avi, "-start_number", str(int(first)), "-pix_fmt", "rgba",
+                           os.path.join(folder, PICTURE)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if done.returncode != 0:
+        raise RuntimeError("ffmpeg could not unpack %s: %s" % (avi, done.stderr.strip()[-300:]))
+    n = 0
+    while os.path.exists(os.path.join(folder, PICTURE % (int(first) + n))):
+        n += 1
+    return n
+
+
+def same_view(a, b):
+    """whether two cameras draw the same picture (mv_world View: where, which way, how wide)"""
+    return (a.size == b.size and np.allclose(a.eye, b.eye, rtol=0, atol=1e-9) and np.allclose(a.forward, b.forward, rtol=0, atol=1e-12)
+            and np.allclose(a.up, b.up, rtol=0, atol=1e-12) and abs(a.focal - b.focal) < 1e-9)
+
+
+def picture_frame(folder, frame, view_of):
+    """the frame whose picture of MMD's in `folder` shows the stage at `frame`: its own, or, when there is none, the one of
+    the earliest frame before it whose camera is still the same (a camera that stands still needs one picture of the stage:
+    the stage itself does not move).  view_of(frame) is the camera at a frame.  ValueError when there is none"""
+    want = view_of(frame)
+    f = int(frame)
+    while f >= 0:
+        if os.path.exists(os.path.join(folder, PICTURE % f)):
+            return f
+        f -= 1
+        if f < 0 or not same_view(view_of(f), want):
+            break
+    raise ValueError("no picture of the stage by MMD in %s for frame %d (nor for an earlier frame with the same camera): draw "
+                     "it first (`batch`)" % (folder, int(frame)))
+
+
+def read_picture(path):
+    """MMD's picture (RGBA) as floats: its colour (MMD writes it times the alpha: premultiplied) and its alpha 0 to 1"""
+    from PIL import Image
+    img = np.asarray(Image.open(path).convert("RGBA"), dtype=np.float64)
+    return img[..., :3], img[..., 3] / 255.0
+
+
+# ---- her shadow on the stage's surfaces --------------------------------------------------------------
+
+def _contact_at(P, n, a, b, r):
+    """mv_world.capsule_contact at points P of surfaces whose normals are n (mv_world's has the floor's, up): the share of
+    the light from all round the nearest sphere of the capsule hides, (r / d)^2 x its cosine to the surface's normal,
+    faded out to nothing at mv_world.contact_reach(r) from the axis"""
+    reach = mv_world().contact_reach(r)
+    u = b - a
+    uu = float(u @ u)
+    w0 = a[None, :] - P
+    s = np.clip(-(w0 @ u) / uu, 0.0, 1.0) if uu > 1e-12 else np.zeros(len(P))
+    c = w0 + s[:, None] * u[None, :]
+    dist = np.sqrt(np.maximum((c * c).sum(axis=1), 1e-18))
+    t = np.clip((reach - dist) / (0.4 * reach), 0.0, 1.0)
+    fade = t * t * (3.0 - 2.0 * t)
+    cosine = np.maximum((c * n).sum(axis=1) / dist, 0.0)
+    return np.where(dist <= r, 1.0, np.clip((r / dist) ** 2 * cosine, 0.0, 1.0) * fade)
+
+
+def shadow_at(points, normals, capsules, groups, light, blur_degrees):
+    """(key, contact): the share of the key light and of the light from all round that reach the points (N x 3, on the stage's
+    surfaces, with their normals) past her body's capsules, 0 to 1: mv_world.soft_shadow_grid's shadow worked out at the
+    points themselves, so that it falls on a floor of any height, its steps and kerbs and what stands on it.  The capsules of
+    a part of her (groups) keep off what the one that keeps most off keeps off, the parts multiply (BODY_GROUPS); the light
+    from all round multiplies capsule by capsule.  Only the points a capsule's shadow can reach are worked out"""
+    world = mv_world()
+    P = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    n = np.asarray(normals, dtype=np.float64).reshape(-1, 3)
+    key, contact = np.ones(len(P)), np.ones(len(P))
+    if not capsules or not len(P):
+        return key, contact
+    if groups is not None and len(groups) != len(capsules):
+        raise ValueError("shadow_at: a part for each capsule, not %d for %d" % (len(groups), len(capsules)))
+    ell = world.toward_light(light)
+    sigma = math.radians(max(float(blur_degrees), 0.0))
+    low = float(np.min(P[:, 1]))                        # the lowest surface: the boxes are worked out down to it
+    held = {}
+    for i, (a, b, r) in enumerate(capsules):
+        a, b, r = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64), float(r)
+        part = groups[i] if groups is not None else i
+        lift = np.array([0.0, low, 0.0])
+        x0, x1, z0, z1 = world._key_box(a - lift, b - lift, r, ell, sigma)
+        near = (P[:, 0] >= x0) & (P[:, 0] <= x1) & (P[:, 2] >= z0) & (P[:, 2] <= z1)
+        if near.any():
+            got = world.capsule_key(P[near], a, b, r, ell, sigma)
+            if part not in held:
+                held[part] = np.zeros(len(P))
+            np.maximum.at(held[part], np.nonzero(near)[0], got)
+        reach = world.contact_reach(r) + 0.5
+        lo, hi = np.minimum(a, b) - reach - r, np.maximum(a, b) + reach + r
+        near = ((P >= lo[None, :]) & (P <= hi[None, :])).all(axis=1)
+        if near.any():
+            contact[near] *= 1.0 - _contact_at(P[near], n[near], a, b, r)
+    for kept in held.values():
+        key *= 1.0 - kept
+    return key, contact
+
+
+def soft_light_at(key, contact, normals, stage):
+    """what the stage's surfaces keep of their light where her shadow lets `key` of the key light and `contact` of the light
+    from all round through: mv_world.soft_light, the key light's share (stage.shadow_key on the floor) taken in proportion
+    to how squarely a surface faces the key light against the floor (a face turned from it has none of it to lose)"""
+    world = mv_world()
+    ell = world.toward_light(stage["shadow_light"])
+    k = float(stage.get("shadow_key", world.KEY_SHARE))
+    facing = np.maximum(np.asarray(normals, dtype=np.float64).reshape(-1, 3) @ ell / ell[1], 0.0)
+    # the floor's light is A all round and K ell_y from the key light, K ell_y / (A + K ell_y) = k; a face whose cosine to
+    # the key light is c has K c / (A + K c) of its light from it
+    if k >= 1.0:
+        share = (facing > 0).astype(np.float64)
+    else:
+        ratio = k / (1.0 - k) * facing
+        share = ratio / (1.0 + ratio)
+    s = float(stage["shadow"])
+    m_key = 1.0 - s * (1.0 - key)
+    m_all = 1.0 - s * float(stage["shadow_contact"]) * (1.0 - contact)
+    return (1.0 - share) * m_all + share * m_key
+
+
+# ---- the night: how the stage is lit ------------------------------------------------------------------
+
+REFERENCE_HEIGHT = 720.0         # lengths in pixels of the look are pixels of a 720 line picture (mv_look)
+
+
+def emissive_table(mesh, spec):
+    """per material: True for the set's emissive materials"""
+    table = np.zeros(len(mesh.materials) + 1, dtype=bool)        # (the last for -1: nothing drawn)
+    for name in spec["emissive"]:
+        table[mesh.material_index(name)] = True
+    return table
+
+
+def lamp_light(points, normals, lamps, layer, compiled=None):
+    """[N, 3]: the light of the set's lamps on the points (0 to 1 of white per unit of layer.lamp): each lamp throws its
+    colour (layer.lamp_colour) down, (cos of the angle from straight down)^layer.lamp_spot, falling off as
+    1 / (1 + (distance / layer.lamp_reach)^2), times the cosine of the light to the surface's normal.  No lamp casts a
+    shadow.  `compiled`: with numba (None: when it is there)"""
+    P = np.ascontiguousarray(np.asarray(points, dtype=np.float64).reshape(-1, 3))
+    n = np.ascontiguousarray(np.asarray(normals, dtype=np.float64).reshape(-1, 3))
+    colour = np.asarray(layer["lamp_colour"], dtype=np.float64) / 255.0
+    reach, spot = float(layer["lamp_reach"]), float(layer["lamp_spot"])
+    L = np.ascontiguousarray(np.asarray(lamps, dtype=np.float64).reshape(-1, 3))
+    if compiled is None:
+        compiled = has_numba()
+    if compiled and len(L):
+        weight = np.zeros(len(P))
+        _lamp_kernel()(P, n, L, reach, spot, weight)
+        return weight[:, None] * colour[None, :]
+    weight = np.zeros(len(P))
+    for lamp in L:
+        v = lamp[None, :] - P
+        d = np.sqrt(np.maximum((v * v).sum(axis=1), 1e-12))
+        cosine = np.maximum((n * v).sum(axis=1) / d, 0.0)
+        down = np.maximum(v[:, 1] / d, 0.0) ** spot if spot > 0 else 1.0
+        weight += cosine * down / (1.0 + (d / reach) ** 2)
+    return weight[:, None] * colour[None, :]
+
+
+_LAMP = []
+
+
+def _lamp_kernel():
+    if not _LAMP:
+        import numba
+
+        @numba.njit(cache=False)
+        def light(P, n, L, reach, spot, out):
+            for i in range(P.shape[0]):
+                total = 0.0
+                for j in range(L.shape[0]):
+                    vx, vy, vz = L[j, 0] - P[i, 0], L[j, 1] - P[i, 1], L[j, 2] - P[i, 2]
+                    d = math.sqrt(max(vx * vx + vy * vy + vz * vz, 1e-12))
+                    c = (n[i, 0] * vx + n[i, 1] * vy + n[i, 2] * vz) / d
+                    if c <= 0.0:
+                        continue
+                    down = 1.0
+                    if spot > 0:
+                        down = max(vy / d, 0.0) ** spot
+                    total += c * down / (1.0 + (d / reach) ** 2)
+                out[i] = total
+        _LAMP.append(light)
+    return _LAMP[0]
+
+
+def sky(view, layer):
+    """[rows, columns, 3]: the night sky where nothing is drawn, from layer.sky_horizon at the horizon (and below it) to
+    layer.sky_top at 0.5 radians above it"""
+    d = view.rays(1)
+    el = np.arcsin(np.clip(d[..., 1] / np.linalg.norm(d, axis=-1), -1.0, 1.0))
+    k = np.clip(el / 0.5, 0.0, 1.0)[..., None]
+    return (np.asarray(layer["sky_horizon"], dtype=np.float64)[None, None, :] * (1.0 - k)
+            + np.asarray(layer["sky_top"], dtype=np.float64)[None, None, :] * k)
+
+
+def floor_levels(surf, least=0.01):
+    """the heights of the stage's level floors seen (faces looking straight up), each taking at least `least` of them:
+    a street and its raised pavements"""
+    up = surf.seen & (surf.normals[..., 1] > 0.9999)
+    if not up.any():
+        return []
+    y = np.round(surf.points[up][:, 1], 3)
+    values, counts = np.unique(y, return_counts=True)
+    return [float(v) for v, c in zip(values, counts) if c >= least * up.sum()]
+
+
+def reflection(view, surf, colour, levels, least=6.0):
+    """[rows, columns, 3] and [rows, columns] bool: what the level floors mirror (the picture `colour` of the stage, a pixel
+    as bright as `least` or more), and where something is mirrored.  For each level, the stage's points above it are mirrored
+    in its plane and drawn again from the camera (the nearest mirrored point at a pixel wins); a pixel of that floor shows the
+    mirrored point when the point lies beyond the floor along its line of sight.  Only what the camera sees can be mirrored
+    (a screen-space reflection)"""
+    h, w = surf.seen.shape
+    out = np.zeros((h, w, 3))
+    best = np.full(h * w, np.inf)
+    got = np.zeros((h, w), bool)
+    bright = surf.seen & (colour.max(axis=-1) >= least)
+    floor_y = np.where(surf.seen & (surf.normals[..., 1] > 0.9999), np.round(surf.points[..., 1], 3), np.nan)
+    flat_out = out.reshape(-1, 3)
+    for level in levels:
+        src = bright & (surf.points[..., 1] > level + 1e-6)
+        if not src.any():
+            continue
+        X = surf.points[src].copy()
+        X[:, 1] = 2.0 * level - X[:, 1]
+        u, v, d = view.project(X)
+        col = colour[src]
+        px, py = np.round(u).astype(np.int64), np.round(v).astype(np.int64)
+        ok = (d > NEAR) & (px >= 0) & (px < w) & (py >= 0) & (py < h)
+        px, py, d, col = px[ok], py[ok], d[ok], col[ok]
+        on = floor_y[py, px] == round(level, 3)
+        on &= d > surf.depth[py, px]
+        px, py, d, col = px[on], py[on], d[on], col[on]
+        flat = py * w + px
+        order = np.lexsort((d, flat))
+        flat, d, col = flat[order], d[order], col[order]
+        first = np.ones(len(flat), dtype=bool)
+        first[1:] = flat[1:] != flat[:-1]
+        flat, d, col = flat[first], d[first], col[first]
+        nearer = d < best[flat]
+        best[flat[nearer]] = d[nearer]
+        flat_out[flat[nearer]] = col[nearer]
+    got.reshape(-1)[np.isfinite(best)] = True
+    return out, got
+
+
+def _blur(img, sigma):
+    """img blurred by a Gaussian of `sigma` pixels (OpenCV when it is there, else scipy as mv_world blurs), edges repeated"""
+    if sigma <= 0:
+        return img
+    try:
+        import cv2
+        return cv2.GaussianBlur(np.ascontiguousarray(img, dtype=np.float64), (0, 0), float(sigma), borderType=cv2.BORDER_REPLICATE)
+    except ImportError:
+        return mv_world()._blurred(img, sigma) if img.ndim == 3 else mv_world()._blurred(img[..., None], sigma)[..., 0]
+
+
+FILL = 1.5                       # pixels: the gaps a mirror's points leave are filled over at least this blur
+COVERED = 0.05                   # a neighbourhood where the known pixels' Gaussian weight is under this is faded out
+
+
+def fill_holes(img, got, sigma):
+    """the picture `img` known where `got`, its holes filled and the whole blurred by `sigma` pixels (a normalized blur: the
+    known pixels' Gaussian mean): the gaps between mirrored points close, the mirror is as rough as sigma says"""
+    s = max(float(sigma), FILL)
+    weight = _blur(got.astype(np.float64), s)
+    total = _blur(img * got[..., None], s)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        filled = np.where(weight[..., None] > 1e-6, total / np.maximum(weight, 1e-12)[..., None], 0.0)
+    # (beyond the reach of the known pixels the mirror shows nothing: faded out where hardly any of the neighbourhood is
+    # known; mirrored points a few pixels apart, as a mirror that magnifies leaves them, keep it whole)
+    return filled * np.clip(weight / COVERED, 0.0, 1.0)[..., None]
+
+
+def defocus(img, sigma):
+    """mv_world.defocus (every pixel blurred by its own sigma: levels of blur sqrt 2 apart, each pixel mixed from the two
+    round its blur) with OpenCV's Gaussian when it is there (about twice as fast; the same to within a hair: its kernel
+    reaches 4 sigma as scipy's), else mv_world's own"""
+    try:
+        import cv2
+    except ImportError:
+        return mv_world().defocus(img, sigma)
+    img = np.asarray(img, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    out = img.copy()
+    top = float(sigma.max()) if sigma.size else 0.0
+    lower, below = 0.0, img
+    level = 0.5
+    while lower < top:
+        above = cv2.GaussianBlur(img, (0, 0), level, borderType=cv2.BORDER_REPLICATE)
+        here = (sigma > lower) & (sigma <= level)
+        if here.any():
+            w = ((sigma[here] - lower) / (level - lower))[:, None]
+            out[here] = below[here] * (1.0 - w) + above[here] * w
+        lower, below = level, above
+        level *= mv_world().DOF_LEVELS
+    return out
+
+
+# ---- a frame of the stage --------------------------------------------------------------------------
+
+@dataclass
+class Still:
+    """what does not change while the camera stands still: the geometry under MMD's picture, the light of the night on it
+    (before her shadow), the sky, the haze, the light round every pixel for her (spill)"""
+    view: object
+    surf: Surface
+    emissive: np.ndarray          # [rows, columns] bool: the emissive materials' pixels
+    lit: np.ndarray               # [rows, columns, 3]: the stage lit for the night, before her shadow, the sky and the blur
+    alpha: np.ndarray             # MMD's alpha
+    reflected: np.ndarray         # what the floor mirrors (already times its share), or None
+    sky: np.ndarray
+    haze: np.ndarray              # [rows, columns]: the haze's share
+    spill: np.ndarray             # [rows / 2, columns / 2, 3] or None
+
+
+def still(look, spec, mesh, table, view, picture, alpha):
+    """the Still of a camera over MMD's picture of the stage (premultiplied colour, alpha)"""
+    layer, unit = look["layer"], view.size[1] / REFERENCE_HEIGHT
+    depth, face = rasterize(view, mesh)
+    surf = surface(view, depth, face, mesh)
+    emissive = table[surf.material]
+    plain = surf.seen & ~emissive
+    gain = float(layer["night"]) * np.asarray(layer["tint"], dtype=np.float64)
+    lit = picture * gain[None, None, :]
+    if float(layer["lamp"]) > 0 and spec["lamps"]:
+        light = np.zeros(picture.shape)
+        light[plain] = lamp_light(surf.points[plain], surf.normals[plain], spec["lamps"], layer) * float(layer["lamp"])
+        lit = lit + picture * light
+    lit[emissive] = picture[emissive] * float(layer["emissive"])
+    reflected = None
+    if float(layer["reflect"]) > 0:
+        levels = floor_levels(surf)
+        mirror, got = reflection(view, surf, lit, levels)
+        mirror = fill_holes(mirror, got, float(layer["reflect_blur"]) * unit)
+        on = surf.seen & (surf.normals[..., 1] > 0.9999) & np.isin(np.round(np.nan_to_num(surf.points[..., 1], nan=-1e9), 3),
+                                                                    np.round(levels, 3))
+        reflected = mirror * (float(layer["reflect"]) * mv_world().fresnel(view) * on)[..., None]
+    haze = np.zeros(surf.seen.shape)
+    if float(layer["haze"]) > 0:
+        haze = np.where(surf.seen, 1.0 - np.exp(-float(layer["haze"]) * np.where(surf.seen, depth, 0.0)), 0.0)
+    spill = None
+    if float(layer["spill"]) > 0 or float(layer["spill_wrap"]) > 0:
+        source = np.where(emissive[..., None], lit, 0.0)
+        h, w = surf.seen.shape
+        small = source.reshape(h // 2, 2, w // 2, 2, 3).mean(axis=(1, 3)) if h % 2 == 0 and w % 2 == 0 else source[::2, ::2]
+        spill = _blur(small, float(layer["spill_radius"]) * unit / 2.0)
+    return Still(view, surf, emissive, lit, alpha, reflected, sky(view, layer), haze, spill)
+
+
+def stage_frame(look, s, state=None):
+    """the stage of a frame (an RGB picture as floats) from its Still and her state (mv_world.Figure.state: her capsules
+    for her shadow), in this order: the night's light (the Still), her shadow on the surfaces round her, the floor's mirror,
+    the sky, the haze, the blur by depth (stage.dof, focused at the camera's look-at point as mv_world focuses), the glow"""
+    stage, layer = look["stage"], look["layer"]
+    unit = s.view.size[1] / REFERENCE_HEIGHT
+    img = s.lit.copy()
+    if state is not None and float(stage["shadow"]) > 0 and getattr(state, "capsules", None):
+        world = mv_world()
+        plain = s.surf.seen & ~s.emissive
+        P, n = s.surf.points[plain], s.surf.normals[plain]
+        ell = world.toward_light(stage["shadow_light"])
+        sigma = math.radians(float(stage["shadow_blur"]))
+        low = float(P[:, 1].min()) if len(P) else 0.0
+        boxes = []
+        for a, b, r in state.capsules:
+            a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
+            lift = np.array([0.0, low, 0.0])
+            boxes.append(world._key_box(a - lift, b - lift, float(r), ell, sigma))
+            reach = world.contact_reach(float(r)) + 0.5 + float(r)
+            boxes.append((min(a[0], b[0]) - reach, max(a[0], b[0]) + reach, min(a[2], b[2]) - reach, max(a[2], b[2]) + reach))
+        x0, x1 = min(bx[0] for bx in boxes), max(bx[1] for bx in boxes)
+        z0, z1 = min(bx[2] for bx in boxes), max(bx[3] for bx in boxes)
+        near = (P[:, 0] >= x0) & (P[:, 0] <= x1) & (P[:, 2] >= z0) & (P[:, 2] <= z1)
+        if near.any():
+            key, contact = shadow_at(P[near], n[near], state.capsules, getattr(state, "capsule_groups", None),
+                                     stage["shadow_light"], float(stage["shadow_blur"]))
+            keep = soft_light_at(key, contact, n[near], stage)
+            idx = np.nonzero(plain.reshape(-1))[0][near]
+            flat = img.reshape(-1, 3)
+            flat[idx] *= keep[:, None]
+    if s.reflected is not None:
+        img = img + s.reflected
+    img = img + (1.0 - s.alpha)[..., None] * s.sky
+    if s.haze.any():
+        img = img * (1.0 - s.haze[..., None]) + np.asarray(layer["haze_colour"], dtype=np.float64)[None, None, :] * s.haze[..., None]
+    if float(stage["dof"]) > 0:
+        world = mv_world()
+        far = float(stage["dof"]) * unit
+        focus = float(stage["dof_focus"]) or s.view.distance
+        if not focus > 0:
+            raise ValueError("stage.dof focuses at the camera's look-at point, and the camera is at or beyond it: give "
+                             "stage.dof_focus")
+        img = defocus(img, world.blur_of(np.where(s.surf.seen, s.surf.depth, np.inf), focus, far))
+    if float(layer["glow"]) > 0:
+        bright = np.clip(img - float(layer["glow_threshold"]), 0.0, None)
+        img = img + float(layer["glow"]) * _blur(bright, float(layer["glow_radius"]) * unit)
+    if float(layer["emissive_glow"]) > 0:
+        source = np.where(s.emissive[..., None], img, 0.0)
+        img = img + float(layer["emissive_glow"]) * _blur(source, float(layer["emissive_glow_radius"]) * unit)
+    return img
+
+
+def as_picture(img):
+    """floats (light may pass 255) as an 8-bit RGB picture"""
+    from PIL import Image
+    return Image.fromarray(np.clip(np.asarray(img) + 0.5, 0, 255).astype(np.uint8), "RGB")
+
+
+SONG_FPS = 30                    # MMD's frames of the song (mv_world.SONG_FPS)
+SPILL = "spill_%05d.png"         # the light round every pixel for her (half size), next to the stage's frames
+
+
+def needs_spill(look):
+    return float(look["layer"]["spill"]) > 0 or float(look["layer"]["spill_wrap"]) > 0
+
+
+class Drawer:
+    """draws the frames of the stage of a set for mv_look: MMD's pictures of the stage (a folder of PICTURE, by frame of the
+    song), the camera motion, the dancer (her shadow) and the shutter of the fold; the Still of a camera is kept while the
+    camera stands still"""
+
+    def __init__(self, look, spec, size, fps, track, pictures, figure=None, subframes=1, shutter=1.0):
+        self.look, self.spec, self.size, self.fps = look, spec, tuple(size), fps
+        self.track, self.pictures, self.figure = track, pictures, figure
+        self.subframes, self.shutter = subframes, shutter
+        self.mesh = set_mesh(spec)
+        self.table = emissive_table(self.mesh, spec)
+        self._still = None
+
+    def view_of(self, frame):
+        return mv_world().view_at(self.track, frame, self.size)
+
+    def frame(self, index):
+        """(stage, spill or None) of video frame `index`: the camera of the frame of the song it shows (the camera must stand
+        still while the shutter is open: MMD draws the stage at whole frames of the song), her shadow at the middle of the
+        moments the shutter is open (as mv_world's floor)"""
+        world = mv_world()
+        times = world.moments(index, self.fps, self.subframes, self.shutter)
+        song = int(math.floor(index * SONG_FPS / float(self.fps) + 1e-9))
+        view = self.view_of(song)
+        for t in (times[0], times[-1]):
+            if world.floor_moves(view, self.view_of(t), 60.0) >= world.SHARP_ENOUGH:
+                raise ValueError("the camera moves while the shutter of video frame %d is open (frame %.3f of the song): MMD "
+                                 "draws the stage of a model at whole frames of the song, so it is drawn for cameras that "
+                                 "stand still between them (keys a frame apart, or none)" % (index, t))
+        if self._still is None or not same_view(self._still.view, view):
+            got = picture_frame(self.pictures, song, self.view_of)
+            picture, alpha = read_picture(os.path.join(self.pictures, PICTURE % got))
+            if picture.shape[:2] != (self.size[1], self.size[0]):
+                raise ValueError("MMD's picture of the stage %s is %dx%d, the video %dx%d" % (
+                    PICTURE % got, picture.shape[1], picture.shape[0], self.size[0], self.size[1]))
+            self._still = still(self.look, self.spec, self.mesh, self.table, view, picture, alpha)
+        middle = sum(times) / len(times)
+        state = self.figure.state(middle) if self.figure is not None else None
+        return stage_frame(self.look, self._still, state), self._still.spill
+
+    def draw(self, ranges, folder):
+        for first, count in ranges:
+            for index in range(int(first), int(first) + int(count)):
+                img, spill = self.frame(index)
+                as_picture(img).save(os.path.join(folder, "stage_%05d.png" % index), compress_level=1)
+                if needs_spill(self.look):
+                    as_picture(spill).save(os.path.join(folder, SPILL % index), compress_level=1)
+
+
+def write_stage(look, work, size, fps, world, first, count, spans=None):
+    """the stage of video frames first .. first + count - 1 (or of `spans`, (first, count) stretches) as
+    WORK/stage/stage_NNNNN.png, and with layer.spill or layer.spill_wrap the light round her as WORK/stage/spill_NNNNN.png
+    (half size), as mv_world.write_stage writes the stage in the world: `world` is mv_look's world_inputs (the camera, the
+    dancer, the shutter, the jobs, and the layer: the set and the folder of MMD's pictures).  With world["jobs"] above 1
+    that many processes of this tool (`draw`) draw a share each.  The answer: {"pattern", "first", "frames", "spans" and
+    "spill" (its pattern, or None)}"""
+    ranges = mv_world().merge_spans(spans if spans is not None else [(first, count)])
+    folder = os.path.join(work, "stage")
+    os.makedirs(folder, exist_ok=True)
+    for name in os.listdir(folder):
+        if (name.startswith("stage_") or name.startswith("spill_")) and name.endswith(".png"):
+            os.remove(os.path.join(folder, name))
+    total, jobs = sum(n for _, n in ranges), max(1, int(world.get("jobs", 1)))
+    layer = world["layer"]
+    if jobs == 1 or total < 2:
+        spec = load_set(layer["set"])
+        Drawer(look, spec, size, fps, world["track"], layer["pictures"], world.get("figure"), world.get("subframes", 1),
+               world.get("shutter", 1.0)).draw(ranges, folder)
+    else:
+        _draw_in_jobs(look, size, fps, world, ranges, folder, jobs, work)
+    pattern = os.path.join(folder, "stage_%05d.png").replace("\\", "/")
+    spill = os.path.join(folder, SPILL).replace("\\", "/") if needs_spill(look) else None
+    return {"pattern": pattern, "first": ranges[0][0], "frames": total, "spans": ranges, "spill": spill}
+
+
+def _draw_in_jobs(look, size, fps, world, ranges, folder, jobs, work):
+    import subprocess
+    shares = mv_world()._shares(ranges, min(jobs, sum(n for _, n in ranges)))
+    running = []
+    for k, share in enumerate(shares):
+        job = {"look": look, "size": [int(size[0]), int(size[1])], "fps": fps, "camera": world["camera"],
+               "model": world.get("model"), "motions": list(world.get("motions") or []), "ranges": share,
+               "subframes": int(world.get("subframes", 1)), "shutter": float(world.get("shutter", 1.0)),
+               "set": world["layer"]["set"], "pictures": world["layer"]["pictures"], "folder": folder}
+        path = os.path.join(work, "layer_job_%d.json" % k)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=True)
+        log = open(os.path.join(work, "layer_job_%d.log" % k), "wb")
+        running.append((path, log, subprocess.Popen([sys.executable, os.path.abspath(__file__), "draw", path],
+                                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)))
+    failed = []
+    for path, log, process in running:
+        process.wait()
+        log.close()
+        with open(log.name, "rb") as f:
+            said = f.read().decode("utf-8", "replace").strip()
+        if process.returncode != 0:
+            failed.append("%s (exit %d): %s" % (os.path.basename(path), process.returncode, said[-400:]))
+        for leftover in (path, log.name):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+    if failed:
+        raise RuntimeError("drawing the stage failed in %d of %d jobs: %s" % (len(failed), len(shares), " | ".join(failed)))
+
+
+def _draw_job(path):
+    with open(path, encoding="utf-8") as f:
+        job = json.load(f)
+    world = mv_world()
+    look = job["look"]
+    figure = None
+    if job.get("model") and float(look["stage"]["shadow"]) > 0:
+        figure = world.Figure.from_files(job["model"], job["motions"], body=True)
+    Drawer(look, load_set(job["set"]), tuple(job["size"]), job["fps"], world.camera_track(job["camera"]), job["pictures"], figure,
+           job["subframes"], job["shutter"]).draw(job["ranges"], job["folder"])
+    return {"ok": True, "ranges": job["ranges"]}
+
+
+_WORLD = []
+
+
+def mv_world():
+    """tools/mv_world.py (the camera, the soft shadow, the blur by depth), loaded once from its file"""
+    if not _WORLD:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mv_world", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                              "mv_world.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _WORLD.append(module)
+    return _WORLD[0]
+
+
 # ---- the command ----------------------------------------------------------------------------
+
+def _mv_look():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mv_look", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_look.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _size(text):
+    w, h = (int(v) for v in text.lower().split("x"))
+    return w, h
+
 
 def main(argv=None):
     import argparse
@@ -397,20 +964,77 @@ def main(argv=None):
     s = sub.add_parser("info", help="the model of a set: its materials, their faces and flags")
     s.add_argument("set")
     s.add_argument("out")
+    s = sub.add_parser("batch", help="write the mmd batch that draws the set's model alone with a camera motion")
+    s.add_argument("set")
+    s.add_argument("camera", help="the camera motion (.vmd) the dancer is drawn with")
+    s.add_argument("out", help="the batch file to write")
+    s.add_argument("--mmd", required=True, help="MikuMikuDance.exe (a plain one: no MME)")
+    s.add_argument("--size", default="1280x720")
+    s.add_argument("--avi", help="draw an uncompressed AVI with alpha of the frames --from .. --to (at 30 fps)")
+    s.add_argument("--from", dest="start", type=int)
+    s.add_argument("--to", type=int)
+    s.add_argument("--stills", type=int, nargs="+", help="draw these frames of the song as pictures, into --folder")
+    s.add_argument("--folder")
+    s = sub.add_parser("unpack", help="MMD's AVI of the stage as a folder of pictures, by frame of the song")
+    s.add_argument("avi")
+    s.add_argument("folder")
+    s.add_argument("--first", type=int, required=True, help="the frame of the song of the AVI's first picture")
+    s = sub.add_parser("frame", help="draw one frame of the stage, to look at")
+    s.add_argument("set")
+    s.add_argument("look")
+    s.add_argument("camera")
+    s.add_argument("pictures", help="the folder of MMD's pictures of the stage (unpack or batch --stills)")
+    s.add_argument("out")
+    s.add_argument("--frame", type=int, required=True, help="the frame of the video (at --fps)")
+    s.add_argument("--size", default="1280x720")
+    s.add_argument("--fps", type=int, default=30)
+    s.add_argument("--subframes", type=int, default=1)
+    s.add_argument("--shutter", type=float, default=1.0)
+    s.add_argument("--model", help="the dancer's model, for her shadow")
+    s.add_argument("--motion", action="append", default=[])
+    s = sub.add_parser("draw", help="draw the frames of a job file (write_stage with jobs runs these)")
+    s.add_argument("job")
     args = p.parse_args(argv)
     try:
-        with open(args.set, encoding="utf-8") as f:
-            spec = json.load(f)
-        mesh = load_mesh(spec["model"])
-        out = {"model": spec["model"], "vertices": int(len(mesh.positions)), "faces": int(len(mesh.faces)),
-               "materials": [{"name": m.name, "faces": int((mesh.face_material == i).sum()), "flags": m.flags, "power": m.power,
-                              "alpha": m.alpha} for i, m in enumerate(mesh.materials)]}
-        with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(out, f, ensure_ascii=False, indent=1)
-    except (ValueError, KeyError, OSError) as exc:
+        if args.command == "info":
+            spec = load_set(args.set)
+            mesh = load_mesh(spec["model"])
+            out = {"model": spec["model"], "vertices": int(len(mesh.positions)), "faces": int(len(mesh.faces)),
+                   "materials": [{"name": m.name, "faces": int((mesh.face_material == i).sum()), "flags": m.flags,
+                                  "power": m.power, "alpha": m.alpha} for i, m in enumerate(mesh.materials)]}
+            with open(args.out, "w", encoding="utf-8") as f:
+                json.dump(out, f, ensure_ascii=False, indent=1)
+            result = {"out": os.path.abspath(args.out)}
+        elif args.command == "batch":
+            spec = load_set(args.set)
+            lines = batch_lines(spec, os.path.abspath(args.camera), _size(args.size), args.mmd, avi=args.avi, first=args.start,
+                                last=args.to, stills=args.stills, folder=args.folder)
+            write_batch(lines, args.out)
+            result = {"out": os.path.abspath(args.out), "lines": len(lines)}
+        elif args.command == "unpack":
+            result = {"folder": os.path.abspath(args.folder), "pictures": unpack_avi(args.avi, args.folder, args.first)}
+        elif args.command == "frame":
+            look = _mv_look().load_look(args.look)
+            spec = load_set(args.set)
+            world = mv_world()
+            figure = world.Figure.from_files(args.model, args.motion, body=True) if args.model else None
+            d = Drawer(look, spec, _size(args.size), args.fps, world.camera_track(args.camera), args.pictures, figure,
+                       args.subframes, args.shutter)
+            img, spill = d.frame(args.frame)
+            as_picture(img).save(args.out)
+            result = {"out": os.path.abspath(args.out)}
+            if spill is not None:
+                as_picture(spill).save(args.out[:-4] + "_spill.png")
+                result["spill"] = os.path.abspath(args.out[:-4] + "_spill.png")
+        else:
+            result = _draw_job(args.job)
+    except (ValueError, KeyError) as exc:
         print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
         return 2
-    print(json.dumps({"ok": True, "out": os.path.abspath(args.out)}, ensure_ascii=True))
+    except (RuntimeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": {"type": type(exc).__name__, "message": str(exc)}}, ensure_ascii=True))
+        return 1
+    print(json.dumps(dict({"ok": True}, **result), ensure_ascii=True))
     return 0
 
 
