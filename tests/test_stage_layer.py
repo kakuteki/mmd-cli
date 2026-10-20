@@ -578,6 +578,30 @@ class FrameTest(unittest.TestCase):
         sky = ~s.seen
         numpy.testing.assert_allclose(img[sky], plain[sky], atol=1e-9)      # (the sky is no nearer for it)
 
+    def test_the_signs_flicker_by_a_share_of_their_light_and_nothing_else_does(self):
+        # light3 (look light.flicker): each emissive material's light dips by at most that share, one gain a material, the
+        # same at the same time; the floor and the sky keep theirs.  Without it the time changes nothing
+        look = layer_look(night=0.3, emissive=1.2)
+        st, s = scene_still(look)
+        steady = stage_layer.stage_frame(look, st)
+        numpy.testing.assert_array_equal(stage_layer.stage_frame(look, st, t=3.2), steady)
+        flick = dict(look, light=dict(look["light"], flicker=0.1))
+        sign, rest = s.material == 1, s.material != 1
+        gains = []
+        for t in numpy.arange(0.0, 6.0, 1.0 / 30.0):
+            img = stage_layer.stage_frame(flick, st, t=float(t))
+            numpy.testing.assert_array_equal(img[rest], steady[rest])
+            g = img[sign][:, 0] / steady[sign][:, 0]
+            self.assertLess(float(numpy.ptp(g)), 1e-9)                       # one gain for the material
+            gains.append(float(g[0]))
+        self.assertGreaterEqual(min(gains), 0.9 - 1e-9)
+        self.assertLessEqual(max(gains), 1.0 + 1e-9)                         # a sign dips, it does not flare
+        self.assertGreater(float(numpy.std(gains)), 0.005)                   # and it does flicker
+        numpy.testing.assert_array_equal(stage_layer.stage_frame(flick, st, t=1.5), stage_layer.stage_frame(flick, st, t=1.5))
+        # another seed, another flicker
+        other = dict(look, light=dict(look["light"], flicker=0.1, flicker_seed=8))
+        self.assertFalse(numpy.array_equal(stage_layer.stage_frame(other, st, t=1.5), stage_layer.stage_frame(flick, st, t=1.5)))
+
     def test_the_glows_spread_the_bright_and_the_emissive(self):
         look = layer_look(night=1.0, emissive=1.2, emissive_glow=0.5, glow=1.0, glow_threshold=200.0)
         st, s = scene_still(look)
