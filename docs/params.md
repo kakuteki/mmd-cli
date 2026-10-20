@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2379（定数 1868・引数 132・関数の既定 379。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 429（retarget 268・rig 69・踊りだけ 104）、記録の出所つき 84。
+- 数: 全部 2385（定数 1873・引数 132・関数の既定 380。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 430（retarget 268・rig 69・踊りだけ 105）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -2444,47 +2444,53 @@
 | --height | 540 |  | 2752 |  |  |  |  |  |  |  |  |  |
 | --scale | 1.0 |  | 2754 |  |  |  |  |  |  |  |  |  |
 
-### mograph_analyze.py（確かめ・部品、37）
+### mograph_analyze.py（確かめ・部品、43）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| REFERENCE_HEIGHT | 720.0 |  | 67 |  |  |  |  |  |  |  |  |  |
-| FADE_BLACK | 0.06 |  | 68 | mean Y' under this: black |  |  |  |  |  |  |  |  |
-| FADE_WHITE | 0.90 |  | 69 | over this: white |  |  |  |  |  |  |  |  |
-| FADE_LEAST | 3 | frames | 70 | frames the picture takes going there at least |  |  |  |  |  |  |  |  |
-| DISSOLVE_W | (2, 3, 5, 8) | frames | 71 | half widths (frames) tried for a dissolve |  |  |  |  |  |  |  |  |
-| DISSOLVE_LEAST | 0.05 |  | 72 | mean ／Y' change／ between its ends at least this |  |  |  |  |  |  |  |  |
-| DISSOLVE_MID | 0.25 |  | 73 | its middle frame within this share of that change of the mean of its ends, |  |  |  |  |  |  |  |  |
-| DISSOLVE_ENDS | 0.6 |  | 74 | and its ends two pictures (correlation under this; a picture dimmed, or a line of |  |  |  |  |  |  |  |  |
-| PUNCH_LEAST | 0.08 |  | 76 | log scale change within three frames for a zoom punch, and |  |  |  |  |  |  |  |  |
-| PUNCH_OVER | 6.0 |  | 77 | this many times the scale's usual change round it (a second each side) |  |  |  |  |  |  |  |  |
-| PUNCH_MERGE | 0.3 | s | 78 | s: punches closer than this are one |  |  |  |  |  |  |  |  |
-| SHAKE_WINDOW | 0.2 | s | 79 | s: the shake is the shift less its running mean over this |  |  |  |  |  |  |  |  |
-| GLITCH_SPLIT | 8.0 |  | 80 | 720 line px between red and blue across the picture: a glitch frame |  |  |  |  |  |  |  |  |
-| SPLIT_REACH | 6 | px | 81 | px searched at the read size |  |  |  |  |  |  |  |  |
-| COLOUR_RISE | 12.0 |  | 82 | C*ab over the running median: a colour flash |  |  |  |  |  |  |  |  |
-| COLOUR_LONGEST | 0.6 | s | 83 | s |  |  |  |  |  |  |  |  |
-| BEAT_REACH | 0.01 | s | 84 | s added to a frame either side: on the beat |  |  |  | ○ |  |  |  | dance |
-| _similarity(border) | 4 |  | 106 |  |  |  |  |  |  |  |  |  |
-| finish(start) | 0.0 |  | 190 |  |  |  |  |  |  |  |  |  |
-| _events(start) | 0.0 |  | 217 |  |  |  |  |  |  |  |  |  |
-| events_of(start) | 0.0 |  | 346 |  |  |  |  |  |  |  |  |  |
-| events_video(size) | (128, 72) |  | 354 |  |  |  |  |  |  |  |  |  |
-| PARTICLE_SIGMAS | (1.2, 1.8, 2.7, 4.0, 6.0, 9.0, 13.0) |  | 388 | 720 line px |  |  |  |  |  |  |  |  |
-| PARTICLE_LEAST | 0.12 |  | 389 | Y' a particle stands above the ground round it (the ring 2.5 to 4 sigma out) |  |  |  |  |  |  |  |  |
-| PARTICLE_LOG | 0.04 |  | 390 | its scale-normalised Laplacian at least this |  |  |  |  |  |  |  |  |
-| BOKEH_SIGMA | 4.0 |  | 391 | 720 line px: a particle this wide or wider is bokeh (a defocused light) |  |  |  |  |  |  |  |  |
-| PARTICLE_ROUND | 3.0 |  | 392 | the larger of a particle's two curvatures at most this many times the smaller |  |  |  |  |  |  |  |  |
-| LINE_LEAST | 0.15 |  | 393 | of the frame's height: a long line |  |  |  |  |  |  |  |  |
-| LINE_JOIN | (3.0, 6.0) | deg | 394 | degrees and 720 line px: segments this parallel and near are one line's two edges |  |  |  |  |  |  |  |  |
-| AXIS | 3.0 | deg | 395 | degrees from level or upright: on the frame's axes |  |  |  |  |  |  |  |  |
-| particles(unit) | 1.0 |  | 398 |  |  |  |  |  |  |  |  |  |
-| lines(unit) | 1.0 |  | 451 |  |  |  |  |  |  |  |  |  |
-| elements_video(frames) | 60 |  | 491 |  |  |  |  |  |  |  |  |  |
-| elements_video(height) | 720 |  | 491 |  |  |  |  |  |  |  |  |  |
-| --size | "128x72" |  | 568 |  |  |  |  |  |  |  |  |  |
-| --frames | 60 | frames | 574 |  |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 575 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 71 |  |  |  |  |  |  |  |  |  |
+| FADE_BLACK | 0.06 |  | 72 | mean Y' under this: black |  |  |  |  |  |  |  |  |
+| FADE_WHITE | 0.90 |  | 73 | over this: white |  |  |  |  |  |  |  |  |
+| FADE_LEAST | 3 | frames | 74 | frames the picture takes going there at least |  |  |  |  |  |  |  |  |
+| DISSOLVE_W | (2, 3, 5, 8) | frames | 75 | half widths (frames) tried for a dissolve |  |  |  |  |  |  |  |  |
+| DISSOLVE_LEAST | 0.05 |  | 76 | mean ／Y' change／ between its ends at least this |  |  |  |  |  |  |  |  |
+| DISSOLVE_MID | 0.25 |  | 77 | its middle frame within this share of that change of the mean of its ends, |  |  |  |  |  |  |  |  |
+| DISSOLVE_ENDS | 0.6 |  | 78 | and its ends two pictures (correlation under this; a picture dimmed, or a line of |  |  |  |  |  |  |  |  |
+| PUNCH_LEAST | 0.08 |  | 80 | log scale change within three frames for a zoom punch, and |  |  |  |  |  |  |  |  |
+| PUNCH_OVER | 6.0 |  | 81 | this many times the scale's usual change round it (a second each side) |  |  |  |  |  |  |  |  |
+| PUNCH_MERGE | 0.3 | s | 82 | s: punches closer than this are one |  |  |  |  |  |  |  |  |
+| SHAKE_WINDOW | 0.2 | s | 83 | s: the shake is the shift less its running mean over this |  |  |  |  |  |  |  |  |
+| GLITCH_SPLIT | 8.0 |  | 84 | 720 line px between red and blue across the picture: a glitch frame |  |  |  |  |  |  |  |  |
+| SPLIT_REACH | 6 | px | 85 | px searched at the read size |  |  |  |  |  |  |  |  |
+| COLOUR_RISE | 12.0 |  | 86 | C*ab over the running median: a colour flash |  |  |  |  |  |  |  |  |
+| COLOUR_LONGEST | 0.6 | s | 87 | s |  |  |  |  |  |  |  |  |
+| BEAT_REACH | 0.01 | s | 88 | s added to a frame either side: on the beat |  |  |  | ○ |  |  |  | dance |
+| CAMERA_ROBUST | 4.685 |  | 89 | the camera's motion is fitted to the flow robustly (Tukey's biweight, 3 rounds): flow |  |  |  |  |  |  |  |  |
+| CAMERA_NOISE | 0.05 | px | 93 | px at the read size: the least robust sigma (the flow's own noise) |  |  |  | ○ |  |  |  | dance |
+| CUT_SAME | 0.95 |  | 94 | a change whose thumbnail correlates with the one before it at least this is the same |  |  |  |  |  |  |  |  |
+| FLASH_SAME | 0.6 |  | 98 | a flash is a light on one shot (the thumbnails before and after it correlate at least |  |  |  |  |  |  |  |  |
+| FLASH_WASH | 0.7 |  | 99 | this) or a white wash (its brightest thumbnail's contrast under this share of the |  |  |  |  |  |  |  |  |
+| _similarity(border) | 4 |  | 124 |  |  |  |  |  |  |  |  |  |
+| read_size(size) | (128, 72) |  | 164 |  |  |  |  |  |  |  |  |  |
+| finish(start) | 0.0 |  | 238 |  |  |  |  |  |  |  |  |  |
+| _events(start) | 0.0 |  | 287 |  |  |  |  |  |  |  |  |  |
+| events_of(start) | 0.0 |  | 438 |  |  |  |  |  |  |  |  |  |
+| events_video(size) | (128, 72) |  | 446 |  |  |  |  |  |  |  |  |  |
+| PARTICLE_SIGMAS | (1.2, 1.8, 2.7, 4.0, 6.0, 9.0, 13.0) |  | 480 | 720 line px |  |  |  |  |  |  |  |  |
+| PARTICLE_LEAST | 0.12 |  | 481 | Y' a particle stands above the ground round it (the ring 2.5 to 4 sigma out) |  |  |  |  |  |  |  |  |
+| PARTICLE_LOG | 0.04 |  | 482 | its scale-normalised Laplacian at least this |  |  |  |  |  |  |  |  |
+| BOKEH_SIGMA | 4.0 |  | 483 | 720 line px: a particle this wide or wider is bokeh (a defocused light) |  |  |  |  |  |  |  |  |
+| PARTICLE_ROUND | 3.0 |  | 484 | the larger of a particle's two curvatures at most this many times the smaller |  |  |  |  |  |  |  |  |
+| LINE_LEAST | 0.15 |  | 485 | of the frame's height: a long line |  |  |  |  |  |  |  |  |
+| LINE_JOIN | (3.0, 6.0) | deg | 486 | degrees and 720 line px: segments this parallel and near are one line's two edges |  |  |  |  |  |  |  |  |
+| AXIS | 3.0 | deg | 487 | degrees from level or upright: on the frame's axes |  |  |  |  |  |  |  |  |
+| particles(unit) | 1.0 |  | 490 |  |  |  |  |  |  |  |  |  |
+| lines(unit) | 1.0 |  | 543 |  |  |  |  |  |  |  |  |  |
+| elements_video(frames) | 60 |  | 583 |  |  |  |  |  |  |  |  |  |
+| elements_video(height) | 720 |  | 583 |  |  |  |  |  |  |  |  |  |
+| --size | "128x72" |  | 664 |  |  |  |  |  |  |  |  |  |
+| --frames | 60 | frames | 670 |  |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 671 |  |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 
