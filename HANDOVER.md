@@ -1082,3 +1082,5 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
     225.8 の値より小さく出る。0.1 秒刻みの時刻の約 8 % で同じことが起き、3.7 秒で ffmpeg で確かめた）、前の区間は始めが 0・2 mod 3 のとき（901 のうち 583）6774 から。86.933・155.533・
     241.233 秒は全曲と同じコマ（前の区間では始めが 1 mod 3 の一部 18/901 だけ 1 コマ遅れていた）。**パンチをフレアの絵と同じコマから始めたいなら look の値を 44.466・225.799
     にする**（全曲でも区間でも 1334・6774 から）。決めるのは協調役。
+- 2026-10-21 **人の踊りの元データを片付けで消した（協調役の手落ち）**: hinata の `stage6` の 2 日より古い .npz・.npy・.tar の片付けで、FineDance の踊りの .npy（`fingers/human/dl/finedance/x2/finedance/motion/`、human_baseline の hbpack.py が読む）・DD100 の SMPL-X の .npy（`fingers/human/dl/dd100/x/data/motion/smplx/`）・SMPL-X の休みの関節 `smplx_neu_J_1.npy` まで消えた。
+  集計の値（`tools/mvi/human.json`・表）は残るので仕上げは止まらない。**加賀さんの決め: 取り直すのは必要になったとき**（人のデータで新しい物差しを測るとき。前と同じ配布元から）。AIST++（.pkl）・参考の動画・舞台の模型・testdata・v9〜v11 の組み立ては消していない。片付けの決まりを COMMON.md に足した。
