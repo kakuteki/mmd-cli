@@ -448,10 +448,30 @@ class FrameTest(unittest.TestCase):
         self.assertLess(float(keep.min()), 0.5)
         far = numpy.linalg.norm(s.points[floor][:, [0, 2]], axis=1) > 25.0
         numpy.testing.assert_allclose(keep[far], 1.0, atol=1e-9)
-        # and what each point keeps is soft_light_at of the shadow there
-        key, contact = stage_layer.shadow_at(s.points[floor], s.normals[floor], her.capsules, her.capsule_groups,
-                                             look["stage"]["shadow_light"], look["stage"]["shadow_blur"])
-        numpy.testing.assert_allclose(keep, stage_layer.soft_light_at(key, contact, s.normals[floor], look["stage"]), atol=1e-9)
+        # and what each point keeps is soft_light_at of the shadow mv_world lays on its floor there (its grid)
+        grid = mv_world.soft_shadow_grid(her.capsules, look["stage"]["shadow_light"], look["stage"]["shadow_blur"], 0.0,
+                                         groups=her.capsule_groups)
+        key, contact = grid.at(s.points[floor][:, 0], s.points[floor][:, 2])
+        # (past the box the shadows reach, 4 standard deviations of the light's spread out, under 1e-4 of the light is kept
+        # off, and nothing is worked out there)
+        numpy.testing.assert_allclose(keep, stage_layer.soft_light_at(key, contact, s.normals[floor], look["stage"]), atol=1e-4)
+
+    def test_her_shadow_is_mv_worlds_grid_on_a_level_floor_and_worked_out_at_the_points_elsewhere(self):
+        her = State([((0.0, 5.0, 0.0), (0.0, 9.0, 0.0), 1.2), ((0.0, 0.42, -0.5), (0.0, 0.42, 0.8), 0.42)], ["torso", "foot"])
+        stage = dict(shadow=1.0, shadow_light=list(LIGHT), shadow_blur=5.0, shadow_contact=0.9, shadow_key=0.6)
+        floor = floor_points(numpy.linspace(-12, 4, 41), numpy.linspace(-4, 12, 41), 0.0)
+        wall = numpy.array([(-2.0, 1.0, 2.0), (-3.0, 0.5, 2.0), (6.0, 1.0, 2.0)])
+        P = numpy.concatenate([floor, wall])
+        n = numpy.concatenate([[[0.0, 1.0, 0.0]] * len(floor), [[0.0, 0.0, -1.0]] * len(wall)])
+        key, contact = stage_layer.her_shadow(P, n, her, stage)
+        grid = mv_world.soft_shadow_grid(her.capsules, LIGHT, 5.0, 0.0, groups=her.capsule_groups)
+        want = grid.at(floor[:, 0], floor[:, 2])
+        numpy.testing.assert_allclose(key[:len(floor)], want[0], atol=1e-12)
+        numpy.testing.assert_allclose(contact[:len(floor)], want[1], atol=1e-12)
+        exact = stage_layer.shadow_at(wall, n[len(floor):], her.capsules, her.capsule_groups, LIGHT, 5.0)
+        numpy.testing.assert_allclose(key[len(floor):], exact[0], atol=1e-12)
+        numpy.testing.assert_allclose(contact[len(floor):], exact[1], atol=1e-12)
+        self.assertLess(float(key[len(floor):].min()), 0.5)
 
     def test_her_shadow_does_not_put_out_a_sign(self):
         # standing right in front of the sign, between it and the light: the sign gives its light all the same
@@ -532,6 +552,79 @@ class PictureTest(unittest.TestCase):
             stage_layer.check_set({"model": "a.pmx", "offst": [0, 0, 0]})
         with self.assertRaises(ValueError):
             stage_layer.check_set({"model": "a.pmx", "offset": [0, 0]})
+
+
+class Moving:
+    """a dancer as check_placement reads her (mv_world.Figure): her capsules at every frame and the parts they belong to.
+    Two soles on the floor at y 0.111 (their bottoms there), a body above them; she walks along x by `step` a frame"""
+
+    def __init__(self, step=0.0, lift=0.0, sink=0.0):
+        self.step, self.lift, self.sink = step, lift, sink
+        self.body = State(None, ["torso", "head", "left foot", "right foot"])
+        self.body.groups = self.body.capsule_groups
+
+    def state(self, frame):
+        x = self.step * frame
+        y = 0.111 + 0.42 + self.lift - self.sink
+        return State([((x, 4.0, 0.0), (x, 12.0, 0.0), 1.2), ((x, 14.0, 0.0), (x, 16.0, 0.0), 1.5),
+                      ((x - 1.0, y, -0.5), (x - 1.0, y, 1.0), 0.42), ((x + 1.0, y, -0.5), (x + 1.0, y, 1.0), 0.42)],
+                     self.body.groups)
+
+
+def cam_track(eye_z=-40.0, look_at=(0.0, 8.0, 0.0), angles=(5.0, 0.0, 0.0)):
+    """a camera motion held from frame 0 to 100 (what check_placement reads)"""
+    from mmd_cli.formats import vmd
+    key = dict(distance=-(look_at[2] - eye_z), position=tuple(look_at), rotation=(-math.radians(angles[0]), math.radians(angles[1]), 0.0),
+               fov=30)
+    keys = fk.camera_keys(vmd.Motion.for_camera(cameras=[vmd.CameraKey(frame=0, **key), vmd.CameraKey(frame=100, **key)]))
+    return keys, [k.frame for k in keys]
+
+
+def box(lo, hi):
+    """the six faces of a closed box, their fronts facing out"""
+    (x0, y0, z0), (x1, y1, z1) = lo, hi
+    return (quad(y1, x0, x1, z0, z1) + quad(y0, x0, x1, z0, z1, up=False)
+            + wall(z0, x0, x1, y0, y1) + wall(z1, x0, x1, y0, y1, towards_minus_z=False)
+            + [((x0, y0, z0), (x0, y0, z1), (x0, y1, z1)), ((x0, y0, z0), (x0, y1, z1), (x0, y1, z0))]
+            + [((x1, y0, z0), (x1, y1, z1), (x1, y0, z1)), ((x1, y0, z0), (x1, y1, z0), (x1, y1, z1))])
+
+
+@unittest.skipUnless(stage_layer, "needs Pillow and numpy")
+class CheckTest(unittest.TestCase):
+    FLOOR = quad(0.111, -60, 60, -60, 60)
+
+    def test_soles_on_the_floor_are_on_it_and_one_in_it_or_off_its_edge_is_counted(self):
+        got = stage_layer.check_placement(mesh(self.FLOOR), Moving(), range(3), {})
+        self.assertEqual(got["feet"]["sunk_frames"], 0)
+        self.assertEqual(got["feet"]["off_floor_frames"], 0)
+        self.assertAlmostEqual(got["feet"]["floor_height_min"], 0.111, places=9)
+        self.assertAlmostEqual(got["feet"]["floor_height_max"], 0.111, places=9)
+        self.assertEqual(stage_layer.check_placement(mesh(self.FLOOR), Moving(sink=0.2), range(3), {})["feet"]["sunk_frames"], 3)
+        # walking off the floor's edge (x 60) by the 30th frame
+        off = stage_layer.check_placement(mesh(self.FLOOR), Moving(step=2.5), range(30), {})
+        self.assertEqual(off["feet"]["off_floor"][0]["frames"][1], 29)
+        self.assertGreater(off["feet"]["off_floor_frames"], 0)
+
+    def test_a_post_she_walks_into_is_counted(self):
+        post = box((9.0, 0.111, -0.5), (10.0, 30.0, 0.5))
+        got = stage_layer.check_placement(mesh(self.FLOOR + post), Moving(step=1.0), range(15), {})
+        frames = [f for run in got["body"]["into_things"] for f in range(run["frames"][0], run["frames"][1] + 1)]
+        self.assertIn(10, frames)                                   # her body's middle at the post
+        self.assertNotIn(0, frames)
+        self.assertEqual(got["feet"]["sunk_frames"], 0)
+
+    def test_a_camera_in_a_building_or_behind_a_wall_before_her_is_counted(self):
+        house = box((-10.0, 0.111, -50.0), (10.0, 30.0, -30.0))
+        cams = {"open": cam_track(eye_z=-40.0), "in": cam_track(eye_z=-40.0)}
+        open_floor = stage_layer.check_placement(mesh(self.FLOOR), Moving(), range(2), {"open": cams["open"]})
+        self.assertEqual(open_floor["cameras"]["open"]["inside_frames"], 0)
+        self.assertEqual(open_floor["cameras"]["open"]["hidden_frames"], 0)
+        inside = stage_layer.check_placement(mesh(self.FLOOR + house), Moving(), range(2), {"in": cams["in"]})
+        self.assertEqual(inside["cameras"]["in"]["inside_frames"], 2)
+        screen = wall(-20.0, -10.0, 10.0, 0.111, 25.0)               # a wall between the camera and her
+        hidden = stage_layer.check_placement(mesh(self.FLOOR + screen), Moving(), range(2), {"open": cams["open"]})
+        self.assertEqual(hidden["cameras"]["open"]["hidden_frames"], 2)
+        self.assertEqual(hidden["cameras"]["open"]["inside_frames"], 0)
 
 
 @unittest.skipUnless(stage_layer, "needs Pillow and numpy")

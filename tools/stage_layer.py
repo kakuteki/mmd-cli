@@ -489,6 +489,39 @@ def shadow_at(points, normals, capsules, groups, light, blur_degrees):
     return key, contact
 
 
+LEVEL_LEAST = 64                  # a level floor round her with at least this many pixels takes mv_world's grid
+
+
+def her_shadow(points, normals, state, stage):
+    """(key, contact) of her shadow at the points of the stage round her: on a level floor (faces looking straight up, at a
+    height that many pixels share) mv_world's grid of that floor (soft_shadow_grid: the same sums on a grid fixed in the world,
+    worked out coarser where the shadow is soft; what mv_world lays on its own floor), on every other surface shadow_at at
+    the points themselves"""
+    world = mv_world()
+    P = np.asarray(points, dtype=np.float64)
+    n = np.asarray(normals, dtype=np.float64)
+    key, contact = np.ones(len(P)), np.ones(len(P))
+    groups = getattr(state, "capsule_groups", None)
+    level = n[:, 1] > 0.9999
+    y = np.round(P[:, 1], 3)
+    done = np.zeros(len(P), bool)
+    if level.any():
+        values, counts = np.unique(y[level], return_counts=True)
+        for value, count in zip(values, counts):
+            if count < LEVEL_LEAST:
+                continue
+            on = level & (y == value)
+            grid = world.soft_shadow_grid(state.capsules, stage["shadow_light"], float(stage["shadow_blur"]), float(value),
+                                          groups=groups)
+            if grid is not None:
+                key[on], contact[on] = grid.at(P[on, 0], P[on, 2])
+            done |= on
+    if (~done).any():
+        key[~done], contact[~done] = shadow_at(P[~done], n[~done], state.capsules, groups, stage["shadow_light"],
+                                               float(stage["shadow_blur"]))
+    return key, contact
+
+
 def soft_light_at(key, contact, normals, stage):
     """what the stage's surfaces keep of their light where her shadow lets `key` of the key light and `contact` of the light
     from all round through: mv_world.soft_light, the key light's share (stage.shadow_key on the floor) taken in proportion
@@ -556,9 +589,9 @@ def _lamp_kernel():
     if not _LAMP:
         import numba
 
-        @numba.njit(cache=False)
+        @numba.njit(cache=False, parallel=True)
         def light(P, n, L, reach, spot, out):
-            for i in range(P.shape[0]):
+            for i in numba.prange(P.shape[0]):
                 total = 0.0
                 for j in range(L.shape[0]):
                     vx, vy, vz = L[j, 0] - P[i, 0], L[j, 1] - P[i, 1], L[j, 2] - P[i, 2]
@@ -596,7 +629,10 @@ def floor_levels(surf, least=0.01):
     return [float(v) for v, c in zip(values, counts) if c >= least * up.sum()]
 
 
-def reflection(view, surf, colour, levels, least=6.0):
+MIRROR_LEAST = 24.0              # of 255: the parts of the stage brighter than this are mirrored (at night the rest adds little)
+
+
+def reflection(view, surf, colour, levels, least=MIRROR_LEAST):
     """[rows, columns, 3] and [rows, columns] bool: what the level floors mirror (the picture `colour` of the stage, a pixel
     as bright as `least` or more), and where something is mirrored.  For each level, the stage's points above it are mirrored
     in its plane and drawn again from the camera (the nearest mirrored point at a pixel wins); a pixel of that floor shows the
@@ -637,12 +673,14 @@ def reflection(view, surf, colour, levels, least=6.0):
 
 
 def _blur(img, sigma):
-    """img blurred by a Gaussian of `sigma` pixels (OpenCV when it is there, else scipy as mv_world blurs), edges repeated"""
+    """img blurred by a Gaussian of `sigma` pixels (OpenCV in 32-bit floats when it is there, else scipy as mv_world blurs),
+    edges repeated"""
     if sigma <= 0:
         return img
     try:
         import cv2
-        return cv2.GaussianBlur(np.ascontiguousarray(img, dtype=np.float64), (0, 0), float(sigma), borderType=cv2.BORDER_REPLICATE)
+        return cv2.GaussianBlur(np.ascontiguousarray(img, dtype=np.float32), (0, 0), float(sigma),
+                                borderType=cv2.BORDER_REPLICATE).astype(np.float64)
     except ImportError:
         return mv_world()._blurred(img, sigma) if img.ndim == 3 else mv_world()._blurred(img[..., None], sigma)[..., 0]
 
@@ -666,13 +704,13 @@ def fill_holes(img, got, sigma):
 
 def defocus(img, sigma):
     """mv_world.defocus (every pixel blurred by its own sigma: levels of blur sqrt 2 apart, each pixel mixed from the two
-    round its blur) with OpenCV's Gaussian when it is there (about twice as fast; the same to within a hair: its kernel
-    reaches 4 sigma as scipy's), else mv_world's own"""
+    round its blur) with OpenCV's Gaussian in 32-bit floats when it is there (several times as fast; the same to within a
+    hair: its kernel reaches 4 sigma as scipy's), else mv_world's own"""
     try:
         import cv2
     except ImportError:
         return mv_world().defocus(img, sigma)
-    img = np.asarray(img, dtype=np.float64)
+    img = np.asarray(img, dtype=np.float32)
     sigma = np.asarray(sigma, dtype=np.float64)
     out = img.copy()
     top = float(sigma.max()) if sigma.size else 0.0
@@ -682,11 +720,11 @@ def defocus(img, sigma):
         above = cv2.GaussianBlur(img, (0, 0), level, borderType=cv2.BORDER_REPLICATE)
         here = (sigma > lower) & (sigma <= level)
         if here.any():
-            w = ((sigma[here] - lower) / (level - lower))[:, None]
+            w = ((sigma[here] - lower) / (level - lower))[:, None].astype(np.float32)
             out[here] = below[here] * (1.0 - w) + above[here] * w
         lower, below = level, above
         level *= mv_world().DOF_LEVELS
-    return out
+    return out.astype(np.float64)
 
 
 # ---- a frame of the stage --------------------------------------------------------------------------
@@ -765,8 +803,7 @@ def stage_frame(look, s, state=None):
         z0, z1 = min(bx[2] for bx in boxes), max(bx[3] for bx in boxes)
         near = (P[:, 0] >= x0) & (P[:, 0] <= x1) & (P[:, 2] >= z0) & (P[:, 2] <= z1)
         if near.any():
-            key, contact = shadow_at(P[near], n[near], state.capsules, getattr(state, "capsule_groups", None),
-                                     stage["shadow_light"], float(stage["shadow_blur"]))
+            key, contact = her_shadow(P[near], n[near], state, stage)
             keep = soft_light_at(key, contact, n[near], stage)
             idx = np.nonzero(plain.reshape(-1))[0][near]
             flat = img.reshape(-1, 3)
@@ -944,6 +981,198 @@ def mv_world():
 
 # ---- the command ----------------------------------------------------------------------------
 
+# ---- where she stands: the placement over the whole song ---------------------------------------------------
+
+def segment_hits(origins, ends, tri):
+    """for each segment origins[i] .. ends[i]: the share t (0 to 1) along it of the nearest face of `tri` (n x 3 x 3) it
+    crosses (inf where none) and that face's index (-1): Moller and Trumbore's test, every face against every segment"""
+    O = np.asarray(origins, dtype=np.float64).reshape(-1, 3)
+    D = np.asarray(ends, dtype=np.float64).reshape(-1, 3) - O
+    t_best = np.full(len(O), np.inf)
+    i_best = np.full(len(O), -1, dtype=np.int64)
+    tri = np.asarray(tri, dtype=np.float64).reshape(-1, 3, 3)
+    if not len(tri) or not len(O):
+        return t_best, i_best
+    a = tri[:, 0]
+    e1, e2 = tri[:, 1] - a, tri[:, 2] - a
+    for s in range(0, len(tri), 4096):
+        A, E1, E2 = a[s:s + 4096], e1[s:s + 4096], e2[s:s + 4096]
+        p = np.cross(D[:, None, :], E2[None, :, :])                     # (segments, faces, 3)
+        det = (E1[None, :, :] * p).sum(axis=2)
+        ok = np.abs(det) > 1e-12
+        inv = np.where(ok, 1.0 / np.where(ok, det, 1.0), 0.0)
+        tv = O[:, None, :] - A[None, :, :]
+        u = (tv * p).sum(axis=2) * inv
+        q = np.cross(tv, E1[None, :, :])
+        v = (D[:, None, :] * q).sum(axis=2) * inv
+        t = (E2[None, :, :] * q).sum(axis=2) * inv
+        hit = ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (t >= 0) & (t <= 1)
+        t = np.where(hit, t, np.inf)
+        j = np.argmin(t, axis=1)
+        tj = t[np.arange(len(O)), j]
+        better = tj < t_best
+        t_best[better] = tj[better]
+        i_best[better] = s + j[better]
+    return t_best, i_best
+
+
+def point_triangle_distance(P, tri):
+    """[points, faces]: the distance from each point to each face (Ericson's closest point on a triangle)"""
+    P = np.asarray(P, dtype=np.float64).reshape(-1, 3)[:, None, :]
+    a, b, c = (np.asarray(tri, dtype=np.float64).reshape(-1, 3, 3)[None, :, k, :] for k in range(3))
+    ab, ac, ap = b - a, c - a, P - a
+    d1, d2 = (ab * ap).sum(-1), (ac * ap).sum(-1)
+    bp = P - b
+    d3, d4 = (ab * bp).sum(-1), (ac * bp).sum(-1)
+    cp = P - c
+    d5, d6 = (ab * cp).sum(-1), (ac * cp).sum(-1)
+    va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denom = va + vb + vc
+        v = np.where(np.abs(denom) > 1e-300, vb / denom, 0.0)
+        w = np.where(np.abs(denom) > 1e-300, vc / denom, 0.0)
+        closest = a + ab * v[..., None] + ac * w[..., None]                                   # inside the face
+        t_ab = np.clip(np.where(np.abs(d1 - d3) > 1e-300, d1 / (d1 - d3), 0.0), 0.0, 1.0)
+        on_ab = a + ab * t_ab[..., None]
+        t_ac = np.clip(np.where(np.abs(d2 - d6) > 1e-300, d2 / (d2 - d6), 0.0), 0.0, 1.0)
+        on_ac = a + ac * t_ac[..., None]
+        t_bc = np.clip(np.where(np.abs((d4 - d3) + (d5 - d6)) > 1e-300, (d4 - d3) / ((d4 - d3) + (d5 - d6)), 0.0), 0.0, 1.0)
+        on_bc = b + (c - b) * t_bc[..., None]
+    # the regions of Ericson's test, the last that holds wins (they do not overlap)
+    out = closest
+    out = np.where(((va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0))[..., None], on_bc, out)
+    out = np.where(((vb <= 0) & (d2 >= 0) & (d6 <= 0))[..., None], on_ac, out)
+    out = np.where(((vc <= 0) & (d1 >= 0) & (d3 <= 0))[..., None], on_ab, out)
+    out = np.where(((d6 >= 0) & (d5 <= d6))[..., None], c, out)
+    out = np.where(((d3 >= 0) & (d4 <= d3))[..., None], b, out)
+    out = np.where(((d1 <= 0) & (d2 <= 0))[..., None], a, out)
+    return np.linalg.norm(P - out, axis=-1)
+
+
+CHECK_STEP = 0.25                 # MMD units: a capsule is checked as balls this far apart along its axis
+FLOOR_TOLERANCE = 0.06            # MMD units (about 5 mm): a sole lower than the floor by more is in it
+FLOOR_LOOK = 3.0                  # the floor under a sole is looked for this far above and below it
+VIEW_REACH = 150.0                # a camera's sight is checked this far: the inside of a thing it stands in lies nearer
+
+
+def check_placement(mesh, figure, frames, cameras, size=(1280, 720), body_margin=4.0):
+    """the numbers of where the stage puts her, over `frames` of the song: {"feet": the floor under her soles (the height
+    of the topmost face that looks up under each end of each sole: frames with a sole in the floor, frames with a floor of
+    another height under a sole or none), "body": frames where a ball of her capsules (CHECK_STEP apart) reaches into a face
+    that is not the floor under her (and, apart, into the floor), "cameras": per camera {"inside": frames where a ray of its
+    view meets the back of a face within VIEW_REACH first (it stands in or behind something), "hidden": frames where a face
+    lies between it and a point of her (the stage would be laid behind her there)}}.  `figure`: mv_world.Figure with her
+    body; `cameras`: {name: camera track}"""
+    world = mv_world()
+    P = mesh.positions
+    tri_all = P[mesh.faces]
+    normal = np.cross(tri_all[:, 1] - tri_all[:, 0], tri_all[:, 2] - tri_all[:, 0])
+    up = normal[:, 1] / np.maximum(np.linalg.norm(normal, axis=1), 1e-300)
+    states = [(f, figure.state(f)) for f in frames]
+    allpts = np.array([p for _, s in states for a, b, r in s.capsules for p in (a, b)])
+    lo, hi = allpts.min(axis=0) - body_margin, allpts.max(axis=0) + body_margin
+    tmin, tmax = tri_all.min(axis=1), tri_all.max(axis=1)
+    near_her = np.nonzero(((tmax >= lo) & (tmin <= hi)).all(axis=1))[0]
+    floor_faces = near_her[up[near_her] > 0.9]
+    groups = figure.body.groups if figure.body is not None else []
+    feet_idx = [i for i, g in enumerate(groups) if g.endswith("foot")]
+    rows = {"sunk": [], "off_floor": [], "floor_heights": [], "lift": [], "body": [], "body_floor": []}
+    for f, s in states:
+        caps = s.capsules
+        soles = []
+        for i in feet_idx:
+            a, b, r = caps[i]
+            for p in (a, b):
+                soles.append((p[0], min(a[1], b[1]) - r, p[2]))
+        soles = np.array(soles)
+        t, k = segment_hits(soles + [0.0, FLOOR_LOOK, 0.0], soles - [0.0, FLOOR_LOOK, 0.0], tri_all[floor_faces])
+        found = np.isfinite(t)
+        heights = soles[:, 1] + FLOOR_LOOK - 2.0 * FLOOR_LOOK * np.where(found, t, 0.0)
+        if not found.all():
+            rows["off_floor"].append(f)
+        else:
+            rows["floor_heights"].append(heights)
+            rows["lift"].append(soles[:, 1] - heights)
+            if (soles[:, 1] < heights - FLOOR_TOLERANCE).any():
+                rows["sunk"].append(f)
+        # her body against the faces near her: balls along every capsule
+        balls, radii, is_foot = [], [], []
+        for i, (a, b, r) in enumerate(caps):
+            a, b = np.asarray(a), np.asarray(b)
+            n = max(1, int(math.ceil(np.linalg.norm(b - a) / CHECK_STEP)))
+            for j in range(n + 1):
+                balls.append(a + (b - a) * j / n)
+                radii.append(r)
+                is_foot.append(i in feet_idx)
+        balls, radii, is_foot = np.array(balls), np.array(radii), np.array(is_foot)
+        blo, bhi = balls.min(axis=0) - radii.max(), balls.max(axis=0) + radii.max()
+        cand = near_her[((tmax[near_her] >= blo) & (tmin[near_her] <= bhi)).all(axis=1)]
+        if len(cand):
+            dist = point_triangle_distance(balls, tri_all[cand])
+            into = dist < radii[:, None] - FLOOR_TOLERANCE
+            floorish = up[cand] > 0.9
+            if (into & ~floorish[None, :]).any():
+                rows["body"].append(f)
+            if (into[~is_foot] & floorish[None, :]).any():
+                rows["body_floor"].append(f)
+    heights = np.concatenate(rows["floor_heights"]) if rows["floor_heights"] else np.zeros(0)
+    lift = np.concatenate(rows["lift"]) if rows["lift"] else np.zeros(0)
+    out = {"frames": len(frames), "feet": {"sunk": _spans(rows["sunk"]), "sunk_frames": len(rows["sunk"]),
+                                           "off_floor": _spans(rows["off_floor"]), "off_floor_frames": len(rows["off_floor"]),
+                                           "floor_height_min": float(heights.min()) if heights.size else None,
+                                           "floor_height_max": float(heights.max()) if heights.size else None,
+                                           "sole_above_floor_p01": float(np.percentile(lift, 1)) if lift.size else None,
+                                           "sole_above_floor_min": float(lift.min()) if lift.size else None},
+           "body": {"into_things": _spans(rows["body"]), "into_things_frames": len(rows["body"]),
+                    "body_on_floor": _spans(rows["body_floor"]), "body_on_floor_frames": len(rows["body_floor"]),
+                    "faces_near_her": int(len(near_her)), "of_them_floor": int(len(floor_faces))},
+           "cameras": {}}
+    for name, track in cameras.items():
+        inside, hidden = [], []
+        for f, s in states:
+            v = world.view_at(track, f, size)
+            # the centre and the four corners of the picture, VIEW_REACH far
+            dirs = []
+            for u, w in ((0.5, 0.5), (0.02, 0.02), (0.98, 0.02), (0.02, 0.98), (0.98, 0.98)):
+                d = v.forward * v.focal + (u - 0.5) * size[0] * v.right - (w - 0.5) * size[1] * v.up
+                dirs.append(d / np.linalg.norm(d))
+            ends = v.eye[None, :] + VIEW_REACH * np.array(dirs)
+            box_lo = np.minimum(ends.min(axis=0), v.eye) - 1.0
+            box_hi = np.maximum(ends.max(axis=0), v.eye) + 1.0
+            cand = np.nonzero(((tmax >= box_lo) & (tmin <= box_hi)).all(axis=1))[0]
+            t, k = segment_hits(np.repeat(v.eye[None, :], len(ends), axis=0), ends, tri_all[cand])
+            hit = np.isfinite(t)
+            if hit.any():
+                back = (normal[cand[k[hit]]] * (ends[hit] - v.eye)).sum(axis=1) > 0
+                if back.any():
+                    inside.append(f)
+            # points of her: both ends of every capsule
+            pts = np.array([p for a, b, r in s.capsules for p in (a, b)])
+            box_lo = np.minimum(pts.min(axis=0), v.eye) - 1.0
+            box_hi = np.maximum(pts.max(axis=0), v.eye) + 1.0
+            cand = np.nonzero(((tmax >= box_lo) & (tmin <= box_hi)).all(axis=1))[0]
+            if len(cand):
+                t, _ = segment_hits(np.repeat(v.eye[None, :], len(pts), axis=0), pts, tri_all[cand])
+                # (a face within her own reach of the point is her floor or what she touches, not in front of her)
+                gap = (1.0 - t) * np.linalg.norm(pts - v.eye, axis=1)
+                if (np.isfinite(t) & (gap > 2.0)).any():
+                    hidden.append(f)
+        out["cameras"][name] = {"inside": _spans(inside), "inside_frames": len(inside), "hidden": _spans(hidden),
+                                "hidden_frames": len(hidden)}
+    return out
+
+
+def _spans(frames):
+    """[[first, last], ...] runs of frames, with their seconds"""
+    runs = []
+    for f in frames:
+        if runs and f == runs[-1][1] + 1:
+            runs[-1][1] = f
+        else:
+            runs.append([f, f])
+    return [{"frames": [a, b], "seconds": [round(a / float(SONG_FPS), 2), round(b / float(SONG_FPS), 2)]} for a, b in runs]
+
+
 def _mv_look():
     import importlib.util
     spec = importlib.util.spec_from_file_location("mv_look", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_look.py"))
@@ -994,6 +1223,16 @@ def main(argv=None):
     s.add_argument("--motion", action="append", default=[])
     s = sub.add_parser("draw", help="draw the frames of a job file (write_stage with jobs runs these)")
     s.add_argument("job")
+    s = sub.add_parser("check", help="where the set puts her over the song: her feet on its floor, her body against it, the "
+                                     "cameras in it or behind something in front of her")
+    s.add_argument("set")
+    s.add_argument("out", help="the numbers (.json)")
+    s.add_argument("--model", required=True, help="the dancer's model")
+    s.add_argument("--motion", action="append", default=[], required=True, help="her motions, in the order MMD loads them")
+    s.add_argument("--camera", action="append", default=[], metavar="NAME=CAMERA.vmd", help="a camera to check (repeatable)")
+    s.add_argument("--from", dest="start", type=int, default=0, help="the first frame of the song (default 0)")
+    s.add_argument("--to", type=int, help="the last frame (default: her motion's last)")
+    s.add_argument("--size", default="1280x720")
     args = p.parse_args(argv)
     try:
         if args.command == "info":
@@ -1026,6 +1265,25 @@ def main(argv=None):
             if spill is not None:
                 as_picture(spill).save(args.out[:-4] + "_spill.png")
                 result["spill"] = os.path.abspath(args.out[:-4] + "_spill.png")
+        elif args.command == "check":
+            world = mv_world()
+            spec = load_set(args.set)
+            figure = world.Figure.from_files(args.model, args.motion, body=True)
+            last = figure.last if args.to is None else min(int(args.to), figure.last)
+            cameras = {}
+            for item in args.camera:
+                name, _, path = item.partition("=")
+                if not path:
+                    raise ValueError("--camera is NAME=CAMERA.vmd, not %r" % item)
+                cameras[name] = world.camera_track(path)
+            got = check_placement(set_mesh(spec), figure, list(range(int(args.start), last + 1)), cameras, _size(args.size))
+            got.update({"set": os.path.abspath(args.set), "model": os.path.abspath(args.model),
+                        "motions": [os.path.abspath(m) for m in args.motion], "offset": spec["offset"]})
+            with open(args.out, "w", encoding="utf-8") as f:
+                json.dump(got, f, ensure_ascii=False, indent=1)
+            result = {"out": os.path.abspath(args.out), "frames": got["frames"], "sunk": got["feet"]["sunk_frames"],
+                      "off_floor": got["feet"]["off_floor_frames"], "into_things": got["body"]["into_things_frames"],
+                      "cameras": {k: [v["inside_frames"], v["hidden_frames"]] for k, v in got["cameras"].items()}}
         else:
             result = _draw_job(args.job)
     except (ValueError, KeyError) as exc:
