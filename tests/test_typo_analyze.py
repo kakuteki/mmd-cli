@@ -1094,6 +1094,17 @@ class FontMatchTest(unittest.TestCase):
             self.assertGreater(r["ranking"][0]["iou"], r["ranking"][1]["iou"])
             self.assertEqual(r["chars"], len(text))
 
+    def test_a_glow_does_not_make_the_face_heavier(self):
+        # a glow round the letters (the references') drew the match to the bold faces (Yu Gothic Bold over Medium)
+        from PIL import Image, ImageFilter
+        text = "東京の夜空に光る星"
+        fonts = ["yumin.ttf", "msmincho.ttc", "NotoSerifJP-VF.ttf", "YuGothM.ttc", "msgothic.ttc", "YuGothB.ttc"]
+        a, box, mids = self.spaced(text, "YuGothM.ttc", size=44)
+        g = np.asarray(Image.fromarray(a).filter(ImageFilter.GaussianBlur(2)), np.float64)
+        b = np.clip(a.astype(np.float64) + 1.2 * g, 0, 255).astype(np.uint8)
+        r = TA.font_match(b, box, text, [font_path(f) for f in fonts], chars=mids)
+        self.assertEqual(os.path.basename(r["ranking"][0]["font"]), "YuGothM.ttc", r["ranking"][:3])
+
     def test_a_rule_under_the_line_does_not_change_the_font(self):
         text = "東京の夜空に光る星"
         fonts = ["yumin.ttf", "msmincho.ttc", "NotoSerifJP-VF.ttf", "YuGothM.ttc", "msgothic.ttc"]

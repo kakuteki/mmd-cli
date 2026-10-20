@@ -1536,6 +1536,7 @@ TYPE_PAD = 0.1                    # heights round the box where a text's letters
 TYPE_CONTRAST = 25.0              # CIEDE76 between the letters' fill and the ground under which they are not read (a
 #                                   text half faded in, a grey line on a grey ground)
 TYPE_TAIL = 0.25                  # the cover under this (a glow) is none, over 1 - this is whole
+FONT_CORE = 0.75                  # the cover the font match takes as the letters (drawn glyphs cut at a half)
 LETTER_TALL = 1.15                # a piece taller than this many box heights is not a letter (a figure behind the text,
 #                                   the dancer's legs across the box in our v7)
 LETTER_RULE = (2.5, 0.3)          # a piece wider than 2.5 box heights and lower than 0.3 of one is a rule, not a letter
@@ -1658,7 +1659,10 @@ def font_match(rgb, box, text, fonts, chars=None, size=160):
     found = _letters_of(rgb, box)
     if found is None:
         return {"ranking": [], "chars": 0}
-    strokes, _, (ox, oy), _ = found
+    # the letters' cores (FONT_CORE of the fill or more): a glow round them widens the half-covered edge and draws the
+    # match to the heavier faces
+    strokes, cover, (ox, oy), _ = found
+    strokes = strokes & (cover >= FONT_CORE)
     vertical = bool(box.get("vertical"))
     if chars is None or len(chars) != len(letters):
         n = len(letters)
