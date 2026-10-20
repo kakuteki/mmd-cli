@@ -1084,3 +1084,18 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
     にする**（全曲でも区間でも 1334・6774 から）。決めるのは協調役。
 - 2026-10-21 **人の踊りの元データを片付けで消した（協調役の手落ち）**: hinata の `stage6` の 2 日より古い .npz・.npy・.tar の片付けで、FineDance の踊りの .npy（`fingers/human/dl/finedance/x2/finedance/motion/`、human_baseline の hbpack.py が読む）・DD100 の SMPL-X の .npy（`fingers/human/dl/dd100/x/data/motion/smplx/`）・SMPL-X の休みの関節 `smplx_neu_J_1.npy` まで消えた。
   集計の値（`tools/mvi/human.json`・表）は残るので仕上げは止まらない。**加賀さんの決め: 取り直すのは必要になったとき**（人のデータで新しい物差しを測るとき。前と同じ配布元から）。AIST++（.pkl）・参考の動画・舞台の模型・testdata・v9〜v11 の組み立ては消していない。片付けの決まりを COMMON.md に足した。
+- 2026-10-21 **typoref・typobase・typorev の取り込み（@PizaCG の照明・歌詞の文字・飾りの研究の道具と、その敵対的査読の直し）**（研究は枝 typoref、main に合わせた土台は
+  枝 typobase 0e00708、査読は枝 typorev 6bf8215。記録は作業木 typorev の `_spike/out/stage6/typorev/NOTES.md`、**直した狙いの数は同じ所の `targets_corrected.md`**、
+  hinata `C:/work/hibikase/stage6/typorev/`。参考の動画は hinata にだけ置き、配らない）。
+  - **入った道具**: `tools/typo_analyze.py`（歌詞の行を追って見えている時間・置き場・入りと出の種類・書体・声との時刻。`phases` で保存したコマから入りと出を読み直す）、
+    `tools/mograph_analyze.py`（カット・拍との揃い・パンチ・フラッシュ・ゆれ）、`tools/look_analyze.py` の照明の物差し（`regions --faces` で顔の頬の L*・C*ab・色相、
+    ちらつきはカットの前後を除く、光の筋と光だまり）。docs/params はこの道具の値を入れて 2,385 件（取り込みの後 `param_inventory.py --check` が ok）。
+  - **査読の結論: 研究の数は直してから使う**。照明の「参考は人物を暗くする」は衣装の色の違い（同じ動画で衣装だけ変わると人物の L* は 48〜53 違い、顔の肌は同じ）で、
+    **人物を暗くする方針は取りやめ**。人物の明るさは顔の肌で比べる（参考 79.2 [74.2, 81.3]、v11 r2 正面 79.6 は範囲内、**新しい舞台のカメラ D は 91〜92 で肌の色が抜ける**）。
+    文字は道具が字の無いコマを「見えた」と読み、看板が歌詞に混ざっていた（見えている時間 1.07 → 0.72 秒、下 1/3 の行 38 → 67 %）。飾りはカットが拍の約 2.3 コマ前に
+    揃い（9 本中 5 本）、パンチ・フラッシュ・ゆれは多めに読んでいた（2.5・0.80 回/分・1.41）。グリッチと粒の数は狙いに使わない。
+  - **書体**: Y1（ゆうたONE）は収益化しなくても公開するならフォローが要る → **OFL の書体に替える**（v7 で Y1 を使っていたのは名のり 10・ロゴ 2・サビ頭のカード 4・副題 1）。
+    HG は収益化しなければ無料（収益化するなら 1 台 1 書体 18,700 円）なので使わない。
+  - **全体の試験**（hinata、`typorev/suite/suite_6bf8215.log`、main_suite の作り。判定行は記録と別の手で読んだ）: `Ran 2844 tests in 1693.238s` /
+    `OK (skipped=39, expected failures=1)`。取り込みは衝突なし（README・docs/params は自動で合わさった）。
+  - 2 段目（照明 light3・文字 kinetic・飾り mograph）には直した狙いの数を渡した（3 本とも typobase 0e00708 から始めていたので typorev を merge して測り直す）。
