@@ -479,6 +479,34 @@ class TrackMeasureTest(unittest.TestCase):
         y, rgb = frame(2, tear=True)
         self.assertEqual(TA._glitch(rgb, y, rgb_ref, y_ref, box, (0.0, 0.0), 1.0)[1], 1)
 
+    def panned(self, sign, n_frames=150, step=1.3):
+        """a picture panning `step` px a frame to the left behind a line of text that stays put (sign False) or is part
+        of the picture and pans with it (sign True)"""
+        rng = np.random.default_rng(11)
+        tex = ndi.gaussian_filter(rng.standard_normal((180, 320 + int(step * n_frames) + 40)), 3.0)
+        tex = 0.12 + 0.28 * (tex - tex.min()) / (tex.max() - tex.min())
+        out = {}
+        for n in range(n_frames):
+            x0 = int(round(step * n))
+            frac = step * n - x0
+            ground = (1 - frac) * tex[:, x0:x0 + 320] + frac * tex[:, x0 + 1:x0 + 321]
+            off = (-step * n + 60.0, 0.0) if sign else (0.0, 0.0)
+            text = draw_text(bg=0.0, seed=n, offset=off, centre=(160.0 - 60.0 if sign else 160.0, 120.0)).astype(np.float64) / 255.0
+            mask = text.mean(axis=2) > 0.5
+            f = np.repeat(ground[..., None], 3, axis=2)
+            f[mask] = text[mask]
+            out[n] = np.clip(f * 255.0 + 0.5, 0, 255).astype(np.uint8)
+        return out
+
+    def test_a_sign_moving_with_the_picture_is_in_the_scene(self):
+        # a neon sign of the night street (RE: 踊): the camera pans and the sign goes with the street
+        m = self.measure(self.panned(sign=True))
+        self.assertEqual(m["space"]["kind"], "scene", m["space"])
+
+    def test_a_line_on_the_screen_over_a_panning_picture_stays(self):
+        m = self.measure(self.panned(sign=False))
+        self.assertEqual(m["space"]["kind"], "screen", m["space"])
+
     def test_a_line_only_seen_moving_is_not_whole(self):
         # never still: its look is read off a frame of its motion (the look of the lyrics is read on the whole ones)
         m = self.measure(clip_of(lambda n: {"alpha": 0.0} if n < 10 or n > 50 else {"offset": (3.0 * (n - 30), 0.0)}))

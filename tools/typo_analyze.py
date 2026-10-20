@@ -616,6 +616,13 @@ SWAP_NCC = 0.5                    # two samples of a track whose texts match les
 BG_LEAST = 1.0                    # px a frame: the picture behind a text moves at least this to tell scene from screen
 WORLD_SHARE = 0.6                 # a text that moves with the picture behind it in this share of those frames is in the
 #                                   scene; one that stays put while it moves, laid over it (on the screen)
+BG_GAP = 3                        # frames: the picture's step behind a text is read between frames read this close (the
+#                                   hold is read every third frame)
+BG_PART = 24                      # px: a part of the band beside the text (left, right, above, below) this large in both
+#                                   ways is read for the picture's step (the text's own place is left out, not filled in:
+#                                   a filled patch stays put and pulls the step to 0)
+BG_SPAN = (6, 15)                 # frames: the text's and the picture's steps are added up over spans this long (one
+#                                   frame's step is read to a pixel only)
 
 
 def _ink_region(y, box, pad=0.15):
@@ -855,19 +862,31 @@ def measure_track(frames, track, fps, start=0.0, bounds=None, origin=(0, 0), fra
 
 
 def _background_shift(y_a, y_b, box):
-    """how the picture behind a text moves from one frame to the next (px, and the phase correlation's response): the
-    frames' band with the text's box (grown by half its height) filled with the band's mean"""
+    """how the picture behind a text moves from one frame to another (px, and the phase correlation's best response):
+    the parts of the band beside the text's box (grown by half its height) that are BG_PART px or more, each read alone
+    (Hanning window), their steps weighted by their response and size"""
     cv2 = _cv2()
-    a = np.array(y_a, np.float32)
-    b = np.array(y_b, np.float32)
+    a = np.asarray(y_a, np.float32)
+    b = np.asarray(y_b, np.float32)
+    hh, ww = a.shape[:2]
     h = box["h"]
-    y0, y1 = int(max(0, box["y0"] - 0.5 * h)), int(min(a.shape[0], box["y1"] + 0.5 * h))
-    x0, x1 = int(max(0, box["x0"] - 0.5 * h)), int(min(a.shape[1], box["x1"] + 0.5 * h))
-    a[y0:y1, x0:x1] = a.mean()
-    b[y0:y1, x0:x1] = b.mean()
-    win = cv2.createHanningWindow((a.shape[1], a.shape[0]), cv2.CV_32F)
-    (dx, dy), resp = cv2.phaseCorrelate(a, b, win)
-    return float(dx), float(dy), float(resp)
+    y0, y1 = int(max(0, box["y0"] - 0.5 * h)), int(min(hh, box["y1"] + 0.5 * h))
+    x0, x1 = int(max(0, box["x0"] - 0.5 * h)), int(min(ww, box["x1"] + 0.5 * h))
+    parts = [(slice(0, hh), slice(0, x0)), (slice(0, hh), slice(x1, ww)), (slice(0, y0), slice(0, ww)),
+             (slice(y1, hh), slice(0, ww))]
+    found = []
+    for sy, sx in parts:
+        pa, pb = a[sy, sx], b[sy, sx]
+        if pa.shape[0] < BG_PART or pa.shape[1] < BG_PART or float(pa.std()) < 1e-3:
+            continue
+        win = cv2.createHanningWindow((pa.shape[1], pa.shape[0]), cv2.CV_32F)
+        (dx, dy), resp = cv2.phaseCorrelate(np.ascontiguousarray(pa), np.ascontiguousarray(pb), win)
+        if resp > 0.05 and abs(dx) < 0.25 * pa.shape[1] and abs(dy) < 0.25 * pa.shape[0]:
+            found.append((resp * pa.size, float(dx), float(dy), float(resp)))
+    if not found:
+        return float("nan"), float("nan"), 0.0
+    wsum = sum(f[0] for f in found)
+    return (sum(f[0] * f[1] for f in found) / wsum, sum(f[0] * f[2] for f in found) / wsum, max(f[3] for f in found))
 
 
 def _measure_segment(frames, ys, ns, track, ref_i, tmpl, fps, start, bounds):
@@ -966,9 +985,9 @@ def _measure_segment(frames, ys, ns, track, ref_i, tmpl, fps, start, bounds):
                "s": float(s), "split_px": split_px, "torn": torn, "angle": float("nan"), "alpha": alpha,
                "alpha_vis": alpha_vis, "alpha_k": [float(a) for a in alpha_k], "sharp": float(sharp),
                "ink_vis": ink_vis, "ink_k": [float(a) for a in ink_k], "bg_dx": float("nan"), "bg_dy": float("nan")}
-        if prev is not None and n - prev == 1:
+        if prev is not None and n - prev <= BG_GAP:
             bdx, bdy, resp = _background_shift(ys[prev], y, here)
-            row.update({"bg_dx": bdx, "bg_dy": bdy, "bg_resp": resp})
+            row.update({"bg_dx": bdx, "bg_dy": bdy, "bg_resp": resp, "bg_dn": int(n - prev)})
         series.append(row)
         prev = n
     m = _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds)
@@ -1120,22 +1139,39 @@ def _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds
     times = {k: start + v / float(fps) for k, v in frames.items()}
     held = series[a:b + 1]
     dur = max(1, held[-1]["n"] - held[0]["n"]) / float(fps)
-    # scene or screen: in the frames where the picture behind it moves, does the text move with it or stay put
+    # scene or screen: over spans of frames where the picture behind it moves, does the text move with it or stay put
+    # (the steps added up over BG_SPAN frames: one frame's step of the text is read to a pixel only)
     follows = stays = moving = 0
+    span = None
+
+    def judge(sp):
+        nonlocal follows, stays, moving
+        frames_, tx_, ty_, bx_, by_ = sp
+        bg = math.hypot(bx_, by_)
+        if frames_ < BG_SPAN[0] or bg < BG_LEAST * frames_:
+            return
+        moving += frames_
+        tol = max(1.5, 0.35 * bg)
+        if math.hypot(tx_ - bx_, ty_ - by_) <= tol:
+            follows += frames_
+        elif math.hypot(tx_, ty_) <= tol:
+            stays += frames_
     for i in range(1, len(series)):
         r, q = series[i], series[i - 1]
-        if r["n"] - q["n"] != 1 or not (r["present"] and q["present"]) or not np.isfinite(r["bg_dx"]):
-            continue
-        bg = math.hypot(r["bg_dx"], r["bg_dy"])
-        if bg < BG_LEAST:
-            continue
-        moving += 1
-        tdx, tdy = r["tx"] - q["tx"], r["ty"] - q["ty"]
-        tol = max(0.75, 0.35 * bg)
-        if math.hypot(tdx - r["bg_dx"], tdy - r["bg_dy"]) <= tol:
-            follows += 1
-        elif math.hypot(tdx, tdy) <= tol:
-            stays += 1
+        dn = r["n"] - q["n"]
+        ok = (dn <= BG_GAP and r["present"] and q["present"] and r.get("bg_dx") is not None and
+              np.isfinite(r["bg_dx"]) and r.get("bg_dn", 1) == dn)
+        if ok:
+            if span is None:
+                span = [0, 0.0, 0.0, 0.0, 0.0]
+            span[0] += dn
+            span[1] += r["tx"] - q["tx"]
+            span[2] += r["ty"] - q["ty"]
+            span[3] += r["bg_dx"]
+            span[4] += r["bg_dy"]
+        if span is not None and (not ok or span[0] >= BG_SPAN[1] or i == len(series) - 1):
+            judge(span)
+            span = None
     space = {"frames": moving, "follows": follows / float(moving) if moving else float("nan"),
              "stays": stays / float(moving) if moving else float("nan")}
     space["kind"] = ("scene" if moving and space["follows"] >= WORLD_SHARE else
