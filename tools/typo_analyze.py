@@ -987,7 +987,7 @@ def _grad(y, scale=1.0):
 
 GLITCH_SPLIT = 2.0                # px between red and blue that change within a phase: a colour split
 TEAR_SHIFT = 3                    # px: a row of the text moved sideways this much against the reference is torn
-TEAR_SHARE = 0.08                 # a frame with this share of the text's rows torn is torn
+TEAR_SHARE = 0.15                 # a frame with this share of the text's rows torn (in bands of 3 rows or more) is torn
 SPLIT_REACH = 8                   # px searched for the colour split
 TEAR_REACH = 12                   # px searched for a torn row
 
@@ -1052,12 +1052,19 @@ def _glitch(rgb, y, rgb_ref, y_ref, rb, t, s):
                 vals[k2] = float((u * v).sum() / den) if den > 1e-12 else -1.0
             rows += 1
             k_best = max(vals, key=vals.get)
-            # moved, matching well there, and clearly better than where it should be
-            if abs(k_best) >= TEAR_SHIFT and vals[k_best] > 0.6 and vals[k_best] - vals[0] > 0.25:
+            # moved whole (matching very well there) and not where it should be (a row of the text over a moving
+            # picture matches a little better somewhere else by chance; a torn row is the text moved)
+            if abs(k_best) >= TEAR_SHIFT and vals[k_best] > 0.8 and vals[0] < 0.6:
                 torn_rows.append(rr)
-        # a tear moves a band of rows together: at least two neighbouring rows
-        band = sum(1 for i, r_ in enumerate(torn_rows) if (i > 0 and torn_rows[i - 1] == r_ - 1) or
-                   (i + 1 < len(torn_rows) and torn_rows[i + 1] == r_ + 1))
+        # a tear moves a band of rows together: runs of at least three neighbouring rows
+        band, run = 0, 1
+        for i in range(1, len(torn_rows) + 1):
+            if i < len(torn_rows) and torn_rows[i] == torn_rows[i - 1] + 1:
+                run += 1
+                continue
+            if run >= 3:
+                band += run
+            run = 1
         torn = int(rows > 0 and band / float(rows) >= TEAR_SHARE)
     return split, torn
 
@@ -1133,8 +1140,10 @@ def _track_summary(series, track, rb, rchars, ref_n, fps, start, n_chars, bounds
             "torn_frames": int(sum(r["torn"] for r in held)),
             "drift_h_per_s": math.hypot(held[-1]["tx"] - held[0]["tx"], held[-1]["ty"] - held[0]["ty"]) / h / dur,
             "scale_change": held[-1]["s"] / max(held[0]["s"], 1e-9)}
+    # whole: the text stood whole and still on its reference frame (a text only seen coming or going, faint or blurred,
+    # has its look read off a part of it: the look of the lyrics is read on the whole ones)
     return {"frames": frames, "times": times, "enter": enter, "exit": leave, "hold": hold, "space": space,
-            "ref": {"box": rb, "chars": [list(c) for c in rchars]}, "series": series}
+            "whole": bool(still[k_ref]), "ref": {"box": rb, "chars": [list(c) for c in rchars]}, "series": series}
 
 
 def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
@@ -1218,8 +1227,11 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
                      "torn_frames": int(sum(r["torn"] for r in moving)), "flicker": int(flicker)}
     if out["glitch"]["split_var"] >= GLITCH_SPLIT or out["glitch"]["torn_frames"] >= 2 or flicker >= 1:
         kinds.append("glitch")
-    sharp = [r["sharp"] for r in moving if np.isfinite(r["sharp"]) and r["ink_vis"] > 0.5]
-    if sharp and min(sharp) < BLUR_LEAST:
+    # a blur: soft edges on at least two frames where the text already stands out (one faint first frame is soft
+    # because it is faint)
+    soft = [r for r in moving if r["sharp"] is not None and np.isfinite(r["sharp"]) and r["ink_vis"] > 0.5 and
+            r["alpha_vis"] >= 0.5 and r["sharp"] < BLUR_LEAST]
+    if len(soft) >= 2:
         kinds.append("blur")
     if not kinds:
         kinds = ["cut"] if out["frames"] <= 1 else ["other"]
@@ -1391,7 +1403,7 @@ def text_style(rgb, box):
 
 
 TYPE_HV = 0.62                    # horizontal strokes thinner than this share of the vertical ones: mincho.  Measured
-#                                   on drawn text (48 to 120 px): gothic 0.72 to 0.97 (Noto Sans JP, Yu Gothic, Meiryo,
+#                                   on the letters of drawn text (48 to 120 px): gothic 0.72 to 1.00 (Noto Sans JP, Yu Gothic, Meiryo,
 #                                   MS Gothic, BIZ UDGothic, HG Gothic M, HG Soei Kaku Pop, UD Digi Kyokasho), mincho 0.24 to
 #                                   0.55 (Yu Mincho, MS Mincho, Noto Serif JP, HG Mincho B); BIZ UDMincho (0.77), the textbook
 #                                   and brush faces (HG Kyokasho 0.77, HG Gyosho 0.81 to 0.86, HG Seikaisho 0.58 to 0.76) read
@@ -1399,33 +1411,21 @@ TYPE_HV = 0.62                    # horizontal strokes thinner than this share o
 
 
 def typeface(rgb, box):
-    """the typeface of a text on one frame from its strokes (as text_style finds them): weight (the median stroke
-    width, measured across each stroke to a fraction of a pixel, over the text's height), hv (the horizontal strokes'
-    width over the vertical ones': mincho draws its horizontals thin), uneven (how the width varies along the strokes
-    and between them), class: gothic or mincho (TYPE_HV)"""
+    """the typeface of a text on one frame from its letters (_letters_of): weight (the median stroke width, measured
+    across each stroke to a fraction of a pixel, over the text's height), hv (the horizontal strokes' width over the
+    vertical ones': mincho draws its horizontals thin), uneven (how the width varies along the strokes and between
+    them), class: gothic or mincho (TYPE_HV); None when the letters stand out too little from the ground (TYPE_CONTRAST)"""
     ndi = _ndi()
     from skimage.morphology import skeletonize
-    a = np.asarray(rgb, np.uint8)
-    h_img, w_img = a.shape[:2]
-    hb = max(2.0, box["h"])
-    x0 = int(max(0, box["x0"] - STYLE_GROUND[1] * hb))
-    y0 = int(max(0, box["y0"] - STYLE_GROUND[1] * hb))
-    x1 = int(min(w_img, math.ceil(box["x1"] + STYLE_GROUND[1] * hb)))
-    y1 = int(min(h_img, math.ceil(box["y1"] + STYLE_GROUND[1] * hb)))
-    lab = _lab(a[y0:y1, x0:x1])
-    yy, xx = np.mgrid[y0:y1, x0:x1]
-    ring_in = ((xx < box["x0"] - STYLE_GROUND[0] * hb) | (xx > box["x1"] + STYLE_GROUND[0] * hb) |
-               (yy < box["y0"] - STYLE_GROUND[0] * hb) | (yy > box["y1"] + STYLE_GROUND[0] * hb))
-    near = ((xx >= box["x0"] - STYLE_PAD * hb) & (xx <= box["x1"] + STYLE_PAD * hb) &
-            (yy >= box["y0"] - STYLE_PAD * hb) & (yy <= box["y1"] + STYLE_PAD * hb))
-    ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
-    de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
-    strokes = near & (de > max(_otsu(de[near]), 8.0))
     out = {"weight": float("nan"), "hv": float("nan"), "uneven": float("nan"), "class": None}
-    if strokes.sum() < 50:
+    found = _letters_of(rgb, box)
+    if found is None:
         return out
-    full = float(np.percentile(de[strokes], 90))
-    soft = np.clip(de / max(full, 1e-6), 0.0, 1.0) * near          # each pixel's share covered by the strokes
+    strokes, soft, _, contrast = found
+    out["contrast"] = contrast
+    if strokes.sum() < 50 or contrast < TYPE_CONTRAST:
+        return out
+    hb = max(2.0, box["h"])
     rows = np.nonzero(strokes.any(axis=1))[0] if not box.get("vertical") else np.nonzero(strokes.any(axis=0))[0]
     tall = float(np.percentile(rows, 98) - np.percentile(rows, 2) + 1) if len(rows) else hb
     depth = ndi.distance_transform_edt(strokes)
@@ -1478,8 +1478,20 @@ def typeface(rgb, box):
     return out
 
 
-def _strokes_of(rgb, box):
-    """the strokes of a text on a frame (as text_style finds them) and the region they were looked for in"""
+TYPE_PAD = 0.1                    # heights round the box where a text's letters are looked for: farther out lie a rule
+#                                   under the line, a shadow's blur, more of the picture behind
+TYPE_CONTRAST = 25.0              # CIEDE76 between the letters' fill and the ground under which they are not read (a
+#                                   text half faded in, a grey line on a grey ground)
+
+
+def _letters_of(rgb, box, pad=TYPE_PAD):
+    """the letters of a text on one frame (RGB uint8 at the video's size, box in its px): in the box and `pad` heights
+    round it, the pixels whose colour lies on the mix of the text's fill and its ground (an anti-aliased edge is such a
+    mix) and nearer the fill, with the share of each the fill covers (0..1); a rule under the line, a grid line or a
+    figure of another colour behind it, an outline, a shadow and a glow are not letters.  The ground is the colour round
+    the box (text_style's ring), the fill the colour of the deepest of the pixels far from it.  Returns (mask, cover,
+    (x0, y0) of their region in the frame, the fill's distance from the ground) or None"""
+    ndi = _ndi()
     a = np.asarray(rgb, np.uint8)
     h_img, w_img = a.shape[:2]
     hb = max(2.0, box["h"])
@@ -1487,16 +1499,29 @@ def _strokes_of(rgb, box):
     y0 = int(max(0, box["y0"] - STYLE_GROUND[1] * hb))
     x1 = int(min(w_img, math.ceil(box["x1"] + STYLE_GROUND[1] * hb)))
     y1 = int(min(h_img, math.ceil(box["y1"] + STYLE_GROUND[1] * hb)))
+    if x1 - x0 < 3 or y1 - y0 < 3:
+        return None
     lab = _lab(a[y0:y1, x0:x1])
     yy, xx = np.mgrid[y0:y1, x0:x1]
     ring_in = ((xx < box["x0"] - STYLE_GROUND[0] * hb) | (xx > box["x1"] + STYLE_GROUND[0] * hb) |
                (yy < box["y0"] - STYLE_GROUND[0] * hb) | (yy > box["y1"] + STYLE_GROUND[0] * hb))
-    near = ((xx >= box["x0"] - STYLE_PAD * hb) & (xx <= box["x1"] + STYLE_PAD * hb) &
-            (yy >= box["y0"] - STYLE_PAD * hb) & (yy <= box["y1"] + STYLE_PAD * hb))
+    near = ((xx >= box["x0"] - pad * hb) & (xx <= box["x1"] + pad * hb) &
+            (yy >= box["y0"] - pad * hb) & (yy <= box["y1"] + pad * hb))
+    if not near.any():
+        return None
     ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
     de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
     strokes = near & (de > max(_otsu(de[near]), 8.0))
-    return strokes, (x0, y0)
+    if strokes.sum() < 20:
+        return None
+    depth = ndi.distance_transform_edt(strokes)
+    fill = np.median(lab[strokes & (depth >= max(1.0, float(np.percentile(depth[strokes], 80))))], axis=0)
+    seg = fill - ground
+    contrast = float(np.sqrt((seg * seg).sum()))
+    t = np.clip(((lab - ground) * seg).sum(axis=-1) / max(contrast ** 2, 1e-9), 0.0, 1.0)
+    off = np.sqrt(((lab - (ground + t[..., None] * seg)) ** 2).sum(axis=-1))
+    cover = np.where(near & (off < max(OUTLINE_DE, 0.2 * contrast)), t, 0.0)
+    return cover >= 0.5, cover, (x0, y0), contrast
 
 
 def _weight_axes(font, weight):
@@ -1532,7 +1557,10 @@ def font_match(rgb, box, text, fonts, chars=None, size=160):
     cv2 = _cv2()
     ndi = _ndi()
     letters = [ch for ch in text if not ch.isspace()]
-    strokes, (ox, oy) = _strokes_of(rgb, box)
+    found = _letters_of(rgb, box)
+    if found is None:
+        return {"ranking": [], "chars": 0}
+    strokes, _, (ox, oy), _ = found
     vertical = bool(box.get("vertical"))
     if chars is None or len(chars) != len(letters):
         n = len(letters)
@@ -2114,6 +2142,13 @@ def _one(value, n=1):
             "floor_pair": float("nan"), "ci": [float(value), float(value)]}
 
 
+def _looks(t):
+    """(style, typeface) of a text when it stood whole on its reference frame (else both empty)"""
+    if not t.get("whole", True):
+        return {}, {}
+    return t.get("style") or {}, t.get("typeface") or {}
+
+
 def typo_summary(tr, sy, voice=None, seed=0):
     """the summary (TYPO_MEASURES, in look_analyze's form: median, quartiles, n, floor_pair, ci) of a video's lyrics
     from its track run (tr) and its sync run (sy, whose texts are in the order of tr's); the times are read to a frame
@@ -2137,14 +2172,13 @@ def typo_summary(tr, sy, voice=None, seed=0):
             m["enter.scale"] = e["scale"]
         if "stagger" in e["kinds"] and e.get("stagger"):
             m["enter.stagger_s"] = abs(e["stagger"]["per_char_s"])
-        st = t.get("style") or {}
+        st, ty = _looks(t)
         for k in ("fill_L", "fill_C", "contrast_L", "glow"):
             if st.get(k) is not None:
                 m["style." + k] = st[k]
         if st.get("outline"):
             m["style.outline_px"] = st.get("outline_px", float("nan"))
-        ty = t.get("typeface") or {}
-        if ty.get("weight") is not None:
+        if ty.get("weight") is not None and ty.get("class"):
             m["type.weight"] = ty["weight"]
         for k in ("lead_s", "full_lead_s"):
             if k in r:
@@ -2164,11 +2198,12 @@ def typo_summary(tr, sy, voice=None, seed=0):
     summary["typo.centred"] = _share_stats([0.4 <= t["place"]["x"] <= 0.6 for t in texts], seed)
     summary["typo.vertical"] = _share_stats([t.get("vertical", False) for t in texts], seed)
     summary["typo.display"] = _share_stats([t["place"]["h"] >= DISPLAY_H for t in texts], seed)
-    summary["style.outline"] = _share_stats([(t.get("style") or {}).get("outline") for t in texts], seed)
-    summary["style.shadow"] = _share_stats([(t.get("style") or {}).get("shadow") for t in texts], seed)
-    summary["style.hollow"] = _share_stats([(t.get("style") or {}).get("hollow") for t in texts], seed)
-    summary["type.mincho"] = _share_stats([((t.get("typeface") or {}).get("class") == "mincho")
-                                           if (t.get("typeface") or {}).get("class") else None for t in texts], seed)
+    whole = [t for t in texts if t.get("whole", True)]
+    summary["style.outline"] = _share_stats([_looks(t)[0].get("outline") for t in whole], seed)
+    summary["style.shadow"] = _share_stats([_looks(t)[0].get("shadow") for t in whole], seed)
+    summary["style.hollow"] = _share_stats([_looks(t)[0].get("hollow") for t in whole], seed)
+    summary["type.mincho"] = _share_stats([(_looks(t)[1].get("class") == "mincho") if _looks(t)[1].get("class") else None
+                                           for t in whole], seed)
     # the amount, over the time the voice sings (from the first phrase's start to the last's end)
     phrases = (voice or {}).get("phrases") or []
     if phrases:

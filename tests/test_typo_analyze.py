@@ -418,6 +418,40 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertLess(m["enter"]["glitch"]["split_px"], 1.0)
         self.assertEqual(m["enter"]["glitch"]["torn_frames"], 0)
         self.assertLess(m["hold"]["split_px"], 1.0)
+        self.assertTrue(m["whole"])
+
+    def test_lines_of_the_picture_moving_behind_a_still_line_do_not_tear_it(self):
+        # our v7: the stage's grid lines slide behind the lyrics (they read as torn rows, the lines as glitching in)
+        frames = clip_of(lambda n: {"alpha": 0.0} if n < 10 else {"offset": (0.0, 24.0 * (1.0 - ease_out((n - 10) / 8.0))),
+                                                                   "alpha": min(1.0, (n - 9) / 8.0)})
+        for n, f in frames.items():
+            g = f.astype(np.float64)
+            for k in range(-4, 6):
+                x0 = 40 * k + 3 * n                                   # slanted lines moving right 3 px a frame
+                for y in range(f.shape[0]):
+                    x = int(x0 + 0.6 * y)
+                    if 0 <= x < f.shape[1] - 1:
+                        g[y, x:x + 2] = 0.6 * g[y, x:x + 2] + 0.4 * np.array([230.0, 150.0, 60.0])
+            frames[n] = np.clip(g, 0, 255).astype(np.uint8)
+        m = self.measure(frames)
+        self.assertNotIn("glitch", m["enter"]["kinds"], m["enter"])
+        self.assertEqual(m["hold"]["torn_frames"], 0)
+        self.assertIn("move", m["enter"]["kinds"])
+
+    def test_a_line_rising_as_it_fades_in_is_no_blur(self):
+        # our v7 lyrics rise 0.25 s as they fade in: their faint first frames are soft for being faint
+        m = self.measure(clip_of(lambda n: {"alpha": 0.0} if n < 10 else
+                                 {"offset": (0.0, 20.0 * (1.0 - ease_out((n - 10) / 8.0))),
+                                  "alpha": min(1.0, (n - 9) / 8.0)}))
+        self.assertIn("move", m["enter"]["kinds"])
+        self.assertIn("fade", m["enter"]["kinds"])
+        self.assertNotIn("blur", m["enter"]["kinds"])
+        self.assertNotIn("glitch", m["enter"]["kinds"])
+
+    def test_a_line_only_seen_moving_is_not_whole(self):
+        # never still: its look is read off a frame of its motion (the look of the lyrics is read on the whole ones)
+        m = self.measure(clip_of(lambda n: {"alpha": 0.0} if n < 10 or n > 50 else {"offset": (3.0 * (n - 30), 0.0)}))
+        self.assertFalse(m["whole"])
 
 
     def test_pieces_of_frames_read_as_the_whole_frames(self):
@@ -611,6 +645,16 @@ class TypefaceTest(unittest.TestCase):
         light = self.features("NotoSansJP-VF.ttf", weight=300)
         heavy = self.features("NotoSansJP-VF.ttf", weight=900)
         self.assertGreater(heavy["weight"], 1.5 * light["weight"])
+
+    def test_a_rule_under_the_line_is_not_a_stroke_of_its_letters(self):
+        # our lyric style: a thin accent rule a little under the line, wider than it (its long thin horizontal read
+        # the gothic lines of our v7 as mincho)
+        a, box = render(font="NotoSansJP-VF.ttf", size=72, weight=700, ground=(40, 40, 60))
+        y = int(box["y1"] + 0.22 * box["h"])
+        a[y:y + 3, int(box["x0"] - 12):int(box["x1"] + 12)] = (255, 200, 80)
+        tf = TA.typeface(a, box)
+        self.assertEqual(tf["class"], "gothic", tf)
+        self.assertGreater(tf["hv"], 0.7, tf)
 
 
 # ---- the voice and the beat ----------------------------------------------------------------------------------------------
@@ -881,6 +925,16 @@ class FontMatchTest(unittest.TestCase):
             self.assertEqual(ranked[0], truth, r["ranking"][:3])
             self.assertGreater(r["ranking"][0]["iou"], r["ranking"][1]["iou"])
             self.assertEqual(r["chars"], len(text))
+
+    def test_a_rule_under_the_line_does_not_change_the_font(self):
+        text = "東京の夜空に光る星"
+        fonts = ["yumin.ttf", "msmincho.ttc", "NotoSerifJP-VF.ttf", "YuGothM.ttc", "msgothic.ttc"]
+        a, box, mids = self.spaced(text, "YuGothM.ttc")
+        a = a.copy()
+        y = int(box["y1"] + 0.12 * box["h"])
+        a[y:y + 3, int(box["x0"]):int(box["x1"])] = (255, 200, 80)
+        r = TA.font_match(a, box, text, [font_path(f) for f in fonts], chars=mids)
+        self.assertEqual(os.path.basename(r["ranking"][0]["font"]), "YuGothM.ttc", r["ranking"][:3])
 
 
 if __name__ == "__main__":
