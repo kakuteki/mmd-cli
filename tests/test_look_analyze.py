@@ -389,6 +389,14 @@ class LightingTest(unittest.TestCase):
         b = LA.beams(np.clip(img, 0, 1), unit=0.5)
         self.assertEqual(b["beam.count"], 0)
 
+    def test_hard_bright_things_are_no_beams_nor_spots(self):
+        # a lit window and an LED bar: bright, flat inside, hard edged (not light in the air or a pool on the floor)
+        img = self.dark()
+        img[150:200, 300:360] = 0.85                                 # a window
+        img[40:60, 100:560] = 0.9                                    # a wide bar of light
+        b = LA.beams(np.clip(img, 0, 1), unit=0.5)
+        self.assertEqual((b["beam.count"], b["spot.count"]), (0, 0))
+
     def test_a_round_pool_of_light_is_a_spot(self):
         img = self.dark()
         yy, xx = np.mgrid[0:360, 0:640]

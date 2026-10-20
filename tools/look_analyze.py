@@ -585,7 +585,8 @@ def light(rgb, lab):
 # ---- the lighting of a frame and of a video (typoref, 2026-10-20) ------------------------------------------------------
 #
 # The light falling in the scene: shafts of light (beams, the light of a spotlight seen in haze or fog) and pools of
-# light (spots), read on the frame made small (BEAM_LINES lines) as what rises above the slowly varying light round it;
+# light (spots), read on the frame made small (BEAM_LINES lines) as what rises above the slowly varying light round it,
+# soft inside (SOFT_PLATEAU: not a lit window, a sign or a bar of light);
 # how many colours the bright parts of a frame have; over a video, how many colours its key light takes and how often
 # it changes them, how much it flickers and strobes, and how fast its brightest part moves.
 
@@ -600,6 +601,9 @@ SPOT_ELONG = 3.0                  # a spot: rounder than this (a pool on the flo
 #                                   than deep),
 SPOT_AREA = 0.003                 # covering at least this share of the frame,
 SPOT_WIDTH = 0.04                 # and at least this wide at half its rise
+SOFT_PLATEAU = 0.45               # beams and spots are soft: under this share of a part rises to 3/4 of its highest (a
+#                                   Gaussian pool 0.18, a Gaussian shaft 0.4; a lit window or a bar of light, flat inside,
+#                                   0.7 and more)
 COLOUR_BINS = 36                  # hue bins of the bright, coloured pixels (10 degrees)
 COLOUR_LEAST = 0.10               # a colour of the light holds at least this share of their chroma
 STROBE_GAP = 0.35                 # s between the starts of flashes of one strobe at most, and
@@ -655,6 +659,9 @@ def beams(rgb, unit=1.0, extras=None):
         width = float(np.median(widths)) / hs if widths else 0.0
         angle = abs(math.degrees(math.atan2(vx, vy)))
         angle = 180.0 - angle if angle > 90.0 else angle
+        soft = float((rr >= 0.75 * rr.max()).sum()) / area < SOFT_PLATEAU
+        if not soft:
+            continue
         if elong >= BEAM_ELONG and length >= BEAM_LENGTH and width >= BEAM_WIDTH:
             out["beam.count"] += 1
             beam_area += area
