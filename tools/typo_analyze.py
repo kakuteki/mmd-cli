@@ -5,6 +5,9 @@ looks like, and how it goes with the voice and the beat.
                                         [--craft-onnx craft.onnx] [--threads 3]          # the text of sampled frames
     python tools/typo_analyze.py track VIDEO DETECT.json OUT.json [--craft-onnx ...] [--threads 3] [--no-style]
                                         # every text frame by frame: when and how it comes, stays and goes, its look
+    python tools/typo_analyze.py voice VOCALS OUT.json [--accompaniment NO_VOCALS] [--offset S]
+                                        # the voice's syllable onsets and phrases, the beat and the bar
+    python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json      # the texts against the voice and the beat
 
 Why (2026-10-20, typoref): the request is to take the lighting, the kinetic typography of the lyrics and the motion
 graphics of the YouTube channel @PizaCG as the reference for our MV.  tools/look_analyze.py measures the look of a frame;
@@ -1492,6 +1495,182 @@ def track_video(path, det, out=None, detector=None, onnx=None, threads=3, style=
     return result
 
 
+# ---- the voice and the beat ------------------------------------------------------------------------------------------
+#
+# The voice: the separated singing (demucs htdemucs), read as tools/lip_check.py reads it (16 kHz, the power of 300 to
+# 3500 Hz every 10 ms, its level against the song's 99th percentile, the syllable onsets).  A phrase is a run of the
+# voice sounding (above PHRASE_DB) whose quiet gaps are shorter than PHRASE_GAP; it starts at its first onset when one
+# lies just round the run's start.  The beat: librosa's beat tracker on the accompaniment (the song without the voice);
+# the bar from the beat whose phase of four holds the most low (under 150 Hz) onset strength (the kick on one).
+
+PHRASE_DB = -35.0                 # dB re the voice's 99th percentile: the voice sounds above this
+PHRASE_GAP = 0.30                 # s: a quieter gap shorter than this stays inside the phrase
+PHRASE_LEAST = 0.20               # s: a shorter run is no phrase
+PHRASE_ONSET = (0.05, 0.15)       # s before and after a run's start where its first onset is taken as its start
+
+
+def voice_events(x, sr=16000):
+    """the onsets (s) of the syllables and the phrases ([start, end] s) of a separated voice (mono, at sr)"""
+    LC = _tool("lip_check")
+    x = np.asarray(x, np.float32)
+    if sr != LC.SR:
+        from scipy.signal import resample_poly
+        g = math.gcd(int(sr), int(LC.SR))
+        x = resample_poly(x, LC.SR // g, int(sr) // g).astype(np.float32)
+    v = LC.Voice(x)
+    onsets = LC.voice_onsets(v)
+    on = v.level > PHRASE_DB
+    step = LC.STEP
+    runs = []
+    k = 0
+    n = len(on)
+    while k < n:
+        if not on[k]:
+            k += 1
+            continue
+        j = k
+        while j < n and on[j]:
+            j += 1
+        runs.append([k, j])
+        k = j
+    merged = []
+    for a, b in runs:
+        if merged and (a - merged[-1][1]) * step < PHRASE_GAP:
+            merged[-1][1] = b
+        else:
+            merged.append([a, b])
+    phrases = []
+    for a, b in merged:
+        if (b - a) * step < PHRASE_LEAST:
+            continue
+        t0, t1 = a * step, b * step
+        near = [o for o in onsets if t0 - PHRASE_ONSET[0] <= o <= t0 + PHRASE_ONSET[1]]
+        phrases.append([float(near[0]) if near else float(t0), float(t1)])
+    return {"onsets": [float(o) for o in onsets], "phrases": phrases, "step": step}
+
+
+def beat_events(x, sr):
+    """the tempo (bpm), the beats and the bar lines (downbeats, s) of an accompaniment (mono, at sr)"""
+    import librosa
+    y = np.asarray(x, np.float32)
+    env = librosa.onset.onset_strength(y=y, sr=sr)
+    tempo, frames = librosa.beat.beat_track(onset_envelope=env, sr=sr, units="frames", trim=False)
+    beats = librosa.frames_to_time(frames, sr=sr)
+    low = librosa.onset.onset_strength(y=y, sr=sr, fmax=150.0, n_mels=32)
+    best, phase = -1.0, 0
+    for k in range(4):
+        idx = frames[k::4]
+        idx = idx[idx < len(low)]
+        v = float(low[idx].mean()) if len(idx) else 0.0
+        if v > best:
+            best, phase = v, k
+    bpm = float(np.atleast_1d(tempo)[0])
+    return {"bpm": bpm, "beats": [float(b) for b in beats], "downbeats": [float(b) for b in beats[phase::4]],
+            "phase": phase}
+
+
+def read_sound(path, sr=16000):
+    """mono float32 of a sound file at sr (ffmpeg)"""
+    import subprocess
+    args = ["ffmpeg", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(int(sr)), "-f", "f32le", "-"]
+    flags = 0x08000000 if os.name == "nt" else 0
+    raw = subprocess.run(args, capture_output=True, check=True, creationflags=flags, stdin=subprocess.DEVNULL).stdout
+    return np.frombuffer(raw, dtype=np.float32).copy()
+
+
+def voice_file(vocals, out=None, accompaniment=None, offset=0.0):
+    """voice: the voice's onsets and phrases (and with the accompaniment, the beat) as OUT.json; offset (s) is added to
+    every time (the sound and the video's frames on one clock)"""
+    v = voice_events(read_sound(vocals, 16000), 16000)
+    res = {"vocals": vocals, "onsets": [o + offset for o in v["onsets"]], "phrases": [[a + offset, b + offset] for a, b in v["phrases"]]}
+    if accompaniment:
+        b = beat_events(read_sound(accompaniment, 22050), 22050)
+        res.update({"bpm": b["bpm"], "beats": [t + offset for t in b["beats"]], "downbeats": [t + offset for t in b["downbeats"]],
+                    "accompaniment": accompaniment})
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False, indent=1)
+    return res
+
+
+# ---- the text against the voice and the beat ---------------------------------------------------------------------------
+
+PAIR_REACH = 1.5                  # s: a text and a phrase start further apart than this are not paired
+MARK_SHARE = 0.4                  # a text on the screen this share of the video or more is a mark (a logo, a watermark)
+LYRIC_OVERLAP = 0.3               # a text that holds the voice this share of its time (or is paired) is a lyric
+BEAT_REACH = 0.01                 # s added to a frame either side: an event this near a beat is on it
+
+
+def _stats(values):
+    v = np.asarray([x for x in values if x is not None and np.isfinite(x)], np.float64)
+    if not v.size:
+        return {"n": 0, "median": float("nan"), "q25": float("nan"), "q75": float("nan")}
+    return {"n": int(v.size), "median": float(np.median(v)), "q25": float(np.percentile(v, 25)),
+            "q75": float(np.percentile(v, 75)), "mean": float(v.mean())}
+
+
+def _on_beat(times, beats, fps):
+    """the share of the times within a frame (and BEAT_REACH) of a beat, the chance of that for times spread evenly,
+    and the phases (0..1 of the beat) of the times"""
+    b = np.asarray(beats, np.float64)
+    if b.size < 2 or not len(times):
+        return {"share": float("nan"), "chance": float("nan"), "n": len(times), "phases": []}
+    reach = 1.0 / fps + BEAT_REACH
+    near, phases = [], []
+    for t in times:
+        k = int(np.searchsorted(b, t))
+        d = min(abs(t - b[max(0, k - 1)]), abs(t - b[min(len(b) - 1, k)]))
+        near.append(d <= reach)
+        if 0 < k < len(b):
+            phases.append(float((t - b[k - 1]) / (b[k] - b[k - 1])))
+    period = float(np.median(np.diff(b)))
+    return {"share": float(np.mean(near)), "chance": float(min(1.0, 2 * reach / period)), "n": len(times),
+            "phases": phases}
+
+
+def sync(texts, voice, beats=None, fps=30.0, duration=None):
+    """each text against the voice and the beat: its kind (mark: on the screen MARK_SHARE of the video or more; lyric:
+    paired with a phrase start within PAIR_REACH or holding the voice LYRIC_OVERLAP of its time; other), and for the
+    lyrics: lead_s (the phrase's start less the text's first frame: + the text comes first), full_lead_s (the same from
+    the frame it is whole), out_lag_s (its last frame less the phrase's end: + it stays after the voice); on_beat: the
+    share of the lyrics' first frames on a beat against chance"""
+    phrases = voice.get("phrases") or []
+    starts = np.array([p[0] for p in phrases], np.float64)
+    if duration is None:
+        duration = max([t["times"]["last"] for t in texts] + [1.0])
+    rows = []
+    for t in texts:
+        a, full, z = t["times"]["first"], t["times"]["full"], t["times"]["last"]
+        row = {"first": a, "full": full, "last": z, "kind": "other", "phrase": None}
+        if z - a >= MARK_SHARE * duration:
+            row["kind"] = "mark"
+            rows.append(row)
+            continue
+        held = sum(max(0.0, min(z, p[1]) - max(a, p[0])) for p in phrases)
+        if starts.size:
+            k = int(np.argmin(np.abs(starts - a)))
+            if abs(starts[k] - a) <= PAIR_REACH:
+                row["phrase"] = k
+                row["lead_s"] = float(starts[k] - a)
+                row["full_lead_s"] = float(starts[k] - full)
+                row["out_lag_s"] = float(z - phrases[k][1])
+        if row["phrase"] is not None or (z > a and held / (z - a) >= LYRIC_OVERLAP):
+            row["kind"] = "lyric"
+        rows.append(row)
+    lyr = [r for r in rows if r["kind"] == "lyric"]
+    paired = [r for r in lyr if r["phrase"] is not None]
+    out = {"texts": rows, "paired": len(paired),
+           "lead_s": _stats([r["lead_s"] for r in paired]), "full_lead_s": _stats([r["full_lead_s"] for r in paired]),
+           "out_lag_s": _stats([r["out_lag_s"] for r in paired]),
+           "lyric_share_paired": len(paired) / float(len(lyr)) if lyr else float("nan")}
+    events = [r["first"] for r in (lyr if lyr else rows if not phrases else [])]
+    out["on_beat"] = _on_beat(events, beats["beats"], fps) if beats and beats.get("beats") else \
+        {"share": float("nan"), "chance": float("nan"), "n": 0, "phases": []}
+    out["on_bar"] = _on_beat(events, beats["downbeats"], fps) if beats and beats.get("downbeats") else \
+        {"share": float("nan"), "chance": float("nan"), "n": 0, "phases": []}
+    return out
+
+
 # ---- the command line --------------------------------------------------------------------------------------------------
 
 def main(argv=None):
@@ -1514,7 +1693,32 @@ def main(argv=None):
     p.add_argument("--craft-onnx", default=None)
     p.add_argument("--threads", type=int, default=3)
     p.add_argument("--no-style", action="store_true", help="not the look (colour, outline, typeface)")
+    p = sub.add_parser("voice", help="the onsets and phrases of a separated voice, and the beat of the accompaniment")
+    p.add_argument("vocals")
+    p.add_argument("out")
+    p.add_argument("--accompaniment", default=None, help="the song without the voice (for the beat)")
+    p.add_argument("--offset", type=float, default=0.0, help="s added to every time")
+    p = sub.add_parser("sync", help="the texts of a track run against the voice and the beat")
+    p.add_argument("texts", help="the JSON of a track run")
+    p.add_argument("voice", help="the JSON of a voice run")
+    p.add_argument("out")
     args = ap.parse_args(argv)
+    if args.cmd == "voice":
+        r = voice_file(args.vocals, args.out, accompaniment=args.accompaniment, offset=args.offset)
+        print(json.dumps({"ok": True, "out": args.out, "phrases": len(r["phrases"]), "onsets": len(r["onsets"]),
+                          "bpm": r.get("bpm")}))
+        return 0
+    if args.cmd == "sync":
+        with open(args.texts, encoding="utf-8") as f:
+            tr = json.load(f)
+        with open(args.voice, encoding="utf-8") as f:
+            vo = json.load(f)
+        beats = {"beats": vo["beats"], "downbeats": vo.get("downbeats", [])} if vo.get("beats") else None
+        r = sync(tr["texts"], vo, beats=beats, fps=tr["fps"], duration=tr["range"][1] - tr["range"][0])
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(r, f, ensure_ascii=False, indent=1)
+        print(json.dumps({"ok": True, "out": args.out, "paired": r["paired"], "lead_median": r["lead_s"]["median"]}))
+        return 0
     if args.cmd == "track":
         with open(args.detect, encoding="utf-8") as f:
             det = json.load(f)

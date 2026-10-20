@@ -605,5 +605,107 @@ class TypefaceTest(unittest.TestCase):
         self.assertGreater(heavy["weight"], 1.5 * light["weight"])
 
 
+# ---- the voice and the beat ----------------------------------------------------------------------------------------------
+
+def sung(phrases, sr=16000, total=6.0, f0=220.0, syllable=0.25, gap=0.06, seed=0):
+    """a voice-like sound: harmonic syllables (f0 and its harmonics, a little vibrato) of `syllable` s with consonant
+    gaps of `gap` s, inside each phrase (start, end); quiet noise elsewhere"""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(total * sr)) / float(sr)
+    x = rng.normal(0, 1e-4, t.size)
+    for a, b in phrases:
+        s0 = a
+        while s0 < b - 0.05:
+            s1 = min(b, s0 + syllable)
+            m = (t >= s0) & (t < s1)
+            tt = t[m] - s0
+            env = np.minimum(1.0, tt / 0.015) * np.minimum(1.0, (s1 - s0 - tt) / 0.03)
+            ph = 2 * np.pi * f0 * tt + 0.3 * np.sin(2 * np.pi * 5.5 * tt)
+            x[m] += 0.3 * env * sum(np.sin(k * ph) / k for k in range(1, 8))
+            s0 = s1 + gap
+    return x.astype(np.float32)
+
+
+def clicks(bpm=120.0, first=0.5, total=10.0, sr=22050, accent_every=4, accent_at=0):
+    """a click on every beat, a low thump on every accent_every-th (from beat accent_at)"""
+    t = np.arange(int(total * sr)) / float(sr)
+    x = np.zeros(t.size)
+    period = 60.0 / bpm
+    k = 0
+    b = first
+    while b < total - 0.1:
+        m = (t >= b) & (t < b + 0.08)
+        tt = t[m] - b
+        x[m] += 0.5 * np.exp(-tt / 0.01) * np.sin(2 * np.pi * 2000 * tt)
+        if (k - accent_at) % accent_every == 0:
+            x[m] += 0.9 * np.exp(-tt / 0.03) * np.sin(2 * np.pi * 60 * tt)
+        k += 1
+        b += period
+    return x.astype(np.float32), sr
+
+
+@unittest.skipUnless(TA, NEEDS)
+class VoiceTest(unittest.TestCase):
+    def test_phrases_start_where_the_singing_starts(self):
+        x = sung([(1.0, 2.5), (3.0, 4.2), (4.9, 5.6)])
+        v = TA.voice_events(x)
+        starts = [p[0] for p in v["phrases"]]
+        self.assertEqual(len(starts), 3, v["phrases"])
+        for got, want in zip(starts, (1.0, 3.0, 4.9)):
+            self.assertAlmostEqual(got, want, delta=0.04)
+        ends = [p[1] for p in v["phrases"]]
+        for got, want in zip(ends, (2.5, 4.2, 5.6)):
+            self.assertAlmostEqual(got, want, delta=0.08)
+        self.assertGreater(len(v["onsets"]), 6)
+
+    def test_the_beat_and_the_bar(self):
+        try:
+            import librosa  # noqa: F401
+        except ImportError:
+            self.skipTest("needs librosa")
+        x, sr = clicks(bpm=120.0, first=0.5, accent_at=2)
+        b = TA.beat_events(x, sr)
+        self.assertAlmostEqual(b["bpm"], 120.0, delta=3.0)
+        want = 0.5 + 0.5 * np.arange(18)
+        got = np.array(b["beats"])
+        near = [np.min(np.abs(got - w)) for w in want[1:-1]]
+        self.assertLess(np.median(near), 0.03)
+        down = np.array(b["downbeats"])
+        # the accents fall on beats 2, 6, 10, ...: at 1.5, 3.5, 5.5 s
+        self.assertLess(np.min(np.abs(down - 3.5)), 0.04)
+
+
+@unittest.skipUnless(TA, NEEDS)
+class SyncTest(unittest.TestCase):
+    def text(self, first, full, last, place_y=0.85):
+        return {"times": {"first": first, "full": full, "hold_end": last - 0.1, "last": last}, "place": {"x": 0.5, "y": place_y},
+                "enter": {"kinds": ["fade"]}, "exit": {"kinds": ["fade"]}}
+
+    def test_a_text_that_comes_before_the_voice(self):
+        voice = {"phrases": [[2.0, 4.0], [5.0, 7.0], [8.0, 9.5]], "onsets": [2.0, 2.4, 5.0, 5.3, 8.0]}
+        texts = [self.text(p - 0.2, p - 0.05, e + 0.3) for p, e in ((2.0, 4.0), (5.0, 7.0), (8.0, 9.5))]
+        r = TA.sync(texts, voice, beats=None, fps=30.0, duration=10.0)
+        self.assertAlmostEqual(r["lead_s"]["median"], 0.2, delta=0.01)
+        self.assertAlmostEqual(r["full_lead_s"]["median"], 0.05, delta=0.01)
+        self.assertAlmostEqual(r["out_lag_s"]["median"], 0.3, delta=0.01)
+        self.assertEqual(r["paired"], 3)
+        self.assertEqual([t["kind"] for t in r["texts"]], ["lyric"] * 3)
+
+    def test_a_text_on_the_beat(self):
+        beats = {"beats": list(0.5 + 0.5 * np.arange(40)), "downbeats": list(0.5 + 2.0 * np.arange(10)), "bpm": 120.0}
+        on = [self.text(0.5 + 0.5 * k, 0.6 + 0.5 * k, 1.0 + 0.5 * k) for k in range(2, 30, 3)]
+        off = [self.text(0.75 + 0.5 * k, 0.8 + 0.5 * k, 1.0 + 0.5 * k) for k in range(2, 30, 3)]
+        r_on = TA.sync(on, {"phrases": [], "onsets": []}, beats=beats, fps=30.0, duration=20.0)
+        r_off = TA.sync(off, {"phrases": [], "onsets": []}, beats=beats, fps=30.0, duration=20.0)
+        self.assertGreater(r_on["on_beat"]["share"], 0.95)
+        self.assertLess(r_off["on_beat"]["share"], 0.05)
+        self.assertAlmostEqual(r_on["on_beat"]["chance"], 2 * (1 / 30.0 + 0.01) / 0.5, delta=0.02)
+
+    def test_a_text_that_stays_all_along_is_a_mark(self):
+        voice = {"phrases": [[2.0, 4.0]], "onsets": [2.0]}
+        r = TA.sync([self.text(0.0, 0.0, 60.0, place_y=0.05)], voice, beats=None, fps=30.0, duration=60.0)
+        self.assertEqual(r["texts"][0]["kind"], "mark")
+
+
 if __name__ == "__main__":
     unittest.main()
