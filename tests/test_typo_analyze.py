@@ -775,5 +775,33 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(r["texts"][0]["kind"], "mark")
 
 
+@unittest.skipUnless(TA, NEEDS)
+class FigureTest(unittest.TestCase):
+    def test_the_figures_are_drawn(self):
+        try:
+            import matplotlib  # noqa: F401
+        except ImportError:
+            self.skipTest("needs matplotlib")
+        tmp = tempfile.mkdtemp(prefix="typo_fig_")
+        try:
+            sync_test = SyncTest()
+            voice = sync_test.voice(((2.0, 4.0), (5.0, 7.0)))
+            voice["beats"] = [0.5 * k for k in range(24)]
+            texts = []
+            for i, (a, b) in enumerate(((1.8, 4.2), (4.8, 7.2))):
+                t = sync_test.text(a, a + 0.2, b)
+                t.update({"id": i, "place": {"x": 0.5, "y": 0.85, "h": 0.05, "w": 0.4}, "vertical": False,
+                          "enter": {"kinds": ["fade"]}, "exit": {"kinds": ["cut"]}})
+                texts.append(t)
+            tr = {"label": "x", "range": [0.0, 10.0], "fps": 30.0, "texts": texts}
+            sy = TA.sync(texts, voice, beats={"beats": voice["beats"]}, fps=30.0, duration=10.0)
+            for kind, path in (("timeline", TA.figure_timeline(os.path.join(tmp, "t.png"), tr, sy, voice)),
+                               ("layout", TA.figure_layout(os.path.join(tmp, "l.png"), [("x", tr, sy), ("y", tr, sy)])),
+                               ("trigger", TA.figure_trigger(os.path.join(tmp, "g.png"), [("x", sy)]))):
+                self.assertTrue(os.path.getsize(path) > 1000, kind)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,8 @@ looks like, and how it goes with the voice and the beat.
     python tools/typo_analyze.py sync TRACK.json VOICE.json OUT.json      # the texts against the voice and the beat
     python tools/typo_analyze.py summary TRACK.json SYNC.json OUT.json [--voice VOICE.json] [--label NAME]
     python tools/typo_analyze.py compare OUT.md OUT.json --ref A.json ... --ours X.json ...   # TYPO_MEASURES side by side
+    python tools/typo_analyze.py figure timeline|layout|trigger OUT.png --track T.json ... --sync S.json ... [--voice V]
+    python tools/typo_analyze.py annotate VIDEO OUT.png TRACK.json --at S [--crop x0,y0,x1,y1] [--scale 0.5]
 
 Why (2026-10-20, typoref): the request is to take the lighting, the kinetic typography of the lyrics and the motion
 graphics of the YouTube channel @PizaCG as the reference for our MV.  tools/look_analyze.py measures the look of a frame;
@@ -1954,6 +1956,158 @@ def typo_summary(tr, sy, voice=None, seed=0):
             "kinds": {k: kinds.count(k) for k in sorted(set(kinds))}, "summary": summary}
 
 
+# ---- figures -----------------------------------------------------------------------------------------------------------
+
+KIND_COLOURS = {"lyric": "#1f77b4", "scene": "#bbbbbb", "mark": "#888888", "other": "#ff7f0e"}
+KIND_LETTER = {"cut": "C", "fade": "F", "move": "M", "scale": "Z", "rotate": "R", "stagger": "S", "blur": "B",
+               "glitch": "G", "none": "-", "other": "?"}
+
+
+def figure_timeline(out, tr, sy=None, voice=None, start=None, end=None, title=None):
+    """the texts of a video on a time line: the voice's level and its strong onsets, the beats, and each text as a bar
+    (light while it comes and goes, full while it stays) coloured by its kind, with the letters of how it comes in and
+    goes out (C cut, F fade, M move, Z zoom, S one character after another, B blur, G glitch)"""
+    plt = _tool("look_analyze")._plt()
+    texts = tr["texts"]
+    kinds = [r["kind"] for r in sy["texts"]] if sy else ["other"] * len(texts)
+    a = start if start is not None else tr["range"][0]
+    z = end if end is not None else tr["range"][1]
+    show = [(t, k) for t, k in zip(texts, kinds) if t["times"]["last"] >= a and t["times"]["first"] <= z and k != "scene"]
+    fig, (ax0, ax1) = plt.subplots(2, 1, figsize=(12, 2.0 + 0.22 * max(4, len(show))), sharex=True,
+                                   gridspec_kw={"height_ratios": [1, max(2, len(show) / 6.0)]})
+    if voice and voice.get("level"):
+        step, off = voice.get("step", 0.01), voice.get("offset", 0.0)
+        lv = np.asarray(voice["level"], np.float64)
+        tt = off + np.arange(lv.size) * step
+        sel = (tt >= a) & (tt <= z)
+        ax0.plot(tt[sel], lv[sel], color="#666666", lw=0.6)
+        on = np.asarray(voice.get("onsets") or [])
+        st = np.asarray(voice.get("strength") or [1.0] * len(on))
+        if on.size:
+            strong = on[(st >= np.percentile(st, STRONG)) & (on >= a) & (on <= z)]
+            ax0.vlines(strong, -60, 0, color="#d62728", lw=0.6, alpha=0.7)
+        for b in voice.get("beats") or []:
+            if a <= b <= z:
+                ax1.axvline(b, color="#dddddd", lw=0.5, zorder=0)
+        for b in voice.get("downbeats") or []:
+            if a <= b <= z:
+                ax1.axvline(b, color="#aaaaaa", lw=0.8, zorder=0)
+        ax0.set_ylim(-60, 2)
+        ax0.set_ylabel("歌声 dB")
+    for row, (t, k) in enumerate(show):
+        c = KIND_COLOURS.get(k, "#ff7f0e")
+        f0, f1, h0, h1 = t["times"]["first"], t["times"]["full"], t["times"]["hold_end"], t["times"]["last"]
+        ax1.barh(row, f1 - f0, left=f0, color=c, alpha=0.35, height=0.7)
+        ax1.barh(row, max(0.0, h0 - f1), left=f1, color=c, alpha=0.9, height=0.7)
+        ax1.barh(row, h1 - h0, left=h0, color=c, alpha=0.35, height=0.7)
+        lab = "".join(KIND_LETTER.get(x, "?") for x in t["enter"]["kinds"]) + "/" + \
+            "".join(KIND_LETTER.get(x, "?") for x in t["exit"]["kinds"])
+        ax1.text(min(z, h1) + 0.05, row, lab, va="center", fontsize=6)
+    ax1.set_ylim(len(show) - 0.5, -0.5)
+    ax1.set_yticks([])
+    ax1.set_xlim(a, z)
+    ax1.set_xlabel("秒")
+    ax1.set_ylabel("文字（青: 歌詞、橙: その他）")
+    ax0.set_title(title or tr.get("label") or "")
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    return out
+
+
+def figure_layout(out, runs, title=None):
+    """where the lyrics lie in the picture: each run (label, track run, sync run) as boxes of its lyric lines at their
+    place and size, one colour a run"""
+    plt = _tool("look_analyze")._plt()
+    from matplotlib.patches import Rectangle
+    n = len(runs)
+    cols = min(4, n)
+    rows_n = int(math.ceil(n / float(cols)))
+    fig, axes = plt.subplots(rows_n, cols, figsize=(3.2 * cols, 2.1 * rows_n), squeeze=False)
+    for i, (label, tr, sy) in enumerate(runs):
+        ax = axes[i // cols][i % cols]
+        kinds = [r["kind"] for r in sy["texts"]] if sy else ["lyric"] * len(tr["texts"])
+        for t, k in zip(tr["texts"], kinds):
+            if k != "lyric":
+                continue
+            pl = t["place"]
+            w = pl["w"] if not t.get("vertical") else pl["h"] * 9 / 16.0
+            h = pl["h"] if not t.get("vertical") else pl["w"]
+            ax.add_patch(Rectangle((pl["x"] - w / 2.0, pl["y"] - h / 2.0), w, h, color="#1f77b4", alpha=0.18, lw=0))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(1, 0)
+        ax.set_aspect(9 / 16.0)
+        ax.set_xticks([0, 1 / 3.0, 2 / 3.0, 1])
+        ax.set_yticks([0, 1 / 3.0, 2 / 3.0, 1])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.grid(True, lw=0.4, color="#cccccc")
+        ax.set_title(label, fontsize=8)
+    for j in range(n, rows_n * cols):
+        axes[j // cols][j % cols].axis("off")
+    if title:
+        fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    return out
+
+
+def figure_trigger(out, runs, title=None):
+    """the voice's onset strength averaged round the lyrics' first frames (sync's trigger), one line a run: where it
+    peaks is how long after a line comes on the screen the voice sings it"""
+    plt = _tool("look_analyze")._plt()
+    fig, ax = plt.subplots(figsize=(7, 3.2))
+    for label, sy in runs:
+        tg = sy.get("trigger")
+        if not tg:
+            continue
+        ax.plot(tg["lags"], tg["flux"], lw=1.0, label="%s (%.2f s)" % (label, sy.get("trig_lead_s", float("nan"))))
+    ax.axvline(0, color="#000000", lw=0.6)
+    ax.set_xlabel("文字が出始めてからの時間（秒）")
+    ax.set_ylabel("歌声の立ち上がりの強さ（平均）")
+    ax.legend(fontsize=6, loc="upper right")
+    ax.set_title(title or "")
+    fig.tight_layout()
+    fig.savefig(out, dpi=130)
+    plt.close(fig)
+    return out
+
+
+def annotate(path, out, tr, at, height=540, crop=None, scale=1.0):
+    """a frame with the texts on it at that moment boxed (blue lyric or the track's kind unknown, the id and the
+    letters of how it came in), cropped to crop (x0, y0, x1, y1 in the frame at `height` lines)"""
+    from PIL import Image, ImageDraw
+    LA = _tool("look_analyze")
+    info = LA.probe(path)
+    mat = LA.matrix_for(info)
+    n = int(round((at - tr["range"][0]) * info["fps"]))
+    a = next(iter(LA.read_frames(path, info, [n], height=height, matrix=mat, start=tr["range"][0], as_uint8=True)))[1]
+    im = Image.fromarray(a)
+    d = ImageDraw.Draw(im)
+    k = height / float(tr["height"])
+    for t in tr["texts"]:
+        if not (t["times"]["first"] <= at <= t["times"]["last"]):
+            continue
+        # where it is at that moment: the reference's box moved as the series says at the nearest frame
+        rows = [r for r in t["series"] if r["n"] <= n]
+        r = rows[-1] if rows else t["series"][0]
+        b = t["ref"]["box"]
+        sc = r.get("s") or 1.0
+        cx, cy = b["cx"] + (r.get("tx") or 0.0), b["cy"] + (r.get("ty") or 0.0)
+        w2, h2 = (b["x1"] - b["x0"]) * sc / 2.0, (b["y1"] - b["y0"]) * sc / 2.0
+        box = [(cx - w2) * k, (cy - h2) * k, (cx + w2) * k, (cy + h2) * k]
+        d.rectangle(box, outline=(40, 140, 255), width=2)
+        lab = "%d %s" % (t["id"], "".join(KIND_LETTER.get(x, "?") for x in t["enter"]["kinds"]))
+        d.text((box[0] + 2, max(0, box[1] - 14)), lab, fill=(40, 140, 255), font=LA._font(12))
+    if crop:
+        im = im.crop(tuple(int(v) for v in crop))
+    if scale != 1.0:
+        im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+    im.save(out)
+    return out
+
+
 # ---- the command line --------------------------------------------------------------------------------------------------
 
 def main(argv=None):
@@ -1996,7 +2150,44 @@ def main(argv=None):
     p.add_argument("out_json")
     p.add_argument("--ref", nargs="+", required=True)
     p.add_argument("--ours", nargs="+", required=True)
+    p = sub.add_parser("figure", help="figures: timeline, layout, trigger")
+    p.add_argument("kind", choices=("timeline", "layout", "trigger"))
+    p.add_argument("out")
+    p.add_argument("--track", nargs="*", default=[], help="track runs (timeline: one; layout: several)")
+    p.add_argument("--sync", nargs="*", default=[], help="sync runs, in the order of --track")
+    p.add_argument("--voice", default=None)
+    p.add_argument("--labels", nargs="*", default=[])
+    p.add_argument("--from", dest="start", type=float, default=None)
+    p.add_argument("--to", dest="end", type=float, default=None)
+    p.add_argument("--title", default=None)
+    p = sub.add_parser("annotate", help="a frame with its texts boxed")
+    p.add_argument("video")
+    p.add_argument("out")
+    p.add_argument("track")
+    p.add_argument("--at", type=float, required=True)
+    p.add_argument("--height", type=int, default=540)
+    p.add_argument("--crop", default=None, help="x0,y0,x1,y1 in the frame at --height lines")
+    p.add_argument("--scale", type=float, default=1.0)
     args = ap.parse_args(argv)
+    if args.cmd == "figure":
+        trs = [json.load(open(x, encoding="utf-8")) for x in args.track]
+        sys_ = [json.load(open(x, encoding="utf-8")) for x in args.sync]
+        labels = args.labels or [t.get("label") for t in trs] or [str(i) for i in range(len(sys_))]
+        if args.kind == "timeline":
+            vo = json.load(open(args.voice, encoding="utf-8")) if args.voice else None
+            figure_timeline(args.out, trs[0], sys_[0] if sys_ else None, vo, args.start, args.end, args.title)
+        elif args.kind == "layout":
+            figure_layout(args.out, [(l, t, s_) for l, t, s_ in zip(labels, trs, sys_ or [None] * len(trs))], args.title)
+        else:
+            figure_trigger(args.out, list(zip(labels, sys_)), args.title)
+        print(json.dumps({"ok": True, "out": args.out}))
+        return 0
+    if args.cmd == "annotate":
+        tr = json.load(open(args.track, encoding="utf-8"))
+        crop = [float(v) for v in args.crop.split(",")] if args.crop else None
+        annotate(args.video, args.out, tr, args.at, args.height, crop, args.scale)
+        print(json.dumps({"ok": True, "out": args.out}))
+        return 0
     if args.cmd == "summary":
         with open(args.texts, encoding="utf-8") as f:
             tr = json.load(f)
