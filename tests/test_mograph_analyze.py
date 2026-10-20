@@ -476,6 +476,52 @@ class SafetyTest(unittest.TestCase):
         calm = MG.safety_of([level(0.1)] * 60, self.fps)
         self.assertEqual(calm["red"]["most_flashes_a_second"], 0)
 
+    def strobe(self, low, high, h=36, w=64, where=None):
+        """two seconds of a picture going between two pictures every two frames (7.5 flashes a second)"""
+        frames = []
+        for i in range(60):
+            img = level(0.0, h, w)
+            img[...] = low
+            if (i // 2) % 2:
+                if where is None:
+                    img[...] = high
+                else:
+                    img[where] = high
+            frames.append(img)
+        return MG.safety_of(frames, self.fps)
+
+    def test_a_coloured_flash_is_judged_by_the_luminance_of_its_three_channels(self):
+        # (the screen's luminance is that of its three primaries, each through BT.1886: full red and blue over black is
+        # 200 x (0.2126 + 0.0722) = 57 cd/m2.  The luma of the signal put through the curve made it 9.8, under the 20 of a flash,
+        # and a strobe of it passed; review mographrev 2026-10-21)
+        s = self.strobe((0.0, 0.0, 0.0), (1.0, 0.0, 1.0))
+        self.assertTrue(s["general"]["harmful"])
+        self.assertAlmostEqual(s["general"]["flashes"][0]["cd"], 200 * (0.2126 + 0.0722), delta=1.0)
+        self.assertEqual(s["red"]["most_flashes_a_second"], 0)                    # half red: no saturated red
+        # a grey is as before
+        self.assertAlmostEqual(self.strobe(0.3, 0.8)["general"]["flashes"][0]["cd"], 200 * (0.8 ** 2.4 - 0.3 ** 2.4), delta=0.5)
+
+    def test_a_quarter_of_the_screen_is_allowed_and_more_is_not(self):
+        # ("the combined area of flashes occurring concurrently occupies more than 25% of the displayed screen area")
+        self.assertFalse(self.strobe(0.2, 0.7, where=(slice(None), slice(0, 16)))["general"]["harmful"])    # 16 of 64 columns
+        self.assertTrue(self.strobe(0.2, 0.7, where=(slice(None), slice(0, 17)))["general"]["harmful"])
+
+    def test_a_fine_pattern_flashes_over_the_area_it_covers(self):
+        # every other column of a 256 x 144 picture: half of every cell of the grid (4 x 4 px) goes from 4.2 to 117 cd/m2, the
+        # cells' mean by 56: a flash over the whole screen, not over none of it
+        s = self.strobe(0.2, 0.8, h=144, w=256, where=(slice(None), slice(1, None, 2)))
+        self.assertTrue(s["general"]["harmful"])
+
+    def test_only_a_saturated_red_makes_a_red_flash(self):
+        # WCAG 2.2's saturated red: R / (R + G + B) of 0.8 or more, linear.  An orange of full red and 0.7 green is 0.70
+        self.assertEqual(self.strobe((0.0, 0.0, 0.0), (1.0, 0.7, 0.0))["red"]["most_flashes_a_second"], 0)
+
+    def test_a_bright_red_flicker_is_a_red_flash_whatever_its_luminance(self):
+        # ("irrespective of luminance": full red and 0.8 red are (R - G - B) x 320 of 320 and 187, 133 apart)
+        s = self.strobe((0.8, 0.0, 0.0), (1.0, 0.0, 0.0))
+        self.assertGreater(s["red"]["most_flashes_a_second"], 3)
+        self.assertTrue(s["red"]["harmful"])
+
 
 if __name__ == "__main__":
     unittest.main()

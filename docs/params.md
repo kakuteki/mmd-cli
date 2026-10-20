@@ -2581,11 +2581,11 @@
 | RED_SCALE | 320.0 |  | 632 |  |  |  |  |  |  |  |  |  |
 | RED_CHANGE | 20.0 |  | 633 |  |  |  |  |  |  |  |  |  |
 | SAFETY_GRID | (64, 36) |  | 634 | cells over the picture: what flashes is told by area |  |  |  |  |  |  |  |  |
-| safety_video(size) | (256, 144) |  | 768 |  |  |  |  |  |  |  |  |  |
-| --size | "128x72" |  | 843 |  |  |  |  |  |  |  |  |  |
-| --frames | 60 | frames | 849 |  |  |  |  |  |  |  |  |  |
-| --height | 720 |  | 850 |  |  |  |  |  |  |  |  |  |
-| --size | "256x144" |  | 856 | "the size the video is read at, then put into %dx%d cells" % SAFETY_GRID |  |  |  |  |  |  |  |  |
+| safety_video(size) | (256, 144) |  | 776 |  |  |  |  |  |  |  |  |  |
+| --size | "128x72" |  | 851 |  |  |  |  |  |  |  |  |  |
+| --frames | 60 | frames | 857 |  |  |  |  |  |  |  |  |  |
+| --height | 720 |  | 858 |  |  |  |  |  |  |  |  |  |
+| --size | "256x144" |  | 864 | "the size the video is read at, then put into %dx%d cells" % SAFETY_GRID |  |  |  |  |  |  |  |  |
 
 ### mv_inspect.py（確かめ・部品、3）
 

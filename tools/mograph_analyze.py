@@ -639,6 +639,14 @@ def screen_luminance(v):
     return WHITE_CD * np.clip(np.asarray(v, np.float64), 0.0, 1.0) ** 2.4
 
 
+def screen_luminance_rgb(f):
+    """cd/m2 of an R'G'B' picture (signal levels 0..1) on that display: each primary through BT.1886, then BT.709's weights.
+    (The luma of the signal put through the curve gives a grey's luminance only: a magenta of full red and blue, 57 cd/m2 over
+    black, came out at 9.8; review mographrev 2026-10-21)"""
+    lin = np.clip(np.asarray(f, np.float64), 0.0, 1.0) ** 2.4
+    return WHITE_CD * (lin[..., 0] * 0.2126 + lin[..., 1] * 0.7152 + lin[..., 2] * 0.0722)
+
+
 def _cells(values, grid):
     """values [h, w] averaged over the cells of `grid` (columns, rows): the area each cell covers alike"""
     cols, rows = grid
@@ -734,14 +742,14 @@ def _flash_report(changes, fps):
 
 def safety_of(frames, fps, grid=SAFETY_GRID):
     """BT.1702-3's flashes in frames (RGB 0..1, the signal levels: a video read to the full range): the screen luminance of
-    every pixel (BT.1886 on 200 cd/m2 white) averaged over the cells of `grid`, and per cell its changes of FLASH_CD or more
-    whose darker side is below DARK_BELOW; and the saturated red's changes (WCAG 2.2's measure).  See _flash_report"""
+    every pixel (each primary through BT.1886 on 200 cd/m2 white) averaged over the cells of `grid`, and per cell its changes of
+    FLASH_CD or more whose darker side is below DARK_BELOW; and the saturated red's changes (WCAG 2.2's measure).  See
+    _flash_report"""
     lum, red = [], []
     for f in frames:
         f = np.asarray(f, np.float64)
         g = (min(grid[0], f.shape[1]), min(grid[1], f.shape[0]))
-        y = f[..., 0] * 0.2126 + f[..., 1] * 0.7152 + f[..., 2] * 0.0722
-        lum.append(_cells(screen_luminance(y), g))
+        lum.append(_cells(screen_luminance_rgb(f), g))
         lin = np.clip(f, 0.0, 1.0) ** 2.4
         total = lin.sum(axis=2)
         with np.errstate(divide="ignore", invalid="ignore"):

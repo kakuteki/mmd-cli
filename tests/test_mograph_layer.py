@@ -234,6 +234,28 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len([e for e in edited["events"] if e["kind"] == "punch"]), len(punches) - 1)
         self.assertIn(12.5, [e["t"] for e in edited["events"] if e["kind"] == "glitch"])
 
+    def test_no_punch_or_shake_within_half_a_second_of_the_skirt(self):
+        # (the underwear checks look where the skirt flares: a title word's punch, a chorus's punch and a landing's shake each
+        # with the skirt half a second or less from their frames are left out; the title word keeps its flash, which does not
+        # move the picture.  review mographrev 2026-10-21)
+        structure = copy.deepcopy(STRUCTURE)
+        hook = STRUCTURE["hooks"][0]["t"]
+        chorus1 = [s for s in STRUCTURE["sections"] if s["id"] == "chorus1"][0]["t"]
+        structure["skirt"] = [hook + 0.2, 60.0 - 0.45, chorus1 + 12 / 30.0 + 0.45]
+        events = ML.events_of(ML.plan(structure))
+
+        def frames(kind):
+            return sorted(fr(e["t"]) for e in events if e["kind"] == kind)
+        self.assertIn(fr(hook), frames("flash"))
+        self.assertNotIn(fr(hook), frames("punch"))
+        self.assertNotIn(fr(60.0), frames("shake"))                  # the skirt 0.45 s before the landing
+        self.assertNotIn(fr(chorus1), frames("punch"))                # 0.45 s after the end of the punch
+        self.assertIn(fr(at(48)), frames("punch"))                    # pre1's, far from them
+
+    def test_the_end_fades_to_black_over_a_bar(self):
+        end = [e for e in self.kind("fade") if e["hold"] == -1][0]
+        self.assertEqual(end["out"], int(round(STRUCTURE["beat"]["per_bar"] * PERIOD * 30)))
+
     def test_the_level_scales_the_strength_of_punches_shakes_and_flashes(self):
         soft = ML.events_of(ML.plan(copy.deepcopy(STRUCTURE), level=0.5))
         for a, b in zip(self.events, soft):
@@ -428,6 +450,13 @@ def box_columns(img, row=90, least=200):
     return (int(cols.min()), int(cols.max())) if cols.size else None
 
 
+def centroid(img, rows=slice(40, 140)):
+    """the column of the box's middle to a fraction of a pixel: the brightness over the plate's, weighted by column"""
+    y = luma(img)[rows]
+    weight = numpy.clip(y - numpy.median(y[:, :60]), 0.0, None).sum(axis=0)
+    return float((weight * numpy.arange(y.shape[1])).sum() / weight.sum())
+
+
 def render(folder, name, look, dancer, *extra):
     path = os.path.join(folder, name + ".json")
     with open(path, "w", encoding="utf-8") as f:
@@ -503,9 +532,23 @@ class RenderTest(unittest.TestCase):
         self.assertAlmostEqual(y[15] - base, 0.4 * (1 - base), delta=0.04)
         self.assertTrue(y[15] > y[16] > y[17] > y[18] > y[20] - 0.005, y[14:22])
         self.assertAlmostEqual(y[21], base, delta=0.01)
-        # over the whole picture alike on every frame of it: drawn 2 x 2, ffmpeg 8.0 left a quarter unlit from the second frame on
+        # over the whole picture alike on every frame of it (without the lens this passed with the veil drawn 2 x 2 too, on
+        # hinata's ffmpeg 8.0: the test behind the lens below is the one that fails with it)
         for k in range(15, 20):
             quarters = [float(luma(frames[k])[r, c].mean() - luma(frames[10])[r, c].mean())
+                        for r in (slice(0, 90), slice(90, 180)) for c in (slice(0, 100), slice(220, 320))]
+            self.assertLess(max(quarters) - min(quarters), 0.02, (k, quarters))
+
+    def test_a_flash_lifts_every_quarter_alike_behind_the_lens(self):
+        # (b32007d: the veil drawn 2 x 2 left the lower left quarter unlit from the flash's second frame on when the lens's
+        # vignette and grain came before it, on hinata's ffmpeg 8.0: in the previews, and here, 64 of 255 apart on the frame
+        # after the flash's first.  Drawn 1 x 1 all four lift alike.  The test above, without the lens, passed with either;
+        # review mographrev 2026-10-21)
+        look = dict(picture_look(events=[{"kind": "flash", "t": 0.5, "strength": 0.4, "frames": 6}]),
+                    lens={"vignette": 0.3, "grain": 3})
+        frames = read_frames(render(self.folder, "flash_lens", look, self.still))
+        for k in range(15, 21):
+            quarters = [float(luma(frames[k])[r, c].mean() - luma(frames[12])[r, c].mean())
                         for r in (slice(0, 90), slice(90, 180)) for c in (slice(0, 100), slice(220, 320))]
             self.assertLess(max(quarters) - min(quarters), 0.02, (k, quarters))
 
@@ -541,6 +584,52 @@ class RenderTest(unittest.TestCase):
             # red one way and blue the other by the frame's split: twice it between them (px of this picture)
             self.assertAlmostEqual(split[k], 2 * planned[k], delta=1.5, msg=(k, split[k], planned[k]))
             self.assertGreater(split[k] * 720.0 / SIZE[1], 8.0)          # tools/mograph_analyze.py's glitch frame
+
+    def test_the_picture_follows_the_envelopes_on_every_frame(self):
+        # (the filters are ffmpeg expressions written beside the Python envelopes, which the plan and these tests read: the
+        # picture must follow them on every frame of an effect, not only on its first and last; review mographrev 2026-10-21)
+        y = [float(luma(f)[:, :100].mean()) for f in self.frames("env_flash", [
+            {"kind": "flash", "t": 0.5, "strength": 0.4, "frames": 6}])]
+        for x in range(-1, 8):
+            self.assertAlmostEqual((y[15 + x] - y[10]) / (1 - y[10]), ML.flash_value(x, 0.4, 6), delta=0.02, msg=("flash", x))
+        y = [float(luma(f)[:, :100].mean()) for f in self.frames("env_fade", [
+            {"kind": "fade", "t": 0.5, "out": 6, "hold": 3, "back": 6}])]
+        for x in range(-1, 18):
+            self.assertAlmostEqual(y[15 + x] / y[10], 1 - ML.fade_value(x, 6, 3, 6), delta=0.03, msg=("fade", x))
+        c = [centroid(f) for f in self.frames("env_shake", [{"kind": "shake", "t": 0.5, "amount": 20.0, "frames": 10}])]
+        for x in range(-1, 12):
+            dx = ML.shake_values(x, 20.0 * SIZE[1] / 720.0, 10, 9.0, 30)[0]    # (the picture's centre stays where the box is)
+            self.assertAlmostEqual(c[15 + x] - c[10], dx, delta=0.35, msg=("shake", x))
+
+    def test_a_coloured_flash_lifts_its_own_colour(self):
+        frames = self.frames("flash_red", [{"kind": "flash", "t": 0.5, "strength": 0.5, "frames": 6, "colour": [255, 0, 0]}])
+        before, lit = frames[10][:, :100].mean(axis=(0, 1)), frames[15][:, :100].mean(axis=(0, 1))
+        self.assertAlmostEqual(lit[0], before[0] + 0.5 * (255 - before[0]), delta=8)          # red half way to full
+        self.assertAlmostEqual(lit[2], 0.5 * before[2], delta=8)                              # blue half way to none
+
+    def test_a_glitch_slides_its_bands_of_the_picture(self):
+        event = {"kind": "glitch", "t": 0.5, "frames": 1, "split": 0.0, "bands": 3, "shift": 40.0, "seed": 5}
+        frames = self.frames("glitch_bands", [event])
+        (frame, _, bands), = ML.glitch_frames(dict(ML.DEFAULTS["glitch"], **event), 30, SIZE)
+        self.assertEqual(frame, 15)
+        moved = 0
+        for row in range(40, 141, 2):
+            want = sum(d for a, b, d in bands if a <= row <= b)
+            got = box_columns(frames[15], row=row)[0] - box_columns(frames[10], row=row)[0]
+            self.assertAlmostEqual(got, want, delta=1.01, msg=(row, want, got))
+            moved += abs(want) >= 3
+        self.assertGreater(moved, 5)                                    # (this seed's bands cross the box)
+
+    def test_an_excerpt_from_a_time_a_hair_under_its_frame_starts_on_that_frame(self):
+        # (0.533333 s is frame 16 less a third of a microsecond, as a chunk's --from of tools/mv_chunks.py is written: the excerpt's
+        # effects count from frame 16, as its dancer and stage do, or every one of them comes a frame late; mographrev 2026-10-21)
+        events = [{"kind": "punch", "t": 0.5, "amount": 0.2}, {"kind": "flash", "t": 0.6, "frames": 7}]
+        whole = self.frames("whole_hair", events)
+        part = read_frames(render(self.folder, "part_hair", picture_look(events=events), self.still, "--from", "0.533333",
+                                  "--to", "1.0"))
+        self.assertEqual(len(part), 14)
+        for k in range(len(part)):
+            self.assertLess(float(numpy.abs(part[k] - whole[16 + k]).mean()), 1.5, k)
 
     def test_an_excerpt_shows_what_the_whole_render_shows_on_its_frames(self):
         events = [{"kind": "punch", "t": 0.5, "amount": 0.2}, {"kind": "flash", "t": 0.55, "frames": 7},
@@ -700,6 +789,14 @@ class ParticleTest(unittest.TestCase):
             self.assertGreater(float(layers[side][..., 3].max()), 80, z)
             self.assertEqual(float(layers[1 - side][..., 3].max()), 0.0, z)
 
+    def test_none_at_the_lens(self):
+        # (a speck 2 from the eye would be a blur over a quarter of the picture: NEAR_FADE keeps those nearer than 3 out and
+        # brings them in by 8)
+        look = world_look()
+        for z, shown in ((-36.0, False), (-28.0, True)):                # 2 and 10 from the eye at z -38
+            back, front = one_particle(look, (1.0, 13.0, z)).draw(view(), 0.0, look, SIZE)
+            self.assertEqual(float(max(back[..., 3].max(), front[..., 3].max())) > 0, shown, z)
+
     def test_one_in_front_never_covers_her_by_more_than_its_cap(self):
         look = world_look(front=0.3)
         field = one_particle(look, (0.0, 13.0, -30.0), kind="light")
@@ -836,6 +933,22 @@ class ParticleFramesTest(unittest.TestCase):
         os.remove(os.path.join(self.work, "mograph", "front_00020.png"))
         code, result, calls = self.render("--prepared", self.work)
         self.assertEqual(code, 2, result)                               # a frame of the particles is missing
+
+    def test_the_key_of_prepare_sees_the_code_that_draws_the_particles(self):
+        # (prepare's particles are drawn by tools/mograph_layer.py: a change of it alone must make prepare draw them again)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        for name in ("mv_look", "mv_text", "mv_world", "mograph_layer"):
+            shutil.copy(os.path.join(ROOT, "tools", name + ".py"), folder)
+        spec = importlib.util.spec_from_file_location("mv_look_copy", os.path.join(folder, "mv_look.py"))
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        look = tool.merge_look({})
+        before = tool.prepared_key(look, SIZE, 30, None)
+        self.assertEqual(tool.prepared_key(look, SIZE, 30, None), before)
+        with open(os.path.join(folder, "mograph_layer.py"), "a", encoding="utf-8") as f:
+            f.write("\n# changed\n")
+        self.assertNotEqual(tool.prepared_key(look, SIZE, 30, None), before)
 
     def test_jobs_draw_the_same_particles(self):
         code, one, _ = self.run_tool(["prepare", self.look, self.work, "--size", "320x180", "--fps", "30", "--camera",
