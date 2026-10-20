@@ -512,7 +512,7 @@ class VideoTest(unittest.TestCase):
         self.assertGreater(t["style"]["fill_L"], 85)
 
     def test_a_look_that_cannot_be_read_does_not_lose_the_run(self):
-        # a run of half an hour lost to one text whose fill could not be read (RE: 踊 2, 10-21)
+        # a run of half an hour lost to one text whose fill could not be read (踊 / Odo, Eks4OJ1d56U, 10-21)
         det = TA.detect_video(self.tmp, None, rate=2.0, height=None, detector=pixel_detector)
         real = TA.text_style
 
