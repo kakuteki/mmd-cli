@@ -65,7 +65,9 @@ DEFAULTS = {
     "on": 0,
     "punch": {"amount": 0.10, "rise": 2, "fall": 10, "centre": [0.5, 0.45]},
     "shake": {"amount": 5.0, "frames": 10, "hz": 9.0},
-    "flash": {"strength": 0.27, "frames": 7, "colour": [255, 255, 255]},
+    # (9 frames: 4 of them over 0.10 of Y' on the city at night, as tools/mograph_analyze.py reads a flash; the references'
+    # last 0.119 s, 3.6 frames.  7 gave 2 on window A of the previews)
+    "flash": {"strength": 0.27, "frames": 9, "colour": [255, 255, 255]},
     "fade": {"out": 12, "hold": 2, "back": 15, "colour": [0, 0, 0]},
     "dissolve": {"frames": 12},
     # (split 14: red and blue 28 px apart, which tools/mograph_analyze.py reads at its 128 x 72 as the references' glitches;
@@ -504,7 +506,8 @@ class Graph:
 
     def veils(self, parts, label):
         """the fades, then the flashes: a picture of one colour over the whole frame whose alpha follows the events (drawn
-        2 x 2 and scaled up: its alpha is one number a frame)"""
+        1 x 1 and scaled up: its alpha is one number a frame.  Drawn 2 x 2, geq of ffmpeg 8.0 on hinata left one of the four
+        pixels unlit from the flash's second frame on, inside mv_look's graph: a quarter of the picture did not flash)"""
         w, h = self.size
         groups = []
         for kind in ("fade", "flash"):
@@ -524,7 +527,7 @@ class Graph:
                 else:
                     terms.append(_flash_expr(X, e["strength"], song_span(e["frames"], self.fps)))
             r, g, b = (int(round(c)) for c in colour)
-            parts += ["color=c=0x%02x%02x%02x:s=2x2:r=%s,format=rgba,geq=r=%d:g=%d:b=%d:a='255*min(1,%s)',"
+            parts += ["color=c=0x%02x%02x%02x:s=1x1:r=%s,format=rgba,geq=r=%d:g=%d:b=%d:a='255*min(1,%s)',"
                       "scale=%d:%d:flags=neighbor[mg_v%d]" % (r, g, b, _n(self.fps), r, g, b, "+".join(terms), w, h, i),
                       "[%s][mg_v%d]overlay=format=gbrp:shortest=1:enable='%s'[mg_veiled%d]" % (label, i, self._enable(mine), i)]
             label = "mg_veiled%d" % i

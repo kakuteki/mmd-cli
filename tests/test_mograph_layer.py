@@ -310,14 +310,14 @@ class GraphTest(unittest.TestCase):
             {"kind": "punch", "t": 1.0}, {"kind": "flash", "t": 1.0}, {"kind": "fade", "t": 1.2}, {"kind": "glitch", "t": 1.1}]}}
         g = self.graph(look)
         flare_punch, persp, glitch, lens, veil, front = (g.index(p) for p in (
-            "eval=frame:flags=bilinear", "perspective=", "geq=r='r(", "vignette=", "s=2x2", "overlay=x=16:y=140"))
+            "eval=frame:flags=bilinear", "perspective=", "geq=r='r(", "vignette=", "s=1x1", "overlay=x=16:y=140"))
         self.assertTrue(flare_punch < persp < glitch < lens < veil < front, (flare_punch, persp, glitch, lens, veil, front))
 
     def test_an_event_outside_the_excerpt_adds_nothing(self):
         look = {"mograph": {"on": 1, "events": [{"kind": "punch", "t": 5.0}, {"kind": "flash", "t": 5.0}]}}
         g = self.graph(look, start=1.0, duration=1.0)
         self.assertNotIn("perspective", g)
-        self.assertNotIn("s=2x2", g)
+        self.assertNotIn("s=1x1", g)
         self.assertIn("perspective", self.graph(look, start=4.5, duration=1.0))
 
     def test_an_event_that_began_before_the_excerpt_goes_on_from_its_frame(self):
@@ -459,6 +459,11 @@ class RenderTest(unittest.TestCase):
         self.assertAlmostEqual(y[15] - base, 0.4 * (1 - base), delta=0.04)
         self.assertTrue(y[15] > y[16] > y[17] > y[18] > y[20] - 0.005, y[14:22])
         self.assertAlmostEqual(y[21], base, delta=0.01)
+        # over the whole picture alike on every frame of it: drawn 2 x 2, ffmpeg 8.0 left a quarter unlit from the second frame on
+        for k in range(15, 20):
+            quarters = [float(luma(frames[k])[r, c].mean() - luma(frames[10])[r, c].mean())
+                        for r in (slice(0, 90), slice(90, 180)) for c in (slice(0, 100), slice(220, 320))]
+            self.assertLess(max(quarters) - min(quarters), 0.02, (k, quarters))
 
     def test_a_fade_goes_to_black_holds_and_comes_back(self):
         frames = self.frames("fade", [{"kind": "fade", "t": 0.5, "out": 6, "hold": 3, "back": 6}])
