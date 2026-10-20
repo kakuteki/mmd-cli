@@ -1130,7 +1130,7 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
     4 分の 1 だけ白フラッシュが出なかった（hinata の ffmpeg 8.0、b32007d。hinata の本物のグラフで 1x1 なら 4 区画とも同じことを確かめた）。(1)(2) は先に試験を書き、
     前のコードで落ちることを確かめた。
   - **全体の試験**（hinata、`stage6/mograph/suite/suite_b07dd71.log`、main_suite の作り。判定行は記録と別の手で読んだ）: `Ran 2923 tests in 1518.951s` /
-    `OK (skipped=39, expected failures=1)`。b07dd71 の後は README と docs/params だけ（試験はこの 2 つを読まない）。
+    `OK (skipped=39, expected failures=1)`。b07dd71 の後に変えたのはこの記録（HANDOVER）だけ。
   - **プレビュー**（hinata `stage6/mograph/out/previews/`）: 都会の舞台・v11 r2 の動き・正面の固定カメラとカメラ D、窓 F（15〜22 秒）・A（80〜92）・B（151〜161）・C（194〜204）・
     D（221〜231）・E（239〜251、カメラ D は 249.9 まで）、1280x720・音つき・8 本とも 16.7〜16.9 MB。`mg_*` が飾りの絵、`side_*` が今の街との左右の見比べ。
   - **残り**: パンチは物差し（mograph_analyze）が暗く模様の少ない夜の街では読みにくく、タイトル語のパンチは同じコマの白フラッシュに隠れて読まない（直接の測りで入っている）。
