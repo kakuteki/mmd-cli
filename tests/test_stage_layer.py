@@ -675,6 +675,19 @@ class DrawerTest(unittest.TestCase):
             self.drawer(self.moving, 30, 16).frame(5)
         self.drawer(self.cut, 30, 16).frame(5)                       # a key on every frame: it stands still between them
 
+    def test_her_shadow_is_drawn_where_she_is_in_the_middle_of_the_open_shutter(self):
+        # the fold averages the first 8 of every 16 subframes: she is seen at their middle, 5 + 3.5 / 16, and so is her shadow
+        asked = []
+
+        class Figure:
+            def state(self, t):
+                asked.append(t)
+                return State([((0.0, 1.0, 0.0), (0.0, 3.0, 0.0), 0.5)])
+        look = layer_look(stage={"shadow": 1.0}, night=1.0)
+        stage_layer.Drawer(look, self.spec, self.SIZE, 30, self.cut, self.pictures, Figure(), 16, 0.5).frame(5)
+        self.assertEqual(len(asked), 1)
+        self.assertAlmostEqual(asked[0], 5.0 + 3.5 / 16.0, places=9)
+
 
 class Moving:
     """a dancer as check_placement reads her (mv_world.Figure): her capsules at every frame and the parts they belong to.
