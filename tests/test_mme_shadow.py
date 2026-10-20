@@ -8,6 +8,7 @@ import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 import unittest
 
@@ -409,8 +410,8 @@ class NightTest(unittest.TestCase):
         self.assertAlmostEqual(define(text, "NL_RIM_SIDED"), 1.0, places=6)
         self.assertAlmostEqual(define(text, "NL_RIM_ALBEDO"), 0.3, places=6)
         self.assertAlmostEqual(define(text, "NL_FADE"), 0.5, places=6)
-        # MMD's light colour scales the key: its default (154 of 255) is 1
-        self.assertAlmostEqual(define(text, "NL_LIGHT_DEFAULT"), 154.0 / 255.0, places=6)
+        # MMD's light colour scales the key: its default (154; MME gives the panel's colour over 256) is 1
+        self.assertAlmostEqual(define(text, "NL_LIGHT_DEFAULT"), 154.0 / 256.0, places=6)
         self.assertIn("LightAmbient / NL_LIGHT_DEFAULT", text)
         n, keys = array4(text, "NL_KEY")
         self.assertEqual(n, 1)
@@ -478,7 +479,8 @@ class NightTest(unittest.TestCase):
                     {"rim_power": 0}, {"rim_from": [0, 0]}, {"rim_sided": -0.1}, {"rim_albedo": 2},
                     {"sections": [[0, 1, 1, 1, 0, 0, 0, 0, 0]]}, {"sections": [[5, 1, 1, 1, 0, 0, 0, 0, 0, 0],
                                                                                 [3, 1, 1, 1, 0, 0, 0, 0, 0, 0]]},
-                    {"sections": [[-1, 1, 1, 1, 0, 0, 0, 0, 0, 0]]}, {"fade": 0}, {"colour": [1, 1, 1]}):
+                    {"sections": [[-1, 1, 1, 1, 0, 0, 0, 0, 0, 0]]}, {"fade": 0}, {"colour": [1, 1, 1]},
+                    {"direction": [0, 1, 0]}, {"direction": [0, -1]}):
             with self.assertRaises(ValueError, msg=bad):
                 mme_shadow.effect(light=dict(self.NIGHT, **bad))
         # the night is drawn with the soft shadow: not with the effects for measuring
@@ -514,6 +516,31 @@ class NightTest(unittest.TestCase):
             self.assertEqual(mme_shadow.main(["write", out, "--look", look]), 0)
         with open(out, encoding="ascii") as f:
             self.assertEqual(define(f.read(), "SS_NIGHT"), 1)
+
+
+class LightVmdTest(unittest.TestCase):
+    def test_the_camera_motion_gets_the_nights_light_and_keeps_its_camera(self):
+        sys.path.insert(0, ROOT)
+        from mmd_cli.formats import vmd
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        cam = os.path.join(folder, "cam.vmd")
+        keys = [vmd.CameraKey(frame=f, distance=-45.0, position=(0.0, 10.0, float(f)), rotation=(0.1, 0.0, 0.0))
+                for f in (0, 30, 7742)]
+        vmd.dump(vmd.Motion.for_camera(cameras=keys, lights=[vmd.LightKey(90, (1.0, 0.0, 0.0), (0.0, -1.0, 0.0))]), cam)
+        out = os.path.join(folder, "cam_light.vmd")
+        got = mme_shadow.light_vmd(cam, {"on": 1, "direction": [-0.75, -0.55, 0.35]}, out)
+        self.assertEqual(got["direction"], [-0.75, -0.55, 0.35])
+        m = vmd.load(out)
+        self.assertEqual([(k.frame, k.position) for k in m.cameras], [(k.frame, k.position) for k in keys])
+        self.assertEqual(len(m.lights), 1)                                   # the light keys it had are left out
+        self.assertEqual(m.lights[0].frame, 0)
+        for a, b in zip(m.lights[0].rgb, (154.0 / 256.0,) * 3):
+            self.assertAlmostEqual(a, b, places=6)                            # MMD's default colour: the key's scale 1
+        for a, b in zip(m.lights[0].direction, (-0.75, -0.55, 0.35)):
+            self.assertAlmostEqual(a, b, places=6)
+        with self.assertRaises(ValueError):
+            mme_shadow.light_vmd(cam, None, out)
 
 
 class FilesTest(unittest.TestCase):

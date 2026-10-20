@@ -86,6 +86,21 @@ def layer_tool():
     return _LAYER[0]
 
 
+_SHADOW = []
+
+
+def shadow_tool():
+    """tools/mme_shadow.py (loaded from its file, once): it says what the night's light on her (look light.person) may hold;
+    MMD draws that light through MME, this tool only checks it"""
+    if not _SHADOW:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mme_shadow.py")
+        spec = importlib.util.spec_from_file_location("mme_shadow", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _SHADOW.append(module)
+    return _SHADOW[0]
+
+
 def world_tool():
     """tools/mv_world.py (tools/ is no package: loaded from its file, once), only for a look whose stage lies in the world:
     it reads the camera and the dancer with mmd_cli, which a look fixed to the picture does without"""
@@ -208,6 +223,15 @@ DEFAULT_LOOK = {
               "spill_wrap": 0.0,    # and round her outline (a light wrap): the light round her added in a band inside it
               "spill_radius": 40.0,  # how far round her the light is gathered from, pixels of a 720 line picture
               "spill_wrap_width": 6.0},         # the band's width, pixels of a 720 line picture
+    # the light of the night (light3, 2026-10-21; @PizaCG's lighting, typoref's research): unwritten, nothing changes
+    "light": {"person": {"on": 0},  # the light on her: MMD draws it through MME (tools/mme_shadow.py prepare --look takes
+                                    # it: key, fill, face, rim, sections; written, the rest comes from its NIGHT_DEFAULTS);
+                                    # here only checked, the dancer comes lit
+              # the grade of the picture under the front text: ffmpeg's colorbalance (r, g, b shifts of -1 to 1 for the
+              # shadows, the middle tones and the highlights, lightness kept) and the saturation about the luma (BT.709)
+              "grade": {"shadows": [0.0, 0.0, 0.0], "mids": [0.0, 0.0, 0.0], "highs": [0.0, 0.0, 0.0], "saturation": 1.0},
+              "flicker": 0.0,       # the stage of a model: its lit signs flicker by this share of their light; 0 none
+              "flicker_seed": 7},
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -250,6 +274,9 @@ def merge_look(overrides):
     for name, value in overrides.items():
         if name not in look:
             raise ValueError("the look has no setting %r (it has: %s)" % (name, ", ".join(sorted(look))))
+        if name == "light":
+            look[name] = _merge_light(value)
+            continue
         if isinstance(look[name], dict):
             if not isinstance(value, dict):
                 raise ValueError("%s must be an object, not %r" % (name, value))
@@ -269,7 +296,89 @@ def merge_look(overrides):
     _check_lamps(look["lamps"], look["stage"])
     _check_rim(look["rim"])
     _check_layer(look["layer"], look["stage"], look["lamps"])
+    person = look["light"]["person"]
+    if person.get("on") and look["stage"]["world"] and look["stage"]["shadow"] > 0:
+        # (light3) her key light is MMD's light (tools/mme_shadow.py light-vmd puts it in the camera's motion), and her
+        # shadow on the floor falls from stage.shadow_light: one light
+        a = [float(v) for v in shadow_tool().night(person)["direction"]]
+        b = [float(v) for v in look["stage"]["shadow_light"]]
+        if any(abs(x - y) > 1e-9 for x, y in zip(a, b)):
+            raise ValueError("the light on her shines along light.person.direction %r and her shadow on the floor falls from "
+                             "stage.shadow_light %r: they are one light, make them the same" % (a, b))
     return look
+
+
+GRADE_RANGES = ("shadows", "mids", "highs")
+GRADE_AT = (0.25, 0.5, 0.75)        # the coded values (0..1) whose shift each range of the grade gives
+GRADE_MOST = 0.2                    # a shift is -this to this
+
+
+def _grade_points(grade, channel):
+    """the points of the grade's curve of one channel (0 r, 1 g, 2 b): 0 and 1 kept, GRADE_AT moved by the shadows', the
+    middle tones' and the highlights' shift of that channel"""
+    return [(0.0, 0.0)] + [(x, x + float(grade[k][channel])) for x, k in zip(GRADE_AT, GRADE_RANGES)] + [(1.0, 1.0)]
+
+
+def _merge_light(value):
+    """the light section (light3) over its default: light.person checked by tools/mme_shadow.py (MMD draws it), the grade
+    and the flicker here"""
+    light = copy.deepcopy(DEFAULT_LOOK["light"])
+    if not isinstance(value, dict):
+        raise ValueError("light must be an object, not %r" % (value,))
+    for key, v in value.items():
+        if key not in light:
+            raise ValueError("light has no setting %r (it has: %s)" % (key, ", ".join(sorted(light))))
+        if key == "person":
+            if not isinstance(v, dict):
+                raise ValueError("light.person must be an object, not %r" % (v,))
+            shadow_tool().night(v)                       # ValueError on what MME's effect cannot draw
+            light["person"] = dict(copy.deepcopy(shadow_tool().NIGHT_DEFAULTS), **copy.deepcopy(v))
+        elif key == "grade":
+            if not isinstance(v, dict):
+                raise ValueError("light.grade must be an object, not %r" % (v,))
+            for k, x in v.items():
+                if k not in light["grade"]:
+                    raise ValueError("light.grade has no setting %r (it has: %s)" % (k, ", ".join(sorted(light["grade"]))))
+                _check("light.grade.%s" % k, x, light["grade"][k])
+                light["grade"][k] = x
+        else:
+            _check("light.%s" % key, v, light[key])
+            light[key] = v
+    for k in GRADE_RANGES:
+        if not all(-GRADE_MOST <= c <= GRADE_MOST for c in light["grade"][k]):
+            raise ValueError("light.grade.%s is r, g, b shifts of -%g to %g, not %r" % (k, GRADE_MOST, GRADE_MOST,
+                                                                                        light["grade"][k]))
+    for c in range(3):
+        ys = [y for _, y in _grade_points(light["grade"], c)]
+        if not all(a < b for a, b in zip(ys, ys[1:])):
+            raise ValueError("light.grade's curve of %s must rise (shadows, middle tones and highlights in order), not %r"
+                             % ("rgb"[c], ys))
+    if not 0.0 <= light["grade"]["saturation"] <= 3.0:
+        raise ValueError("light.grade.saturation is 0 (grey) to 3, 1 as it is: not %r" % (light["grade"]["saturation"],))
+    if not 0.0 <= light["flicker"] <= 1.0:
+        raise ValueError("light.flicker is a share of the signs' light, 0 to 1: not %r" % (light["flicker"],))
+    if int(light["flicker_seed"]) != light["flicker_seed"]:
+        raise ValueError("light.flicker_seed is a whole number, not %r" % (light["flicker_seed"],))
+    return light
+
+
+def _grade(grade):
+    """the filters of the grade (look light.grade; light3), none for a grade of nothing: a curve a channel through 0, the
+    shifted quarter, half and three quarters and 1 (ffmpeg's curves: a split toning on RGB; a grey takes the middle tones'
+    shift), and the saturation as a matrix about the luma (BT.709 weights on the coded values) on RGB"""
+    out = []
+    if any(c != 0 for k in GRADE_RANGES for c in grade[k]):
+        out.append("curves=" + ":".join("%s='%s'" % ("rgb"[c], " ".join("%s/%s" % (_number4(x), _number4(y))
+                                                                         for x, y in _grade_points(grade, c)))
+                                        for c in range(3)))
+    s = float(grade["saturation"])
+    if s != 1.0:
+        w = (0.2126, 0.7152, 0.0722)
+        rows = [[w[c] * (1.0 - s) + (s if c == r else 0.0) for c in range(3)] for r in range(3)]
+        # (in 16 bits: in 8 the mixer rounds each term and a grey 128 came out 126)
+        out.append("format=gbrp16,colorchannelmixer=" + ":".join("%s%s=%s" % ("rgb"[r], "rgb"[c], _number4(rows[r][c]))
+                                                                 for r in range(3) for c in range(3)) + ",format=gbrp")
+    return out
 
 
 def _check_layer(layer, stage, lamps):
@@ -724,6 +833,11 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if rim_on:
         parts += _rim(rim, scale, state["label"])
         state["label"] = "rimlit"
+    grade = _grade(look["light"]["grade"])
+    if grade:
+        # the grade (light3): the stage, the back text, the dancer and her glow, in RGB (gbrp), under the lens and the front text
+        parts.append("[%s]format=gbrp,%s[graded]" % (state["label"], ",".join(grade)))
+        state["label"] = "graded"
     camera = look["camera"]
     span = punch_span
     hits = flare_starts if span > 0 else []
@@ -869,6 +983,11 @@ def _pick(subframes, taken, shifts):
     for (first, shift), (following, _) in reversed(list(zip(pieces[:-1], pieces[1:]))):
         expr = "if(lt(n,%d),%d,%s)" % (following * subframes, taken - 1 + shift, expr)
     return "eq(mod(n,%d),%s)" % (subframes, expr)
+
+
+def _number4(value):
+    """a decimal of 4 places without a trailing zero (a matrix's entries)"""
+    return ("%.4f" % value).rstrip("0").rstrip(".")
 
 
 def _number(value):

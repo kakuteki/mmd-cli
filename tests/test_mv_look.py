@@ -806,6 +806,128 @@ class RimLightRenderTest(unittest.TestCase):
                 mv_look.merge_look({"rim": bad})
 
 
+@unittest.skipUnless(mv_look, "needs Pillow and numpy")
+class NightLightLookTest(unittest.TestCase):
+    """light3 (2026-10-21, @PizaCG's lighting): the look's light section.  light.person is the night's light on her, drawn by
+    MMD through MME (tools/mme_shadow.py prepare --look takes it; this tool only checks it); light.grade grades the picture
+    under the front text; light.flicker makes the street's lit signs flicker (tools/stage_layer.py).  Unwritten, nothing
+    changes"""
+
+    NIGHT = {"on": 1, "key": [1.0, 0.7, 0.45], "fill": [0.2, 0.22, 0.34], "rim": [0.5, 0.7, 1.0], "rim_from": [-0.7, -0.7],
+             "sections": [[0, 1.0, 0.7, 0.45, 0.2, 0.22, 0.34, 0.5, 0.7, 1.0], [44.467, 0.8, 0.5, 1.0, 0.2, 0.15, 0.2, 1, 0.6, 0.3]]}
+    GRADE = {"shadows": [-0.02, -0.03, 0.06], "mids": [-0.04, -0.05, 0.07], "highs": [0.0, 0.0, 0.0], "saturation": 1.15}
+
+    def argv(self, look):
+        return mv_look.ffmpeg_command("fg.avi", "out.mp4", "W/plate.png", "W/light_%05d.png", mv_look.merge_look(look), SIZE, 30)
+
+    def test_unwritten_the_light_changes_nothing(self):
+        look = mv_look.merge_look({})
+        self.assertEqual(look["light"], mv_look.DEFAULT_LOOK["light"])
+        self.assertEqual(look["light"]["person"]["on"], 0)
+        self.assertEqual(self.argv({}), self.argv({"light": {}}))
+        self.assertNotIn("curves=", self.argv({})[self.argv({}).index("-filter_complex") + 1])
+
+    def test_the_light_on_her_is_mmds_and_checked_by_mme_shadow(self):
+        look = mv_look.merge_look({"light": {"person": self.NIGHT}})
+        self.assertEqual(look["light"]["person"]["fill"], [0.2, 0.22, 0.34])
+        self.assertEqual(look["light"]["person"]["face"], 0.75)                  # the rest from tools/mme_shadow.py
+        # her light is drawn by MMD: the graph is the one without it
+        self.assertEqual(self.argv({"light": {"person": self.NIGHT}}), self.argv({}))
+        for bad in ({"fill": [0, 0, 9]}, {"sections": [[3, 1, 1, 1, 0, 0, 0, 0, 0, 0], [1, 1, 1, 1, 0, 0, 0, 0, 0, 0]]},
+                    {"rim_from": [0, 0]}, {"warmth": 1}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"light": {"person": dict(self.NIGHT, **bad)}})
+
+    def test_the_grade_comes_after_her_glow_and_before_the_lens_and_the_front_text(self):
+        argv = self.argv({"light": {"grade": self.GRADE}})
+        graph = argv[argv.index("-filter_complex") + 1]
+        # a curve a channel through 0, the quarter, the half and the three quarters moved by the shifts, and 1
+        self.assertIn("curves=r='0/0 0.25/0.23 0.5/0.46 0.75/0.75 1/1':g='0/0 0.25/0.22 0.5/0.45 0.75/0.75 1/1':"
+                      "b='0/0 0.25/0.31 0.5/0.57 0.75/0.75 1/1'", graph)
+        self.assertLess(graph.index("[comp][glow]blend=all_mode=screen"), graph.index("curves="))
+        self.assertLess(graph.index("curves="), graph.index("vignette="))
+        # saturation: a matrix on RGB about the luma (BT.709), the picture kept RGB
+        m = re.search(r"colorchannelmixer=rr=([-0-9.]+):rg=([-0-9.]+):rb=([-0-9.]+):gr=([-0-9.]+):gg=([-0-9.]+):gb=([-0-9.]+):"
+                      r"br=([-0-9.]+):bg=([-0-9.]+):bb=([-0-9.]+)", graph)
+        rows = [[float(m.group(1 + 3 * r + c)) for c in range(3)] for r in range(3)]
+        for r in rows:
+            self.assertAlmostEqual(sum(r), 1.0, places=3)                    # a grey stays grey
+        self.assertAlmostEqual(rows[0][0], 0.2126 + 1.15 * (1 - 0.2126), places=3)
+        self.assertNotIn("format=yuv", graph[:graph.index("curves=")])
+        for bad in ({"mids": [0, 0, 0.5]}, {"saturation": -1}, {"highs": [0, 0]}, {"lift": [0, 0, 0]},
+                    {"shadows": [0.2, 0, 0], "mids": [-0.2, 0, 0]}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"light": {"grade": bad}})
+
+    def test_her_shadow_on_the_floor_falls_from_her_key_light(self):
+        # her key light is MMD's light (tools/mme_shadow.py light-vmd), her shadow on the floor falls from stage.shadow_light
+        world = {"world": 1, "floor": 1, "shadow": 1.0}
+        night = dict(self.NIGHT, direction=[-0.75, -0.55, 0.35])
+        with self.assertRaises(ValueError):
+            mv_look.merge_look({"stage": world, "light": {"person": night}})
+        look = mv_look.merge_look({"stage": dict(world, shadow_light=[-0.75, -0.55, 0.35]), "light": {"person": night}})
+        self.assertEqual(look["stage"]["shadow_light"], [-0.75, -0.55, 0.35])
+        # MMD's default light on both sides: nothing to say
+        mv_look.merge_look({"stage": world, "light": {"person": self.NIGHT}})
+
+    def test_the_flicker_is_a_share_of_the_signs_light(self):
+        self.assertEqual(mv_look.merge_look({"light": {"flicker": 0.08}})["light"]["flicker"], 0.08)
+        for bad in ({"flicker": -0.1}, {"flicker": 1.5}, {"flicker_seed": 1.5}, {"glitter": 1}):
+            with self.assertRaises(ValueError, msg=bad):
+                mv_look.merge_look({"light": bad})
+
+
+@unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
+class GradeRenderTest(unittest.TestCase):
+    """light3: the grade rendered for real on a grey box (her) over a black stage: the middle tones lean as the look says, the
+    picture stays RGB to the end (no detour through Y'CbCr: a grey stays grey), and a grade of nothing is no grade"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.mkdtemp()
+        cls.fg = os.path.join(cls.folder, "fg.avi")
+        source = ("color=c=black@0.0:s=%dx%d:r=30,format=rgba,"
+                  "drawbox=x=100:y=40:w=120:h=100:color=0x808080@1.0:t=fill:replace=1" % SIZE)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", source, "-frames:v", "6", "-c:v", "rawvideo",
+                        "-pix_fmt", "bgra", cls.fg], check=True, stdin=subprocess.DEVNULL)
+        cls.frames = {}
+        base = {"beams": {"count": 0, "loop_seconds": 1}, "bokeh": {"count": 0}, "glow": {"strength": 0},
+                "plate": {"base": [0, 0, 0], "haze": [0, 0, 0], "pool": [0, 0, 0]}, "lens": {"vignette": 0, "grain": 0}}
+        for name, light in (("bare", {}), ("none", {"light": {"grade": {"saturation": 1.0}}}),
+                            ("blue", {"light": {"grade": {"mids": [-0.06, -0.04, 0.1]}}}),
+                            ("grey", {"light": {"grade": {"saturation": 1.6}}})):
+            look = os.path.join(cls.folder, name + ".json")
+            with open(look, "w", encoding="utf-8") as f:
+                json.dump(dict(base, **light), f)
+            out = os.path.join(cls.folder, name + ".mp4")
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert mv_look.main(["render", cls.fg, look, out, "--work", os.path.join(cls.folder, "w_" + name)]) == 0
+            raw = subprocess.run(["ffmpeg", "-v", "error", "-i", out, "-vf",
+                                  "select=eq(n\\,3),scale=in_color_matrix=bt709:in_range=tv,format=rgb24", "-frames:v", "1",
+                                  "-f", "rawvideo", "-"], check=True, capture_output=True, stdin=subprocess.DEVNULL).stdout
+            cls.frames[name] = numpy.frombuffer(raw, dtype=numpy.uint8).reshape(SIZE[1], SIZE[0], 3).astype(numpy.int16)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.folder, ignore_errors=True)
+
+    def box(self, name):
+        return self.frames[name][60:120, 120:200].reshape(-1, 3).mean(axis=0)
+
+    def test_a_grade_of_nothing_is_no_grade(self):
+        self.assertTrue(numpy.array_equal(self.frames["none"], self.frames["bare"]))
+
+    def test_the_middle_tones_lean_blue(self):
+        bare, blue = self.box("bare"), self.box("blue")
+        self.assertGreater(blue[2] - bare[2], 6.0, (bare, blue))
+        self.assertLess(blue[0] - bare[0], -3.0, (bare, blue))
+
+    def test_saturation_leaves_a_grey_grey(self):
+        bare, grey = self.box("bare"), self.box("grey")
+        self.assertLess(numpy.abs(grey - bare).max(), 1.5, (bare, grey))
+        self.assertLess(numpy.ptp(grey), 1.5)
+
+
 @unittest.skipUnless(mv_look and FFMPEG, "needs Pillow, numpy, ffmpeg and ffprobe")
 class ChunkLightRenderTest(unittest.TestCase):
     """review 10: rendered for real, a chunk of the song shows the light loop as the whole song shows it at that time

@@ -4,6 +4,7 @@ shading but reads the self shadow map at many points weighted by a Gaussian, and
     python tools/mme_shadow.py write OUT.fx [--blur 5] [--min-blur 0.05] [--taps 64] [--search-taps 64] [--key-share 0.35 | --toon]
                                      [--debug [shadow|lit]] [--sharp] [--look LOOK.json]
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
+    python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd
     python tools/mme_shadow.py check MMD.exe
     python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd
 
@@ -115,10 +116,13 @@ SEARCH_INNER = 0.03       # the innermost point of the search, a share of its ra
 SEARCH = 1.8              # MMD units round the point the casters are looked for (2.5 standard deviations of a 5 degree
                           # light at 8 units: the hips above the knees)
 # the night's light on her (light3, 2026-10-21; look light.person): drawn by the body's pass itself, see NIGHT_BODY
-LIGHT_DEFAULT = 154.0 / 255.0     # MMD's light colour by default (what MME gives as the light's AMBIENT: measured on
-                                  # hinata, a light of 200, 100, 50 read 199, 100, 50; its DIFFUSE is 0, its SPECULAR 0.6)
+LIGHT_DEFAULT = 154.0 / 256.0     # MMD's light colour by default, as MME gives it (the light's AMBIENT is the colour of
+                                  # MMD's light panel over 256: on hinata a light of 200, 100, 50 drew 199, 100, 50 of 255;
+                                  # its DIFFUSE is 0, its SPECULAR stays 154 / 256)
 NIGHT_MOST = 4.0                  # a colour of the night is r, g, b of 0 to this (over 1: brighter than MMD's white)
 NIGHT_DEFAULTS = {"on": 0,
+                  "direction": [-0.5, -1.0, 0.5],   # MMD's light, where it shines to (y below 0): the key's direction and
+                                                # the self shadow's (light_vmd writes it into the camera's motion)
                   "key": [1.0, 1.0, 1.0],       # the key light: her colour times this where MMD's light reaches her
                   "fill": [0.35, 0.35, 0.35],   # the fill: her colour times this in the shade (in the toon's hue)
                   "face": 0.75,                 # the face and the eyes (MMD shades them not): from the fill (0) to the key (1)
@@ -206,6 +210,12 @@ def night(light):
         raise ValueError("light.person.rim_from is the way the rim light comes from in the picture (x right, y down), not %r"
                          % (f,))
     out["rim_from"] = [float(v) for v in f]
+    d = s["direction"]
+    if (not isinstance(d, (list, tuple)) or len(d) != 3
+            or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in d)
+            or not d[1] < 0):
+        raise ValueError("light.person.direction is MMD's light, where it shines to (x, y, z with y below 0), not %r" % (d,))
+    out["direction"] = [float(v) for v in d]
     sections = []
     for row in s["sections"]:
         if not isinstance(row, (list, tuple)) or len(row) != 10:
@@ -804,6 +814,26 @@ def _sync(src, dst):
                 shutil.copy2(a, b)
 
 
+def light_vmd(camera, light, out):
+    """a copy of the camera's motion (a .vmd of the camera and the light) whose light is the night's (`night`'s answer, or
+    its settings): one light key at frame 0 in MMD's default colour (154; MME gives the key's scale from it) shining
+    along light.person.direction, the light keys the camera's motion had left out.  MMD's self shadow map follows the
+    light: the key light's shadows fall from it, and the floor's (look stage.shadow_light) must take the same direction"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from mmd_cli.formats import vmd
+    s = night(dict(light, on=1)) if light is not None else None
+    if s is None:
+        raise ValueError("light_vmd needs the night's light (light.person)")
+    motion = vmd.load(camera)
+    if not motion.is_camera:
+        raise ValueError("%s is not a motion of the camera and the light" % camera)
+    motion.lights = [vmd.LightKey(0, (154.0 / 256.0,) * 3, tuple(s["direction"]))]
+    vmd.dump(motion, out)
+    return {"camera": camera, "out": out, "direction": s["direction"], "cameras": len(motion.cameras)}
+
+
 def look_light(path):
     """the night's light on her of a look file (its light.person), None when the look has none.  The look is read as
     JSON only (tools/mv_look.py checks the rest of it)"""
@@ -957,6 +987,10 @@ def main(argv=None):
     s.add_argument("outdir")
     s.add_argument("--variant", help="write <variant>.fx and a copy of the model named <model>[<variant>.fx].pmx")
     _options(s)
+    s = sub.add_parser("light-vmd", help="a copy of the camera's motion with the light of a look's night (light.person)")
+    s.add_argument("camera")
+    s.add_argument("look")
+    s.add_argument("out")
     s = sub.add_parser("check", help="is MME installed beside this MMD?")
     s.add_argument("exe")
     s = sub.add_parser("verify", help="will this MMD draw this model's self shadow as WANT says (soft / mmd)?")
@@ -969,6 +1003,8 @@ def main(argv=None):
             out = {"ok": True, "effect": write(a.out, **_settings(a))}
         elif a.command == "prepare":
             out = dict({"ok": True}, **prepare(a.model, a.outdir, a.variant, **_settings(a)))
+        elif a.command == "light-vmd":
+            out = dict({"ok": True}, **light_vmd(a.camera, look_light(a.look), a.out))
         elif a.command == "verify":
             out = dict({"ok": True}, **verify(a.exe, a.model, a.want))
         else:
