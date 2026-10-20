@@ -1387,15 +1387,15 @@
 | PHYSICS_HZ | 60 | Hz | 90 | MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ) |  |  |  |  |  |  |  |  |
 | STAGE_JOBS | 4 |  | 92 | the processes that draw a stage in the world ("world": true) unless stage_jobs says |  |  |  |  |  |  |  |  |
 | avi_bytes(bytes_per_pixel) | 4 |  | 176 |  |  |  |  |  |  |  |  |  |
-| _look_check(shutter) | 0.5 |  | 385 |  |  |  |  |  |  |  |  |  |
-| _look_check(subframes) | 1 |  | 385 |  |  |  |  |  |  |  |  |  |
-| write(workers) | 1 |  | 818 |  |  |  |  |  |  |  |  |  |
-| --lead | 120 | frames | 883 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
-| --fps | 240 |  | 884 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
-| --shutter | 0.5 |  | 888 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
-| --tag | "final" |  | 891 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
-| --workers | 1 |  | 892 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 894 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
+| _look_check(shutter) | 0.5 |  | 400 |  |  |  |  |  |  |  |  |  |
+| _look_check(subframes) | 1 |  | 400 |  |  |  |  |  |  |  |  |  |
+| write(workers) | 1 |  | 833 |  |  |  |  |  |  |  |  |  |
+| --lead | 120 | frames | 898 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
+| --fps | 240 |  | 899 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
+| --shutter | 0.5 |  | 903 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
+| --tag | "final" |  | 906 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
+| --workers | 1 |  | 907 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 909 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
 ## mv_world.py（18. 描画と後処理、54）
 
