@@ -689,15 +689,43 @@ class SyncTest(unittest.TestCase):
         return {"times": {"first": first, "full": full, "hold_end": last - 0.1, "last": last}, "place": {"x": 0.5, "y": place_y},
                 "enter": {"kinds": ["fade"]}, "exit": {"kinds": ["fade"]}}
 
+    def voice(self, lines, total=12.0, weak_every=0.25):
+        """a voice in the form of voice_events: strong onsets where the lines start, weak ones every weak_every s while
+        it sings, its level -10 dB while it sings and -60 dB between, its onset strength at the onsets"""
+        step = 0.01
+        n = int(total / step)
+        level = np.full(n, -60.0)
+        flux = np.zeros(n)
+        onsets, strength = [], []
+        for a, b in lines:
+            level[int(a / step):int(b / step)] = -10.0
+            t = a
+            while t < b:
+                strong = abs(t - a) < 1e-9
+                onsets.append(t)
+                strength.append(5.0 if strong else 1.0)
+                flux[int(round(t / step))] = 5.0 if strong else 1.0
+                t += weak_every
+        return {"phrases": [list(l) for l in lines], "onsets": onsets, "strength": strength, "level": list(level),
+                "flux": list(flux), "step": step, "offset": 0.0}
+
     def test_a_text_that_comes_before_the_voice(self):
-        voice = {"phrases": [[2.0, 4.0], [5.0, 7.0], [8.0, 9.5]], "onsets": [2.0, 2.4, 5.0, 5.3, 8.0]}
-        texts = [self.text(p - 0.2, p - 0.05, e + 0.3) for p, e in ((2.0, 4.0), (5.0, 7.0), (8.0, 9.5))]
+        lines = ((2.0, 4.0), (5.0, 7.0), (8.0, 9.5))
+        voice = self.voice(lines)
+        texts = [self.text(p - 0.2, p - 0.05, e + 0.3) for p, e in lines]
         r = TA.sync(texts, voice, beats=None, fps=30.0, duration=10.0)
         self.assertAlmostEqual(r["lead_s"]["median"], 0.2, delta=0.01)
         self.assertAlmostEqual(r["full_lead_s"]["median"], 0.05, delta=0.01)
-        self.assertAlmostEqual(r["out_lag_s"]["median"], 0.3, delta=0.01)
+        self.assertAlmostEqual(r["trig_lead_s"], 0.2, delta=0.011)
         self.assertEqual(r["paired"], 3)
         self.assertEqual([t["kind"] for t in r["texts"]], ["lyric"] * 3)
+
+    def test_a_sign_in_the_scene_is_no_lyric(self):
+        voice = self.voice(((2.0, 4.0),))
+        t = self.text(2.0, 2.1, 3.9)
+        t["space"] = {"kind": "scene"}
+        r = TA.sync([t], voice, beats=None, fps=30.0, duration=10.0)
+        self.assertEqual(r["texts"][0]["kind"], "scene")
 
     def test_a_text_on_the_beat(self):
         beats = {"beats": list(0.5 + 0.5 * np.arange(40)), "downbeats": list(0.5 + 2.0 * np.arange(10)), "bpm": 120.0}
@@ -724,7 +752,7 @@ class SyncTest(unittest.TestCase):
         texts = [tx(0, 1.8, 4.2, 0.85, ["fade"]), tx(1, 4.8, 7.2, 0.85, ["fade"]), tx(2, 7.8, 9.0, 0.5, ["move"]),
                  tx(3, 9.4, 11.0, 0.2, ["cut"])]
         tr = {"label": "x", "fps": 30.0, "range": [0.0, 12.0], "texts": texts}
-        voice = {"phrases": [[2.0, 4.0], [5.0, 7.0], [8.0, 9.0], [9.5, 11.0]], "onsets": []}
+        voice = self.voice(((2.0, 4.0), (5.0, 7.0), (8.0, 9.0), (9.5, 11.0)))
         sy = TA.sync(texts, voice, beats=None, fps=30.0, duration=12.0)
         r = TA.typo_summary(tr, sy, voice=voice)
         s = r["summary"]
@@ -735,6 +763,7 @@ class SyncTest(unittest.TestCase):
         self.assertAlmostEqual(s["typo.lower"]["median"], 0.5)
         self.assertAlmostEqual(s["style.outline"]["median"], 0.25)
         self.assertAlmostEqual(s["sync.lead_s"]["median"], 0.15, delta=0.06)
+        self.assertAlmostEqual(s["sync.trig_lead_s"]["median"], 0.2, delta=0.011)
         self.assertAlmostEqual(s["typo.per_min"]["median"], 4 / 9.0 * 60.0, delta=0.5)     # 4 lines over 2 to 11 s
         self.assertGreater(s["typo.on_screen"]["median"], 0.8)
         self.assertEqual(s["typo.concurrent"]["median"], 1.0)

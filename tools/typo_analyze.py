@@ -1632,7 +1632,11 @@ def voice_events(x, sr=16000):
         t0, t1 = a * step, b * step
         near = [o for o in onsets if t0 - PHRASE_ONSET[0] <= o <= t0 + PHRASE_ONSET[1]]
         phrases.append([float(near[0]) if near else float(t0), float(t1)])
-    return {"onsets": [float(o) for o in onsets], "phrases": phrases, "step": step}
+    rows = np.round(np.asarray(onsets) / step).astype(int)
+    strength = [float(v.flux[min(len(v.flux) - 1, r)] / max(v.flux_median, 1e-9)) for r in rows]
+    return {"onsets": [float(o) for o in onsets], "strength": strength, "phrases": phrases, "step": step,
+            "level": [round(float(x), 1) for x in v.level], "flux": [round(float(x / max(v.flux_median, 1e-9)), 2)
+                                                                    for x in v.flux]}
 
 
 def beat_events(x, sr):
@@ -1668,7 +1672,9 @@ def voice_file(vocals, out=None, accompaniment=None, offset=0.0):
     """voice: the voice's onsets and phrases (and with the accompaniment, the beat) as OUT.json; offset (s) is added to
     every time (the sound and the video's frames on one clock)"""
     v = voice_events(read_sound(vocals, 16000), 16000)
-    res = {"vocals": vocals, "onsets": [o + offset for o in v["onsets"]], "phrases": [[a + offset, b + offset] for a, b in v["phrases"]]}
+    res = {"vocals": vocals, "onsets": [o + offset for o in v["onsets"]], "strength": v["strength"],
+           "phrases": [[a + offset, b + offset] for a, b in v["phrases"]], "step": v["step"], "offset": offset,
+           "level": v["level"], "flux": v["flux"]}
     if accompaniment:
         b = beat_events(read_sound(accompaniment, 22050), 22050)
         res.update({"bpm": b["bpm"], "beats": [t + offset for t in b["beats"]], "downbeats": [t + offset for t in b["downbeats"]],
@@ -1683,8 +1689,12 @@ def voice_file(vocals, out=None, accompaniment=None, offset=0.0):
 
 PAIR_REACH = 1.5                  # s: a text and a phrase start further apart than this are not paired
 MARK_SHARE = 0.4                  # a text on the screen this share of the video or more is a mark (a logo, a watermark)
-LYRIC_OVERLAP = 0.3               # a text that holds the voice this share of its time (or is paired) is a lyric
+LYRIC_SOUNDS = 0.5                # a screen text over which the voice sounds (VOICE_ON) this share of its time is a lyric
+VOICE_ON = -30.0                  # dB re the voice's 99th percentile: the voice sounds
 BEAT_REACH = 0.01                 # s added to a frame either side: an event this near a beat is on it
+LEAD_WINDOW = (-0.5, 1.0)         # s round a text's first frame where the voice's first strong onset is looked for
+STRONG = 75.0                     # a strong onset: its flux at least this percentile of the song's onsets'
+TRIGGER = (-1.0, 1.5)             # s round the texts' first frames over which the voice is averaged
 
 
 def _stats(values):
@@ -1714,42 +1724,80 @@ def _on_beat(times, beats, fps):
             "phases": phases}
 
 
+def _triggered(series, step, offset, times, window=TRIGGER):
+    """the mean of a 10 ms series over windows round the given times: (lags s, mean)"""
+    x = np.asarray(series, np.float64)
+    lags = np.arange(window[0], window[1] + 1e-9, step)
+    rows = []
+    for t in times:
+        idx = np.round((t - offset + lags) / step).astype(int)
+        if idx[0] < 0 or idx[-1] >= x.size:
+            continue
+        rows.append(x[idx])
+    if not rows:
+        return lags, np.full(lags.size, np.nan)
+    return lags, np.mean(rows, axis=0)
+
+
 def sync(texts, voice, beats=None, fps=30.0, duration=None):
-    """each text against the voice and the beat: its kind (mark: on the screen MARK_SHARE of the video or more; lyric:
-    paired with a phrase start within PAIR_REACH or holding the voice LYRIC_OVERLAP of its time; other), and for the
-    lyrics: lead_s (the phrase's start less the text's first frame: + the text comes first), full_lead_s (the same from
-    the frame it is whole), out_lag_s (its last frame less the phrase's end: + it stays after the voice); on_beat: the
-    share of the lyrics' first frames on a beat against chance"""
+    """each text against the voice and the beat.  Its kind: mark (on the screen MARK_SHARE of the video or more),
+    scene (it moves with the picture behind it: a sign in the scene), lyric (the voice sounds LYRIC_SOUNDS of its time,
+    or phrases say so), other.  For the lyrics: lead_s, from the text's first frame to the first strong onset of the
+    voice (STRONG) in LEAD_WINDOW (+: the voice comes after the text), and full_lead_s from the frame it is whole; the
+    triggered average of the voice's level and onset strength round the lyrics' first frames, and trig_lead_s where that
+    onset strength peaks (the lead over all the lyrics at once, with no pairing); on_beat: the share of the lyrics' first
+    frames on a beat against chance.  The voice's phrases (runs of sound) pair less well with lines in a fast song: lines
+    follow one another without a rest (in ours the gap between lines is -0.05 s at the median)"""
     phrases = voice.get("phrases") or []
-    starts = np.array([p[0] for p in phrases], np.float64)
+    onsets = np.asarray(voice.get("onsets") or [], np.float64)
+    strength = np.asarray(voice.get("strength") or [1.0] * len(onsets), np.float64)
+    strong_at = float(np.percentile(strength, STRONG)) if strength.size else 0.0
+    level = np.asarray(voice.get("level") or [], np.float64)
+    step = float(voice.get("step", 0.01))
+    off = float(voice.get("offset", 0.0))
     if duration is None:
         duration = max([t["times"]["last"] for t in texts] + [1.0])
     rows = []
     for t in texts:
         a, full, z = t["times"]["first"], t["times"]["full"], t["times"]["last"]
-        row = {"first": a, "full": full, "last": z, "kind": "other", "phrase": None}
+        row = {"first": a, "full": full, "last": z, "kind": "other"}
+        space = (t.get("space") or {}).get("kind")
         if z - a >= MARK_SHARE * duration:
             row["kind"] = "mark"
-            rows.append(row)
-            continue
-        held = sum(max(0.0, min(z, p[1]) - max(a, p[0])) for p in phrases)
-        if starts.size:
-            k = int(np.argmin(np.abs(starts - a)))
-            if abs(starts[k] - a) <= PAIR_REACH:
-                row["phrase"] = k
-                row["lead_s"] = float(starts[k] - a)
-                row["full_lead_s"] = float(starts[k] - full)
-                row["out_lag_s"] = float(z - phrases[k][1])
-        if row["phrase"] is not None or (z > a and held / (z - a) >= LYRIC_OVERLAP):
-            row["kind"] = "lyric"
+        elif space == "scene":
+            row["kind"] = "scene"
+        else:
+            if level.size:
+                i0, i1 = int(max(0, (a - off) / step)), int(min(level.size, (z - off) / step + 1))
+                sounds = float((level[i0:i1] > VOICE_ON).mean()) if i1 > i0 else 0.0
+            else:
+                sounds = sum(max(0.0, min(z, p[1]) - max(a, p[0])) for p in phrases) / max(1e-9, z - a)
+            row["sounds"] = sounds
+            if sounds >= LYRIC_SOUNDS:
+                row["kind"] = "lyric"
+        if row["kind"] == "lyric" and onsets.size:
+            near = (onsets >= a + LEAD_WINDOW[0]) & (onsets <= a + LEAD_WINDOW[1]) & (strength >= strong_at)
+            if near.any():
+                o = float(onsets[near][0])
+                row["onset"] = o
+                row["lead_s"] = o - a
+                row["full_lead_s"] = o - full
         rows.append(row)
     lyr = [r for r in rows if r["kind"] == "lyric"]
-    paired = [r for r in lyr if r["phrase"] is not None]
-    out = {"texts": rows, "paired": len(paired),
-           "lead_s": _stats([r["lead_s"] for r in paired]), "full_lead_s": _stats([r["full_lead_s"] for r in paired]),
-           "out_lag_s": _stats([r["out_lag_s"] for r in paired]),
-           "lyric_share_paired": len(paired) / float(len(lyr)) if lyr else float("nan")}
-    events = [r["first"] for r in (lyr if lyr else rows if not phrases else [])]
+    led = [r for r in lyr if "lead_s" in r]
+    out = {"texts": rows, "lyrics": len(lyr), "paired": len(led),
+           "lead_s": _stats([r["lead_s"] for r in led]), "full_lead_s": _stats([r["full_lead_s"] for r in led]),
+           "lyric_share_paired": len(led) / float(len(lyr)) if lyr else float("nan")}
+    if voice.get("flux") and lyr:
+        lags, fl = _triggered(voice["flux"], step, off, [r["first"] for r in lyr])
+        _, lv = _triggered(voice["level"], step, off, [r["first"] for r in lyr])
+        ok = (lags >= LEAD_WINDOW[0]) & (lags <= LEAD_WINDOW[1]) & np.isfinite(fl)
+        out["trigger"] = {"lags": [round(float(x), 3) for x in lags], "flux": [round(float(x), 3) for x in fl],
+                          "level": [round(float(x), 2) for x in lv]}
+        out["trig_lead_s"] = float(lags[ok][np.argmax(fl[ok])]) if ok.any() else float("nan")
+    else:
+        out["trig_lead_s"] = float("nan")
+    events = [r["first"] for r in lyr] if lyr else [r["first"] for r in rows if r["kind"] == "other"]
     out["on_beat"] = _on_beat(events, beats["beats"], fps) if beats and beats.get("beats") else \
         {"share": float("nan"), "chance": float("nan"), "n": 0, "phases": []}
     out["on_bar"] = _on_beat(events, beats["downbeats"], fps) if beats and beats.get("downbeats") else \
@@ -1770,6 +1818,7 @@ TYPO_MEASURES = {
     "typo.on_screen": ("amount", "歌っている間に歌詞が出ている時間の割合", ""),
     "typo.concurrent": ("amount", "同時に出ている歌詞の行の数（出ている間の時間で重みを付けた中央）", "行"),
     "typo.chars": ("amount", "1 行の文字の数", "字"),
+    "typo.scene": ("amount", "場面の中の文字（看板など、背景と一緒に動く）の数（歌っている間の 1 分あたり）", "個"),
     "typo.size": ("place", "文字の大きさ（字の高さ / 絵の高さ）", ""),
     "typo.x": ("place", "横の置き場（行の中心、左 0〜右 1）", ""),
     "typo.y": ("place", "縦の置き場（行の中心、上 0〜下 1）", ""),
@@ -1796,10 +1845,10 @@ TYPO_MEASURES = {
     "style.hollow": ("look", "中抜き（縁の線だけ）の行の割合", ""),
     "type.mincho": ("look", "明朝の行の割合（横画が縦画の 0.62 倍より細い）", ""),
     "type.weight": ("look", "書体の太さ（画の太さ / 字の高さ）", ""),
-    "sync.lead_s": ("sync", "文字が出始める時刻の、歌い出しより前の時間（+ 先）", "秒"),
-    "sync.full_lead_s": ("sync", "文字が全部見える時刻の、歌い出しより前の時間", "秒"),
-    "sync.out_lag_s": ("sync", "文字が消える時刻の、歌い終わりより後の時間", "秒"),
-    "sync.paired": ("sync", "歌い出しと組めた行の割合", ""),
+    "sync.lead_s": ("sync", "文字が出始めてから歌声の強い立ち上がりまでの時間（+ 文字が先、1 行ずつ）", "秒"),
+    "sync.full_lead_s": ("sync", "文字が全部見えてから歌声の強い立ち上がりまでの時間", "秒"),
+    "sync.trig_lead_s": ("sync", "文字の出始めでそろえた歌声の立ち上がりの強さが山になる時刻（全部の行をまとめて）", "秒"),
+    "sync.paired": ("sync", "出始めの -0.5〜+1.0 秒に歌声の強い立ち上がりがある行の割合", ""),
     "sync.on_beat": ("sync", "出始めが拍の上（1 コマ以内）にある行の割合", ""),
     "sync.on_beat_chance": ("sync", "（拍の上に来る偶然の割合）", ""),
 }
@@ -1858,13 +1907,13 @@ def typo_summary(tr, sy, voice=None, seed=0):
         ty = t.get("typeface") or {}
         if ty.get("weight") is not None:
             m["type.weight"] = ty["weight"]
-        for k in ("lead_s", "full_lead_s", "out_lag_s"):
+        for k in ("lead_s", "full_lead_s"):
             if k in r:
                 m["sync." + k] = r[k]
         rows.append({"m": {k: (float(v) if v is not None else float("nan")) for k, v in m.items()}, "shot": t["id"]})
     summary = LA.summarise(rows, seed=seed) if rows else {}
     for k in ("typo.show_s", "typo.hold_s", "enter.s", "exit.s", "enter.fade_s", "enter.stagger_s", "sync.lead_s",
-              "sync.full_lead_s", "sync.out_lag_s"):
+              "sync.full_lead_s"):
         if k in summary:
             summary[k]["floor_pair"] = 1.0 / fps
     texts = [t for t, _ in lyr]
@@ -1889,6 +1938,7 @@ def typo_summary(tr, sy, voice=None, seed=0):
     span = max(1e-6, z - a)
     summary["typo.per_min"] = _one(sum(1 for t in texts if t["times"]["last"] >= a and t["times"]["first"] <= z) / span * 60.0,
                                    len(texts))
+    summary["typo.scene"] = _one(sum(1 for k in kinds if k == "scene") / max(1.0, span / 60.0), len(kinds))
     grid = np.arange(a, z, 1.0 / fps)
     count = np.zeros(grid.size, int)
     for t in texts:
@@ -1896,6 +1946,8 @@ def typo_summary(tr, sy, voice=None, seed=0):
     summary["typo.on_screen"] = _one(float((count > 0).mean()) if grid.size else float("nan"), grid.size)
     summary["typo.concurrent"] = _one(float(np.median(count[count > 0])) if (count > 0).any() else 0.0, grid.size)
     summary["sync.paired"] = _one(sy.get("lyric_share_paired", float("nan")), len(texts))
+    summary["sync.trig_lead_s"] = _one(sy.get("trig_lead_s", float("nan")), len(texts))
+    summary["sync.trig_lead_s"]["floor_pair"] = 1.0 / fps
     summary["sync.on_beat"] = _one(sy["on_beat"]["share"], sy["on_beat"].get("n", 0))
     summary["sync.on_beat_chance"] = _one(sy["on_beat"]["chance"], sy["on_beat"].get("n", 0))
     return {"label": tr.get("label"), "fps": fps, "lyrics": len(texts), "texts": len(kinds),
