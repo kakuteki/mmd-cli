@@ -1089,6 +1089,257 @@ def _phase(part, rest, h, fps, chars, vertical, entering, cut_off=False):
     return out
 
 
+# ---- the look of a text: its colour, outline, shadow, glow, plate; its typeface --------------------------------------
+#
+# Read on one frame at the video's own size (thin outlines are 1 to 3 px there), in a text's box: the ground is the
+# colour round the box (the ring 0.6 to 1.2 heights out); the strokes are the pixels whose colour (CIELAB) lies far from
+# the ground (past Otsu's threshold); inside the strokes, the deep pixels (3 px or more from the ground) are the fill
+# and the band at their edge (1 to 2 px) tells an outline (another colour all round) from a drop shadow (another
+# colour on one side: the edge pixels of that colour all face one way); outside them, the light that falls off with the
+# distance from the strokes is a glow; strokes round holes of the ground larger than themselves are hollow letters.
+
+STYLE_GROUND = (0.6, 1.2)         # heights out from the box: the ring whose colour is the ground
+STYLE_PAD = 0.3                   # heights round the box where the strokes are looked for
+DEEP = 3.0                        # px into the strokes: the fill
+EDGE_BAND = (1.0, 2.5)            # px into the strokes: the edge band (an outline, a shadow's side)
+OUTLINE_DE = 15.0                 # CIEDE76 between the edge band and the fill for another colour at the edge
+SHADOW_ONE_WAY = 0.35             # the edge pixels of that colour face one way at least this much (mean resultant
+#                                   length of their directions): a shadow, under it an outline all round
+GLOW_AT = (2.0, 5.0)              # px out from the strokes where the glow is read, against the fill's rise
+HOLLOW = 0.8                      # holes of the ground inside the strokes this many times the strokes' area: hollow
+
+
+def _lab(rgb):
+    return _tool("look_analyze").rgb_to_lab(np.asarray(rgb, np.float64) / 255.0)
+
+
+def _hue(a, b):
+    return float(math.degrees(math.atan2(b, a)))
+
+
+def _off_segment(lab, p, q):
+    """CIELAB distance of every pixel from the segment between the colours p and q (the mixes of a text's fill and its
+    ground at an anti-aliased edge or in its glow lie on it; an outline's or a shadow's colour does not)"""
+    d = q - p
+    t = np.clip(((lab - p) * d).sum(axis=-1) / max(float((d * d).sum()), 1e-9), 0.0, 1.0)
+    return np.sqrt(((lab - (p + t[..., None] * d)) ** 2).sum(axis=-1))
+
+
+def text_style(rgb, box):
+    """the look of a text on one frame (RGB uint8 at the video's size, box in its px): fill_L fill_C fill_hue fill_rgb
+    (the fill's CIELAB lightness, chroma and hue angle, and its colour), contrast_L (fill against ground), outline (and
+    outline_L outline_C outline_hue outline_px), shadow (and shadow_dx shadow_dy shadow_strength), glow (the light 2 to 5
+    px out from the strokes as a share of the fill's rise over the ground) and glow_px (where it falls to half), hollow,
+    ground_L ground_rgb"""
+    ndi = _ndi()
+    a = np.asarray(rgb, np.uint8)
+    h_img, w_img = a.shape[:2]
+    hb = max(2.0, box["h"])
+    x0 = int(max(0, box["x0"] - STYLE_GROUND[1] * hb))
+    y0 = int(max(0, box["y0"] - STYLE_GROUND[1] * hb))
+    x1 = int(min(w_img, math.ceil(box["x1"] + STYLE_GROUND[1] * hb)))
+    y1 = int(min(h_img, math.ceil(box["y1"] + STYLE_GROUND[1] * hb)))
+    sub = a[y0:y1, x0:x1]
+    lab = _lab(sub)
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    ring_in = ((xx < box["x0"] - STYLE_GROUND[0] * hb) | (xx > box["x1"] + STYLE_GROUND[0] * hb) |
+               (yy < box["y0"] - STYLE_GROUND[0] * hb) | (yy > box["y1"] + STYLE_GROUND[0] * hb))
+    near = ((xx >= box["x0"] - STYLE_PAD * hb) & (xx <= box["x1"] + STYLE_PAD * hb) &
+            (yy >= box["y0"] - STYLE_PAD * hb) & (yy <= box["y1"] + STYLE_PAD * hb))
+    ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
+    de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
+    th = max(_otsu(de[near]), 8.0)
+    strokes = near & (de > th)
+    # strokes cut off from the rest by a little (a shadow's own blobs) stay: the look is read on all of them
+    out = {"ground_L": float(ground[0]), "ground_rgb": [int(v) for v in np.median(sub[ring_in], axis=0)] if ring_in.any()
+           else [0, 0, 0]}
+    if strokes.sum() < 20:
+        out.update({"fill_L": float("nan"), "fill_C": float("nan"), "fill_hue": float("nan"), "outline": False,
+                    "shadow": False, "glow": float("nan"), "glow_px": float("nan"), "hollow": False})
+        return out
+    # the depth into the strokes: across the 1 px seams where an outline's colour meets the fill's (their mix can be
+    # the ground's colour) too
+    depth = ndi.distance_transform_edt(ndi.binary_closing(strokes, iterations=1) | strokes)
+    deep = strokes & (depth >= DEEP)
+    if deep.sum() < 10:
+        deep = strokes & (depth >= max(1.0, float(np.percentile(depth[strokes], 75))))
+    # the fill: the colour of the deepest strokes (an outline lies at their edge, a drop shadow under them)
+    deepest = strokes & (depth >= max(1.0, float(np.percentile(depth[strokes], 80))))
+    fill = np.median(lab[deepest], axis=0)
+    deep = deep & (np.sqrt(((lab - fill) ** 2).sum(axis=2)) < 2 * OUTLINE_DE)
+    band = strokes & (depth >= EDGE_BAND[0]) & (depth <= EDGE_BAND[1])
+    holes = ndi.binary_fill_holes(strokes) & ~strokes
+    hollow = bool(holes.sum() >= HOLLOW * strokes.sum() and np.median(de[holes]) < OUTLINE_DE) if holes.any() else False
+    if hollow:
+        fill = np.median(lab[strokes & (depth >= 1.0)], axis=0)
+    out.update({"fill_L": float(fill[0]), "fill_C": float(math.hypot(fill[1], fill[2])), "fill_hue": _hue(fill[1], fill[2]),
+                "fill_rgb": [int(v) for v in np.median(sub[deep if not hollow else strokes], axis=0)],
+                "contrast_L": float(fill[0] - ground[0]), "hollow": hollow})
+    # the edge band: pixels of another colour than the fill, and which way they face
+    other = band & (_off_segment(lab, ground, fill) > OUTLINE_DE)
+    out.update({"outline": False, "shadow": False, "outline_px": 0.0, "shadow_dx": 0.0, "shadow_dy": 0.0,
+                "shadow_strength": 0.0})
+    if not hollow and other.sum() >= 0.25 * band.sum() and band.sum() > 20:
+        oc = np.median(lab[other], axis=0)
+        # the side each such pixel lies on: from the nearest fill pixel (deep) to it
+        _, (iy, ix) = ndi.distance_transform_edt(~deep, return_indices=True)
+        oy, ox = np.nonzero(other)
+        vy = oy - iy[oy, ox]
+        vx = ox - ix[oy, ox]
+        norm = np.hypot(vx, vy)
+        ok = norm > 0
+        r = float(np.hypot((vx[ok] / norm[ok]).mean(), (vy[ok] / norm[ok]).mean())) if ok.any() else 0.0
+        if r >= SHADOW_ONE_WAY:
+            # the shadow: the offset that best lays the fill on the pixels of the shadow's colour
+            # the shadow is the fill moved: the offset whose moved fill lands on shadow or fill (never on the ground)
+            # and covers the most of the shadow's colour
+            dark = (np.sqrt(((lab - oc) ** 2).sum(axis=2)) < OUTLINE_DE * 1.5) & near
+            filled = (np.sqrt(((lab - fill) ** 2).sum(axis=2)) < OUTLINE_DE * 1.5) & near
+            core = strokes & (np.sqrt(((lab - fill) ** 2).sum(axis=2)) < OUTLINE_DE * 1.5)
+            ys_, xs_ = np.nonzero(core)
+            best = (0, 0, -1.0)
+            n_dark = max(1, int(dark.sum()))
+            for dy in range(-10, 11):
+                for dx in range(-10, 11):
+                    if dx == 0 and dy == 0:
+                        continue
+                    ty, tx = ys_ + dy, xs_ + dx
+                    ok = (ty >= 0) & (ty < dark.shape[0]) & (tx >= 0) & (tx < dark.shape[1])
+                    if not ok.any():
+                        continue
+                    land = (dark[ty[ok], tx[ok]] | filled[ty[ok], tx[ok]]).mean()
+                    cover = dark[ty[ok], tx[ok]].sum() / float(n_dark)
+                    v = float(land * cover)
+                    if v > best[2]:
+                        best = (dx, dy, v)
+            out.update({"shadow": True, "shadow_dx": float(best[0]), "shadow_dy": float(best[1]),
+                        "shadow_strength": float(best[2]), "shadow_L": float(oc[0])})
+        else:
+            # the outline's width: how deep into the strokes its colour reaches (the depth whose pixels lie nearer the
+            # outline's colour than the fill's)
+            width = 0.0
+            near_o = np.sqrt(((lab - oc) ** 2).sum(axis=2)) < np.sqrt(((lab - fill) ** 2).sum(axis=2))
+            for d in np.arange(0.5, 12.0, 1.0):
+                ring_d = strokes & (depth >= d) & (depth < d + 1.0)
+                if ring_d.sum() < 5:
+                    break
+                share = float(near_o[ring_d].mean())
+                width += share
+                if share < 0.2:
+                    break
+            out.update({"outline": True, "outline_L": float(oc[0]), "outline_C": float(math.hypot(oc[1], oc[2])),
+                        "outline_hue": _hue(oc[1], oc[2]), "outline_px": float(width)})
+    # the glow: how much lighter (on the fill's side) the ground is near the strokes than far from them
+    outside = ndi.distance_transform_edt(~strokes)
+    yl = lab[..., 0]
+    rise = fill[0] - ground[0]
+    prof = []
+    for d in np.arange(1.0, 25.0, 1.0):
+        ringd = (outside >= d) & (outside < d + 1.0) & ~ring_in
+        prof.append(float(np.median(yl[ringd]) - ground[0]) if ringd.sum() >= 10 else float("nan"))
+    prof = np.array(prof)
+    sgn = 1.0 if rise >= 0 else -1.0
+    at = (np.arange(1.0, 25.0, 1.0) >= GLOW_AT[0]) & (np.arange(1.0, 25.0, 1.0) <= GLOW_AT[1])
+    glow = float(np.nanmean(prof[at]) * sgn / abs(rise)) if abs(rise) > 1e-6 and np.isfinite(prof[at]).any() else 0.0
+    out["glow"] = max(0.0, glow)
+    half = None
+    if np.isfinite(prof[1]) and prof[1] * sgn > 0:
+        for i, v in enumerate(prof[1:], start=1):
+            if np.isfinite(v) and v * sgn <= 0.5 * prof[1] * sgn:
+                half = i + 1.0
+                break
+    out["glow_px"] = float(half) if half is not None else float("nan")
+    return out
+
+
+TYPE_HV = 0.62                    # horizontal strokes thinner than this share of the vertical ones: mincho.  Measured
+#                                   on drawn text (48 to 120 px): gothic 0.72 to 0.97 (Noto Sans JP, Yu Gothic, Meiryo,
+#                                   MS Gothic, BIZ UDGothic, HG Gothic M, HG Soei Kaku Pop, UD Digi Kyokasho), mincho 0.24 to
+#                                   0.55 (Yu Mincho, MS Mincho, Noto Serif JP, HG Mincho B); BIZ UDMincho (0.77), the textbook
+#                                   and brush faces (HG Kyokasho 0.77, HG Gyosho 0.81 to 0.86, HG Seikaisho 0.58 to 0.76) read
+#                                   as gothic: the width of the strokes alone does not tell them
+
+
+def typeface(rgb, box):
+    """the typeface of a text on one frame from its strokes (as text_style finds them): weight (the median stroke
+    width, measured across each stroke to a fraction of a pixel, over the text's height), hv (the horizontal strokes'
+    width over the vertical ones': mincho draws its horizontals thin), uneven (how the width varies along the strokes
+    and between them), class: gothic or mincho (TYPE_HV)"""
+    ndi = _ndi()
+    from skimage.morphology import skeletonize
+    a = np.asarray(rgb, np.uint8)
+    h_img, w_img = a.shape[:2]
+    hb = max(2.0, box["h"])
+    x0 = int(max(0, box["x0"] - STYLE_GROUND[1] * hb))
+    y0 = int(max(0, box["y0"] - STYLE_GROUND[1] * hb))
+    x1 = int(min(w_img, math.ceil(box["x1"] + STYLE_GROUND[1] * hb)))
+    y1 = int(min(h_img, math.ceil(box["y1"] + STYLE_GROUND[1] * hb)))
+    lab = _lab(a[y0:y1, x0:x1])
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    ring_in = ((xx < box["x0"] - STYLE_GROUND[0] * hb) | (xx > box["x1"] + STYLE_GROUND[0] * hb) |
+               (yy < box["y0"] - STYLE_GROUND[0] * hb) | (yy > box["y1"] + STYLE_GROUND[0] * hb))
+    near = ((xx >= box["x0"] - STYLE_PAD * hb) & (xx <= box["x1"] + STYLE_PAD * hb) &
+            (yy >= box["y0"] - STYLE_PAD * hb) & (yy <= box["y1"] + STYLE_PAD * hb))
+    ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
+    de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
+    strokes = near & (de > max(_otsu(de[near]), 8.0))
+    out = {"weight": float("nan"), "hv": float("nan"), "uneven": float("nan"), "class": None}
+    if strokes.sum() < 50:
+        return out
+    full = float(np.percentile(de[strokes], 90))
+    soft = np.clip(de / max(full, 1e-6), 0.0, 1.0) * near          # each pixel's share covered by the strokes
+    rows = np.nonzero(strokes.any(axis=1))[0] if not box.get("vertical") else np.nonzero(strokes.any(axis=0))[0]
+    tall = float(np.percentile(rows, 98) - np.percentile(rows, 2) + 1) if len(rows) else hb
+    depth = ndi.distance_transform_edt(strokes)
+    skel = skeletonize(strokes)
+    nb = ndi.convolve(skel.astype(np.int32), np.ones((3, 3), np.int32), mode="constant") - skel
+    plain = skel & (nb == 2)                              # on a stroke: away from its ends and joints
+    widths = 2.0 * depth[plain] - 1.0
+    if widths.size < 20:
+        return out
+    # the stroke's direction from the structure tensor of the strokes (smoothed over about a stroke's width)
+    f = strokes.astype(np.float64)
+    gy, gx = np.gradient(ndi.gaussian_filter(f, 1.0))
+    sig = max(1.5, float(np.median(widths)))
+    jxx = ndi.gaussian_filter(gx * gx, sig)
+    jyy = ndi.gaussian_filter(gy * gy, sig)
+    jxy = ndi.gaussian_filter(gx * gy, sig)
+    across = 0.5 * np.degrees(np.arctan2(2 * jxy, jxx - jyy))          # the direction across the stroke
+    ang = np.abs(across[plain])                                       # 0: across is horizontal (a vertical stroke)
+    # each width again, to a fraction of a pixel: the covered shares summed along the line across the stroke through
+    # the skeleton pixel, as far as the stroke goes on each side
+    py, px = np.nonzero(plain)
+    th = np.radians(across[plain])
+    reach = max(4.0, 2.0 * float(np.median(widths)) + 2.0)
+    ts = np.arange(-reach, reach + 0.25, 0.5)
+    sy = py[:, None] + np.sin(th)[:, None] * ts[None, :]
+    sx = px[:, None] + np.cos(th)[:, None] * ts[None, :]
+    vals = ndi.map_coordinates(soft, [sy.ravel(), sx.ravel()], order=1, mode="constant").reshape(sy.shape)
+    mid = len(ts) // 2
+    keep = np.ones_like(vals, bool)
+    for side in (range(mid + 1, len(ts)), range(mid - 1, -1, -1)):
+        gone = np.zeros(len(py), bool)
+        for j in side:
+            gone |= vals[:, j] < 0.1
+            keep[:, j] &= ~gone
+    widths = (vals * keep).sum(axis=1) * 0.5
+    vert = widths[ang < 20.0]
+    horiz = widths[ang > 70.0]
+    weight = float(np.median(widths)) / tall
+    hv = float(np.median(horiz) / np.median(vert)) if horiz.size >= 10 and vert.size >= 10 else float("nan")
+    # unevenness along the strokes: the spread of the width against its local mean along the skeleton
+    wmap = np.zeros(strokes.shape)
+    wmap[plain] = widths
+    cnt = ndi.uniform_filter(plain.astype(np.float64), 7)
+    loc = ndi.uniform_filter(wmap, 7) / np.maximum(cnt, 1e-9)
+    dev = (wmap[plain] - loc[plain]) / np.maximum(loc[plain], 1e-9)
+    uneven = float(np.std(dev) + np.std(widths) / max(np.mean(widths), 1e-9))
+    cls = "mincho" if np.isfinite(hv) and hv < TYPE_HV else "gothic"
+    out.update({"weight": weight, "hv": hv, "uneven": uneven, "class": cls, "height_px": tall,
+                "stroke_px": float(np.median(widths))})
+    return out
+
+
 # ---- the command line --------------------------------------------------------------------------------------------------
 
 def main(argv=None):

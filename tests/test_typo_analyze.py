@@ -412,5 +412,140 @@ class TrackMeasureTest(unittest.TestCase):
         self.assertLess(m["hold"]["split_px"], 1.0)
 
 
+# ---- the look of the text: drawn with Pillow, its colour, outline, shadow and glow known -----------------------------
+
+WIN_FONTS = "C:/Windows/Fonts"
+
+
+def font_path(name):
+    p = os.path.join(WIN_FONTS, name)
+    return p if os.path.exists(p) else None
+
+
+def render(text="東京の夜空に光る星", font="NotoSansJP-VF.ttf", size=64, weight=None, fill=(255, 255, 255),
+           ground=(30, 30, 40), stroke=0, stroke_fill=None, shadow=None, glow=None, hollow=False, pad=40):
+    """(RGB uint8, box) of a line drawn with Pillow: shadow (dx, dy, blur, rgb), glow (sigma, strength) of the fill
+    colour round the text, hollow: only the outline (stroke) drawn, its inside the ground"""
+    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    f = ImageFont.truetype(font_path(font), size)
+    if weight is None and font.startswith("Noto"):
+        weight = 700                                  # the default instance of the Noto variable fonts is Thin
+    if weight is not None:
+        try:
+            axes = []
+            for ax in f.get_variation_axes():
+                axes.append(weight if str(ax.get("name", b"")).lower().find("weight") >= 0 or ax.get("name") in (b"Weight",)
+                            else ax["default"])
+            f.set_variation_by_axes(axes)
+        except Exception:
+            pass
+    x0, y0, x1, y1 = f.getbbox(text, stroke_width=stroke)
+    w, h = x1 - x0 + 2 * pad, y1 - y0 + 2 * pad
+    img = Image.new("RGB", (w, h), ground)
+    org = (pad - x0, pad - y0)
+
+    def text_layer(colour, sw=0, sfill=None, inner=None):
+        layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(layer).text(org, text, font=f, fill=inner if inner is not None else colour + (255,),
+                                   stroke_width=sw, stroke_fill=(sfill + (255,)) if sfill else None)
+        return layer
+    if glow:
+        g = text_layer(fill).filter(ImageFilter.GaussianBlur(glow[0]))
+        a = np.asarray(g, np.float64)
+        base = np.asarray(img, np.float64)
+        add = a[..., :3] * (a[..., 3:4] / 255.0) * glow[1]
+        img = Image.fromarray(np.clip(base + add, 0, 255).astype(np.uint8))
+    if shadow:
+        dx, dy, blur, rgb = shadow
+        sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).text((org[0] + dx, org[1] + dy), text, font=f, fill=rgb + (255,))
+        if blur:
+            sh = sh.filter(ImageFilter.GaussianBlur(blur))
+        img.paste(sh, (0, 0), sh)
+    if hollow:
+        lay = text_layer(fill, sw=stroke, sfill=stroke_fill or fill, inner=(0, 0, 0, 0))
+        img.paste(lay, (0, 0), lay)
+        # the inside back to the ground: draw the text in the ground colour over the stroke's middle
+        inner = text_layer(ground)
+        img.paste(inner, (0, 0), inner)
+    else:
+        lay = text_layer(fill, sw=stroke, sfill=stroke_fill)
+        img.paste(lay, (0, 0), lay)
+    a = np.asarray(img, np.uint8).copy()
+    box = {"x0": float(pad), "y0": float(pad), "x1": float(w - pad), "y1": float(h - pad), "cx": w / 2.0, "cy": h / 2.0,
+           "w": float(w - 2 * pad), "h": float(h - 2 * pad), "angle": 0.0, "vertical": False, "score": 1.0, "area": 0.0}
+    return a, box
+
+
+HAS_FONTS = np is not None and font_path("NotoSansJP-VF.ttf") is not None and font_path("yumin.ttf") is not None
+
+
+@unittest.skipUnless(TA and HAS_FONTS, NEEDS + " and the Windows Japanese fonts")
+class StyleTest(unittest.TestCase):
+    def style(self, **kw):
+        a, box = render(**kw)
+        return TA.text_style(a, box)
+
+    def test_plain_white_text(self):
+        st = self.style()
+        self.assertGreater(st["fill_L"], 90)
+        self.assertLess(st["fill_C"], 8)
+        self.assertFalse(st["outline"])
+        self.assertFalse(st["shadow"])
+        self.assertLess(st["glow"], 0.05)
+        self.assertFalse(st["hollow"])
+
+    def test_red_text(self):
+        st = self.style(fill=(220, 40, 40))
+        self.assertGreater(st["fill_C"], 50)
+        self.assertTrue(-20 <= st["fill_hue"] <= 50, st["fill_hue"])       # red: a* high, b* a little
+
+    def test_an_outline_is_seen_with_its_colour_and_width(self):
+        st = self.style(stroke=4, stroke_fill=(10, 10, 10), ground=(120, 120, 130))
+        self.assertTrue(st["outline"], st)
+        self.assertLess(st["outline_L"], 25)
+        self.assertGreater(st["fill_L"], 90)
+        self.assertAlmostEqual(st["outline_px"], 4.0, delta=1.6)
+
+    def test_a_drop_shadow_is_seen_with_its_offset(self):
+        st = self.style(shadow=(5, 5, 1, (0, 0, 0)), ground=(120, 120, 130))
+        self.assertTrue(st["shadow"], st)
+        self.assertAlmostEqual(st["shadow_dx"], 5, delta=1.6)
+        self.assertAlmostEqual(st["shadow_dy"], 5, delta=1.6)
+        self.assertFalse(st["outline"])
+
+    def test_a_glow_is_seen_and_a_plain_text_has_none(self):
+        glowing = self.style(glow=(6, 2.5), ground=(20, 20, 30))
+        plain = self.style(ground=(20, 20, 30))
+        self.assertGreater(glowing["glow"], 0.12)
+        self.assertGreater(glowing["glow"], 4 * max(plain["glow"], 0.01))
+        self.assertGreater(glowing["glow_px"], 3)
+
+    def test_hollow_letters(self):
+        st = self.style(hollow=True, stroke=3, stroke_fill=(60, 230, 230), ground=(15, 15, 25), size=96)
+        self.assertTrue(st["hollow"], st)
+
+
+@unittest.skipUnless(TA and HAS_FONTS, NEEDS + " and the Windows Japanese fonts")
+class TypefaceTest(unittest.TestCase):
+    def features(self, font, weight=None, size=72):
+        a, box = render(font=font, size=size, weight=weight)
+        return TA.typeface(a, box)
+
+    def test_gothic_and_mincho_part(self):
+        gothic = [self.features(f) for f in ("NotoSansJP-VF.ttf", "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc")]
+        mincho = [self.features(f) for f in ("yumin.ttf", "msmincho.ttc", "NotoSerifJP-VF.ttf")]
+        for g in gothic:
+            self.assertEqual(g["class"], "gothic", g)
+        for m in mincho:
+            self.assertEqual(m["class"], "mincho", m)
+        self.assertGreater(min(g["hv"] for g in gothic), max(m["hv"] for m in mincho))
+
+    def test_a_heavier_weight_reads_heavier(self):
+        light = self.features("NotoSansJP-VF.ttf", weight=300)
+        heavy = self.features("NotoSansJP-VF.ttf", weight=900)
+        self.assertGreater(heavy["weight"], 1.5 * light["weight"])
+
+
 if __name__ == "__main__":
     unittest.main()
