@@ -44,7 +44,10 @@ ffmpeg (the compositing), from back to front:
   starts where it holds one step of the physics (read from the dancer's file), so that the cloth shows once instead of
   twice (`phase` shows what it reads);
 * the text cues of the "front" layer;
-* a flare at each of those times: a burst of light and a streak for `flare.frames`.
+* a flare at each of those times: a burst of light and a streak for `flare.frames`;
+* the motion graphics of the look's "mograph" section (tools/mograph_layer.py, which says how; none by default): particles
+  in the air behind and in front of the dancer, punches, shakes, glitches and dissolves before the lens, and fades and
+  flashes after it, under the text in front.
 
 The picture stays RGB to the end, where it is made Y'CbCr by BT.709 in the TV range with the four tags that say so
 (COLOUR_OUT), as a player reads an HD video.
@@ -73,6 +76,18 @@ from PIL import Image, ImageDraw, ImageFilter
 
 _WORLD = []
 _LAYER = []
+_MOGRAPH = []
+
+
+def mograph_tool():
+    """tools/mograph_layer.py (loaded from its file, once): the motion graphics of the look's "mograph" section"""
+    if not _MOGRAPH:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mograph_layer.py")
+        spec = importlib.util.spec_from_file_location("mograph_layer", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _MOGRAPH.append(module)
+    return _MOGRAPH[0]
 
 
 def layer_tool():
@@ -208,6 +223,10 @@ DEFAULT_LOOK = {
               "spill_wrap": 0.0,    # and round her outline (a light wrap): the light round her added in a band inside it
               "spill_radius": 40.0,  # how far round her the light is gathered from, pixels of a 720 line picture
               "spill_wrap_width": 6.0},         # the band's width, pixels of a 720 line picture
+    # the motion graphics (mograph, 2026-10-21; tools/mograph_layer.py, which says how and holds the section's defaults):
+    # punches, shakes, flashes, fades, dissolves and glitches at times of the song, and particles in the air of a stage in the
+    # world.  on 0 draws nothing (the argv of before)
+    "mograph": {"on": 0},
 }
 REFERENCE_HEIGHT = 720.0
 LIGHT_SCALE = 2                  # the light is drawn at half size: it is all blur
@@ -250,6 +269,9 @@ def merge_look(overrides):
     for name, value in overrides.items():
         if name not in look:
             raise ValueError("the look has no setting %r (it has: %s)" % (name, ", ".join(sorted(look))))
+        if name == "mograph":
+            look[name] = mograph_tool().merge(value)            # its events are a table: the section checks itself
+            continue
         if isinstance(look[name], dict):
             if not isinstance(value, dict):
                 raise ValueError("%s must be an object, not %r" % (name, value))
@@ -269,6 +291,8 @@ def merge_look(overrides):
     _check_lamps(look["lamps"], look["stage"])
     _check_rim(look["rim"])
     _check_layer(look["layer"], look["stage"], look["lamps"])
+    if look["mograph"]["on"]:
+        mograph_tool().check_look(look)
     return look
 
 
@@ -586,7 +610,7 @@ def check_encoder(encoder):
 
 def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=None, flare_pattern=None, flare_frames=0,
                    start=None, duration=None, offset=0.0, subframes=1, shutter=1.0, light_frames=None, encoder="x264",
-                   stage=None, shifts=None):
+                   stage=None, shifts=None, particles=None):
     """the ffmpeg argv that lays plate, light, back text, dancer, glow, front text and flares over each other
     (see the module docstring).  `offset` is the song time at the dancer's first frame (a chunk of the song
     rendered from a later frame); `start` and `duration` cut an excerpt, in seconds of the song.  With
@@ -596,7 +620,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     pixel format and nothing else.  `stage` ({"pattern", "first"}: the frames of tools/mv_world.py, numbered by the frame
     of the video from the song's start, and the excerpt's first) takes the place of the plate and the light for a look
     whose stage lies in the world.  `shifts` (measure_physics) move the window of the fold; without them, or with shifts
-    of 0, the argv is the one of before"""
+    of 0, the argv is the one of before.  `particles` ({"back", "front", "first"}: the frames of the look's mograph
+    particles, tools/mograph_layer.write_particles) when the look has them"""
     w, h = size
     coding = encoder_args(encoder)
     taken = check_shutter(subframes, shutter)
@@ -606,6 +631,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if start is not None and start < offset - 1e-9:
         raise ValueError("--from %.3f is before the dancer's file, which begins at %.3f s of the song" % (start, offset))
     clip_start = float(start) if start is not None else offset
+    # the motion graphics (tools/mograph_layer.py), at their places in the graph below; none with mograph.on 0
+    mograph = mograph_tool().Graph(look["mograph"], size, fps, clip_start, duration, particles) if look["mograph"]["on"] else None
     argv = ["ffmpeg", "-v", "error", "-y"]
     if start is not None:
         argv += ["-ss", "%.3f" % (clip_start - offset)]
@@ -662,6 +689,10 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         argv += ["-framerate", str(fps), "-start_number", str(skip), "-i", flare_pattern]
         overlays["flare"].append((next_input, offset, 0, 0, (w, h)))
         next_input += 1
+    if mograph:
+        added = mograph.inputs(next_input)              # the frames of its particles, after every input of before
+        argv += added
+        next_input += added.count("-i")
 
     if stage is not None:
         parts = ["[1:v]format=gbrp[stage]"]
@@ -685,6 +716,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                                                                                            state["n"]))
             state["label"] = "v%d" % state["n"]
 
+    if mograph:
+        state["label"] = mograph.back(parts, state["label"])           # the particles behind her, over the stage
     lay(overlays["back"])
     glow = look["glow"]
     scale = h / REFERENCE_HEIGHT
@@ -724,6 +757,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if rim_on:
         parts += _rim(rim, scale, state["label"])
         state["label"] = "rimlit"
+    if mograph:
+        state["label"] = mograph.front(parts, state["label"])          # the particles in front of her
     camera = look["camera"]
     span = punch_span
     hits = flare_starts if span > 0 else []
@@ -742,6 +777,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
         enable = "+".join("between(t,%.3f,%.3f)" % (at, at + span) for at in hits)
         parts.append("[%s]rgbashift=rh=-%d:bh=%d:enable='%s'[parted]" % (state["label"], shift, shift, enable))
         state["label"] = "parted"
+    if mograph:
+        state["label"] = mograph.camera(parts, state["label"])         # its punches, shakes, glitches and dissolves
     lens = look["lens"]
     finish = []
     if lens["vignette"] > 0:
@@ -753,6 +790,8 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     if finish:
         parts.append("[%s]%s[lens]" % (state["label"], ",".join(finish)))
         state["label"] = "lens"
+    if mograph:
+        state["label"] = mograph.veils(parts, state["label"])          # its fades and flashes, under the text in front
     lay(overlays["front"])
     lay(overlays["flare"])
     parts.append("[%s]%s[out]" % (state["label"], COLOUR_OUT))
@@ -1157,7 +1196,8 @@ def prepared_key(look, size, fps, cues_path, world=None):
     digest = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8"))
     here = os.path.dirname(os.path.abspath(__file__))
     files = [("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
-             ("mv_text", os.path.join(here, "mv_text.py")), ("mv_world", os.path.join(here, "mv_world.py"))]
+             ("mv_text", os.path.join(here, "mv_text.py")), ("mv_world", os.path.join(here, "mv_world.py")),
+             ("mograph_layer", os.path.join(here, "mograph_layer.py"))]
     if world is not None:
         package = os.path.join(os.path.dirname(here), "mmd_cli")
         files += [("camera", world["camera"]), ("model", world["model"])] + [("motion", m) for m in world["motions"]]
@@ -1223,6 +1263,9 @@ def prepare(look, work, size, fps, cues_path=None, world=None, spans=None):
         note["stage"] = world_tool().write_stage(look, work, size, fps, world["track"], None, None, layers["light_frames"],
                                                  world["subframes"], world["shutter"], world["figure"], world["jobs"], world,
                                                  spans=ranges)
+    if look["mograph"]["on"] and mograph_tool().needs_particles(look["mograph"]):
+        # the particles of the motion graphics over the same frames as the stage (they need the world: merge_look says so)
+        layers["mograph"] = mograph_tool().write_particles(look, work, size, fps, world, None, None, spans=ranges)
     with open(note_path + ".part", "w", encoding="utf-8") as f:
         json.dump(note, f, ensure_ascii=True, indent=1)
     os.replace(note_path + ".part", note_path)
@@ -1263,6 +1306,13 @@ def load_prepared(work, look, size, fps, cues_path=None, world=None):
     else:
         whole = isinstance(stage, dict) and isinstance(stage.get("spans"), list) and len(stage["spans"]) > 0
         patterns = [stage["pattern"]] + ([stage["spill"]] if whole and stage.get("spill") else []) if whole else []
+        if whole and look["mograph"]["on"] and mograph_tool().needs_particles(look["mograph"]):
+            # the particles of the motion graphics: drawn by prepare over the stage's spans
+            drawn = layers.get("mograph")
+            if isinstance(drawn, dict) and drawn.get("spans") == stage["spans"]:
+                patterns += [drawn["back"], drawn["front"]]
+            else:
+                whole = False
         for span in (stage.get("spans") or []) if whole else []:
             if not (isinstance(span, list) and len(span) == 2 and all(isinstance(v, int) for v in span) and span[0] >= 0
                     and all(_whole_sequence(p, span[1], span[0]) for p in patterns)):
@@ -1440,6 +1490,12 @@ def render(args):
         elif world is not None:
             stage = world_tool().write_stage(look, work, size, fps, world["track"], first, count, layers["light_frames"],
                                              world["subframes"], world["shutter"], world["figure"], world["jobs"], world)
+        if look["mograph"]["on"] and mograph_tool().needs_particles(look["mograph"]):
+            layers["mograph"] = mograph_tool().write_particles(look, work, size, fps, world, first, count)
+    particles = None
+    if layers.get("mograph"):
+        # the particles of the motion graphics, read from the excerpt's first frame as the stage is
+        particles = {"back": layers["mograph"]["back"], "front": layers["mograph"]["front"], "first": first}
     folder = os.path.dirname(out)
     if folder:
         os.makedirs(folder, exist_ok=True)
@@ -1450,8 +1506,14 @@ def render(args):
                           flare_pattern=layers["flare_pattern"], flare_frames=layers["flare_frames"],
                           start=start, duration=duration, offset=args.offset, subframes=args.subframes,
                           shutter=args.shutter, light_frames=layers["light_frames"], encoder=args.encoder, stage=stage,
-                          shifts=[(s[0], s[2]) for s in physics["segments"]] if physics else None)
+                          shifts=[(s[0], s[2]) for s in physics["segments"]] if physics else None, particles=particles)
+    graph_file = out + ".filter_complex.txt"
+    if look["mograph"]["on"]:
+        # many events make a graph past Windows' command line: it then goes to ffmpeg in a file
+        argv = mograph_tool().long_argv(argv, graph_file)
     done = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if look["mograph"]["on"] and os.path.exists(graph_file):
+        os.remove(graph_file)
     result = {"out": out, "size": list(size), "fps": fps, "offset": args.offset, "subframes": args.subframes,
               "shutter": args.shutter, "work": work, "light_frames": layers["light_frames"],
               "flares": sum(1 for a in argv if a == layers["flare_pattern"]),
@@ -1465,6 +1527,8 @@ def render(args):
         result["encoder"] = args.encoder
     if physics:
         result["physics"] = physics
+    if look["mograph"]["on"]:
+        result["mograph"] = {"events": len(mograph_tool().events_of(look["mograph"])), "particles": bool(particles)}
     if done.returncode != 0 or not os.path.exists(out):
         raise RuntimeError("ffmpeg failed (%d): %s" % (done.returncode, done.stderr.strip()[-600:]))
     return result
