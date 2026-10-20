@@ -37,6 +37,14 @@ driver checks either before MMD renders, and with "soft" -Resume watches MME's f
 which gives the AVI its alpha and must stay on), "size" ([1280, 720]), "codec" ("未圧縮"), "avi_bytes_per_pixel" (4
 for the uncompressed BGRA; another codec needs it, measured on one AVI), "mmd_cli_home", "python" ("python"),
 "name" ("mv": the joined video is OUT/<name>_<tag>.mp4).  An entry this tool does not know is refused.
+A stage of a model (a look with layer.on 1, tools/stage_layer.py) takes "stage_set" and "stage_pictures" (with "world": true),
+and "stage_mmd" (render12, 2026-10-21): the plain MMD (no MME beside it) that draws MMD's pictures of the stage chunk by chunk.
+With it the driver draws, right before every chunk, the stage over the frames the chunk shows (stage_layer.py batch, the batch,
+unpack into stage_pictures/<tag>_<NN>), folds the chunk with them in a work folder of its own (OUT/look_work_<tag>_<NN>) and
+removes both once the chunk's mp4 has passed; without it stage_pictures holds MMD's pictures of every frame the chunks show,
+drawn before (and watched by -Resume).  "keep_free_gb" (30 with a stage of a model, none otherwise): the free space, in GB of
+1024^3 bytes, the driver keeps on the disk of OUT: before every MMD it measures, and a chunk that would leave less (its peak, see
+the summary's "disk") is not started (exit 3; -Resume goes on from it).
 
 --shots takes the shot list of tools/make_camera.py's report (of the run that wrote the camera, or of one with the same
 shots: --handheld does not move them); --cuts gives the first frame of every chunk after the first one, and --last
@@ -59,7 +67,8 @@ render without -Resume.  The output and scripts folders may not lie in a watched
 checks the look with `mv_look.py layers`, so a wrong look stops the run before MMD has rendered anything.
 
 The summary is one line of JSON (frames: of the joined video; spans: frames of the song; out_fps only at 60, so that the
-default prints what it printed before --out-fps); an error is {"ok": false, "error": ...} with exit code 2.
+default prints what it printed before --out-fps); an error is {"ok": false, "error": ...} with exit code 2.  With a free space
+kept it ends with "disk": the peak of every chunk on the disk and its parts, and the free space to start the run with.
 """
 import argparse
 import hashlib
@@ -77,7 +86,7 @@ UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
 OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
-            "stage_jobs", "self_shadow", "stage_set", "stage_pictures")
+            "stage_jobs", "self_shadow", "stage_set", "stage_pictures", "stage_mmd", "keep_free_gb")
 SELF_SHADOWS = ("mmd", "soft")
 MME_DLLS = ("d3d9.dll", "MMHack.dll", "MMEffect.dll")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
@@ -90,6 +99,16 @@ MAX_WORKERS = 8                         # each worker runs an MMD and an encoder
 PHYSICS_HZ = 60                         # MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ)
 ENCODERS = ("x264", "nvenc")            # libx264 (the default, the video to publish) or h264_nvenc
 STAGE_JOBS = 4                          # the processes that draw a stage in the world ("world": true) unless stage_jobs says
+# the free space kept on the disk of "out" (render12, 2026-10-21): 30 GB with a stage of a model (the rule of the render machine,
+# _spike/out/stage6/COMMON.md: MMD starts only with 30 GB free after its AVI), in GB of 1024^3 bytes as PowerShell's 1GB reads it
+KEEP_FREE_GB = 30
+GB = 1024 ** 3
+# the bytes per pixel of what a chunk puts on the disk besides its AVIs, for its peak (measured at 1280x720 on hinata by
+# stagecity on 120 frames of camera D, data/timing.json, with headroom; render12 measured them again on its chunks):
+PICTURE_BPP = 1.5                       # MMD's picture of the stage, unpacked (RGBA PNG): 1.38
+LAYER_BPP = 1.6                         # a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42
+WORLD_BPP = 0.5                         # a frame of the stage in the world (tools/mv_world.py, PNG): 0.41
+MP4_BPP = 0.1                           # a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song
 
 
 def _whole(value):
@@ -106,9 +125,12 @@ def _folder_of(path):
 
 def watched_folders(plan):
     """the folders -Resume reads through: the model's and the accessories' (what they load: textures, toons, spheres),
-    and mmd_cli's code"""
+    and mmd_cli's code; with a stage of a model whose pictures were drawn before, the folder of the pictures too (render12: an
+    input of every fold).  The folder of the stage's model joins on the render machine (only the set names it)"""
     folders = [_folder_of(plan["model"])] + [_folder_of(a) for a in plan["accessories"]]
     folders += ["%s/%s" % (plan["mmd_cli"].replace("\\", "/").rstrip("/"), name) for name in ("mmd_cli", "tools")]
+    if plan.get("stage_set") and not plan.get("stage_mmd"):
+        folders.append(plan["stage_pictures"].replace("\\", "/").rstrip("/"))
     unique = []
     for f in folders:
         if f not in unique:
@@ -176,6 +198,56 @@ def rate(chunk, fps):
 def avi_bytes(chunk, fps, size, bytes_per_pixel=4):
     """the AVI of the chunk, lead-in included: every frame of the song is fps/30 frames in the AVI (whatever the output)"""
     return int((chunk["end"] - chunk["first"] + 1) * (rate(chunk, fps) // FPS) * size[0] * size[1] * bytes_per_pixel)
+
+
+def chunk_disk(plan, chunk, fps, out_fps=FPS, workers=1):
+    """what a chunk puts on the disk of "out" at its most (render12): {"peak", and its parts "avi" (her AVI, the lead-in in),
+    "stage_avi" (with stage_mmd: MMD's AVI of the stage at 30 fps, BGRA), "pictures" (the pictures unpacked from it), "stage" (the
+    frames of the stage its fold draws; the workers of a stage drawn before prepare those of every chunk before they start), "mp4"}
+    in bytes.  The fold holds her AVI, the pictures, the stage's frames and the mp4 at once; MMD's AVI of the stage is unpacked
+    and deleted before her MMD starts.  The parts besides the AVIs are estimates (PICTURE_BPP, LAYER_BPP, WORLD_BPP, MP4_BPP); the
+    text of the cues is not in them"""
+    pixels = plan["size"][0] * plan["size"][1]
+    video = chunk["frames"] * (out_fps // FPS)
+    parts = {"avi": avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]), "stage_avi": 0, "pictures": 0, "stage": 0,
+             "mp4": int(video * pixels * MP4_BPP)}
+    if plan.get("stage_mmd"):
+        parts["stage_avi"] = chunk["frames"] * pixels * 4
+        parts["pictures"] = int(chunk["frames"] * pixels * PICTURE_BPP)
+    if plan["world"] and (plan.get("stage_mmd") or workers == 1):
+        parts["stage"] = int(video * pixels * (LAYER_BPP if plan.get("stage_set") else WORLD_BPP))
+    parts["peak"] = max(parts["avi"] + parts["pictures"] + parts["stage"] + parts["mp4"], parts["stage_avi"] + parts["pictures"])
+    return parts
+
+
+def disk_summary(plan, chunks, fps, out_fps=FPS, workers=1):
+    """the summary's "disk" (with a free space kept): the space kept, every chunk's peak and its parts, and the free space to
+    start the run with so that no chunk stops for the disk: the space kept, the mp4s of the chunks before, and the peaks of the
+    chunks under way at once (one; with --workers N the N largest, a bound); the join writes the whole video again beside its
+    chunks.  In GB of 1024^3 bytes, as keep_free_gb"""
+    gb = lambda n: round(n / float(GB), 3)
+    disks = [chunk_disk(plan, c, fps, out_fps, workers) for c in chunks]
+    peaks, mp4s = [d["peak"] for d in disks], [d["mp4"] for d in disks]
+    count = min(workers, len(chunks))
+    if count == 1:
+        start = max(sum(mp4s[:k]) + peaks[k] for k in range(len(chunks)))
+    else:
+        start = sum(mp4s) + sum(sorted(peaks, reverse=True)[:count])
+    start = max(start, 2 * sum(mp4s))
+    out = {"keep_free_gb": plan["keep_free_gb"],
+           "chunks": [dict({"chunk": c["index"], "peak_gb": gb(d["peak"])},
+                           **{k + "_gb": gb(d[k]) for k in ("avi", "stage_avi", "pictures", "stage", "mp4")})
+                      for c, d in zip(chunks, disks)],
+           "largest_chunk": chunks[peaks.index(max(peaks))]["index"], "largest_peak_gb": gb(max(peaks)),
+           "mp4_gb": gb(sum(mp4s))}
+    if plan["world"] and workers > 1 and not plan.get("stage_mmd"):
+        # prepare draws the frames of the stage of every chunk before the workers start, and they stay through the run
+        prepared = sum(int(c["frames"] * (out_fps // FPS) * plan["size"][0] * plan["size"][1]
+                           * (LAYER_BPP if plan.get("stage_set") else WORLD_BPP)) for c in chunks)
+        out["prepared_stage_gb"] = gb(prepared)
+        start += prepared
+    out["start_free_gb"] = round(plan["keep_free_gb"] + start / float(GB), 3)
+    return out
 
 
 def parse_spans(text):
@@ -294,6 +366,23 @@ def check_plan(plan):
                 raise ValueError("%s must be an absolute path on the render machine, not %r" % (key, full[key]))
         if not full["world"]:
             raise ValueError("a stage of a model lies in the world: stage_set goes with \"world\": true")
+    # "stage_mmd" (render12): the plain MMD that draws the stage of a model chunk by chunk, right before every chunk (without
+    # it the pictures of every frame the chunks show are drawn before, into stage_pictures)
+    full.setdefault("stage_mmd", None)
+    if full["stage_mmd"] is not None:
+        if full["stage_set"] is None:
+            raise ValueError("stage_mmd draws MMD's pictures of the stage of a model chunk by chunk: it goes with stage_set and "
+                             "stage_pictures")
+        if not _absolute(full["stage_mmd"]):
+            raise ValueError("stage_mmd must be an absolute path on the render machine (a MikuMikuDance.exe without MME), not %r"
+                             % (full["stage_mmd"],))
+    # "keep_free_gb" (render12): the free space the driver keeps on the disk of "out"; 30 GB with a stage of a model, none for
+    # the plans of before (their scripts stay as they were) unless the plan asks
+    full.setdefault("keep_free_gb", KEEP_FREE_GB if full["stage_set"] is not None else None)
+    keep = full["keep_free_gb"]
+    if keep is not None and (isinstance(keep, bool) or not isinstance(keep, (int, float)) or not math.isfinite(keep) or keep < 0):
+        raise ValueError("keep_free_gb is the free space (GB of 1024^3 bytes) the driver keeps on the disk of out, from 0, or null "
+                         "for none, not %r" % (keep,))
     # "self_shadow": how the model's own body shadow is drawn.  "soft": through MME (beside "mmd") with the effect of
     # tools/mme_shadow.py beside "model"; "mmd": MMD's own.  Either way the driver checks it before MMD renders (mme_shadow
     # verify); without the entry nothing is checked (the plans of before)
@@ -306,6 +395,11 @@ def check_plan(plan):
             if _inside(full[key], folder):
                 raise ValueError("%s (%s) is inside %s, which -Resume watches: every chunk written there would look like a "
                                  "changed input.  Put it elsewhere" % (key, full[key], folder))
+    if full["stage_mmd"] is not None:
+        for folder in watched_folders(full):
+            if _inside(full["stage_pictures"], folder):
+                raise ValueError("stage_pictures (%s) is inside %s, which -Resume watches: the pictures the driver draws and removes "
+                                 "for every chunk would look like a changed input.  Put it elsewhere" % (full["stage_pictures"], folder))
     return full
 
 
@@ -353,17 +447,21 @@ def fold_args(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepa
         fold += ["--encoder", encoder]
     if align_physics:
         fold += ["--physics-align"]
-    return [str(a) for a in fold + _world_args(plan)]
+    return [str(a) for a in fold + _world_args(plan, tag, chunk)]
 
 
 def _work(plan, tag, chunk):
-    """the folder of the look's layers: a chunk of --fast-spans has its own (its stage is drawn with its own subframes)"""
+    """the folder of the look's layers: a chunk of --fast-spans has its own (its stage is drawn with its own subframes), and
+    with stage_mmd every chunk has its own (its stage is drawn from its own pictures, and goes once its mp4 has passed)"""
+    if plan.get("stage_mmd"):
+        return stage_paths(plan, tag, chunk)["work"]
     return "%s/look_work_%s" % (plan["out"], tag) + ("_%dfps" % chunk["fps"] if "fps" in chunk else "")
 
 
-def _world_args(plan):
+def _world_args(plan, tag=None, chunk=None):
     """with "world": true, what a stage in the world is drawn from: the camera motion and the dancer (mv_look reads the
-    dancer only for a pool of light or shadows)"""
+    dancer only for a pool of light or shadows); a stage of a model also its set and the folder of MMD's pictures of it (with
+    stage_mmd the chunk's own, the root of them all without a chunk)"""
     if not plan["world"]:
         return []
     args = ["--camera", plan["camera"], "--model", plan["model"]]
@@ -372,15 +470,48 @@ def _world_args(plan):
     if plan["stage_jobs"] > 1:
         args += ["--jobs", plan["stage_jobs"]]
     if plan.get("stage_set"):
-        args += ["--stage-set", plan["stage_set"], "--stage-pictures", plan["stage_pictures"]]
+        pictures = plan["stage_pictures"]
+        if plan.get("stage_mmd") and chunk is not None:
+            pictures = stage_paths(plan, tag, chunk)["pictures"]
+        args += ["--stage-set", plan["stage_set"], "--stage-pictures", pictures]
     return [str(a) for a in args]
 
 
+def stage_paths(plan, tag, chunk):
+    """with stage_mmd, where the driver draws the stage of a chunk: the batch tools/stage_layer.py writes and its answer, MMD's
+    AVI of the stage, the folder of the pictures unpacked from it (stage_pictures/<tag>_<NN>) and the chunk's own work folder of
+    mv_look (its layers, its text and the frames of its stage)"""
+    name = _names(plan, tag, chunk)[0]
+    root = plan["stage_pictures"].replace("\\", "/").rstrip("/")
+    return {"batch": "%s/%s_stage.txt" % (plan["out"], name), "json": "%s/%s_stage.json" % (plan["out"], name),
+            "avi": "%s/%s_stage.avi" % (plan["out"], name), "pictures": "%s/%s" % (root, name),
+            "work": "%s/look_work_%s" % (plan["out"], name)}
+
+
+def stage_batch_args(plan, tag, chunk):
+    """what the driver runs (after python) to write the batch that draws the stage of the chunk alone: the frames the chunk
+    shows (from its cut; MMD moves the camera only at the frames of the song, so 30 fps is the stage of every subframe), with the
+    plain MMD, at the plan's size"""
+    p = stage_paths(plan, tag, chunk)
+    return ["tools/stage_layer.py", "batch", plan["stage_set"], plan["camera"], p["batch"], "--mmd", plan["stage_mmd"],
+            "--size", "%dx%d" % (plan["size"][0], plan["size"][1]), "--avi", p["avi"], "--from", str(chunk["cut"]),
+            "--to", str(chunk["end"])]
+
+
+def stage_unpack_args(plan, tag, chunk):
+    """what the driver runs (after python) to unpack MMD's AVI of the stage of the chunk into the chunk's folder of pictures"""
+    p = stage_paths(plan, tag, chunk)
+    return ["tools/stage_layer.py", "unpack", p["avi"], p["pictures"], "--first", str(chunk["cut"])]
+
+
 def recipe(plan, tag, chunk, fps, shutter, out_fps=FPS, encoder="x264", prepared=False, align_physics=False):
-    """what makes the chunk's mp4 apart from the contents of the input files: its batch, its look and its fold"""
+    """what makes the chunk's mp4 apart from the contents of the input files: its batch, its look and its fold (with
+    stage_mmd also how its stage is drawn)"""
     parts = [batch_text(plan, chunk, fps, _names(plan, tag, chunk)[1]), plan["look"]] + fold_args(plan, tag, chunk, fps, shutter,
                                                                                                    out_fps, encoder, prepared,
                                                                                                    align_physics)
+    if plan.get("stage_mmd"):
+        parts += stage_batch_args(plan, tag, chunk) + stage_unpack_args(plan, tag, chunk)
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -390,7 +521,11 @@ def _inputs(plan):
         # MME's files beside MMD draw the soft shadow (the effect lies in the model's folder, which is watched)
         mmd_folder = plan["mmd"].replace("\\", "/").rsplit("/", 1)[0]
         inputs += ["%s/%s" % (mmd_folder, name) for name in MME_DLLS]
-    return inputs + ([plan["cues"]] if plan["cues"] else [])
+    inputs += [plan["cues"]] if plan["cues"] else []
+    if plan.get("stage_set"):
+        # (render12) the set of a stage of a model, and the MMD that draws it chunk by chunk
+        inputs += [plan["stage_set"]] + ([plan["stage_mmd"]] if plan.get("stage_mmd") else [])
+    return inputs
 
 
 def _python(plan):
@@ -459,6 +594,25 @@ def _stop_launched_lines(plan):
             "}"]
 
 
+def _stop_stage_lines(plan):
+    """with stage_mmd (render12): the function that stops the MMD a failed batch of the stage left open.  mmd_cli's batch stops
+    at a failure without its quit, MMD left open (stagecity's sc_common.py stopped it the same way); the batch's answer gives the
+    process id of its launch, stopped when it is the plan's stage_mmd"""
+    if not plan.get("stage_mmd"):
+        return []
+    return ["function Stop-Stage($json) {",
+            "    try { $answer = Get-Content -LiteralPath $json -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json } catch { return }",
+            "    foreach ($r in @($answer.results)) {",
+            "        if (-not $r.argv -or $r.argv[0] -ne 'launch' -or -not $r.pid) { continue }",
+            "        $p = Get-Process -Id ([int]$r.pid) -ErrorAction SilentlyContinue",
+            "        if ($p -and $p.Path -and (($p.Path -replace '\\\\', '/') -ieq %s)) {" % _ps(plan["stage_mmd"].replace("\\", "/")),
+            "            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue",
+            "            'stopped MMD {0}: the failed batch of the stage left it open' -f $p.Id",
+            "        }",
+            "    }",
+            "}"]
+
+
 def _check_lines(plan, look_check, what):
     return [look_check,
             # review 13: the path goes in through _ps like every other value (all the quotes PowerShell knows doubled)
@@ -491,6 +645,79 @@ def _helper_lines():
             "}"]
 
 
+def _keep_lines(plan):
+    """with a free space kept (render12): the bytes kept, in the variable the checks of the disk read"""
+    if plan.get("keep_free_gb") is None:
+        return []
+    return ["$keep = [decimal]%d" % int(round(plan["keep_free_gb"] * GB))]
+
+
+def _stage_setup_lines(plan):
+    """with a stage of a model (render12), before the stamp of -Resume is taken: the folder of the stage's model (only the set
+    names it: read here, on the render machine) joins the watched folders, and the run stops when the output or the folder of the
+    pictures lies in it.  With stage_mmd the run stops when MME lies beside the MMD that draws the stage (the stage is MMD's own
+    picture of the model, the night laid on it by tools/stage_layer.py), and the folder of the pictures is made (the look check
+    reads it)"""
+    if not plan.get("stage_set"):
+        return []
+    lines = ["$stageSet = %s" % _ps(plan["stage_set"]),
+             "$stageModel = $null",
+             "try { $stageModel = [string](Get-Content -LiteralPath $stageSet -Raw -Encoding UTF8 -ErrorAction Stop | "
+             "ConvertFrom-Json -ErrorAction Stop).model } catch { }",
+             "if (-not $stageModel) { 'STOP: could not read the model of the stage set {0}' -f $stageSet; exit 1 }",
+             "if (-not [IO.Path]::IsPathRooted($stageModel)) { $stageModel = Join-Path (Split-Path -Parent $stageSet) $stageModel }",
+             "$stageFolder = ((Split-Path -Parent $stageModel) -replace '\\\\', '/').TrimEnd('/')",
+             "$folders += $stageFolder"]
+    mine = [plan["out"]] + ([plan["stage_pictures"]] if plan.get("stage_mmd") else [])
+    lines += ["foreach ($p in @(%s)) {" % ", ".join(_ps(p) for p in mine),
+              "    $a = ($p -replace '\\\\', '/').TrimEnd('/').ToLowerInvariant()",
+              "    $b = $stageFolder.ToLowerInvariant()",
+              "    if ($a -eq $b -or $a.StartsWith($b + '/')) {",
+              "        'STOP: {0} is inside {1}, the folder of the model of the stage, which -Resume watches: put it elsewhere' -f $p, $stageFolder",
+              "        exit 1",
+              "    }",
+              "}"]
+    if plan.get("stage_mmd"):
+        folder = _folder_of(plan["stage_mmd"])
+        lines += ["foreach ($dll in @(%s)) {" % ", ".join(_ps("%s/%s" % (folder, name)) for name in MME_DLLS),
+                  "    if (Test-Path -LiteralPath $dll) {",
+                  "        'STOP: {0} lies beside the MMD that draws the stage: the stage is MMD''s own picture of the model, without MME' -f $dll",
+                  "        exit 1",
+                  "    }",
+                  "}",
+                  "New-Item -ItemType Directory -Force -Path %s | Out-Null" % _ps(plan["stage_pictures"]),
+                  "if (-not (Test-Path -LiteralPath %s -PathType Container)) { 'STOP: could not make the folder of the pictures "
+                  "of the stage {0}' -f %s; exit 1 }" % (_ps(plan["stage_pictures"]), _ps(plan["stage_pictures"]))]
+    return lines
+
+
+USED = ["function Used([string[]]$paths) {",
+        "    # the bytes the files and the folders (every file in them) of a chunk hold now",
+        "    $sum = [decimal]0",
+        "    foreach ($p in @($paths)) {",
+        "        if (-not $p) { continue }",
+        "        $i = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue",
+        "        if (-not $i) { continue }",
+        "        if ($i.PSIsContainer) {",
+        "            foreach ($f in @(Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue)) { $sum += [decimal]$f.Length }",
+        "        } else { $sum += [decimal]$i.Length }",
+        "    }",
+        "    return $sum",
+        "}"]
+NEED_FREE = ["function Need-Free($name, $need, [string[]]$paths, [string[]]$clear) {",
+             "    # (keep_free_gb) the chunk goes on when the free space less what it still has to write (its peak less what its files",
+             "    # hold now) keeps $keep free; otherwise what it is given to clear goes and the run stops (exit 3), -Resume goes on from it",
+             "    $free = Get-FreeBytes $out",
+             "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+             "    $owed = [math]::Max([decimal]0, [decimal]$need - (Used $paths))",
+             "    if ([decimal]$free - $owed -ge $keep) { return }",
+             "    foreach ($c in @($clear)) { if ($c) { Remove-Item -LiteralPath $c -Recurse -Force -ErrorAction SilentlyContinue } }",
+             "    '{0} STOP: {1} bytes free, the chunk has {2} more to write and {3} are kept free: not started (-Resume goes on from this "
+             "chunk)' -f $name, $free, $owed, $keep",
+             "    exit 3",
+             "}"]
+
+
 COUNT_FRAMES = ["function Count-Frames($path) {",
                 "    if (-not (Test-Path -LiteralPath $path)) { return -1 }",
                 "    $n = & ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 $path",
@@ -504,26 +731,84 @@ def _run_chunk_lines(plan, workers):
     counts what the AVIs under way still have to write), a chunk that is done says so in the folder of the run, and the
     seconds are those of the run (the workers start after the driver)"""
     py = _python(plan)
+    staged = bool(plan.get("stage_mmd"))                    # render12: the stage of a model drawn chunk by chunk
+    keep = plan.get("keep_free_gb") is not None             # render12: a free space kept on the disk
+    # what the chunk's files and folders hold (its peak less these is what it still has to write)
+    held = "@($avi, $savi, $pics, $work, $mp4)" if staged else "@($avi, $mp4)"
     if workers:
-        free = ["    if (-not (Reserve $name $avi $need)) { '{0}: not rendered, another chunk failed' -f $name; return }"]
+        if keep:
+            free = ["    if (-not (Reserve $name $need %s)) { '{0}: not rendered, another chunk failed' -f $name; return }" % held]
+            again = ["    Need-Still $name @($pics)"]
+        else:
+            free = ["    if (-not (Reserve $name $avi $need)) { '{0}: not rendered, another chunk failed' -f $name; return }"]
+            again = []
         skipped, finished = ["        Done $name"], ["    Release $name",
                                                      "    '{0} {1} frames (want {2}), {3} s (worker {4})' -f $name, $n, $want, (Seconds), $Worker",
                                                      "    Done $name"]
+        clock = "(Seconds)"
     else:
-        free = ["    $free = Get-FreeBytes $out",
-                "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
-                "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }"]
+        if keep:
+            free = ["    Need-Free $name $need %s @()" % held]
+            again = ["    Need-Free $name $need %s @($pics)" % held]
+        else:
+            free = ["    $free = Get-FreeBytes $out",
+                    "    if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+                    "    if ($free -lt $need) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }"]
+            again = []
         skipped, finished = [], ["    '{0} {1} frames (want {2}), {3} s' -f $name, $n, $want, [int]$sw.Elapsed.TotalSeconds"]
+        clock = "[int]$sw.Elapsed.TotalSeconds"
     stop = ["    if ($LASTEXITCODE -ne 0) { Stop-Launched $json }"] if plan.get("self_shadow") == "soft" else []
-    return (_stop_launched_lines(plan) +
-            ["function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold) {",
+    signature = "function Run-Chunk($name, $batch, $bhash, $recipe, $json, $avi, $mp4, $want, $need, [string[]]$fold"
+    stage, cleared, drawn = [], [], []
+    if staged:
+        signature += ", [string[]]$sbatch, [string[]]$sunpack, $stxt, $sjson, $savi, $pics, $work, $shown"
+        # a skipped chunk loses what a run cut short left of its stage; a chunk to draw loses it before anything (a folder
+        # where the stage's AVI goes stops the run, as one where her AVI goes)
+        cleared = ["        $sleft = @(Get-ChildItem -LiteralPath $out -Filter ($name + '_stage.avi.mmdcli-failed*') | ForEach-Object { $_.FullName })",
+                   "        foreach ($old in @($savi, $pics, $work) + $sleft) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }"]
+        stage = (["    $sleft = @(Get-ChildItem -LiteralPath $out -Filter ($name + '_stage.avi.mmdcli-failed*') | ForEach-Object { $_.FullName })",
+                  "    foreach ($old in @($savi) + $sleft) {",
+                  "        if (Test-Path -LiteralPath $old -PathType Container) { '{0} STOP: {1} is a folder, not an earlier attempt' -f $name, $old; exit 1 }",
+                  "        if (-not (Test-Path -LiteralPath $old)) { continue }",
+                  "        try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop }",
+                  "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
+                  "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
+                  "    }",
+                  "    foreach ($old in @($pics, $work)) {",
+                  "        if (-not (Test-Path -LiteralPath $old)) { continue }",
+                  "        try { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction Stop }",
+                  "        catch { '{0} STOP: could not remove {1} of an earlier attempt: {2}' -f $name, $old, $_; exit 1 }",
+                  "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
+                  "    }"]
+                 + free +
+                 # the stage over the frames the chunk shows: its batch, the plain MMD, its pictures; the stage's AVI goes then
+                 ["    $said = Invoke-Native %s @sbatch" % py,
+                  "    if ($LASTEXITCODE -ne 0) { '{0} STOP: tools/stage_layer.py could not write the batch of the stage ({1}):' -f $name, (Why $LASTEXITCODE); $said; exit 1 }",
+                  "    Invoke-Native %s -m mmd_cli --out $sjson batch $stxt | Out-Null" % py,
+                  "    if ($LASTEXITCODE -ne 0) { $code = $LASTEXITCODE; Stop-Stage $sjson; $global:LASTEXITCODE = $code }",
+                  "    if ($LASTEXITCODE -ne 0) { '{0} STOP: MMD could not draw the stage ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $sjson; exit 1 }",
+                  "    $said = Invoke-Native %s @sunpack" % py,
+                  "    if ($LASTEXITCODE -ne 0) { '{0} STOP: the AVI of the stage could not be unpacked ({1}); it is kept: {2}' -f $name, (Why $LASTEXITCODE), $savi; $said; exit 1 }",
+                  "    $got = @(Get-ChildItem -LiteralPath $pics -Filter 'mmd_*.png' -File -ErrorAction SilentlyContinue).Count",
+                  "    if ($got -ne $shown) { '{0} STOP: {1} pictures of the stage, want {2}; the AVI of the stage is kept: {3}' -f $name, $got, $shown, $savi; exit 1 }",
+                  "    try { Remove-Item -LiteralPath $savi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $savi, $_ }",
+                  "    '{0}: the stage drawn, {1} pictures, {2} s' -f $name, $got, %s" % clock]
+                 + again)
+        drawn = ["    '{0}: her AVI drawn, {1} s' -f $name, %s" % clock]
+        free = []
+    after = ["    foreach ($done in @($pics, $work)) {",
+             "        try { Remove-Item -LiteralPath $done -Recurse -Force -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $done, $_ }",
+             "    }"] if staged else []
+    return (_stop_launched_lines(plan) + _stop_stage_lines(plan) +
+            [signature + ") {",
              "    $made = \"$recipe`n$stamp\"",
              "    $kept = ''",
              "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
              "    if ($raw) { $kept = $raw.Trim() }",
              "    if ($Resume -and $kept -eq $made -and (Count-Frames $mp4) -eq $want) {",
-             "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue",
-             "        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want"]
+             "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue"]
+            + cleared +
+            ["        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want"]
             + skipped +
             ["        return",
              "    }",
@@ -540,10 +825,11 @@ def _run_chunk_lines(plan, workers):
              "        '{0}: removed {1} (an earlier attempt)' -f $name, $old",
              "    }",
              "    foreach ($old in @($mp4, \"$mp4.recipe\", \"$mp4.look.json\")) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }"]
-            + free +
+            + stage + free +
             ["    Invoke-Native %s -m mmd_cli --out $json batch $batch | Out-Null" % py] + stop +
-            ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }",
-             "    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
+            ["    if ($LASTEXITCODE -ne 0) { '{0} STOP: the MMD batch failed ({1}), see {2}' -f $name, (Why $LASTEXITCODE), $json; exit 1 }"]
+            + drawn +
+            ["    Invoke-Native %s tools/mv_look.py render $avi $look $mp4 @fold | Set-Content -LiteralPath \"$mp4.look.json\" -Encoding UTF8" % py,
              "    if ($LASTEXITCODE -ne 0) {",
              "        '{0} STOP: mv_look failed ({1}); the AVI is kept: {2}' -f $name, (Why $LASTEXITCODE), $avi",
              "        Get-Content -LiteralPath \"$mp4.look.json\" -ErrorAction SilentlyContinue",
@@ -553,17 +839,28 @@ def _run_chunk_lines(plan, workers):
              "    if ($n -ne $want) { '{0} STOP: {1} frames, want {2}; the AVI is kept: {3}' -f $name, $n, $want, $avi; exit 1 }",
              "    Set-Content -LiteralPath \"$mp4.recipe\" -Value $made -Encoding UTF8",
              "    try { Remove-Item -LiteralPath $avi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $avi, $_ }"]
-            + finished + ["}"])
+            + after + finished + ["}"])
 
 
-def _chunk_call(plan, tag, chunk, fps, shutter, batch_hashes, out_fps, encoder, prepared, align_physics=False):
+def _chunk_call(plan, tag, chunk, fps, shutter, batch_hashes, out_fps, encoder, prepared, align_physics=False, workers=1):
+    """the call of Run-Chunk for a chunk.  What it needs of the disk: its AVI and the margin, or with a free space kept its peak
+    (chunk_disk).  With stage_mmd also how its stage is drawn and where (stage_paths) and how many pictures it shows"""
     name, avi, mp4 = _names(plan, tag, chunk)
-    return "Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
+    if plan.get("keep_free_gb") is not None:
+        need = chunk_disk(plan, chunk, fps, out_fps, workers)["peak"]
+    else:
+        need = avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN
+    call = "Run-Chunk %s %s %s %s %s %s %s %d %d @(%s)" % (
         _ps(name), _ps("%s/chunk_%s.txt" % (plan["scripts"], name)), _ps(batch_hashes[chunk["index"]]),
         _ps(recipe(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared, align_physics)), _ps("%s/%s.json" % (plan["out"], name)),
-        _ps(avi), _ps(mp4), chunk["frames"] * (out_fps // FPS),
-        avi_bytes(chunk, fps, plan["size"], plan["avi_bytes_per_pixel"]) + DISK_MARGIN,
+        _ps(avi), _ps(mp4), chunk["frames"] * (out_fps // FPS), need,
         ", ".join(_ps(a) for a in fold_args(plan, tag, chunk, fps, shutter, out_fps, encoder, prepared, align_physics)))
+    if plan.get("stage_mmd"):
+        p = stage_paths(plan, tag, chunk)
+        call += " @(%s) @(%s) %s %s %s %s %s %d" % (
+            ", ".join(_ps(a) for a in stage_batch_args(plan, tag, chunk)), ", ".join(_ps(a) for a in stage_unpack_args(plan, tag, chunk)),
+            _ps(p["batch"]), _ps(p["json"]), _ps(p["avi"]), _ps(p["pictures"]), _ps(p["work"]), chunk["frames"])
+    return call
 
 
 def _join_lines(joined, concat, total):
@@ -595,11 +892,14 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, enco
     lines += ["$out = %s" % _ps(plan["out"]),
               "$look = %s" % _ps(plan["look"]),
               "$inputs = @(%s)" % ", ".join(_ps(i) for i in _inputs(plan)),
-              "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan)),
-              "New-Item -ItemType Directory -Force -Path $out | Out-Null",
+              "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan))]
+    lines += _keep_lines(plan) + _stage_setup_lines(plan)
+    lines += ["New-Item -ItemType Directory -Force -Path $out | Out-Null",
               "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }",
               "$sw = [Diagnostics.Stopwatch]::StartNew()"]
     lines += _helper_lines() + _stamp_lines()
+    if plan.get("keep_free_gb") is not None:
+        lines += USED + NEED_FREE
     # the self shadow (with "self_shadow" in the plan), and the look at the rate the fold will draw it at
     lines += _shadow_check_lines(plan)
     lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
@@ -620,21 +920,31 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
     run = "%s/run_%s" % (plan["out"], tag)
     count = min(workers, len(chunks))
     names = [_names(plan, tag, c)[0] for c in chunks]
+    staged = bool(plan.get("stage_mmd"))
+    keep = plan.get("keep_free_gb") is not None
+    if staged:
+        how = ["# would, and takes the next.  Nothing is prepared before: every chunk has its stage of a model drawn right before it",
+               "# and draws its layers, text and stage in a work folder of its own (stage_mmd).  A failure stops the run: no worker",
+               "# takes another chunk, the chunks under way are finished, and the driver exits with the code of the failure (1; 3 for",
+               "# the disk) without joining."]
+    else:
+        how = ["# would, and takes the next.  The layers and the text are prepared once, before the first worker starts, and every",
+               "# chunk folds with them (mv_look --prepared).  A failure stops the run: no worker takes another chunk, the chunks under",
+               "# way are finished, and the driver exits with the code of the failure (1; 3 for the disk) without joining."]
     lines = ["# %d chunks at %d fps folded to %d fps (%d subframes, shutter %s), %d frames, joined to %s."
              % (len(chunks), fps, out_fps, sub, shutter, total, joined),
              "# %d workers at a time.  Every worker is this script again (-Worker k): it takes the next chunk no worker has taken"
              % count,
-             "# (a claim in the folder of the run, made with CreateNew), renders, folds and checks it as the driver of one worker",
-             "# would, and takes the next.  The layers and the text are prepared once, before the first worker starts, and every",
-             "# chunk folds with them (mv_look --prepared).  A failure stops the run: no worker takes another chunk, the chunks under",
-             "# way are finished, and the driver exits with the code of the failure (1; 3 for the disk) without joining.",
-             "# Written by tools/mv_chunks.py --workers %d.  -Resume skips a chunk whose mp4 has its frame count and was made from" % workers,
-             "# the same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
-             "# It does not see fonts, MMD's settings, Python, ffmpeg or files outside the watched folders: after changing",
-             "# any of those, run without -Resume.",
-             "param([switch]$Resume, [int]$Worker = 0)",
-             "$ErrorActionPreference = 'Continue'",
-             "Set-Location -LiteralPath %s" % _ps(plan["mmd_cli"])]
+             "# (a claim in the folder of the run, made with CreateNew), renders, folds and checks it as the driver of one worker"]
+    lines += how
+    lines += ["# Written by tools/mv_chunks.py --workers %d.  -Resume skips a chunk whose mp4 has its frame count and was made from"
+              % workers,
+              "# the same recipe (batch, look and fold) and the same watched files (size and time): see <mp4>.recipe beside it.",
+              "# It does not see fonts, MMD's settings, Python, ffmpeg or files outside the watched folders: after changing",
+              "# any of those, run without -Resume.",
+              "param([switch]$Resume, [int]$Worker = 0)",
+              "$ErrorActionPreference = 'Continue'",
+              "Set-Location -LiteralPath %s" % _ps(plan["mmd_cli"])]
     if plan["mmd_cli_home"]:
         lines.append("$env:MMD_CLI_HOME = %s" % _ps(plan["mmd_cli_home"]))
     lines += ["$out = %s" % _ps(plan["out"]),
@@ -642,8 +952,9 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "$run = %s" % _ps(run),
               "$inputs = @(%s)" % ", ".join(_ps(i) for i in _inputs(plan)),
               "$folders = @(%s)" % ", ".join(_ps(f) for f in watched_folders(plan)),
-              "$diskWait = 5",
-              "New-Item -ItemType Directory -Force -Path $out | Out-Null",
+              "$diskWait = 5"]
+    lines += _keep_lines(plan) + _stage_setup_lines(plan)
+    lines += ["New-Item -ItemType Directory -Force -Path $out | Out-Null",
               "if (-not (Test-Path -LiteralPath $out -PathType Container)) { 'STOP: could not make the output folder {0}' -f $out; exit 1 }"]
     lines += _helper_lines() + COUNT_FRAMES
     lines += ["function Hold($path) {",
@@ -662,42 +973,109 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "        Start-Sleep -Milliseconds 50",
               "    }",
               "    return $lock",
-              "}",
-              "function Reserve($name, $avi, $need) {",
-              "    # the AVI starts when the disk holds it with its margin after what the AVIs under way (busy_<chunk> in the folder",
-              "    # of the run: their AVI and need) still have to write.  While those would leave too little it waits; with none",
-              "    # under way and still too little it stops the run (exit 3).  $false when another chunk failed meanwhile",
-              "    while ($true) {",
-              "        if (Test-Path -LiteralPath (Join-Path $run 'stop')) { return $false }",
-              "        $lock = Lock-Disk",
-              "        try {",
-              "            $free = Get-FreeBytes $out",
-              "            if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
-              "            $owed = [decimal]0",
-              "            $busy = @(Get-ChildItem -LiteralPath $run -Filter 'busy_*' -File -Force -ErrorAction SilentlyContinue)",
-              "            foreach ($b in $busy) {",
-              "                $note = ([IO.File]::ReadAllText($b.FullName)).Trim().Split('|')",
-              "                $done = 0",
-              "                $i = Get-Item -LiteralPath $note[0] -Force -ErrorAction SilentlyContinue",
-              "                if ($i) { $done = $i.Length }",
-              "                $owed += [math]::Max([decimal]0, [decimal]$note[1] - $done)",
-              "            }",
-              "            if ([decimal]$free - $owed -ge $need) {",
-              "                [IO.File]::WriteAllText((Join-Path $run ('busy_' + $name)), ('{0}|{1}' -f $avi, $need))",
-              "                return $true",
-              "            }",
-              "            if ($busy.Count -eq 0) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
-              "        } finally { $lock.Close() }",
-              "        Start-Sleep -Milliseconds ([int]($diskWait * 1000))",
-              "    }",
-              "}",
-              "function Release($name) {",
+              "}"]
+    lines += _floor_reserve_lines() if keep else _reserve_lines()
+    lines += ["function Release($name) {",
               "    $lock = Lock-Disk",
               "    try { Remove-Item -LiteralPath (Join-Path $run ('busy_' + $name)) -Force -ErrorAction SilentlyContinue } finally { $lock.Close() }",
               "}",
               "function Done($name) { [IO.File]::WriteAllText((Join-Path $run ('done_' + $name)), [string]$Worker) }",
               "function Seconds { [int]([DateTime]::UtcNow - $since).TotalSeconds }"]
     lines += _run_chunk_lines(plan, workers=True)
+    lines += _workers_tail_lines(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, encoder, align_physics, work, sub, count,
+                                 names, joined, concat, total, staged)
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _reserve_lines():
+    """Reserve of the workers without a free space kept: the AVI and its margin (the drivers of before, byte for byte)"""
+    return ["function Reserve($name, $avi, $need) {",
+            "    # the AVI starts when the disk holds it with its margin after what the AVIs under way (busy_<chunk> in the folder",
+            "    # of the run: their AVI and need) still have to write.  While those would leave too little it waits; with none",
+            "    # under way and still too little it stops the run (exit 3).  $false when another chunk failed meanwhile",
+            "    while ($true) {",
+            "        if (Test-Path -LiteralPath (Join-Path $run 'stop')) { return $false }",
+            "        $lock = Lock-Disk",
+            "        try {",
+            "            $free = Get-FreeBytes $out",
+            "            if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+            "            $owed = [decimal]0",
+            "            $busy = @(Get-ChildItem -LiteralPath $run -Filter 'busy_*' -File -Force -ErrorAction SilentlyContinue)",
+            "            foreach ($b in $busy) {",
+            "                $note = ([IO.File]::ReadAllText($b.FullName)).Trim().Split('|')",
+            "                $done = 0",
+            "                $i = Get-Item -LiteralPath $note[0] -Force -ErrorAction SilentlyContinue",
+            "                if ($i) { $done = $i.Length }",
+            "                $owed += [math]::Max([decimal]0, [decimal]$note[1] - $done)",
+            "            }",
+            "            if ([decimal]$free - $owed -ge $need) {",
+            "                [IO.File]::WriteAllText((Join-Path $run ('busy_' + $name)), ('{0}|{1}' -f $avi, $need))",
+            "                return $true",
+            "            }",
+            "            if ($busy.Count -eq 0) { '{0} STOP: {1} bytes free, the AVI needs {2} with the margin' -f $name, $free, $need; exit 3 }",
+            "        } finally { $lock.Close() }",
+            "        Start-Sleep -Milliseconds ([int]($diskWait * 1000))",
+            "    }",
+            "}"]
+
+
+def _floor_reserve_lines():
+    """with a free space kept (render12): what the chunks under way still have to write (their peak less what their files and
+    folders hold now: the busy notes give both), Reserve (a chunk starts when the disk holds its peak and $keep after that; it
+    waits while those would leave too little, and with none under way and still too little stops the run, exit 3) and
+    Need-Still (before her MMD: the chunks under way, this one in, still fit with $keep free; otherwise what it is given to
+    clear goes and the run stops, exit 3: somebody else took the room meanwhile.  It does not wait: two workers past their
+    reserve that waited for each other would wait for ever)"""
+    return USED + [
+        "function Owed {",
+        "    $owed = [decimal]0",
+        "    foreach ($b in @(Get-ChildItem -LiteralPath $run -Filter 'busy_*' -File -Force -ErrorAction SilentlyContinue)) {",
+        "        $note = ([IO.File]::ReadAllText($b.FullName)).Trim().Split('|')",
+        "        $owed += [math]::Max([decimal]0, [decimal]$note[0] - (Used @($note | Select-Object -Skip 1)))",
+        "    }",
+        "    return $owed",
+        "}",
+        "function Reserve($name, $need, [string[]]$paths) {",
+        "    while ($true) {",
+        "        if (Test-Path -LiteralPath (Join-Path $run 'stop')) { return $false }",
+        "        $lock = Lock-Disk",
+        "        try {",
+        "            $free = Get-FreeBytes $out",
+        "            if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+        "            $busy = @(Get-ChildItem -LiteralPath $run -Filter 'busy_*' -File -Force -ErrorAction SilentlyContinue)",
+        "            $owed = Owed",
+        "            if ([decimal]$free - $owed - $need -ge $keep) {",
+        "                [IO.File]::WriteAllText((Join-Path $run ('busy_' + $name)), ((@([string]$need) + @($paths)) -join '|'))",
+        "                return $true",
+        "            }",
+        "            if ($busy.Count -eq 0) {",
+        "                '{0} STOP: {1} bytes free, the chunk needs {2} and {3} are kept free: not started (-Resume goes on from this chunk)' -f $name, $free, $need, $keep",
+        "                exit 3",
+        "            }",
+        "        } finally { $lock.Close() }",
+        "        Start-Sleep -Milliseconds ([int]($diskWait * 1000))",
+        "    }",
+        "}",
+        "function Need-Still($name, [string[]]$clear) {",
+        "    $lock = Lock-Disk",
+        "    try {",
+        "        $free = Get-FreeBytes $out",
+        "        if ($free -lt 0) { '{0} STOP: could not measure the free space of {1}' -f $name, $out; exit 3 }",
+        "        $owed = Owed",
+        "        if ([decimal]$free - $owed -ge $keep) { return }",
+        "        foreach ($c in @($clear)) { if ($c) { Remove-Item -LiteralPath $c -Recurse -Force -ErrorAction SilentlyContinue } }",
+        "        '{0} STOP: {1} bytes free, the chunks under way have {2} more to write and {3} are kept free: her MMD not started (-Resume goes on from this chunk)' -f $name, $free, $owed, $keep",
+        "        exit 3",
+        "    } finally { $lock.Close() }",
+        "}"]
+
+
+def _workers_tail_lines(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, encoder, align_physics, work, sub, count, names,
+                        joined, concat, total, staged):
+    """the rest of the driver of --workers: the workers' part, and the driver's (the stamp, the look checked and the layers
+    prepared, the workers started and waited for, the join).  With stage_mmd nothing is prepared (no stage is there before its
+    chunk): the look is checked as the driver of one worker checks it, and every chunk folds in its own work folder"""
+    lines = []
     lines += ["if ($Worker -gt 0) {",
               "    # a worker: the stamp of the inputs and the start of the run are the driver's",
               "    $mine = Hold (Join-Path $run ('worker_' + $Worker + '.lock'))",
@@ -717,7 +1095,8 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "    $through = $false",
               "    try {"]
     lines += ["        if (Take %s) { %s }" % (_ps(_names(plan, tag, c)[0]), _chunk_call(plan, tag, c, fps, shutter, batch_hashes, out_fps,
-                                                                                        encoder, True, align_physics)) for c in chunks]
+                                                                                        encoder, not staged, align_physics,
+                                                                                        count)) for c in chunks]
     lines += ["        $through = $true",
               "    } catch {",
               "        # an error the steps do not expect (a .NET call that threw): a failure like the others",
@@ -742,20 +1121,24 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "[IO.File]::WriteAllText((Join-Path $run 'started.txt'), [string]$since.Ticks)"]
     lines += _stamp_lines()
     lines += ["[IO.File]::WriteAllText((Join-Path $run 'stamp.txt'), $stamp)"]
-    # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
-    groups = [(work, [c for c in chunks if "fps" not in c], sub)]
-    groups += [(_work(plan, tag, {"fps": f}), [c for c in chunks if c.get("fps") == f], f // out_fps)
-               for f in sorted({c["fps"] for c in chunks if "fps" in c})]
-    last = work
     lines += _shadow_check_lines(plan)
-    for i, (folder, members, subframes) in enumerate(g for g in groups if g[1]):
-        if i:
-            lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last)]
-        lines += _check_lines(plan, _look_check(plan, folder, out_fps, encoder, prepare=True, chunks=members, subframes=subframes,
-                                                shutter=shutter), "prepare")
-        last = folder
-    lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last),
-              "$self = (Get-Process -Id $PID).Path",
+    if staged:
+        lines += _check_lines(plan, _look_check(plan, work, out_fps, encoder), "layers")
+        lines += ["'checked the look, {0} s' -f (Seconds)"]
+    else:
+        # the layers and the text, prepared at the rate the folds draw them at: a wrong look or cue file stops the run here
+        groups = [(work, [c for c in chunks if "fps" not in c], sub)]
+        groups += [(_work(plan, tag, {"fps": f}), [c for c in chunks if c.get("fps") == f], f // out_fps)
+                   for f in sorted({c["fps"] for c in chunks if "fps" in c})]
+        last = work
+        for i, (folder, members, subframes) in enumerate(g for g in groups if g[1]):
+            if i:
+                lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last)]
+            lines += _check_lines(plan, _look_check(plan, folder, out_fps, encoder, prepare=True, chunks=members, subframes=subframes,
+                                                    shutter=shutter), "prepare")
+            last = folder
+        lines += ["'prepared the layers and the text in {0}, {1} s' -f %s, (Seconds)" % _ps(last)]
+    lines += [              "$self = (Get-Process -Id $PID).Path",
               "$count = %d" % count,
               "$started = @()",
               "for ($k = 1; $k -le $count; $k++) {",
@@ -788,7 +1171,7 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "if ($missing.Count -gt 0) { 'STOP: no worker finished {0}' -f ($missing -join ', '); exit 1 }"]
     lines += _join_lines(joined, concat, total)
     lines.append("'joined {0} frames (want {1}), {2} s: {3}' -f $n, %d, (Seconds), %s" % (total, _ps(joined)))
-    return "\r\n".join(lines) + "\r\n"
+    return lines
 
 
 def concat_text(plan, chunks, tag, out_fps=FPS):
@@ -884,6 +1267,8 @@ def write(plan, chunks, outdir, tag, fps, shutter, out_fps=FPS, workers=1, encod
                     "largest_avi_gb": round(max(avi_bytes(c, fps, plan["size"], bpp) for c in chunks) / 1e9, 1),
                     "spans": [[c["cut"], c["end"]] for c in chunks], "driver": driver, "batches": batches, "concat": concat,
                     "joined": "%s/%s_%s.mp4" % (plan["out"], plan["name"], tag)})
+    if plan.get("keep_free_gb") is not None:
+        summary["disk"] = disk_summary(plan, chunks, fps, out_fps, workers)     # render12: only with a free space kept
     return summary
 
 

@@ -792,11 +792,69 @@ class ShutterTest(unittest.TestCase):
                     self.assertEqual(ok, looks_ok, (out_fps, fps, shutter))
 
 
-STUBS = r"""
+# What the stand-ins of python share (render12): the value after a switch, and the first frame of the song from .. to (seconds)
+# whose picture of the stage by MMD is missing from a folder (mv_look needs them all)
+STUB_HELPERS = r"""
+function Arg-After($list, $key) { $i = [array]::IndexOf($list, $key); if ($i -lt 0) { return $null }; return $list[$i + 1] }
+function Missing-Picture($folder, $from, $to) {
+    for ($f = [int][math]::Round($from * 30); $f -lt [int][math]::Round($to * 30); $f++) {
+        if (-not (Test-Path -LiteralPath (Join-Path $folder ('mmd_{0:D5}.png' -f $f)))) { return $f }
+    }
+    return $null
+}
+"""
+# tools/stage_layer.py batch and unpack as the stand-ins of python do them (render12): the batch draws the frames --from .. --to of
+# the stage at 30 fps (its render line, as the real one writes it); unpack writes a picture for every frame the AVI holds (the
+# stand-in of MMD writes the rate and the frames of the song into the AVI) and, with STUB_FREE_DROP, takes that many bytes off
+# the free space (somebody else writing while the stage was drawn)
+STAGE_STUB = r"""
+    if ($args[0] -eq 'tools/stage_layer.py' -and $args[1] -eq 'batch') {
+        if (-not (Test-Path -LiteralPath $args[2])) { '{"ok": false, "error": "cannot read the set"}'; $global:LASTEXITCODE = 2; return }
+        $line = ConvertTo-Json -Compress -InputObject @('render', 'avi', (Arg-After $args '--avi'), '--from', (Arg-After $args '--from'),
+                                                       '--to', (Arg-After $args '--to'), '--fps', '30')
+        Set-Content -LiteralPath $args[4] -Encoding UTF8 -Value @('# the stage alone (a stand-in)', $line)
+        '{"ok": true}'; $global:LASTEXITCODE = 0; return
+    }
+    if ($args[0] -eq 'tools/stage_layer.py' -and $args[1] -eq 'unpack') {
+        $avi = $args[2]; $dir = $args[3]; $first = [int](Arg-After $args '--first')
+        if (-not (Test-Path -LiteralPath $avi)) { '{"ok": false, "error": "no AVI"}'; $global:LASTEXITCODE = 1; return }
+        $n = [int]@(Get-Content -LiteralPath $avi)[1]
+        if ($env:STUB_UNPACK_SHORT -and ($dir -like ('*' + $env:STUB_UNPACK_SHORT))) { $n = $n - 1 }
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        for ($i = 0; $i -lt $n; $i++) { Set-Content -LiteralPath (Join-Path $dir ('mmd_{0:D5}.png' -f ($first + $i))) -Value 'picture' }
+        if ($env:STUB_FREE_FILE -and $env:STUB_FREE_DROP) {
+            Set-Content -LiteralPath $env:STUB_FREE_FILE -Value ([decimal](Get-Content -LiteralPath $env:STUB_FREE_FILE) - [decimal]$env:STUB_FREE_DROP)
+        }
+        '{"ok": true, "pictures": ' + $n + '}'; $global:LASTEXITCODE = 0; return
+    }
+"""
+# the AVI holds its rate, as the header of MMD's AVI does, and the frames of the song it covers (for the stand-in of unpack)
+STUB_AVI = ("Set-Content -LiteralPath $r[2] -Value @($r[[array]::IndexOf($r, '--fps') + 1], "
+            "([int]$r[[array]::IndexOf($r, '--to') + 1] - [int]$r[[array]::IndexOf($r, '--from') + 1] + 1))")
+# mv_look render with a stage of a model: every picture of the stage by MMD of the excerpt must be there (the real one stops
+# without one); its stage's frames go to the work folder
+STUB_RENDER_STAGE = (
+    "    elseif ((Arg-After $args '--stage-pictures') -and ($null -ne (Missing-Picture (Arg-After $args '--stage-pictures') $from $to))) {\n"
+    "        $why = 'no picture of the stage by MMD for frame ' + (Missing-Picture (Arg-After $args '--stage-pictures') $from $to)\n"
+    "    }\n")
+STUB_STAGE_FRAMES = (
+    "    if ((Arg-After $args '--stage-pictures') -and (Arg-After $args '--work')) {\n"
+    "        New-Item -ItemType Directory -Force -Path ((Arg-After $args '--work') + '/stage') | Out-Null\n"
+    "        Set-Content -LiteralPath ((Arg-After $args '--work') + '/stage/stage_00000.png') -Value 'a frame of the stage'\n"
+    "    }\n")
+# mv_look layers with a stage of a model: the folder of MMD's pictures must be there
+STUB_LAYERS_STAGE = (
+    "        if ((Arg-After $args '--stage-pictures') -and -not (Test-Path -LiteralPath (Arg-After $args '--stage-pictures') -PathType Container)) {\n"
+    "            '{\"ok\": false, \"error\": \"no folder of the pictures of the stage\"}'; $global:LASTEXITCODE = 2; return\n"
+    "        }\n")
+
+
+STUBS = STUB_HELPERS + r"""
 $log = $env:STUB_LOG
 function python {
     Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
     if ($args[0] -eq 'tools/mme_shadow.py') { '{"ok": true}'; $global:LASTEXITCODE = 0; return }
+""" + STAGE_STUB + r"""
     if ($args[0] -eq '-m') {
         if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) {
             # the answer of a batch that stopped at a window: its launch with the process id (STUB_BATCH_PID)
@@ -808,8 +866,7 @@ function python {
         }
         $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
         $r = $render | ConvertFrom-Json
-        # the AVI holds its rate, as the header of MMD's AVI does
-        Set-Content -LiteralPath $r[2] -Value $r[[array]::IndexOf($r, '--fps') + 1]
+""" + "        " + STUB_AVI + r"""
         $global:LASTEXITCODE = 0
         return
     }
@@ -817,7 +874,7 @@ function python {
         # tools/mv_look.py layers LOOK WORK ...: the look must be JSON
         try { $null = Get-Content -LiteralPath $args[2] -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
         catch { '{"ok": false, "error": "the look is not JSON"}'; $global:LASTEXITCODE = 2; return }
-        '{"ok": true}'
+""" + STUB_LAYERS_STAGE + r"""        '{"ok": true}'
         $global:LASTEXITCODE = 0
         return
     }
@@ -830,7 +887,7 @@ function python {
     if (-not (Test-Path -LiteralPath $avi)) { $why = 'no such file: ' + $avi }
     elseif (-not (Test-Path -LiteralPath $look)) { $why = 'no look: ' + $look }
     elseif ($offset -gt $from) { $why = '--from is before the dancer' }
-    elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
+""" + STUB_RENDER_STAGE + r"""    elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
     if ($why) { '{"ok": false, "error": "' + $why + '"}'; $global:LASTEXITCODE = 2; return }
     $null = Get-Content -LiteralPath $look -Raw | ConvertFrom-Json
     # the output runs at the rate of the AVI over the subframes (mv_look reads the rate from the AVI)
@@ -839,12 +896,16 @@ function python {
     $n = [int][math]::Round(($to - $from) * $rate / $sub)
     if ($env:STUB_SHORT -and ($mp4 -like ('*' + $env:STUB_SHORT + '*'))) { $n = $n - 1 }
     Set-Content -LiteralPath $mp4 -Value $n
-    '{"ok": true}'
+""" + STUB_STAGE_FRAMES + r"""    '{"ok": true}'
     $global:LASTEXITCODE = 0
 }
 function ffprobe { $p = $args[-1]; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p } }
 if ($env:STUB_NO_DISK) {
     Add-Type -Namespace MvChunks -Name Disk -MemberDefinition 'public static bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, out ulong free) { available = 0; total = 0; free = 0; return false; }'
+}
+if ($env:STUB_FREE_FILE) {
+    # the free space the test sets (render12): the number in the file, read at every call
+    Add-Type -Namespace MvChunks -Name Disk -MemberDefinition 'public static bool GetDiskFreeSpaceEx(string folder, out ulong available, out ulong total, out ulong free) { available = ulong.Parse(System.IO.File.ReadAllText(System.Environment.GetEnvironmentVariable("STUB_FREE_FILE")).Trim()); total = available; free = available; return true; }'
 }
 if (-not $env:STUB_NO_FFMPEG) { function ffmpeg {
     Add-Content -LiteralPath $log -Value ('ffmpeg ' + ($args -join ' ')) -Encoding UTF8
@@ -1409,22 +1470,23 @@ class DriverTest(unittest.TestCase):
 # where the functions of a wrapper do not reach.  Every process logs to a file of its own (STUB_LOG.<pid>).  STUB_SLOW makes a
 # batch take 3 seconds, so that a test knows which chunk is still under way when another one fails
 PATH_STUBS = {
-    "python.ps1": r"""
+    "python.ps1": STUB_HELPERS + r"""
 $log = $env:STUB_LOG + '.' + $PID
 Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
+""" + STAGE_STUB + r"""
 if ($args[0] -eq '-m') {
     if ($env:STUB_SLOW -and (($args -join ' ') -like ('*' + $env:STUB_SLOW + '*'))) { Start-Sleep -Seconds 3 }
     if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) { $global:LASTEXITCODE = 1; return }
     $render = Get-Content -LiteralPath $args[-1] -Encoding UTF8 | Where-Object { $_ -like '*"render"*' }
     $r = $render | ConvertFrom-Json
-    Set-Content -LiteralPath $r[2] -Value $r[[array]::IndexOf($r, '--fps') + 1]
+""" + STUB_AVI + r"""
     $global:LASTEXITCODE = 0
     return
 }
 if ($args[1] -eq 'layers' -or $args[1] -eq 'prepare') {
     try { $null = Get-Content -LiteralPath $args[2] -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
     catch { '{"ok": false, "error": "the look is not JSON"}'; $global:LASTEXITCODE = 2; return }
-    '{"ok": true}'
+""" + STUB_LAYERS_STAGE + r"""    '{"ok": true}'
     $global:LASTEXITCODE = 0
     return
 }
@@ -1436,14 +1498,14 @@ $why = $null
 if (-not (Test-Path -LiteralPath $avi)) { $why = 'no such file: ' + $avi }
 elseif (-not (Test-Path -LiteralPath $look)) { $why = 'no look: ' + $look }
 elseif ($offset -gt $from) { $why = '--from is before the dancer' }
-elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
+""" + STUB_RENDER_STAGE + r"""elseif ($env:STUB_LOOK_FAILS -and ($mp4 -like ('*' + $env:STUB_LOOK_FAILS + '*'))) { $why = 'stub failure' }
 if ($why) { '{"ok": false, "error": "' + $why + '"}'; $global:LASTEXITCODE = 2; return }
 $rate = [double](Get-Content -LiteralPath $avi -TotalCount 1)
 $sub = [double]$args[[array]::IndexOf($args, '--subframes') + 1]
 $n = [int][math]::Round(($to - $from) * $rate / $sub)
 if ($env:STUB_SHORT -and ($mp4 -like ('*' + $env:STUB_SHORT + '*'))) { $n = $n - 1 }
 Set-Content -LiteralPath $mp4 -Value $n
-'{"ok": true}'
+""" + STUB_STAGE_FRAMES + r"""'{"ok": true}'
 $global:LASTEXITCODE = 0
 """,
     "ffprobe.ps1": r"""
@@ -1743,6 +1805,463 @@ class DiskReserveTest(unittest.TestCase):
         self.assertFalse(noted)
 
 
+STAGE_FILES = dict(DriverTest.FILES, **{"MMDplain/MikuMikuDance.exe": "plain mmd", "stagemodel/city.pmx": "city",
+                                        "stagemodel/tex/sign.png": "sign"})
+
+
+def needs_of(driver):
+    """the bytes every Run-Chunk of a driver needs (the AVI and its margin; with a free space kept, the chunk's peak)"""
+    return [int(n) for n in re.findall(r"Run-Chunk (?:'[^']*' ){7}\d+ (\d+) @\(", driver)]
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class StageDriverTest(unittest.TestCase):
+    """The stage of a model drawn chunk by chunk ("stage_mmd" in the plan), the driver run for real with the stand-ins: before a
+    chunk the driver has the plain MMD draw the stage over the frames the chunk shows (tools/stage_layer.py batch, the batch,
+    unpack into the chunk's folder of pictures), folds the chunk with them in a work folder of its own and removes both once its
+    mp4 has passed.  Before every MMD it measures the free space (STUB_FREE_FILE sets it here) and starts nothing that would leave
+    less than keep_free_gb"""
+
+    FILES = STAGE_FILES
+    put = DriverTest.put
+    frames = DriverTest.frames
+    batches = DriverTest.batches
+
+    def setUp(self):
+        DriverTest.setUp(self)
+        self.set = self.base + "/sets/city.json"
+        self.put("sets/city.json", json.dumps({"model": self.base + "/stagemodel/city.pmx", "offset": [0, 0.111, 0]}))
+        self.pictures = self.base + "/pictures"
+        self.free = os.path.join(self.tmp, "free.txt")
+        self.set_free(10 ** 15)
+
+    def set_free(self, n):
+        with open(self.free, "w", encoding="ascii") as f:
+            f.write(str(int(n)))
+
+    def write(self, **plan):
+        b = self.base
+        full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
+                "camera": b + "/camera.vmd", "accessories": [], "look": self.look, "cues": self.cues, "out": self.out,
+                "scripts": self.scripts, "mmd_cli": b, "world": True, "stage_set": self.set, "stage_pictures": self.pictures,
+                "stage_mmd": b + "/MMDplain/MikuMikuDance.exe"}
+        full.update(plan)
+        self.plan = mv_chunks.check_plan({k: v for k, v in full.items() if v is not None})     # None: not in the plan
+        self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240, shutter=0.5)
+        with open(self.summary["driver"], encoding="utf-8-sig") as f:
+            self.driver = f.read()
+        return self.summary
+
+    def run_driver(self, switches="", **env):
+        env.setdefault("STUB_FREE_FILE", self.free)
+        return DriverTest.run_driver(self, switches, **env)
+
+    @staticmethod
+    def steps(calls):
+        """(what, chunk) of the calls that draw: the stage's batch, MMD for the stage, unpack, MMD for her, the fold"""
+        out = []
+        for c in calls:
+            m = re.search(r"(t_\d\d)", c)
+            if "tools/stage_layer.py batch" in c:
+                out.append(("stage batch", m.group(1)))
+            elif c.startswith("python -m mmd_cli") and "_stage.txt" in c:
+                out.append(("stage mmd", m.group(1)))
+            elif "tools/stage_layer.py unpack" in c:
+                out.append(("unpack", m.group(1)))
+            elif c.startswith("python -m mmd_cli"):
+                out.append(("mmd", m.group(1)))
+            elif "tools/mv_look.py render" in c:
+                out.append(("fold", m.group(1)))
+        return out
+
+    def left(self):
+        """what the stage of the chunks left: the stage's AVIs, the folders of pictures, the work folders of the chunks"""
+        got = sorted(n for n in os.listdir(self.out) if n.endswith(".avi") or n.startswith("look_work_t_"))
+        if os.path.isdir(self.pictures):
+            got += sorted("pictures/" + n for n in os.listdir(self.pictures))
+        return got
+
+    def test_every_chunk_has_its_stage_drawn_right_before_it_and_removed_after_it(self):
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.steps(calls), [(s, "t_%02d" % i) for i in range(3)
+                                             for s in ("stage batch", "stage mmd", "unpack", "mmd", "fold")])
+        # the stage over the frames each chunk shows (from its cut, not its lead-in), with the plain MMD, at the plan's size
+        stage = [c for c in calls if "tools/stage_layer.py batch" in c]
+        self.assertEqual([re.search(r"--from (\d+) --to (\d+)", c).groups() for c in stage], [("0", "99"), ("100", "249"), ("250", "299")])
+        self.assertTrue(all(("--mmd %s/MMDplain/MikuMikuDance.exe --size 1280x720" % self.base) in c for c in stage), stage)
+        self.assertTrue(all((" %s %s/camera.vmd " % (self.set, self.base)) in c for c in stage), stage)
+        unpacks = [c for c in calls if "tools/stage_layer.py unpack" in c]
+        self.assertEqual([re.search(r"--first (\d+)", c).group(1) for c in unpacks], ["0", "100", "250"])
+        # every fold read the pictures of its own frames (the stand-in refuses a missing one) and drew in its own work folder
+        folds = [c for c in calls if "tools/mv_look.py render" in c]
+        for i, c in enumerate(folds):
+            self.assertIn(" --stage-pictures %s/t_%02d " % (self.pictures, i), c)
+            self.assertIn(" --work %s/look_work_t_%02d " % (self.out, i), c)
+        # nothing of the stage is left behind, and the video is whole
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+        self.assertIn("joined 300 frames", text)
+
+    def test_the_look_is_checked_with_the_folder_of_the_pictures_before_any_mmd(self):
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertIn("tools/mv_look.py layers", calls[0])
+        self.assertIn(" --stage-pictures %s " % self.pictures, calls[0] + " ")
+
+    def test_resume_after_a_whole_run_draws_nothing_though_the_pictures_came_and_went(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.steps(calls), [])
+        for name in ("t_00", "t_01", "t_02"):
+            self.assertIn("%s skipped: " % name, text)
+
+    def test_resume_after_a_failed_fold_goes_on_from_that_chunk(self):
+        self.write()
+        code, text, calls = self.run_driver(STUB_LOOK_FAILS="t_01")
+        self.assertEqual(code, 1, text)
+        # a failure keeps what the chunk made, to look at: its AVI and its pictures
+        self.assertTrue(os.path.exists(os.path.join(self.out, "t_01.avi")))
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "pictures", "t_01")))
+        self.assertNotIn(("stage batch", "t_02"), self.steps(calls))
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.steps(calls), [(s, "t_%02d" % i) for i in (1, 2)
+                                             for s in ("stage batch", "stage mmd", "unpack", "mmd", "fold")])
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_a_chunk_that_would_leave_less_than_the_free_space_kept_is_not_started(self):
+        self.write(keep_free_gb=1)
+        needs = needs_of(self.driver)
+        self.assertEqual(len(needs), 3)
+        self.assertTrue(needs[1] > needs[0], needs)
+        # too little for chunk 0: nothing is drawn, not even its stage
+        self.set_free(needs[0] + GIB - 1)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.steps(calls), [])
+        self.assertIn("t_00 STOP: ", text)
+        self.assertIn("-Resume", text)
+        # enough for chunk 0 and not for chunk 1 (whose lead-in makes it longer): chunk 0 is made, chunk 1 not started
+        self.set_free(needs[0] + GIB)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.steps(calls), [(s, "t_00") for s in ("stage batch", "stage mmd", "unpack", "mmd", "fold")])
+        self.assertIn("t_01 STOP: ", text)
+        self.assertEqual(self.left(), [])                          # it stopped clean
+        # and with room again -Resume goes on from chunk 1
+        self.set_free(max(needs) + GIB)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual([c for _, c in self.steps(calls)][::5], ["t_01", "t_02"])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_the_free_space_is_measured_again_before_mmd_draws_her(self):
+        # enough when the chunk starts, but somebody else writes while its stage is drawn: her MMD does not start, and the chunk's
+        # pictures go (the next try draws them again)
+        self.write(keep_free_gb=1)
+        needs = needs_of(self.driver)
+        self.set_free(needs[0] + GIB)
+        code, text, calls = self.run_driver(STUB_FREE_DROP=str(10 ** 6))
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.steps(calls), [("stage batch", "t_00"), ("stage mmd", "t_00"), ("unpack", "t_00")])
+        self.assertIn("t_00 STOP: ", text)
+        self.assertEqual(self.left(), [])
+
+    def test_a_stage_mmd_with_mme_beside_it_stops_the_run_before_anything(self):
+        # the stage of a model is MMD's own picture of it (tools/stage_layer.py lays the night on it): MME would draw its effects
+        self.put("MMDplain/d3d9.dll", "MME")
+        self.write()
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 1, text)
+        self.assertIn("MME", text)
+        self.assertEqual(calls, [])
+
+    def test_resume_sees_the_stage_set_and_the_folder_of_its_model(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+
+        def drawn(label):
+            code, text, calls = self.run_driver("-Resume")
+            self.assertEqual(code, 0, (label, text))
+            return len([s for s in self.steps(calls) if s[0] == "stage mmd"])
+        self.assertEqual(drawn("nothing changed"), 0)
+        self.put("stagemodel/tex/sign.png", "another sign")
+        self.assertEqual(drawn("a texture of the stage"), 3)
+        self.put("sets/city.json", json.dumps({"model": self.base + "/stagemodel/city.pmx", "offset": [0, 0.2, 0]}))
+        self.assertEqual(drawn("the set"), 3)
+        self.put("MMDplain/MikuMikuDance.exe", "another plain mmd")
+        self.assertEqual(drawn("the stage's MMD"), 3)
+        # a model named from the set's folder is found there
+        self.put("sets/city.json", json.dumps({"model": "../stagemodel/city.pmx"}))
+        self.assertEqual(drawn("the set again"), 3)
+        self.put("stagemodel/tex/sign.png", "a third sign")
+        self.assertEqual(drawn("a texture of a model named from the set's folder"), 3)
+        self.assertEqual(drawn("nothing changed again"), 0)
+
+    def test_an_output_or_pictures_folder_inside_the_stage_models_folder_stops_the_run(self):
+        # -Resume watches the folder of the stage's model (only the set names it, read on the render machine)
+        for change in ({"out": self.base + "/stagemodel/out"}, {"stage_pictures": self.base + "/stagemodel/pictures"}):
+            with self.subTest(change=change):
+                if "out" in change:
+                    self.out = change["out"]
+                self.write(**change)
+                code, text, calls = self.run_driver()
+                self.assertEqual(code, 1, text)
+                self.assertIn("inside", text)
+                self.assertEqual(calls, [])
+                self.out = self.base + "/out"
+
+    def test_a_failed_stage_stops_the_run_before_mmd_draws_her(self):
+        self.write()
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_01_stage.json")
+        self.assertEqual(code, 1, text)
+        self.assertEqual(self.steps(calls)[-1], ("stage mmd", "t_01"))
+        self.assertIn("t_01 STOP", text)
+        self.write()
+        code, text, calls = self.run_driver(STUB_UNPACK_SHORT="t_01")
+        self.assertEqual(code, 1, text)
+        self.assertEqual(self.steps(calls)[-1], ("unpack", "t_01"))
+        self.assertIn("149 pictures", text)
+
+    def test_a_failed_stage_batch_stops_the_stage_mmd_it_left_open_and_nothing_else(self):
+        # mmd_cli's batch stops at a failure without its quit, and leaves MMD open (on a shared machine it holds memory and counts
+        # among the MMDs others wait for): the driver stops the process of the batch's launch when it is the stage's MMD.  A
+        # program that is not MMD stands for it here (ping, copied to the plan's plain MikuMikuDance.exe)
+        ping = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE")
+        if not os.path.isfile(ping):
+            self.skipTest("needs PING.EXE")
+        exe = os.path.join(self.tmp, "MMDplain", "MikuMikuDance.exe")
+        shutil.copy2(ping, exe)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        quiet = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=flags)
+        mmd = subprocess.Popen([exe, "-n", "120", "127.0.0.1"], **quiet)
+        other = subprocess.Popen([ping, "-n", "120", "127.0.0.1"], **quiet)
+        for proc in (mmd, other):
+            self.addCleanup(proc.wait, 10)
+            self.addCleanup(proc.kill)
+        self.write()
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_01_stage.json", STUB_BATCH_PID=str(other.pid))
+        self.assertEqual(code, 1, text)
+        self.assertIsNone(other.poll())                               # not the stage's MMD: left alone
+        self.assertNotIn("stopped MMD", text)
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="t_01_stage.json", STUB_BATCH_PID=str(mmd.pid))
+        self.assertEqual(code, 1, text)
+        self.assertIn("stopped MMD %d" % mmd.pid, text)
+        self.assertIn("t_01 STOP: MMD could not draw the stage (exit 1)", text)
+        self.assertIsNotNone(mmd.wait(10))
+
+    def test_what_a_cut_short_run_left_of_a_chunk_goes_before_the_chunk_or_when_it_is_skipped(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        for rel in ("pictures/t_01/mmd_00100.png", "out/look_work_t_01/stage/stage_00100.png", "out/t_01_stage.avi",
+                    "out/t_02_stage.avi.mmdcli-failed", "pictures/t_02/mmd_00250.png"):
+            self.put(rel, "left over")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.steps(calls), [])
+        self.assertEqual(self.left(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.out, "t_02_stage.avi.mmdcli-failed")))
+
+    def test_pictures_drawn_before_are_read_as_they_are_and_watched(self):
+        # without stage_mmd: the folder of the plan holds MMD's pictures of every frame the chunks show, drawn before (as now)
+        for f in range(300):
+            self.put("pictures/mmd_%05d.png" % f, "picture")
+        self.write(stage_mmd=None)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 0, text)
+        self.assertEqual([s for s, _ in self.steps(calls)], ["mmd", "fold"] * 3)
+        self.assertTrue(all(" --stage-pictures %s " % self.pictures in c for c in calls if "mv_look.py render" in c))
+        self.assertEqual(len(os.listdir(self.pictures)), 300)               # left as they were
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual((code, self.steps(calls)), (0, []), text)
+        self.put("pictures/mmd_00120.png", "another picture")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.batches(calls)), 3)
+
+    def test_the_free_space_is_kept_with_pictures_drawn_before_too(self):
+        for f in range(300):
+            self.put("pictures/mmd_%05d.png" % f, "picture")
+        self.write(stage_mmd=None, keep_free_gb=1)
+        needs = needs_of(self.driver)
+        self.set_free(needs[0] + GIB - 1)
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.batches(calls), [])
+        self.set_free(max(needs) + GIB)
+        self.assertEqual(self.run_driver()[0], 0)
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class StageWorkersDriverTest(unittest.TestCase):
+    """The stage of a model drawn chunk by chunk with --workers: every worker draws the stage of the chunk it takes right before
+    it, folds it in the chunk's own work folder and removes both; the look is checked once before the workers start.  The free
+    space is the real one here (the workers are processes of their own): the size is small and keep_free_gb 0, or far beyond
+    the disk"""
+
+    FILES = STAGE_FILES
+    setUp = StageDriverTest.setUp
+    set_free = StageDriverTest.set_free
+    put = DriverTest.put
+    frames = DriverTest.frames
+    batches = DriverTest.batches
+    steps = staticmethod(StageDriverTest.steps)
+    left = StageDriverTest.left
+    every = staticmethod(WorkersDriverTest.every)
+    run_driver = WorkersDriverTest.run_driver
+
+    def write(self, workers=2, **plan):
+        b = self.base
+        full = {"mmd": b + "/MMD/MikuMikuDance.exe", "model": b + "/model/White.pmx", "motions": [b + "/dance.vmd", b + "/lips.vmd"],
+                "camera": b + "/camera.vmd", "accessories": [], "look": self.look, "cues": self.cues, "out": self.out,
+                "scripts": self.scripts, "mmd_cli": b, "world": True, "stage_set": self.set, "stage_pictures": self.pictures,
+                "stage_mmd": b + "/MMDplain/MikuMikuDance.exe", "size": [64, 36], "keep_free_gb": 0}
+        full.update(plan)
+        self.plan = mv_chunks.check_plan({k: v for k, v in full.items() if v is not None})
+        self.summary = mv_chunks.write(self.plan, mv_chunks.plan_chunks(SPANS, lead=120), self.scripts, tag="t", fps=240, shutter=0.5,
+                                       workers=workers)
+        return self.summary
+
+    def test_every_worker_draws_the_stage_of_its_chunk_before_it_and_removes_it_after(self):
+        self.write()
+        code, text, calls = self.run_driver(STUB_SLOW="chunk_t_00")
+        self.assertEqual(code, 0, text)
+        every = self.every(calls)
+        self.assertFalse(any("mv_look.py prepare" in c for c in every), every)
+        self.assertEqual(len([c for c in every if "mv_look.py layers" in c]), 1)
+        for pid, made in calls.items():
+            # in every worker the stage of a chunk comes right before her, and its fold after them
+            steps = self.steps(made)
+            for i in range(0, len(steps), 5):
+                self.assertEqual([s for s, _ in steps[i:i + 5]], ["stage batch", "stage mmd", "unpack", "mmd", "fold"], steps)
+                self.assertEqual(len({c for _, c in steps[i:i + 5]}), 1, steps)
+        self.assertEqual(sorted(c for s, c in self.steps(every) if s == "fold"), ["t_00", "t_01", "t_02"])
+        self.assertGreaterEqual(len([pid for pid, made in calls.items() if self.batches(made)]), 2)
+        folds = [c for c in every if "mv_look.py render" in c]
+        self.assertTrue(all(re.search(r" --work \S+/look_work_(t_\d\d) .* --stage-pictures \S+/pictures/\1( |$)", c) for c in folds), folds)
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_resume_after_a_whole_run_draws_nothing(self):
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.steps(self.every(calls)), [])
+
+    def test_a_free_space_beyond_the_disk_stops_the_run_before_any_mmd(self):
+        self.write(keep_free_gb=10 ** 9)                      # an exabyte
+        code, text, calls = self.run_driver()
+        self.assertEqual(code, 3, text)
+        self.assertEqual(self.steps(self.every(calls)), [])
+        self.assertIn("STOP", text)
+
+
+@unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
+class FloorReserveTest(unittest.TestCase):
+    """the free space of the workers with a free space kept (keep_free_gb): a chunk starts when the disk holds its peak and the
+    space kept after what the chunks under way still have to write (their peak less what their files and folders hold now); it
+    waits while those would leave too little and stops the run (exit 3) when even alone it does not fit.  Before MMD draws her,
+    the chunk measures again and stops (exit 3) if somebody else took the room meanwhile.  The functions of the driver are run by
+    themselves, the free space given"""
+
+    KEEP = 100
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        base = self.tmp.replace("\\", "/")
+        plan = mv_chunks.check_plan(dict(CITY_PLAN, out=base + "/out", scripts=base + "/scripts", keep_free_gb=1))
+        summary = mv_chunks.write(plan, mv_chunks.plan_chunks(SPANS, lead=120), self.tmp + "/scripts", "t", 240, 0.5, workers=2)
+        with open(summary["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        self.functions = "\n".join(DiskReserveTest.function(driver, name)
+                                   for name in ("Hold", "Lock-Disk", "Used", "Owed", "Reserve", "Need-Still"))
+        self.run = base + "/out/run_t"
+        os.makedirs(self.run)
+
+    def busy(self, name, need, files=0, folder=0):
+        """a chunk under way that needs `need` bytes at its peak and holds `files` bytes in its AVI and `folder` in a folder of two files"""
+        avi, pics = "%s/%s.avi" % (self.run, name), "%s/%s_pictures" % (self.run, name)
+        with open(avi, "wb") as f:
+            f.write(b"\0" * files)
+        os.makedirs(pics)
+        for k, n in enumerate((folder // 2, folder - folder // 2)):
+            with open("%s/mmd_%05d.png" % (pics, k), "wb") as f:
+                f.write(b"\0" * n)
+        with open("%s/busy_%s" % (self.run, name), "w", encoding="utf-8") as f:
+            f.write("%d|%s|%s" % (need, avi, pics))
+
+    def call(self, line, free, gone_after=None):
+        script = os.path.join(self.tmp, "call.ps1")
+        with open(script, "w", encoding="utf-8-sig", newline="\r\n") as f:
+            f.write("$run = %s\n$out = %s\n$diskWait = 0.2\n$keep = [decimal]%d\n"
+                    "function Get-FreeBytes($folder) { return %d }\n%s\n%s\nexit 0\n"
+                    % (mv_chunks._ps(self.run), mv_chunks._ps(self.tmp), self.KEEP, free, self.functions, line))
+        proc = subprocess.Popen(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if gone_after is not None:
+            time.sleep(gone_after)
+            for name in os.listdir(self.run):
+                if name.startswith("busy_"):
+                    os.remove(os.path.join(self.run, name))
+        out = proc.communicate(timeout=120)[0]
+        return proc.returncode, out.decode("utf-8", "replace")
+
+    def reserve(self, free, need=1000, gone_after=None):
+        code, text = self.call("$went = Reserve 't_02' %d @(%s)\n'went {0}' -f $went" % (need, mv_chunks._ps(self.run + "/t_02.avi")),
+                               free, gone_after)
+        return code, text, os.path.exists(self.run + "/busy_t_02")
+
+    def test_a_chunk_starts_when_its_peak_leaves_the_space_kept(self):
+        code, text, noted = self.reserve(free=1100)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        self.assertTrue(noted)
+        with open(self.run + "/busy_t_02", encoding="utf-8") as f:
+            self.assertEqual(f.read().split("|")[0], "1000")
+
+    def test_too_little_even_alone_stops_the_run_with_exit_3(self):
+        code, text, noted = self.reserve(free=1099)
+        self.assertEqual(code, 3, text)
+        self.assertIn("t_02 STOP: ", text)
+        self.assertFalse(noted)
+
+    def test_it_waits_while_a_chunk_under_way_would_leave_too_little_and_counts_what_its_folders_hold(self):
+        # chunk 00 needs 2000 at its peak and holds 300 in its AVI and 500 in its folder of pictures: 1200 to go.  With 2300 free,
+        # 2300 - 1200 - 1000 = 100 = the space kept: it goes at once
+        self.busy("t_00", 2000, files=300, folder=500)
+        code, text, noted = self.reserve(free=2300)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        os.remove(self.run + "/busy_t_02")
+        # one byte less and it waits until chunk 00 is done
+        code, text, noted = self.reserve(free=2299, gone_after=2)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        self.assertTrue(noted)
+
+    def test_before_mmd_draws_her_the_chunk_stops_if_somebody_took_the_room(self):
+        # the chunk under way (this one) needs 2000 and holds 800: 1200 to go, and 1300 are free: 100 kept, it goes on
+        self.busy("t_02", 2000, files=0, folder=800)
+        code, text = self.call("Need-Still 't_02' @()\n'went on'", free=1300)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went on", text)
+        # one byte less: it stops (exit 3) and clears what it is given (its pictures)
+        code, text = self.call("Need-Still 't_02' @(%s)\n'went on'" % mv_chunks._ps(self.run + "/t_02_pictures"), free=1299)
+        self.assertEqual(code, 3, text)
+        self.assertIn("t_02 STOP: ", text)
+        self.assertNotIn("went on", text)
+        self.assertFalse(os.path.exists(self.run + "/t_02_pictures"))
+
+
 FAKE_MMD = r'''"""tests/test_mv_chunks.py: `python -m mmd_cli --out JSON batch FILE` without MMD (after review 10).  It reads the
 batch as mmd_cli does and writes the AVI MMD would: BGRA, (to - from + 1) * fps / 30 frames, each frame telling its song
 frame (G = 16 * (frame mod 16), B = 16 * (frame // 16 mod 16)) and its subframe (R = 256 / sub * subframe).  A motion
@@ -1883,6 +2402,192 @@ class EndToEndTest(unittest.TestCase):
         times = [float(t.strip().strip(",")) for t in probe.stdout.split() if t.strip().strip(",")]
         self.assertEqual(len(times), 240)
         self.assertEqual({round((b - a) * 60, 3) for a, b in zip(times, times[1:])}, {1.0})
+
+
+# The SHA-256 of the scripts main 4f034ce's tools/mv_chunks.py wrote for plans without a stage of a model, beyond the default
+# plan of GOLDEN_30 and GOLDEN_60: in the world, with workers, fast spans, the physics aligned, the soft self shadow, 60 fps and
+# nvenc (render12, _spike/out/stage6/render12/golden_main.py).  The stage of a model drawn chunk by chunk and the free space kept
+# on the disk change nothing of them
+WORLD_PLAN = dict(PLAN, world=True, accessories=[])
+MAIN_VARIANTS = {
+    "world": (WORLD_PLAN, dict(tag="w", fps=240, shutter=0.5)),
+    "world_workers_fast_align": (WORLD_PLAN, dict(tag="wf", fps=480, shutter=0.5, workers=2, align_physics=True,
+                                                  fast={"spans": [(4.0, 5.0)], "fps": 960})),
+    "soft_workers_60_nvenc": (dict(PLAN, self_shadow="soft"), dict(tag="s", fps=240, shutter=0.5, workers=3, out_fps=60,
+                                                                    encoder="nvenc")),
+    "world_jobs8_nocues_workers": (dict(WORLD_PLAN, stage_jobs=8, cues=None), dict(tag="j", fps=240, shutter=0.5, workers=2)),
+}
+MAIN_4F034CE = {
+    "soft_workers_60_nvenc": {
+        "chunk_s_60fps_nvenc_00.txt": "f3e88238abd3a0745c2d287d48bedee0171a7447dee801c5f517591a3d3a174f",
+        "chunk_s_60fps_nvenc_01.txt": "947485d6278d1db32fb9f789f5e56bb8495f5cce57abbcb9d239550b2f990e48",
+        "chunk_s_60fps_nvenc_02.txt": "308497b2535a70b85b1d7bb96339a56a535134d285d12bffa6ea4f443fb24003",
+        "concat_s_60fps_nvenc.txt": "a184be7bc0676c5cad602a405a1021f91b2ea5ca6e82e2ecd7be0f9aac2dae40",
+        "render_s_60fps_nvenc.ps1": "6a7821319f812951b582e2faf059d1da6e12596e88475716d806f722b4583be1"},
+    "world": {
+        "chunk_w_00.txt": "95c530f97da710ef5bee416890d5563e07d9a58f029554c09ecc2d64d4ebcd59",
+        "chunk_w_01.txt": "76d34f2b3dcf5fb18664ed6b4617d6d968f9ae91769a52815f9aae39c4374394",
+        "chunk_w_02.txt": "b9c92ed2eba7b1322228b0041bdbc70ef9eff77dae21a217db3b8178284fa05d",
+        "concat_w.txt": "7c25942fc2ce5f11737b513e6d75430b61fa0bc3f06f9e9f8b4c733d8b32916a",
+        "render_w.ps1": "f216565dd72e548a003e1646f94f67993b45f5169662d0ec6893da4811f93d2e"},
+    "world_jobs8_nocues_workers": {
+        "chunk_j_00.txt": "b100978036a68dc8ed7a1b2349a4490f0b62262d9363025117b9c846ce8aa517",
+        "chunk_j_01.txt": "1a36ae01064b2c90b43d7e6759fbdc1eda2807399f23437c9b4a29952c77a977",
+        "chunk_j_02.txt": "bd8bec000273a30396e2f197c64fd62d066e2efc3c285b9cabc030082fd25af2",
+        "concat_j.txt": "f7b3c05be056fa1076fe2bbe885165ae9fde663a65f537cc2926e3889720ed57",
+        "render_j.ps1": "79016a30bfe3968b9ea0880784d40052f316071e0d56c47c7d34e33e4257d8c8"},
+    "world_workers_fast_align": {
+        "chunk_wf_00.txt": "b05c4f941aa36624f890994d059974d96dcefa6613f5d60fe52a78ffef5c9b78",
+        "chunk_wf_01.txt": "152b7c3e0ad746769241fe626d500de3023b8e81a8a24d83f737fe14fe608559",
+        "chunk_wf_02.txt": "3fb14b199a541d8dd497fdf8a026d53c31f702dda61ac3dc62ab2d840e88ad50",
+        "concat_wf.txt": "06a18cb678a3c337c123c8a399425f9bad9e6f9c56eaa9cb0dbfe99286ff710a",
+        "render_wf.ps1": "a70c3f2f2d3d4cef905f6ca99eec33370b942eaa4d3e4737aad1b5758f566fea"},
+}
+
+
+class MainBytesTest(unittest.TestCase):
+    def test_plans_without_a_stage_of_a_model_get_the_scripts_main_wrote(self):
+        for name, (plan, kw) in MAIN_VARIANTS.items():
+            with self.subTest(variant=name):
+                folder = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, folder, True)
+                kw = dict(kw)
+                tag, fps, shutter = kw.pop("tag"), kw.pop("fps"), kw.pop("shutter")
+                summary = mv_chunks.write(mv_chunks.check_plan(dict(plan)), mv_chunks.plan_chunks(SPANS, 120), folder, tag, fps,
+                                          shutter, **kw)
+                self.assertEqual(hashes(folder), MAIN_4F034CE[name])
+                self.assertNotIn("disk", summary)                  # no free space is kept: the summary of before
+
+
+CITY_PLAN = dict(PLAN, world=True, accessories=[], stage_set="C:/work/song/stage/city.json",
+                 stage_pictures="C:/work/song/stage_pictures", stage_mmd="C:/MMD_plain/MikuMikuDance.exe")
+
+
+class StagePlanTest(unittest.TestCase):
+    """A stage of a model drawn chunk by chunk ("stage_mmd": the plain MMD that draws it before every chunk, into a folder of
+    the chunk under "stage_pictures") and the free space the driver keeps on the disk ("keep_free_gb"): what the plan takes,
+    what every fold gets and what the summary says of the disk"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def written(self, plan, fps=240, workers=1, out_fps=30, spans=SPANS):
+        folder = os.path.join(self.tmp, "s%d" % len(os.listdir(self.tmp)))
+        return mv_chunks.write(mv_chunks.check_plan(dict(plan)), mv_chunks.plan_chunks(spans, 120), folder, "t", fps, 0.5,
+                               out_fps=out_fps, workers=workers)
+
+    def test_stage_mmd_goes_with_a_stage_of_a_model_and_is_an_absolute_path(self):
+        self.assertEqual(mv_chunks.check_plan(dict(CITY_PLAN))["stage_mmd"], "C:/MMD_plain/MikuMikuDance.exe")
+        self.assertIsNone(mv_chunks.check_plan(dict(CITY_PLAN, stage_mmd=None))["stage_mmd"])      # the pictures drawn before
+        self.assertIsNone(mv_chunks.check_plan(dict(PLAN))["stage_mmd"])
+        for bad in ({"stage_mmd": "MikuMikuDance.exe"}, {"stage_mmd": 3}, {"stage_mmd": ""},
+                    {"stage_set": None, "stage_pictures": None}):                  # no stage of a model to draw
+            with self.assertRaises(ValueError, msg=bad):
+                mv_chunks.check_plan(dict(CITY_PLAN, **bad))
+
+    def test_30_gb_are_kept_free_with_a_stage_of_a_model_and_nothing_without_unless_the_plan_says(self):
+        self.assertEqual(mv_chunks.check_plan(dict(CITY_PLAN))["keep_free_gb"], 30)
+        self.assertEqual(mv_chunks.check_plan(dict(CITY_PLAN, stage_mmd=None))["keep_free_gb"], 30)
+        self.assertIsNone(mv_chunks.check_plan(dict(PLAN))["keep_free_gb"])                # the plans of before
+        self.assertIsNone(mv_chunks.check_plan(dict(WORLD_PLAN))["keep_free_gb"])
+        self.assertIsNone(mv_chunks.check_plan(dict(CITY_PLAN, keep_free_gb=None))["keep_free_gb"])
+        self.assertEqual(mv_chunks.check_plan(dict(PLAN, keep_free_gb=12.5))["keep_free_gb"], 12.5)   # any plan may ask
+        self.assertEqual(mv_chunks.check_plan(dict(CITY_PLAN, keep_free_gb=0))["keep_free_gb"], 0)
+        for bad in (-1, "30", True, float("nan"), float("inf"), [30]):
+            with self.assertRaises(ValueError, msg=bad) as ctx:
+                mv_chunks.check_plan(dict(CITY_PLAN, keep_free_gb=bad))
+            self.assertIn("keep_free_gb", str(ctx.exception))
+
+    def test_the_pictures_of_the_chunks_lie_outside_what_resume_watches(self):
+        # the driver makes and removes a folder of pictures for every chunk: in a watched folder every chunk would look like a
+        # changed input
+        for root in ("C:/MMD/UserFile/Model/Rin/pictures", "C:/work/mmd-cli/tools/pictures", "c:\\mmd\\userfile\\model\\rin"):
+            with self.assertRaises(ValueError, msg=root) as ctx:
+                mv_chunks.check_plan(dict(CITY_PLAN, stage_pictures=root))
+            self.assertIn("inside", str(ctx.exception))
+        # pictures drawn before are an input (-Resume watches them): the output may not lie among them
+        for change in ({"out": "C:/work/song/stage_pictures/out"}, {"scripts": "C:/work/song/stage_pictures/mv"}):
+            with self.assertRaises(ValueError, msg=change) as ctx:
+                mv_chunks.check_plan(dict(CITY_PLAN, stage_mmd=None, **change))
+            self.assertIn("inside", str(ctx.exception))
+        mv_chunks.check_plan(dict(CITY_PLAN, out="C:/work/song/stage_pictures/out"))      # chunk by chunk they are no input
+
+    def test_every_fold_reads_the_pictures_of_its_chunk_and_draws_its_stage_in_a_folder_of_its_own(self):
+        plan = mv_chunks.check_plan(dict(CITY_PLAN))
+        chunks = mv_chunks.plan_chunks(SPANS, 120)
+        for c in chunks:
+            fold = mv_chunks.fold_args(plan, "t", c, 240, 0.5)
+            self.assertEqual(value(fold, "--stage-pictures"), "C:/work/song/stage_pictures/t_%02d" % c["index"])
+            self.assertEqual(value(fold, "--work"), "C:/work/song/out/look_work_t_%02d" % c["index"])
+            self.assertEqual(value(fold, "--stage-set"), "C:/work/song/stage/city.json")
+        # the pictures drawn before: the folder of the plan for every chunk, as before
+        before = mv_chunks.check_plan(dict(CITY_PLAN, stage_mmd=None))
+        fold = mv_chunks.fold_args(before, "t", chunks[1], 240, 0.5)
+        self.assertEqual((value(fold, "--stage-pictures"), value(fold, "--work")),
+                         ("C:/work/song/stage_pictures", "C:/work/song/out/look_work_t"))
+
+    def test_the_workers_fold_every_chunk_with_its_own_stage_and_prepare_nothing(self):
+        # the stage of a chunk is drawn when the chunk comes (its pictures are not there before): no prepare of the stage of every
+        # chunk before the workers start, and every fold draws its layers, its text and its stage in its own folder
+        with open(self.written(CITY_PLAN, workers=2)["driver"], encoding="utf-8-sig") as f:
+            driver = f.read()
+        self.assertNotIn("tools/mv_look.py prepare", driver)
+        self.assertEqual(len([l for l in driver.splitlines() if "tools/mv_look.py layers" in l]), 1)
+        calls = re.findall(r"if \(Take '(t_\d\d)'\) \{ Run-Chunk (.*)\}$", driver, re.M)
+        self.assertEqual([n for n, _ in calls], ["t_00", "t_01", "t_02"])
+        for name, call in calls:
+            self.assertIn("'--work', 'C:/work/song/out/look_work_%s'" % name, call)
+            self.assertIn("'--stage-pictures', 'C:/work/song/stage_pictures/%s'" % name, call)
+            self.assertNotIn("'--prepared'", call)
+
+    def test_the_recipe_holds_how_the_stage_of_the_chunk_is_drawn(self):
+        # -Resume does not keep an mp4 whose stage was drawn another way
+        plan = mv_chunks.check_plan(dict(CITY_PLAN))
+        chunk = mv_chunks.plan_chunks(SPANS, 120)[1]
+        made = mv_chunks.recipe(plan, "t", chunk, 240, 0.5)
+        for change in ({"stage_mmd": None}, {"stage_mmd": "C:/MMD2/MikuMikuDance.exe"}, {"size": [640, 360]}):
+            self.assertNotEqual(made, mv_chunks.recipe(mv_chunks.check_plan(dict(CITY_PLAN, **change)), "t", chunk, 240, 0.5), change)
+        self.assertEqual(made, mv_chunks.recipe(mv_chunks.check_plan(dict(CITY_PLAN)), "t", chunk, 240, 0.5))
+
+    def test_the_summary_gives_the_peak_of_every_chunk_on_the_disk(self):
+        disk = self.written(CITY_PLAN)["disk"]
+        self.assertEqual(disk["keep_free_gb"], 30)
+        chunks = disk["chunks"]
+        self.assertEqual([c["chunk"] for c in chunks], [0, 1, 2])
+        for c in chunks:
+            # while the chunk folds, the person's AVI, the chunk's pictures, the stage's frames and the mp4 are there at once; the
+            # stage's AVI is gone by then (unpacked and deleted before MMD draws her)
+            self.assertAlmostEqual(c["peak_gb"], c["avi_gb"] + c["pictures_gb"] + c["stage_gb"] + c["mp4_gb"], delta=0.015)
+            self.assertGreater(c["peak_gb"], c["stage_avi_gb"] + c["pictures_gb"])
+            self.assertTrue(all(c[k] > 0 for k in ("avi_gb", "stage_avi_gb", "pictures_gb", "stage_gb", "mp4_gb")), c)
+        # the person's AVI holds every subframe of the lead-in and the shot (chunk 1: 250 frames of the song at 240 fps); the
+        # stage's AVI the 150 frames the chunk shows at 30 fps (both BGRA)
+        self.assertAlmostEqual(chunks[1]["avi_gb"], 250 * 8 * 1280 * 720 * 4 / 1024.0 ** 3, delta=0.01)
+        self.assertAlmostEqual(chunks[1]["stage_avi_gb"], 150 * 1280 * 720 * 4 / 1024.0 ** 3, delta=0.01)
+        self.assertEqual(max(range(3), key=lambda i: chunks[i]["peak_gb"]), disk["largest_chunk"])
+        # twice the subframes, twice the person's AVI; the pictures and the stage's frames stay
+        for a, b in zip(chunks, self.written(CITY_PLAN, fps=480)["disk"]["chunks"]):
+            self.assertAlmostEqual(b["avi_gb"], 2 * a["avi_gb"], delta=0.01)
+            self.assertEqual((b["pictures_gb"], b["stage_gb"]), (a["pictures_gb"], a["stage_gb"]))
+        # at 60 fps as many pictures (MMD draws the stage at the frames of the song), twice the stage's frames
+        for a, b in zip(chunks, self.written(CITY_PLAN, out_fps=60)["disk"]["chunks"]):
+            self.assertEqual(b["pictures_gb"], a["pictures_gb"])
+            self.assertAlmostEqual(b["stage_gb"], 2 * a["stage_gb"], delta=0.01)
+        # pictures drawn before take no room of the chunk; a plan that keeps no free space says nothing of the disk
+        before = self.written(dict(CITY_PLAN, stage_mmd=None))["disk"]["chunks"]
+        self.assertTrue(all(c["stage_avi_gb"] == 0 and c["pictures_gb"] == 0 for c in before), before)
+        self.assertNotIn("disk", self.written(dict(CITY_PLAN, keep_free_gb=None)))
+        self.assertIn("disk", self.written(dict(PLAN, keep_free_gb=10)))
+
+    def test_the_free_space_to_start_with_holds_the_floor_and_the_peaks_of_the_chunks_at_once(self):
+        one = self.written(CITY_PLAN)["disk"]
+        two = self.written(CITY_PLAN, workers=2)["disk"]
+        peaks = sorted((c["peak_gb"] for c in one["chunks"]), reverse=True)
+        self.assertGreaterEqual(one["start_free_gb"], 30 + peaks[0])
+        self.assertLess(one["start_free_gb"], 30 + peaks[0] + peaks[1])
+        self.assertGreaterEqual(two["start_free_gb"], 30 + peaks[0] + peaks[1])
+        self.assertEqual([c["peak_gb"] for c in two["chunks"]], [c["peak_gb"] for c in one["chunks"]])
 
 
 class CliTest(unittest.TestCase):
