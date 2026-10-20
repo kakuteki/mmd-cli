@@ -202,6 +202,8 @@ DEFAULT_LOOK = {
               "glow_radius": 10.0,  # pixels of a 720 line picture
               "emissive_glow": 0.0,  # a glow round the emissive materials (as AutoLuminous makes them glow); 0 none
               "emissive_glow_radius": 14.0,
+              "person": 1.0,        # the light on her: her colour (as MMD drew her) times this ...
+              "person_tint": [1.0, 1.0, 1.0],   # ... in this colour (r, g, b factors)
               "spill": 0.0,         # the street's light on her: her colour times (1 + this x the light round her); 0 none
               "spill_wrap": 0.0,    # and round her outline (a light wrap): the light round her added in a band inside it
               "spill_radius": 40.0,  # how far round her the light is gathered from, pixels of a 720 line picture
@@ -280,7 +282,7 @@ def _check_layer(layer, stage, lamps):
         if changed:
             raise ValueError("layer.%s draws the stage of a model: it needs layer.on 1" % changed[0])
         return
-    for key in ("night", "emissive", "lamp", "reflect_blur", "haze", "glow", "emissive_glow", "spill", "spill_wrap"):
+    for key in ("night", "emissive", "lamp", "reflect_blur", "haze", "glow", "emissive_glow", "spill", "spill_wrap", "person"):
         if not (math.isfinite(layer[key]) and layer[key] >= 0):
             raise ValueError("layer.%s is from 0, not %r" % (key, layer[key]))
     for key in ("lamp_reach", "glow_radius", "emissive_glow_radius", "spill_radius", "spill_wrap_width"):
@@ -292,7 +294,7 @@ def _check_layer(layer, stage, lamps):
         raise ValueError("layer.reflect is 0 (none) to 1 (a mirror), not %r" % (layer["reflect"],))
     if not 0 <= layer["glow_threshold"] <= 255:
         raise ValueError("layer.glow_threshold is 0 to 255, not %r" % (layer["glow_threshold"],))
-    for key in ("tint", "lamp_colour", "sky_top", "sky_horizon", "haze_colour"):
+    for key in ("tint", "lamp_colour", "sky_top", "sky_horizon", "haze_colour", "person_tint"):
         if not all(math.isfinite(c) and c >= 0 for c in layer[key]):
             raise ValueError("layer.%s is r, g, b from 0, not %r" % (key, layer[key]))
     if not (stage["world"] and stage["floor"]):
@@ -689,6 +691,13 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
     rim = look["rim"]
     rim_on = rim["strength"] > 0 and rim["width"] > 0
     dancer = "[0:v]%sformat=rgba," % _fold(subframes, taken, fps, shifts)
+    lit_dancer = spill is not None
+    layer = look["layer"]
+    if layer["on"] and (layer["person"] != 1.0 or list(layer["person_tint"]) != [1.0, 1.0, 1.0]):
+        # the light on her at night (the stage of a model): her colour times layer.person in layer.person_tint
+        r, g, b = (float(layer["person"]) * float(c) for c in layer["person_tint"])
+        dancer += "colorchannelmixer=rr=%s:gg=%s:bb=%s," % (_number(r), _number(g), _number(b))
+        lit_dancer = True
     if spill is not None:
         parts += _spill(look["layer"], spill, scale, dancer, w, h)
         dancer = "[lit_dancer]"
@@ -703,7 +712,7 @@ def ffmpeg_command(fg, out, plate_path, light_pattern, look, size, fps, plan=Non
                   "[comp][glow]blend=all_mode=screen:all_opacity=%.3f:shortest=1[lit]" % glow["strength"]]
         state["label"] = "lit"
     else:
-        parts += ["%s%s" % (dancer, "split=2[fg][fgr]" if rim_on else "null[fg]") if spill is not None else
+        parts += ["%s%s" % (dancer, "split=2[fg][fgr]" if rim_on else "null[fg]") if lit_dancer else
                   "[0:v]%sformat=rgba%s" % (_fold(subframes, taken, fps, shifts), ",split=2[fg][fgr]" if rim_on else "[fg]"),
                   "[%s][fg]overlay=shortest=1:format=auto[lit]" % state["label"]]
         state["label"] = "lit"

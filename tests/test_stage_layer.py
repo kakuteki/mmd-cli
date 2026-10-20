@@ -667,6 +667,20 @@ class LookTest(unittest.TestCase):
         with self.assertRaises(ValueError):                          # spill asked, but no light round her drawn
             self.mv_look.ffmpeg_command(*args, lit, (320, 180), 30, stage=dict(stage, spill=None), start=1.0, duration=10 / 30.0)
 
+    def test_the_light_on_her_scales_her_colour_and_only_when_asked(self):
+        stage = {"pattern": "W/stage/stage_%05d.png", "first": 30, "frames": 10, "spill": None}
+        args = ("fg.avi", "out.mp4", None, None)
+        for glow in (0.45, 0.0):
+            plain = self.mv_look.merge_look({"stage": {"world": 1}, "layer": {"on": 1}, "glow": {"strength": glow}})
+            dim = self.mv_look.merge_look({"stage": {"world": 1}, "layer": {"on": 1, "person": 0.8, "person_tint": [1.0, 0.9, 0.8]},
+                                           "glow": {"strength": glow}})
+            a = self.mv_look.ffmpeg_command(*args, plain, (320, 180), 30, stage=stage, start=1.0, duration=10 / 30.0)
+            b = self.mv_look.ffmpeg_command(*args, dim, (320, 180), 30, stage=stage, start=1.0, duration=10 / 30.0)
+            self.assertNotIn("colorchannelmixer", a[a.index("-filter_complex") + 1])
+            self.assertIn("colorchannelmixer=rr=0.8:gg=0.72:bb=0.64", b[b.index("-filter_complex") + 1])
+        with self.assertRaises(ValueError):
+            self.mv_look.merge_look({"stage": {"world": 1}, "layer": {"person": 0.8}})          # (it needs layer.on 1)
+
 
 FFMPEG = __import__("shutil").which("ffmpeg")
 
@@ -713,7 +727,7 @@ class RenderTest(unittest.TestCase):
                         % cls.SIZE, "-frames:v", "12", "-c:v", "rawvideo", "-pix_fmt", "bgra", cls.fg], check=True,
                        stdin=subprocess.DEVNULL)
         cls.outs = {}
-        for name, layer in (("plain", {}), ("spill", {"spill": 1.0, "spill_radius": 60.0})):
+        for name, layer in (("plain", {}), ("spill", {"spill": 1.0, "spill_radius": 60.0}), ("dim", {"person": 0.5})):
             look = os.path.join(f, "look_%s.json" % name)
             with open(look, "w", encoding="utf-8") as fh:
                 _json.dump({"stage": {"world": 1}, "layer": dict({"on": 1, "night": 0.5}, **layer), "glow": {"strength": 0},
@@ -764,6 +778,10 @@ class RenderTest(unittest.TestCase):
         away = numpy.ones(plain.shape[:2], bool)
         away[50:130, 130:190] = False
         diff = numpy.abs(lit[away] - plain[away])
+        dim = self.frames(self.outs["dim"][2])[6]
+        self.assertEqual(self.outs["dim"][0], 0, self.outs["dim"][1])
+        self.assertAlmostEqual(float(dim[her].mean()), 0.5 * float(plain[her].mean()), delta=3.0)   # half the light on her
+        self.assertLess(float(numpy.abs(dim[away] - plain[away]).mean()), 0.3)                    # and the stage as it was
         self.assertLess(float(diff.mean()), 0.3)                     # (x264 codes the two a little apart)
         self.assertLess(float(numpy.percentile(diff, 99.5)), 3.0)
 
