@@ -691,6 +691,34 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(got["self_shadow"], "soft")
         self.assertIn('"light":', got["settings"])
 
+    def test_soft_with_a_look_needs_the_looks_night(self):
+        # light3: with the look the render uses (mv_chunks' plan "night"), the effect beside the model must draw that look's
+        # light.person (or none when the look has none): an effect written for another look is refused before MMD renders
+        self.install()
+        night = {"on": 1, "fill": [0.2, 0.2, 0.3], "sections": [[0, 1, 0.9, 0.8, 0.2, 0.2, 0.3, 0.4, 0.6, 1.0]]}
+        look = os.path.join(self.folder, "look.json")
+        with open(look, "w", encoding="utf-8") as f:
+            json.dump({"light": {"person": night}}, f)
+        fx = os.path.join(self.models, "White.fx")
+        mme_shadow.write(fx, light=night)
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "soft", look=look)["self_shadow"], "soft")
+        mme_shadow.write(fx, light=dict(night, fill=[0.3, 0.3, 0.3]))                 # another night
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft", look=look)
+        mme_shadow.write(fx)                                                          # the soft shadow alone
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft", look=look)
+        plain = os.path.join(self.folder, "plain.json")
+        with open(plain, "w", encoding="utf-8") as f:
+            json.dump({"glow": {"radius": 6}}, f)
+        self.assertEqual(mme_shadow.verify(self.exe, self.model, "soft", look=plain)["self_shadow"], "soft")
+        mme_shadow.write(fx, light=night)                                             # a night the look does not have
+        with self.assertRaises(ValueError):
+            mme_shadow.verify(self.exe, self.model, "soft", look=plain)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mme_shadow.main(["verify", self.exe, self.model, "soft", "--look", look]), 0)
+            self.assertEqual(mme_shadow.main(["verify", self.exe, self.model, "soft", "--look", plain]), 2)
+
     def test_soft_refuses_the_effects_for_measuring(self):
         # review of softshadow-mme: --debug draws the shadow alone (black and white) or the body lit, --sharp MMD's own
         # test; a plan that says soft must not render either

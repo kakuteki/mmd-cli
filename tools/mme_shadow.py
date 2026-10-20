@@ -6,7 +6,7 @@ shading but reads the self shadow map at many points weighted by a Gaussian, and
     python tools/mme_shadow.py prepare MODEL.pmx OUTDIR [--variant NAME] [the options of write]
     python tools/mme_shadow.py light-vmd CAMERA.vmd LOOK.json OUT.vmd
     python tools/mme_shadow.py check MMD.exe
-    python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd
+    python tools/mme_shadow.py verify MMD.exe MODEL.pmx soft|mmd [--look LOOK.json]
 
 What it changes, and what not.  MMD draws a model in passes; MME lets an effect file replace any of them, and draws the
 others with MMD's own shaders (REFERENCE.txt of MME 0.37, 1.2 and the Tips).  This effect has techniques for one pass
@@ -944,9 +944,11 @@ def effect_of(model):
     return plain if os.path.isfile(plain) else None
 
 
-def verify(exe, model, want):
+def verify(exe, model, want, look=None):
     """does MMD at EXE render MODEL the way `want` says?  "soft": MME is installed beside EXE and MODEL has an effect this
-    tool wrote; "mmd": MMD's own self shadow (no MME beside EXE, or no effect on MODEL).  ValueError when not"""
+    tool wrote; "mmd": MMD's own self shadow (no MME beside EXE, or no effect on MODEL).  With `look` (light3; the look file
+    the render uses) the effect must draw that look's night (its light.person, or none when the look has none): an effect
+    written for another look would light her otherwise.  ValueError when not"""
     mme = check(exe)
     fx = effect_of(model)
     if want == "soft":
@@ -970,6 +972,13 @@ def verify(exe, model, want):
         if values.get("debug") or values.get("sharp"):
             raise ValueError("the effect %s is one for measuring (debug %r, sharp %r), not the soft shadow"
                              % (fx, values.get("debug"), values.get("sharp")))
+        if look is not None:
+            wanted = night(look_light(look))
+            if json.dumps(wanted, sort_keys=True) != json.dumps(values.get("light"), sort_keys=True):
+                raise ValueError("the effect %s draws %s, the look %s asks for %s: write it again with prepare --look"
+                                 % (fx, "the night %s" % json.dumps(values["light"], sort_keys=True) if values.get("light")
+                                    else "no night", look, "the night %s" % json.dumps(wanted, sort_keys=True) if wanted
+                                    else "no night"))
         return {"self_shadow": "soft", "effect": fx.replace("\\", "/"), "settings": settings[0]}
     if want == "mmd":
         # MME of another build than the one this tool knows applies the effect all the same (review of softshadow-mme)
@@ -1029,6 +1038,7 @@ def main(argv=None):
     s.add_argument("exe")
     s.add_argument("model")
     s.add_argument("want", choices=("soft", "mmd"))
+    s.add_argument("--look", help="the look file the render uses: the effect must draw its night (light.person; light3)")
     a = p.parse_args(argv)
     try:
         if a.command == "write":
@@ -1038,7 +1048,7 @@ def main(argv=None):
         elif a.command == "light-vmd":
             out = dict({"ok": True}, **light_vmd(a.camera, look_light(a.look), a.out))
         elif a.command == "verify":
-            out = dict({"ok": True}, **verify(a.exe, a.model, a.want))
+            out = dict({"ok": True}, **verify(a.exe, a.model, a.want, look=a.look))
         else:
             out = dict({"ok": True}, **check(a.exe))
     except (ValueError, OSError) as exc:
