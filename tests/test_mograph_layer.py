@@ -478,6 +478,23 @@ class RenderTest(unittest.TestCase):
         self.assertGreater(abs(centre[15] - centre[10]), 3.5)           # 20 px of a 720 line picture: 5 px here
         self.assertAlmostEqual(centre[25], centre[10], delta=0.6)       # still after its 10 frames
 
+    def test_two_shakes_in_one_render_each_jolt_the_picture_as_one_alone_does(self):
+        # (the second of two shakes wrote its jolt into the right and lower edges with the wrong sign: those edges moved apart
+        # and the picture stretched by 0.35 px where it should have moved 5; window F of the previews, 2026-10-21)
+        both = self.frames("shake2", [{"kind": "shake", "t": 0.3, "amount": 20.0, "frames": 6},
+                                      {"kind": "shake", "t": 0.8, "amount": 20.0, "frames": 6}])
+        alone = self.frames("shake2b", [{"kind": "shake", "t": 0.8, "amount": 20.0, "frames": 6}])
+        for k in range(24, 30):
+            a, b = box_columns(both[k]), box_columns(alone[k])
+            self.assertAlmostEqual((a[0] + a[1]) / 2.0, (b[0] + b[1]) / 2.0, delta=0.6, msg=k)
+            self.assertAlmostEqual(a[1] - a[0], b[1] - b[0], delta=1, msg=k)
+            rows = [numpy.nonzero(luma(f)[:, 150:170].mean(axis=1) > 0.6)[0] for f in (both[k], alone[k])]
+            self.assertAlmostEqual((rows[0].min() + rows[0].max()) / 2.0, (rows[1].min() + rows[1].max()) / 2.0, delta=0.6, msg=k)
+            self.assertAlmostEqual(rows[0].max() - rows[0].min(), rows[1].max() - rows[1].min(), delta=1, msg=k)
+        centre = [sum(box_columns(f)) / 2.0 for f in both]
+        self.assertGreater(abs(centre[24] - centre[20]), 3.5)              # the second one jolts as the first does
+        self.assertGreater(abs(centre[9] - centre[5]), 3.5)
+
     def test_a_flash_lifts_the_picture_towards_white_and_falls(self):
         frames = self.frames("flash", [{"kind": "flash", "t": 0.5, "strength": 0.4, "frames": 6}])
         y = [float(luma(f)[:, :100].mean()) for f in frames]

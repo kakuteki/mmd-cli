@@ -474,8 +474,10 @@ class Graph:
         s = "(1+%s)" % "+".join(punch_terms) if punch_terms else "1"
         if reach_terms:
             s += "*(1+%s*(%s))" % (_n(MARGIN / nearest), "+".join(reach_terms))
-        dx = "+".join(dxs) or "0"
-        dy = "+".join(dys) or "0"
+        # (in brackets: the right and lower edges take the jolt after a minus.  Without them the second of two shakes in one
+        # render moved those edges the other way, a stretch of 0.35 px for a jolt of 5; 2026-10-21)
+        dx = "(%s)" % "+".join(dxs) if dxs else "0"
+        dy = "(%s)" % "+".join(dys) if dys else "0"
         x0 = "%s-(%s+%s)/(%s)" % (_n(px), _n(px), dx, s)
         x1 = "%s+(%s-%s)/(%s)" % (_n(px), _n(w - px), dx, s)
         y0 = "%s-(%s+%s)/(%s)" % (_n(py), _n(py), dy, s)

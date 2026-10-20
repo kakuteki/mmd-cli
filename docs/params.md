@@ -1806,15 +1806,15 @@
 | PLAN_PARTICLES.lights | 24 |  | 106 | references' cuts do (five of nine, [0.034, 0.108]: typorev) the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the in… |  |  |  |  |  |  |  |  |
 | PLAN_PARTICLES.specks | 100 |  | 106 | the plan's particles: restrained, by eye (their count is no target: typorev), and a little busier over the interludes |  |  |  |  |  |  |  |  |
 | PLAN_BUSY | 1.3 |  | 107 |  |  |  |  |  |  |  |  |  |
-| SPECK_COLOURS | ((255.0, 240.0, 214.0), (255.0, 255.0, 255.0), (214.0, 228.… |  | 577 |  |  |  |  |  |  |  |  |  |
-| LIGHT_COLOURS | ((255.0, 196.0, 120.0), (255.0, 160.0, 186.0), (150.0, 214.… |  | 578 |  |  |  |  |  |  |  |  |  |
-| particle_frame(shutter) | 1.0 |  | 719 |  |  |  |  |  |  |  |  |  |
-| particle_frame(subframes) | 1 |  | 719 |  |  |  |  |  |  |  |  |  |
-| plan(level) | 1.0 |  | 819 |  |  |  |  |  |  |  |  |  |
-| apply_argv(offset) | 0.0 |  | 931 |  |  |  |  |  |  |  |  |  |
-| --level | 1.0 |  | 987 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 993 |  |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1000 |  |  |  |  |  |  |  |  |  |
+| SPECK_COLOURS | ((255.0, 240.0, 214.0), (255.0, 255.0, 255.0), (214.0, 228.… |  | 579 |  |  |  |  |  |  |  |  |  |
+| LIGHT_COLOURS | ((255.0, 196.0, 120.0), (255.0, 160.0, 186.0), (150.0, 214.… |  | 580 |  |  |  |  |  |  |  |  |  |
+| particle_frame(shutter) | 1.0 |  | 721 |  |  |  |  |  |  |  |  |  |
+| particle_frame(subframes) | 1 |  | 721 |  |  |  |  |  |  |  |  |  |
+| plan(level) | 1.0 |  | 821 |  |  |  |  |  |  |  |  |  |
+| apply_argv(offset) | 0.0 |  | 933 |  |  |  |  |  |  |  |  |  |
+| --level | 1.0 |  | 989 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 995 |  |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1002 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
