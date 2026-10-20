@@ -1470,6 +1470,115 @@ def typeface(rgb, box):
     return out
 
 
+def _strokes_of(rgb, box):
+    """the strokes of a text on a frame (as text_style finds them) and the region they were looked for in"""
+    a = np.asarray(rgb, np.uint8)
+    h_img, w_img = a.shape[:2]
+    hb = max(2.0, box["h"])
+    x0 = int(max(0, box["x0"] - STYLE_GROUND[1] * hb))
+    y0 = int(max(0, box["y0"] - STYLE_GROUND[1] * hb))
+    x1 = int(min(w_img, math.ceil(box["x1"] + STYLE_GROUND[1] * hb)))
+    y1 = int(min(h_img, math.ceil(box["y1"] + STYLE_GROUND[1] * hb)))
+    lab = _lab(a[y0:y1, x0:x1])
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    ring_in = ((xx < box["x0"] - STYLE_GROUND[0] * hb) | (xx > box["x1"] + STYLE_GROUND[0] * hb) |
+               (yy < box["y0"] - STYLE_GROUND[0] * hb) | (yy > box["y1"] + STYLE_GROUND[0] * hb))
+    near = ((xx >= box["x0"] - STYLE_PAD * hb) & (xx <= box["x1"] + STYLE_PAD * hb) &
+            (yy >= box["y0"] - STYLE_PAD * hb) & (yy <= box["y1"] + STYLE_PAD * hb))
+    ground = np.median(lab[ring_in], axis=0) if ring_in.any() else np.median(lab.reshape(-1, 3), axis=0)
+    de = np.sqrt(((lab - ground) ** 2).sum(axis=2))
+    strokes = near & (de > max(_otsu(de[near]), 8.0))
+    return strokes, (x0, y0)
+
+
+def _weight_axes(font, weight):
+    """the axis values of a variable font with its weight axis at `weight` (inside its range)"""
+    values = []
+    for axis in font.get_variation_axes():
+        name = axis.get("name", b"")
+        name = name.decode("ascii", "replace") if isinstance(name, bytes) else str(name)
+        values.append(min(max(weight, axis["minimum"]), axis["maximum"]) if name.strip().lower() in ("weight", "wght")
+                      else axis["default"])
+    return values
+
+
+def _glyph(font, ch, size=160):
+    """the ink of one character in a font (bool, cropped to its ink)"""
+    from PIL import Image, ImageDraw
+    img = Image.new("L", (size * 2, size * 2), 0)
+    ImageDraw.Draw(img).text((size // 2, size // 2), ch, font=font, fill=255)
+    a = np.asarray(img) >= 128
+    ys, xs = np.nonzero(a)
+    if not len(xs):
+        return None
+    return a[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+
+
+def font_match(rgb, box, text, fonts, chars=None, size=160):
+    """which of the fonts (paths) a text on a frame (RGB at the video's size, box in its px) is drawn in: each
+    character's strokes (the text's strokes in the character's own cell: half way to its neighbours, chars giving their
+    middles, else the box cut evenly) cut to their ink, against the same character drawn in each font and fitted to that
+    ink (so the letters' spacing does not matter), compared on both grown by a pixel (IoU); the mean over the characters.
+    Returns ranking (font, iou, best first) and chars (how many were compared)"""
+    from PIL import ImageFont
+    cv2 = _cv2()
+    ndi = _ndi()
+    letters = [ch for ch in text if not ch.isspace()]
+    strokes, (ox, oy) = _strokes_of(rgb, box)
+    vertical = bool(box.get("vertical"))
+    if chars is None or len(chars) != len(letters):
+        n = len(letters)
+        if vertical:
+            chars = [(box["cx"], box["y0"] + (k + 0.5) * (box["y1"] - box["y0"]) / n) for k in range(n)]
+        else:
+            chars = [(box["x0"] + (k + 0.5) * (box["x1"] - box["x0"]) / n, box["cy"]) for k in range(n)]
+    order = sorted(range(len(chars)), key=lambda k: chars[k][1] if vertical else chars[k][0])
+    pos = [chars[k][1] if vertical else chars[k][0] for k in order]
+    cells = []
+    for i, k in enumerate(order):
+        lo = (pos[i - 1] + pos[i]) / 2.0 if i > 0 else (box["y0"] if vertical else box["x0"]) - 0.2 * box["h"]
+        hi = (pos[i] + pos[i + 1]) / 2.0 if i + 1 < len(pos) else (box["y1"] if vertical else box["x1"]) + 0.2 * box["h"]
+        m = np.zeros_like(strokes)
+        if vertical:
+            m[int(max(0, lo - oy)):int(max(0, hi - oy)), :] = True
+        else:
+            m[:, int(max(0, lo - ox)):int(max(0, hi - ox))] = True
+        cell = strokes & m
+        ys, xs = np.nonzero(cell)
+        if len(xs) < 10:
+            cells.append(None)
+            continue
+        cells.append(ndi.binary_dilation(cell[ys.min():ys.max() + 1, xs.min():xs.max() + 1]))
+    ranking = []
+    for spec in fonts:
+        # PATH or PATH@WEIGHT (a variable font at that weight: the default instance of Noto Sans JP is Thin)
+        path, _, weight = str(spec).partition("@")
+        try:
+            f = ImageFont.truetype(path, size)
+            if weight:
+                f.set_variation_by_axes(_weight_axes(f, int(weight)))
+        except (OSError, ValueError):
+            continue
+        scores = []
+        for i, k in enumerate(order):
+            cell = cells[i]
+            if cell is None:
+                continue
+            g = _glyph(f, letters[k], size)
+            if g is None:
+                continue
+            h, w = cell.shape
+            gg = cv2.resize(g.astype(np.uint8) * 255, (max(1, w), max(1, h)), interpolation=cv2.INTER_AREA) >= 128
+            gg = ndi.binary_dilation(gg)
+            inter = float((gg & cell).sum())
+            union = float((gg | cell).sum())
+            scores.append(inter / union if union else 0.0)
+        if scores:
+            ranking.append({"font": spec, "iou": float(np.mean(scores)), "n": len(scores)})
+    ranking.sort(key=lambda r: -r["iou"])
+    return {"ranking": ranking, "chars": sum(1 for c in cells if c is not None)}
+
+
 # ---- a whole video: every track of a detect run, read frame by frame --------------------------------------------------
 
 def iter_frames(path, info, height, matrix, start=0.0, duration=None):

@@ -825,5 +825,45 @@ class FigureTest(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+@unittest.skipUnless(TA and HAS_FONTS, NEEDS + " and the Windows Japanese fonts")
+class FontMatchTest(unittest.TestCase):
+    """which of some fonts a text on a frame is drawn in: each character's strokes against the same character drawn in
+    each font (laid where the character is, its size fitted), even with the letters spaced out"""
+
+    def spaced(self, text, font, size=64, tracking=0.3, weight=None):
+        """a frame with the text drawn one character at a time, `tracking` em apart, and the characters' middles"""
+        from PIL import Image, ImageDraw, ImageFont
+        f = ImageFont.truetype(font_path(font), size)
+        if weight is not None:
+            try:
+                f.set_variation_by_axes([weight])
+            except Exception:
+                pass
+        w = int(size * (len(text) * (1 + tracking) + 2))
+        img = Image.new("RGB", (w, size * 3), (25, 25, 35))
+        d = ImageDraw.Draw(img)
+        x = size
+        mids = []
+        for ch in text:
+            x0, y0, x1, y1 = f.getbbox(ch)
+            d.text((x - x0, size - y0 + (size - (y1 - y0)) // 2), ch, font=f, fill=(255, 255, 255))
+            mids.append((x + (x1 - x0) / 2.0, size * 1.5))
+            x += int(size * (1 + tracking))
+        box = {"x0": size * 0.8, "y0": size * 0.8, "x1": x, "y1": size * 2.2, "cx": (size * 0.8 + x) / 2.0, "cy": size * 1.5,
+               "w": x - size * 0.8, "h": size * 1.4, "angle": 0.0, "vertical": False, "score": 1.0, "area": 0.0}
+        return np.asarray(img), box, mids
+
+    def test_the_font_it_is_drawn_in_comes_first(self):
+        text = "東京の夜空に光る星"
+        fonts = ["yumin.ttf", "msmincho.ttc", "NotoSerifJP-VF.ttf", "YuGothM.ttc", "msgothic.ttc"]
+        for truth in ("yumin.ttf", "YuGothM.ttc"):
+            a, box, mids = self.spaced(text, truth)
+            r = TA.font_match(a, box, text, [font_path(f) for f in fonts], chars=mids)
+            ranked = [os.path.basename(x["font"]) for x in r["ranking"]]
+            self.assertEqual(ranked[0], truth, r["ranking"][:3])
+            self.assertGreater(r["ranking"][0]["iou"], r["ranking"][1]["iou"])
+            self.assertEqual(r["chars"], len(text))
+
+
 if __name__ == "__main__":
     unittest.main()
