@@ -1758,10 +1758,45 @@ def _triggered(series, step, offset, times, window=TRIGGER):
     return lags, np.mean(rows, axis=0)
 
 
-def sync(texts, voice, beats=None, fps=30.0, duration=None):
-    """each text against the voice and the beat.  Its kind: mark (on the screen MARK_SHARE of the video or more),
-    scene (it moves with the picture behind it: a sign in the scene), lyric (the voice sounds LYRIC_SOUNDS of its time,
-    or phrases say so), other.  For the lyrics: lead_s, from the text's first frame to the first strong onset of the
+MARK_PLACE = (0.03, 0.03, 0.25)   # texts within these of each other across, down and in size (shares) are one place
+MARK_TIMES = 3                    # a text that comes back to one place this many times is a mark,
+MARK_WIDTH = 0.03                 # if it is as wide each time (within this share)
+SIZE_RANGE = (0.012, 0.35)        # a lyric's characters are this tall at least and at most (share of the picture)
+
+
+def _marks(texts, duration):
+    """the texts that come back to one place again and again (MARK_PLACE, MARK_TIMES) or stay MARK_SHARE of the video"""
+    out = set()
+    for i, t in enumerate(texts):
+        if t["times"]["last"] - t["times"]["first"] >= MARK_SHARE * duration:
+            out.add(i)
+    groups = []
+    for i, t in enumerate(texts):
+        pl = t.get("place")
+        if not pl or "h" not in pl:
+            continue
+        for g in groups:
+            q = texts[g[0]]["place"]
+            # one place, one size, and one width (the same text again: lines of lyrics in one place differ in width)
+            if abs(pl["x"] - q["x"]) <= MARK_PLACE[0] and abs(pl["y"] - q["y"]) <= MARK_PLACE[1] and                     abs(pl["h"] / max(q["h"], 1e-9) - 1) <= MARK_PLACE[2] and                     abs(pl.get("w", 0) - q.get("w", 0)) <= MARK_WIDTH * max(pl.get("w", 0), q.get("w", 0), 1e-9):
+                g.append(i)
+                break
+        else:
+            groups.append([i])
+    for g in groups:
+        if len(g) < MARK_TIMES:
+            continue
+        span = max(texts[i]["times"]["last"] for i in g) - min(texts[i]["times"]["first"] for i in g)
+        if span >= 0.25 * duration:
+            out.update(g)
+    return out
+
+
+def sync(texts, voice, beats=None, fps=30.0, duration=None, cuts=None):
+    """each text against the voice and the beat.  Its kind: mark (on the screen MARK_SHARE of the video or more, or a
+    text that comes back to one place again and again: a logo, a watermark, _marks), scene (it moves with the picture
+    behind it, or comes and goes with a shot: within a frame of a cut both, cuts in s; a sign in the scene), lyric (its
+    characters SIZE_RANGE tall and the voice sounding LYRIC_SOUNDS of its time, or phrases say so), other.  For the lyrics: lead_s, from the text's first frame to the first strong onset of the
     voice (STRONG) in LEAD_WINDOW (+: the voice comes after the text), and full_lead_s from the frame it is whole; the
     triggered average of the voice's level and onset strength round the lyrics' first frames, and trig_lead_s where that
     onset strength peaks (the lead over all the lyrics at once, with no pairing); on_beat: the share of the lyrics' first
@@ -1777,14 +1812,21 @@ def sync(texts, voice, beats=None, fps=30.0, duration=None):
     if duration is None:
         duration = max([t["times"]["last"] for t in texts] + [1.0])
     rows = []
-    for t in texts:
+    marks = _marks(texts, duration)
+    cut_t = np.asarray(cuts or [], np.float64)
+    near_cut = (1.0 / fps) + 0.01
+    for i, t in enumerate(texts):
         a, full, z = t["times"]["first"], t["times"]["full"], t["times"]["last"]
         row = {"first": a, "full": full, "last": z, "kind": "other"}
         space = (t.get("space") or {}).get("kind")
-        if z - a >= MARK_SHARE * duration:
+        size = (t.get("place") or {}).get("h")
+        at_cuts = cut_t.size and np.min(np.abs(cut_t - a)) <= near_cut and np.min(np.abs(cut_t - (z + 1.0 / fps))) <= near_cut
+        if i in marks:
             row["kind"] = "mark"
-        elif space == "scene":
+        elif space == "scene" or (at_cuts and space != "screen"):
             row["kind"] = "scene"
+        elif size is not None and not (SIZE_RANGE[0] <= size <= SIZE_RANGE[1]):
+            row["kind"] = "other"
         else:
             if level.size:
                 i0, i1 = int(max(0, (a - off) / step)), int(min(level.size, (z - off) / step + 1))
@@ -1845,6 +1887,7 @@ TYPO_MEASURES = {
     "typo.upper": ("place", "上 1/3 にある行の割合", ""),
     "typo.centred": ("place", "横の真ん中（0.4〜0.6）にある行の割合", ""),
     "typo.vertical": ("place", "縦書きの行の割合", ""),
+    "typo.display": ("place", "大きな文字（字の高さが絵の 6 % 以上）の行の割合", ""),
     "typo.show_s": ("time", "1 行が見えている時間（出始めから消えるまで）", "秒"),
     "typo.hold_s": ("time", "1 行が止まって全部見えている時間", "秒"),
     "enter.s": ("enter", "入りの長さ（出始めから止まって全部見えるまで）", "秒"),
@@ -1874,6 +1917,9 @@ TYPO_MEASURES = {
 for _k in KINDS:
     TYPO_MEASURES["enter." + _k] = ("enter", "入りが%sの行の割合" % KIND_JA[_k], "")
     TYPO_MEASURES["exit." + _k] = ("exit", "出が%sの行の割合" % KIND_JA[_k], "")
+
+
+DISPLAY_H = 0.06                  # a line whose characters are this tall (share of the picture) or more is display type
 
 
 def _share_stats(flags, seed=0):
@@ -1943,6 +1989,7 @@ def typo_summary(tr, sy, voice=None, seed=0):
     summary["typo.upper"] = _share_stats([t["place"]["y"] < 1 / 3.0 for t in texts], seed)
     summary["typo.centred"] = _share_stats([0.4 <= t["place"]["x"] <= 0.6 for t in texts], seed)
     summary["typo.vertical"] = _share_stats([t.get("vertical", False) for t in texts], seed)
+    summary["typo.display"] = _share_stats([t["place"]["h"] >= DISPLAY_H for t in texts], seed)
     summary["style.outline"] = _share_stats([(t.get("style") or {}).get("outline") for t in texts], seed)
     summary["style.shadow"] = _share_stats([(t.get("style") or {}).get("shadow") for t in texts], seed)
     summary["style.hollow"] = _share_stats([(t.get("style") or {}).get("hollow") for t in texts], seed)
@@ -2156,6 +2203,7 @@ def main(argv=None):
     p.add_argument("texts", help="the JSON of a track run")
     p.add_argument("voice", help="the JSON of a voice run")
     p.add_argument("out")
+    p.add_argument("--events", default=None, help="an events run of tools/mograph_analyze.py (its cuts)")
     p = sub.add_parser("summary", help="a video's lyrics in a few numbers (TYPO_MEASURES)")
     p.add_argument("texts", help="the JSON of a track run")
     p.add_argument("sync", help="the JSON of a sync run of it")
@@ -2245,7 +2293,11 @@ def main(argv=None):
         with open(args.voice, encoding="utf-8") as f:
             vo = json.load(f)
         beats = {"beats": vo["beats"], "downbeats": vo.get("downbeats", [])} if vo.get("beats") else None
-        r = sync(tr["texts"], vo, beats=beats, fps=tr["fps"], duration=tr["range"][1] - tr["range"][0])
+        cuts = None
+        if args.events:
+            with open(args.events, encoding="utf-8") as f:
+                cuts = json.load(f)["times"]["cuts"]
+        r = sync(tr["texts"], vo, beats=beats, fps=tr["fps"], duration=tr["range"][1] - tr["range"][0], cuts=cuts)
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(r, f, ensure_ascii=False, indent=1)
         print(json.dumps({"ok": True, "out": args.out, "paired": r["paired"], "lead_median": r["lead_s"]["median"]}))

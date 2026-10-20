@@ -686,7 +686,8 @@ class VoiceTest(unittest.TestCase):
 @unittest.skipUnless(TA, NEEDS)
 class SyncTest(unittest.TestCase):
     def text(self, first, full, last, place_y=0.85):
-        return {"times": {"first": first, "full": full, "hold_end": last - 0.1, "last": last}, "place": {"x": 0.5, "y": place_y},
+        return {"times": {"first": first, "full": full, "hold_end": last - 0.1, "last": last},
+                "place": {"x": 0.5, "y": place_y, "h": 0.04, "w": 0.15 + 0.013 * (int(round(first * 10)) % 8)},
                 "enter": {"kinds": ["fade"]}, "exit": {"kinds": ["fade"]}}
 
     def voice(self, lines, total=12.0, weak_every=0.25):
@@ -768,6 +769,27 @@ class SyncTest(unittest.TestCase):
         self.assertGreater(s["typo.on_screen"]["median"], 0.8)
         self.assertEqual(s["typo.concurrent"]["median"], 1.0)
         self.assertAlmostEqual(s["enter.move_h"]["median"], 1.0)                          # 30 px at 30 px tall
+
+    def test_a_small_text_that_comes_back_to_one_place_is_a_mark(self):
+        voice = self.voice(((0.5, 59.0),), total=60.0)
+        texts = []
+        for a in (2.0, 15.0, 30.0, 45.0):
+            t = self.text(a, a + 0.1, a + 4.0)
+            t["place"] = {"x": 0.97, "y": 0.86, "h": 0.033, "w": 0.05}
+            texts.append(t)
+        lyric = self.text(10.0, 10.2, 12.0)
+        lyric["place"] = {"x": 0.5, "y": 0.84, "h": 0.04, "w": 0.2}
+        r = TA.sync(texts + [lyric], voice, beats=None, fps=30.0, duration=60.0)
+        self.assertEqual([x["kind"] for x in r["texts"]], ["mark"] * 4 + ["lyric"])
+
+    def test_a_text_that_comes_and_goes_with_the_shot_is_in_the_scene(self):
+        voice = self.voice(((0.5, 19.0),), total=20.0)
+        sign = self.text(4.0, 4.0, 7.0)
+        sign["place"] = {"x": 0.3, "y": 0.2, "h": 0.04, "w": 0.1}
+        lyric = self.text(5.0, 5.2, 6.5)
+        lyric["place"] = {"x": 0.5, "y": 0.84, "h": 0.04, "w": 0.2}
+        r = TA.sync([sign, lyric], voice, beats=None, fps=30.0, duration=20.0, cuts=[4.0, 7.0 + 1 / 30.0, 12.0])
+        self.assertEqual([x["kind"] for x in r["texts"]], ["scene", "lyric"])
 
     def test_a_text_that_stays_all_along_is_a_mark(self):
         voice = {"phrases": [[2.0, 4.0]], "onsets": [2.0]}
