@@ -1812,9 +1812,9 @@
 | particle_frame(subframes) | 1 |  | 719 |  |  |  |  |  |  |  |  |  |
 | plan(level) | 1.0 |  | 819 |  |  |  |  |  |  |  |  |  |
 | apply_argv(offset) | 0.0 |  | 931 |  |  |  |  |  |  |  |  |  |
-| --level | 1.0 |  | 973 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 979 |  |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 986 |  |  |  |  |  |  |  |  |  |
+| --level | 1.0 |  | 987 | the punches', shakes' and flashes' strength times this |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 993 |  |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1000 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
