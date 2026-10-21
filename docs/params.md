@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2709（定数 2174・引数 141・関数の既定 394。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 458（retarget 271・rig 70・踊りだけ 129）、記録の出所つき 84。
+- 数: 全部 2911（定数 2351・引数 147・関数の既定 413。定数を既定にする引数 42 は定数の行に書き、数えない）、見直しの印 493（retarget 278・rig 72・踊りだけ 155）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -29,7 +29,7 @@
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・kinetic_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py・flash_sync.py | 632 | 16 | 15 | 49 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
-| 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
+| 19 | カメラ | make_camera.py・operator_camera.py | 234 | 6 | 4 | 26 | （物差しなし） | camera_rhythm.py |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
 
@@ -2060,77 +2060,249 @@
 | --labels | "A,B" |  | 1047 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
 | --lang | "en" |  | 1052 |  |  |  |  |  |  |  |  |  |
 
-## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
+## make_camera.py（19. カメラ、124）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS | 30 |  | 90 |  |  |  |  |  |  |  |  |  |
-| WINDOW | 30 | frames | 91 | frames: the strength of a frame is the motion of the second around it |  |  |  |  |  |  |  |  |
-| TREND_WINDOW | 90 | frames | 92 | frames: sections are found on a 3 second moving average of the strength |  |  |  |  |  |  |  |  |
-| HIGH_PERCENTILE | 65 |  | 93 |  |  |  |  |  |  |  |  |  |
-| LOW_PERCENTILE | 35 |  | 93 |  |  |  |  |  |  |  |  |  |
-| MAX_SHOT（引数 --max-shot） | 480 | frames | 94 | frames: 6 to 16 seconds |  |  |  |  |  |  |  |  |
-| MIN_SHOT（引数 --min-shot） | 180 | frames | 94 | frames: 6 to 16 seconds |  |  |  |  |  |  |  |  |
-| LEVEL_SHARE | 0.6 |  | 95 | of a shot's frames in high (low) sections to call it a peak (valley) |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.push_in.distance | (38.0, 32.0) |  | 103 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.push_in.height | 13.0 |  | 103 |  | リンに合わせた注視点の高さ（頭の上 19.5、リボン 20.8 の注釈。adapt 10-17 の測りで髪の上 19.197・リボン 20.55）。カメラの仕事は加賀さんの指示で後回し |  |  |  |  |  |  | rig |
-| SHOT_VALUES.push_in.x | 0.0 |  | 103 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.push_in.y | (0.0, 0.0) |  | 103 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.pull_out.distance | (32.0, 42.0) |  | 104 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.pull_out.height | 13.0 |  | 104 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.pull_out.x | 0.0 |  | 104 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.pull_out.y | (0.0, 0.0) |  | 104 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.orbit.distance | (34.0, 34.0) |  | 105 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.orbit.height | 12.0 |  | 105 |  | リンに合わせた注視点の高さ（カメラの仕事は後回し） |  |  |  |  |  |  | rig |
-| SHOT_VALUES.orbit.x | 0.0 |  | 105 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.orbit.y | (-15.0, 15.0) |  | 105 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.above.distance | (38.0, 36.0) |  | 106 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.above.height | 12.0 |  | 106 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.above.x | 10.0 |  | 106 |  |  |  |  |  |  |  |  |  |
-| SHOT_VALUES.above.y | (0.0, 0.0) |  | 106 |  |  |  |  |  |  |  |  |  |
-| PEAK_DISTANCE_ADD | 6.0 |  | 108 |  |  |  |  |  |  |  |  |  |
-| PEAK_ORBIT_SWING | 22.0 |  | 109 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.valley.above | 1 |  | 111 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.valley.orbit | 1 |  | 111 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.valley.pull_out | 1 |  | 111 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.valley.push_in | 3 |  | 111 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.peak.above | 1 |  | 112 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.peak.orbit | 2 |  | 112 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.peak.pull_out | 2 |  | 112 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.peak.push_in | 1 |  | 112 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.mid.above | 1 |  | 113 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.mid.orbit | 1 |  | 113 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.mid.pull_out | 1 |  | 113 |  |  |  |  |  |  |  |  |  |
-| TYPE_WEIGHTS.mid.push_in | 1 |  | 113 |  |  |  |  |  |  |  |  |  |
-| CLEAR_CUT.angle | 10.0 |  | 117 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
-| CLEAR_CUT.distance | 8.0 |  | 117 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
-| CLEAR_CUT.height | 3.0 |  | 117 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
-| DISTANCE_RANGE | (24.0, 48.0) |  | 118 |  |  |  |  |  |  |  |  |  |
-| HEIGHT_RANGE | (7.0, 14.0) |  | 119 |  |  |  |  |  |  |  |  |  |
-| ANGLE_X_RANGE | (-10.0, 10.0) |  | 120 |  |  |  |  |  |  |  |  |  |
-| ANGLE_Y_RANGE | (-25.0, 25.0) |  | 121 |  |  |  |  |  |  |  |  |  |
-| FOV | 30 |  | 122 |  |  |  |  |  |  |  |  |  |
-| S_CURVE | (64, 0, 64, 127) |  | 123 | ease in and out over a whole shot, on distance, angles and fov |  |  |  |  |  |  |  |  |
-| CUT_CURVE | (127, 0, 127, 0) |  | 124 | on the first key of a shot: the step, so nothing is drawn between two shots |  |  |  |  |  |  |  |  |
-| LOOK_AT_STEP | 90 | frames | 125 | frames: at most this far between two keys of a shot (the look-at point follows) |  |  |  |  |  |  |  |  |
-| LOOK_AT_WINDOW | 90 | frames | 126 | frames: the look-at point is the center averaged over this window |  |  |  |  |  |  |  |  |
-| HANDHELD.angle | 0.3 | units | 130 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
-| HANDHELD.distance | 0.1 | units | 130 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
-| HANDHELD.look_at | 0.03 | units | 130 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
-| SWAY_HZ | (0.13, 0.31, 0.57) | Hz | 131 |  |  |  |  |  |  |  |  |  |
-| SWAY_WEIGHTS | (0.5, 0.3, 0.2) |  | 132 |  |  |  |  |  |  |  |  |  |
-| ROTATION_WEIGHTS | ( ("指", 0.5), ("目", 0.2), ("捩", 1.0), ("ＩＫ", 1.0), ("IK", 1… |  | 138 | (part of the bone name, weight): the first match wins; see the module docstring for the reasoning |  |  |  |  |  |  |  |  |
-| DEFAULT_ROTATION_WEIGHT | 1.0 |  | 143 |  |  |  |  |  |  |  |  |  |
-| POSITION_WEIGHTS | (("センター", 1.0), ("グルーブ", 1.0), ("全ての親", 1.0), ("ＩＫ", 0.5), … |  | 144 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_POSITION_WEIGHT | 0.5 |  | 145 |  |  |  |  |  |  |  |  |  |
-| plan_shots(seed) | 0 |  | 524 |  |  |  |  |  |  |  |  |  |
-| sway(seed) | 0 |  | 649 |  |  |  |  |  |  |  |  |  |
-| camera_motion(handheld) | 0.0 |  | 696 |  |  |  |  |  |  |  |  |  |
-| camera_motion(seed) | 0 |  | 696 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 766 |  |  |  |  |  |  |  |  |  |
-| run(handheld) | 0.0 |  | 767 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 800 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
-| --handheld | 0.0 |  | 804 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
+| FPS | 30 |  | 93 |  |  |  |  |  |  |  |  |  |
+| WINDOW | 30 | frames | 94 | frames: the strength of a frame is the motion of the second around it |  |  |  |  |  |  |  |  |
+| TREND_WINDOW | 90 | frames | 95 | frames: sections are found on a 3 second moving average of the strength |  |  |  |  |  |  |  |  |
+| HIGH_PERCENTILE | 65 |  | 96 |  |  |  |  |  |  |  |  |  |
+| LOW_PERCENTILE | 35 |  | 96 |  |  |  |  |  |  |  |  |  |
+| MAX_SHOT（引数 --max-shot） | 480 | frames | 97 | frames: 6 to 16 seconds |  |  |  |  |  |  |  |  |
+| MIN_SHOT（引数 --min-shot） | 180 | frames | 97 | frames: 6 to 16 seconds |  |  |  |  |  |  |  |  |
+| LEVEL_SHARE | 0.6 |  | 98 | of a shot's frames in high (low) sections to call it a peak (valley) |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.push_in.distance | (38.0, 32.0) |  | 106 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.push_in.height | 13.0 |  | 106 |  | リンに合わせた注視点の高さ（頭の上 19.5、リボン 20.8 の注釈。adapt 10-17 の測りで髪の上 19.197・リボン 20.55）。カメラの仕事は加賀さんの指示で後回し |  |  |  |  |  |  | rig |
+| SHOT_VALUES.push_in.x | 0.0 |  | 106 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.push_in.y | (0.0, 0.0) |  | 106 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.pull_out.distance | (32.0, 42.0) |  | 107 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.pull_out.height | 13.0 |  | 107 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.pull_out.x | 0.0 |  | 107 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.pull_out.y | (0.0, 0.0) |  | 107 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.orbit.distance | (34.0, 34.0) |  | 108 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.orbit.height | 12.0 |  | 108 |  | リンに合わせた注視点の高さ（カメラの仕事は後回し） |  |  |  |  |  |  | rig |
+| SHOT_VALUES.orbit.x | 0.0 |  | 108 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.orbit.y | (-15.0, 15.0) |  | 108 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.above.distance | (38.0, 36.0) |  | 109 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.above.height | 12.0 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.above.x | 10.0 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SHOT_VALUES.above.y | (0.0, 0.0) |  | 109 |  |  |  |  |  |  |  |  |  |
+| PEAK_DISTANCE_ADD | 6.0 |  | 111 |  |  |  |  |  |  |  |  |  |
+| PEAK_ORBIT_SWING | 22.0 |  | 112 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.valley.above | 1 |  | 114 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.valley.orbit | 1 |  | 114 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.valley.pull_out | 1 |  | 114 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.valley.push_in | 3 |  | 114 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.peak.above | 1 |  | 115 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.peak.orbit | 2 |  | 115 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.peak.pull_out | 2 |  | 115 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.peak.push_in | 1 |  | 115 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.mid.above | 1 |  | 116 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.mid.orbit | 1 |  | 116 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.mid.pull_out | 1 |  | 116 |  |  |  |  |  |  |  |  |  |
+| TYPE_WEIGHTS.mid.push_in | 1 |  | 116 |  |  |  |  |  |  |  |  |  |
+| CLEAR_CUT.angle | 10.0 |  | 120 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
+| CLEAR_CUT.distance | 8.0 |  | 120 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
+| CLEAR_CUT.height | 3.0 |  | 120 | a cut must change the picture clearly, or it reads as a dropped frame: at least one of these between the end of a shot and the start of the next |  |  |  |  |  |  |  |  |
+| DISTANCE_RANGE | (24.0, 48.0) |  | 121 |  |  |  |  |  |  |  |  |  |
+| HEIGHT_RANGE | (7.0, 14.0) |  | 122 |  |  |  |  |  |  |  |  |  |
+| ANGLE_X_RANGE | (-10.0, 10.0) |  | 123 |  |  |  |  |  |  |  |  |  |
+| ANGLE_Y_RANGE | (-25.0, 25.0) |  | 124 |  |  |  |  |  |  |  |  |  |
+| FOV | 30 |  | 125 |  |  |  |  |  |  |  |  |  |
+| S_CURVE | (64, 0, 64, 127) |  | 126 | ease in and out over a whole shot, on distance, angles and fov |  |  |  |  |  |  |  |  |
+| CUT_CURVE | (127, 0, 127, 0) |  | 127 | on the first key of a shot: the step, so nothing is drawn between two shots |  |  |  |  |  |  |  |  |
+| LOOK_AT_STEP | 90 | frames | 128 | frames: at most this far between two keys of a shot (the look-at point follows) |  |  |  |  |  |  |  |  |
+| LOOK_AT_WINDOW | 90 | frames | 129 | frames: the look-at point is the center averaged over this window |  |  |  |  |  |  |  |  |
+| HANDHELD.angle | 0.3 | units | 133 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
+| HANDHELD.distance | 0.1 | units | 133 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
+| HANDHELD.look_at | 0.03 | units | 133 | --handheld: a person holding the camera sways it a little. Amplitudes at strength 1 (window units: degrees, model units); the sway of each channel is a sum of slow sines… |  | ○ |  |  |  | ○ |  | retarget |
+| SWAY_HZ | (0.13, 0.31, 0.57) | Hz | 134 |  |  |  |  |  |  |  |  |  |
+| SWAY_WEIGHTS | (0.5, 0.3, 0.2) |  | 135 |  |  |  |  |  |  |  |  |  |
+| ROTATION_WEIGHTS | ( ("指", 0.5), ("目", 0.2), ("捩", 1.0), ("ＩＫ", 1.0), ("IK", 1… |  | 141 | (part of the bone name, weight): the first match wins; see the module docstring for the reasoning |  |  |  |  |  |  |  |  |
+| DEFAULT_ROTATION_WEIGHT | 1.0 |  | 146 |  |  |  |  |  |  |  |  |  |
+| POSITION_WEIGHTS | (("センター", 1.0), ("グルーブ", 1.0), ("全ての親", 1.0), ("ＩＫ", 0.5), … |  | 147 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_POSITION_WEIGHT | 0.5 |  | 148 |  |  |  |  |  |  |  |  |  |
+| plan_shots(seed) | 0 |  | 527 |  |  |  |  |  |  |  |  |  |
+| sway(seed) | 0 |  | 652 |  |  |  |  |  |  |  |  |  |
+| camera_motion(handheld) | 0.0 |  | 699 |  |  |  |  |  |  |  |  |  |
+| camera_motion(seed) | 0 |  | 699 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.band | (2,) |  | 776 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.chorus | (2, 2, 1, 1, 2) |  | 776 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.intro | (4, 4, 2) |  | 776 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.pre | (4, 2, 2) |  | 776 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.verse | (4,) |  | 776 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.break | (0,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.bridge | (4,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.end | (0,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.inter | (2,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.last | (2,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SHOT_BARS.outro | (4,) |  | 777 |  |  |  |  |  |  |  |  |  |
+| MUSIC_ENERGY.band | 0.9 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.bridge | 0.6 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.chorus | 1.0 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.inter | 0.9 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.intro | 0.6 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.pre | 0.8 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.verse | 0.6 |  | 788 | the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and pushes in the chorus, cranes in the interlude; th… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_ENERGY.break | 0.0 |  | 789 |  |  |  |  |  |  |  |  |  |
+| MUSIC_ENERGY.end | 0.0 |  | 789 |  |  |  |  |  |  |  |  |  |
+| MUSIC_ENERGY.last | 0.9 |  | 789 |  |  |  |  |  |  |  |  |  |
+| MUSIC_ENERGY.outro | 0.7 |  | 789 |  |  |  |  |  |  |  |  |  |
+| MUSIC_FULL.dolly | 9.0 | units | 791 | units of distance at full energy |  | ○ |  |  |  |  |  | retarget |
+| MUSIC_FULL.orbit | 40.0 | deg | 792 | degrees of heading (the window's Y) |  |  |  |  |  |  |  |  |
+| MUSIC_FULL.crane | 12.0 | deg | 793 | degrees of the window's X (the camera rises or sinks round the look-at point) |  |  |  |  |  |  |  |  |
+| MUSIC_FULL.track | 8.0 | units | 794 | units sideways (the look-at point and the camera together) |  | ○ |  |  |  |  |  | retarget |
+| MUSIC_RANGE.distance | (31.0, 52.0) |  | 798 | (the first sizes, 7, 30, 10 and 5, moved the picture 58 % of the song against the references' 81 % [80, 84] on the same yardstick, camera_rhythm: a track of 5 units over… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_RANGE.pitch | (4.0, 22.0) |  | 798 | (the first sizes, 7, 30, 10 and 5, moved the picture 58 % of the song against the references' 81 % [80, 84] on the same yardstick, camera_rhythm: a track of 5 units over… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_RANGE.track | (-5.0, 5.0) |  | 798 | (the first sizes, 7, 30, 10 and 5, moved the picture 58 % of the song against the references' 81 % [80, 84] on the same yardstick, camera_rhythm: a track of 5 units over… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_RANGE.yaw | (-65.0, 65.0) |  | 798 | (the first sizes, 7, 30, 10 and 5, moved the picture 58 % of the song against the references' 81 % [80, 84] on the same yardstick, camera_rhythm: a track of 5 units over… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_HEIGHT | 13.0 |  | 799 | the look-at point's height (the picture covers 5 to 21 at the dancer within the ranges) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_DISTANCES.close | (33.0, 36.0, 39.0) |  | 800 |  |  |  |  |  |  |  |  |  |
+| MUSIC_DISTANCES.wide | (40.0, 44.0, 48.0) |  | 800 |  |  |  |  |  |  |  |  |  |
+| MUSIC_PITCHES | (6.0, 9.0, 12.0) |  | 804 | the quiet parts are shot from further (from 46 or so her feet are in the picture; the first music camera, from 31 to 42, showed them on 1.3 % of the frames against 25 % … |  |  |  |  |  |  |  |  |
+| MUSIC_YAWS | (0.0, 25.0, -25.0, 40.0, -40.0, 12.0, -12.0) |  | 805 |  |  |  |  |  |  |  |  |  |
+| MOVE_BEATS | 8 |  | 807 | beats a move lasts (4 in a shot of one bar) |  |  |  | ○ |  |  |  | dance |
+| MOVE_LEAST | 0.3 |  | 808 | of its full size: a move that has less room than this is drawn another way |  |  |  |  |  |  |  |  |
+| MOVE_TAIL | 2.0 |  | 809 | beats: this many or more left after a shot's last whole move take one more move of 4 beats that the next cut cuts into (the camera still moving at the cut), not a stop (… |  |  |  | ○ |  |  |  | dance |
+| MOVE_OVERRUN | 3 | frames | 813 | frames a move may run past its shot's end (the cut hides them: a cut moved onto a flash shortens its shot by 2, and a shot that starts on frame 0 or ends on a cut before… |  |  |  | ○ |  |  |  | dance |
+| ONSET_DELAY | 3 | frames | 816 | frames: a strong onset this far into the shot's first bar starts the move instead of the cut |  |  |  |  |  |  |  |  |
+| STRONG（引数 --strong） | 4.0 |  | 817 | z: a strong onset (a04's) |  |  |  |  |  |  |  |  |
+| HOOK_REACH | 15 | frames | 818 | frames: no push in this near a title word (the motion graphics' punch is the zoom there) or a punch of --punch |  |  |  |  |  |  |  |  |
+| CUT_SNAP | 6 | frames | 820 | frames (under half a beat at 140 BPM): a planned cut this near a frame of --cut-on (the MV's light flashes: a cut on the flash is strong) moves onto it; farther, a cut i… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_CUT_LEAD | 0.077 | s | 823 | s before the beat a cut falls (the references: typorev, 2.3 frames) |  |  |  | ○ |  |  |  | dance |
+| GUARD_RISE_LEAST | 1.0 | deg | 824 | degrees: with --guard-report, no crane down where the guard's tilt rises more than this (the guard swings the camera up round the look-at point where she spins: a crane … |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_PITCHES | (4.0, 5.0) | deg | 829 | degrees the window looks down in a shot that holds an eye contact (--contacts): level with her eyes, and its Y on her face's way (facing_at), so that the camera stays wi… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_CONTACT_TURNS | (12.0, -12.0) | deg | 833 | degrees off her face's way a contact shot takes when its own way does not cut clearly from the shot before |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_LEAST | 90 | frames | 836 | frames a shot lasts at least to hold a contact (eye_gaze: a run of 48 frames within reach and none 2 frames before or 6 after a cut); the wanted time goes to the nearest… |  |  |  |  |  |  |  |  |
+| FACING_HOLD | 8.0 | deg | 839 | degrees either side of its middle her face's way may wander over the frames a contact shot is aimed at (steady_facing): the camera on the middle stays within eye_gaze's … |  |  |  |  |  |  |  |  |
+| CONTACT_RUN | 48 | frames | 842 | frames: eye_gaze makes a contact of a run within reach this long (its CONTACT_MIN) |  |  |  |  |  |  |  |  |
+| CONTACT_CLEAR | (6, 2) | frames | 843 | frames after a cut and before the next with no contact (eye_gaze's CUT_CLEAR, END_CLEAR) |  |  |  |  |  |  |  |  |
+| _shape(ramp) | 0.125 |  | 925 |  |  |  |  |  |  |  |  |  |
+| plan_music_shots(seed) | 0 |  | 1109 |  |  |  |  |  |  |  |  |  |
+| music_motion(handheld) | 0.0 |  | 1278 |  |  |  |  |  |  |  |  |  |
+| music_motion(seed) | 0 |  | 1278 |  |  |  |  |  |  |  |  |  |
+| run_music(handheld) | 0.0 |  | 1317 |  |  |  |  |  |  |  |  |  |
+| run_music(seed) | 0 |  | 1317 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1371 |  |  |  |  |  |  |  |  |  |
+| run(handheld) | 0.0 |  | 1372 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1405 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
+| --handheld | 0.0 |  | 1409 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
+
+## operator_camera.py（19. カメラ、110）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FPS | 30 |  | 77 |  |  |  |  |  |  |  |  |  |
+| ASPECT | 16.0 / 9.0 |  | 78 |  |  |  |  |  |  |  |  |  |
+| CUT_CURVE | (127, 0, 127, 0) |  | 79 | on the first key of a shot: the step, so a render above 30 fps draws nothing between shots |  |  |  |  |  |  |  |  |
+| LOWEST | 10.0 |  | 80 | no camera below this height: Rin's hips (a camera below them looks up into the skirt) |  |  |  |  | ○ |  |  | rig |
+| HIP_MARGIN | 1.0 |  | 81 | and none below the dancer's own hips plus this, when she jumps |  |  |  | ○ |  |  |  | dance |
+| MIN_LOOK_DOWN | 4.5 | deg | 82 | degrees: every frame whose picture shows her hips looks down at them this much or more, however far the camera stands: hips + HIP_MARGIN alone is level from a long lens … |  |  |  | ○ |  |  |  | dance |
+| LOOK_DOWN_ROUNDS | 12 |  | 90 | shoot raises a shot's camera at most this many times to look down at her hips |  |  |  |  |  |  |  |  |
+| FLARE_SPIN | 450.0 | deg/s | 91 | deg/s: her shoulders turning this fast flare the skirt out nearly level |  |  |  |  |  |  |  |  |
+| FLARE_HOLD | 9 | frames | 92 | frames: the skirt flares up before the turn peaks and settles after it (0.3 s each way) |  |  |  |  |  |  |  |  |
+| FLARE_LOOK_DOWN | 15.0 | deg | 93 | degrees: while the skirt flares, the frames that show her hips look down at them this much. In the strongest spin (58.9 s, 696 deg/s at most) the current camera showed t… |  |  |  | ○ |  |  |  | dance |
+| SIZE_SPEC.long.body | 0.40 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.long.eye | -1.0 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.long.fov | 30 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.long.room | 0.30 |  | 109 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.full.body | 0.84 |  | 110 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.full.eye | -2.5 |  | 110 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.full.fov | 27 |  | 110 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.full.room | 0.06 |  | 110 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.knee.cut | 0.80 |  | 111 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.knee.eye | -1.5 |  | 111 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.knee.fov | 24 |  | 111 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.knee.room | 0.07 |  | 111 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.waist.cut | 0.50 |  | 112 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.waist.eye | -0.5 |  | 112 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.waist.fov | 20 |  | 112 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.waist.room | 0.08 |  | 112 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.chest.cut | 0.335 |  | 113 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.chest.eye | 0.0 |  | 113 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.chest.fov | 17 |  | 113 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.chest.room | 0.08 |  | 113 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.face.cut | 0.235 |  | 114 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.face.eye | 0.0 |  | 114 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.face.fov | 14 |  | 114 |  |  |  |  |  |  |  |  |  |
+| SIZE_SPEC.face.room | 0.05 |  | 114 |  |  |  |  |  |  |  |  |  |
+| SIZE_EDGES | (("face", 0.27), ("chest", 0.40), ("waist", 0.60), ("knee",… |  | 116 |  |  |  |  |  |  |  |  |  |
+| HIGH_RISE.chest | 4.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| HIGH_RISE.face | 3.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| HIGH_RISE.full | 9.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| HIGH_RISE.knee | 7.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| HIGH_RISE.long | 12.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| HIGH_RISE.waist | 5.0 |  | 117 | above the head top |  |  |  |  |  |  |  |  |
+| FOLLOW.delay | 0.2 | s | 120 | s: seeing late; with the shortest wait below the reaction time is 0.3 s (veteran sports cameramen answered a player's turn in 0.23-0.37 s) |  |  |  |  |  |  |  |  |
+| FOLLOW.slack | (0.25, 0.15) |  | 122 | how far off the middle she may be before the camera turns (half-heights; pan, tilt) |  |  |  |  |  |  |  |  |
+| FOLLOW.release | 0.04 |  | 123 | the camera stops turning when she is this close to the middle again |  |  |  |  |  |  |  |  |
+| FOLLOW.gain | 4.0 |  | 124 | 1/s: the pace grows with how far off she is |  |  |  |  |  |  |  |  |
+| FOLLOW.max_speed | 0.9 | deg/s | 125 | half-heights a second (14 deg/s at a field of 30; studio pans top out at 15-20 deg/s) |  |  |  |  |  |  |  |  |
+| FOLLOW.accel | 6.0 |  | 126 | half-heights a second, per second, speeding up (92 deg/s2 at 30; studio pans stay under 200) |  |  |  |  |  |  |  |  |
+| FOLLOW.brake | 3.75 |  | 127 | slowing down: 1.6 times gentler (the slowing down of a studio pan lasts 48-77 % longer) |  |  |  |  |  |  |  |  |
+| FOLLOW.trend | 0.1 | s | 128 | s: the person sees where she is going from her drift over this time |  |  |  |  |  | ○ |  |  |
+| FOLLOW.look | 0.3 | s | 129 | s: and judges by where that drift takes her this much later (predictable motion is followed with little delay: 54 ms against 221 ms for unpredictable, Parker et al. 2021) |  |  |  |  |  |  |  |  |
+| FOLLOW.persist | (0.1, 0.5) | s | 131 | s: she must stay outside the slack this long (where she is and where she is going) before the camera starts: 0.5 s while she is well inside the picture, down to 0.1 s as… |  |  |  |  |  |  |  |  |
+| EDGE_NEAR | 0.7 |  | 135 |  |  |  |  |  |  |  |  |  |
+| EASE | 15 | frames | 136 | frames: a planned move reaches its even pace in half a second, and leaves it the same |  |  |  |  |  |  |  |  |
+| HEAD_TOP_ABOVE_HEAD | 19.5 - 16.243 |  | 282 | the bones that give the landmarks, and the offsets from them (Sour's Rin at rest: head bone 16.24, head top 19.5; 下半身 12.23, hip joints 10.66; the knee half way between … |  |  |  |  | ○ |  |  | rig |
+| HIPS_BELOW_WAIST | 12.225 - 10.658 |  | 283 |  |  |  |  |  |  |  |  |  |
+| dancer_from_motion(subframes) | 1 |  | 288 |  |  |  |  |  |  |  |  |  |
+| frame_size(look_reach) | 1.0 |  | 458 |  |  |  |  |  |  |  |  |  |
+| lag_seconds(max_shift) | 60 |  | 573 |  |  |  |  |  |  |  |  |  |
+| SUNG_LINE | 2.0 | s | 616 | s: how long a sung line given by its start alone is taken to last |  |  |  |  |  |  |  |  |
+| BUSY.head | 12.0 | deg | 701 | deg in a second; units above her 2-s median; units/s (90 % of the shot) |  |  |  |  |  |  |  |  |
+| BUSY.jump | 1.0 | deg | 701 | deg in a second; units above her 2-s median; units/s (90 % of the shot) |  |  |  |  |  |  |  |  |
+| BUSY.turn | 150.0 | deg | 701 | deg in a second; units above her 2-s median; units/s (90 % of the shot) |  |  |  |  |  |  |  |  |
+| CALM_HEAD | 8.0 | units/s | 702 | units/s: the head's 90 % point under this is calm enough for a close shot |  | ○ |  |  |  |  |  | retarget |
+| PHRASE_BARS | 8 |  | 782 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.build | (2, 2, 2, 2) |  | 783 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.chorus | (2, 2, 2, 1, 1) |  | 783 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.interlude | (4, 4) |  | 783 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.intro | (4, 4) |  | 783 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.verse | (4, 4) |  | 783 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.break | (4, 4) |  | 784 |  |  |  |  |  |  |  |  |  |
+| SHOT_BARS.outro | (4, 4) |  | 784 |  |  |  |  |  |  |  |  |  |
+| YAWS | (0.0, 30.0, -30.0, 45.0, -45.0, 15.0, -15.0) |  | 790 |  |  |  |  |  |  |  |  |  |
+| CLEAR_RATIO | 1.5 |  | 791 | a cut changes the size by half or the view by 30 degrees (the 30-degree rule) |  |  |  |  |  |  |  |  |
+| CLEAR_TURN | 30.0 |  | 791 | a cut changes the size by half or the view by 30 degrees (the 30-degree rule) |  |  |  |  |  |  |  |  |
+| MOVES.long | (("hold", 3), ("push", 2), ("pull", 1), ("arc", 2), ("crane… |  | 792 |  |  |  |  |  |  |  |  |  |
+| MOVES.short | (("hold", 2), ("push", 1), ("arc", 1)) |  | 793 |  |  |  |  |  |  |  |  |  |
+| MOVE_AMOUNT.crane | 3.0 |  | 794 |  |  |  |  |  |  |  |  |  |
+| MOVE_AMOUNT.pull | 1.18 |  | 794 |  |  |  |  |  |  |  |  |  |
+| MOVE_AMOUNT.push | 0.85 |  | 794 |  |  |  |  |  |  |  |  |  |
+| EYES_OUT | 0.02 |  | 795 | a shot whose eyes leave the picture longer than this share goes wider |  |  |  |  |  |  |  |  |
+| MAX_BARS.chest | 4 |  | 876 | a face shot lasts 2 bars at most, a chest shot 4 (close shots are short) |  |  |  |  |  |  |  |  |
+| MAX_BARS.face | 2 |  | 876 | a face shot lasts 2 bars at most, a chest shot 4 (close shots are short) |  |  |  |  |  |  |  |  |
+| FACE_REACH | 20.0 | deg | 877 | degrees: a close shot on a sung line comes from no further round than this from the way she faces, where her eyes can reach the camera (the gaze tool looks at it within … |  |  |  |  |  |  |  |  |
+| HEAD_OUT | 0.08 |  | 893 | a whole-body shot may lose her head top this share of the time (a jump) |  |  |  |  |  |  |  |  |
+| plan_music(seed) | 0 |  | 935 |  |  |  |  |  |  |  |  |  |
+| STEADY | 15 | frames | 1015 | frames: the dancer's heights for the framing are their medians over the cut's half second |  |  |  | ○ |  |  |  | dance |
+| LONG_LENS | 10 | deg | 1141 | degrees: a field this narrow or narrower is a long lens (the trace's are 5 and 6) |  |  |  | ○ |  |  |  | dance |
+| QUICK_LENS | (5, 10) | frames | 1142 | frames, degrees: a field changing this much this fast inside a shot is a cut |  |  |  |  |  |  |  |  |
+| WIDE_LENS | 20 | deg | 1143 | degrees: through a field this wide or wider a traced shot is knee or wider (a close size from near through a wide lens draws a large head over a shortened body) |  |  |  | ○ |  |  |  | dance |
+| plan_trace(close_ups) | 0.0 |  | 1258 |  |  |  |  |  |  |  |  |  |
+| STILL | 0.02 |  | 1318 | half-heights a second: a camera turning and moving slower than this holds still |  |  |  |  |  |  |  |  |
+| _r(places) | 4 |  | 1321 |  |  |  |  |  |  |  |  |  |
+| PELVIS_SPIN | 360.0 | deg/s | 1416 | deg/s: her lower body (the way 下半身 faces) turning this fast from one frame to the next |  |  |  |  |  |  |  |  |
+| PELVIS_AFTER | 6 | frames | 1417 | frames: and that many before and after that frame flare her skirt as well (the count of the fast turns of the v11 base: 292 frames of the song, against FLARE_SPIN's 357 … |  |  |  | ○ |  |  |  | dance |
+| PELVIS_BEFORE | 5 | frames | 1417 | frames: and that many before and after that frame flare her skirt as well (the count of the fast turns of the v11 base: 292 frames of the song, against FLARE_SPIN's 357 … |  |  |  | ○ |  |  |  | dance |
+| GUARD_RATE | 20.0 | deg/s | 1420 | deg/s: the top pace of the tilt guard adds (a crane swinging up round the look-at point) |  |  |  |  |  |  |  |  |
+| GUARD_RAMP | 15 | frames | 1421 | frames: the shortest rise before a frame that needs the tilt, and the shortest settle after |  |  |  |  |  |  |  |  |
+| GUARD_HOLD | 6 | frames | 1422 | frames: on each side of a frame that needs a tilt the tilt is held at least that high |  |  |  |  |  |  |  |  |
+| GUARD_SMOOTH | 5 | frames | 1423 | frames: the half width of the cosine that smooths the tilt (under GUARD_HOLD: smoothing never lowers a frame below its own need) |  |  |  |  |  |  |  |  |
+| GUARD_CLOSE | 60 | frames | 1425 | frames: a dip between two rises narrower than twice this is filled (the camera stays up rather than bob down and up again within 4 s) |  |  |  |  |  |  |  |  |
+| GUARD_MARGIN | 0.05 | deg | 1427 | degrees over the need |  |  |  |  |  |  |  |  |
+| GUARD_TOP | 85.0 | deg | 1428 | degrees: no guarded camera looks down more steeply than this |  |  |  |  |  |  |  |  |
+| GUARD_ROUNDS | 6 |  | 1429 |  |  |  |  |  |  |  |  |  |
+| GUARD_SUBFRAMES | 16 |  | 1430 | the look-down holds over every frame at f + k/16: MMD keeps the camera of a frame (a key on every frame) over the subframes it draws at 480 fps while her body moves on (… |  |  |  |  |  |  |  |  |
+| LIFT_ROOM | 0.1 |  | 1434 | --lift-aim: her knees stay this far over the bottom edge (half-heights: 5 % of the picture), the eye stays where guard put it |  |  |  |  |  |  |  |  |
+| LIFT_SHARE | 1.0 |  | 1436 | and the aim gives back at most this share of a window's own tilt (all of it: then the camera looks the way it would without the window, from the window's eye) |  |  |  |  |  |  |  |  |
+| run(close_ups) | 0.0 |  | 1760 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 1760 |  |  |  |  |  |  |  |  |  |
+| --close-ups | 0.0 |  | 1902 | turn calm long-lens shots into chest and face shots up to this share of the frames |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 1906 | the draws of the plan (default 0) |  |  |  |  |  |  |  |  |
 
 ## 確かめの道具と部品（物差しの決め）
 
@@ -2831,6 +3003,46 @@
 | --height | 720 |  | 858 |  |  |  |  |  |  |  |  |  |
 | --size | "256x144" |  | 864 | "the size the video is read at, then put into %dx%d cells" % SAFETY_GRID |  |  |  |  |  |  |  |  |
 
+### camera_rhythm.py（確かめ・部品、35）
+
+| 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FPS | 30 |  | 80 |  |  |  |  |  |  |  |  |  |
+| REFERENCE_HEIGHT | 720.0 |  | 81 |  |  |  |  |  |  |  |  |  |
+| SMOOTH | 5 | frames | 82 | frames: the running median the per-frame series are smoothed by |  |  |  |  |  |  |  |  |
+| MIN_RUN | 6 | frames | 83 | frames: a move lasts at least this long (0.2 s) |  |  |  |  |  |  |  |  |
+| MAX_GAP | 3 | frames | 84 | frames: still frames between two moves closed when there are at most this many |  |  |  |  |  |  |  |  |
+| MOVE.dolly | 0.3 | units | 86 | units: the distance to the look-at point (about 1 % of 34 a second) |  | ○ |  |  |  |  |  | retarget |
+| MOVE.orbit | 1.0 | deg | 87 | degrees: the heading of the eye round the look-at point |  |  |  |  |  |  |  |  |
+| MOVE.crane | 0.7 | deg | 88 | degrees: the elevation of the eye over the look-at point |  |  |  |  |  |  |  |  |
+| MOVE.track | 0.3 | units | 89 | units: the look-at point sideways (the camera going with it) |  | ○ |  |  |  |  |  | retarget |
+| HANDHELD_TURN | 0.05 | deg/s | 90 | deg/s: a frame under the thresholds whose line of sight turns this much is handheld |  |  |  |  |  |  |  |  |
+| PICTURE_MOVE.pan | 30.0 | deg/s | 92 | 720-line px/s the picture shifts (1.3 deg/s at a field of 30; a video's flow noise is about 15: mograph_analyze CAMERA_NOISE 0.05 px at 72 lines a frame) |  |  |  |  |  |  |  |  |
+| PICTURE_MOVE.zoom | 0.01 |  | 94 | 1/s: the picture's scale (1 % a second) |  |  |  |  |  |  |  |  |
+| PICTURE_MOVE.roll | 0.5 | deg/s | 95 | deg/s |  |  |  |  |  |  |  |  |
+| JUMP_EYE | 3.0 | units | 96 | units in a frame: a jump of the eye is a cut |  | ○ |  |  |  |  |  | retarget |
+| JUMP_TURN | 10.0 | deg | 97 | degrees in a frame: a jump of the line of sight is a cut |  |  |  |  |  |  |  |  |
+| TURN_ANGLE | 90.0 | deg | 98 | degrees the eye's velocity turns within TURN_SPAN frames: a turn |  |  |  |  |  |  |  |  |
+| TURN_SPAN | 6 |  | 99 |  |  |  |  |  |  |  |  |  |
+| FAR | 5000.0 | units | 100 | units: a pixel with nothing of the stage behind it |  | ○ |  |  |  |  |  | retarget |
+| READ（引数 --size） | (128, 72) |  | 101 | the read size of the picture's motion (mograph_analyze's) |  |  |  |  |  |  |  |  |
+| LEAD_HIGH | 1 | frames | 102 | frames: an event this near a grid point (before it .. after it) keeps time with it |  |  |  |  |  |  |  |  |
+| LEAD_LOW | -3 | frames | 102 | frames: an event this near a grid point (before it .. after it) keeps time with it |  |  |  |  |  |  |  |  |
+| ONSET_SR | 16000 |  | 107 |  |  |  |  |  |  |  |  |  |
+| ONSET_HOP | 0.01 | s | 108 | s |  |  |  |  |  |  |  |  |
+| ONSET_WIN | 1024 |  | 109 | samples at ONSET_SR |  |  |  |  |  |  |  |  |
+| ONSET_BAND | (30.0, 8000.0) | Hz | 110 | Hz |  |  |  |  |  |  |  |  |
+| ONSET_CAL（引数 --cal） | 0.0467 | s | 111 | s: a04's calibration (the full-band envelope's peak against the kick's attack) |  |  |  |  |  |  |  |  |
+| onsets_of(gap) | 0.3 |  | 131 |  |  |  |  |  |  |  |  |  |
+| onsets_of(min_z) | 2.0 |  | 131 |  |  |  |  |  |  |  |  |  |
+| _blocked(reach) | 1 |  | 216 |  |  |  |  |  |  |  |  |  |
+| run_vmd(strong) | 4.0 |  | 445 |  |  |  |  |  |  |  |  |  |
+| run_video(strong) | 4.0 |  | 476 |  |  |  |  |  |  |  |  |  |
+| --min-z | 2.0 |  | 605 |  |  |  |  |  |  |  |  |  |
+| --gap | 0.3 |  | 606 |  |  |  |  |  |  |  |  |  |
+| --strong | 4.0 |  | 613 | the least z of an onset counted strong (default 4, a04's) |  |  |  |  |  |  |  |  |
+| --strong | 4.0 |  | 622 |  |  |  |  |  |  |  |  |  |
+
 ### mv_inspect.py（確かめ・部品、3）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
@@ -2845,7 +3057,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | FORMAT | 1 |  | 44 |  |  |  |  |  |  |  |  |  |
 | ORDER | [ (1, "模型の写し（rig の受け持ち）", ["pmx_rig.py", "rig_skin.py", "pm… |  | 52 | ---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the meas… |  |  |  | ○ |  |  |  | dance |
-| _cell(n) | 170 |  | 450 |  |  |  |  |  |  |  |  |  |
+| _cell(n) | 170 |  | 452 |  |  |  |  |  |  |  |  |  |
 
 ### mouth_shape.py（確かめ・部品、14）
 

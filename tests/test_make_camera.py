@@ -864,5 +864,746 @@ class AnalysisJsonTest(unittest.TestCase):
         self.assertIn("position", data["weights"])
 
 
+
+# ---- --song: the camera cut and moved on the song ----------------------------------------------------------------------
+
+BEAT = 0.5                    # s: 120 BPM, 15 frames a beat, 60 a bar
+LEAD = 0.077                  # s: the references cut 2.3 frames before the beat (song_structure's cut_lead)
+SECTIONS = [("intro", 0), ("verse1", 4), ("chorus1", 12), ("break", 20), ("end", 24)]     # (id, first bar)
+HOOK = 17 * 4 + 2             # a title word on the third beat of bar 17 (in the chorus)
+
+
+def synthetic_song():
+    beats = [BEAT * k for k in range(25 * 4 + 1)]
+    bars = beats[::4]
+    sections = [{"id": sid, "beat": bar * 4, "t": bars[bar], "frame": int(round(bars[bar] * 30))} for sid, bar in SECTIONS]
+    return {"fps": 30, "beats": beats, "bars": bars, "sections": sections, "cut_lead": LEAD,
+            "hooks": [{"n": 1, "beat": HOOK, "t": beats[HOOK], "frame": int(round(beats[HOOK] * 30))}]}
+
+
+# a strong onset on the second beat of the verse's first bar, a weak one in the chorus, a strong one in the break
+ONSETS = [{"t": BEAT * (4 * 4 + 1), "z": 6.0}, {"t": BEAT * (12 * 4 + 1), "z": 2.5}, {"t": BEAT * (21 * 4), "z": 7.0}]
+
+
+def frames_of_bar(bar):
+    return int(round((BEAT * 4 * bar - LEAD) * 30))
+
+
+class MusicTest(unittest.TestCase):
+    """make_camera --song: the cuts on the song's bars a little before the beat, the shots by the part of the song (long
+    in the quiet parts, short in the chorus), every shot moving in whole beats (a dolly, an orbit, a crane, a track)
+    from its cut or from a strong onset, still only where the song stops (the break, the end), the dancer framed from
+    the knees to above the head, no push in over a title word"""
+
+    def setUp(self):
+        self.song = synthetic_song()
+        self.shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0)
+
+    def section_of(self, shot):
+        return shot.section.rstrip("0123456789")
+
+    def test_cuts_fall_on_the_bars_a_little_before_the_beat(self):
+        shots = self.shots
+        self.assertEqual((shots[0].start, shots[-1].end), (0, LAST))
+        heads = {frames_of_bar(b) for b in range(1, 25)}
+        for before, after in zip(shots, shots[1:]):
+            self.assertEqual(after.start, before.end + 1)
+            self.assertIn(after.start, heads, after.start)
+
+    def test_the_chorus_cuts_often_and_the_quiet_parts_hold(self):
+        bars = {}
+        for s in self.shots:
+            bars.setdefault(self.section_of(s), []).append(s.bars)
+        self.assertEqual(bars["verse"], [4, 4])
+        self.assertEqual(bars["chorus"], [2, 2, 1, 1, 2])
+        self.assertEqual(bars["break"], [4])
+        self.assertEqual(len(bars["end"]), 1)
+        per_bar = {k: len(v) / float(sum(v)) for k, v in bars.items()}
+        self.assertGreater(per_bar["chorus"], 2 * per_bar["verse"])
+
+    def test_every_shot_moves_in_whole_beats_from_its_cut_or_a_strong_onset(self):
+        beat_frames = BEAT * 30
+        for s in self.shots:
+            kind = self.section_of(s)
+            if kind in ("break", "end"):
+                self.assertEqual(s.moves, [], (s.start, kind))
+                continue
+            self.assertTrue(s.moves, (s.start, kind))
+            first = s.moves[0]
+            onset = [round(o["t"] * 30) for o in ONSETS if o["z"] >= 4.0 and s.start < round(o["t"] * 30) < s.start + 60]
+            self.assertIn(first.start, [s.start] + onset, (s.start, kind))
+            for m in s.moves:
+                self.assertIn(m.name, make_camera.MUSIC_MOVES, m.name)
+                whole = m.frames / beat_frames
+                self.assertAlmostEqual(whole, round(whole), delta=0.07, msg=(s.start, m.name, m.frames))
+                self.assertIn(int(round(whole)), (4, 8), (s.start, m.name))
+                # a move ends at the latest on the first beat after its shot (the cut leads that beat by LEAD: the last
+                # frames of the move are hidden by the cut, MOVE_OVERRUN at most), but for the shot's last move when it
+                # starts MOVE_TAIL beats or more before the shot's end (the next cut cuts into it)
+                if m is s.moves[-1] and m.start + m.frames > s.end + make_camera.MOVE_OVERRUN:
+                    self.assertLessEqual(m.start, s.end + 1 - make_camera.MOVE_TAIL * beat_frames, (s.start, m.name))
+                    continue
+                beat_after = math.ceil((s.end + 1) / beat_frames - 1e-9) * beat_frames
+                self.assertLessEqual(m.start + m.frames, beat_after, (s.start, m.name))
+                self.assertLessEqual(m.start + m.frames, s.end + make_camera.MOVE_OVERRUN, (s.start, m.name))
+        # the strong onset of the verse's first bar starts that shot's move; the weak one in the chorus does not
+        verse = [s for s in self.shots if self.section_of(s) == "verse"][0]
+        self.assertEqual(verse.moves[0].start, round(ONSETS[0]["t"] * 30))
+        self.assertEqual(verse.moves[0].shape, "hit")
+        chorus = [s for s in self.shots if self.section_of(s) == "chorus"][0]
+        self.assertEqual(chorus.moves[0].start, chorus.start)
+
+    def test_most_of_the_song_moves_and_the_break_holds_still(self):
+        values = make_camera.music_values(self.shots, LAST)
+        moving = 0
+        counted = 0
+        for s in self.shots:
+            kind = self.section_of(s)
+            for f in range(s.start + 1, s.end + 1):
+                a, b = values[f - 1], values[f]
+                changed = (abs(a["distance"] - b["distance"]) > 1e-6 or abs(a["rot"][0] - b["rot"][0]) > 1e-6 or
+                           abs(a["rot"][1] - b["rot"][1]) > 1e-6 or math.dist(a["offset"], b["offset"]) > 1e-6)
+                if kind in ("break", "end"):
+                    self.assertFalse(changed, f)
+                else:
+                    counted += 1
+                    moving += changed
+        self.assertGreater(moving / float(counted), 0.6)
+
+    def test_the_dancer_stays_framed_and_the_camera_above_her_hips(self):
+        values = make_camera.music_values(self.shots, LAST)
+        for f, v in enumerate(values):
+            bottom, top = make_camera.picture_span(v["distance"], v["pos"][1], v["rot"][0])
+            self.assertLess(bottom, 5.0, f)
+            self.assertGreater(top, 21.0, f)
+            up = math.radians(-v["rot"][0])
+            self.assertGreater(v["pos"][1] - v["distance"] * math.sin(up), 12.0, f)          # the eye's height
+
+    def test_a_cut_changes_the_picture_clearly(self):
+        values = make_camera.music_values(self.shots, LAST)
+        for before, after in zip(self.shots, self.shots[1:]):
+            a, b = values[before.end], values[after.start]
+            self.assertTrue(make_camera.changes_clearly((a["distance"], a["pos"][1], a["rot"]),
+                                                        (b["distance"], b["pos"][1], b["rot"])), after.start)
+
+    def test_no_push_in_over_a_title_word(self):
+        hook = self.song["hooks"][0]["frame"]
+        for s in self.shots:
+            for m in s.moves:
+                if m.name == "dolly_in":
+                    self.assertFalse(m.start - make_camera.HOOK_REACH <= hook <= m.start + m.frames + make_camera.HOOK_REACH,
+                                     (m.start, m.frames))
+
+    def test_the_keys_follow_the_values_with_a_step_on_every_cut(self):
+        motion = make_camera.music_motion(self.shots, LAST, handheld=0.0, seed=0)
+        keys = motion.cameras
+        self.assertEqual([k.frame for k in keys], list(range(0, LAST + 1)))
+        starts = {s.start for s in self.shots}
+        step = {c: make_camera.CUT_CURVE for c in vmd.CAMERA_CHANNELS}
+        values = make_camera.music_values(self.shots, LAST)
+        for k in keys:
+            self.assertEqual(vmd.camera_curves(k.interpolation) == step, k.frame in starts, k.frame)
+            ui = motion_edit.camera_to_ui(k)
+            self.assertAlmostEqual(ui["distance"], values[k.frame]["distance"], places=3)
+            self.assertAlmostEqual(ui["rot"][1], values[k.frame]["rot"][1], places=3)
+
+    def test_a_drive_comes_up_to_pace_in_a_beat_holds_it_and_comes_to_rest(self):
+        r = 0.125                                   # a beat of an 8-beat move
+        values = [make_camera._shape("drive", i / 800.0, r) for i in range(801)]
+        self.assertAlmostEqual(values[0], 0.0, places=9)
+        self.assertAlmostEqual(values[-1], 1.0, places=9)
+        steps = [b - a for a, b in zip(values, values[1:])]
+        self.assertTrue(all(d >= -1e-12 for d in steps))
+        even = steps[int(800 * r) + 2:int(800 * (1 - r)) - 2]
+        self.assertLess(max(even) - min(even), 1e-9)                       # an even pace between the ramps
+        self.assertLess(steps[0], 0.05 * even[0])                          # it starts and ends at rest
+        self.assertLess(steps[-1], 0.05 * even[0])
+
+    def test_the_quiet_parts_are_shot_wider_with_her_feet_in(self):
+        values = make_camera.music_values(self.shots, LAST)
+        for s in self.shots:
+            if self.section_of(s) in ("verse", "break"):
+                self.assertGreaterEqual(s.base["distance"], 40.0, s.start)
+        feet = [f for s in self.shots if self.section_of(s) in ("verse", "break") for f in range(s.start, s.end + 1)
+                if make_camera.picture_span(values[f]["distance"], values[f]["pos"][1], values[f]["rot"][0])[0] < 0.1]
+        self.assertTrue(feet)
+
+    def test_a_crane_down_is_not_drawn_where_the_guard_raises_the_camera(self):
+        # the plain plan draws a crane down somewhere; the guard of a first pass tilts the camera up over those frames (15
+        # degrees): the second pass draws no crane down where the guard rises (it would turn the move into a rise)
+        downs = [m for s in self.shots for m in s.moves if m.name == "crane_down"]
+        self.assertTrue(downs)
+        tilt = [0.0] * (LAST + 1)
+        for m in downs:
+            for f in range(m.start, min(LAST + 1, m.start + m.frames + 1)):
+                tilt[f] = 15.0 * (f - m.start) / float(m.frames)
+        shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0, rising=tilt)
+        for m in (m for s in shots for m in s.moves if m.name == "crane_down"):
+            span = tilt[m.start:min(LAST + 1, m.start + m.frames + 1)]
+            self.assertLessEqual(max(span) - span[0], make_camera.GUARD_RISE_LEAST, (m.start, m.frames))
+
+    def test_a_crane_up_is_not_drawn_where_the_guard_lowers_the_camera(self):
+        # the guard of a first pass swings the camera up over the first half of each crane up of the plain plan and back
+        # down over the second (a window of the guard: the music camera's 5th build ran a crane up against it for 42
+        # frames at 212.5 s): the second pass draws no crane up where the guard's tilt falls from its height
+        ups = [m for s in self.shots for m in s.moves if m.name == "crane_up"]
+        self.assertTrue(ups)
+        tilt = [0.0] * (LAST + 1)
+        for m in ups:
+            for f in range(m.start, min(LAST + 1, m.start + m.frames + 1)):
+                tilt[f] = 15.0 * math.sin(math.pi * (f - m.start) / float(m.frames))
+        shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0, rising=tilt)
+        for m in (m for s in shots for m in s.moves if m.name == "crane_up"):
+            span = tilt[m.start:min(LAST + 1, m.start + m.frames + 1)]
+            fall = max(max(span[:i + 1]) - span[i] for i in range(len(span)))
+            self.assertLessEqual(fall, make_camera.GUARD_RISE_LEAST, (m.start, m.frames))
+
+    def test_the_shot_of_a_contact_stands_where_her_face_looks(self):
+        # she turns her upper body 30 degrees about Y round the wanted contact (a key turning +Y swings her face to -X,
+        # her right: mmd_cli/fk.py's convention); the camera of the shot that holds it stands on her face's way, at the
+        # window's Y of -30 (Y positive swings the camera to +X), not in front of the stage
+        t = 10.5
+        c = int(round(t * 30))
+        dance = synthetic_dance()
+        dance.bones += [bone("上半身", 0), bone("上半身", c - 60, rot=(0, 30, 0)), bone("上半身", c + 90, rot=(0, 30, 0)),
+                        bone("上半身", c + 150)]
+        self.assertAlmostEqual(make_camera.facing_at(make_camera.facing_chain(dance), c), -30.0, delta=3.5)
+        shots = make_camera.plan_music_shots(dance, self.song, ONSETS, seed=0, contacts=[t])
+        shot = [s for s in shots if s.start <= c <= s.end][0]
+        self.assertTrue(shot.contact)
+        self.assertAlmostEqual(shot.base["yaw"], -30.0, delta=4.0)
+        self.assertTrue(all(m.name in ("dolly_in", "dolly_out") for m in shot.moves))
+
+    def test_a_cut_falls_on_each_light_flash(self):
+        # the MV's light flashes (--cut-on): one 2 frames after a planned cut (the cut moves onto it), one on the head of bar
+        # 10 inside the verse's second shot (a cut is added there); the other cuts stay, and both halves of the split shot
+        # still move in whole beats from their cuts
+        moved, added = frames_of_bar(14) + 2, int(round(BEAT * 4 * 10 * 30))
+        shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0, cut_on=[added, moved])
+        plain = [s.start for s in self.shots]
+        want = sorted([c for c in plain if c != frames_of_bar(14)] + [moved, added])
+        self.assertEqual([s.start for s in shots], want)
+        for s in shots:
+            self.assertGreaterEqual(s.end, s.start)
+        # the command takes them as --cut-on and --punch and reports them
+        folder = tempfile.mkdtemp()
+        dance, song, out, report = (os.path.join(folder, n) for n in ("dance.vmd", "song.json", "cam.vmd", "r.json"))
+        with open(dance, "wb") as f:
+            f.write(vmd.dumps(synthetic_dance()))
+        with open(song, "w", encoding="utf-8") as f:
+            json.dump(synthetic_song(), f)
+        code, result = run([dance, out, "--song", song, "--cut-on", str(added), str(moved), "--punch", "700", "--report", report])
+        self.assertEqual(code, 0, result)
+        with open(report, encoding="utf-8") as f:
+            r = json.load(f)
+        self.assertEqual(r["cut_on"], sorted([added, moved]))
+        self.assertEqual(r["punches"], [700])
+        self.assertEqual([s["start"] for s in r["shots"]], want)
+        # the shot after the moved cut is 2 frames short of its 2 bars and still moves over all of them (an 8-beat move; the
+        # cut hides its last frames), as it did before the cut moved
+        after_move = [s for s in shots if s.start == moved][0]
+        plain_after = [s for s in self.shots if s.start == frames_of_bar(14)][0]
+        self.assertEqual([m.frames for m in after_move.moves], [m.frames for m in plain_after.moves])
+        split = [s for s in shots if s.start == added][0]
+        before = [s for s in shots if s.end == added - 1][0]
+        for s in (before, split):
+            self.assertEqual(self.section_of(s), "verse")
+            self.assertTrue(s.moves)
+            self.assertEqual(s.moves[0].start, s.start)
+            for m in s.moves:
+                self.assertIn(m.frames, (60, 120))
+                self.assertLessEqual(m.start + m.frames, s.end + make_camera.MOVE_OVERRUN)
+
+    def test_a_shot_does_not_stand_still_for_beats_after_its_last_move(self):
+        # the verse's first shot starts its move on the strong onset of its second beat: 8 beats, then 4, and then 3.1
+        # beats are left; a 4-beat move runs into the next cut there (the camera still moves at the cut) instead of standing
+        # still; no shot of the song stands still MOVE_TAIL beats or more after its last move
+        beat = BEAT * 30
+        for s in self.shots:
+            if self.section_of(s) in ("break", "end"):
+                continue
+            last = s.moves[-1]
+            left = (s.end + 1 - (last.start + last.frames)) / beat
+            self.assertLess(left, make_camera.MOVE_TAIL, (s.start, [(m.start, m.frames) for m in s.moves]))
+        verse = [s for s in self.shots if self.section_of(s) == "verse"][0]
+        self.assertEqual([m.frames for m in verse.moves], [120, 60, 60])
+        self.assertGreater(verse.moves[-1].start + verse.moves[-1].frames, verse.end + make_camera.MOVE_OVERRUN)
+        self.assertLessEqual(verse.moves[-1].start, verse.end + 1 - make_camera.MOVE_TAIL * beat)
+
+    def test_a_shot_a_few_frames_short_of_its_bars_still_moves_over_all_of_them(self):
+        # the first shot of the intro starts on frame 0 and ends 2 frames before bar 4 (the next cut leads the beat): 238
+        # frames, 2 short of 16 beats; it moves over all of them in 8-beat moves (no 4 beats of standing still at its end)
+        shot = self.shots[0]
+        frames = shot.end - shot.start + 1
+        self.assertEqual(frames, frames_of_bar(4))
+        self.assertEqual([m.frames for m in shot.moves], [120, 120])
+        self.assertGreaterEqual(sum(m.frames for m in shot.moves), frames - make_camera.MOVE_OVERRUN)
+
+    def test_no_push_in_over_a_punch_of_the_motion_graphics(self):
+        # a punch of the motion graphics (--punch) where the plain plan pushes in: the plan with it puts no dolly in there
+        # (the punch is the zoom; a push under it doubles it)
+        pushes = [m for s in self.shots for m in s.moves if m.name == "dolly_in"]
+        self.assertTrue(pushes)
+        punch = pushes[0].start + 5
+        shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0, punches=[punch])
+        for m in (m for s in shots for m in s.moves if m.name == "dolly_in"):
+            self.assertFalse(m.start - make_camera.HOOK_REACH <= punch <= m.start + m.frames + make_camera.HOOK_REACH,
+                             (m.start, m.frames, punch))
+
+    def test_the_way_of_a_contact_is_where_her_face_holds_still_nearest_the_wanted_time(self):
+        # her upper body faces the front up to frame 100, turns to Y +40 (her face to -X, Y -40) by frame 200 and holds
+        # there to 400: wanted at 50 the camera takes the front, wanted at 300 the way she holds after the turn, and the
+        # frames are the ones she holds it over (within FACING_HOLD either side), not the turn
+        dance = vmd.Motion(model_name="synthetic", bones=[bone("上半身", 0), bone("上半身", 100), bone("上半身", 200, rot=(0, 40, 0)),
+                                                          bone("上半身", 400, rot=(0, 40, 0))])
+        chain = make_camera.facing_chain(dance)
+        a, b, way = make_camera.steady_facing(chain, 0, 400, [50])
+        self.assertEqual(a, 0)
+        self.assertGreaterEqual(b, 100)
+        self.assertLess(b, 200)
+        self.assertAlmostEqual(way, 0.0, delta=4.0)
+        a, b, way = make_camera.steady_facing(chain, 0, 400, [300])
+        self.assertGreater(a, 100)
+        self.assertEqual(b, 400)
+        self.assertAlmostEqual(way, -40.0, delta=4.0)
+        for f in range(a, b + 1):
+            self.assertLessEqual(abs(make_camera.facing_at(chain, f) - way), 2 * make_camera.FACING_HOLD)
+        # the spine bones of the MV's model are in the chain, in its order (腰椎上部 under 上半身2, 胸椎上部 under 首)
+        bones = make_camera.FACING_BONES
+        self.assertLess(bones.index("上半身"), bones.index("腰椎上部"))
+        self.assertLess(bones.index("腰椎上部"), bones.index("上半身2"))
+        self.assertLess(bones.index("上半身2"), bones.index("胸椎上部"))
+        self.assertLess(bones.index("胸椎上部"), bones.index("首"))
+
+    def test_a_shot_round_an_eye_contact_holds_the_camera_before_her_face(self):
+        # an eye contact wanted at 10.5 s (in the verse): the shot holding it looks at her from the front, level with
+        # her eyes (window X at most 5, Y within 12 degrees), and only dollies; round the contact the camera hardly turns,
+        # so the gaze tool can hold her eyes on it (eye_gaze: within reach for 1.6 s, a turn of the head's range)
+        t = 10.5
+        shots = make_camera.plan_music_shots(synthetic_dance(), self.song, ONSETS, seed=0, contacts=[t])
+        values = make_camera.music_values(shots, LAST)
+        c = int(round(t * 30))
+        shot = [s for s in shots if s.start <= c <= s.end][0]
+        self.assertLessEqual(shot.base["pitch"], 5.0)
+        self.assertLessEqual(abs(shot.base["yaw"]), 12.0)
+        self.assertTrue(all(m.name in ("dolly_in", "dolly_out") for m in shot.moves), [m.name for m in shot.moves])
+        near = values[max(shot.start, c - 30):min(shot.end, c + 60) + 1]
+        self.assertLess(max(v["rot"][1] for v in near) - min(v["rot"][1] for v in near), 2.0)
+        self.assertLess(max(v["rot"][0] for v in near) - min(v["rot"][0] for v in near), 2.0)
+        # (without the contact the same shot is drawn otherwise: the test is not empty)
+        plain = [s for s in self.shots if s.start <= c <= s.end][0]
+        self.assertTrue(plain.base["pitch"] > 5.0 or abs(plain.base["yaw"]) > 12.0 or
+                        any(m.name not in ("dolly_in", "dolly_out") for m in plain.moves))
+        # the picture still holds her from below the knees to above the head, from above her waist
+        for v in values[shot.start:shot.end + 1]:
+            bottom, top = make_camera.picture_span(v["distance"], make_camera.MUSIC_HEIGHT, v["pitch"])
+            self.assertLess(bottom, 5.0)
+            self.assertGreater(top, 21.0)
+            self.assertGreater(make_camera.MUSIC_HEIGHT + v["distance"] * math.sin(math.radians(v["pitch"])), 12.0)
+        # the cuts stay where they were
+        self.assertEqual([s.start for s in shots], [s.start for s in self.shots])
+
+    def test_the_contacts_come_from_a_list_of_seconds_or_from_the_gaze_report_and_go_to_a_long_shot(self):
+        folder = tempfile.mkdtemp()
+        dance, song = os.path.join(folder, "dance.vmd"), os.path.join(folder, "song.json")
+        with open(dance, "wb") as f:
+            f.write(vmd.dumps(synthetic_dance()))
+        with open(song, "w", encoding="utf-8") as f:
+            json.dump(synthetic_song(), f)
+        seconds, report = os.path.join(folder, "seconds.json"), os.path.join(folder, "gaze.json")
+        with open(seconds, "w", encoding="utf-8") as f:
+            json.dump([10.5], f)
+        with open(report, "w", encoding="utf-8") as f:     # eye_gaze's report: the contact from 300 to 330 (10.5 s in the middle)
+            json.dump({"contacts": {"count": 1, "list": [{"first": 300, "last": 330, "seconds": 1.033, "anchor": None}]}}, f)
+        self.assertEqual(make_camera.load_contacts(seconds), [10.5])
+        self.assertEqual(make_camera.load_contacts(report), [10.5])
+        outs = []
+        for path in (seconds, report):
+            out, r = os.path.join(folder, "cam_%d.vmd" % len(outs)), os.path.join(folder, "r_%d.json" % len(outs))
+            code, result = run([dance, out, "--song", song, "--contacts", path, "--report", r])
+            self.assertEqual(code, 0, result)
+            self.assertEqual(result["contact_shots"], 1)
+            with open(r, encoding="utf-8") as f:
+                shots = json.load(f)["shots"]
+            held = [s for s in shots if s["contact"]]
+            self.assertEqual(len(held), 1)
+            self.assertTrue(held[0]["start"] <= 315 <= held[0]["end"])
+            with open(out, "rb") as f:
+                outs.append(f.read())
+        self.assertEqual(outs[0], outs[1])
+        # a wanted time in a shot too short to hold a contact goes to the nearest long one
+        spans = [(0, 59), (60, 89), (90, 239)]
+        self.assertEqual(make_camera.contact_shots(spans, [70 / 30.0]), {2: [70]})
+        self.assertEqual(make_camera.contact_shots(spans, [1.0, 5.0]), {2: [30, 150]})
+        self.assertEqual(make_camera.contact_shots(spans, []), {})
+
+    def test_the_same_input_and_seed_give_the_same_bytes_and_the_command_writes_them(self):
+        a = vmd.dumps(make_camera.music_motion(self.shots, LAST, handheld=1.0, seed=0))
+        again = make_camera.plan_music_shots(synthetic_dance(), synthetic_song(), ONSETS, seed=0)
+        self.assertEqual(a, vmd.dumps(make_camera.music_motion(again, LAST, handheld=1.0, seed=0)))
+        folder = tempfile.mkdtemp()
+        dance, song, onsets = (os.path.join(folder, n) for n in ("dance.vmd", "song.json", "onsets.json"))
+        with open(dance, "wb") as f:
+            f.write(vmd.dumps(synthetic_dance()))
+        with open(song, "w", encoding="utf-8") as f:
+            json.dump(synthetic_song(), f)
+        with open(onsets, "w", encoding="utf-8") as f:
+            json.dump({"onsets": ONSETS}, f)
+        out, report = os.path.join(folder, "cam.vmd"), os.path.join(folder, "r.json")
+        code, result = run([dance, out, "--song", song, "--onsets", onsets, "--handheld", "1", "--report", report])
+        self.assertEqual(code, 0, result)
+        # (the dance read back from its file: a VMD keeps float32, so the centre the camera follows is that one)
+        read = make_camera.plan_music_shots(vmd.load(dance), synthetic_song(), ONSETS, seed=0)
+        with open(out, "rb") as f:
+            self.assertEqual(f.read(), vmd.dumps(make_camera.music_motion(read, LAST, handheld=1.0, seed=0)))
+        with open(report, encoding="utf-8") as f:
+            r = json.load(f)
+        self.assertEqual(len(r["shots"]), len(self.shots))
+        for key in ("section", "bars", "moves", "start", "end"):
+            self.assertIn(key, r["shots"][0])
+        self.assertEqual(r["song"]["cut_lead"], LEAD)
+
+
+# ---- (review camsyncrev 2026-10-21) the cases the tests above let pass: the tools broken one place at a time (139 ways:
+# 80 that changed what the tool does were not caught), each case below fails on one of them and passes on the tool as it is
+import shutil  # noqa: E402
+
+from mmd_cli import fk  # noqa: E402
+from mmd_cli.formats import pmx  # noqa: E402
+
+mc = make_camera
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location("_mc_test_" + name, os.path.join(ROOT, "tools", name + ".py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_json(folder, name, data):
+    path = os.path.join(folder, name)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    return path
+
+
+def quiet(main, argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = main(argv)
+    return code, json.loads(out.getvalue().strip().splitlines()[-1])
+
+
+KEY = {"dolly": "distance", "orbit": "yaw", "crane": "pitch", "track": "track"}
+
+
+def plan(song=None, onsets=None, seed=0, dance=None, **kw):
+    return mc.plan_music_shots(synthetic_dance() if dance is None else dance, synthetic_song() if song is None else song,
+                               ONSETS if onsets is None else onsets, seed=seed, **kw)
+
+
+
+class MusicPartsTest(unittest.TestCase):
+    def test_a_part_that_starts_off_the_bar_lines_starts_its_first_bar_there(self):
+        # the verse comes in two beats before bar 4: its bars begin at its head (T2-03)
+        song = synthetic_song()
+        head = song["bars"][4] - 2 * BEAT
+        song["sections"][1] = dict(song["sections"][1], t=head, frame=int(round(head * 30)))
+        verse = [p for p in mc.song_parts(song, LAST) if p[0] == "verse1"][0]
+        self.assertAlmostEqual(verse[2][0], head)
+        self.assertEqual(verse[3], int(round((head - LEAD) * 30)))
+
+    def test_a_song_without_bars_is_cut_on_every_fourth_beat(self):
+        song = synthetic_song()
+        plain = [s.start for s in plan(song=song)]
+        del song["bars"]
+        self.assertEqual([s.start for s in plan(song=song)], plain)                       # T2-04
+
+    def test_a_song_without_its_lead_is_cut_with_the_references_lead(self):
+        # the synthetic song gives the references' lead (0.077 s, 2.3 frames: typorev); without it the cuts are the same
+        # (T2-05)
+        song = synthetic_song()
+        plain = [s.start for s in plan(song=song)]
+        del song["cut_lead"]
+        self.assertEqual([s.start for s in plan(song=song)], plain)
+
+
+class MusicMovesTest(unittest.TestCase):
+    def test_a_hit_starts_at_full_pace_and_eases_out(self):
+        # the verse's move from its strong onset and the chorus's one-bar shots are hits: fastest on their first frame,
+        # slower on every frame after (T2-06, T2-50)
+        shots = plan()
+        values = mc.music_values(shots, LAST)
+        hits = [(s, m) for s in shots for m in s.moves if m.shape == "hit"]
+        self.assertTrue(any(s.section.startswith("verse") for s, _ in hits))
+        self.assertTrue(any(s.section.startswith("chorus") and s.bars == 1 for s, _ in hits))
+        for s, m in hits:
+            key = KEY[mc._move_channel(m.name)]
+            steps = [abs(values[f + 1][key] - values[f][key]) for f in range(m.start, min(m.start + m.frames, s.end))]
+            self.assertEqual(max(steps), steps[0], (s.start, m.name))
+            self.assertTrue(all(b <= a + 1e-12 for a, b in zip(steps, steps[1:])), (s.start, m.name))
+
+    def test_a_drive_is_at_its_even_pace_from_one_beat_in(self):
+        # up to pace over a beat, even, down over a beat (T2-46: two beats of ramp)
+        shots = plan()
+        values = mc.music_values(shots, LAST)
+        beat = int(round(BEAT * 30))
+        checked = 0
+        for s in shots:
+            for m in s.moves:
+                if m.shape != "drive":
+                    continue
+                key = KEY[mc._move_channel(m.name)]
+                step = [values[f + 1][key] - values[f][key] for f in range(m.start, min(m.start + m.frames, s.end))]
+                if len(step) < m.frames - beat - 1:
+                    continue                                # (a tail move the next cut cuts into before its even part ends)
+                middle = step[m.frames // 2]
+                for i in range(beat + 1, min(m.frames - beat - 1, len(step))):
+                    self.assertAlmostEqual(step[i], middle, delta=1e-9, msg=(s.start, m.name, i))
+                self.assertLess(abs(step[beat // 2]), abs(middle))
+                checked += 1
+        self.assertGreater(checked, 3)
+
+    def test_the_camera_stays_within_its_ranges_on_every_frame(self):
+        # distance, pitch, yaw and track within MUSIC_RANGE on every frame, whatever the seed (T2-13, T2-14, T2-15, T2-17)
+        for seed in range(8):
+            values = mc.music_values(plan(seed=seed), LAST)
+            for f, v in enumerate(values):
+                for key in ("distance", "pitch", "yaw", "track"):
+                    lo, hi = mc.MUSIC_RANGE[key]
+                    self.assertTrue(lo - 1e-6 <= v[key] <= hi + 1e-6, (seed, f, key, v[key]))
+
+    def test_every_move_is_at_most_its_full_size(self):
+        # a move takes its full size times its part's energy, or less where the range leaves less (T2-13: a dolly out
+        # taking all the room up to the far end, more than its full size)
+        for seed in range(8):
+            for s in plan(seed=seed):
+                for m in s.moves:
+                    full = mc.MUSIC_FULL[mc._move_channel(m.name)] * mc.MUSIC_ENERGY[s.kind]
+                    self.assertLessEqual(abs(m.amount), full + 1e-6, (seed, s.start, m.name, m.amount))
+
+    def test_a_track_of_a_lively_part_stays_within_its_range(self):
+        # the band (energy 0.9) tracks 7.2 units at full size, more than the range's 5 either side: the track is held
+        # within the range (T2-17)
+        song = synthetic_song()
+        song["sections"][1] = dict(song["sections"][1], id="band1")
+        shots = plan(song=song)
+        self.assertTrue(any(m.name == "track" for s in shots if s.kind == "band" for m in s.moves))
+        lo, hi = mc.MUSIC_RANGE["track"]
+        for f, v in enumerate(mc.music_values(shots, LAST)):
+            self.assertTrue(lo - 1e-6 <= v["track"] <= hi + 1e-6, (f, v["track"]))
+
+    def test_an_orbit_with_no_room_on_its_side_swings_the_other_way(self):
+        # 5 degrees from the end of the range on the side drawn: the orbit goes the other way, its full size (T2-16)
+        for yaw, sign in ((60.0, 1), (-60.0, -1)):
+            values = {"distance": 40.0, "pitch": 9.0, "yaw": yaw, "track": 0.0}
+            self.assertEqual(mc._room("orbit", values, 1.0, sign), -sign * mc.MUSIC_FULL["orbit"])
+
+    def test_a_track_moves_across_the_line_of_sight(self):
+        # the look-at point and the camera go sideways together: the offset is square to where the camera looks (T2-20)
+        shots = plan()
+        values = mc.music_values(shots, LAST)
+        keys = fk.camera_keys(mc.music_motion(shots, LAST))
+        frames = [k.frame for k in keys]
+        checked = 0
+        for s in shots:
+            for m in s.moves:
+                if m.name != "track":
+                    continue
+                for f in range(m.start + 1, min(m.start + m.frames, s.end) + 1):
+                    ox, oz = values[f]["offset"]
+                    if math.hypot(ox, oz) < 0.5:
+                        continue
+                    d = fk.camera_direction(fk.camera_at(keys, f, frames))
+                    cos = (ox * d[0] + oz * d[2]) / (math.hypot(ox, oz) * math.hypot(d[0], d[2]))
+                    self.assertLess(abs(cos), 0.02, (s.start, f, cos))
+                    checked += 1
+        self.assertGreater(checked, 10)
+
+    def test_every_cut_changes_the_picture_clearly_whatever_the_seed(self):
+        for seed in range(10):                                                              # T2-51
+            shots = plan(seed=seed)
+            values = mc.music_values(shots, LAST)
+            for before, after in zip(shots, shots[1:]):
+                a, b = values[before.end], values[after.start]
+                self.assertTrue(mc.changes_clearly((a["distance"], a["pos"][1], a["rot"]), (b["distance"], b["pos"][1], b["rot"])),
+                                (seed, after.start))
+
+    def test_the_sway_grows_with_the_handheld_strength(self):
+        shots = plan()                                                                     # T2-55
+
+        def rots(strength):
+            return [motion_edit.camera_to_ui(k)["rot"] for k in mc.music_motion(shots, LAST, handheld=strength, seed=0).cameras]
+        plain, one, two = rots(0.0), rots(1.0), rots(2.0)
+        for f in range(0, LAST + 1, 37):
+            for i in (0, 1):
+                self.assertAlmostEqual(two[f][i] - plain[f][i], 2.0 * (one[f][i] - plain[f][i]), places=3)
+        self.assertGreater(max(abs(a[1] - b[1]) for a, b in zip(one, plain)), 0.1)
+
+
+class MusicCutsTest(unittest.TestCase):
+    def test_no_push_in_runs_while_a_punch_zooms(self):
+        # a punch of the motion graphics zooms over mograph_layer's rise and fall frames from its frame: put one 7 frames
+        # before a push in of the plain plan; the plan with it draws no push in while it zooms (T2-21, T2-22)
+        ml = load("mograph_layer")
+        zoom = ml.DEFAULTS["punch"]["rise"] + ml.DEFAULTS["punch"]["fall"]
+        pushes = [m for s in plan() for m in s.moves if m.name == "dolly_in" and m.start >= 20]
+        self.assertTrue(pushes)
+        for m0 in pushes[:3]:
+            p = m0.start - 7
+            for m in (m for s in plan(punches=[p]) for m in s.moves if m.name == "dolly_in"):
+                self.assertFalse(m.start < p + zoom and p < m.start + m.frames, (m.start, m.frames, p))
+
+    def test_a_flash_up_to_cut_snap_frames_from_a_planned_cut_moves_it(self):
+        planned = frames_of_bar(14)                                                        # T2-35
+        for d in (mc.CUT_SNAP, -mc.CUT_SNAP):
+            starts = [s.start for s in plan(cut_on=[planned + d])]
+            self.assertIn(planned + d, starts, d)
+            self.assertNotIn(planned, starts, d)
+
+    def test_a_flash_5_frames_after_a_planned_cut_moves_it(self):
+        # (pins CUT_SNAP: "6 frames, under half a beat at 140 BPM") a shot of 5 frames would read as a dropped frame (T2-36)
+        planned = frames_of_bar(14)
+        shots = plan(cut_on=[planned + 5])
+        self.assertIn(planned + 5, [s.start for s in shots])
+        self.assertGreater(min(s.end - s.start + 1 for s in shots), 30)
+
+    def test_an_onset_of_the_strong_z_itself_starts_a_move(self):
+        onsets = [dict(ONSETS[0], z=mc.STRONG)] + ONSETS[1:]                              # T2-37
+        verse = [s for s in plan(onsets=onsets) if s.section.startswith("verse")][0]
+        self.assertEqual(verse.moves[0].start, int(round(ONSETS[0]["t"] * 30)))
+
+    def test_the_onset_of_the_bar_the_cut_leads_starts_no_move_of_its_own(self):
+        # the cut leads its bar by the references' 2.3 frames, so the bar's own onset falls 2 frames after the cut: the
+        # cut is on it and the move starts with the cut, not a hit 2 frames later (T2-39)
+        onsets = ONSETS + [{"t": BEAT * 4 * 8, "z": 6.0}]
+        shot = [s for s in plan(onsets=onsets) if s.start == frames_of_bar(8)][0]
+        self.assertEqual(shot.moves[0].start, shot.start)
+
+    def test_only_a_short_tail_move_runs_into_the_next_cut(self):
+        # a cut moved 5 frames later onto a flash leaves the 2-bar shot after it 5 frames short: its move gives way to
+        # 4-beat ones, no 8-beat move runs more than MOVE_OVERRUN frames past its shot (T2-41)
+        beat = BEAT * 30
+        for shot in plan(cut_on=[frames_of_bar(14) + 5]):
+            for m in shot.moves:
+                if m.frames > 4 * beat + 1e-9:
+                    self.assertLessEqual(m.start + m.frames, shot.end + mc.MOVE_OVERRUN, (shot.start, m.start, m.frames))
+
+    def test_a_whole_move_is_cut_at_most_a_tenth_of_a_second_short(self):
+        # (pins MOVE_OVERRUN: 3 frames, "a cut moved onto a flash shortens its shot by 2, a shot that ends on a cut before
+        # the beat is a few frames short") a shot 3 frames short keeps no 8-beat move cut 4 frames before its end (T2-42)
+        flash = frames_of_bar(14) + 3
+        shot = [s for s in plan(cut_on=[flash]) if s.start == flash][0]
+        self.assertTrue(all(m.frames <= 60 for m in shot.moves), [(m.start, m.frames) for m in shot.moves])
+
+
+class MusicFacingTest(unittest.TestCase):
+    def test_her_faces_way_is_the_heads_way_in_the_forward_kinematics(self):
+        # she bows 40 degrees (上半身 about X) and turns her neck 30 degrees (首 about Y): her face's way is the head's -Z as
+        # mmd_cli/fk.py composes the bones from the root (T2-28: composed from the head the bow does not tilt the turn)
+        from tests.test_operator_camera import rin_like_model
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "rin.pmx")
+        with open(path, "wb") as f:
+            f.write(rin_like_model())
+        dance = vmd.Motion(model_name="d", bones=[bone("上半身", 0, rot=(40, 0, 0)), bone("首", 0, rot=(0, 30, 0)),
+                                                  bone("上半身", 30, rot=(40, 0, 0)), bone("首", 30, rot=(0, 30, 0))])
+        track = fk.world_track(pmx.load(path), dance, ["頭"], 0, 30)
+        chain = mc.facing_chain(dance)
+        for f in (0, 15, 30):
+            x, _, z = fk.rotate(track["頭"][f][1], (0.0, 0.0, -1.0))
+            self.assertAlmostEqual(mc.facing_at(chain, f), math.degrees(math.atan2(x, -z)), delta=0.5)
+
+    def test_her_way_across_the_back_is_one_span(self):
+        # she faces the back and sways 5 degrees either side of it: one span over all the frames, her way about 180 (T2-29)
+        dance = vmd.Motion(model_name="s", bones=[bone("上半身", f, rot=(0, 175 if (f // 30) % 2 == 0 else 185, 0))
+                                                  for f in range(0, 301, 30)])
+        a, b, way = mc.steady_facing(mc.facing_chain(dance), 0, 300, [150])
+        self.assertEqual((a, b), (0, 300))
+        self.assertAlmostEqual(abs(way), 180.0, delta=6.0)
+
+    def test_the_span_she_holds_her_way_over_is_as_long_as_it_can_be(self):
+        # within FACING_HOLD either side of its middle, and one frame more either way would not be (T2-30)
+        dance = vmd.Motion(model_name="synthetic", bones=[bone("上半身", 0), bone("上半身", 100), bone("上半身", 200, rot=(0, 40, 0)),
+                                                          bone("上半身", 400, rot=(0, 40, 0))])
+        chain = mc.facing_chain(dance)
+        ways = [mc.facing_at(chain, f) for f in range(401)]
+        width = 2.0 * mc.FACING_HOLD
+        for wanted in (50, 300):
+            a, b, _ = mc.steady_facing(chain, 0, 400, [wanted])
+            self.assertLessEqual(max(ways[a:b + 1]) - min(ways[a:b + 1]), width + 1e-9)
+            if a > 0:
+                self.assertGreater(max(ways[a - 1:b + 1]) - min(ways[a - 1:b + 1]), width, (wanted, a, b))
+            if b < 400:
+                self.assertGreater(max(ways[a:b + 2]) - min(ways[a:b + 2]), width, (wanted, a, b))
+
+    def test_a_shot_of_the_least_length_holds_a_contact(self):
+        least = mc.MUSIC_CONTACT_LEAST                                                     # T2-33
+        self.assertEqual(mc.contact_shots([(0, least - 1), (least, least + 9)], [1.0]), {0: [30]})
+
+    def test_a_contact_goes_to_the_long_shot_whose_end_is_nearest(self):
+        self.assertEqual(mc.contact_shots([(0, 199), (200, 209), (210, 399)], [202 / 30.0]), {0: [202]})   # T2-34
+
+    def test_a_contact_shot_is_aimed_at_the_frames_a_contact_can_be_in(self):
+        # eye_gaze makes no contact 6 frames after a cut nor 2 before the next (CONTACT_CLEAR): the frames the shot is
+        # aimed at lie between (T2-60)
+        t = 10.5
+        c = int(round(t * 30))
+        shot = [s for s in plan(contacts=[t]) if s.start <= c <= s.end][0]
+        a, b = shot.contact
+        self.assertGreaterEqual(a, shot.start + mc.CONTACT_CLEAR[0])
+        self.assertLessEqual(b, shot.end - mc.CONTACT_CLEAR[1])
+
+    def test_a_contact_shot_of_a_quiet_part_is_still_shot_wide(self):
+        # the verse is shot wide (her feet in); its contact shot too, when a wide distance cuts clearly (T2-61)
+        t = 10.5
+        c = int(round(t * 30))
+        shot = [s for s in plan(contacts=[t]) if s.start <= c <= s.end][0]
+        self.assertTrue(shot.section.startswith("verse"))
+        self.assertIn(shot.base["distance"], mc.MUSIC_DISTANCES["wide"])
+
+
+class MusicCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        with open(self.dance, "wb") as f:
+            f.write(vmd.dumps(synthetic_dance()))
+        self.song = write_json(self.folder, "song.json", synthetic_song())
+
+    def report(self, *args):
+        out, report = os.path.join(self.folder, "cam.vmd"), os.path.join(self.folder, "r.json")
+        code, result = quiet(mc.main, [self.dance, out, "--song", self.song, "--report", report] + list(args))
+        self.assertEqual(code, 0, result)
+        with open(report, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_the_command_reads_the_guard_report(self):
+        # the guard's tilt of a first pass rises 15 degrees over each crane down of the plain plan: --guard-report puts no
+        # crane down there (T2-57)
+        downs = [m for s in plan(dance=vmd.load(self.dance)) for m in s.moves if m.name == "crane_down"]
+        self.assertTrue(downs)
+        tilt = [0.0] * (LAST + 1)
+        for m in downs:
+            for f in range(m.start, min(LAST + 1, m.start + m.frames + 1)):
+                tilt[f] = 15.0 * (f - m.start) / float(m.frames)
+        guard = write_json(self.folder, "guard.json", {"per_frame": {"tilt": tilt}})
+        for s in self.report("--guard-report", guard)["shots"]:
+            for m in s["moves"]:
+                if m["name"] == "crane_down":
+                    span = tilt[m["start"]:min(LAST + 1, m["start"] + m["frames"] + 1)]
+                    self.assertLessEqual(max(span) - span[0], mc.GUARD_RISE_LEAST, m)
+
+    def test_the_command_takes_the_strong_z(self):
+        # at --strong 7 the verse's onset of z 6 is weak: the verse's move starts at its cut (T2-59)
+        onsets = write_json(self.folder, "onsets.json", {"onsets": ONSETS})
+        r = self.report("--onsets", onsets, "--strong", "7")
+        self.assertEqual(r["song"]["strong"], 7.0)
+        verse = [s for s in r["shots"] if s["section"].startswith("verse")][0]
+        self.assertEqual(verse["moves"][0]["start"], verse["start"])
+
 if __name__ == "__main__":
     unittest.main()

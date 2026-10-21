@@ -104,9 +104,11 @@ ORDER = [
      "区間の描画・舞台と光（後処理の舞台 mv_world か、模型の舞台 stage_layer）・床と体の影・文字（mv_text か、歌詞の動く文字 kinetic_text）・画面の飾り（mograph_layer、閃光とパンチの時刻は flash_sync）・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す（mograph の白フラッシュに瞳を合わせるなら --flares にその時刻）",
      ["pixels.pants_frames", "pixels.shadow_rough", "pixels.shadow_total_rough"],
      ["shadow_check.py", "shadow_measure.py", "selfshadow_check.py", "look_analyze.py", "typo_analyze.py", "mograph_analyze.py"]),
-    (19, "カメラ（加賀さんの指示で後回し）", ["make_camera.py"],
-     "ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す",
-     [], []),
+    (19, "カメラ", ["make_camera.py", "operator_camera.py"],
+     "ショットの切り分けと控えめに動くカメラ（make_camera、MV のカメラ D）と、ローアングルの守り（operator_camera guard: 腰と股関節を見下ろす角で"
+     "注視点のまわりに振り上げる）。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す。踊りの腰と股関節が"
+     "動いたら guard を当て直す。camera_rhythm はカットと動きを拍・強い音・節の頭と比べ、動く時間と動きの種類を参考の動画と同じ物差しで測る",
+     [], ["camera_rhythm.py"]),
 ]
 # tools the sibling branches add (2026-10-17): placed above, taken from the code once they are merged
 EXPECTED = {"pmx_rig.py": "rig", "rig_skin.py": "rig", "rig_check.py": "rig", "retarget.py": "retarget",
