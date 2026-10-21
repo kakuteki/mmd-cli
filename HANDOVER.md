@@ -1474,3 +1474,7 @@ kinetic の文字は Y1 を使わず、OFL の上の 3 つだけ）。
   - **残り（協調役の決め）**: 字幕が歌い終わる前に消えること（参考の数に合わせた形。歌に合わせるなら life と hang の値）、ブレイクの間奏の節、eef97ee の履歴、
     COVER の行の名の書き方、rinaudio の表との突き合わせ。小さい残り: `over` を静止画の上で使うと ffmpeg の stderr の管が閉じられず ResourceWarning が出る
     （`_over_still`。結果は変わらない）。
+- 2026-10-21 **協調役の決め（kineticrev の取り込み）**: squash で取り込んだ（eef97ee に歌詞の 6 字の句があり、通常の merge だと公開の履歴に入るため）。**枝 kinetic・kineticrev は push しない**。
+  言葉のファイルは hinata `stage6/kineticrev/data/words7.json`（歌詞を含むので hinata の中だけ）。組み立ての look は `kineticrev/looks/look_compose_{front,D}_text2.json`。
+  **字幕は自分の言葉を歌い終わるまで出す**（査読: 94 本中 92 本が歌い終わる前に消えていた、中央 0.8 秒前。参考の「見えている 0.72 秒」に合わせた結果）。参考の短さは、かたまりを
+  歌う長さに合わせて短く切ることで合わせる。ブレイクの頭（183.433 秒）に何も出ないのは言葉のファイルの節が表と 2.3 秒ずれているため → 直す。
