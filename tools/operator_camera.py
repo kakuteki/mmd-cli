@@ -100,6 +100,9 @@ LANDMARKS = ("headtop", "eyes", "chin", "chest", "waist", "hips", "toes", "cente
 # and, for guard, the hip joints (左足, 右足), a point a unit in front of 下半身 (its -Z turned with it: the way the
 # lower body faces) and either toe (左つま先ＩＫ, 右つま先ＩＫ: with the hip joints, where her knees are about)
 HIP_LANDMARKS = ("lhip", "rhip", "pelvis_front", "ltoe", "rtoe")
+# and, for make_camera --song with --model (camsync2), the ankles: where the leg IK bones are (左足ＩＫ, 右足ＩＫ: the IK puts
+# the ankle there), so that a knee shot can keep them out of the picture and a full shot in it
+LEG_LANDMARKS = ("lankle", "rankle")
 
 # sizes, from far to close.  cut: the share of the body (head top to toes) above the bottom edge; body: the body's share
 # of the picture height (whole-body sizes); room: the picture's share above the head top; fov: the lens; eye: the
@@ -247,7 +250,7 @@ class Dancer:
         missing = [n for n in LANDMARKS if n not in tracks]
         if missing:
             raise ValueError("the dancer lacks %s" % ", ".join(missing))
-        names = list(LANDMARKS) + [n for n in HIP_LANDMARKS if n in tracks]
+        names = list(LANDMARKS) + [n for n in HIP_LANDMARKS + LEG_LANDMARKS if n in tracks]
         self.tracks = {n: [tuple(float(v) for v in p) for p in tracks[n]] for n in names}
         self.frames = len(self.tracks["headtop"])
         if any(len(t) != self.frames for t in self.tracks.values()):
@@ -283,14 +286,22 @@ HEAD_TOP_ABOVE_HEAD = 19.5 - 16.243
 HIPS_BELOW_WAIST = 12.225 - 10.658
 FK_BONES = ("頭", "左目", "右目", "上半身2", "下半身", "センター", "左つま先ＩＫ", "右つま先ＩＫ", "左腕", "右腕")
 HIP_BONES = ("左足", "右足")
+ANKLE_BONES = ("左足ＩＫ", "右足ＩＫ")
 
 
-def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
+def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1, ankles=False):
     """the landmarks through the forward kinematics of mmd_cli/fk.py (no IK: the feet come from the IK bones); with
     hip_joints also HIP_LANDMARKS (the hip joints are where 左足 and 右足 turn: the leg IK turns them, it does not move
-    them, so the forward kinematics puts them right; a model without those bones is refused), and with subframes n > 1
-    the points guard looks down at (GUARD_POINTS) at every frame's subframes f + k/n from the dance's own curves"""
-    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints else []), 0, last)
+    them, so the forward kinematics puts them right; a model without those bones is refused), with subframes n > 1
+    the points guard looks down at (GUARD_POINTS) at every frame's subframes f + k/n from the dance's own curves, and
+    with ankles LEG_LANDMARKS (the leg IK bones; a model without them is refused)"""
+    names = [b.name for b in model.bones]
+    if ankles:
+        missing = [n for n in ANKLE_BONES if n not in names]
+        if missing:
+            raise ValueError("the model has no %s: the ankles are read from the leg IK bones" % ", ".join(missing))
+    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints else [])
+                           + (list(ANKLE_BONES) if ankles else []), 0, last)
     n = len(track["頭"])
     sub = None
     if hip_joints and subframes > 1:
@@ -301,7 +312,7 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
             sub["hips"].append([(w["下半身"][0][0], w["下半身"][0][1] - HIPS_BELOW_WAIST, w["下半身"][0][2]) for w in worlds])
             sub["lhip"].append([w["左足"][0] for w in worlds])
             sub["rhip"].append([w["右足"][0] for w in worlds])
-    out = {k: [] for k in LANDMARKS + (HIP_LANDMARKS if hip_joints else ())}
+    out = {k: [] for k in LANDMARKS + (HIP_LANDMARKS if hip_joints else ()) + (LEG_LANDMARKS if ankles else ())}
     for f in range(n):
         head = track["頭"][f][0]
         left, right = track["左目"][f][0], track["右目"][f][0]
@@ -324,6 +335,9 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
             out["pelvis_front"].append(tuple(a + b for a, b in zip(lower, front)))
             out["ltoe"].append(lt)
             out["rtoe"].append(rt)
+        if ankles:
+            out["lankle"].append(track["左足ＩＫ"][f][0])
+            out["rankle"].append(track["右足ＩＫ"][f][0])
     return Dancer(out, sub)
 
 
@@ -351,9 +365,10 @@ def seen(dancer, frame, cam):
     return {"visible": visible, "body_share": span / 2.0, "headtop_v": top[1], "eyes_u": eyes[0], "eyes_v": eyes[1]}
 
 
-def picture_span(size, headtop, toes):
-    """(bottom, top, head row): the heights the picture covers at the dancer for `size`, and the row (v) of her head top"""
-    spec = SIZE_SPEC[size]
+def picture_span(size, headtop, toes, spec=None):
+    """(bottom, top, head row): the heights the picture covers at the dancer for `size` (its SIZE_SPEC, or `spec` in that
+    form), and the row (v) of her head top"""
+    spec = SIZE_SPEC[size] if spec is None else spec
     body = headtop - toes
     if "body" in spec:
         height = body / spec["body"]
@@ -456,20 +471,20 @@ def hips_look_down(dancer, frame, cam):
 
 
 def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, frames=None, heights=None, look_reach=1.0,
-               at_least=None, look_down=None):
+               at_least=None, look_down=None, spec=None):
     """the camera that frames the dancer at `frame` as `size` from the direction `yaw` (the window's Y angle):
     at the size's eye height (or `height`, or above her head when `high`), never below lowest_height over `frames`
     (default: the frame itself) nor below `at_least`, and for a size that shows her hips high enough to look down at
     them by MIN_LOOK_DOWN from its distance times `look_reach` (the farthest the shot's move takes it); with
     `look_down` (degrees), any size high enough to look down at her hips by that much (and by MIN_LOOK_DOWN at least for
     a size that shows them: a close size asks CLOSE_LOOK_DOWN).  `heights` (head top, toes, eyes) replaces the frame's own
-    (a steadier reading)"""
-    spec = SIZE_SPEC[size]
+    (a steadier reading); `spec` (in SIZE_SPEC's form) replaces the size's own cut, room, lens and eye height"""
+    spec = SIZE_SPEC[size] if spec is None else spec
     fov = int(fov if fov is not None else spec["fov"])
     if heights is None:
         heights = (dancer.at("headtop", frame)[1], dancer.at("toes", frame)[1], dancer.at("eyes", frame)[1])
     headtop, toes, eyes = heights
-    bottom, top, top_row = picture_span(size, headtop, min(toes, headtop - 1.0))
+    bottom, top, top_row = picture_span(size, headtop, min(toes, headtop - 1.0), spec)
     if height is None:
         height = headtop + HIGH_RISE[size] if high else eyes + spec["eye"]
     # never steeper than the size's view from above (a traced camera may stand far up), never below her hips; a height

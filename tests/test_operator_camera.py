@@ -1996,5 +1996,68 @@ class CloseLookDownTest(unittest.TestCase):
         self.assertEqual(oc.close_frames(d, [knee] * 60 + [waist] * 60), [False] * 60 + [True] * 60)
 
 
+def rin_with_ankles():
+    """rin_like_model with the leg IK bones (左足ＩＫ, 右足ＩＫ: at the ankles, as on Sour's Rin)"""
+    from tests.test_pmx import NORMAL, TRANSLATE, Writer
+    w = Writer(bone=2)
+    bones = [("全ての親", -1, (0.0, 0.0, 0.0), NORMAL | TRANSLATE), ("センター", 0, (0.0, 7.85, 0.0), NORMAL | TRANSLATE),
+             ("上半身", 1, (0.0, 12.23, -0.65), NORMAL), ("上半身2", 2, (0.0, 13.8, -0.68), NORMAL),
+             ("首", 3, (0.0, 15.65, -0.13), NORMAL), ("頭", 4, (0.0, 16.24, 0.0), NORMAL),
+             ("左目", 5, (0.41, 17.21, -0.56), NORMAL), ("右目", 5, (-0.41, 17.21, -0.56), NORMAL),
+             ("下半身", 1, (0.0, 12.23, -0.65), NORMAL), ("左腕", 3, (0.91, 15.28, -0.25), NORMAL),
+             ("右腕", 3, (-0.91, 15.28, -0.25), NORMAL), ("左つま先ＩＫ", 0, (1.05, 0.1, -1.15), NORMAL | TRANSLATE),
+             ("右つま先ＩＫ", 0, (-1.05, 0.1, -1.15), NORMAL | TRANSLATE), ("左足", 8, (0.90, 10.66, 0.007), NORMAL),
+             ("右足", 8, (-0.90, 10.59, 0.007), NORMAL), ("左足ＩＫ", 0, (0.93, 1.75, 0.38), NORMAL | TRANSLATE),
+             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE)]
+    return w.build(name="rin-ankles", bones=[w.bone(n, parent=p, position=pos, flags=fl) for n, p, pos, fl in bones])
+
+
+class SizeSpecAndAnklesTest(unittest.TestCase):
+    """camsync2: make_camera --song frames its sizes with operator_camera.frame_size and its own cut of a size (a waist shot
+    with her hip joints well inside the picture), and checks a knee shot by her ankles: frame_size and picture_span take a
+    size's spec, and dancer_from_motion reads the ankles (the leg IK bones) on request"""
+
+    def test_a_size_is_framed_by_the_spec_it_is_given(self):
+        d = standing(10)
+        spec = {"cut": 0.56, "room": 0.08, "fov": 30, "eye": -0.5}
+        cam = oc.frame_size(d, 0, "waist", 0.0, fov=30, spec=spec)
+        body = REST["headtop"] - REST["toes"]
+        bottom, top, row = oc.picture_span("waist", REST["headtop"], REST["toes"], spec=spec)
+        self.assertAlmostEqual(bottom, REST["headtop"] - 0.56 * body, places=9)
+        self.assertAlmostEqual(row, 1.0 - 2.0 * 0.08, places=9)
+        ax, az = oc.anchor(d, 0, "waist")
+        v_bottom = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, 30, (ax, bottom, az))[1]
+        self.assertAlmostEqual(v_bottom, -1.0, places=3)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "waist")
+        # without a spec, the size's own (SIZE_SPEC): the same as before
+        self.assertEqual(oc.frame_size(d, 0, "waist", 0.0, fov=30, spec=None), oc.frame_size(d, 0, "waist", 0.0, fov=30))
+        self.assertEqual(oc.picture_span("knee", 19.5, 0.1), oc.picture_span("knee", 19.5, 0.1, spec=oc.SIZE_SPEC["knee"]))
+
+    def test_a_dancer_read_with_ankles_has_them_at_the_leg_ik_bones(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "rin.pmx")
+        with open(path, "wb") as f:
+            f.write(rin_with_ankles())
+        model = pmx.load(path)
+        motion = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左足ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY)])
+        dancer = oc.dancer_from_motion(model, motion, 10, hip_joints=True, ankles=True)
+        track = fk.world_track(model, motion, ["左足ＩＫ", "右足ＩＫ"], 0, 10)
+        for f in (0, 5, 10):
+            for name, bone_name in (("lankle", "左足ＩＫ"), ("rankle", "右足ＩＫ")):
+                for a, b in zip(dancer.at(name, f), track[bone_name][f][0]):
+                    self.assertAlmostEqual(a, b, places=6)
+        self.assertAlmostEqual(dancer.at("lankle", 10)[1], 1.75 + 4.0, places=6)
+        # read without them, the dancer has none; a model without the leg IK bones is refused when they are asked for
+        self.assertFalse(oc.dancer_from_motion(model, motion, 10, hip_joints=True).has("lankle"))
+        plain = os.path.join(folder, "plain.pmx")
+        with open(plain, "wb") as f:
+            f.write(rin_like_model())
+        with self.assertRaises(ValueError):
+            oc.dancer_from_motion(pmx.load(plain), motion, 10, hip_joints=True, ankles=True)
+
+
 if __name__ == "__main__":
     unittest.main()

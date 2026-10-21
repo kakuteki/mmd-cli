@@ -1605,5 +1605,336 @@ class MusicCommandTest(unittest.TestCase):
         verse = [s for s in r["shots"] if s["section"].startswith("verse")][0]
         self.assertEqual(verse["moves"][0]["start"], verse["start"])
 
+
+# ---- --song with --model: the sizes (camsync2) ---------------------------------------------------------------------------
+
+oc = mc._operator()
+# Rin's heights (Sour's White.pmx at rest, as the operator tests have them), her ankles where the leg IK bones are
+REST = {"headtop": 19.5, "eyes": 17.21, "chin": 16.24, "chest": 13.8, "waist": 12.23, "hips": 10.66, "toes": 0.1,
+        "center": 7.85, "lshoulder": 15.28, "rshoulder": 15.28, "lhip": 10.66, "rhip": 10.66, "ltoe": 0.1, "rtoe": 0.1,
+        "lankle": 1.75, "rankle": 1.75}
+SIDE = {"lshoulder": 0.91, "rshoulder": -0.91, "lhip": 0.90, "rhip": -0.90, "ltoe": 0.90, "rtoe": -0.90, "lankle": 0.90,
+        "rankle": -0.90}
+SPIN = (740, 770)             # frames: her shoulders and lower body turn twice round at 720 degrees a second (chorus, bars 12-13)
+STEPS = (1078, 1197)          # frames: her feet step fast (chorus, bars 18-19)
+TURNED = (905, 1035)          # frames: she turns her face 60 degrees to her left and back (chorus, bars 15-17)
+NOTE = (18.2, 18.9)           # s: a sustained note (verse, bar 9)
+CONTACT = 29.0                # s: an eye contact wanted (chorus, bars 14-15)
+
+
+def sized_centre(f):
+    return 1.5 * math.sin(2.0 * math.pi * f / 900.0), 0.4 * math.sin(2.0 * math.pi * f / 1300.0)
+
+
+def sized_dance():
+    """センター walks a little side to side; her whole body turns (センター's Y) by TURNED's 60 degrees and back"""
+    keys = []
+    for f in list(range(0, LAST + 1, 15)) + [LAST]:
+        x, z = sized_centre(f)
+        a = 0.0
+        if TURNED[0] <= f <= TURNED[1]:
+            a = 60.0 * math.sin(math.pi * (f - TURNED[0]) / float(TURNED[1] - TURNED[0])) ** 0.5
+        keys.append(bone("センター", f, pos=(x, 0.0, z), rot=(0.0, a, 0.0)))
+    return vmd.Motion(model_name="sized", bones=keys)
+
+
+def sized_dancer(motion):
+    """her landmarks over the sized dance: standing where センター is, facing where the dance turns her (facing_at), her
+    shoulders and lower body spinning over SPIN, her feet stepping over STEPS"""
+    chain = mc.facing_chain(motion)
+    out = {n: [] for n in oc.LANDMARKS + oc.HIP_LANDMARKS + oc.LEG_LANDMARKS}
+    for f in range(LAST + 1):
+        x, z = sized_centre(f)
+        way = mc.facing_at(chain, f)
+        spin = 720.0 * (f - SPIN[0]) / 30.0 if SPIN[0] <= f <= SPIN[1] else 0.0
+        a = math.radians(way + spin)
+        step = 1.5 * math.sin(2.0 * math.pi * 3.0 * f / 30.0) if STEPS[0] <= f <= STEPS[1] else 0.0
+        for name in oc.LANDMARKS + ("lhip", "rhip", "ltoe", "rtoe", "lankle", "rankle"):
+            s = SIDE.get(name, 0.0)
+            dx = (step if name in ("ltoe", "lankle") else -step if name in ("rtoe", "rankle") else 0.0)
+            out[name].append((x + s * math.cos(a) + dx, REST[name], z + s * math.sin(a)))
+        out["pelvis_front"].append((x + math.sin(a), REST["waist"], z - math.cos(a)))
+    return oc.Dancer(out)
+
+
+def sized_song():
+    song = synthetic_song()
+    song["lines"] = [{"n": 1, "from": BEAT * 16, "to": BEAT * 47}, {"n": 2, "from": BEAT * 48, "to": BEAT * 79}]
+    return song
+
+
+def sized_plan(seed=0, **kw):
+    motion = sized_dance()
+    dancer = sized_dancer(motion)
+    shots = mc.plan_music_shots(motion, sized_song(), ONSETS, seed=seed, contacts=[CONTACT], dancer=dancer,
+                                notes=[NOTE], **kw)
+    return motion, dancer, shots
+
+
+def sized_cameras(shot):
+    return [mc.sized_camera(v, shot.fov) for v in mc.music_shot_values(shot)]
+
+
+def angle_off(a, b):
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+class MusicSizesTest(unittest.TestCase):
+    """the sizes of the shots from what each holds (music_sizes): a shot with a fast turn, footwork or a busy dance is
+    full, one that holds an eye contact chest, the sustained notes and the sung lines of the verses close (waist) first,
+    then the chorus's, each share up to its target; the quiet parts are never close but for a contact; knee then takes
+    its share of the rest, and full the remainder"""
+
+    def shots(self):
+        f = lambda n, kind, **kw: dict({"frames": n, "kind": kind, "chorus": kind == "chorus", "contact": False,
+                                       "note": False, "sung": 0.0, "wide": False, "calm": True, "pace": 5.0}, **kw)
+        return [f(240, "intro"), f(240, "verse", sung=1.0), f(240, "verse", sung=1.0, note=True),
+                f(120, "chorus", sung=1.0, wide=True), f(120, "chorus", sung=1.0, contact=True), f(60, "chorus", sung=1.0),
+                f(60, "chorus", sung=1.0, calm=False), f(120, "chorus", sung=1.0, wide=True), f(240, "break", wide=True),
+                f(60, "end", wide=True)]
+
+    def test_wide_shots_are_full_and_a_contact_chest(self):
+        sizes = mc.music_sizes(self.shots())
+        self.assertEqual([sizes[i] for i in (3, 7, 8, 9)], ["full"] * 4)
+        self.assertEqual(sizes[4], "chest")
+        # a contact in a wide shot is not close
+        shots = self.shots()
+        shots[3]["contact"] = True
+        self.assertEqual(mc.music_sizes(shots)[3], "full")
+
+    def test_the_sustained_note_and_the_verse_lines_come_close_first_and_the_quiet_parts_never(self):
+        sizes = mc.music_sizes(self.shots())
+        self.assertEqual(sizes[2], "waist")                                   # the note
+        self.assertNotIn(sizes[0], mc.MUSIC_CLOSE)                            # the intro
+        # with room for more close shots the other verse shot and then the chorus's come close, never the intro's
+        share = dict(mc.MUSIC_SIZE_SHARE, waist=0.5)
+        chorus_share = dict(mc.MUSIC_CHORUS_SHARE, waist=0.5)
+        sizes = mc.music_sizes(self.shots(), share=share, chorus_share=chorus_share)
+        self.assertEqual(sizes[1], "waist")
+        self.assertIn("waist", [sizes[5], sizes[6]])
+        self.assertNotIn(sizes[0], mc.MUSIC_CLOSE)
+        # a contact in the intro is close
+        shots = self.shots()
+        shots[0]["contact"] = True
+        self.assertEqual(mc.music_sizes(shots)[0], "chest")
+
+    def test_each_share_comes_to_its_target_within_half_a_shot(self):
+        shots = self.shots()
+        sizes = mc.music_sizes(shots)
+        total = float(sum(s["frames"] for s in shots))
+        for size in ("waist", "knee"):
+            got = sum(s["frames"] for s, z in zip(shots, sizes) if z == size)
+            target = mc.MUSIC_SIZE_SHARE[size] * total
+            self.assertLessEqual(got, target + 120 + 1e-9, size)
+        # every size is one of the four, the face is not used
+        self.assertTrue(set(sizes) <= set(mc.MUSIC_SIZES))
+        self.assertEqual(mc.MUSIC_SIZES, ("full", "knee", "waist", "chest"))
+
+
+class MusicSizedPlanTest(unittest.TestCase):
+    """make_camera --song with her body (--model, camsync2): the cuts of the plain plan, each shot a size from what it holds,
+    framed from her body (operator_camera.frame_size) so that every frame shows it (full: both toes and some floor; knee:
+    the knees, not the ankles; waist: the hip joints, not the knees; chest: the shoulders, not the hip joints; her head
+    top and eyes inside the picture with room for the punch's zoom), a close shot looking down at her hips and hip joints
+    by CLOSE_LOOK_DOWN, every cut a size or 30 degrees, none across the line of her face's way"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.motion, cls.dancer, cls.shots = sized_plan()
+
+    def test_the_cuts_are_those_of_the_plain_plan(self):
+        plain = mc.plan_music_shots(self.motion, sized_song(), ONSETS, seed=0, contacts=[CONTACT])
+        self.assertEqual([(s.start, s.end) for s in self.shots], [(s.start, s.end) for s in plain])
+        self.assertTrue(all(s.size in mc.MUSIC_SIZES for s in self.shots))
+        self.assertTrue(all(s.size is None and s.height is None and s.fov is None for s in plain))
+
+    def test_every_frame_shows_its_size_and_her_head(self):
+        for s in self.shots:
+            cams = sized_cameras(s)
+            shown = [mc.size_shown(self.dancer, s.start + i, cam, s.size) for i, cam in enumerate(cams)]
+            self.assertGreaterEqual(sum(shown) / float(len(shown)), mc.MUSIC_FRAME["hold"], (s.start, s.size))
+            for i, cam in enumerate(cams):
+                f = s.start + i
+                for name in ("headtop", "eyes"):
+                    u, v, depth = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, self.dancer.at(name, f))
+                    self.assertGreater(depth, 0.0)
+                    self.assertLessEqual(v, mc.MUSIC_FRAME["head_row"] + 1e-9, (f, name, s.size))
+                    self.assertLessEqual(abs(u), mc.MUSIC_FRAME["side"] + 1e-9, (f, name, s.size))
+
+    def test_a_close_shot_looks_down_at_her_hips_and_hip_joints_by_30_degrees(self):
+        close = [s for s in self.shots if s.size in mc.MUSIC_CLOSE]
+        self.assertTrue(close)
+        for s in close:
+            for i, cam in enumerate(sized_cameras(s)):
+                points = [self.dancer.at(n, s.start + i) for n in ("hips", "lhip", "rhip")]
+                self.assertGreaterEqual(oc.look_down_at(cam.position, points), oc.CLOSE_LOOK_DOWN, (s.start + i, s.size))
+
+    def test_a_full_shot_shows_both_toes_and_a_little_floor(self):
+        full = [s for s in self.shots if s.size == "full"]
+        self.assertTrue(full)
+        for s in full:
+            for i, cam in enumerate(sized_cameras(s)):
+                for toe in ("ltoe", "rtoe"):
+                    u, v, _ = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, self.dancer.at(toe, s.start + i))
+                    self.assertGreaterEqual(v, -1.0 + mc.MUSIC_FRAME["floor"] - 1e-9, (s.start + i, toe))
+
+    def test_a_spin_and_footwork_are_shot_full_and_the_contact_chest_within_reach_of_her_eyes(self):
+        def holding(f):
+            return [s for s in self.shots if s.start <= f <= s.end][0]
+        self.assertEqual(holding(SPIN[0]).size, "full")
+        self.assertEqual(holding(STEPS[0] + 30).size, "full")
+        contact = holding(int(CONTACT * 30))
+        self.assertEqual(contact.size, "chest")
+        self.assertTrue(contact.contact)
+        a, b = contact.contact
+        chain = mc.facing_chain(self.motion)
+        for i, cam in enumerate(sized_cameras(contact)):
+            f = contact.start + i
+            if not a <= f <= b:
+                continue
+            eyes = self.dancer.at("eyes", f)
+            up = math.degrees(math.atan2(cam.position[1] - eyes[1], math.hypot(cam.position[0] - eyes[0], cam.position[2] - eyes[2])))
+            self.assertLessEqual(up, mc.MUSIC_CONTACT_UP + 1e-6, f)
+            self.assertLessEqual(angle_off(cam.yaw, mc.facing_at(chain, f)), 16.0, f)
+        # the note's shot is close, and the quiet parts are not
+        self.assertIn(holding(int(NOTE[0] * 30)).size, mc.MUSIC_CLOSE)
+        for s in self.shots:
+            if s.kind in ("intro", "break", "end"):
+                self.assertNotIn(s.size, mc.MUSIC_CLOSE, s.start)
+
+    def test_every_cut_changes_the_size_or_turns_30_degrees_and_none_crosses_the_line(self):
+        chain = mc.facing_chain(self.motion)
+        for seed in range(4):
+            _, _, shots = sized_plan(seed=seed) if seed else (None, None, self.shots)
+            for before, after in zip(shots, shots[1:]):
+                yaw_before = mc.music_shot_values(before)[-1]["yaw"]
+                yaw_after = after.base["yaw"]
+                self.assertTrue(before.size != after.size or angle_off(yaw_before, yaw_after) >= 30.0,
+                                (seed, after.start, before.size, after.size, yaw_before, yaw_after))
+                self.assertFalse(mc.crosses_line(mc.facing_at(chain, after.start), yaw_before, yaw_after),
+                                 (seed, after.start, yaw_before, yaw_after))
+
+    def test_the_line_is_crossed_when_her_face_turns_from_one_side_of_the_picture_to_the_other(self):
+        self.assertTrue(mc.crosses_line(0.0, -40.0, 40.0))
+        self.assertFalse(mc.crosses_line(0.0, -40.0, -10.0))
+        self.assertFalse(mc.crosses_line(0.0, -5.0, 5.0))                  # she faces the camera on both: no side
+        self.assertTrue(mc.crosses_line(60.0, 10.0, 110.0))
+
+    def test_the_sized_values_reach_the_keys(self):
+        motion = mc.music_motion(self.shots, LAST)
+        keys = {k.frame: k for k in motion.cameras}
+        for s in self.shots:
+            for f in (s.start, s.end):
+                ui = motion_edit.camera_to_ui(keys[f])
+                v = mc.music_shot_values(s)[f - s.start]
+                self.assertEqual(ui["fov"], s.fov, f)
+                self.assertAlmostEqual(ui["pos"][1], s.height, places=3)
+                self.assertAlmostEqual(ui["distance"], v["distance"], places=3)
+
+    def test_without_her_body_nothing_changes(self):
+        shots = plan()
+        for s in shots:
+            for v in mc.music_shot_values(s):
+                self.assertEqual(v["pos"][1], mc.MUSIC_HEIGHT)
+        self.assertTrue(all(motion_edit.camera_to_ui(k)["fov"] == mc.FOV for k in mc.music_motion(shots, LAST).cameras))
+
+    def test_a_box_of_words_moves_her_face_off_it(self):
+        # a narrow box down the middle of the picture's upper half over the whole first verse shot: her face is put
+        # beside it
+        verse = [s for s in self.shots if s.kind == "verse"][0]
+        box = [verse.start, verse.end, 0.44, 0.0, 0.56, 0.5, "front"]
+        _, _, shots = sized_plan(keep_clear=[box])
+        moved = [s for s in shots if s.start == verse.start][0]
+        hit = 0
+        for i, cam in enumerate(sized_cameras(moved)):
+            f = moved.start + i
+            if mc.face_on_boxes(self.dancer, f, cam, [box]):
+                hit += 1
+        self.assertEqual(hit, 0)
+        plain_hit = sum(1 for i, cam in enumerate(sized_cameras(verse)) if mc.face_on_boxes(self.dancer, verse.start + i, cam, [box]))
+        self.assertGreater(plain_hit, 0)
+
+    def test_a_close_shot_the_words_leave_no_room_for_is_shot_wide_and_its_share_goes_on(self):
+        # a band of words across the whole picture's middle over the note's shot: no close way of seeing keeps her face
+        # off it, a whole-body shot (her face above the band) does; the waist share goes to the other verse shot
+        note = [s for s in self.shots if s.start <= int(NOTE[0] * 30) <= s.end][0]
+        other = [s for s in self.shots if s.kind == "verse" and s is not note][0]
+        self.assertIn(note.size, mc.MUSIC_CLOSE)
+        self.assertNotIn(other.size, mc.MUSIC_CLOSE)
+        box = [note.start, note.end, 0.0, 0.32, 1.0, 0.62, "back"]
+        _, _, shots = sized_plan(keep_clear=[box])
+        by_start = {s.start: s for s in shots}
+        self.assertNotIn(by_start[note.start].size, mc.MUSIC_CLOSE)
+        self.assertEqual(by_start[note.start].features["face_hits"], 0)
+        self.assertIn(by_start[other.start].size, mc.MUSIC_CLOSE)
+        # planned once (no second round), the note's shot is still widened but nothing takes its share
+        rounds = mc.MUSIC_ROUNDS
+        mc.MUSIC_ROUNDS = 1
+        try:
+            _, _, once = sized_plan(keep_clear=[box])
+        finally:
+            mc.MUSIC_ROUNDS = rounds
+        self.assertNotIn({s.start: s for s in once}[other.start].size, mc.MUSIC_CLOSE)
+
+
+def sized_model():
+    """the bones the camera reads, laid out as on Sour's Rin at rest, with the leg IK bones (the ankles)"""
+    from tests.test_pmx import NORMAL, TRANSLATE, Writer
+    w = Writer(bone=2)
+    bones = [("全ての親", -1, (0.0, 0.0, 0.0), NORMAL | TRANSLATE), ("センター", 0, (0.0, 7.85, 0.0), NORMAL | TRANSLATE),
+             ("上半身", 1, (0.0, 12.23, -0.65), NORMAL), ("上半身2", 2, (0.0, 13.8, -0.68), NORMAL),
+             ("首", 3, (0.0, 15.65, -0.13), NORMAL), ("頭", 4, (0.0, 16.24, 0.0), NORMAL),
+             ("左目", 5, (0.41, 17.21, -0.56), NORMAL), ("右目", 5, (-0.41, 17.21, -0.56), NORMAL),
+             ("下半身", 1, (0.0, 12.23, -0.65), NORMAL), ("左腕", 3, (0.91, 15.28, -0.25), NORMAL),
+             ("右腕", 3, (-0.91, 15.28, -0.25), NORMAL), ("左つま先ＩＫ", 0, (1.05, 0.1, -1.15), NORMAL | TRANSLATE),
+             ("右つま先ＩＫ", 0, (-1.05, 0.1, -1.15), NORMAL | TRANSLATE), ("左足", 8, (0.90, 10.66, 0.007), NORMAL),
+             ("右足", 8, (-0.90, 10.59, 0.007), NORMAL), ("左足ＩＫ", 0, (0.93, 1.75, 0.38), NORMAL | TRANSLATE),
+             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE)]
+    return w.build(name="rin-sized", bones=[w.bone(n, parent=p, position=pos, flags=fl) for n, p, pos, fl in bones])
+
+
+class MusicSizedCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        self.dance = os.path.join(self.folder, "dance.vmd")
+        with open(self.dance, "wb") as f:
+            f.write(vmd.dumps(sized_dance()))
+        self.model = os.path.join(self.folder, "rin.pmx")
+        with open(self.model, "wb") as f:
+            f.write(sized_model())
+        self.song = write_json(self.folder, "song.json", sized_song())
+        # lip_sync's alignment (--align-out): a vowel at NOTE held on by a long mark, the rest short
+        self.notes = write_json(self.folder, "align.json", [
+            {"line": 0, "mora": "x", "kana": "x", "consonant": "", "vowel": "a", "held": False, "word_start": True,
+             "c0": 10.0, "v0": 10.0, "v1": 10.2},
+            {"line": 0, "mora": "x", "kana": "x", "consonant": "", "vowel": "a", "held": False, "word_start": False,
+             "c0": NOTE[0], "v0": NOTE[0], "v1": NOTE[0] + 0.3},
+            {"line": 0, "mora": "x", "kana": "x", "consonant": "", "vowel": "a", "held": True, "word_start": False,
+             "c0": NOTE[0] + 0.3, "v0": NOTE[0] + 0.3, "v1": NOTE[1]}])
+
+    def test_the_model_and_the_notes_reach_the_plan(self):
+        out, report = os.path.join(self.folder, "cam.vmd"), os.path.join(self.folder, "r.json")
+        code, result = quiet(mc.main, [self.dance, out, "--song", self.song, "--report", report, "--model", self.model,
+                                       "--notes", self.notes])
+        self.assertEqual(code, 0, result)
+        with open(report, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["notes"]["wanted"], [[NOTE[0], NOTE[1]]])
+        sizes = [s["size"] for s in data["shots"]]
+        self.assertTrue(set(sizes) <= set(mc.MUSIC_SIZES), sizes)
+        self.assertIn("full", sizes)
+        self.assertTrue(set(sizes) & set(mc.MUSIC_CLOSE), sizes)
+        self.assertEqual(result["sizes"], {k: sizes.count(k) for k in sorted(set(sizes))})
+        # without --model the report has no sizes and the camera is the plain one
+        plain_out, plain_report = os.path.join(self.folder, "plain.vmd"), os.path.join(self.folder, "p.json")
+        code, _ = quiet(mc.main, [self.dance, plain_out, "--song", self.song, "--report", plain_report])
+        self.assertEqual(code, 0)
+        with open(plain_report, encoding="utf-8") as f:
+            self.assertNotIn("size", json.load(f)["shots"][0])
+
+    def test_notes_are_the_vowels_held_long_enough(self):
+        self.assertEqual(mc.load_notes(self.notes), [(NOTE[0], NOTE[1])])
+
 if __name__ == "__main__":
     unittest.main()
