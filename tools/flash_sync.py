@@ -11,8 +11,8 @@
         LOOK with the decisions of MEASURE: those flashes, flares and punches moved or dropped, nothing else changed
     python tools/flash_sync.py table MEASURE.json OUT.md
         the decisions and the numbers behind them as a table
-    python tools/flash_sync.py figure MEASURE.json ARRAYS.npz OUT.png
-        each flash against the voice, the hits and the heads (needs matplotlib)
+    python tools/flash_sync.py figure MEASURE.json ARRAYS.npz OUT.png [--lang en|ja]
+        the whole song and each flash against the voice, the hits and the heads (needs matplotlib)
 
 Why (2026-10-21, flashsync): the request is that a flash in the MV mean something, or go.  The four flashes of the motion
 graphics (look_city_mograph_rv.json) stood on the title words' beats, where the first syllable has already been sung for 100 to
@@ -403,11 +403,11 @@ def decide(events, moments, hits, skirt=(), flares=(), reach=None, fps=FPS):
         placed = _place_flash(t, moments, hits, reach, fps)
         d = {"kind": kind, "index": index, "t": t, "old_frame": old, "title": title_for(t)}
         if placed is None:
-            d.update(action="drop", frame=None, moment=None, hit=None,
+            d.update(action="drop", frame=None, moment=None, hit=None, why="no_strong_hit",
                      reason="no strong hit of the backing (>= p%g within %d frame) on a moment within a bar" % (STRONG, NEAR_FRAMES))
         else:
             m, hit, frame = placed
-            d.update(action="keep" if frame == old else "move", frame=frame, moment=m, hit=hit,
+            d.update(action="keep" if frame == old else "move", frame=frame, moment=m, hit=hit, why="strong_hit",
                      reason="%s with a strong hit of the backing (p%.1f)" % (_moment_name(m), hit["pct"]))
         return d
     flashes = {}
@@ -426,16 +426,17 @@ def decide(events, moments, hits, skirt=(), flares=(), reach=None, fps=FPS):
         span = _punch_span(e)
         d = {"kind": "punch", "index": i, "t": float(e["t"]), "old_frame": frame, "flash": f["index"]}
         if f["action"] != "drop" and not near_skirt(f["frame"] / float(fps), span, skirt, fps):
-            d.update(action="keep" if f["frame"] == frame else "move", frame=f["frame"], reason="with its flash")
+            d.update(action="keep" if f["frame"] == frame else "move", frame=f["frame"], why="with_flash", reason="with its flash")
         else:
             why = "its flash is dropped" if f["action"] == "drop" else "the skirt flares near its flash's frame"
+            code = "flash_dropped" if f["action"] == "drop" else "skirt"
             title = f["title"]
             if title is not None and not near_skirt(frame_of_moment(title["t"], fps) / float(fps), span, skirt, fps):
                 nf = frame_of_moment(title["t"], fps)
-                d.update(action="keep" if nf == frame else "move", frame=nf,
+                d.update(action="keep" if nf == frame else "move", frame=nf, why=code + "_title", n=title["n"],
                          reason="%s: on title word %d as sung" % (why, title["n"]))
             else:
-                d.update(action="drop", frame=None, reason="%s, and no title word as sung to go to" % why)
+                d.update(action="drop", frame=None, why=code + "_none", reason="%s, and no title word as sung to go to" % why)
         out.append(d)
     for i, t in enumerate(flares):
         out.append(judge("flare", i, float(t)))
@@ -559,6 +560,25 @@ def _moment_ja(m):
     return "伴奏が戻る小節の頭%s" % ("" if m.get("bar") is None else "（小節 %d）" % m["bar"])
 
 
+def _why_ja(d, st):
+    """the reason of a decision, in Japanese"""
+    why = d.get("why")
+    if why == "strong_hit":
+        return "%sに伴奏の強い立ち上がり（全曲の %.0f %% 点）がある" % (_moment_ja(d["moment"]), d["hit"]["pct"])
+    if why == "no_strong_hit":
+        return "1 小節の中の意味のある瞬間（題名の語の 1 音目・節の頭・伴奏が戻る所）の ±%d コマに、伴奏の %g %% 点以上の立ち上がりが無い" % (
+            st["near_frames"], st["strong"])
+    if why == "with_flash":
+        return "光と同じコマから"
+    if why == "flash_dropped_title":
+        return "光を削ったので、題名の語 %d の 1 音目を歌うコマへ" % d["n"]
+    if why == "skirt_title":
+        return "光の所はスカートが広がる所の %g 秒にかかるので、題名の語 %d の 1 音目を歌うコマへ" % (st["skirt_gap"], d["n"])
+    if why in ("flash_dropped_none", "skirt_none"):
+        return "行き先が無いので削る"
+    return d.get("reason", "-")
+
+
 def table_md(report):
     """the decisions as a Markdown table (Japanese)"""
     fps = report["settings"]["fps"]
@@ -580,7 +600,7 @@ def table_md(report):
             KIND_JA.get(d["kind"], d["kind"]), d["t"], d["old_frame"],
             "-" if d.get("old_from_voice_ms") is None else "%+.0f ms" % d["old_from_voice_ms"],
             _pct(a.get("backing")), _pct(a.get("mix")), _pct(a.get("voice")), ACTION_JA[d["action"]], new,
-            _moment_ja(d.get("moment")), new_pct, d["reason"]))
+            _moment_ja(d.get("moment")), new_pct, _why_ja(d, report["settings"])))
     lines += ["", "## 意味のある瞬間（±%d コマの中で最も強い立ち上がりの %% 点: 伴奏 / 全体 / 声）" % report["settings"]["near_frames"], "",
               "| 瞬間 | 時刻 | 伴奏 | 全体 | 声 |", "| --- | --- | --- | --- | --- |"]
     for m in report["moments"]:
@@ -589,61 +609,120 @@ def table_md(report):
     return "\n".join(lines) + "\n"
 
 
-def figure(report, arrays, out):
-    """one panel a flash or flare: the voice's level, the backing's and the mix's onsets (strong hits marked), the beats, the
-    moments, the old frame and the new"""
+LABELS = {
+    "en": {"voice": "voice level (150-1500 Hz)", "hits": "backing hits", "strong": "strong backing hit (>= p%g)",
+           "old": "light before", "new": "light after", "punch_old": "punch before", "punch_new": "punch after",
+           "title": "title word %d sung", "return": "the band returns", "x": "seconds of the song (grey: beats, darker: bars)",
+           "overview": "the whole song: strong backing hits (red), section heads (black), title words sung (purple), "
+                       "the light before (grey) and after (green)",
+           "row": "%s at %.3f s (frame %d): %s"},
+    "ja": {"voice": "声の強さ（150〜1500 Hz）", "hits": "伴奏の立ち上がり", "strong": "伴奏の強い立ち上がり（%g %% 点以上）",
+           "old": "前の光", "new": "直した光", "punch_old": "前のパンチ", "punch_new": "直したパンチ",
+           "title": "題名の語 %d の 1 音目", "return": "伴奏が戻る", "x": "曲の秒（灰の線: 拍、濃い線: 小節の頭）",
+           "overview": "全曲: 伴奏の強い立ち上がり（赤）、節の頭（黒）、題名の語の 1 音目（紫）、前の光（灰）と直した光（緑）",
+           "row": "%s %.3f 秒（%d コマ）: %s"},
+}
+ACTION_LABEL = {"en": {"keep": "kept", "move": "moved to frame %d", "drop": "dropped"},
+                "ja": {"keep": "そのまま", "move": "%d コマへ動かす", "drop": "削る"}}
+KIND_LABEL = {"en": {"flash": "flash", "flare": "flare"}, "ja": {"flash": "光のフラッシュ", "flare": "フレア"}}
+JA_FONTS = ("Meiryo", "Yu Gothic", "MS Gothic", "Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic")
+
+
+def figure(report, arrays, out, lang="en"):
+    """the whole song in one row (the strong hits of the backing, the heads, the title words, the light before and after), then
+    one row a flash or flare: the voice's level, the backing's hits (strong ones red, with their percentile), the beats, the
+    moments, the old frame and the new, and the punches that go with it.  lang "ja" writes the labels in Japanese (needs a
+    Japanese font)"""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib import font_manager
+    L, A, K = LABELS[lang], ACTION_LABEL[lang], KIND_LABEL[lang]
+    if lang == "ja":
+        names = {f.name for f in font_manager.fontManager.ttflist}
+        found = [n for n in JA_FONTS if n in names]
+        if not found:
+            raise ValueError("no Japanese font for the figure (looked for %s)" % ", ".join(JA_FONTS))
+        matplotlib.rcParams["font.family"] = found[0]
     a = np.load(arrays)
-    fps = report["settings"]["fps"]
-    first, period = report["settings"]["beat_first"], report["settings"]["beat_period"]
+    st = report["settings"]
+    fps, strong = st["fps"], st["strong"]
+    first, period = st["beat_first"], st["beat_period"]
+    bt, be = a["backing_t"].astype(np.float64), a["backing_e"].astype(np.float64)
+    hits = Hits(hits_of(bt, be, span=(0.5, float(bt[-1]) - 0.5)))
+    pct = np.array([hits.percentile(h) for h in hits.heights])
+    top = float(np.percentile(hits.heights, 99.5)) or 1.0
     rows = [d for d in report["decisions"] if d["kind"] in ("flash", "flare")]
     if not rows:
         raise ValueError("the report has no flash or flare")
-    fig, axes = plt.subplots(len(rows), 1, figsize=(12, 2.6 * len(rows)), squeeze=False)
-    for ax, d in zip(axes[:, 0], rows):
-        t0 = d["t"]
-        lo, hi = t0 - 0.7, t0 + 1.9
-        vt, vdb = a["voice_db_t"], a["voice_db"]
+    punches = [d for d in report["decisions"] if d["kind"] == "punch"]
+    fig, axes = plt.subplots(len(rows) + 1, 1, figsize=(13, 1.6 + 2.7 * len(rows)), squeeze=False,
+                             gridspec_kw={"height_ratios": [0.6] + [1.0] * len(rows)})
+    ax = axes[0, 0]
+    s = pct >= strong
+    ax.vlines(hits.times[s], 0, 1, color="#e31a1c", lw=0.7)
+    for m in report["moments"]:
+        colour = {"section": "#000000", "title": "#6a3d9a", "return": "#e31a1c"}[m["kind"]]
+        ax.vlines([m["t"]], 1.05, 1.6, color=colour, lw=1.4)
+    for d in rows:
+        ax.plot([d["old_frame"] / float(fps)], [-0.3], "v", color="#777777", ms=7)
+        if d.get("frame") is not None:
+            ax.plot([d["frame"] / float(fps)], [-0.6], "^", color="#33a02c", ms=8)
+    ax.set_xlim(0, float(bt[-1]))
+    ax.set_ylim(-1.0, 1.8)
+    ax.set_yticks([])
+    ax.set_title(L["overview"], fontsize=9)
+    for ax, d in zip(axes[1:, 0], rows):
+        times = [d["old_frame"] / float(fps)] + ([d["frame"] / float(fps)] if d.get("frame") is not None else [])
+        title = d.get("title")
+        if title:
+            times.append(title["t"])
+        lo, hi = min(times) - 0.55, max(times) + 0.75
+        vt, vdb = a["voice_db_t"].astype(np.float64), a["voice_db"].astype(np.float64)
         m = (vt >= lo) & (vt <= hi)
-        ax.plot(vt[m], (vdb[m] - vdb[m].max()) / 60.0 + 1.0, color="#6a3d9a", lw=1.0, label="voice level (150-1500 Hz, 60 dB)")
-        for name, colour, off in (("backing", "#1f78b4", 0.0), ("mix", "#999999", 0.0)):
-            et, ee = a["%s_t" % name], a["%s_e" % name]
-            mm = (et >= lo) & (et <= hi)
-            scale = float(np.percentile(a["%s_e" % name], 99.5)) or 1.0
-            ax.plot(et[mm], -ee[mm] / scale * 0.9 + off, color=colour, lw=0.8, label="%s onsets (down)" % name)
+        ref = float(np.percentile(vdb, 99))
+        ax.plot(vt[m], 0.62 + 0.55 * np.clip((vdb[m] - ref + 50.0) / 50.0, 0, 1), color="#6a3d9a", lw=1.1, label=L["voice"])
+        w = (hits.times >= lo) & (hits.times <= hi)
+        weak = w & ~(pct >= strong)
+        hard = w & (pct >= strong)
+        ax.vlines(hits.times[weak], 0, np.clip(hits.heights[weak] / top, 0, 1) * 0.55, color="#1f78b4", lw=1.2, label=L["hits"])
+        ax.vlines(hits.times[hard], 0, np.clip(hits.heights[hard] / top, 0, 1) * 0.55, color="#e31a1c", lw=2.0,
+                  label=L["strong"] % strong)
+        for i in np.nonzero(hard)[0]:
+            ax.text(hits.times[i], np.clip(hits.heights[i] / top, 0, 1) * 0.55 + 0.02, "%.0f" % pct[i], fontsize=7,
+                    color="#e31a1c", ha="center")
         if first is not None:
             k0 = int(math.ceil((lo - first) / period))
             for k in range(k0, int((hi - first) / period) + 1):
-                ax.axvline(first + k * period, color="#cccccc", lw=0.6, zorder=0)
+                ax.axvline(first + k * period, color="#999999" if k % 4 == 0 else "#dddddd", lw=0.8, zorder=0)
         for mo in report["moments"]:
             if lo <= mo["t"] <= hi:
-                hit = mo["near"]["backing"]
-                ok = hit is not None and hit["pct"] >= report["settings"]["strong"]
-                ax.axvline(mo["t"], color="#e31a1c" if ok else "#fb9a99", lw=1.4, ls="-" if ok else "--")
-                ax.text(mo["t"], 1.08, _moment_label(mo), fontsize=7, ha="center", color="#e31a1c" if ok else "#d6604d")
-        ax.axvspan(d["old_frame"] / float(fps), (d["old_frame"] + 1) / float(fps), color="#555555", alpha=0.35, label="old frame")
+                text = (L["title"] % mo["n"]) if mo["kind"] == "title" else (mo["id"] if mo["kind"] == "section" else L["return"])
+                colour = {"section": "#000000", "title": "#6a3d9a", "return": "#e31a1c"}[mo["kind"]]
+                ax.axvline(mo["t"], color=colour, lw=1.0, ls=":")
+                ax.text(mo["t"], 1.22, text, fontsize=8, ha="center", color=colour)
+        ax.axvspan(d["old_frame"] / float(fps), (d["old_frame"] + 1) / float(fps), color="#777777", alpha=0.45, label=L["old"])
         if d.get("frame") is not None:
-            ax.axvspan(d["frame"] / float(fps), (d["frame"] + 1) / float(fps), color="#33a02c", alpha=0.55, label="new frame")
+            ax.axvspan(d["frame"] / float(fps), (d["frame"] + 1) / float(fps), color="#33a02c", alpha=0.6, label=L["new"])
+        for p in punches:
+            if p.get("flash") == d.get("index") and d["kind"] == "flash":
+                ax.plot([p["old_frame"] / float(fps)], [-0.12], "v", color="#777777", ms=8, label=L["punch_old"])
+                if p.get("frame") is not None:
+                    ax.plot([p["frame"] / float(fps)], [-0.12], "v", color="#00a6c8", ms=8, label=L["punch_new"])
         ax.set_xlim(lo, hi)
-        ax.set_ylim(-1.0, 1.2)
+        ax.set_ylim(-0.25, 1.35)
         ax.set_yticks([])
-        ax.set_title("%s at %.3f s (frame %d): %s%s" % (d["kind"], d["t"], d["old_frame"], d["action"],
-                                                        "" if d.get("frame") is None else " to frame %d" % d["frame"]), fontsize=9)
-    axes[0, 0].legend(loc="lower left", fontsize=7, ncol=5)
-    axes[-1, 0].set_xlabel("seconds of the song (grey lines: beats; red: moments with a strong hit of the backing, pink: without)")
+        what = A[d["action"]] % d["frame"] if d["action"] == "move" else A[d["action"]]
+        ax.set_title(L["row"] % (K[d["kind"]], d["t"], d["old_frame"], what), fontsize=9)
+    handles, labels = axes[1, 0].get_legend_handles_labels()
+    seen = {}
+    for h, lab in zip(handles, labels):
+        seen.setdefault(lab, h)
+    axes[1, 0].legend(list(seen.values()), list(seen.keys()), loc="upper left", fontsize=7, ncol=4, framealpha=0.85)
+    axes[-1, 0].set_xlabel(L["x"])
     fig.tight_layout()
     fig.savefig(out, dpi=110)
     plt.close(fig)
-
-
-def _moment_label(m):
-    if m["kind"] == "title":
-        return "title %d sung" % m["n"]
-    if m["kind"] == "section":
-        return m["id"]
-    return "band returns"
 
 
 # ---- the commands --------------------------------------------------------------------------------------------------
@@ -674,6 +753,7 @@ def main(argv=None):
     p.add_argument("measure")
     p.add_argument("arrays")
     p.add_argument("out")
+    p.add_argument("--lang", choices=sorted(LABELS), default="en")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "measure":
@@ -698,7 +778,7 @@ def main(argv=None):
             print(json.dumps({"ok": True, "out": os.path.abspath(args.out)}))
             return 0
         if args.cmd == "figure":
-            figure(_load(args.measure), args.arrays, args.out)
+            figure(_load(args.measure), args.arrays, args.out, args.lang)
             print(json.dumps({"ok": True, "out": os.path.abspath(args.out)}))
             return 0
     except ValueError as exc:

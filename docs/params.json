@@ -14077,6 +14077,27 @@
    "step": 18
   },
   {
+   "tool": "flash_sync.py",
+   "kind": "option",
+   "name": "--lang",
+   "line": 756,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "\"en\"",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
    "tool": "foot_layer.py",
    "kind": "const",
    "name": "UNIT_CM",
@@ -52550,7 +52571,7 @@
     "typo_analyze.py",
     "mograph_analyze.py"
    ],
-   "values": 452,
+   "values": 453,
    "retarget": 16,
    "rig": 15,
    "dance": 39,
@@ -52574,9 +52595,9 @@
  ],
  "stale_notes": [],
  "counts": {
-  "entries": 2529,
+  "entries": 2530,
   "const": 2006,
-  "option": 136,
+  "option": 137,
   "option_of_constant": 39,
   "default": 387,
   "review": 448,

@@ -329,9 +329,9 @@ class PlaceTest(unittest.TestCase):
                 paths[name] = os.path.join(d, name + ".json")
                 with open(paths[name], "w", encoding="utf-8") as f:
                     json.dump(doc, f)
-            out = os.path.join(d, "measure.json")
+            out, arrays = os.path.join(d, "measure.json"), os.path.join(d, "arrays.npz")
             with contextlib.redirect_stdout(io.StringIO()):
-                code = FS.main(["measure", mix_path, voice_path, paths["structure"], paths["look"], out])
+                code = FS.main(["measure", mix_path, voice_path, paths["structure"], paths["look"], out, "--arrays", arrays])
             self.assertEqual(code, 0)
             with open(out, encoding="utf-8") as f:
                 rep = json.load(f)
@@ -352,7 +352,21 @@ class PlaceTest(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(FS.main(["table", out, table]), 0)
             with open(table, encoding="utf-8") as f:
-                self.assertIn("inter1", f.read())
+                text = f.read()
+            self.assertIn("inter1", text)
+            self.assertIn("伴奏の強い立ち上がり（全曲の", text)                  # the reason, in Japanese
+            try:
+                import matplotlib  # noqa: F401
+            except ImportError:
+                return
+            for lang in ("en", "ja"):
+                png = os.path.join(d, "figure_%s.png" % lang)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = FS.main(["figure", out, arrays, png, "--lang", lang])
+                if lang == "ja" and code == 2:
+                    continue                                                     # no Japanese font on this machine
+                self.assertEqual(code, 0, lang)
+                self.assertGreater(os.path.getsize(png), 10000)
 
 
 if __name__ == "__main__":
