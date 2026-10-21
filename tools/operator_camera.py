@@ -456,12 +456,14 @@ def hips_look_down(dancer, frame, cam):
 
 
 def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, frames=None, heights=None, look_reach=1.0,
-               at_least=None):
+               at_least=None, look_down=None):
     """the camera that frames the dancer at `frame` as `size` from the direction `yaw` (the window's Y angle):
     at the size's eye height (or `height`, or above her head when `high`), never below lowest_height over `frames`
     (default: the frame itself) nor below `at_least`, and for a size that shows her hips high enough to look down at
-    them by MIN_LOOK_DOWN from its distance times `look_reach` (the farthest the shot's move takes it).  `heights`
-    (head top, toes, eyes) replaces the frame's own (a steadier reading)"""
+    them by MIN_LOOK_DOWN from its distance times `look_reach` (the farthest the shot's move takes it); with
+    `look_down` (degrees), any size high enough to look down at her hips by that much (and by MIN_LOOK_DOWN at least for
+    a size that shows them: a close size asks CLOSE_LOOK_DOWN).  `heights` (head top, toes, eyes) replaces the frame's own
+    (a steadier reading)"""
     spec = SIZE_SPEC[size]
     fov = int(fov if fov is not None else spec["fov"])
     if heights is None:
@@ -488,11 +490,14 @@ def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, fram
         solved = solve_distance(headtop, bottom, height, top_row, fov)
     if solved is None:
         raise ValueError("no camera height frames %s with a field of %d degrees" % (size, fov))
-    if size in SHOWS_HIPS:
-        # the skirt: up until the hips are seen from MIN_LOOK_DOWN above at the farthest distance of the shot (the solve
-        # moves the camera back a little as it rises, so a few rounds)
+    angle = MIN_LOOK_DOWN if size in SHOWS_HIPS else None
+    if look_down is not None:
+        angle = float(look_down) if angle is None else max(angle, float(look_down))
+    if angle is not None:
+        # the skirt: up until the hips are seen from `angle` above at the farthest distance of the shot (the solve moves
+        # the camera back a little as it rises, so a few rounds)
         hips_top = max(dancer.at("hips", f)[1] for f in (frames if frames is not None else [frame]))
-        slope = math.tan(math.radians(MIN_LOOK_DOWN))
+        slope = math.tan(math.radians(angle))
         for _ in range(12):
             need = hips_top + solved[0] * look_reach * slope
             if height >= need - 1e-6:
@@ -502,6 +507,9 @@ def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, fram
                 raise ValueError("no camera height frames %s with a field of %d degrees looking down at the hips"
                                  % (size, fov))
             height, solved = need + 1e-3, raised
+        if look_down is not None and height < hips_top + solved[0] * look_reach * slope - 1e-6:
+            raise ValueError("no camera height frames %s with a field of %d degrees looking down at the hips by %g"
+                             % (size, fov, angle))
     r, pitch = solved
     ax, az = anchor(dancer, frame, size)
     position = (ax + r * math.sin(math.radians(yaw)), height, az - r * math.cos(math.radians(yaw)))
@@ -1410,6 +1418,10 @@ def shot_json(shot, music):
 
 # ---- guarding another camera ------------------------------------------------------------------------------------
 
+CLOSE_LOOK_DOWN = 30.0            # degrees: a close picture (waist and closer: CLOSE_SIZES) looks down at her hips this much
+                                  # (COMMON.md 2026-10-17: legs drawn close from 8 and 15 degrees above showed the underwear
+                                  # at 213.43 s; a viewpoint near the height of her hip joints is not used close either)
+CLOSE_SIZES = ("waist", "chest", "face")
 GUARD_POINTS = ("hips", "lhip", "rhip")    # where guard measures the look-down: the point between the hip joints at their
                                            # height (the hips every earlier check measured, and the look-down test was
                                            # drawn against) and either hip joint (the far one is the least looked down at)
@@ -1504,13 +1516,27 @@ def pelvis_spins(dancer):
     return out
 
 
-def guard_needs(dancer, last, windows=()):
+def close_frames(dancer, frames):
+    """per frame whether its picture (`frames`: CameraFrame per frame) shows her at a close size (CLOSE_SIZES: what is
+    seen of her from the head top down, classify)"""
+    out = []
+    for f, cam in enumerate(frames):
+        s = seen(dancer, f, cam)
+        out.append(classify(s["visible"], s["body_share"]) in CLOSE_SIZES)
+    return out
+
+
+def guard_needs(dancer, last, windows=(), close=None):
     """the look-down every frame up to `last` needs (degrees): MIN_LOOK_DOWN, FLARE_LOOK_DOWN while her shoulders
-    (flare_frames) or her lower body (pelvis_spins) turn fast, and what a window (first, last, degrees) asks over its
-    frames when that is more; with the frames of the fast turns"""
+    (flare_frames) or her lower body (pelvis_spins) turn fast, CLOSE_LOOK_DOWN on the frames `close` marks (a close
+    picture: close_frames), and what a window (first, last, degrees) asks over its frames when that is more; with the
+    frames of the fast turns"""
     flare, spin = flare_frames(dancer), pelvis_spins(dancer)
     fast = [flare[min(f, dancer.frames - 1)] or spin[min(f, dancer.frames - 1)] for f in range(last + 1)]
     need = [FLARE_LOOK_DOWN if fast[f] else MIN_LOOK_DOWN for f in range(last + 1)]
+    for f, c in enumerate(close or []):
+        if c and f <= last:
+            need[f] = max(need[f], CLOSE_LOOK_DOWN)
     for a, b, degrees in windows:
         for f in range(max(0, int(a)), min(last, int(b)) + 1):
             need[f] = max(need[f], float(degrees))
@@ -1582,7 +1608,8 @@ def guard_profile(asked, bounds):
 def guard_camera(dancer, keys, last, windows=()):
     """another camera (keys of a camera motion, up to frame `last`) kept from the low angle: where a frame looks down at
     her hips or either hip joint over its subframes (hip_points_over) less than it needs (guard_needs: 4.5 degrees, 15
-    while she turns fast, what a window asks), the camera swings up round its own look-at point, so the picture keeps
+    while she turns fast, 30 where the given camera frames her close, what a window asks), the camera swings up round its
+    own look-at point, so the picture keeps
     its subject, its size and the way it is seen from, and only tilts; the tilt rises before and settles after inside
     the shot (guard_profile, step_cuts).  The rest of the frames are the input's.  Returns (CameraFrame per frame, the
     cuts, the tilt per frame in degrees)"""
@@ -1590,7 +1617,7 @@ def guard_camera(dancer, keys, last, windows=()):
     states = [fk.camera_at(keys, f, frames_of_keys) for f in range(last + 1)]
     cuts = [c for c in step_cuts(keys) if c <= last]
     bounds = [0] + cuts + [last + 1]
-    need, _ = guard_needs(dancer, last, windows)
+    need, _ = guard_needs(dancer, last, windows, close_frames(dancer, [_window_frame(s) for s in states]))
     points = [hip_points_over(dancer, f) for f in range(last + 1)]
     asked = [0.0] * (last + 1)
     for f, s in enumerate(states):
@@ -1677,17 +1704,20 @@ def lift_aim(dancer, cams, tilts, base_tilts, cuts, windows):
     return [lifted(c, x) for c, x in zip(cams, lifts)], lifts, runs
 
 
-def guard_view(dancer, frames, need, fast, windows=()):
+def guard_view(dancer, frames, need, fast, windows=(), close=None):
     """the measures of the low angle on a camera path, every frame counted over its subframes (hip_points_over): the
-    least look-down at her hips and hip joints, the frames under what they need, the least over her fast turns, and over
-    every window"""
+    least look-down at her hips and hip joints, the frames under what they need, the least over her fast turns, over the
+    close pictures (`close`: the frames the given camera frames her close) and over every window"""
     angles = [look_down_at(cam.position, hip_points_over(dancer, f)) for f, cam in enumerate(frames)]
     turning = [a for a, t in zip(angles, fast) if t]
+    closing = [a for a, c in zip(angles, close or []) if c]
     out = {"look_down_min": _r(min(angles), 2), "look_down_min_at": int(min(range(len(angles)), key=angles.__getitem__)),
            "short_frames": sum(1 for a, n in zip(angles, need) if a < n - 1e-6),
            "under_4_5_frames": sum(1 for a in angles if a < MIN_LOOK_DOWN - 1e-6),
            "fast_turn_min": _r(min(turning), 2) if turning else None,
            "fast_turn_under_15_frames": sum(1 for a, t in zip(angles, fast) if t and a < FLARE_LOOK_DOWN - 1e-6),
+           "close_frames": len(closing), "close_min": _r(min(closing), 2) if closing else None,
+           "close_under_30_frames": sum(1 for a in closing if a < CLOSE_LOOK_DOWN - 1e-6),
            "windows": [{"frames": [int(a), int(b)], "need": float(d),
                         "min": _r(min(angles[max(0, int(a)):int(b) + 1]), 2)} for a, b, d in windows]}
     return out, angles
@@ -1833,9 +1863,10 @@ def run_guard(dance_path, model_path, camera_path, out_path, report_path=None, l
     out_full = os.path.abspath(out_path)
     write_bytes(out_full, vmd.dumps(camera_motion(frames, [0] + cuts)))
     back = vmd.load(out_full)
-    need, fast = guard_needs(dancer, last, windows)
-    view_before, angles_before = guard_view(dancer, before, need, fast, windows)
-    view_after, angles_after = guard_view(dancer, frames, need, fast, windows)
+    close = close_frames(dancer, before)
+    need, fast = guard_needs(dancer, last, windows, close)
+    view_before, angles_before = guard_view(dancer, before, need, fast, windows, close)
+    view_after, angles_after = guard_view(dancer, frames, need, fast, windows, close)
     cut_set = set(cuts)
     steps = [abs(tilts[f + 1] - tilts[f]) for f in range(last) if f + 1 not in cut_set]
     tilted = [f for f, t in enumerate(tilts) if t > 0.0]
@@ -1849,7 +1880,8 @@ def run_guard(dance_path, model_path, camera_path, out_path, report_path=None, l
         spans = guard_spans(dancer, before, frames, tilts, cuts, angles_before, angles_after, need)
         report = dict(result, dance=os.path.abspath(dance_path), model=os.path.abspath(model_path),
                       camera=os.path.abspath(camera_path), windows=[[a, b, d] for a, b, d in windows],
-                      min_look_down=MIN_LOOK_DOWN, flare_look_down=FLARE_LOOK_DOWN, flare_spin=FLARE_SPIN,
+                      min_look_down=MIN_LOOK_DOWN, flare_look_down=FLARE_LOOK_DOWN, close_look_down=CLOSE_LOOK_DOWN,
+                      flare_spin=FLARE_SPIN,
                       flare_hold=FLARE_HOLD, pelvis_spin=PELVIS_SPIN, pelvis_frames=[PELVIS_BEFORE, PELVIS_AFTER],
                       points=list(GUARD_POINTS), subframes=GUARD_SUBFRAMES, rate=GUARD_RATE, ramp=GUARD_RAMP,
                       hold=GUARD_HOLD, smooth=GUARD_SMOOTH, close=GUARD_CLOSE, margin=GUARD_MARGIN,

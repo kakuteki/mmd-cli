@@ -1936,5 +1936,65 @@ class GuardCommandLiftTest(unittest.TestCase):
             if run["lift_max"] > 0.0:
                 self.assertLess(run["top_edge_max_after"], run["top_edge_max_before"], run)
 
+
+class CloseLookDownTest(unittest.TestCase):
+    """the close sizes (waist and closer) look down at her hips by 30 degrees or more (COMMON.md, 2026-10-17: legs drawn
+    close from 8 and 15 degrees above showed the underwear at 213.43 s; a viewpoint near the height of her hip joints is
+    not used close either): frame_size frames a size from as high as a look-down asks, and guard holds the close pictures
+    of another camera to it (camsync2: the camera D had no close size at all)"""
+
+    def test_a_close_size_is_framed_from_as_high_as_its_look_down_asks(self):
+        d = standing(10)
+        for size in ("waist", "chest"):
+            plain = oc.frame_size(d, 0, size, 0.0, fov=30)
+            self.assertLess(look_down_at_her_hips(d, 0, plain.position), 30.0, size)
+            cam = oc.frame_size(d, 0, size, 0.0, fov=30, look_down=30.5)
+            self.assertGreaterEqual(look_down_at_her_hips(d, 0, cam.position), 30.5 - 1e-6, size)
+            # still that size: her head top on the size's row, the picture's bottom edge at its cut
+            s = oc.seen(d, 0, cam)
+            self.assertAlmostEqual(s["headtop_v"], 1.0 - 2.0 * oc.SIZE_SPEC[size]["room"], places=3)
+            self.assertEqual(oc.classify(s["visible"], s["body_share"]), size)
+            self.assertGreater(cam.position[1], plain.position[1], size)
+
+    def test_without_a_look_down_the_frame_is_the_one_before(self):
+        d = standing(10)
+        for size in oc.SIZES:
+            self.assertEqual(oc.frame_size(d, 0, size, 25.0), oc.frame_size(d, 0, size, 25.0, look_down=None))
+
+    def test_the_needs_of_the_close_frames_are_the_close_look_down(self):
+        d = standing(60)
+        close = [20 <= f < 40 for f in range(60)]
+        need, _ = oc.guard_needs(d, 59, (), close)
+        self.assertEqual(need[:20], [oc.MIN_LOOK_DOWN] * 20)
+        self.assertEqual(need[20:40], [oc.CLOSE_LOOK_DOWN] * 20)
+        self.assertEqual(need[40:], [oc.MIN_LOOK_DOWN] * 20)
+        self.assertEqual(oc.CLOSE_LOOK_DOWN, 30.0)
+
+    def test_guard_raises_a_close_picture_to_the_close_look_down(self):
+        # a chest shot from her eye height (it looks down at her hips by about 20 degrees): every frame and subframe of
+        # it is raised to look down at them by 30 or more
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertGreater(min(tilts), 0.0)
+        for f in range(90):
+            points = [between_frames(d, n, f, k) for n in ("hips", "lhip", "rhip") for k in range(16)]
+            self.assertGreaterEqual(look_down_at_points(frames[f].position, points), 30.0 - 1e-6, f)
+
+    def test_guard_leaves_a_knee_picture_to_the_usual_rule(self):
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "knee", 0.0)
+        self.assertGreater(look_down_at_her_hips(d, 0, cam.position), oc.MIN_LOOK_DOWN)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertEqual(max(tilts), 0.0)
+
+    def test_a_close_shot_is_judged_on_the_camera_it_is_given(self):
+        # a knee shot and a waist shot after a cut: only the waist shot's frames ask the close look-down
+        d = standing(120)
+        knee = oc.frame_size(d, 0, "knee", 0.0)
+        waist = oc.frame_size(d, 0, "waist", 40.0, fov=30)
+        self.assertEqual(oc.close_frames(d, [knee] * 60 + [waist] * 60), [False] * 60 + [True] * 60)
+
+
 if __name__ == "__main__":
     unittest.main()
