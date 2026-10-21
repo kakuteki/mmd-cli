@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2969（定数 2406・引数 147・関数の既定 416。定数を既定にする引数 42 は定数の行に書き、数えない）、見直しの印 504（retarget 281・rig 72・踊りだけ 163）、記録の出所つき 84。
+- 数: 全部 2974（定数 2410・引数 147・関数の既定 417。定数を既定にする引数 42 は定数の行に書き、数えない）、見直しの印 506（retarget 281・rig 72・踊りだけ 165）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -29,7 +29,7 @@
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・kinetic_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py・flash_sync.py | 632 | 16 | 15 | 49 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
-| 19 | カメラ | make_camera.py・operator_camera.py | 292 | 9 | 4 | 34 | （物差しなし） | camera_rhythm.py |
+| 19 | カメラ | make_camera.py・operator_camera.py | 297 | 9 | 4 | 36 | （物差しなし） | camera_rhythm.py |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
 
@@ -2060,7 +2060,7 @@
 | --labels | "A,B" |  | 1047 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
 | --lang | "en" |  | 1052 |  |  |  |  |  |  |  |  |  |
 
-## make_camera.py（19. カメラ、181）
+## make_camera.py（19. カメラ、186）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2166,85 +2166,90 @@
 | MOVE_LEAST | 0.3 |  | 810 | of its full size: a move that has less room than this is drawn another way |  |  |  |  |  |  |  |  |
 | MOVE_TAIL | 2.0 |  | 811 | beats: this many or more left after a shot's last whole move take one more move of 4 beats that the next cut cuts into (the camera still moving at the cut), not a stop (… |  |  |  | ○ |  |  |  | dance |
 | MOVE_OVERRUN | 3 | frames | 815 | frames a move may run past its shot's end (the cut hides them: a cut moved onto a flash shortens its shot by 2, and a shot that starts on frame 0 or ends on a cut before… |  |  |  | ○ |  |  |  | dance |
-| ONSET_DELAY | 3 | frames | 818 | frames: a strong onset this far into the shot's first bar starts the move instead of the cut |  |  |  |  |  |  |  |  |
-| STRONG（引数 --strong） | 4.0 |  | 819 | z: a strong onset (a04's) |  |  |  |  |  |  |  |  |
-| HOOK_REACH | 15 | frames | 820 | frames: no push in this near a title word (the motion graphics' punch is the zoom there) or a punch of --punch |  |  |  |  |  |  |  |  |
-| CUT_SNAP | 6 | frames | 822 | frames (under half a beat at 140 BPM): a planned cut this near a frame of --cut-on (the MV's light flashes: a cut on the flash is strong) moves onto it; farther, a cut i… |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_CUT_LEAD | 0.077 | s | 825 | s before the beat a cut falls (the references: typorev, 2.3 frames) |  |  |  | ○ |  |  |  | dance |
-| GUARD_RISE_LEAST | 1.0 | deg | 826 | degrees: with --guard-report, no crane down where the guard's tilt rises more than this (the guard swings the camera up round the look-at point where she spins: a crane … |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_PITCHES | (4.0, 5.0) | deg | 831 | degrees the window looks down in a shot that holds an eye contact (--contacts): level with her eyes, and its Y on her face's way (facing_at), so that the camera stays wi… |  |  |  | ○ |  |  |  | dance |
-| MUSIC_CONTACT_TURNS | (12.0, -12.0) | deg | 835 | degrees off her face's way a contact shot takes when its own way does not cut clearly from the shot before |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_LEAST | 90 | frames | 838 | frames a shot lasts at least to hold a contact (eye_gaze: a run of 48 frames within reach and none 2 frames before or 6 after a cut); the wanted time goes to the nearest… |  |  |  |  |  |  |  |  |
-| FACING_HOLD | 8.0 | deg | 841 | degrees either side of its middle her face's way may wander over the frames a contact shot is aimed at (steady_facing): the camera on the middle stays within eye_gaze's … |  |  |  |  |  |  |  |  |
-| CONTACT_RUN | 48 | frames | 844 | frames: eye_gaze makes a contact of a run within reach this long (its CONTACT_MIN) |  |  |  |  |  |  |  |  |
-| CONTACT_CLEAR | (6, 2) | frames | 845 | frames after a cut and before the next with no contact (eye_gaze's CUT_CLEAR, END_CLEAR) |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.full.body | 0.84 |  | 867 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.full.eye | -2.5 |  | 867 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.full.room | 0.06 |  | 867 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.knee.cut | 0.80 |  | 868 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.knee.eye | -1.5 |  | 868 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.knee.room | 0.07 |  | 868 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.waist.cut | 0.56 |  | 869 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.waist.eye | -0.5 |  | 869 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.waist.room | 0.08 |  | 869 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.chest.cut | 0.335 |  | 870 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.chest.eye | 0.0 |  | 870 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SPEC.chest.room | 0.08 |  | 870 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_FITS.full | ({}, {"body": 0.80}, {"body": 0.76}, {"body": 0.72}) |  | 874 | operator_camera's SIZE_SPEC through the music camera's lens (30), but for the waist shot's cut: 0.56 of her height from the head top down (0.50 there) puts the bottom ed… |  |  |  | ○ |  |  |  | dance |
-| MUSIC_SIZE_FITS.knee | ({}, {"cut": 0.76}, {"cut": 0.84}, {"room": 0.04}, {"room":… |  | 875 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_FITS.waist | ({}, {"cut": 0.53}, {"cut": 0.59}, {"room": 0.05}) |  | 877 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_FITS.chest | ({}, {"cut": 0.36, "room": 0.05}, {"cut": 0.31}, {"cut": 0.… |  | 878 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZED_YAWS | MUSIC_YAWS + (55.0, -55.0) |  | 882 | the ways a sized shot is seen from (two more for the 30-degree rule) |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SHARE.chest | 0.11 |  | 883 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SHARE.knee | 0.21 |  | 883 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_SHARE.waist | 0.145 |  | 883 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CHORUS_SHARE.chest | 0.10 |  | 884 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CHORUS_SHARE.knee | 0.20 |  | 884 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CHORUS_SHARE.waist | 0.16 |  | 884 |  |  |  |  |  |  |  |  |  |
-| MUSIC_SUNG | 0.5 |  | 891 | share of a shot's frames inside the song's lines for it to be sung |  |  |  | ○ |  |  |  | dance |
-| MUSIC_NOTE | 0.5 | s | 892 | s: a vowel held this long (with the long marks after it) is a sustained note (lip_sync's alignment of the MV's voice: 7 such, 4 of them in the bridge) |  |  |  |  |  |  |  |  |
-| MUSIC_FOOTWORK | 20.0 | units/s | 894 | units/s: her faster toe's pace on the floor at its 90th percentile over a shot at or above this is footwork, shot full (on the MV's dance the 90th percentile over a seco… |  | ○ |  | ○ |  |  |  | retarget |
-| MUSIC_FRAME.floor | 0.05 |  | 897 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
-| MUSIC_FRAME.head_free | 0.97 |  | 897 |  |  |  |  |  |  |  |  |  |
-| MUSIC_FRAME.head_row | 0.90 |  | 897 |  |  |  |  |  |  |  |  |  |
-| MUSIC_FRAME.hold | 0.85 |  | 897 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
-| MUSIC_FRAME.in | 0.06 |  | 897 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
-| MUSIC_FRAME.out | 0.03 |  | 897 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
-| MUSIC_FRAME.side | 1.58 |  | 897 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
-| MUSIC_FRAME.ends | 3 |  | 898 |  |  |  |  |  |  |  |  |  |
-| MUSIC_FRAME.look_down | 0.3 |  | 898 |  |  |  |  |  |  |  |  |  |
-| MUSIC_FRAME.look_slack | 0.1 |  | 898 |  |  |  |  |  |  |  |  |  |
-| MUSIC_TURN | 32.0 | deg | 909 | degrees: a cut between two shots of one size turns the camera round her this much (the 30-degree rule, and 2 for the look-at point's walk) ... |  |  |  |  |  |  |  |  |
-| MUSIC_SIZE_RATIO | (0.78, 1.28) |  | 911 | ... and one between two sizes that turns less changes her height in the picture (head top to the lower ankle) by more than this (the review's count of the cuts near a ju… |  |  |  |  |  |  |  |  |
-| MUSIC_LINE_SIDE | 0.45 |  | 914 | a cut crosses the line when her face's way turns from one side of the picture to the other, by this sine or more on both (sin 30 degrees: the review's count, less 0.05) |  |  |  |  |  |  |  |  |
-| MUSIC_DOLLY_AT | 40.0 | units | 919 | units: MUSIC_FULL's dolly is for a camera this far; a sized shot's dolly is the same share of its own distance |  | ○ |  |  |  |  |  | retarget |
-| MUSIC_CLOSE_PITCH_TOP | 50.0 | deg | 921 | degrees: the highest a close shot's crane up takes the window's X |  |  |  |  |  |  |  |  |
-| MUSIC_SCALES | (1.0, 0.7, 0.5, 0.35) |  | 922 | of a move's size: smaller in turn until every frame shows the shot's size |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_FOVS | (30, 32, 34, 36, 38, 40) |  | 923 | the lenses a chest shot that holds an eye contact may take, the narrowest that ... |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_UP | 4.5 | deg | 924 | ... keeps the camera at most this far above her eyes (degrees; eye_gaze's reach is 5.3 up off her head's way): looking down at her hips by 30 degrees, a lens of 30 stand… |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_RUN | 54 |  | 927 | ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6), both measured off her head's way (facing_both: she looks down 5 degrees, the camera… |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_SIDE | 12.0 |  | 930 | ... and at most this far round from it (eye_gaze's reach is 16 sideways) |  |  |  |  |  |  |  |  |
-| MUSIC_ROUNDS | 4 |  | 931 | times the song is planned again when a close shot has to be shot wider |  |  |  | ○ |  |  |  | dance |
-| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25,… |  | 932 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_SHIFT | 0.25 |  | 938 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
-| FACE_RADIUS | 1.15 | units | 939 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
-| FACE_DOWN | 0.45 |  | 940 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
-| FACE_MARGIN | 0.02 |  | 941 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
-| MUSIC_CLOSE_WINDOW | 30 | frames | 1132 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
-| ZOOM_REACH | (2, 14) | frames | 1134 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
-| _shape(ramp) | 0.125 |  | 1232 |  |  |  |  |  |  |  |  |  |
-| plan_music_shots(seed) | 0 |  | 1421 |  |  |  |  |  |  |  |  |  |
-| frame_sized(shift) | 0.0 |  | 1563 |  |  |  |  |  |  |  |  |  |
-| _mean_way(step) | 5 |  | 1818 |  |  |  |  |  |  |  |  |  |
-| _sized_shot(waive) | 0 |  | 1843 |  |  |  |  |  |  |  |  |  |
-| music_motion(handheld) | 0.0 |  | 2079 |  |  |  |  |  |  |  |  |  |
-| music_motion(seed) | 0 |  | 2079 |  |  |  |  |  |  |  |  |  |
-| run_music(handheld) | 0.0 |  | 2171 |  |  |  |  |  |  |  |  |  |
-| run_music(seed) | 0 |  | 2171 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 2262 |  |  |  |  |  |  |  |  |  |
-| run(handheld) | 0.0 |  | 2263 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2296 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
-| --handheld | 0.0 |  | 2300 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
+| MUSIC_TURN_PACE | 0.8 | deg | 818 | degrees: the most a move turns the camera round her (an orbit's heading, a crane's pitch) on one frame ... |  |  |  |  |  |  |  |  |
+| MUSIC_TURN_SECOND | 20.0 |  | 820 | ... and over any second (FPS frames). (v12, 2026-10-21, BT.1702: the camera fix3's orbits of 40 degrees over a bar from a strong onset, the hit 1 - (1 - t)^3, turned 2.3… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_HIT_POWERS | (3.0, 2.5, 2.0, 1.5) |  | 827 | a hit's share 1 - (1 - t)^p: the steepest of these within both (its fastest frame still its first, on the onset), else the last with the turn made smaller to fit |  |  |  |  |  |  |  |  |
+| ONSET_DELAY | 3 | frames | 829 | frames: a strong onset this far into the shot's first bar starts the move instead of the cut |  |  |  |  |  |  |  |  |
+| STRONG（引数 --strong） | 4.0 |  | 830 | z: a strong onset (a04's) |  |  |  |  |  |  |  |  |
+| HOOK_REACH | 15 | frames | 831 | frames: no push in this near a title word (the motion graphics' punch is the zoom there) or a punch of --punch |  |  |  |  |  |  |  |  |
+| CUT_SNAP | 6 | frames | 833 | frames (under half a beat at 140 BPM): a planned cut this near a frame of --cut-on (the MV's light flashes: a cut on the flash is strong) moves onto it; farther, a cut i… |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_CUT_LEAD | 0.077 | s | 836 | s before the beat a cut falls (the references: typorev, 2.3 frames) |  |  |  | ○ |  |  |  | dance |
+| GUARD_RISE_LEAST | 1.0 | deg | 837 | degrees: with --guard-report, no crane down where the guard's tilt rises more than this (the guard swings the camera up round the look-at point where she spins: a crane … |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_PITCHES | (4.0, 5.0) | deg | 842 | degrees the window looks down in a shot that holds an eye contact (--contacts): level with her eyes, and its Y on her face's way (facing_at), so that the camera stays wi… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_CONTACT_TURNS | (12.0, -12.0) | deg | 846 | degrees off her face's way a contact shot takes when its own way does not cut clearly from the shot before |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_LEAST | 90 | frames | 849 | frames a shot lasts at least to hold a contact (eye_gaze: a run of 48 frames within reach and none 2 frames before or 6 after a cut); the wanted time goes to the nearest… |  |  |  |  |  |  |  |  |
+| FACING_HOLD | 8.0 | deg | 852 | degrees either side of its middle her face's way may wander over the frames a contact shot is aimed at (steady_facing): the camera on the middle stays within eye_gaze's … |  |  |  |  |  |  |  |  |
+| CONTACT_RUN | 48 | frames | 855 | frames: eye_gaze makes a contact of a run within reach this long (its CONTACT_MIN) |  |  |  |  |  |  |  |  |
+| CONTACT_CLEAR | (6, 2) | frames | 856 | frames after a cut and before the next with no contact (eye_gaze's CUT_CLEAR, END_CLEAR) |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.full.body | 0.84 |  | 878 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.full.eye | -2.5 |  | 878 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.full.room | 0.06 |  | 878 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.knee.cut | 0.80 |  | 879 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.knee.eye | -1.5 |  | 879 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.knee.room | 0.07 |  | 879 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.waist.cut | 0.56 |  | 880 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.waist.eye | -0.5 |  | 880 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.waist.room | 0.08 |  | 880 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.chest.cut | 0.335 |  | 881 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.chest.eye | 0.0 |  | 881 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SPEC.chest.room | 0.08 |  | 881 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_FITS.full | ({}, {"body": 0.80}, {"body": 0.76}, {"body": 0.72}) |  | 885 | operator_camera's SIZE_SPEC through the music camera's lens (30), but for the waist shot's cut: 0.56 of her height from the head top down (0.50 there) puts the bottom ed… |  |  |  | ○ |  |  |  | dance |
+| MUSIC_SIZE_FITS.knee | ({}, {"cut": 0.76}, {"cut": 0.84}, {"room": 0.04}, {"room":… |  | 886 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_FITS.waist | ({}, {"cut": 0.53}, {"cut": 0.59}, {"room": 0.05}) |  | 888 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_FITS.chest | ({}, {"cut": 0.36, "room": 0.05}, {"cut": 0.31}, {"cut": 0.… |  | 889 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZED_YAWS | MUSIC_YAWS + (55.0, -55.0) |  | 893 | the ways a sized shot is seen from (two more for the 30-degree rule) |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SHARE.chest | 0.11 |  | 894 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SHARE.knee | 0.21 |  | 894 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_SHARE.waist | 0.145 |  | 894 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CHORUS_SHARE.chest | 0.10 |  | 895 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CHORUS_SHARE.knee | 0.20 |  | 895 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CHORUS_SHARE.waist | 0.16 |  | 895 |  |  |  |  |  |  |  |  |  |
+| MUSIC_SUNG | 0.5 |  | 902 | share of a shot's frames inside the song's lines for it to be sung |  |  |  | ○ |  |  |  | dance |
+| MUSIC_NOTE | 0.5 | s | 903 | s: a vowel held this long (with the long marks after it) is a sustained note (lip_sync's alignment of the MV's voice: 7 such, 4 of them in the bridge) |  |  |  |  |  |  |  |  |
+| MUSIC_FOOTWORK | 20.0 | units/s | 905 | units/s: her faster toe's pace on the floor at its 90th percentile over a shot at or above this is footwork, shot full (on the MV's dance the 90th percentile over a seco… |  | ○ |  | ○ |  |  |  | retarget |
+| MUSIC_FRAME.floor | 0.05 |  | 908 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_FRAME.head_free | 0.97 |  | 908 |  |  |  |  |  |  |  |  |  |
+| MUSIC_FRAME.head_row | 0.90 |  | 908 |  |  |  |  |  |  |  |  |  |
+| MUSIC_FRAME.hold | 0.85 |  | 908 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_FRAME.in | 0.06 |  | 908 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_FRAME.out | 0.03 |  | 908 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_FRAME.side | 1.58 |  | 908 | or above this is footwork, shot full (on the MV's dance the 90th percentile over a second is 11.6 at the median, 19.6 at the 75th percentile) |  |  |  | ○ |  |  |  | dance |
+| MUSIC_FRAME.ends | 3 |  | 909 |  |  |  |  |  |  |  |  |  |
+| MUSIC_FRAME.look_down | 0.3 |  | 909 |  |  |  |  |  |  |  |  |  |
+| MUSIC_FRAME.look_slack | 0.1 |  | 909 |  |  |  |  |  |  |  |  |  |
+| MUSIC_TURN | 32.0 | deg | 920 | degrees: a cut between two shots of one size turns the camera round her this much (the 30-degree rule, and 2 for the look-at point's walk) ... |  |  |  |  |  |  |  |  |
+| MUSIC_SIZE_RATIO | (0.78, 1.28) |  | 922 | ... and one between two sizes that turns less changes her height in the picture (head top to the lower ankle) by more than this (the review's count of the cuts near a ju… |  |  |  |  |  |  |  |  |
+| MUSIC_LINE_SIDE | 0.45 |  | 925 | a cut crosses the line when her face's way turns from one side of the picture to the other, by this sine or more on both (sin 30 degrees: the review's count, less 0.05) |  |  |  |  |  |  |  |  |
+| MUSIC_DOLLY_AT | 40.0 | units | 930 | units: MUSIC_FULL's dolly is for a camera this far; a sized shot's dolly is the same share of its own distance |  | ○ |  |  |  |  |  | retarget |
+| MUSIC_CLOSE_PITCH_TOP | 50.0 | deg | 932 | degrees: the highest a close shot's crane up takes the window's X |  |  |  |  |  |  |  |  |
+| MUSIC_SCALES | (1.0, 0.7, 0.5, 0.35) |  | 933 | of a move's size: smaller in turn until every frame shows the shot's size |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_FOVS | (30, 32, 34, 36, 38, 40) |  | 934 | the lenses a chest shot that holds an eye contact may take, the narrowest that ... |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_UP | 4.5 | deg | 935 | ... keeps the camera at most this far above her eyes (degrees; eye_gaze's reach is 5.3 up off her head's way): looking down at her hips by 30 degrees, a lens of 30 stand… |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_RUN | 54 |  | 938 | ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6), both measured off her head's way (facing_both: she looks down 5 degrees, the camera… |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_SIDE | 12.0 |  | 941 | ... and at most this far round from it (eye_gaze's reach is 16 sideways) |  |  |  |  |  |  |  |  |
+| MUSIC_ROUNDS | 4 |  | 942 | times the song is planned again when a close shot has to be shot wider |  |  |  | ○ |  |  |  | dance |
+| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25,… |  | 943 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_SHIFT | 0.25 |  | 949 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
+| MUSIC_WORDS_TRACK_BEATS | (4, 8) |  | 950 | beats from the cut a track takes that carries her face from one of the shifts to another, for a shot that no fixed shift keeps off the words (words on one side at the cu… |  |  |  | ○ |  |  |  | dance |
+| FACE_RADIUS | 1.15 | units | 955 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
+| FACE_DOWN | 0.45 |  | 956 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
+| FACE_MARGIN | 0.02 |  | 957 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
+| MUSIC_CLOSE_WINDOW | 30 | frames | 1148 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
+| ZOOM_REACH | (2, 14) | frames | 1150 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
+| _shape(power) | 3.0 |  | 1249 |  |  |  |  |  |  |  |  |  |
+| _shape(ramp) | 0.125 |  | 1249 |  |  |  |  |  |  |  |  |  |
+| plan_music_shots(seed) | 0 |  | 1469 |  |  |  |  |  |  |  |  |  |
+| frame_sized(shift) | 0.0 |  | 1611 |  |  |  |  |  |  |  |  |  |
+| _mean_way(step) | 5 |  | 1875 |  |  |  |  |  |  |  |  |  |
+| _sized_shot(waive) | 0 |  | 1900 |  |  |  |  |  |  |  |  |  |
+| music_motion(handheld) | 0.0 |  | 2166 |  |  |  |  |  |  |  |  |  |
+| music_motion(seed) | 0 |  | 2166 |  |  |  |  |  |  |  |  |  |
+| run_music(handheld) | 0.0 |  | 2258 |  |  |  |  |  |  |  |  |  |
+| run_music(seed) | 0 |  | 2258 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 2349 |  |  |  |  |  |  |  |  |  |
+| run(handheld) | 0.0 |  | 2350 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2383 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
+| --handheld | 0.0 |  | 2387 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
 
 ## operator_camera.py（19. カメラ、111）
 

@@ -1,5 +1,6 @@
 """tools/make_camera.py: a calm camera motion generated from a dance motion, without MMD."""
 import contextlib
+import dataclasses
 import glob
 import importlib.util
 import io
@@ -1303,6 +1304,86 @@ def plan(song=None, onsets=None, seed=0, dance=None, **kw):
                                ONSETS if onsets is None else onsets, seed=seed, **kw)
 
 
+def view_way(pitch, yaw):
+    p, y = math.radians(pitch), math.radians(yaw)
+    return (math.cos(p) * math.sin(y), math.sin(p), math.cos(p) * math.cos(y))
+
+
+def turns_of(values):
+    """the degrees the camera's view turns from each frame to the next (its window's X and Y: what sweeps the background
+    across the picture)"""
+    out = []
+    for a, b in zip(values, values[1:]):
+        u, v = view_way(a["pitch"], a["yaw"]), view_way(b["pitch"], b["yaw"])
+        cross = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+        out.append(math.degrees(math.atan2(math.sqrt(sum(c * c for c in cross)), sum(x * y for x, y in zip(u, v)))))
+    return out
+
+
+def check_turns(case, values, where):
+    """no frame of a shot turns the camera more than MUSIC_TURN_PACE, no second (30 frames) more than MUSIC_TURN_SECOND"""
+    steps = turns_of(values)
+    if not steps:
+        return
+    case.assertLessEqual(max(steps), mc.MUSIC_TURN_PACE + 1e-6, where)
+    second = max(sum(steps[i:i + 30]) for i in range(max(1, len(steps) - 30 + 1)))
+    case.assertLessEqual(second, mc.MUSIC_TURN_SECOND + 1e-4, where)
+
+
+
+class MusicTurnPaceTest(unittest.TestCase):
+    """(v12, 2026-10-21: BT.1702) a move that turns the camera round her (an orbit, a crane) within MUSIC_TURN_PACE a frame
+    and MUSIC_TURN_SECOND a second: a hit at the steepest of MUSIC_HIT_POWERS that keeps within both (its fastest frame
+    still the first), else at the last with its turn made smaller to fit; a drive made smaller; a dolly and a track as
+    they are"""
+
+    def within(self, move):
+        peak, second = mc.move_turn(move)
+        self.assertLessEqual(peak, mc.MUSIC_TURN_PACE + 1e-9, move)
+        self.assertLessEqual(second, mc.MUSIC_TURN_SECOND + 1e-9, move)
+        return peak, second
+
+    def test_a_big_hit_keeps_a_softer_accent_and_turns_less(self):
+        for amount in (-40.0, 40.0):
+            m = mc.paced(mc.Move("orbit", 100, 51, "hit", amount, 0.25))
+            peak, second = self.within(m)
+            self.assertEqual(m.power, mc.MUSIC_HIT_POWERS[-1])
+            self.assertEqual(m.shape, "hit")
+            self.assertLess(abs(m.amount), 40.0)
+            self.assertEqual(math.copysign(1.0, m.amount), math.copysign(1.0, amount))
+            # as large as the caps leave it: on one of them
+            self.assertAlmostEqual(max(peak / mc.MUSIC_TURN_PACE, second / mc.MUSIC_TURN_SECOND), 1.0, places=3)
+            # the share done on each frame falls from the first (the accent on the onset)
+            done = [mc._shape("hit", i / 51.0, 0.25, m.power) for i in range(52)]
+            steps = [b - a for a, b in zip(done, done[1:])]
+            self.assertEqual(max(steps), steps[0])
+
+    def test_a_middling_hit_takes_the_steepest_power_within_the_caps(self):
+        m = mc.paced(mc.Move("orbit", 100, 51, "hit", 18.0, 0.25))
+        self.within(m)
+        self.assertEqual(m.amount, 18.0)
+        self.assertLess(m.power, mc.MUSIC_HIT_POWERS[0])
+        for p in mc.MUSIC_HIT_POWERS:
+            if p > m.power:
+                peak, second = mc.move_turn(dataclasses.replace(m, power=p))
+                self.assertTrue(peak > mc.MUSIC_TURN_PACE or second > mc.MUSIC_TURN_SECOND, p)
+
+    def test_a_small_hit_is_left_as_it_is(self):
+        m = mc.Move("crane_up", 100, 51, "hit", 6.0, 0.25)
+        self.assertEqual(mc.paced(m), m)
+        self.assertEqual(m.power, 3.0)                       # the hit 1 - (1 - t)^3 as before
+
+    def test_a_fast_drive_turns_less_and_a_dolly_and_a_track_are_left_as_they_are(self):
+        m = mc.paced(mc.Move("orbit", 0, 51, "drive", -40.0, 0.25))
+        self.within(m)
+        self.assertEqual(m.shape, "drive")
+        self.assertLess(-40.0, m.amount)
+        self.assertLess(m.amount, 0.0)
+        for name in ("dolly_in", "track"):
+            m = mc.Move(name, 0, 51, "hit", 9.0, 0.25)
+            self.assertEqual(mc.paced(m), m)
+            self.assertEqual(mc.move_turn(m), (0.0, 0.0))
+
 
 class MusicPartsTest(unittest.TestCase):
     def test_a_part_that_starts_off_the_bar_lines_starts_its_first_bar_there(self):
@@ -1343,6 +1424,14 @@ class MusicMovesTest(unittest.TestCase):
             steps = [abs(values[f + 1][key] - values[f][key]) for f in range(m.start, min(m.start + m.frames, s.end))]
             self.assertEqual(max(steps), steps[0], (s.start, m.name))
             self.assertTrue(all(b <= a + 1e-12 for a, b in zip(steps, steps[1:])), (s.start, m.name))
+
+    def test_no_move_turns_the_camera_faster_than_its_pace(self):
+        # (v12, 2026-10-21: BT.1702) an orbit's heading and a crane's pitch turn the camera at most MUSIC_TURN_PACE degrees
+        # a frame and MUSIC_TURN_SECOND over a second, whatever the seed: a chorus's hit of 40 degrees over a bar swept the
+        # city's lights across the picture's cells 7 times a second
+        for seed in range(4):
+            for s in plan(seed=seed):
+                check_turns(self, mc.music_shot_values(s), (seed, s.start))
 
     def test_a_drive_is_at_its_even_pace_from_one_beat_in(self):
         # up to pace over a beat, even, down over a beat (T2-46: two beats of ramp)
@@ -1857,6 +1946,33 @@ class MusicSizedPlanTest(unittest.TestCase):
                 self.assertFalse(mc.crosses_line(mc.facing_at(chain, after.start), yaw_before, yaw_after),
                                  (seed, after.start, yaw_before, yaw_after))
 
+    def test_no_move_turns_the_camera_faster_than_its_pace_and_a_hit_keeps_its_accent(self):
+        # (v12, 2026-10-21: BT.1702) the sized shots' orbits and cranes within MUSIC_TURN_PACE a frame and
+        # MUSIC_TURN_SECOND a second; a hit still turns fastest on its first frame.  With the chorus's orbits drawn first
+        # its one-bar shots orbit from the cut (a hit of 40 degrees over the bar: 1.95 degrees a frame before the caps)
+        palette = mc.MUSIC_PALETTE
+        mc.MUSIC_PALETTE = dict(palette, chorus=("orbit", "crane_up", "orbit", "dolly_in"))
+        try:
+            plans = [sized_plan(seed=seed)[2] for seed in range(2)]
+        finally:
+            mc.MUSIC_PALETTE = palette
+        hits = 0
+        orbits = 0
+        for seed, shots in enumerate([self.shots] + plans):
+            for s in shots:
+                values = mc.music_shot_values(s)
+                check_turns(self, values, (seed, s.start))
+                for m in s.moves:
+                    if m.shape != "hit" or mc._move_channel(m.name) not in ("orbit", "crane"):
+                        continue
+                    a, b = m.start - s.start, min(m.start + m.frames, s.end) - s.start
+                    steps = turns_of(values[a:b + 1])
+                    self.assertAlmostEqual(max(steps), steps[0], places=9, msg=(seed, s.start, m.name))
+                    hits += 1
+                    orbits += m.name == "orbit"
+        self.assertGreater(hits, 0)
+        self.assertGreater(orbits, 0)
+
     def test_a_knee_shot_keeps_both_her_knees_in_on_every_frame(self):
         # (a frame of a knee shot without her knees reads as waist up, which asks the close look-down)
         knee = [s for s in self.shots if s.size == "knee"]
@@ -1942,6 +2058,25 @@ class MusicSizedPlanTest(unittest.TestCase):
         self.assertEqual(hit, 0)
         plain_hit = sum(1 for i, cam in enumerate(sized_cameras(verse)) if mc.face_on_boxes(self.dancer, verse.start + i, cam, [box]))
         self.assertGreater(plain_hit, 0)
+
+    def test_words_on_one_side_at_the_cut_and_on_the_other_later_are_kept_off_with_a_track(self):
+        # (v13 p5: the end of a big word over the picture's left 0.03-0.70 on the chorus's first two frames, the next over its
+        # right 0.80-1.00 from 82 frames on: no side kept her face off both) words over the left 0.72 of the picture on the
+        # shot's first frames and over its right 0.30 on its last: no fixed composition keeps her face off both, a track from
+        # the right to the left does
+        verse = [s for s in self.shots if s.kind == "verse"][0]
+        boxes = [[verse.start, verse.start + 5, 0.0, 0.0, 0.72, 1.0, "back"], [verse.end - 29, verse.end, 0.70, 0.0, 1.0, 1.0, "back"]]
+        _, _, shots = sized_plan(keep_clear=boxes)
+        held = [s for s in shots if s.start == verse.start][0]
+        self.assertEqual(held.features["face_hits"], 0)
+        self.assertEqual(held.moves[0].name, "track")
+        self.assertEqual(held.moves[0].start, held.start)
+        hits = sum(1 for i, cam in enumerate(sized_cameras(held)) if mc.face_on_boxes(self.dancer, held.start + i, cam, boxes))
+        self.assertEqual(hits, 0)
+        # (the boxes overlap across the whole height: every place in the picture is on one of them at one end of the shot)
+        fixed = dataclasses.replace(held, moves=[])
+        self.assertGreater(sum(1 for i, cam in enumerate(sized_cameras(fixed))
+                               if mc.face_on_boxes(self.dancer, held.start + i, cam, boxes)), 0)
 
     def test_a_close_shot_the_words_leave_no_room_for_is_shot_wide_and_its_share_goes_on(self):
         # a band of words across the whole picture's middle over the note's shot: no close way of seeing keeps her face

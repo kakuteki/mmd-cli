@@ -815,6 +815,17 @@ MOVE_TAIL = 2.0                  # beats: this many or more left after a shot's 
 MOVE_OVERRUN = 3                 # frames a move may run past its shot's end (the cut hides them: a cut moved onto a
                                  # flash shortens its shot by 2, and a shot that starts on frame 0 or ends on a cut
                                  # before the beat is a few frames short of its bars; both still move over all of them)
+MUSIC_TURN_PACE = 0.8            # degrees: the most a move turns the camera round her (an orbit's heading, a crane's pitch)
+                                 # on one frame ...
+MUSIC_TURN_SECOND = 20.0         # ... and over any second (FPS frames).  (v12, 2026-10-21, BT.1702: the camera fix3's orbits
+                                 # of 40 degrees over a bar from a strong onset, the hit 1 - (1 - t)^3, turned 2.3 degrees on
+                                 # their first frame and 37 over their first second, the background 54 px a frame through the
+                                 # lens of 30: the city's lights and her outline crossed the picture's cells, and the count of
+                                 # changes over a quarter of the picture came to 7 in a second at 220 s (harmful above 6) and
+                                 # to 6 at 137 s; its drives of 28 and 31 degrees a second came to 5.  v12's estimate from the
+                                 # drawn frames, the background of 220 s turned slower: 5 at 29 degrees a second, 4 at 22)
+MUSIC_HIT_POWERS = (3.0, 2.5, 2.0, 1.5)  # a hit's share 1 - (1 - t)^p: the steepest of these within both (its fastest frame
+                                         # still its first, on the onset), else the last with the turn made smaller to fit
 ONSET_DELAY = 3                  # frames: a strong onset this far into the shot's first bar starts the move instead of the cut
 STRONG = 4.0                     # z: a strong onset (a04's)
 HOOK_REACH = 15                  # frames: no push in this near a title word (the motion graphics' punch is the zoom there)
@@ -936,7 +947,12 @@ MUSIC_SHIFTS = (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25, -1.25
 # fifth of the way in from the side, past a large word that fills the other 70 % of the picture), at most
 # MUSIC_CONTACT_SHIFT for a contact (her eyes' reach)
 MUSIC_CONTACT_SHIFT = 0.25
-FACE_RADIUS = 1.15                       # units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure
+MUSIC_WORDS_TRACK_BEATS = (4, 8)         # beats from the cut a track takes that carries her face from one of the shifts to
+                                         # another, for a shot that no fixed shift keeps off the words (words on one side at
+                                         # the cut, on the other later: v13 p5, the end of a big word over the left 0.03-0.70
+                                         # of the picture on the chorus's first 2 frames and the next over the right 0.80-1.00
+                                         # from 82 frames on)
+FACE_RADIUS = 1.15                      # units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure
 FACE_DOWN = 0.45                         # of the words over her face: half a head's width round her nose)
 FACE_MARGIN = 0.02                       # of the picture: the words' boxes grown by this when her face is kept off them
 
@@ -1162,6 +1178,7 @@ class Move:
                                  # over the whole move; "hit": at full pace from a strong onset, easing out
     amount: float                # its size in its channel's unit (signed)
     ramp: float = 0.0            # "drive": the share of the move each ramp takes (a beat)
+    power: float = 3.0           # "hit": the share done 1 - (1 - t)^power (a softer accent within MUSIC_TURN_PACE: paced)
 
 
 @dataclasses.dataclass
@@ -1229,12 +1246,12 @@ def _move_channel(name):
             "track": "track"}[name]
 
 
-def _shape(name, t, ramp=0.125):
-    """the share of a move done at the share t of its time: "hit" 1 - (1 - t)^3 (its pace highest at the start),
+def _shape(name, t, ramp=0.125, power=3.0):
+    """the share of a move done at the share t of its time: "hit" 1 - (1 - t)^power (its pace highest at the start),
     "glide" the smoothstep, "drive" a cosine ramp up over `ramp`, an even pace, a cosine ramp down over `ramp`"""
     t = min(max(t, 0.0), 1.0)
     if name == "hit":
-        return 1.0 - (1.0 - t) ** 3
+        return 1.0 - (1.0 - t) ** power
     if name == "glide":
         return t * t * (3.0 - 2.0 * t)
     r = min(max(ramp, 1e-6), 0.5)
@@ -1280,11 +1297,42 @@ def _apply(values, move, frame):
     out = dict(values)
     if frame <= move.start:
         return out
-    k = _shape(move.shape, (frame - move.start) / float(move.frames), move.ramp)
+    k = _shape(move.shape, (frame - move.start) / float(move.frames), move.ramp, move.power)
     channel = _move_channel(move.name)
     key = {"dolly": "distance", "orbit": "yaw", "crane": "pitch", "track": "track"}[channel]
     out[key] = values[key] + move.amount * k
     return out
+
+
+TURNING = ("orbit", "crane")     # the channels that turn the camera round her (its window's Y and X)
+
+
+def move_turn(move):
+    """(the most degrees `move` turns the camera round her on one frame, over any second): an orbit's heading, a crane's
+    pitch; a dolly and a track turn it none"""
+    if _move_channel(move.name) not in TURNING:
+        return 0.0, 0.0
+    done = [_shape(move.shape, i / float(move.frames), move.ramp, move.power) for i in range(move.frames + 1)]
+    steps = [abs(move.amount) * (b - a) for a, b in zip(done, done[1:])]
+    n = int(FPS)
+    return max(steps), max(sum(steps[i:i + n]) for i in range(max(1, len(steps) - n + 1)))
+
+
+def paced(move):
+    """`move` within MUSIC_TURN_PACE a frame and MUSIC_TURN_SECOND a second: a hit at the steepest of MUSIC_HIT_POWERS that
+    keeps within both (a smaller one keeps its power), else at the last of them with its turn made smaller to fit; another
+    shape with its turn made smaller; a dolly and a track as they are"""
+    if _move_channel(move.name) not in TURNING:
+        return move
+    powers = [p for p in MUSIC_HIT_POWERS if p <= move.power] if move.shape == "hit" else []
+    for power in powers or [move.power]:
+        trial = dataclasses.replace(move, power=power)
+        peak, second = move_turn(trial)
+        if peak <= MUSIC_TURN_PACE and second <= MUSIC_TURN_SECOND:
+            return trial
+    k = min(MUSIC_TURN_PACE / peak, MUSIC_TURN_SECOND / second)
+    # rounded toward zero to the amounts' 4 places, so that the rounding never takes it past a cap
+    return dataclasses.replace(trial, amount=math.copysign(math.floor(abs(trial.amount) * k * 1e4) / 1e4, trial.amount))
 
 
 def _end_values(values, move):
@@ -1535,7 +1583,7 @@ def plan_music_shots(motion, song, onsets, seed=0, last=None, strong=STRONG, ris
                         break
                 if chosen is None:
                     break
-                move = Move(chosen[0], start, frames_of, shape, round(chosen[1], 4), round(beat_frames / frames_of, 4))
+                move = paced(Move(chosen[0], start, frames_of, shape, round(chosen[1], 4), round(beat_frames / frames_of, 4)))
                 moves.append(move)
                 values = _end_values(values, move)
                 previous_name = chosen[0]
@@ -1740,14 +1788,15 @@ def _sized_room(name, values, energy, rng_sign, size):
 
 
 def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, rising, rng, palette_at, boxes=(), rows=None,
-                 head=None):
+                 head=None, lead=()):
     """the moves of a sized shot: as the plain plan draws them (the part's palette in turn, whole beats from the cut or a
     strong onset, none against guard or into a title word), only the moves of its size (MUSIC_SIZE_MOVES), each at the
     largest of MUSIC_SCALES of its full size that keeps the shot holding (sized_ok) and her face off the words (`boxes`)
-    on no more frames than before it"""
+    on no more frames than before it; after the moves `lead` (a track that keeps her face off the words: _sized_shot)
+    when given"""
     kind, contact, end, frame = shot.kind, shot.contact, shot.end, shot.start
     if kind in MUSIC_STILL:
-        return []
+        return list(lead)
     allowed = MUSIC_SIZE_MOVES[shot.size]
     palette = [m for m in (MUSIC_CONTACT_MOVES if contact else MUSIC_PALETTE[kind]) if m in allowed]
     if not palette:
@@ -1759,9 +1808,17 @@ def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, r
     shape = "hit" if (kind == "chorus" and nbars == 1) else "drive"
     values = dict(shot.base)
     previous_name = None
-    moves = []
+    moves = list(lead)
+    if lead:
+        for m in lead:
+            values = _end_values(values, m)
+        start, shape, previous_name = lead[-1].start + lead[-1].frames, "drive", lead[-1].name
+        beats_left = (end + 1 + MOVE_OVERRUN - start) / beat_frames
+        if beats_left < MOVE_TAIL:
+            return moves
+        frames_of = int(round((MOVE_BEATS if beats_left >= MOVE_BEATS else 4) * beat_frames))
     boxes = [b for b in boxes if b[0] <= end and b[1] >= frame]
-    hits = face_hits(dancer, shot, boxes) if boxes else 0
+    hits = face_hits(dancer, dataclasses.replace(shot, moves=list(moves)), boxes) if boxes else 0
     while (start + int(round(4 * beat_frames)) <= end + MOVE_OVERRUN if not moves
            else (end + 1 + MOVE_OVERRUN - start) / beat_frames >= MOVE_TAIL):
         if start + frames_of > end + MOVE_OVERRUN:
@@ -1791,7 +1848,7 @@ def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, r
             if abs(full) < least:
                 continue
             for scale in MUSIC_SCALES:
-                move = Move(name, start, frames_of, shape, round(full * scale, 4), round(beat_frames / frames_of, 4))
+                move = paced(Move(name, start, frames_of, shape, round(full * scale, 4), round(beat_frames / frames_of, 4)))
                 trial = dataclasses.replace(shot, moves=moves + [move])
                 if sized_ok(dancer, trial, look, rows, head) and (not boxes or face_hits(dancer, trial, boxes) <= hits):
                     chosen = move
@@ -1885,8 +1942,42 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
     facing_before = facing_at(chain, frame - 1) if chain and frame > 0 else facing
     if waive and prev_yaw is not None:
         yaws = sorted(set(yaws) | set(MUSIC_SIZED_YAWS), key=lambda y: (-angle_off(y, prev_yaw), y))
-    best = None
+    best = [None]
     why = collections.Counter()
+
+    def consider(base, height, fov, lead=()):
+        """(shot, hits, turns) of the way of seeing from `base` (its moves after `lead`), or None (`why` counts the
+        reason); the best so far kept in `best`"""
+        shot = MusicShot(count, frame, end, sid, kind, nbars, base, list(lead), follow, contact, size, height, int(fov))
+        if previous is not None and not waive:
+            cam0 = sized_camera(music_shot_values(shot)[0], shot.fov)
+            if angle_off(camera_azimuth(dancer, frame, cam0), prev_az) < MUSIC_TURN:
+                if previous.size == size:
+                    why["turn"] += 1
+                    return None
+                ratio = picture_height(dancer, frame, cam0) / max(prev_height, 1e-6)
+                if MUSIC_SIZE_RATIO[0] <= ratio <= MUSIC_SIZE_RATIO[1]:
+                    why["ratio"] += 1
+                    return None
+        hits = face_hits(dancer, shot, boxes)
+        if hits and best[0] is not None and hits >= best[0][0]:
+            why["words"] += 1
+            return None
+        reason = sized_why(dancer, shot, look, rows, head)
+        if reason is not None:
+            why[reason] += 1
+            return None
+        turns = dict(palette_at)
+        shot.moves = _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, rising, rng, turns, boxes,
+                                  rows, head, lead)
+        hits = face_hits(dancer, shot, boxes)
+        if hits:
+            why["words"] += 1
+            if best[0] is None or hits < best[0][0]:
+                best[0] = (hits, shot, turns)
+        return shot, hits, turns
+
+    framed = []                     # (yaw, fov, unit, {shift: (base, height)}) of every framing that holds
     for yaw in yaws:
         if (previous is not None and chain and waive < 2
                 and crosses_line(facing_before, prev_yaw, yaw, facing_after=facing)):
@@ -1901,6 +1992,8 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
                     why["frame"] += 1
                     continue
                 unit = base0["distance"] * math.tan(math.radians(fov / 2.0))
+                sides = {}
+                framed.append((yaw, fov, unit, sides))
                 for shift in shifts:
                     if shift == 0.0:
                         base, height = base0, height0
@@ -1910,37 +2003,29 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
                         except ValueError:
                             why["frame"] += 1
                             continue
-                    shot = MusicShot(count, frame, end, sid, kind, nbars, base, [], follow, contact, size, height, int(fov))
-                    if previous is not None and not waive:
-                        cam0 = sized_camera(music_shot_values(shot)[0], shot.fov)
-                        if angle_off(camera_azimuth(dancer, frame, cam0), prev_az) < MUSIC_TURN:
-                            if previous.size == size:
-                                why["turn"] += 1
-                                continue
-                            ratio = picture_height(dancer, frame, cam0) / max(prev_height, 1e-6)
-                            if MUSIC_SIZE_RATIO[0] <= ratio <= MUSIC_SIZE_RATIO[1]:
-                                why["ratio"] += 1
-                                continue
-                    hits = face_hits(dancer, shot, boxes)
-                    if hits and best is not None and hits >= best[0]:
-                        why["words"] += 1
+                    sides[shift] = (base, height)
+                    got = consider(base, height, fov)
+                    if got is not None and got[1] == 0:
+                        return got[0], 0, got[2], dict(why)
+    # her face on the words whatever fixed side holds it (words on one side at the cut, on the other later): a track from the
+    # cut that carries her from a side that keeps it off them to another (MUSIC_WORDS_TRACK_BEATS)
+    if best[0] is not None and len(shifts) > 1:
+        for yaw, fov, unit, sides in framed:
+            for first, (base, height) in sides.items():
+                for then in sides:
+                    if then == first:
                         continue
-                    reason = sized_why(dancer, shot, look, rows, head)
-                    if reason is not None:
-                        why[reason] += 1
-                        continue
-                    turns = dict(palette_at)
-                    shot.moves = _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, rising, rng,
-                                              turns, boxes, rows, head)
-                    hits = face_hits(dancer, shot, boxes)
-                    if hits == 0:
-                        return shot, 0, turns, dict(why)
-                    why["words"] += 1
-                    if best is None or hits < best[0]:
-                        best = (hits, shot, turns)
-    if best is None:
+                    for beats in MUSIC_WORDS_TRACK_BEATS:
+                        n = int(round(beats * beat_frames))
+                        if frame + n > end + MOVE_OVERRUN:
+                            continue
+                        track = Move("track", frame, n, "drive", round((then - first) * unit, 4), round(beat_frames / n, 4))
+                        got = consider(base, height, fov, (track,))
+                        if got is not None and got[1] == 0:
+                            return got[0], 0, got[2], dict(why, tracked=1)
+    if best[0] is None:
         return None, None, None, dict(why)
-    return best[1], best[0], best[2], dict(why)
+    return best[0][1], best[0][0], best[0][2], dict(why)
 
 
 def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, strong_frames, beat_frames, hooks, rising, rng,
@@ -2094,8 +2179,8 @@ def music_shot_json(shot):
     out = {"index": shot.index, "start": shot.start, "end": shot.end, "frames": frames, "seconds": round(frames / float(FPS), 2),
            "section": shot.section, "kind": shot.kind, "bars": shot.bars, "contact": shot.contact,
            "base": {k: _r(v) for k, v in shot.base.items()},
-           "moves": [{"name": m.name, "start": m.start, "frames": m.frames, "shape": m.shape, "amount": _r(m.amount),
-                      "ramp": m.ramp} for m in shot.moves],
+           "moves": [dict({"name": m.name, "start": m.start, "frames": m.frames, "shape": m.shape, "amount": _r(m.amount),
+                           "ramp": m.ramp}, **({"power": m.power} if m.shape == "hit" else {})) for m in shot.moves],
            "picture": [[_r(v) for v in picture_span(values[i]["distance"], height, values[i]["pitch"], fov)] for i in (0, -1)]}
     if shot.size is not None:
         out.update({"size": shot.size, "planned": shot.planned, "height": _r(shot.height), "fov": shot.fov,
