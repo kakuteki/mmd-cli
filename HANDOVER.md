@@ -1286,3 +1286,11 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
   - **全体の試験**（5cb5d1b = 直しと main の取り込みの後、hinata、main_suite の run_suite_td2.py の書く先だけ替えた写し。判定行は記録と別の手で読んだ）:
     `Ran 2979 tests in 1425.625s` / `OK (skipped=39, expected failures=1)`。足した試験 15 本（壊しの試験 8・直し 7）は全部 ok。1 回目は 09:00 の hinata の止まりで途中で
     消えた（ログは `suite/suite_5cb5d1b_crashed.log`、それまでに FAIL・ERROR なし）。
+- 2026-10-21 **協調役の決め（light3rev の取り込み）**: 夜の照明の look は、査読者の案を重ねて 1 つにする（作業木 light3rev の `_spike/out/stage6/light3rev/looks/`）。
+  (1) 区間の色の変わり目は曲の区切りに揃える（v7s: サビ 1 の頭 59.999 秒・タイトル語 1・2・4 の 86.166・154.733・240.433 秒。前は look_city の flares の時刻だった）。
+  (2) 陰の明るさは**加賀さんの 10-17 の決め（案 D: 陰は光の 0.65）に揃える**（v7sd。light3 の v7 は 0.80 で、決めとずれていた）。
+  (3) キーの光は 0.99/0.97/0.91（v7r。頬の C* を参考の四分位に入れる見積もり。**MMD で描いて頬を確かめてから採る**）。
+  (4) 看板の芯は 0.75（1.5 では平らな看板が面ごと白く飛ぶ）。区間の終わりは音の終わり 256.0 秒。eye_optics に `--flares` は渡さない。
+  組み立ては light3 の look を土台にして flares を []、mographrev の rv の mograph と文字（kinetic）を足す（逆に重ねると layer が look_city の値に戻って確かめを黙って通る。
+  `data/compose_notes.md`）。**全曲の MMD の前に look と区間の時刻を決めきる**（区間の色は MMD の絵に焼き込まれる）。夜の光の効果は形を変えない（物理なしの同じコマで輪郭の違いは
+  同じ入力の 2 回の違いと同じ大きさ）が、効果の HLSL は試験で守れないので、変えたら MMD で描いて `scripts/shape.py` で確かめる。
