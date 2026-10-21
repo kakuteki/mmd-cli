@@ -198,6 +198,24 @@ class SyllableTest(unittest.TestCase):
         rise = FS.first_syllable(*FS.voice_level(x), beat)
         self.assertLess(abs(rise["t"] - (beat - 0.10)), 0.006)
 
+    def test_a_word_sung_partly_legato_is_still_its_vowels_in_order(self):
+        # (the second singer's title words 1 and 2: two syllables in the middle run on from the one before, no stop, no onset)
+        beat = 1.2
+        rng = np.random.default_rng(6)
+        x = 0.003 * rng.standard_normal(int(3.0 * SR))
+        eighth = PERIOD / 2.0
+        put(x, beat - 0.10, vowel(0.10 + eighth - 0.04, "a"))
+        put(x, beat + eighth, vowel(eighth - 0.04, "i"))
+        put(x, beat + 2 * eighth, np.concatenate([vowel(eighth, "i", attack=0.01), vowel(eighth - 0.04, "a", attack=0.01)]))
+        put(x, beat + 4 * eighth, vowel(eighth - 0.04, "e"))
+        sy = FS.syllables_of(x)
+        self.assertLess(len([y for y in sy if beat < y["t"] < beat + 5 * eighth]), 4)          # not every syllable comes in
+        got = FS.title_start(sy, beat, "iiae")
+        self.assertIsNotNone(got)
+        self.assertLess(abs(got["t"] - (beat + eighth)), 0.006, got)
+        # and a start one syllable late (the second i) matches fewer of the word's vowels: not taken
+        self.assertGreaterEqual(len(got["run"]), 3)
+
     def test_no_title_word_where_no_run_has_its_vowels_in_order(self):
         beat = 1.2
         x = self.sung(beat, "aaii", before="a")

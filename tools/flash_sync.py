@@ -45,10 +45,10 @@ median of the hits within LOCAL seconds (local).  A syllable's onset: a steepest
 (VOICED) that comes up by SYLLABLE_RISE_DB or more from the quietest of the SYLLABLE_BEFORE before it to the loudest of the
 SYLLABLE_AFTER after it (a breath of h before the vowel has little in that band), at the time its power first reaches half of
 that loudest (a Hann window centred on a step reads half of it there).  The first syllable of a title word (--title-vowels, the
-word's vowels in order): of the syllables round its beat (TITLE_SEARCH), the first of the run of as many whose vowels that
-should be open (e a o) are all more open than those that should be close (i u), OPEN = the level of 700-1500 Hz over 300-700 Hz
-over VOWEL_AFTER of the vowel (the run with the widest margin; the order, not a threshold, so that a voice's colour does not
-count).  Without the vowels, the syllable the voice comes in with nearest the beat (SYLLABLE_SEARCH): in this song that is the
+word's vowels in order): of the syllables round its beat (TITLE_SEARCH), the first of a run whose vowels that should be open
+(e a o) are all more open than those that should be close (i u), OPEN = the level of 700-1500 Hz over 300-700 Hz over
+VOWEL_AFTER of the vowel (the order, not a threshold, so that a voice's colour does not count; a syllable sung legato makes no
+onset and may be missing from the run, never the first; the run that places most of the word's vowels, then the widest margin).  Without the vowels, the syllable the voice comes in with nearest the beat (SYLLABLE_SEARCH): in this song that is the
 word before the title word.
 The band's return: a strong hit of the backing after a stop, STOP_S or more in which none of its hits reaches the QUIET_PCT
 percentile (the drums stop under the last title word and come back hard on the next bar; the bass plays on through it, so
@@ -57,6 +57,7 @@ the low end alone does not show the stop).
 import argparse
 import copy
 import importlib.util
+import itertools
 import json
 import math
 import os
@@ -82,7 +83,8 @@ OPEN_BANDS = ((300.0, 700.0), (700.0, 1500.0))      # Hz: OPEN = the level of th
 VOWEL_AFTER = (0.03, 0.13)        # s after a syllable's onset over which its vowel is read
 VOWEL_OPEN = {"i": -1, "u": -1, "e": 1, "a": 1, "o": 1}             # close (a low first formant) or open
 TITLE_SEARCH = (-0.35, 0.6)       # s from the title word's beat where its first syllable is looked for (by its vowels)
-WORD_GAP = 0.45                   # s: the syllables of one word lie closer than this
+WORD_SYLLABLE = 0.25              # s: the title word's syllables lie within (its syllables - 1) x this of its first (an eighth at
+#                                   140 BPM is 0.214 s)
 STOP_S = 1.0                      # s without a hit at the song's median or over (more than two beats at 140 BPM): a stop
 QUIET_PCT = 50.0
 STRONG = 90.0                     # percentile of the song's hits: a strong hit (the request: "the top 10 % or so")
@@ -392,12 +394,13 @@ def syllables_of(voice, sr=SR, rise_db=SYLLABLE_RISE_DB, before=SYLLABLE_BEFORE,
     return out
 
 
-def title_start(syllables, beat, vowels, search=TITLE_SEARCH, gap=WORD_GAP):
-    """the title word's first syllable as sung, told by the word's vowels (`vowels`: its vowels in order, of i u e a o): the run
-    of as many syllables (one after the other, closer than `gap`), its first within `search` of `beat`, whose vowels that
-    should be open (e a o) are all more open than those that should be close (i u) - the order of the run, not a threshold,
-    so that a voice's own colour does not count - the run with the widest such margin.  {"t", "rise_db", "run", "open",
-    "margin"} or None"""
+def title_start(syllables, beat, vowels, search=TITLE_SEARCH, per=WORD_SYLLABLE):
+    """the title word's first syllable as sung, told by the word's vowels (`vowels`: its vowels in order, of i u e a o): a
+    syllable within `search` of `beat` taken as the word's first, and the syllables after it within the word's length (`per`
+    a syllable) taken in order as later syllables of the word - a syllable sung legato makes no onset, so some may be missing,
+    never the first - such that the vowels that should be open (e a o) are all more open than those that should be close
+    (i u): the order of the run, not a threshold, so that a voice's own colour does not count.  Of those, the one that
+    places most of the word's vowels, then the widest margin.  {"t", "rise_db", "run", "open", "positions", "margin"} or None"""
     signs = []
     for v in vowels:
         if v not in VOWEL_OPEN:
@@ -407,22 +410,25 @@ def title_start(syllables, beat, vowels, search=TITLE_SEARCH, gap=WORD_GAP):
         raise ValueError("the title word's vowels %r must hold close (i u) and open (e a o) ones to tell the word" % vowels)
     n = len(signs)
     best = None
-    for k in range(len(syllables) - n + 1):
-        run = syllables[k:k + n]
-        if not (beat + search[0] <= run[0]["t"] <= beat + search[1]):
+    for k, first in enumerate(syllables):
+        if not (beat + search[0] <= first["t"] <= beat + search[1]):
             continue
-        if any(b["t"] - a["t"] >= gap for a, b in zip(run, run[1:])):
-            continue
-        close = [y["open"] for y, sg in zip(run, signs) if sg < 0]
-        opened = [y["open"] for y, sg in zip(run, signs) if sg > 0]
-        margin = min(opened) - max(close)
-        if margin > 0 and (best is None or margin > best[0]):
-            best = (margin, run)
+        after = [y for y in syllables[k + 1:] if y["t"] - first["t"] <= per * (n - 1) + 1e-9][:n - 1]
+        for places in itertools.combinations(range(1, n), len(after)):
+            matched = [(first, signs[0])] + [(y, signs[p]) for y, p in zip(after, places)]
+            close = [y["open"] for y, sg in matched if sg < 0]
+            opened = [y["open"] for y, sg in matched if sg > 0]
+            if not close or not opened:
+                continue
+            margin = min(opened) - max(close)
+            key = (len(matched), margin)
+            if margin > 0 and (best is None or key > best[0]):
+                best = (key, first, [y for y, _ in matched], (0,) + places)
     if best is None:
         return None
-    margin, run = best
-    return {"t": run[0]["t"], "rise_db": run[0]["rise_db"], "run": [y["t"] for y in run], "open": [y["open"] for y in run],
-            "margin": round(margin, 2)}
+    (_, margin), first, run, places = best
+    return {"t": first["t"], "rise_db": first["rise_db"], "run": [y["t"] for y in run], "open": [y["open"] for y in run],
+            "positions": list(places), "margin": round(margin, 2)}
 
 
 # ---- moments -------------------------------------------------------------------------------------------------------
