@@ -240,6 +240,38 @@ class SyllableTest(unittest.TestCase):
         self.assertTrue(all(b - a >= FS.SYLLABLE_APART for a, b in zip(times, times[1:])), times)
         self.assertEqual(len([t for t in times if 0.75 < t < 0.95]), 1, times)
 
+    def legato(self, beat, parts, after=()):
+        """the word before (an open vowel just before the beat), then the title word sung as `parts`: (eighths from the beat,
+        vowels sung as one held run without a stop), then `after`: (eighths, vowel) of the next word"""
+        rng = np.random.default_rng(10)
+        x = 0.003 * rng.standard_normal(int(4.0 * SR))
+        eighth = PERIOD / 2.0
+        put(x, beat - 0.10, vowel(0.10 + eighth - 0.04, "a"))
+        for at, vs in parts:
+            put(x, beat + at * eighth, np.concatenate([vowel(eighth - (0.04 if k == len(vs) - 1 else 0.0), v, attack=0.01 if k else 0.0005)
+                                                        for k, v in enumerate(vs)]))
+        for at, v in after:
+            put(x, beat + at * eighth, vowel(eighth - 0.04, v))
+        return x
+
+    def test_the_second_syllable_may_be_the_one_missing(self):
+        # i i run together (one onset), then a and e: the a is the word's third vowel, not its second
+        beat = 1.2
+        x = self.legato(beat, [(1, "ii"), (3, "a"), (4, "e")])
+        got = FS.title_start(FS.syllables_of(x), beat, "iiae")
+        self.assertIsNotNone(got)
+        self.assertLess(abs(got["t"] - (beat + PERIOD / 2.0)), 0.006, got)
+        self.assertEqual(got["positions"], [0, 2, 3])
+
+    def test_the_next_word_past_the_title_words_length_is_not_its_syllables(self):
+        # the title word sung with its middle run together, and the next word's close vowels soon after it
+        beat = 1.2
+        x = self.legato(beat, [(1, "i"), (2, "ia"), (4, "e")], after=[(6, "i"), (7, "i")])
+        got = FS.title_start(FS.syllables_of(x), beat, "iiae")
+        self.assertIsNotNone(got)
+        self.assertLess(abs(got["t"] - (beat + PERIOD / 2.0)), 0.006, got)
+        self.assertLessEqual(max(got["run"]) - got["t"], FS.WORD_SYLLABLE * 3 + 1e-9)
+
     def test_no_title_word_where_no_run_has_its_vowels_in_order(self):
         beat = 1.2
         x = self.sung(beat, "aaii", before="a")

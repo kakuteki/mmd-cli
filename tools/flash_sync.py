@@ -78,7 +78,7 @@ SYLLABLE_SEARCH = (-0.25, 0.15)   # s from the title word's beat: its first syll
 SYLLABLE_RISE_DB = 12.0
 SYLLABLE_BEFORE, SYLLABLE_AFTER = 0.075, 0.05
 SYLLABLE_SMOOTH = 5               # rows the level is smoothed over for its slope
-SYLLABLE_APART = 0.06             # s: two syllables' onsets nearer than this are one (the larger rise)
+SYLLABLE_APART = 0.06             # s: a syllable's rise is the steepest within this each side (two nearer are one syllable)
 OPEN_BANDS = ((300.0, 700.0), (700.0, 1500.0))      # Hz: OPEN = the level of the second over the first (lip_check's)
 VOWEL_AFTER = (0.03, 0.13)        # s after a syllable's onset over which its vowel is read
 VOWEL_OPEN = {"i": -1, "u": -1, "e": 1, "a": 1, "o": 1}             # close (a low first formant) or open
@@ -385,10 +385,6 @@ def syllables_of(voice, sr=SR, rise_db=SYLLABLE_RISE_DB, before=SYLLABLE_BEFORE,
         t, rise, _, _ = got
         rows = (times >= t + VOWEL_AFTER[0]) & (times <= t + VOWEL_AFTER[1])
         if not rows.any():
-            continue
-        if out and t - out[-1]["t"] < SYLLABLE_APART:
-            if rise > out[-1]["rise_db"]:
-                out[-1] = {"t": round(t, 4), "rise_db": round(rise, 1), "open": round(float(np.median(hi[rows] - lo[rows])), 2)}
             continue
         out.append({"t": round(t, 4), "rise_db": round(rise, 1), "open": round(float(np.median(hi[rows] - lo[rows])), 2)})
     return out

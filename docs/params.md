@@ -1866,7 +1866,7 @@
 | SYLLABLE_AFTER | 0.05 |  | 79 |  |  |  |  |  |  |  |  |  |
 | SYLLABLE_BEFORE | 0.075 |  | 79 |  |  |  |  |  |  |  |  |  |
 | SYLLABLE_SMOOTH | 5 |  | 80 | rows the level is smoothed over for its slope |  |  |  |  |  |  |  |  |
-| SYLLABLE_APART | 0.06 | s | 81 | s: two syllables' onsets nearer than this are one (the larger rise) |  |  |  |  |  |  |  |  |
+| SYLLABLE_APART | 0.06 | s | 81 | s: a syllable's rise is the steepest within this each side (two nearer are one syllable) |  |  |  |  |  |  |  |  |
 | OPEN_BANDS | ((300.0, 700.0), (700.0, 1500.0)) | Hz | 82 | Hz: OPEN = the level of the second over the first (lip_check's) |  |  |  |  |  |  |  |  |
 | VOWEL_AFTER | (0.03, 0.13) | s | 83 | s after a syllable's onset over which its vowel is read |  |  |  |  |  |  |  |  |
 | VOWEL_OPEN.a | 1 |  | 84 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
@@ -1885,8 +1885,8 @@
 | SKIRT_GAP | 0.5 | s | 94 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
 | ALIGN_MOST | 0.05 | s | 95 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
 | REFERENCE_MOST | 2.0 | s | 96 | s: a mix of another source is looked for this far either way in the reference mix |  |  |  |  |  |  |  |  |
-| --labels | "A,B" |  | 992 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
-| --lang | "en" |  | 997 |  |  |  |  |  |  |  |  |  |
+| --labels | "A,B" |  | 988 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
+| --lang | "en" |  | 993 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
