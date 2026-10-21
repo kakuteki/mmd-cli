@@ -1,5 +1,6 @@
 """Flashes that mean something: the light of a look (the motion graphics' flashes, tools/mograph_layer.py events of kind
-"flash", and the look's flares) put on moments of the song a viewer hears, or dropped; the punch on a flash's frame with it.
+"flash", and the look's flares) put on moments of the song a viewer hears, or dropped; the punch on a flash's frame on the
+title word it stood for, as sung.
 
     python tools/flash_sync.py measure MIX VOICE STRUCTURE.json LOOK.json OUT.json [--arrays OUT.npz] [--reference MIX0]
         the moments of the song: the title words' first syllable as sung (read from VOICE, the separated singing voice), the
@@ -32,10 +33,11 @@ moment.  The backing, not the mix: it is what a flash of the editor hits on, and
 (the hits of the mix and of the voice are measured and written beside it).  A flash moves to the nearest such moment within a
 bar of its place (it keeps to its phrase); none there, it is dropped.  It starts on the frame on which the moment's sound
 starts (the earlier of the moment and its hit, floored to a frame: the light comes no later than the sound, as a viewer takes
-a light up to some tens of ms early for the same time).  A punch on a flash's frame goes with the flash; where a punch may not
-be (half a second from where the skirt flares, mograph_layer's plan) or when the flash is dropped, it goes to the first
-syllable of the title word the flash stood for, as sung (a punch marks the title word on the voice), or, not allowed there
-either, it is dropped.
+a light up to some tens of ms early for the same time).  A punch on a flash's frame does not go with the flash: it goes to the
+first syllable of the title word the flash stood for, as sung, whatever becomes of the flash (a punch marks the title word on
+the voice; one rule an effect - the coordinator, 2026-10-21, after review flashsyncrev: title word 1's punch had gone with its
+flash to the head of the interlude, the others stayed on their words).  Where a punch may not be (half a second from where the
+skirt flares, mograph_layer's plan), or with no title word as sung, it is dropped.
 
 How the sound is read: both files at SR through ffmpeg, the voice found in the mix at its lag (the cross-correlation over the
 middle of the song) and taken off it (the separated stems add up to the mix: the gain is 1).  The hits: peaks, HIT_SPACING
@@ -560,9 +562,10 @@ def _place_flash(t, moments, hits, reach, fps):
 
 
 def decide(events, moments, hits, skirt=(), flares=(), reach=None, fps=FPS):
-    """the decisions for the flashes among `events` (a look's mograph events, as written), the punches on their frames, and
-    the look's `flares` (times): [{"kind", "index", "t", "old_frame", "action" keep|move|drop, "frame", "moment", "hit",
-    "reason", ...}] in the order of the events, then the flares"""
+    """the decisions for the flashes among `events` (a look's mograph events, as written), the punches on their frames (each
+    to the title word its flash stood for, as sung: not with the flash), and the look's `flares` (times): [{"kind", "index",
+    "t", "old_frame", "action" keep|move|drop, "frame", "moment", "hit", "reason", ...}] in the order of the events, then the
+    flares"""
     ML = mograph_tool()
     reach = reach if reach is not None else 4 * 60.0 / 140.0 + 1.0 / fps
     out = []
@@ -599,18 +602,20 @@ def decide(events, moments, hits, skirt=(), flares=(), reach=None, fps=FPS):
             continue
         span = _punch_span(e)
         d = {"kind": "punch", "index": i, "t": float(e["t"]), "old_frame": frame, "flash": f["index"]}
-        if f["action"] != "drop" and not near_skirt(f["frame"] / float(fps), span, skirt, fps):
-            d.update(action="keep" if f["frame"] == frame else "move", frame=f["frame"], why="with_flash", reason="with its flash")
+        # the punch marks the title word as sung, wherever its flash goes (one rule an effect: the coordinator, 2026-10-21);
+        # what became of the flash is said beside it
+        fate = ("its flash is dropped" if f["action"] == "drop" else
+                "its flash stays" if f["action"] == "keep" else "its flash goes to %s" % _moment_name(f["moment"]))
+        title = f["title"]
+        if title is None:
+            d.update(action="drop", frame=None, why="no_title", reason="%s, and no title word as sung to go to" % fate)
+        elif near_skirt(frame_of_moment(title["t"], fps) / float(fps), span, skirt, fps):
+            d.update(action="drop", frame=None, why="title_skirt", n=title["n"],
+                     reason="%s, and the skirt flares near title word %d as sung" % (fate, title["n"]))
         else:
-            why = "its flash is dropped" if f["action"] == "drop" else "the skirt flares near its flash's frame"
-            code = "flash_dropped" if f["action"] == "drop" else "skirt"
-            title = f["title"]
-            if title is not None and not near_skirt(frame_of_moment(title["t"], fps) / float(fps), span, skirt, fps):
-                nf = frame_of_moment(title["t"], fps)
-                d.update(action="keep" if nf == frame else "move", frame=nf, why=code + "_title", n=title["n"],
-                         reason="%s: on title word %d as sung" % (why, title["n"]))
-            else:
-                d.update(action="drop", frame=None, why=code + "_none", reason="%s, and no title word as sung to go to" % why)
+            nf = frame_of_moment(title["t"], fps)
+            d.update(action="keep" if nf == frame else "move", frame=nf, why="title", n=title["n"], flash_action=f["action"],
+                     reason="%s: on title word %d as sung" % (fate, title["n"]))
         out.append(d)
     for i, t in enumerate(flares):
         out.append(judge("flare", i, float(t)))
@@ -787,6 +792,14 @@ def _why_ja(d, st):
     if why == "no_strong_hit":
         return "1 小節の中の意味のある瞬間（題名の語の 1 音目・節の頭・伴奏が戻る所）の ±%d コマに、伴奏の %g %% 点以上の立ち上がりが無い" % (
             st["near_frames"], st["strong"])
+    if why == "title":
+        return "パンチは題名の語 %d の 1 音目を歌うコマへ（光は%s）" % (
+            d["n"], {"drop": "削った", "keep": "そのまま", "move": "動かした"}.get(d.get("flash_action"), "-"))
+    if why == "no_title":
+        return "歌う題名の語が見つからないので削る"
+    if why == "title_skirt":
+        return "題名の語 %d の 1 音目がスカートの広がる所の %g 秒にかかるので削る" % (d["n"], st["skirt_gap"])
+    # (the reasons of reports made before 2026-10-21's rule, when a punch went with its flash)
     if why == "with_flash":
         return "光と同じコマから"
     if why == "flash_dropped_title":

@@ -1,5 +1,6 @@
 """tools/flash_sync.py: the flashes of a look put on moments of the song a viewer hears (a strong hit of the backing at the
-head of a section, at the band's return or where the title word is sung), or dropped; the punches on their frames with them.
+head of a section, at the band's return or where the title word is sung), or dropped; the punches on their frames on the title
+words they stood for, as sung (not with the flashes).
 Synthetic sounds only (the song itself is measured on hinata, its numbers are in the stage-6 notes)."""
 import contextlib
 import copy
@@ -394,7 +395,9 @@ class DecideTest(unittest.TestCase):
     def hits(self, strong=(), weak=()):
         return song_hits(strong, weak)
 
-    def test_a_flash_moves_to_the_nearest_moment_with_a_strong_hit_on_it_and_its_punch_with_it(self):
+    def test_a_flash_moves_to_the_nearest_moment_with_a_strong_hit_on_it_and_its_punch_stays_on_the_title_word(self):
+        # (the coordinator, 2026-10-21, after review flashsyncrev: one rule an effect) the punch marks the title word as sung and
+        # does not go with its flash: title word 1's flash to the head of inter1, its punch to the word's first syllable
         moments = [{"kind": "title", "n": 1, "t": 9.893, "beat": 10.0}, {"kind": "section", "id": "inter1", "t": 11.29}]
         events = [flash(10.0), punch(10.0), punch(5.0)]
         out = FS.decide(events, moments, self.hits(strong=[11.30]), skirt=[])
@@ -403,9 +406,25 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(f["frame"], FS.frame_of_moment(11.29))
         self.assertEqual(f["moment"]["kind"], "section")
         p = [d for d in out if d["kind"] == "punch" and d["old_frame"] == 300][0]
-        self.assertEqual((p["action"], p["frame"]), ("move", f["frame"]))
+        self.assertEqual((p["action"], p["frame"], p["n"]), ("move", FS.frame_of_moment(9.893), 1))
+        self.assertNotEqual(p["frame"], f["frame"])
         other = [d for d in out if d["kind"] == "punch" and d["old_frame"] == 150]
         self.assertEqual(other, [])                          # a punch on no flash's frame is not the tool's
+
+    def test_a_punch_goes_to_the_title_word_as_sung_whatever_becomes_of_its_flash(self):
+        # its flash moved (title word 1), dropped (2) or kept (3): each punch on its own title word's first syllable as sung
+        moments = [{"kind": "title", "n": 1, "t": 9.893, "beat": 10.0}, {"kind": "section", "id": "inter1", "t": 11.29},
+                   {"kind": "title", "n": 2, "t": 30.21, "beat": 30.0},
+                   {"kind": "title", "n": 3, "t": 50.01, "beat": 50.0}]
+        events = [flash(10.0), punch(10.0), flash(30.0), punch(30.0), flash(ML.frame_time(1500)), punch(ML.frame_time(1500))]
+        out = FS.decide(events, moments, self.hits(strong=[11.30, 50.01]), skirt=[])
+        flashes = {d["old_frame"]: d for d in out if d["kind"] == "flash"}
+        self.assertEqual([flashes[k]["action"] for k in (300, 900, 1500)], ["move", "drop", "keep"])
+        punches = {d["old_frame"]: d for d in out if d["kind"] == "punch"}
+        self.assertEqual([(punches[k]["frame"], punches[k]["n"]) for k in (300, 900, 1500)],
+                         [(FS.frame_of_moment(9.893), 1), (FS.frame_of_moment(30.21), 2), (1500, 3)])
+        self.assertEqual(punches[1500]["action"], "keep")                  # on its title word already: nothing moves
+        self.assertEqual(punches[900]["action"], "move")
 
     def test_the_title_word_keeps_its_flash_on_the_voice_when_a_strong_hit_is_on_it(self):
         moments = [{"kind": "title", "n": 1, "t": 9.893, "beat": 10.0}]
@@ -479,7 +498,9 @@ class PlaceTest(unittest.TestCase):
         self.assertEqual(look, self.LOOK)                                   # the look given is not touched
         ev = out["mograph"]["events"]
         frames = sorted((e["kind"], ML.frame_of(e["t"], 30)) for e in ev)
-        self.assertEqual(frames, sorted([("punch", 150), ("flash", 338), ("punch", 338), ("punch", 596), ("shake", 600)]))
+        # the flash at 10 s to the head (338), its punch to title word 1 as sung (296), the punch of the dropped flash at 20 s
+        # to title word 2 as sung (596)
+        self.assertEqual(frames, sorted([("punch", 150), ("flash", 338), ("punch", 296), ("punch", 596), ("shake", 600)]))
         self.assertEqual(out["flares"], [FS.time_of_frame(338)])           # the flare at 10.5 s goes to the same moment
         ML.merge(out["mograph"])                                            # still a section mograph_layer takes
         moved = [e for e in ev if ML.frame_of(e["t"], 30) == 338 and e["kind"] == "flash"][0]
@@ -533,8 +554,10 @@ class PlaceTest(unittest.TestCase):
                 self.assertEqual(FS.main(["place", paths["look"], out, new_look]), 0)
             with open(new_look, encoding="utf-8") as f:
                 placed = json.load(f)
-            self.assertEqual(sorted(ML.frame_of(e["t"], 30) for e in placed["mograph"]["events"]),
-                             [f0["frame"], f0["frame"]])
+            # the flash on the head, its punch on the title word as sung (not with the flash)
+            self.assertEqual(sorted((e["kind"], ML.frame_of(e["t"], 30)) for e in placed["mograph"]["events"]),
+                             [("flash", f0["frame"]), ("punch", FS.frame_of_moment(title["t"]))])
+            self.assertNotEqual(FS.frame_of_moment(title["t"]), f0["frame"])
             # another source's mix over the same backing is measured against the reference: on it, it goes on; a mix that lies
             # 0.3 s off is refused (the song structure's beats would not be where its hits are)
             with contextlib.redirect_stdout(io.StringIO()):
@@ -558,6 +581,7 @@ class PlaceTest(unittest.TestCase):
                 text = f.read()
             self.assertIn("inter1", text)
             self.assertIn("伴奏の強い立ち上がり（全曲の", text)                  # the reason, in Japanese
+            self.assertIn("パンチは題名の語 1 の 1 音目を歌うコマへ（光は動かした）", text)
             try:
                 import matplotlib  # noqa: F401
             except ImportError:
@@ -636,8 +660,10 @@ class SourceTest(unittest.TestCase):
             self.assertEqual(first(reps["new"], "flash")["action"], "move")
             self.assertEqual(first(reps["new"], "flash")["frame"], FS.frame_of_moment(head))
             self.assertEqual(reps["new"]["backing_from"]["mix"], os.path.abspath(files["mix0"]))
-            # the punch of the dropped flash goes to the new voice's first syllable
+            # the punch of the dropped flash goes to the new voice's first syllable, and so does the punch of the flash that moves
+            # to the head (a punch marks the title word as sung, not its flash)
             self.assertEqual(first(reps["own"], "punch")["frame"], FS.frame_of_moment(beat - 0.150))
+            self.assertEqual(first(reps["new"], "punch")["frame"], FS.frame_of_moment(beat - 0.150))
             # the two sources side by side
             table = os.path.join(d, "compare.md")
             with contextlib.redirect_stdout(io.StringIO()):
@@ -840,13 +866,17 @@ class RuleEdgeTest(unittest.TestCase):
         self.assertAlmostEqual(got[0]["t"], beat + 0.050, places=4)
 
     def test_the_skirts_half_second_holds_on_both_sides_of_the_punch(self):
-        # (skirt_gap_small) the punch on the band's return (41.3 s, 12 frames to 41.7 s) is half a second from where the skirt
-        # flares: 0.4 s after its end, or 0.4 s before its start, is near; the punch goes to the title word as sung
+        # (skirt_gap_small) the punch on the title word as sung (39.89 s: frame 1196 from 39.867 s, 12 frames to 40.267 s) is
+        # half a second from where the skirt flares: 0.4 s after its end or 0.4 s before its start is near, and the punch is
+        # dropped; 0.6 s either side is not
         moments = [{"kind": "title", "n": 4, "t": 39.89, "beat": 40.0}, {"kind": "return", "t": 41.3}]
-        for skirt in (42.1, 40.9):
+        start, end = FS.frame_of_moment(39.89) / 30.0, FS.frame_of_moment(39.89) / 30.0 + 12 / 30.0
+        for skirt, want in ((end + 0.4, "drop"), (start - 0.4, "drop"), (end + 0.6, "move"), (start - 0.6, "move")):
             out = FS.decide([flash(40.0), punch(40.0)], moments, song_hits(strong=[41.3]), skirt=[skirt])
             p = [d for d in out if d["kind"] == "punch"][0]
-            self.assertEqual((p["action"], p["frame"]), ("move", FS.frame_of_moment(39.89)), skirt)
+            self.assertEqual(p["action"], want, skirt)
+            if want == "move":
+                self.assertEqual(p["frame"], FS.frame_of_moment(39.89), skirt)
 
     def test_a_flash_moves_at_most_a_bar_of_the_structures_beat(self):
         # (reach_of_two_bars) measure's reach is a bar of the structure's beat (and a frame): in a song of three beats of 0.5 s
@@ -924,11 +954,12 @@ class PunchAndKeepTest(unittest.TestCase):
         self.assertEqual((p["n"], p["frame"]), (1, FS.frame_of_moment(20.23)))
 
     def test_a_flash_on_its_moment_is_kept_and_so_is_its_punch(self):
-        # (flash_keep_said_move, punch_keep_said_move) a strong hit at the head on the flash's own frame: nothing moves and the
-        # look is left as it was
+        # (flash_keep_said_move, punch_keep_said_move) a strong hit at the head on the flash's own frame and the title word sung
+        # on that frame too: nothing moves and the look is left as it was
         t = ML.frame_time(300)
         look = {"flares": [], "mograph": {"on": 1, "events": [flash(t), punch(t)]}}
-        out = FS.decide(look["mograph"]["events"], [{"kind": "section", "id": "a", "t": 10.0}], song_hits(strong=[10.0]), skirt=[])
+        moments = [{"kind": "section", "id": "a", "t": 10.0}, {"kind": "title", "n": 1, "t": 10.01, "beat": 10.0}]
+        out = FS.decide(look["mograph"]["events"], moments, song_hits(strong=[10.0]), skirt=[])
         self.assertEqual([(d["kind"], d["action"], d["frame"]) for d in out], [("flash", "keep", 300), ("punch", "keep", 300)])
         placed = FS.place(look, out)
         self.assertEqual(placed["mograph"]["events"], look["mograph"]["events"])
@@ -1251,6 +1282,43 @@ class ReportTest(unittest.TestCase):
         text = FS.compare_md(a, b, ["A", "B"])
         self.assertIn("| -43 ms |", text)
         self.assertIn("| 動かす → 338 | 削る |", text)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class PunchRuleTest(unittest.TestCase):
+    """the punch rule of 2026-10-21 (each punch on the title word its flash stood for, as sung): what the look's notes and the
+    table say of it (punch_flash_action_said_move, fate_dropped_said_stays, fate_moment_left_out) and a punch with no title word
+    to go to (punch_no_title_kept)"""
+    MOMENTS = [{"kind": "title", "n": 1, "t": 9.893, "beat": 10.0}, {"kind": "section", "id": "inter1", "t": 11.29},
+               {"kind": "title", "n": 2, "t": 19.89, "beat": 20.0}]
+
+    def test_a_punch_with_no_title_word_as_sung_is_dropped(self):
+        out = FS.decide([flash(10.0), punch(10.0)], [{"kind": "section", "id": "inter1", "t": 11.29}], song_hits(strong=[11.3]),
+                        skirt=[])
+        f, p = out
+        self.assertEqual((f["action"], p["action"], p["frame"], p["why"]), ("move", "drop", None, "no_title"))
+        placed = FS.place({"flares": [], "mograph": {"on": 1, "events": [flash(10.0), punch(10.0)]}}, out)
+        self.assertEqual([e["kind"] for e in placed["mograph"]["events"]], ["flash"])
+
+    def test_the_punchs_note_says_what_became_of_its_flash(self):
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(10.0), punch(10.0, note="title word 1 (beat 23)"),
+                                                            flash(20.0), punch(20.0, note="title word 2 (beat 46)")]}}
+        out = FS.decide(look["mograph"]["events"], self.MOMENTS, song_hits(strong=[11.3]), skirt=[])
+        notes = {round(e["t"] * 30): e["note"] for e in FS.place(look, out)["mograph"]["events"] if e["kind"] == "punch"}
+        self.assertEqual(notes[FS.frame_of_moment(9.893)], "title word 1 (beat 23); flashsync: moved from 10.000 s, "
+                                                           "its flash goes to the head of inter1: on title word 1 as sung")
+        self.assertEqual(notes[FS.frame_of_moment(19.89)], "title word 2 (beat 46); flashsync: moved from 20.000 s, "
+                                                           "its flash is dropped: on title word 2 as sung")
+
+    def test_the_table_says_the_punch_marks_the_title_word_and_what_became_of_its_flash(self):
+        out = FS.decide([flash(10.0), punch(10.0), flash(20.0), punch(20.0)], self.MOMENTS, song_hits(strong=[11.3]), skirt=[])
+        for d in out:
+            d["at_old"] = {"backing": None, "mix": None, "voice": None}
+        moments = [dict(m, near={"backing": None, "mix": None, "voice": None}) for m in self.MOMENTS]
+        text = FS.table_md({"settings": {"fps": 30, "strong": 90.0, "near_frames": 1, "reach_frames": 2, "skirt_gap": 0.5},
+                            "moments": moments, "decisions": out})
+        self.assertIn("パンチは題名の語 1 の 1 音目を歌うコマへ（光は動かした）", text)
+        self.assertIn("パンチは題名の語 2 の 1 音目を歌うコマへ（光は削った）", text)
 
 
 @unittest.skipUnless(FS, "needs numpy")
