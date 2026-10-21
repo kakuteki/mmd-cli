@@ -1664,3 +1664,10 @@ kinetic の文字は Y1 を使わず、OFL の上の 3 つだけ）。
   - **全体の試験**（hinata、ffa9b6b = 最後のコードのコミット、main_suite の run_suite_td2.py の書く先だけ替えた写し `suite/run_suite_fr.py`、
     `suite/suite_ffa9b6b.log`。判定行は記録と別の手で読んだ）: `Ran 3197 tests in 1974.444s` / `OK (skipped=39, expected failures=1)`、SUITE EXIT 0
     （FAIL・ERROR の行 0、test_flash_sync の 68 本は全部 ok、skip は前と同じ 39）。ffa9b6b の後に変えたのは README と HANDOVER だけ（試験は読まない）。
+- 2026-10-21 **協調役の決め（flashsyncrev の取り込み）**: 直しを入れた枝 flashsyncrev（d8ec4f5）を main に取り込んだ（95ad1ee、merge。docs/params は --check ok 2,707）。
+  光は 2623・7251 のまま（鏡音リンの look 5b40fefa…）。査読の決めてほしいこと 4 つへの答え: (a) **題名の語 1 のパンチを歌の頭 2591 に戻す**。パンチは 4 つとも題名の語の
+  1 音目（2591・4648・6757・7220）、光はパンチを伴わない（1 つの効果に 1 つの決まり。題名の語 4 の「パンチ 7220・光 7251」と同じ形になり、2623 に重なる物が 5 から 4 に減る）。
+  flash_sync の「光と同じコマのパンチは光と動く」をやめる直しと新しい look は flashsyncrev、カメラ D の `--punch 2591 4648 6757 7220` は camsync。(b) 2623 を残す理由は
+  節の頭（間奏1）とライザーが切れた後のシンバルの打（2〜8 kHz の立ち上がり 95〜97 % 点）。全帯域の 90 % 点の決まりでは境にある（立ち上がりの作り 18 通りのうち 7 だけが 90 以上）。
+  (c) 2623 で光と題名の語 1 の字の消え始め・間奏の題名の入りが重なるのはよい（節の変わり目を光でつなぐ）。(d) 査読の全曲の絵 `stage6/flashsyncrev/scan/work`（10.96 GB）は
+  消す（全曲の描画の空き。中の一覧は査読の NOTES に残す）。
