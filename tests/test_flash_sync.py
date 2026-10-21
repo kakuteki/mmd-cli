@@ -415,5 +415,82 @@ class PlaceTest(unittest.TestCase):
                 self.assertGreater(os.path.getsize(png), 10000)
 
 
+@unittest.skipUnless(FS, "needs numpy")
+class SourceTest(unittest.TestCase):
+    """another source of the song (another singer over the same backing): the hits of the backing from the source the song
+    structure was measured on, the title words' first syllables from the new voice, and the two sources side by side"""
+
+    def test_the_backing_comes_from_the_reference_and_the_title_word_from_the_new_voice(self):
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(12)
+        seconds = 12.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(28):
+            put(backing, FIRST + b * PERIOD, 0.15 * hit)
+        head = FIRST + 19 * PERIOD
+        hard = backing.copy()
+        put(hard, head, 1.0 * burst(int(0.15 * SR), rng))                   # the head of "inter1": hard in the reference
+        beat = FIRST + 16 * PERIOD
+        voices = {}
+        for name, lead in (("ref", 0.107), ("new", 0.150)):                  # the new singer comes in earlier
+            v = 0.0003 * rng.standard_normal(int(seconds * SR))
+            put(v, beat - 0.5, tone(0.22, 247.0))
+            put(v, beat - lead, tone(0.5, 262.0, attack=0.0005))
+            voices[name] = v
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}, {"id": "inter1", "beat": 19, "t": head}],
+                     "hooks": [{"n": 1, "beat": 16, "t": beat}], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(ML.frame_time(ML.frame_of(beat, 30))),
+                                                            punch(ML.frame_time(ML.frame_of(beat, 30)))]}}
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            scale = 0.8 / max(np.abs(hard + voices["ref"]).max(), 1e-9)
+            # the new source's backing as its own separation gives it: the head's hit softer (no strong hit there)
+            for name, x in (("mix0", hard + voices["ref"]), ("voice0", voices["ref"]), ("mix1", backing + voices["new"]),
+                            ("voice1", voices["new"])):
+                files[name] = os.path.join(d, name + ".wav")
+                write_wav(files[name], x, scale)
+            for name, doc in (("structure", structure), ("look", look)):
+                files[name] = os.path.join(d, name + ".json")
+                with open(files[name], "w", encoding="utf-8") as f:
+                    json.dump(doc, f)
+            outs = {}
+            for tag, extra in (("ref", []), ("own", []), ("new", ["--backing-from", files["mix0"], files["voice0"]])):
+                mix, voice = (files["mix0"], files["voice0"]) if tag == "ref" else (files["mix1"], files["voice1"])
+                outs[tag] = os.path.join(d, "measure_%s.json" % tag)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(FS.main(["measure", mix, voice, files["structure"], files["look"], outs[tag]] + extra), 0, tag)
+            reps = {}
+            for tag, path in outs.items():
+                with open(path, encoding="utf-8") as f:
+                    reps[tag] = json.load(f)
+
+            def first(rep, kind):
+                return [x for x in rep["decisions"] if x["kind"] == kind][0]
+
+            def title(rep):
+                return [m for m in rep["moments"] if m["kind"] == "title"][0]["t"]
+            self.assertLess(abs(title(reps["new"]) - (beat - 0.150)), 0.004)            # the new voice's first syllable
+            self.assertLess(abs(title(reps["ref"]) - (beat - 0.107)), 0.004)
+            # its own backing has no strong hit at the head: the flash is dropped; the reference's backing has: it moves there
+            self.assertEqual(first(reps["own"], "flash")["action"], "drop")
+            self.assertEqual(first(reps["new"], "flash")["action"], "move")
+            self.assertEqual(first(reps["new"], "flash")["frame"], FS.frame_of_moment(head))
+            self.assertEqual(reps["new"]["backing_from"]["mix"], os.path.abspath(files["mix0"]))
+            # the punch of the dropped flash goes to the new voice's first syllable
+            self.assertEqual(first(reps["own"], "punch")["frame"], FS.frame_of_moment(beat - 0.150))
+            # the two sources side by side
+            table = os.path.join(d, "compare.md")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(FS.main(["compare", outs["ref"], outs["new"], table, "--labels", "first,second"]), 0)
+            with open(table, encoding="utf-8") as f:
+                text = f.read()
+            for want in ("| | first | second |", "%.3f" % title(reps["ref"]), "%.3f" % title(reps["new"])):
+                self.assertIn(want, text)
+            self.assertLess(text.index("%.3f" % title(reps["ref"])), text.index("%.3f" % title(reps["new"])))
+
+
 if __name__ == "__main__":
     unittest.main()

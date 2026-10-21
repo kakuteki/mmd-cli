@@ -735,10 +735,13 @@ python tools/flash_sync.py figure measure.json a.npz fig.png [--lang ja]        
   7213 → 7251（題名の語 4 の後に伴奏が戻る所、98 % 点。拍 564 の格子の時刻 241.730 秒のコマ）。パンチは 2585 → 2623（光と）、4642 → 4639・6750 → 6746・7213 → 7210（題名の語の 1 音目を歌うコマ。
   7251 は 242.4 秒のスカートの 0.5 秒にかかる）。
 - **音源が替わったら**（鏡音リンの歌う版など。伴奏が同じなら伴奏の強い立ち上がりは同じで、題名の語の 1 音目の時刻とパンチのコマが変わりうる）:
-  (1) 新しい全体から歌声を分ける（`tools/lip_sync.py` の節の htdemucs の作り）。(2) `measure 新しい全体 新しい歌声 song_structure.json 題名の語の拍に
-  光とパンチがある look（mographrev の rv）... --reference 構成の表を測った全体` で測る（新しい全体の立ち上がりが構成の表の拍から 1 コマを越えてずれていれば
-  止まる: 構成の表から測り直す）。(3) `place` で look を書き、`table`・`figure` で決めを読み、前の決めと比べる。直した look から測り直さない
-  （動かした光はもう題名の語の所に無く、パンチも題名の語の拍に無いので、歌の時刻が変わっても付いてこない）。
+  (1) 新しい全体（構成の表の全体に合わせて頭を切ったもの）から歌声を分ける（`tools/lip_sync.py` の節の htdemucs の作り）。(2) `measure 新しい全体
+  新しい歌声 song_structure.json 題名の語の拍に光とパンチがある look（mographrev の rv）... --reference 構成の表を測った全体 --backing-from 構成の表を
+  測った全体 その歌声` で測る（新しい全体の立ち上がりが構成の表の拍から 1 コマを越えてずれていれば止まる: 構成の表から測り直す。伴奏の立ち上がりは
+  `--backing-from` の組から取るので前と同じで、題名の語の 1 音目だけが新しい歌声から。新しい組の伴奏は `backing_own` として横に書く）。(3) `place` で look を
+  書き、`table`・`figure` で決めを読み、`compare 前の measure 新しい measure 表.md --labels 前,新` で両方の数を並べる。直した look から測り直さない
+  （動かした光はもう題名の語の所に無く、パンチも題名の語の拍に無いので、歌の時刻が変わっても付いてこない）。hinata では flashsync の作業場の
+  `scripts/rebuild_flashes.ps1 -Mix 新しい全体 -Voice 新しい歌声 -Tag 名`（この (2)・(3) をまとめたもの）。
 - 注意: 組み立てで照明 light3 の look（`night_final_*_v7final.json`）を土台にするときは `flares` を `[]` にする（その look には look_city のフレア 5 つが
   残っていて、書き忘れると合いの手でフレアの光・パンチ・色ずれが戻る。flashsync の `scripts/compose_check.py` で mv_look の引数を読んで確かめた）。
 

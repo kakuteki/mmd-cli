@@ -7,11 +7,15 @@
         stop (read from the backing: MIX less VOICE); the hits (onsets) of the backing, of the mix and of the
         voice and how strong each is among the song's own; and the decision for every flash and flare of LOOK and for the
         punch on a flash's frame.  --reference: the mix STRUCTURE was measured on (for a new source: its mix must lie on the
-        reference's hits within a frame, mix_lag, or the measure stops)
+        reference's hits within a frame, mix_lag, or the measure stops).  --backing-from MIX0 VOICE0: the backing's hits from
+        that pair (another singer over the same backing: the hits stay those of the source the structure was measured on, the
+        title words' first syllables are the new voice's)
     python tools/flash_sync.py place LOOK.json MEASURE.json OUT.json
         LOOK with the decisions of MEASURE: those flashes, flares and punches moved or dropped, nothing else changed
     python tools/flash_sync.py table MEASURE.json OUT.md
         the decisions and the numbers behind them as a table
+    python tools/flash_sync.py compare MEASURE_A.json MEASURE_B.json OUT.md [--labels A,B]
+        two sources of the song side by side: the title words' first syllables, the hits on them and the decisions
     python tools/flash_sync.py figure MEASURE.json ARRAYS.npz OUT.png [--lang en|ja]
         the whole song and each flash against the voice, the hits and the heads (needs matplotlib)
 
@@ -520,10 +524,12 @@ def _strengths(t, sets, reach):
     return {name: h.strongest(t, reach) for name, h in sets.items()}
 
 
-def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference=None):
+def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference=None, backing_from=None):
     """the report (see the module's docstring), and with `arrays` the envelopes and the voice's level as .npz.  `reference`:
     the mix the song structure was measured on; a mix of another source (another singer over the same backing) must lie on it
-    within a frame, or the structure's beats are not where its hits are (ValueError)"""
+    within a frame, or the structure's beats are not where its hits are (ValueError).  `backing_from` (MIX0, VOICE0): the hits
+    of the backing are those of that pair (the source the structure was measured on: the same backing, as its separation gave
+    it), the voice's first syllables are VOICE's; the new pair's own backing is measured beside it (backing_own)"""
     mix, voice = read_sound(mix_path, sr), read_sound(voice_path, sr)
     checked = None
     if reference:
@@ -543,10 +549,23 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
     del mags
     span = (0.5, n / float(sr) - 0.5)
     env, sets = {}, {}
-    for name, x in (("backing", backing), ("mix", mix), ("voice", voice_at)):
-        t, e = onset_envelope(x, sr, ref)
+    sources = [("backing", backing, ref, span), ("mix", mix, ref, span), ("voice", voice_at, ref, span)]
+    took = None
+    if backing_from:
+        mix0, voice0 = read_sound(backing_from[0], sr), read_sound(backing_from[1], sr)
+        n0 = min(len(mix0), len(voice0))
+        mix0, voice0 = mix0[:n0], voice0[:n0]
+        lag0 = align(mix0, voice0, sr)
+        _, mags0 = spectra(mix0, sr, ONSET_WIN, ONSET_HOP, ONSET_BAND)
+        ref0 = float(np.median(mags0)) + 1e-12                   # as the measure of that pair takes it: the same hits
+        del mags0
+        sources = [("backing", backing_of(mix0, voice0, lag0), ref0, (0.5, n0 / float(sr) - 0.5)),
+                   ("backing_own", backing, ref, span)] + sources[1:]
+        took = {"mix": os.path.abspath(backing_from[0]), "voice": os.path.abspath(backing_from[1]), "lag_samples": lag0}
+    for name, x, r, within in sources:
+        t, e = onset_envelope(x, sr, r)
         env[name] = (t, e)
-        sets[name] = Hits(hits_of(t, e, span=span))
+        sets[name] = Hits(hits_of(t, e, span=within))
     vt, vdb = voice_level(voice_at, sr)
     syllables = {h["n"]: first_syllable(vt, vdb, float(h["t"])) for h in structure.get("hooks", [])}
     returns = band_returns(sets["backing"])
@@ -584,6 +603,7 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
             "align": {"lag_samples": lag, "lag_ms": round(lag * 1000.0 / sr, 2), "gain_least_squares": round(gain, 3),
                       "gain_used": 1.0},
             "reference": checked,
+            "backing_from": took,
             "hits": {k: v.summary() for k, v in sets.items()},
             "syllables": {str(k): v for k, v in syllables.items()}, "returns": returns,
             "moments": moments, "decisions": decisions}
@@ -677,6 +697,52 @@ ACTION_LABEL = {"en": {"keep": "kept", "move": "moved to frame %d", "drop": "dro
                 "ja": {"keep": "そのまま", "move": "%d コマへ動かす", "drop": "削る"}}
 KIND_LABEL = {"en": {"flash": "flash", "flare": "flare"}, "ja": {"flash": "光のフラッシュ", "flare": "フレア"}}
 JA_FONTS = ("Meiryo", "Yu Gothic", "MS Gothic", "Noto Sans CJK JP", "Noto Sans JP", "IPAexGothic")
+
+
+def compare_md(a, b, labels):
+    """two sources of the song side by side (Japanese): the title words' first syllables as sung, the hits on them, and the
+    decisions for the same look"""
+    la, lb = labels
+    fps = a["settings"]["fps"]
+
+    def lag(rep):
+        r = rep.get("reference")
+        return "-" if not r else "%+.1f ms（r %.2f）" % (r["lag_ms"], r["r"])
+
+    def backing(rep):
+        took = rep.get("backing_from")
+        return "自分の全体 − 自分の歌声" if not took else "参照の組（%s − %s）" % (os.path.basename(took["mix"]), os.path.basename(took["voice"]))
+    lines = ["# 閃光の決め: %s と %s（tools/flash_sync.py compare）" % (la, lb), "",
+             "| | %s | %s |" % (la, lb), "| --- | --- | --- |",
+             "| 全体 | %s | %s |" % (os.path.basename(a["inputs"]["mix"]), os.path.basename(b["inputs"]["mix"])),
+             "| 歌声 | %s | %s |" % (os.path.basename(a["inputs"]["voice"]), os.path.basename(b["inputs"]["voice"])),
+             "| 構成の表の全体からのずれ | %s | %s |" % (lag(a), lag(b)),
+             "| 伴奏の立ち上がり | %s | %s |" % (backing(a), backing(b)), "",
+             "## 題名の語の 1 音目（声の帯の強さが立ち上がりの後の最大の半分になる時刻）", "",
+             "| 題名の語 | 拍 | %s | %s | %s − %s | 1 音目の所の伴奏の %% 点（%s / %s） | 全体の %% 点（%s / %s） |"
+             % (la, lb, lb, la, la, lb, la, lb),
+             "| --- | --- | --- | --- | --- | --- | --- |"]
+    ta = {m["n"]: m for m in a["moments"] if m["kind"] == "title"}
+    tb = {m["n"]: m for m in b["moments"] if m["kind"] == "title"}
+    for n in sorted(set(ta) | set(tb)):
+        ma, mb = ta.get(n), tb.get(n)
+        beat = (ma or mb)["beat"]
+
+        def at(m):
+            if m is None:
+                return "-"
+            return "%.3f 秒（拍の %+.0f ms、コマ %d）" % (m["t"], (m["t"] - beat) * 1000, frame_of_moment(m["t"], fps))
+        diff = "-" if not (ma and mb) else "%+.0f ms" % ((mb["t"] - ma["t"]) * 1000)
+        lines.append("| %d | %.3f 秒 | %s | %s | %s | %s / %s | %s / %s |" % (
+            n, beat, at(ma), at(mb), diff, _pct(ma and ma["near"]["backing"]), _pct(mb and mb["near"]["backing"]),
+            _pct(ma and ma["near"]["mix"]), _pct(mb and mb["near"]["mix"])))
+    lines += ["", "## 決め（同じ look の閃光とパンチ）", "", "| 種類 | 元のコマ | %s | %s |" % (la, lb), "| --- | --- | --- | --- |"]
+
+    def said(d):
+        return ACTION_JA[d["action"]] + ("" if d.get("frame") is None or d["action"] == "keep" else " → %d" % d["frame"])
+    for da, db in zip(a["decisions"], b["decisions"]):
+        lines.append("| %s | %d | %s | %s |" % (KIND_JA.get(da["kind"], da["kind"]), da["old_frame"], said(da), said(db)))
+    return "\n".join(lines) + "\n"
 
 
 def figure(report, arrays, out, lang="en"):
@@ -799,6 +865,8 @@ def main(argv=None):
     p.add_argument("out")
     p.add_argument("--arrays")
     p.add_argument("--reference", help="the mix the song structure was measured on: another source's mix must lie on it")
+    p.add_argument("--backing-from", nargs=2, metavar=("MIX0", "VOICE0"),
+                   help="the hits of the backing from this pair (the source the structure was measured on)")
     p = sub.add_parser("place")
     p.add_argument("look")
     p.add_argument("measure")
@@ -806,6 +874,11 @@ def main(argv=None):
     p = sub.add_parser("table")
     p.add_argument("measure")
     p.add_argument("out")
+    p = sub.add_parser("compare")
+    p.add_argument("measure_a")
+    p.add_argument("measure_b")
+    p.add_argument("out")
+    p.add_argument("--labels", default="A,B", help="the names of the two sources, A,B")
     p = sub.add_parser("figure")
     p.add_argument("measure")
     p.add_argument("arrays")
@@ -814,7 +887,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     try:
         if args.cmd == "measure":
-            rep = measure(args.mix, args.voice, _load(args.structure), _load(args.look), args.arrays, reference=args.reference)
+            rep = measure(args.mix, args.voice, _load(args.structure), _load(args.look), args.arrays, reference=args.reference,
+                          backing_from=args.backing_from)
             rep["inputs"].update(structure=os.path.abspath(args.structure), look=os.path.abspath(args.look))
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(rep, f, ensure_ascii=False, indent=1)
@@ -832,6 +906,14 @@ def main(argv=None):
         if args.cmd == "table":
             with open(args.out, "w", encoding="utf-8") as f:
                 f.write(table_md(_load(args.measure)))
+            print(json.dumps({"ok": True, "out": os.path.abspath(args.out)}))
+            return 0
+        if args.cmd == "compare":
+            labels = args.labels.split(",")
+            if len(labels) != 2:
+                raise ValueError("--labels is two names, A,B: not %r" % args.labels)
+            with open(args.out, "w", encoding="utf-8") as f:
+                f.write(compare_md(_load(args.measure_a), _load(args.measure_b), labels))
             print(json.dumps({"ok": True, "out": os.path.abspath(args.out)}))
             return 0
         if args.cmd == "figure":
