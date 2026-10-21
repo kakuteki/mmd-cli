@@ -32,7 +32,9 @@ PLAN.json names the files on the render machine, as absolute paths with forward 
      "out": "C:/work/song/out", "scripts": "C:/work/song/mv", "mmd_cli": "C:/work/mmd-cli"}
 optional: "self_shadow" (none: not checked; "mmd": MMD's own self shadow; "soft": the soft one of tools/mme_shadow.py
 through MME, which needs "mmd" with MME beside it and "model" with the effect beside it: tools/mme_shadow.py prepare; the
-driver checks either before MMD renders, and with "soft" -Resume watches MME's files too),
+driver checks either before MMD renders, and with "soft" -Resume watches MME's files too), "night" (false; true: the
+effect beside "model" draws the look's night, tools/mme_shadow.py prepare --look, and the check compares it with "look" and
+the light of "camera" with the night's direction, light-vmd; it needs "soft"),
 "accessories" ([]), "cues" (none), "menu" (merged over 215 off, 221 off, 282 on; 282 = background black,
 which gives the AVI its alpha and must stay on), "size" ([1280, 720]), "codec" ("未圧縮"), "avi_bytes_per_pixel" (4
 for the uncompressed BGRA; another codec needs it, measured on one AVI), "mmd_cli_home", "python" ("python"),
@@ -77,7 +79,7 @@ UNCOMPRESSED = "未圧縮"
 DEFAULT_MENU = {"215": "off", "221": "off", "282": "on"}          # axes and floor grid, ground shadow, background black
 REQUIRED = ("mmd", "model", "motions", "camera", "look", "out", "scripts", "mmd_cli")
 OPTIONAL = ("accessories", "cues", "menu", "size", "codec", "avi_bytes_per_pixel", "mmd_cli_home", "python", "name", "world",
-            "stage_jobs", "self_shadow", "stage_set", "stage_pictures")
+            "stage_jobs", "self_shadow", "stage_set", "stage_pictures", "night")
 SELF_SHADOWS = ("mmd", "soft")
 MME_DLLS = ("d3d9.dll", "MMHack.dll", "MMEffect.dll")
 PATHS = ("mmd", "model", "camera", "look", "out", "scripts", "mmd_cli")
@@ -301,6 +303,14 @@ def check_plan(plan):
     if full["self_shadow"] is not None and full["self_shadow"] not in SELF_SHADOWS:
         raise ValueError("self_shadow is \"mmd\" (MMD's own) or \"soft\" (tools/mme_shadow.py through MME), not %r"
                          % (full["self_shadow"],))
+    # "night" (light3): the effect beside "model" draws the look's night (light.person, tools/mme_shadow.py prepare --look);
+    # the driver's check compares the effect with the plan's look, and the light of the plan's camera with the night's
+    # direction (light-vmd; review light3rev).  It needs "soft"; without it the check is the one of before
+    full.setdefault("night", False)
+    if not isinstance(full["night"], bool):
+        raise ValueError("night is true or false, not %r" % (full["night"],))
+    if full["night"] and full["self_shadow"] != "soft":
+        raise ValueError("night: the night's light is drawn by the soft shadow's effect: it needs \"self_shadow\": \"soft\"")
     for key in ("out", "scripts"):
         for folder in watched_folders(full):
             if _inside(full[key], folder):
@@ -431,8 +441,9 @@ def _shadow_check_lines(plan):
     (tools/mme_shadow.py verify); none for a plan without a "self_shadow" entry"""
     if plan.get("self_shadow") is None:
         return []
-    return ["$shadow = Invoke-Native %s tools/mme_shadow.py verify %s %s %s"
-            % (_python(plan), _ps(plan["mmd"]), _ps(plan["model"]), plan["self_shadow"]),
+    return ["$shadow = Invoke-Native %s tools/mme_shadow.py verify %s %s %s%s"
+            % (_python(plan), _ps(plan["mmd"]), _ps(plan["model"]), plan["self_shadow"],
+               " --look %s --camera %s" % (_ps(plan["look"]), _ps(plan["camera"])) if plan.get("night") else ""),
             "if ($null -eq $LASTEXITCODE) { 'STOP: {0} did not run for the self shadow check (not found?)' -f %s; exit 1 }"
             % _ps(plan["python"]),
             "if ($LASTEXITCODE -ne 0) { 'STOP: MMD would not draw the self shadow as the plan says (%s, {0}):' -f "

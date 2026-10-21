@@ -778,13 +778,46 @@ def still(look, spec, mesh, table, view, picture, alpha):
     return Still(view, surf, emissive, lit, alpha, reflected, sky(view, layer), haze, spill)
 
 
-def stage_frame(look, s, state=None):
+FLICKER_SLOW = (0.25, 0.8)        # Hz: the swell of a sign's flicker, drawn per material from this range ...
+FLICKER_FAST = (6.0, 13.0)        # ... and the buzz inside it
+
+
+def flicker_gains(light, materials, t):
+    """[materials]: the gain of each material's own light at `t` seconds (look light.flicker, light3): 1 - share x d^2,
+    d the product of a slow swell and a fast buzz (each 0.5 + 0.5 sin), their rates and phases drawn for each material
+    from light.flicker_seed and its own index (so a material's flicker does not change with how many a camera sees): a lit
+    sign dips now and then and never passes its light"""
+    share = float(light.get("flicker", 0.0))
+    gains = np.ones(materials)
+    if share <= 0:
+        return gains
+    seed = int(light.get("flicker_seed", 0))
+    for m in range(materials):
+        rng = np.random.default_rng([seed, m])
+        slow, fast = rng.uniform(*FLICKER_SLOW), rng.uniform(*FLICKER_FAST)
+        p0, p1 = rng.uniform(0.0, 2.0 * math.pi, size=2)
+        d = (0.5 + 0.5 * math.sin(2.0 * math.pi * slow * t + p0)) * (0.5 + 0.5 * math.sin(2.0 * math.pi * fast * t + p1))
+        gains[m] = 1.0 - share * d * d
+    return gains
+
+
+def stage_frame(look, s, state=None, t=None):
     """the stage of a frame (an RGB picture as floats) from its Still and her state (mv_world.Figure.state: her capsules
-    for her shadow), in this order: the night's light (the Still), her shadow on the surfaces round her, the floor's mirror,
-    the sky, the haze, the blur by depth (stage.dof, focused at the camera's look-at point as mv_world focuses), the glow"""
+    for her shadow), in this order: the night's light (the Still; its lit signs flickering at `t` seconds of the song by
+    look light.flicker, their light past white whitening their cores by light.core), her shadow on the surfaces round her, the floor's mirror, the sky, the haze, the blur by depth
+    (stage.dof, focused at the camera's look-at point as mv_world focuses), the glow"""
     stage, layer = look["stage"], look["layer"]
     unit = s.view.size[1] / REFERENCE_HEIGHT
     img = s.lit.copy()
+    light = look.get("light", {})
+    if t is not None and float(light.get("flicker", 0.0)) > 0 and s.emissive.any():
+        gains = flicker_gains(light, int(s.surf.material.max()) + 1, float(t))
+        img[s.emissive] *= gains[s.surf.material[s.emissive]][:, None]
+    if float(light.get("core", 0.0)) > 0 and s.emissive.any():
+        # (light3, look light.core) a lit sign's light past white spills into its other channels, as an overexposed core
+        # goes white: each channel gains core x (the brightest channel - 255); a sign within white keeps its colour
+        e = img[s.emissive]
+        img[s.emissive] = e + float(light["core"]) * np.clip(e.max(axis=1) - 255.0, 0.0, None)[:, None]
     if state is not None and float(stage["shadow"]) > 0 and getattr(state, "capsules", None):
         world = mv_world()
         plain = s.surf.seen & ~s.emissive
@@ -882,7 +915,7 @@ class Drawer:
             self._still = still(self.look, self.spec, self.mesh, self.table, view, picture, alpha)
         middle = sum(times) / len(times)
         state = self.figure.state(middle) if self.figure is not None else None
-        return stage_frame(self.look, self._still, state), self._still.spill
+        return stage_frame(self.look, self._still, state, t=middle / SONG_FPS), self._still.spill
 
     def draw(self, ranges, folder):
         for first, count in ranges:
