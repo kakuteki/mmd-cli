@@ -13637,6 +13637,728 @@
    "step": 2
   },
   {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SR",
+   "value": "22050",
+   "line": 74,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "FPS",
+   "value": "30",
+   "line": 75,
+   "comment": "frames of the song, MMD's (mograph_layer.SONG_FPS)",
+   "above": "",
+   "unit": "frames",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "ONSET_HOP",
+   "value": "110",
+   "line": 76,
+   "comment": "samples: 46 ms windows every 5 ms",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "ONSET_WIN",
+   "value": "1024",
+   "line": 76,
+   "comment": "samples: 46 ms windows every 5 ms",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "ONSET_BAND",
+   "value": "(30.0, 8000.0)",
+   "line": 77,
+   "comment": "Hz: the whole band of a drum kit and the band (a04_beat's full band)",
+   "above": "",
+   "unit": "Hz",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "HIT_SPACING",
+   "value": "0.05",
+   "line": 78,
+   "comment": "s: a hit is the largest flux within this on each side",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOICE_HOP",
+   "value": "55",
+   "line": 79,
+   "comment": "samples: 23 ms windows every 2.5 ms",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOICE_WIN",
+   "value": "512",
+   "line": 79,
+   "comment": "samples: 23 ms windows every 2.5 ms",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOICED",
+   "value": "(150.0, 1500.0)",
+   "line": 80,
+   "comment": "Hz: the voice's fundamental and first formant (review mographrev's hook_timing)",
+   "above": "",
+   "unit": "Hz",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_SEARCH",
+   "value": "(-0.25, 0.15)",
+   "line": 81,
+   "comment": "s from the title word's beat where the voice's first rise near it is looked for (no vowels",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_RISE_DB",
+   "value": "12.0",
+   "line": 83,
+   "comment": "",
+   "above": "given: in this song the last syllable of the word before, 90-160 ms before the beat)",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_AFTER",
+   "value": "0.05",
+   "line": 84,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_BEFORE",
+   "value": "0.075",
+   "line": 84,
+   "comment": "",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_SMOOTH",
+   "value": "5",
+   "line": 85,
+   "comment": "rows the level is smoothed over for its slope",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SYLLABLE_APART",
+   "value": "0.06",
+   "line": 86,
+   "comment": "s: a syllable's rise is the steepest within this each side (two nearer are one syllable)",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "OPEN_BANDS",
+   "value": "((300.0, 700.0), (700.0, 1500.0))",
+   "line": 87,
+   "comment": "Hz: OPEN = the level of the second over the first (lip_check's)",
+   "above": "",
+   "unit": "Hz",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_AFTER",
+   "value": "(0.03, 0.13)",
+   "line": 88,
+   "comment": "s after a syllable's onset over which its vowel is read",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_OPEN.a",
+   "value": "1",
+   "line": 89,
+   "comment": "close (a low first formant) or open",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_OPEN.e",
+   "value": "1",
+   "line": 89,
+   "comment": "close (a low first formant) or open",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_OPEN.i",
+   "value": "-1",
+   "line": 89,
+   "comment": "close (a low first formant) or open",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_OPEN.o",
+   "value": "1",
+   "line": 89,
+   "comment": "close (a low first formant) or open",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "VOWEL_OPEN.u",
+   "value": "-1",
+   "line": 89,
+   "comment": "close (a low first formant) or open",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "TITLE_SEARCH",
+   "value": "(-0.35, 0.6)",
+   "line": 90,
+   "comment": "s from the title word's beat where its first syllable is looked for (by its vowels)",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "WORD_SYLLABLE",
+   "value": "0.25",
+   "line": 91,
+   "comment": "s: the title word's syllables lie within (its syllables - 1) x this of its first (an eighth at",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "TITLE_STEP",
+   "value": "0.5",
+   "line": 93,
+   "comment": "beats from one of the title word's syllables to the next (it is sung on eighths): where its",
+   "above": "140 BPM is 0.214 s)",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "STOP_S",
+   "value": "1.0",
+   "line": 95,
+   "comment": "s without a hit at the song's median or over (more than two beats at 140 BPM): a stop",
+   "above": "vowels cannot tell a syllable's place (a syllable sung legato is missing), its time does",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "QUIET_PCT",
+   "value": "50.0",
+   "line": 96,
+   "comment": "",
+   "above": "",
+   "unit": "%",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "STRONG",
+   "value": "90.0",
+   "line": 97,
+   "comment": "percentile of the song's hits: a strong hit (the request: \"the top 10 % or so\")",
+   "above": "",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": true,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "dance",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "NEAR_FRAMES",
+   "value": "1",
+   "line": 98,
+   "comment": "a strong hit within this of a moment is on it",
+   "above": "",
+   "unit": "frames",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "REACH_FRAMES",
+   "value": "2",
+   "line": 99,
+   "comment": "the strongest hit within this of a flash is written (the request: +-2 frames)",
+   "above": "",
+   "unit": "frames",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "LOCAL",
+   "value": "2.0",
+   "line": 100,
+   "comment": "s each side: the hits a hit is told against for its local strength",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "SKIRT_GAP",
+   "value": "0.5",
+   "line": 101,
+   "comment": "s: no punch's frames within this of where the skirt flares (mograph_layer.plan)",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "ALIGN_MOST",
+   "value": "0.05",
+   "line": 102,
+   "comment": "s: the voice is looked for this far either way in the mix",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "const",
+   "name": "REFERENCE_MOST",
+   "value": "2.0",
+   "line": 103,
+   "comment": "s: a mix of another source is looked for this far either way in the reference mix",
+   "above": "",
+   "unit": "s",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "option",
+   "name": "--labels",
+   "line": 1034,
+   "comment": "the names of the two sources, A,B",
+   "above": "",
+   "help": "the names of the two sources, A,B",
+   "value": "\"A,B\"",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
+   "tool": "flash_sync.py",
+   "kind": "option",
+   "name": "--lang",
+   "line": 1039,
+   "comment": "",
+   "above": "",
+   "help": "",
+   "value": "\"en\"",
+   "unit": "",
+   "depends": {
+    "gravity": false,
+    "dance": false,
+    "model": false,
+    "people": false,
+    "literature": false,
+    "body": false
+   },
+   "review": "",
+   "step": 18
+  },
+  {
    "tool": "foot_layer.py",
    "kind": "const",
    "name": "UNIT_CM",
@@ -40776,7 +41498,7 @@
    "tool": "param_inventory.py",
    "kind": "const",
    "name": "ORDER",
-   "value": "[ (1, \"模型の写し（rig の受け持ち）\", [\"pmx_rig.py\", \"rig_skin.py\", \"pmx_spine.py\", \"pmx_eyes.py\", \"pmx_skirt.py\"], \"骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し\", [\"skirt.floor_over122_frames\", \"skirt.floor_max\", \"pixels.pants_frames\"], [\"rig_check.py\", \"spine_check.py\", \"skirt_probe.py\"]), (2, \"踊りを体に写す（retarget の受け持ち）と手捩\", [\"retarget.py\", \"fix_twist.py\"], \"体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\", \"retarget.contacts_kept_share\", \"retarget.arms_in_body_frames\", \"retarget.toe_float_pct\"], [\"motion_fk.py\", \"retarget_check.py\"]), (3, \"平滑化と手ぶれ除去（v4s）\", [\"smooth_motion.py\"], \"キーを曲線で通し直し、密なキーのゆらぎを均す\", [\"spikes.centre_per_min\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"spikes.head_per_min\", \"arms.wrist_8hz_pct\", \"arms.wrist_3_6hz_pct\", \"upper.head_stop_ms\"], [\"motion_jerk.py\"]), (4, \"呼吸\", [\"breath_layer.py\"], \"胸と肩の呼吸、止めの間の動き\", [\"upper.head_stops_per_min\", \"upper.upper_sudden_stops_per_min\"], []), (5, \"関節の拘束\", [\"anatomy_layer.py\"], \"ひじの蝶番・上腕のねじり・胴と首の分け直し・肩甲帯・可動域\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\"], []), (6, \"運動（遅れと堅さ、--preset human --elbow-hinge on）\", [\"motor_layer.py\"], \"近位から遠位の時刻、追従の柔らかさ、ひじの蝶番\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\", \"arms.a09_elbow_wrist_L\", \"arms.a09_elbow_wrist_R\", \"upper.head_sudden_stops_per_min\", \"upper.head_stop_ms\"], []), (7, \"背骨 4 本へ配る\", [\"spine_layer.py\"], \"体幹の曲がりを解剖学の割合で腰椎上部・上半身2・胸椎上部へ\", [\"upper.upper_sudden_stops_per_min\", \"upper.chest_follow\"], [\"spine_check.py\"]), (8, \"足（最初の足の層 feet0、--landing off。v11 から --skim on・--hover off が既定）\", [\"foot_layer.py\"], \"転がり・母指球・床に入れない・距骨下・床をかすめる速い足を押し付けない\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"sink_check.py\", \"leg_ik.py\"]), (9, \"体重（順 C の balance）\", [\"balance_layer.py\"], \"片足立ちの重心・XcoM の余裕・腰の下向きの加速度の上限・宙・突起のならし\", [\"gravity.centre_down_max\", \"gravity.centre_down_gt98_pct\", \"skirt.floor_over122_frames\", \"skirt.floor_max\", \"balance.com_lateral_cm\", \"balance.moving_com_lateral_cm\", \"balance.moving_mos_ml_cm\", \"balance.still_com_lateral_cm\", \"balance.touchdown_xcom_cm\", \"gravity.landing_sink_cm\", \"gravity.jump_apex_lowered\", \"gravity.beat_dips_weak\", \"spikes.centre_per_min\"], [\"sink_check.py\", \"leg_ik.py\"]), (10, \"足（2 回目の足の層、--landing human。v11 から --skim on・--hover off が既定）\", [\"foot_layer.py\"], \"着地のひざ・つま先・床をかすめる足を押し付けない（浮きの体の下げ --hover sink は v11 から既定で off）\", [\"feet.slide10_per_min\", \"feet.slide3_per_min\", \"feet.slide_path_cm_per_min\", \"feet.slide_fast_share\", \"feet.knee_gain_deg\", \"feet.knee_straight_pct\", \"feet.ik_new_miss_frames\", \"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"gravity.air_per_min\"], [\"sink_check.py\"]), (11, \"接地の計画（contact_layer）\", [\"contact_layer.py\"], \"立ち足を置く・宙の放物線・体重を受ける足の浮き・ひざの段・振りの足を床へ下ろさない（SWING_CLEAR）・低い払いを下の足で支える（glide）\", [\"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"balance.single_share_pct\", \"balance.zmp_inside_pct\", \"feet.ik_new_miss_frames\", \"gravity.jump_apex_lowered\", \"spikes.centre_per_min\"], [\"contact_check.py\"]), (12, \"上体の慣性\", [\"wb_layer.py\", \"wb_dynamics.py\"], \"骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）\", [\"upper.head_follow\", \"upper.chest_follow\", \"upper.arms_follow\", \"upper.head_follow_2_4hz\", \"balance.zmp_inside_pct\", \"balance.single_share_pct\", \"balance.zmp_margin_single_cm\", \"balance.zmp_tilt_deg_per_min\"], [\"upper_body_check.py\"]), (13, \"手と指、触れの層（v11arms）\", [\"hand_layer.py\", \"touch_layer.py\"], \"指の形・遅れ・触れ・受け身の指、元の踊りの手の触れをリンの体に戻して腕を体から出す（retarget の手の直しをもう一度、もも は脚の IK）\", [\"arms.finger_speed_L\", \"arms.finger_speed_R\", \"arms.finger_wrist_ratio_L\", \"arms.finger_wrist_ratio_R\", \"arms.a09_wrist_finger_L\", \"arms.a09_wrist_finger_R\", \"arms.rests_per_min_R\", \"retarget.contacts_kept_share\", \"retarget.arms_in_body_frames\", \"retarget.contacts_lost_runs\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"arms.wrist_8hz_pct\"], [\"retarget_check.py\"]), (14, \"視線\", [\"eye_gaze.py\"], \"固視とサッカード・カメラ目線・手を見る\", [\"eyes.edge_pct\", \"eyes.edge_longest_s\", \"eyes.eccentric15_pct\"], []), (15, \"表情\", [\"face_life.py\"], \"KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）\", [], []), (16, \"口\", [\"lip_sync.py\", \"lip_timing.py\"], \"歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）\", [\"mouth.lag_median_ms\", \"mouth.lag_open_ms\", \"mouth.late_pct\", \"mouth.late_open_pct\", \"mouth.early_open_pct\", \"mouth.shut_singing_pct\"], [\"lip_check.py\"]), (17, \"目の光と寄り\", [\"eye_optics.py\"], \"光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔\", [], []), (18, \"描画と後処理\", [\"mv_chunks.py\", \"mv_world.py\", \"stage_layer.py\", \"mv_look.py\", \"mv_text.py\", \"kinetic_text.py\", \"make_stage.py\", \"mme_shadow.py\", \"pmm_gravity.py\", \"mograph_layer.py\"], \"区間の描画・舞台と光（後処理の舞台 mv_world か、模型の舞台 stage_layer）・床と体の影・文字（mv_text か、歌詞の動く文字 kinetic_text）・画面の飾り（mograph_layer）・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す（mograph の白フラッシュに瞳を合わせるなら --flares にその時刻）\", [\"pixels.pants_frames\", \"pixels.shadow_rough\", \"pixels.shadow_total_rough\"], [\"shadow_check.py\", \"shadow_measure.py\", \"selfshadow_check.py\", \"look_analyze.py\", \"typo_analyze.py\", \"mograph_analyze.py\"]), (19, \"カメラ（加賀さんの指示で後回し）\", [\"make_camera.py\"], \"ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す\", [], []), ]",
+   "value": "[ (1, \"模型の写し（rig の受け持ち）\", [\"pmx_rig.py\", \"rig_skin.py\", \"pmx_spine.py\", \"pmx_eyes.py\", \"pmx_skirt.py\"], \"骨とモーフの受け皿・皮付け・物理（枝 rig）、背骨の骨 2 本・目の光の骨 4 本・スカートの天井 70 を足したモデルの写し\", [\"skirt.floor_over122_frames\", \"skirt.floor_max\", \"pixels.pants_frames\"], [\"rig_check.py\", \"spine_check.py\", \"skirt_probe.py\"]), (2, \"踊りを体に写す（retarget の受け持ち）と手捩\", [\"retarget.py\", \"fix_twist.py\"], \"体格の写し（枝 retarget）、腕の開き 6 度（_spike の台本）、手捩の 180 度を手首へ\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\", \"retarget.contacts_kept_share\", \"retarget.arms_in_body_frames\", \"retarget.toe_float_pct\"], [\"motion_fk.py\", \"retarget_check.py\"]), (3, \"平滑化と手ぶれ除去（v4s）\", [\"smooth_motion.py\"], \"キーを曲線で通し直し、密なキーのゆらぎを均す\", [\"spikes.centre_per_min\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"spikes.head_per_min\", \"arms.wrist_8hz_pct\", \"arms.wrist_3_6hz_pct\", \"upper.head_stop_ms\"], [\"motion_jerk.py\"]), (4, \"呼吸\", [\"breath_layer.py\"], \"胸と肩の呼吸、止めの間の動き\", [\"upper.head_stops_per_min\", \"upper.upper_sudden_stops_per_min\"], []), (5, \"関節の拘束\", [\"anatomy_layer.py\"], \"ひじの蝶番・上腕のねじり・胴と首の分け直し・肩甲帯・可動域\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\"], []), (6, \"運動（遅れと堅さ、--preset human --elbow-hinge on）\", [\"motor_layer.py\"], \"近位から遠位の時刻、追従の柔らかさ、ひじの蝶番\", [\"arms.a09_shoulder_elbow_L\", \"arms.a09_shoulder_elbow_R\", \"arms.a09_elbow_wrist_L\", \"arms.a09_elbow_wrist_R\", \"upper.head_sudden_stops_per_min\", \"upper.head_stop_ms\"], []), (7, \"背骨 4 本へ配る\", [\"spine_layer.py\"], \"体幹の曲がりを解剖学の割合で腰椎上部・上半身2・胸椎上部へ\", [\"upper.upper_sudden_stops_per_min\", \"upper.chest_follow\"], [\"spine_check.py\"]), (8, \"足（最初の足の層 feet0、--landing off。v11 から --skim on・--hover off が既定）\", [\"foot_layer.py\"], \"転がり・母指球・床に入れない・距骨下・床をかすめる速い足を押し付けない\", [\"feet.under_floor_frames\", \"feet.ik_miss_floor_frames\"], [\"sink_check.py\", \"leg_ik.py\"]), (9, \"体重（順 C の balance）\", [\"balance_layer.py\"], \"片足立ちの重心・XcoM の余裕・腰の下向きの加速度の上限・宙・突起のならし\", [\"gravity.centre_down_max\", \"gravity.centre_down_gt98_pct\", \"skirt.floor_over122_frames\", \"skirt.floor_max\", \"balance.com_lateral_cm\", \"balance.moving_com_lateral_cm\", \"balance.moving_mos_ml_cm\", \"balance.still_com_lateral_cm\", \"balance.touchdown_xcom_cm\", \"gravity.landing_sink_cm\", \"gravity.jump_apex_lowered\", \"gravity.beat_dips_weak\", \"spikes.centre_per_min\"], [\"sink_check.py\", \"leg_ik.py\"]), (10, \"足（2 回目の足の層、--landing human。v11 から --skim on・--hover off が既定）\", [\"foot_layer.py\"], \"着地のひざ・つま先・床をかすめる足を押し付けない（浮きの体の下げ --hover sink は v11 から既定で off）\", [\"feet.slide10_per_min\", \"feet.slide3_per_min\", \"feet.slide_path_cm_per_min\", \"feet.slide_fast_share\", \"feet.knee_gain_deg\", \"feet.knee_straight_pct\", \"feet.ik_new_miss_frames\", \"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"gravity.air_per_min\"], [\"sink_check.py\"]), (11, \"接地の計画（contact_layer）\", [\"contact_layer.py\"], \"立ち足を置く・宙の放物線・体重を受ける足の浮き・ひざの段・振りの足を床へ下ろさない（SWING_CLEAR）・低い払いを下の足で支える（glide）\", [\"gravity.hover_pct\", \"gravity.hover_runs6_per_min\", \"balance.single_share_pct\", \"balance.zmp_inside_pct\", \"feet.ik_new_miss_frames\", \"gravity.jump_apex_lowered\", \"spikes.centre_per_min\"], [\"contact_check.py\"]), (12, \"上体の慣性\", [\"wb_layer.py\", \"wb_dynamics.py\"], \"骨盤の速い動きに頭が付く分を背骨で戻す（全身の重心・ZMP の計算器）\", [\"upper.head_follow\", \"upper.chest_follow\", \"upper.arms_follow\", \"upper.head_follow_2_4hz\", \"balance.zmp_inside_pct\", \"balance.single_share_pct\", \"balance.zmp_margin_single_cm\", \"balance.zmp_tilt_deg_per_min\"], [\"upper_body_check.py\"]), (13, \"手と指、触れの層（v11arms）\", [\"hand_layer.py\", \"touch_layer.py\"], \"指の形・遅れ・触れ・受け身の指、元の踊りの手の触れをリンの体に戻して腕を体から出す（retarget の手の直しをもう一度、もも は脚の IK）\", [\"arms.finger_speed_L\", \"arms.finger_speed_R\", \"arms.finger_wrist_ratio_L\", \"arms.finger_wrist_ratio_R\", \"arms.a09_wrist_finger_L\", \"arms.a09_wrist_finger_R\", \"arms.rests_per_min_R\", \"retarget.contacts_kept_share\", \"retarget.arms_in_body_frames\", \"retarget.contacts_lost_runs\", \"spikes.wrist_R_per_min\", \"spikes.wrist_L_per_min\", \"arms.wrist_8hz_pct\"], [\"retarget_check.py\"]), (14, \"視線\", [\"eye_gaze.py\"], \"固視とサッカード・カメラ目線・手を見る\", [\"eyes.edge_pct\", \"eyes.edge_longest_s\", \"eyes.eccentric15_pct\"], []), (15, \"表情\", [\"face_life.py\"], \"KAZUSA の表情を元に、時刻の型・瞼・まばたき・保持（瞳1off・HL・HL２）\", [], []), (16, \"口\", [\"lip_sync.py\", \"lip_timing.py\"], \"歌声と歌詞の音節で口の形と時刻（文字の時刻は lip_timing）\", [\"mouth.lag_median_ms\", \"mouth.lag_open_ms\", \"mouth.late_pct\", \"mouth.late_open_pct\", \"mouth.early_open_pct\", \"mouth.shut_singing_pct\"], [\"lip_check.py\"]), (17, \"目の光と寄り\", [\"eye_optics.py\"], \"光の骨を角膜反射の式で・手を見る間の寄り目・瞳孔\", [], []), (18, \"描画と後処理\", [\"mv_chunks.py\", \"mv_world.py\", \"stage_layer.py\", \"mv_look.py\", \"mv_text.py\", \"kinetic_text.py\", \"make_stage.py\", \"mme_shadow.py\", \"pmm_gravity.py\", \"mograph_layer.py\", \"flash_sync.py\"], \"区間の描画・舞台と光（後処理の舞台 mv_world か、模型の舞台 stage_layer）・床と体の影・文字（mv_text か、歌詞の動く文字 kinetic_text）・画面の飾り（mograph_layer、閃光とパンチの時刻は flash_sync）・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す（mograph の白フラッシュに瞳を合わせるなら --flares にその時刻）\", [\"pixels.pants_frames\", \"pixels.shadow_rough\", \"pixels.shadow_total_rough\"], [\"shadow_check.py\", \"shadow_measure.py\", \"selfshadow_check.py\", \"look_analyze.py\", \"typo_analyze.py\", \"mograph_analyze.py\"]), (19, \"カメラ（加賀さんの指示で後回し）\", [\"make_camera.py\"], \"ショットの切り分けと控えめに動くカメラ。14 の eye_gaze と 17 の eye_optics はカメラを入力に読む: カメラを変えたら 14〜17 を作り直す\", [], []), ]",
    "line": 52,
    "comment": "",
    "above": "---- the rebuild's order --------------------------------------------------------------------------------------------- (step, title, tools, what the step makes, the measures of tools/mv_inspect.py that check it, other checks).  The v11 build (hinata v11/scripts/build_v11_final.ps1, 2026-10-18: the copies pmx_spine, pmx_eyes, pmx_rig and pmx_skirt make -> retarget -> v4s -> fix_twist -> breath -> anatomy -> motor -> spine -> feet0 -> balance -> feet -> contact -> wb -> hands -> touch -> gaze -> face -> lips -> eye_optics -> render); the v10 build it grew from had no retarget, rig, contact or touch.",
@@ -55384,9 +56106,10 @@
     "make_stage.py",
     "mme_shadow.py",
     "pmm_gravity.py",
-    "mograph_layer.py"
+    "mograph_layer.py",
+    "flash_sync.py"
    ],
-   "what": "区間の描画・舞台と光（後処理の舞台 mv_world か、模型の舞台 stage_layer）・床と体の影・文字（mv_text か、歌詞の動く文字 kinetic_text）・画面の飾り（mograph_layer）・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す（mograph の白フラッシュに瞳を合わせるなら --flares にその時刻）",
+   "what": "区間の描画・舞台と光（後処理の舞台 mv_world か、模型の舞台 stage_layer）・床と体の影・文字（mv_text か、歌詞の動く文字 kinetic_text）・画面の飾り（mograph_layer、閃光とパンチの時刻は flash_sync）・物理の重力。17 の eye_optics は look の flares を読む（--look）: look を変えたら 17 を作り直す（mograph の白フラッシュに瞳を合わせるなら --flares にその時刻）",
    "measures": [
     "pixels.pants_frames",
     "pixels.shadow_rough",
@@ -55400,10 +56123,10 @@
     "typo_analyze.py",
     "mograph_analyze.py"
    ],
-   "values": 594,
+   "values": 630,
    "retarget": 16,
    "rig": 15,
-   "dance": 44,
+   "dance": 50,
    "noted": 10
   },
   {
@@ -55424,15 +56147,15 @@
  ],
  "stale_notes": [],
  "counts": {
-  "entries": 2671,
-  "const": 2138,
-  "option": 139,
+  "entries": 2707,
+  "const": 2172,
+  "option": 141,
   "option_of_constant": 39,
   "default": 394,
-  "review": 453,
+  "review": 459,
   "retarget": 271,
   "rig": 70,
-  "dance": 124,
+  "dance": 130,
   "noted": 84
  }
 }
