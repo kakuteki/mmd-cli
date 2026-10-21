@@ -187,8 +187,8 @@ def check_settings(s):
     need(all(whole(s[k]) for k in ("chars", "chars_min", "chars_max")) and 1 <= s["chars_min"] <= s["chars"] <= s["chars_max"],
          "chars_min, chars and chars_max are whole numbers, 1 <= chars_min <= chars <= chars_max: not %r, %r, %r"
          % (s["chars_min"], s["chars"], s["chars_max"]))
-    for k in ("sung", "lead", "hang", "drift", "stagger", "push", "outline_px", "glow", "glow_radius", "neon_glow", "shadow",
-              "credit_fade"):
+    for k in ("sung", "phrase", "lead", "hang", "drift", "stagger", "push", "outline_px", "glow", "glow_radius", "neon_glow",
+              "shadow", "credit_fade"):
         need(math.isfinite(s[k]) and s[k] >= 0, "%s is from 0, not %r" % (k, s[k]))
     for k in ("enter", "exit"):
         need(0 <= s[k] <= 2.0, "%s is 0 to 2 seconds, not %r" % (k, s[k]))
@@ -444,13 +444,18 @@ TIME_SLACK = 0.25                 # (a slow line is cut more: each piece comes w
 # did in the cutting by characters
 SUNG_UNIT = 0.2
 # ... and a cut inside a word (hiragana after hiragana that is no particle, or after kanji: the ending of a verb or an
-# adjective) costs INSIDE_WORD_COST, not CUT_COST's 6: a piece sung up to about 2 s keeps its words whole (the time's cost of
-# a piece sung 2.0 s is 20).  With 6, words8 of 2026-10-21 had 26 of 137 cuts inside a word, as before a negation
-INSIDE_WORD = frozenset({("hira", "hira"), ("kanji", "hira")})
+# adjective; after katakana: a noun's particle or copula; kinetic3) costs INSIDE_WORD_COST, not CUT_COST's 6 or 2.5: a piece
+# sung up to about 2 s keeps its words whole (the time's cost of a piece sung 2.0 s is 20).  With 6, words8 of 2026-10-21 had
+# 26 of 137 cuts inside a word, as before a negation
+INSIDE_WORD = frozenset({("hira", "hira"), ("kanji", "hira"), ("kata", "hira")})
 INSIDE_WORD_COST = 30.0
-# ... and a piece over a space (where the lyrics part their phrases) holds whole phrases: with the time alone, words8 of
-# 2026-10-21 had 7 pieces over a space begun inside a phrase (as the last particle of a sentence put in front of the next
-# phrase, which it then reads as) and 6 ended inside one
+# ... so does a cut before a kanji after a kanji and one kana that is no particle (a verb made of two, as 歩き|出す, 書き|直す:
+# the first's stem and its one kana go with the second, as words8's cutting parted some; an adjective before a noun, 高い|空, is
+# kept whole too)
+# By the time, the line is cut into its phrases (the parts between its spaces, where the lyrics part them): one sung up to
+# settings["phrase"] s is one piece, a longer one is cut at its words (kinetic3 2026-10-21, the coordinator: the meaning's
+# borders first, the references' 0.72 s only what to near).  kinetic2's pieces over a space (whole phrases put together)
+# are gone with it
 
 
 @dataclasses.dataclass
@@ -514,16 +519,49 @@ def _atoms(chars, longest):
 
 
 def cut_line(chars, settings):
-    """the pieces of a line: [(first, end)] indices into `chars` (no piece begins or ends with a space), each sung about
-    settings["sung"] s (or, with sung 0, of about settings["chars"] characters), where the cuts cost least (CUT_COST; a
-    piece's sung time or length off the target costs its square).  Cut by the time, a piece over a space holds whole
-    phrases"""
-    target, least, most = int(settings["chars"]), int(settings["chars_min"]), int(settings["chars_max"])
+    """the pieces of a line: [(first, end)] indices into `chars` (no piece begins or ends with a space).  By the time
+    (settings["sung"] above 0): each phrase (the parts between spaces) sung up to settings["phrase"] s is a piece, a longer
+    one is cut where the cuts cost least into pieces sung about settings["sung"] s (CUT_COST, INSIDE_WORD_COST; a piece's sung
+    time off it costs its square).  With sung 0 the line is cut as before kinetic2: pieces of about settings["chars"]
+    characters where the cuts cost least"""
     by_time = float(settings.get("sung", 0.0))
-    longest = float(settings["life"][1]) + TIME_SLACK
-    atoms = _atoms(chars, most)
+    atoms = _atoms(chars, int(settings["chars_max"]))
     if not atoms:
         return []
+    if by_time <= 0:
+        return _cut_atoms(chars, atoms, settings, by_time)
+    heads = [k for k, x in enumerate(atoms) if k == 0 or x.space_before]
+    cuts = []
+    for lo, hi in zip(heads, heads[1:] + [len(atoms)]):
+        phrase = atoms[lo:hi]
+        timed = [c for x in phrase for c in chars[x.start:x.end] if c.first >= 0]
+        sung = (max(c.t1 for c in timed) - min(c.t0 for c in timed)) if timed else 0.0
+        if sung <= float(settings["phrase"]) + 1e-9:
+            cuts.append((phrase[0].start, phrase[-1].end))
+        else:
+            cuts += _cut_atoms(chars, phrase, settings, by_time)
+    return cuts
+
+
+def _cut_cost(chars, atoms, a, by_time):
+    """what a cut before atoms[a] costs (0 at the start or after a space)"""
+    if a == 0 or atoms[a].space_before:
+        return 0.0
+    tail, head = atoms[a - 1].tail, atoms[a].head
+    if tail == "hira" and head == "hira" and chars[atoms[a - 1].end - 1].ch in PARTICLES:
+        return AFTER_PARTICLE
+    if by_time > 0 and (tail, head) in INSIDE_WORD:
+        return INSIDE_WORD_COST
+    if (by_time > 0 and head == "kanji" and a >= 2 and atoms[a - 1].size == 1 and tail == "hira"
+            and chars[atoms[a - 1].start].ch not in PARTICLES and atoms[a - 2].tail == "kanji" and not atoms[a - 1].space_before):
+        return INSIDE_WORD_COST                       # a kanji, one kana that is no particle, a kanji: one word
+    return CUT_COST.get((tail, head), CUT_DEFAULT)
+
+
+def _cut_atoms(chars, atoms, settings, by_time):
+    """the cheapest cutting of a run of atoms (a line, or a phrase of one): [(first, end)] into `chars`"""
+    target, least, most = int(settings["chars"]), int(settings["chars_min"]), int(settings["chars_max"])
+    longest = float(settings["life"][1]) + TIME_SLACK
     total = sum(a.size for a in atoms)
     n = len(atoms)
     timed = [[c for c in chars[x.start:x.end] if c.first >= 0] for x in atoms]
@@ -531,22 +569,13 @@ def cut_line(chars, settings):
     for b in range(1, n + 1):
         size = 0
         t0, t1 = math.inf, -math.inf
-        spaced = False                                  # the piece atoms[a:b] holds a space
         for a in range(b - 1, -1, -1):
             size += atoms[a].size
-            spaced = spaced or (a < b - 1 and atoms[a + 1].space_before)
             if timed[a]:
                 t0 = min(t0, min(c.t0 for c in timed[a]))
                 t1 = max(t1, max(c.t1 for c in timed[a]))
             sung = t1 - t0 if t1 > t0 else 0.0
-            if a == 0 or atoms[a].space_before:
-                cut = 0.0
-            elif atoms[a - 1].tail == "hira" and atoms[a].head == "hira" and chars[atoms[a - 1].end - 1].ch in PARTICLES:
-                cut = AFTER_PARTICLE
-            else:
-                cut = CUT_COST.get((atoms[a - 1].tail, atoms[a].head), CUT_DEFAULT)
-                if by_time > 0 and (atoms[a - 1].tail, atoms[a].head) in INSIDE_WORD:
-                    cut = INSIDE_WORD_COST
+            cut = _cut_cost(chars, atoms, a, by_time)
             if by_time > 0:
                 cost = LENGTH_COST * ((sung - by_time) / SUNG_UNIT) ** 2 + cut
             else:
@@ -555,8 +584,6 @@ def cut_line(chars, settings):
                 cost += LONG_COST * (size - most)
             if size < least and size < total:
                 cost += SHORT_COST
-            if by_time > 0 and spaced and not ((a == 0 or atoms[a].space_before) and (b == n or atoms[b].space_before)):
-                cost = math.inf                         # part of a phrase over a space
             if best[a] + cost < best[b]:
                 best[b], back[b] = best[a] + cost, a
             if size > 3 * most:
@@ -577,11 +604,10 @@ BIG_SECTIONS = ("chorus", "bridge", "outro")      # the sections whose lines als
 EDGE_X = (0.03, 0.97)             # where the hollow large words stand: cut by the left or the right edge
 BIG_VARIANTS = ("tilt", "hollow", "tilt", "stack")   # the large words in turn: tilted, hollow cut by an edge (upright),
                                   # tilted, two rows of Mincho (each row is read as a line of its own, of a few characters)
-BIG_ECHO = 0.15                   # s before its subtitle goes, a large word comes: it echoes the words behind the dancer (made
-                                  # when the subtitles went before their words were sung: the echo came while they were
-                                  # still sung, and the text was on more of the sung time, the references 0.56.  With the
-                                  # subtitles on until sung, kinetic2, it comes after they are sung)
-BIG_LONGER = 0.35                 # s a large word stays on longer than the subtitle it echoes
+# a large word is on while its words are sung, as long as its subtitle (kinetic3 2026-10-21, the coordinator: the same
+# words large and small at once are an emphasis.  It came 0.15 s before its subtitle went and stayed 0.35 s longer, made
+# when the subtitles went before their words were sung; on until sung, it came after them and lay over the next line's
+# subtitles 62 % of its time in words8)
 CUE_MEETS = 1.5                   # s: a lyric cue and the line of the alignment it is meet within this
 # the marks of the MV's shared song structure (the words file's "marks", from the motion graphics' table: a white flash and
 # a punch start on a section's first frame, on a chorus half's and on the title word's; the picture changes on a section's
@@ -1060,12 +1086,12 @@ def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
                     # the hollow words are cut by the picture's edge (as the references' are): the side it is on, the edge's size
                     rows = [dataclasses.replace(r, size=s["edge_word"]) for r in rows]
                     x = EDGE_X[0] if x < 0.5 else EDGE_X[1]
-                echo = src.end - BIG_ECHO
-                p = Piece("L%02db%d" % (k, j), "big", "back", rows, echo, echo + (src.end - src.start) + BIG_LONGER,
+                p = Piece("L%02db%d" % (k, j), "big", "back", rows, src.start, src.end,
                           x, s["big_y"][(big_side // 2) % len(s["big_y"])],
                           tilt=s["tilt"] if variant == "tilt" else 0.0,
                           hollow=variant == "hollow", glow=s["neon_glow"] if variant == "hollow" else s["glow"],
-                          alpha=s["big_alpha"], enter_s=s["enter"], exit_s=s["exit"], push=s["push"], line=k, section=kind)
+                          alpha=s["big_alpha"], enter_s=s["enter"], exit_s=s["exit"], push=s["push"], line=k, section=kind,
+                          sung_end=src.sung_end)              # (it goes on the marks its subtitle goes on)
                 big_side += 1
                 pieces.append(p)
                 bigs.append(p)

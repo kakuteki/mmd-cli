@@ -274,8 +274,11 @@ DEFAULT_LOOK = {
               "seed": 1,            # the choices (ways to come and go, places, faces) are fixed by this number
               # (the shares and seconds below were tuned until tools/typo_analyze.py read our text as it reads the references:
               # typorev's corrected targets, 2026-10-21, kinetic's NOTES)
-              # a line is cut into pieces sung about `sung` s each (kinetic2 2026-10-21, the coordinator: the references' short
-              # life, 0.72 s, is reached by cutting by the time sung, at the words' borders; 0 cuts by `chars` as before)
+              # a line is cut into its phrases (the parts between its spaces; kinetic3 2026-10-21, the coordinator: the
+              # meaning's borders first): one sung up to `phrase` s is one piece, a longer one is cut at its words into
+              # pieces sung about `sung` s each (the references' 0.72 s life: what to near, after the borders); sung 0 cuts the
+              # line by `chars` as before kinetic2
+              "phrase": 1.5,
               "sung": 0.72,
               "chars": 7,           # characters a piece when sung is 0 (the references read 6 [5.3, 7.5]; ours read one
               "chars_min": 2, "chars_max": 9,                # fewer), at least and at most (a word is not cut)
