@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2529（定数 2006・引数 136・関数の既定 387。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 447（retarget 271・rig 70・踊りだけ 118）、記録の出所つき 84。
+- 数: 全部 2529（定数 2006・引数 136・関数の既定 387。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 448（retarget 271・rig 70・踊りだけ 119）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py・flash_sync.py | 452 | 16 | 15 | 38 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py・flash_sync.py | 452 | 16 | 15 | 39 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1852,28 +1852,28 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SR | 22050 |  | 58 |  |  |  |  |  |  |  |  |  |
-| FPS | 30 | frames | 59 | frames of the song, MMD's (mograph_layer.SONG_FPS) |  |  |  |  |  |  |  |  |
-| ONSET_HOP | 110 |  | 60 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
-| ONSET_WIN | 1024 |  | 60 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
-| ONSET_BAND | (30.0, 8000.0) | Hz | 61 | Hz: the whole band of a drum kit and the band (a04_beat's full band) |  |  |  |  |  |  |  |  |
-| HIT_SPACING | 0.05 | s | 62 | s: a hit is the largest flux within this on each side |  |  |  |  |  |  |  |  |
-| VOICE_HOP | 55 |  | 63 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
-| VOICE_WIN | 512 |  | 63 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
-| VOICED | (150.0, 1500.0) | Hz | 64 | Hz: the voice's fundamental and first formant (review mographrev's hook_timing) |  |  |  |  |  |  |  |  |
-| SYLLABLE_SEARCH | (-0.25, 0.15) | s | 65 | s from the title word's beat: its first syllable comes in 100-160 ms before it |  |  |  | ○ |  |  |  | dance |
-| SYLLABLE_RISE_DB | 12.0 |  | 66 |  |  |  |  |  |  |  |  |  |
-| SYLLABLE_AFTER | 0.05 |  | 67 |  |  |  |  |  |  |  |  |  |
-| SYLLABLE_BEFORE | 0.075 |  | 67 |  |  |  |  |  |  |  |  |  |
-| SYLLABLE_SMOOTH | 5 |  | 68 | rows the level is smoothed over for its slope |  |  |  |  |  |  |  |  |
-| LOW_BAND | (30.0, 170.0) | Hz | 69 | Hz: the kick and the bass |  |  |  |  |  |  |  |  |
-| RETURN_DB | 5.0 |  | 70 |  |  |  |  |  |  |  |  |  |
-| STRONG | 90.0 |  | 71 | percentile of the song's hits: a strong hit (the request: "the top 10 % or so") |  |  |  | ○ |  |  |  | dance |
-| NEAR_FRAMES | 1 | frames | 72 | a strong hit within this of a moment is on it |  |  |  |  |  |  |  |  |
-| REACH_FRAMES | 2 | frames | 73 | the strongest hit within this of a flash is written (the request: +-2 frames) |  |  |  |  |  |  |  |  |
-| LOCAL | 2.0 | s | 74 | s each side: the hits a hit is told against for its local strength |  |  |  |  |  |  |  |  |
-| SKIRT_GAP | 0.5 | s | 75 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
-| ALIGN_MOST | 0.05 | s | 76 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
+| SR | 22050 |  | 59 |  |  |  |  |  |  |  |  |  |
+| FPS | 30 | frames | 60 | frames of the song, MMD's (mograph_layer.SONG_FPS) |  |  |  |  |  |  |  |  |
+| ONSET_HOP | 110 |  | 61 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
+| ONSET_WIN | 1024 |  | 61 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
+| ONSET_BAND | (30.0, 8000.0) | Hz | 62 | Hz: the whole band of a drum kit and the band (a04_beat's full band) |  |  |  |  |  |  |  |  |
+| HIT_SPACING | 0.05 | s | 63 | s: a hit is the largest flux within this on each side |  |  |  |  |  |  |  |  |
+| VOICE_HOP | 55 |  | 64 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
+| VOICE_WIN | 512 |  | 64 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
+| VOICED | (150.0, 1500.0) | Hz | 65 | Hz: the voice's fundamental and first formant (review mographrev's hook_timing) |  |  |  |  |  |  |  |  |
+| SYLLABLE_SEARCH | (-0.25, 0.15) | s | 66 | s from the title word's beat: its first syllable comes in 100-160 ms before it |  |  |  | ○ |  |  |  | dance |
+| SYLLABLE_RISE_DB | 12.0 |  | 67 |  |  |  |  |  |  |  |  |  |
+| SYLLABLE_AFTER | 0.05 |  | 68 |  |  |  |  |  |  |  |  |  |
+| SYLLABLE_BEFORE | 0.075 |  | 68 |  |  |  |  |  |  |  |  |  |
+| SYLLABLE_SMOOTH | 5 |  | 69 | rows the level is smoothed over for its slope |  |  |  |  |  |  |  |  |
+| STOP_S | 1.0 | s | 70 | s without a hit at the song's median or over (more than two beats at 140 BPM): a stop |  |  |  | ○ |  |  |  | dance |
+| QUIET_PCT | 50.0 | % | 71 |  |  |  |  |  |  |  |  |  |
+| STRONG | 90.0 |  | 72 | percentile of the song's hits: a strong hit (the request: "the top 10 % or so") |  |  |  | ○ |  |  |  | dance |
+| NEAR_FRAMES | 1 | frames | 73 | a strong hit within this of a moment is on it |  |  |  |  |  |  |  |  |
+| REACH_FRAMES | 2 | frames | 74 | the strongest hit within this of a flash is written (the request: +-2 frames) |  |  |  |  |  |  |  |  |
+| LOCAL | 2.0 | s | 75 | s each side: the hits a hit is told against for its local strength |  |  |  |  |  |  |  |  |
+| SKIRT_GAP | 0.5 | s | 76 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
+| ALIGN_MOST | 0.05 | s | 77 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 

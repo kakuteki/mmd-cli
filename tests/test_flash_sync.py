@@ -166,22 +166,22 @@ class MomentTest(unittest.TestCase):
             self.assertEqual(int(round(t * 30)), f)
             self.assertEqual(int(math.ceil(t * 30)), f)
 
-    def test_the_band_returns_where_its_low_end_comes_back_after_a_bar_without_it(self):
-        rng = np.random.default_rng(4)
-        bars = [FIRST + 4 * k * PERIOD for k in range(10)]
-        x = 0.001 * rng.standard_normal(int(18.0 * SR))
-        n = int(0.12 * SR)
-        k = np.arange(n) / float(SR)
-        kick = np.sin(2 * np.pi * 60 * k) * np.exp(-k / 0.05)
-        for b in range(40):
-            if not 20 <= b < 24:                          # bar 5 (beats 20-23) without the kick
-                put(x, FIRST + b * PERIOD, kick)
-        got = FS.band_returns(x, bars)
-        self.assertEqual([round(r["t"], 3) for r in got], [round(bars[6], 3)])
-        self.assertGreaterEqual(got[0]["drop_db"], FS.RETURN_DB)
-        for b in range(20, 24):                           # a kick a little softer: no return
-            put(x, FIRST + b * PERIOD, 0.7 * kick)
-        self.assertEqual(FS.band_returns(x, bars), [])
+    def test_the_band_returns_where_a_strong_hit_ends_a_stop(self):
+        # the drums stop under the last title word and come back with a hard hit: the song's hits every eighth (median 50),
+        # then 1.5 s of hits under its median, then a hit over its 90th percentile
+        hits = [{"t": 1.0 + 0.2143 * k, "height": 45.0 + 10.0 * (k % 3)} for k in range(60)]
+        stop_from = hits[-1]["t"]
+        hits += [{"t": stop_from + 0.3 * k, "height": 10.0} for k in range(1, 6)]
+        back = stop_from + 1.7
+        hits += [{"t": back, "height": 200.0}] + [{"t": back + 0.2143 * k, "height": 50.0} for k in range(1, 20)]
+        got = FS.band_returns(FS.Hits(hits))
+        self.assertEqual([round(r["t"], 3) for r in got], [round(back, 3)])
+        self.assertGreaterEqual(got[0]["quiet_s"], FS.STOP_S)
+        # a hard hit with the band playing on before it is no return, nor a soft one after the stop
+        hits2 = [dict(h) for h in hits if not (stop_from < h["t"] < back)]
+        self.assertEqual(FS.band_returns(FS.Hits(hits2 + [{"t": stop_from + 0.85, "height": 65.0}])), [])
+        hits3 = [dict(h, height=60.0) if h["t"] == back else h for h in hits]
+        self.assertEqual(FS.band_returns(FS.Hits(hits3)), [])
 
 
 # ---- the decision -------------------------------------------------------------------------------------------------

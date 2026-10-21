@@ -3,8 +3,8 @@
 
     python tools/flash_sync.py measure MIX VOICE STRUCTURE.json LOOK.json OUT.json [--arrays OUT.npz]
         the moments of the song: the title words' first syllable as sung (read from VOICE, the separated singing voice), the
-        heads of the sections of STRUCTURE (looks/song_structure.json of the stage-6 work) and the band's returns after a bar
-        without its low end (read from the backing: MIX less VOICE); the hits (onsets) of the backing, of the mix and of the
+        heads of the sections of STRUCTURE (looks/song_structure.json of the stage-6 work) and the band's returns after a
+        stop (read from the backing: MIX less VOICE); the hits (onsets) of the backing, of the mix and of the
         voice and how strong each is among the song's own; and the decision for every flash and flare of LOOK and for the
         punch on a flash's frame
     python tools/flash_sync.py place LOOK.json MEASURE.json OUT.json
@@ -20,7 +20,7 @@ graphics (look_city_mograph_rv.json) stood on the title words' beats, where the 
 voice it should go with (a sound more than 45 ms before its picture is noticed, ITU-R BT.1359-1) and on nothing a viewer hears.
 
 The rule (decide): a flash stands on a moment that means something in the song - a title word where its first syllable is
-sung, the head of a section, the band coming back after a bar without its low end - and only where the backing has a strong
+sung, the head of a section, the band coming back after a stop - and only where the backing has a strong
 hit on it: one of the song's hits at STRONG (the 90th percentile of their strengths) or over, within NEAR_FRAMES frame of the
 moment.  The backing, not the mix: it is what a flash of the editor hits on, and it stays when another singer's voice comes in
 (the hits of the mix and of the voice are measured and written beside it).  A flash moves to the nearest such moment within a
@@ -40,8 +40,9 @@ median of the hits within LOCAL seconds (local).  The first syllable of a title 
 steepest rise of the voice's level in the voiced band (VOICED) that comes up by SYLLABLE_RISE_DB or more from the quietest of
 the SYLLABLE_BEFORE before it to the loudest of the SYLLABLE_AFTER after it (a breath of h before the vowel has little in that
 band), at the time its power first reaches half of that loudest (a Hann window centred on a step reads half of it there).
-The band's return: a bar whose backing has its low end (LOW_BAND) RETURN_DB or more under the median of the song's bars, and
-the next bar's comes back within it; the return is the next bar's first beat.
+The band's return: a strong hit of the backing after a stop, STOP_S or more in which none of its hits reaches the QUIET_PCT
+percentile (the drums stop under the last title word and come back hard on the next bar; the bass plays on through it, so
+the low end alone does not show the stop).
 """
 import argparse
 import copy
@@ -66,8 +67,8 @@ SYLLABLE_SEARCH = (-0.25, 0.15)   # s from the title word's beat: its first syll
 SYLLABLE_RISE_DB = 12.0
 SYLLABLE_BEFORE, SYLLABLE_AFTER = 0.075, 0.05
 SYLLABLE_SMOOTH = 5               # rows the level is smoothed over for its slope
-LOW_BAND = (30.0, 170.0)          # Hz: the kick and the bass
-RETURN_DB = 5.0
+STOP_S = 1.0                      # s without a hit at the song's median or over (more than two beats at 140 BPM): a stop
+QUIET_PCT = 50.0
 STRONG = 90.0                     # percentile of the song's hits: a strong hit (the request: "the top 10 % or so")
 NEAR_FRAMES = 1                   # a strong hit within this of a moment is on it
 REACH_FRAMES = 2                  # the strongest hit within this of a flash is written (the request: +-2 frames)
@@ -311,26 +312,21 @@ def time_of_frame(frame):
     return mograph_tool().frame_time(frame)
 
 
-def band_returns(x, bars, sr=SR, low=LOW_BAND, drop_db=RETURN_DB):
-    """[{"t", "bar", "drop_db"}]: the bars (their first beats, `bars`: seconds) where the low end of `x` comes back after a bar
-    of it RETURN_DB or more under the median of the bars (see the module's docstring; drop_db: how much it came back)"""
-    times, mags = spectra(x, sr, ONSET_WIN, ONSET_HOP, low)
-    power = (np.asarray(mags, np.float64) ** 2).sum(axis=1)
-    bars = [float(b) for b in bars]
-    if len(bars) < 3:
-        return []
-    length = bars[1] - bars[0]
-    ends = bars[1:] + [bars[-1] + length]
-    levels = []
-    for a, b in zip(bars, ends):
-        m = (times >= a) & (times < b)
-        levels.append(10.0 * math.log10(float(power[m].mean()) + 1e-20) if m.any() else float("nan"))
-    levels = np.array(levels)
-    ref = float(np.nanmedian(levels))
+def band_returns(hits, stop=STOP_S, quiet=QUIET_PCT, strong=STRONG):
+    """[{"t", "quiet_s", "pct"}]: the strong hits of the backing (`hits`, at the `strong` percentile or over) that end a stop:
+    none of its hits in the `stop` seconds before reaches the `quiet` percentile (quiet_s: how long since the last that did)"""
     out = []
-    for k in range(len(bars) - 1):
-        if levels[k] <= ref - drop_db and levels[k + 1] > ref - drop_db:
-            out.append({"t": round(bars[k + 1], 4), "bar": k + 1, "drop_db": round(float(levels[k + 1] - levels[k]), 1)})
+    loud = [i for i in range(len(hits)) if hits.percentile(hits.heights[i]) >= quiet]
+    for i in range(len(hits)):
+        pct = hits.percentile(hits.heights[i])
+        if pct < strong:
+            continue
+        before = [j for j in loud if hits.times[j] < hits.times[i] - 1e-9]
+        if not before:
+            continue
+        quiet_s = float(hits.times[i] - hits.times[before[-1]])
+        if quiet_s >= stop:
+            out.append({"t": round(float(hits.times[i]), 4), "quiet_s": round(quiet_s, 3), "pct": round(pct, 1)})
     return out
 
 
@@ -348,7 +344,7 @@ def moments_of(structure, syllables, returns):
         out.append({"kind": "section", "id": s["id"], "t": float(s["t"]), "beat": s.get("beat")})
     for r in returns:
         if all(abs(r["t"] - h) > 0.05 for h in heads):
-            out.append({"kind": "return", "t": r["t"], "bar": r["bar"], "drop_db": r["drop_db"]})
+            out.append({"kind": "return", "t": r["t"], "quiet_s": r["quiet_s"], "pct": r["pct"]})
     return sorted(out, key=lambda m: m["t"])
 
 
@@ -504,7 +500,7 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR):
         sets[name] = Hits(hits_of(t, e, span=span))
     vt, vdb = voice_level(voice_at, sr)
     syllables = {h["n"]: first_syllable(vt, vdb, float(h["t"])) for h in structure.get("hooks", [])}
-    returns = band_returns(backing, structure["bars"], sr) if structure.get("bars") else []
+    returns = band_returns(sets["backing"])
     moments = moments_of(structure, syllables, returns)
     near, reach = NEAR_FRAMES / float(FPS), REACH_FRAMES / float(FPS)
     for m in moments:
@@ -531,7 +527,7 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR):
             "inputs": {"mix": os.path.abspath(mix_path), "voice": os.path.abspath(voice_path)},
             "settings": {"sr": sr, "fps": FPS, "onset": [ONSET_WIN, ONSET_HOP, list(ONSET_BAND)], "hit_spacing": HIT_SPACING,
                          "voice": [VOICE_WIN, VOICE_HOP, list(VOICED)], "syllable_search": list(SYLLABLE_SEARCH),
-                         "syllable_rise_db": SYLLABLE_RISE_DB, "low_band": list(LOW_BAND), "return_db": RETURN_DB,
+                         "syllable_rise_db": SYLLABLE_RISE_DB, "stop_s": STOP_S, "quiet_pct": QUIET_PCT,
                          "strong": STRONG, "near_frames": NEAR_FRAMES, "reach_frames": REACH_FRAMES, "local": LOCAL,
                          "skirt_gap": SKIRT_GAP, "move_reach_s": round(reach_of(structure), 4),
                          "clock_lead_s": round(_clock_lead(sr, ONSET_WIN, ONSET_HOP, ONSET_BAND), 4),
