@@ -33,12 +33,14 @@ What is done:
 2. Reading (align_reading, line_chars): each character of a line is matched to its part of the reading: a kana reads as
    the same kana (hiragana and katakana alike), a run of kanji as the kana between the kana round it (one word, never
    cut), a space or a mark as nothing unless the reading has it there; so every character gets the times of its morae.
-3. Pieces (cut_line): the line cut into pieces of about `chars` characters, between `chars_min` and `chars_max`, where a
-   cut costs least: at a space, then before a word of kanji or katakana after hiragana; never through a run of kanji or
-   of katakana, and never before a small kana, the long mark or a closing mark, nor after an opening one.
+3. Pieces (cut_line): the line cut into pieces each sung about `sung` s (kinetic2: the references' life; with sung 0, of
+   about `chars` characters), between `chars_min` and `chars_max` characters, where a cut costs least: at a space, then
+   before a word of kanji or katakana after hiragana; never through a run of kanji or of katakana, and never before a
+   small kana, the long mark, a closing mark or ん, nor after an opening one.
 4. The plan (plan_words): each piece of a sung line is a subtitle in front of the dancer, coming `lead` s before the
    consonant of its first syllable and on the screen while it is sung and `hang` s after, `life` s at least and at most;
-   the pieces of a line take the rows of `sub_rows` in turn, a share of the verses' lines stand in a column at a side.  In
+   the pieces of a line take the rows of `sub_rows` in turn (from the first no subtitle is on as the line comes), a share
+   of the verses' lines stand in a column at a side.  In
    a chorus, the bridge and the outro `big_per_line` pieces of a line are also large words behind the dancer (tilted,
    in two rows, or hollow with a neon edge).  The title word of the hooks comes one character a syllable, large, behind
    her; the interludes have the title in hollow letters cut by the picture's edge drifting across behind her.  Each
@@ -185,7 +187,7 @@ def check_settings(s):
     need(all(whole(s[k]) for k in ("chars", "chars_min", "chars_max")) and 1 <= s["chars_min"] <= s["chars"] <= s["chars_max"],
          "chars_min, chars and chars_max are whole numbers, 1 <= chars_min <= chars <= chars_max: not %r, %r, %r"
          % (s["chars_min"], s["chars"], s["chars_max"]))
-    for k in ("lead", "hang", "drift", "stagger", "push", "outline_px", "glow", "glow_radius", "neon_glow", "shadow",
+    for k in ("sung", "lead", "hang", "drift", "stagger", "push", "outline_px", "glow", "glow_radius", "neon_glow", "shadow",
               "credit_fade"):
         need(math.isfinite(s[k]) and s[k] >= 0, "%s is from 0, not %r" % (k, s[k]))
     for k in ("enter", "exit"):
@@ -437,6 +439,18 @@ SHORT_COST = 50.0                 # a piece shorter than chars_min (when the lin
 LONG_COST = 1000.0                # a character over chars_max (only when one word is longer)
 TIME_COST = 4.0                   # a piece sung longer than the longest life + TIME_SLACK costs this a second squared
 TIME_SLACK = 0.25                 # (a slow line is cut more: each piece comes when it is sung)
+# cutting by the time sung (settings["sung"] above 0; kinetic2 2026-10-21): a piece's sung time off `sung` costs LENGTH_COST
+# times its square in units of SUNG_UNIT s, a mora of the song (140 bpm, two morae a beat): one unit costs as a character
+# did in the cutting by characters
+SUNG_UNIT = 0.2
+# ... and a cut inside a word (hiragana after hiragana that is no particle, or after kanji: the ending of a verb or an
+# adjective) costs INSIDE_WORD_COST, not CUT_COST's 6: a piece sung up to about 2 s keeps its words whole (the time's cost of
+# a piece sung 2.0 s is 20).  With 6, words8 of 2026-10-21 had 26 of 137 cuts inside a word, as before a negation
+INSIDE_WORD = frozenset({("hira", "hira"), ("kanji", "hira")})
+INSIDE_WORD_COST = 30.0
+# ... and a piece over a space (where the lyrics part their phrases) holds whole phrases: with the time alone, words8 of
+# 2026-10-21 had 7 pieces over a space begun inside a phrase (as the last particle of a sentence put in front of the next
+# phrase, which it then reads as) and 6 ended inside one
 
 
 @dataclasses.dataclass
@@ -500,10 +514,12 @@ def _atoms(chars, longest):
 
 
 def cut_line(chars, settings):
-    """the pieces of a line: [(first, end)] indices into `chars` (no piece begins or ends with a space), of about
-    settings["chars"] characters each, where the cuts cost least (CUT_COST; a piece's length off the target costs its
-    square)"""
+    """the pieces of a line: [(first, end)] indices into `chars` (no piece begins or ends with a space), each sung about
+    settings["sung"] s (or, with sung 0, of about settings["chars"] characters), where the cuts cost least (CUT_COST; a
+    piece's sung time or length off the target costs its square).  Cut by the time, a piece over a space holds whole
+    phrases"""
     target, least, most = int(settings["chars"]), int(settings["chars_min"]), int(settings["chars_max"])
+    by_time = float(settings.get("sung", 0.0))
     longest = float(settings["life"][1]) + TIME_SLACK
     atoms = _atoms(chars, most)
     if not atoms:
@@ -515,8 +531,10 @@ def cut_line(chars, settings):
     for b in range(1, n + 1):
         size = 0
         t0, t1 = math.inf, -math.inf
+        spaced = False                                  # the piece atoms[a:b] holds a space
         for a in range(b - 1, -1, -1):
             size += atoms[a].size
+            spaced = spaced or (a < b - 1 and atoms[a + 1].space_before)
             if timed[a]:
                 t0 = min(t0, min(c.t0 for c in timed[a]))
                 t1 = max(t1, max(c.t1 for c in timed[a]))
@@ -527,11 +545,18 @@ def cut_line(chars, settings):
                 cut = AFTER_PARTICLE
             else:
                 cut = CUT_COST.get((atoms[a - 1].tail, atoms[a].head), CUT_DEFAULT)
-            cost = LENGTH_COST * (size - target) ** 2 + cut + TIME_COST * max(0.0, sung - longest) ** 2
+                if by_time > 0 and (atoms[a - 1].tail, atoms[a].head) in INSIDE_WORD:
+                    cut = INSIDE_WORD_COST
+            if by_time > 0:
+                cost = LENGTH_COST * ((sung - by_time) / SUNG_UNIT) ** 2 + cut
+            else:
+                cost = LENGTH_COST * (size - target) ** 2 + cut + TIME_COST * max(0.0, sung - longest) ** 2
             if size > most:
                 cost += LONG_COST * (size - most)
             if size < least and size < total:
                 cost += SHORT_COST
+            if by_time > 0 and spaced and not ((a == 0 or atoms[a].space_before) and (b == n or atoms[b].space_before)):
+                cost = math.inf                         # part of a phrase over a space
             if best[a] + cost < best[b]:
                 best[b], back[b] = best[a] + cost, a
             if size > 3 * most:
@@ -552,8 +577,10 @@ BIG_SECTIONS = ("chorus", "bridge", "outro")      # the sections whose lines als
 EDGE_X = (0.03, 0.97)             # where the hollow large words stand: cut by the left or the right edge
 BIG_VARIANTS = ("tilt", "hollow", "tilt", "stack")   # the large words in turn: tilted, hollow cut by an edge (upright),
                                   # tilted, two rows of Mincho (each row is read as a line of its own, of a few characters)
-BIG_ECHO = 0.15                   # s before its subtitle goes, a large word comes: it echoes the words behind the dancer while
-                                  # they are still sung (and the text is on more of the sung time: the references 0.56)
+BIG_ECHO = 0.15                   # s before its subtitle goes, a large word comes: it echoes the words behind the dancer (made
+                                  # when the subtitles went before their words were sung: the echo came while they were
+                                  # still sung, and the text was on more of the sung time, the references 0.56.  With the
+                                  # subtitles on until sung, kinetic2, it comes after they are sung)
 BIG_LONGER = 0.35                 # s a large word stays on longer than the subtitle it echoes
 CUE_MEETS = 1.5                   # s: a lyric cue and the line of the alignment it is meet within this
 # the marks of the MV's shared song structure (the words file's "marks", from the motion graphics' table: a white flash and
@@ -732,6 +759,35 @@ def vocal_warnings(words):
     return []
 
 
+HOOK_NEAR = 0.6                   # s: the song structure's title word this near the one a line sings is its mark
+HOOK_OFF = 0.1                    # s: ... and its syllables further than this from the vowels sung are warned of (kinetic2
+                                  # 2026-10-21: version 2 of the table had them an eighth, 0.21 s, early: the characters
+                                  # came before the singing, and kinetic and kineticrev had checked them by the table only)
+
+
+def hook_warnings(words):
+    """a warning for each title word of the song structure's marks whose syllables lie more than HOOK_OFF s from the vowels
+    its line sings them on (the alignment)"""
+    hook = words.get("hook") or {}
+    marked = _marks(words)[1]
+    out = []
+    for line in words.get("lines", []):
+        for m0, m1 in _hook_spans(line, hook):
+            vowels = [_mora(m)["v0"] for m in line["morae"][m0:m1 + 1]]
+            mark = min(marked, key=lambda h: abs(float(h["at"]) - vowels[0]), default=None)
+            if mark is None or abs(float(mark["at"]) - vowels[0]) > HOOK_NEAR:
+                continue
+            off = [float(t) - v for t, v in zip(mark["syllables"], vowels)]
+            worst = max(off, key=abs)
+            if abs(worst) > HOOK_OFF:
+                out.append(_ascii("the title word of the song structure at %.3f s is %.2f s %s its singing (its syllables "
+                                  "%s s, the alignment's vowels %s s): its characters come %s the voice"
+                                  % (float(mark["at"]), abs(worst), "before" if worst < 0 else "after",
+                                     ", ".join("%.3f" % float(t) for t in mark["syllables"]),
+                                     ", ".join("%.3f" % v for v in vowels), "before" if worst < 0 else "after")))
+    return out
+
+
 def _marks(words):
     """the words file's marks (none: empty), each list in order"""
     m = words.get("marks") or {}
@@ -756,7 +812,10 @@ def _on_marks(pieces, marks):
         start = _near(p.start, marks["starts"], MARK_EARLIER, MARK_LATER)
         if start is not None and p.end - start >= 0.3:
             p.start = start
-        end = _near(p.end, ends, END_SOONER, END_LATER)
+        # its words sung, it may go on a mark from END_SOONER s before its singing ended (kinetic2: its tail, `hang`, is its
+        # way to go; on a section's mark the picture changes or flashes)
+        sooner = END_SOONER if p.sung_end is None else max(END_SOONER, p.end - p.sung_end + END_SOONER)
+        end = _near(p.end, ends, sooner, END_LATER)
         if end is not None and end - p.start >= 0.3:
             p.end = end
 
@@ -815,6 +874,7 @@ class Piece:
     char_times: tuple = ()        # the hooks: when each character of the first row comes
     line: int = -1
     section: str = ""
+    sung_end: float = None        # a subtitle: s its last sound ends (it may go on a mark from END_SOONER s before)
 
 
 def _sections(words):
@@ -892,6 +952,28 @@ def _life(start, sung_end, settings):
     return start + min(longest, max(shortest, sung_end - start + settings["hang"]))
 
 
+def _rows(subs, rows):
+    """the subtitles' rows (not the columns'): the pieces of a line take `rows` in turn from the first one no subtitle is
+    on as the line comes (on until sung, the last piece of a line is still going when the next line comes: by the piece's
+    number alone both took the first row, drawn over each other).  Should a piece's row still be taken as it comes (three
+    on at once, sung very fast), the one there goes as it comes"""
+    lines = {}
+    for p in subs:
+        if p.role == "sub":
+            lines.setdefault(p.line, []).append(p)
+    on = {}                                       # a row's index -> the last subtitle on it
+    for k in sorted(lines, key=lambda k: min(p.start for p in lines[k])):
+        line = sorted(lines[k], key=lambda p: p.start)
+        free = [i for i in range(len(rows)) if i not in on or on[i].end <= line[0].start + 1e-9]
+        first = free[0] if free else min(on, key=lambda i: on[i].end)
+        for j, p in enumerate(line):
+            i = (first + j) % len(rows)
+            p.y = rows[i]
+            if i in on and on[i].end > p.start:
+                on[i].end = p.start
+            on[i] = p
+
+
 def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
     """every piece of text of the words file, in the order they come (see the module docstring); aspect: the picture's
     width over its height (a drift across is shares of the width)"""
@@ -947,7 +1029,7 @@ def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
             p = Piece("L%02dp%d" % (k, j), "column" if in_column else "sub", "front",
                       [Row(piece_text, s["sub_size"], face, weight, piece_colours, s["tracking"])], start, end, x, y,
                       vertical=in_column, outline=order in outline and face != "mincho", shadow=order in shadow, glow=s["glow"],
-                      enter_s=s["enter"], exit_s=s["exit"], line=k, section=kind)
+                      enter_s=s["enter"], exit_s=s["exit"], line=k, section=kind, sung_end=max(c.t1 for c in timed))
             made.append(p)
             subs.append(p)
         if in_column:
@@ -989,6 +1071,7 @@ def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
                 bigs.append(p)
     # on the marks of the song structure (the white flash and the punch of the motion graphics, the changes of picture)
     _on_marks(subs + bigs, _marks(words)[0])
+    _rows(subs, s["sub_rows"])
     # the ways the pieces come and go: in the shares of the mixes, over all the subtitles and over all the large words
     for group, enter_mix, exit_mix, salt in ((subs, s["enter_mix"], s["exit_mix"], "sub"),
                                             (bigs, s["big_enter_mix"], s["big_exit_mix"], "big")):
@@ -1009,6 +1092,7 @@ def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
                 # it drifts across all its life: it starts half its way to the left, so that it is in the middle half way
                 p.x -= 0.5 * p.drift[0] * (p.end - p.start) * p.rows[0].size / aspect
     pieces += _hooks(words, s, fps)
+    _clear_for_hooks(pieces)
     pieces += _interludes(words, s, pieces)
     pieces += _cards(words, s)
     return sorted(pieces, key=lambda p: (p.start, p.id))
@@ -1050,10 +1134,11 @@ def _hooks(words, s, fps):
             at = "v0" if s["at_vowel"] else "c0"
             times = tuple(round(m[at] - s["lead"], 4) for m in morae) if len(chars) == len(morae) else (morae[0][at] - s["lead"],)
             end = morae[-1]["v1"] + 0.6
-            # the song structure's title word near it (0.6 s): it comes on its frame, a character on each of its syllables,
-            # and starts to go on the next section's mark (where the motion graphics flash)
+            # the song structure's title word near it (HOOK_NEAR): it comes on its frame, a character on each of its
+            # syllables, and starts to go on the next section's mark (where the motion graphics flash); hook_warnings says
+            # when the table's syllables are off the singing
             mark = min(marked, key=lambda h: abs(float(h["at"]) - times[0]), default=None)
-            if mark is not None and abs(float(mark["at"]) - times[0]) <= 0.6:
+            if mark is not None and abs(float(mark["at"]) - times[0]) <= HOOK_NEAR:
                 syllables = [float(t) for t in mark["syllables"]]
                 times = (float(mark["at"]),) + (tuple(syllables[1:]) if len(syllables) == len(times) else times[1:])
                 goes = [m for m in marks["sections"] if times[-1] + HOOK_GOES[0] < m <= times[-1] + HOOK_GOES[1]]
@@ -1068,6 +1153,18 @@ def _hooks(words, s, fps):
     return out
 
 
+def _clear_for_hooks(pieces):
+    """the title word is large behind her by itself (a line that sings it has no large word of its own): a large word on
+    across its start ends there (not drawn if that leaves it less than 0.3 s), one that would come while it is on is not
+    drawn (kinetic2: on until sung, the echo of the line before came after its words, under the title word)"""
+    for h in [p for p in pieces if p.role == "hook"]:
+        for p in [q for q in pieces if q.role == "big" and q.start < h.end and q.end > h.start]:
+            if h.start - p.start >= 0.3:
+                p.end = h.start
+            else:
+                pieces.remove(p)
+
+
 def _interludes(words, s, pieces):
     title = (words.get("interlude") or {}).get("text") or ""
     if not title:
@@ -1078,13 +1175,14 @@ def _interludes(words, s, pieces):
         busy = [p.end for p in pieces if p.layer == "back" and sec["start"] - 2.0 <= p.start < sec["end"] and p.end > sec["start"]]
         start = max([sec["start"]] + busy) + 0.3
         end = sec["end"] - 0.2
-        # on the song structure's marks: it comes on the first section's mark about the interlude's start that no lyric is on
-        # (the title word may be going), and is gone on a section's mark near its end
+        # on the song structure's marks: it comes on the first section's mark about the interlude's start that no subtitle is on
+        # (the title word may be going; the large words of the section before go there, below), and is gone on a section's
+        # mark near its end
         sung = [p.char_times[-1] if p.char_times else p.start for p in pieces
                 if p.role == "hook" and sec["start"] - 2.0 <= p.start < sec["end"]]     # the title word's last syllable
         for m in marks:
             if (sec["start"] + INTERLUDE_COMES[0] <= m <= sec["start"] + INTERLUDE_COMES[1]
-                    and not any(p.role in ("sub", "column", "big") and p.start < m < p.end for p in pieces)
+                    and not any(p.role in ("sub", "column") and p.start < m < p.end for p in pieces)
                     and all(m >= h + 0.2 for h in sung)):
                 start = m
                 break
@@ -1093,6 +1191,14 @@ def _interludes(words, s, pieces):
             end = min(goes, key=lambda m: abs(m - end))
         if end - start < 2 * FADE_INTERLUDE + 0.5:
             continue
+        # the large words of the section before (the echo of its last line) go on the interlude's head: one on across it
+        # ends there, one that would come on it or after it is not drawn (kinetic2 2026-10-21: the echo of the bridge's last
+        # line kept the title off the break's head)
+        for p in [q for q in pieces if q.role == "big" and q.end > start + 1e-9 and q.start < end]:
+            if start - p.start >= 0.3:
+                p.end = start
+            else:
+                pieces.remove(p)
         across = 0.5 / max(1e-6, s["edge_size"])                 # heights: half the picture's width at 16:9 is 0.89 h
         speed = across * (16.0 / 9.0) / (end - start)
         out.append(Piece("I%d" % n, "interlude", "back", [Row(title, s["edge_size"], "sans", 900, ("neon",) * len(title), 0.08)],
@@ -1749,8 +1855,11 @@ class Drawer:
 
     @property
     def warnings(self):
-        """the fonts' (a face not found) and the singer's (vocal_warnings)"""
-        return list(self.book.warnings) + [w for w in vocal_warnings(self.words) if w not in self.book.warnings]
+        """the fonts' (a face not found), the singer's (vocal_warnings) and the title word's (hook_warnings)"""
+        out = list(self.book.warnings)
+        for w in vocal_warnings(self.words) + hook_warnings(self.words):
+            _warn(out, w)
+        return out
 
     def frame(self, t, layer):
         """the layer at the time t: premultiplied (h, w, 4) float32, and the box anything was drawn in (None: nothing)"""
@@ -2003,7 +2112,8 @@ def main(argv=None):
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(words, f, ensure_ascii=False, indent=1)
             result = {"out": os.path.abspath(args.out), "lines": len(words["lines"]),
-                      "sung": sum(1 for ln in words["lines"] if ln.get("text"))}
+                      "sung": sum(1 for ln in words["lines"] if ln.get("text")),
+                      "warnings": vocal_warnings(words) + hook_warnings(words)}
         elif args.command == "sheet":
             settings = settings_of(args.look)
             check_settings(settings)
@@ -2013,8 +2123,9 @@ def main(argv=None):
             roles = {}
             for x in pieces:
                 roles[x.role] = roles.get(x.role, 0) + 1
+            words = load_words(args.words)
             result = {"out": os.path.abspath(args.out), "pieces": len(pieces), "roles": roles,
-                      "warnings": vocal_warnings(load_words(args.words))}
+                      "warnings": vocal_warnings(words) + hook_warnings(words)}
         elif args.command == "frames":
             span = None
             if args.start is not None or args.to is not None:

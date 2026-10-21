@@ -3,7 +3,9 @@ and going out in about a second (subtitles in front of the dancer, large words b
 
 The lines here are made up for the tests (the MV's lyrics are not distributed); their syllables are timed by hand.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -149,8 +151,10 @@ class PiecesTest(unittest.TestCase):
     def pieces(self, line, **settings):
         text, reading = line
         chars = KT.line_chars(text, reading, timed(reading, 0.0))
-        # the cutting at a target of 5 (2 to 7) unless a test asks another: the rules, not the look's values
-        cut = KT.cut_line(chars, dict(KT.default_settings(), **dict({"chars": 5, "chars_min": 2, "chars_max": 7}, **settings)))
+        # the cutting by characters (sung 0) at a target of 5 (2 to 7) unless a test asks another, with the life of before (a
+        # piece sung longer than 0.77 + 0.25 s costs more): the rules, not the look's values (SungTest cuts by the sung time)
+        base = {"chars": 5, "chars_min": 2, "chars_max": 7, "sung": 0.0, "life": [0.62, 0.77]}
+        cut = KT.cut_line(chars, dict(KT.default_settings(), **dict(base, **settings)))
         return ["".join(c.ch for c in chars[a:b]) for a, b in cut]
 
     def test_a_space_is_where_a_line_is_cut_first(self):
@@ -221,6 +225,166 @@ class PiecesTest(unittest.TestCase):
     def test_a_word_of_katakana_stays_whole(self):
         for chars in (2, 3, 4):
             self.assertIn("カメラマン", self.pieces(CAMERA, chars=chars), chars)
+
+
+@unittest.skipUnless(KT, NEEDS)
+class SungTest(unittest.TestCase):
+    """the subtitles cut by how long they are sung, and on until they are sung (kinetic2 2026-10-21, the coordinator: 92 of the
+    MV's 94 subtitles went before their words were sung, 0.8 s at the median, as the references' short life of 0.72 s was
+    kept by the clock).  Now a piece is sung about `sung` s (the references' life) and stays until its last sound ends, plus
+    `hang` s (its way to go); the words are still not cut, nor begun with a small kana, the long mark, a closing mark or ん"""
+
+    def setUp(self):
+        self.s = KT.default_settings()
+
+    def plan_line(self, line, step, **settings):
+        """the subtitles of one line sung a mora every `step` s from 2.0 s, and the sung span of each of its pieces"""
+        s = dict(self.s, **settings)
+        words = song(lines=[line_of(line[0], line[1], 2.0, step)], sections=[{"kind": "verse", "start": 0, "end": 60}])
+        chars = KT.line_chars(line[0], line[1], timed(line[1], 2.0, step))
+        cuts = KT.cut_line(chars, s)
+        subs = sorted((p for p in KT.plan_words(words, s) if p.role in ("sub", "column")), key=lambda p: p.start)
+        sung = [(min(c.t0 for c in chars[a:b] if c.first >= 0), max(c.t1 for c in chars[a:b] if c.first >= 0)) for a, b in cuts]
+        return subs, sung, cuts, chars
+
+    def test_a_subtitle_stays_until_its_words_are_sung(self):
+        for step in (0.2, 0.4):
+            subs, sung, _, _ = self.plan_line(LONG, step)
+            self.assertEqual(len(subs), len(sung))
+            for p, (t0, t1) in zip(subs, sung):
+                self.assertGreaterEqual(p.end, t1 + self.s["hang"] - 1e-6, (step, p.id))     # on until its last sound ends
+                self.assertLessEqual(p.end, max(p.start + self.s["life"][0], t1 + self.s["hang"]) + 1e-6, (step, p.id))
+
+    def test_a_line_sung_slowly_is_cut_into_more_pieces(self):
+        fast = self.plan_line(LONG, 0.12)[0]
+        slow = self.plan_line(LONG, 0.35)[0]
+        self.assertGreater(len(slow), len(fast) + 1)
+
+    def test_a_piece_is_sung_about_as_long_as_asked_and_no_word_is_parted(self):
+        for line in (LONG, WINDOW, SCHOOL, JUMP):
+            _, sung, cuts, chars = self.plan_line(line, 0.2)
+            lengths = [t1 - t0 for t0, t1 in sung]
+            if len(lengths) > 2:
+                self.assertLess(abs(statistics.median(lengths) - self.s["sung"]), 0.3, (line[0], lengths))
+            for a, b in cuts:
+                self.assertNotIn(chars[a].ch, "ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮーんン」、。", (line[0], a))
+                self.assertNotEqual(chars[b - 1].ch, "「", (line[0], b))
+        for step in (0.12, 0.3):                                       # a word of katakana stays whole
+            _, _, cuts, chars = self.plan_line(CAMERA, step)
+            self.assertTrue(any("カメラマン" in "".join(c.ch for c in chars[a:b]) for a, b in cuts), step)
+
+    def test_a_word_sung_long_is_not_parted_for_the_time(self):
+        # 書きなおしたくなる (9 morae, 1.8 s): every cut inside it is inside a word (the ending of a verb: hiragana after kanji
+        # or after hiragana that is no particle); cut by the time it would part it (words8 of 2026-10-21 had 26 such cuts, as
+        # a verb's stem parted from its negation, read the other way round for a moment)
+        line = ("書きなおしたくなる", "かきなおしたくなる")                 # (made up)
+        for step in (0.2, 0.22):
+            _, _, cuts, chars = self.plan_line(line, step)
+            self.assertEqual(len(cuts), 1, (step, ["".join(c.ch for c in chars[a:b]) for a, b in cuts]))
+
+    def test_a_piece_over_a_space_holds_whole_phrases(self):
+        # 眠るだけでね 森へ, its first phrase sung long and the second short: cut by the time alone, the ね that ends the first
+        # went over the space with the second (the で before it reads as a particle, a cut of 2), a piece that begins with
+        # the last sound of one phrase and reads as the next one's (words8 of 2026-10-21 had 7 pieces over a space begun
+        # inside a phrase and 6 ended inside one).  A space is where the lyrics part their phrases
+        line = ("眠るだけでね 森へ", "ねむるだけでね もりへ")                    # (made up)
+        # ... and ほら 海の灯台 sung fast: by the time alone ほら 海の | 灯台, a piece ended inside a phrase
+        other = ("ほら 海の灯台", "ほら うみのとうだい")                          # (made up)
+        for line, step in [(line, 0.2), (line, 0.22), (line, 0.25), (other, 0.15), (other, 0.16), (other, 0.17)]:
+            _, _, cuts, chars = self.plan_line(line, step)
+            texts = ["".join(c.ch for c in chars[a:b]) for a, b in cuts]
+            for a, b in cuts:
+                if any(c.kind == "space" for c in chars[a:b]):
+                    self.assertTrue(a == 0 or chars[a - 1].kind == "space", (step, texts))
+                    self.assertTrue(b == len(chars) or chars[b].kind == "space", (step, texts))
+            if line[0].startswith("眠"):
+                self.assertEqual(texts, ["眠るだけでね", "森へ"], step)
+
+    def test_no_large_word_is_on_with_the_title_word(self):
+        # the title word is large behind her by itself (a line that sings it has no large word of its own): on until sung,
+        # the echo of the line before came after its words and lay under the title word (words8 of 2026-10-21: the last
+        # chorus line's echo under the last title word for 1.6 s)
+        n = len(morae_of(LONG[1]))
+        for gap in (0.0, 0.2, 0.5):
+            lines = [line_of(LONG[0], LONG[1], 2.0), line_of("輝き", HOOK_READING, 2.0 + n * 0.2 + gap)]
+            words = song(lines=lines, sections=[{"kind": "chorus", "start": 0.0, "end": 20.0}])
+            pieces = KT.plan_words(words, self.s)
+            hooks = [p for p in pieces if p.role == "hook"]
+            self.assertEqual(len(hooks), 1, gap)
+            h = hooks[0]
+            # (with no title word there, the line before has a large word on in its time)
+            bare = KT.plan_words(dict(words, hook={"reading": "ぬ", "text": "ヌ"}), self.s)
+            self.assertTrue([b for b in bare if b.role == "big" and b.line == 0 and b.start < h.end and b.end > h.start], gap)
+            for b in [p for p in pieces if p.role == "big"]:
+                self.assertTrue(b.end <= h.start + 1e-6 or b.start >= h.end - 1e-6, (gap, b.id, b.start, b.end))
+                self.assertGreaterEqual(b.end - b.start, 0.3 - 1e-6, (gap, b.id))
+
+    def test_two_subtitles_never_share_a_row_at_once(self):
+        # on until sung, a subtitle is still going (its hang) when the next one comes: the last of a line of 3 pieces and the
+        # first of the next line both took the first row (words8 of 2026-10-21: 12 such pairs, 8 of them both seen at once,
+        # up to 0.29 s at full strength, drawn over each other).  Sung very fast (0.03 s a mora) three are on at once
+        s = dict(self.s, column_share=0.0)
+        for first, step in [(SKY, 0.15), (SKY, 0.2), (SKY, 0.25), (WINDOW, 0.2), (LONG, 0.03)]:
+            n = len(morae_of(first[1]))
+            words = song(lines=[line_of(first[0], first[1], 2.0, step), line_of(SKY[0], SKY[1], 2.0 + n * step, step)],
+                         sections=[{"kind": "verse", "start": 0, "end": 60}])
+            subs = sorted((p for p in KT.plan_words(words, s) if p.role == "sub"), key=lambda p: p.start)
+            self.assertGreater(len(subs), 3, step)
+            for i, p in enumerate(subs):
+                for q in subs[i + 1:]:
+                    if abs(p.y - q.y) < 1e-9:
+                        self.assertGreaterEqual(q.start, p.end - 1e-6, (step, p.id, q.id))
+                if step > 0.1:                                  # (two on at once: the other row, none cut short)
+                    self.assertGreaterEqual(p.end, KT._life(p.start, p.sung_end, s) - 1e-6, (step, p.id))
+
+    def test_short_phrases_sung_quickly_still_go_together(self):
+        # whole phrases may share a piece: ねえ ほら 見て sung in 0.72 s is one
+        line = ("ねえ ほら 見て", "ねえ ほら みて")                                # (made up)
+        _, _, cuts, chars = self.plan_line(line, 0.12)
+        self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["ねえ ほら 見て"])
+
+    def test_a_long_held_sound_keeps_its_piece_on(self):
+        # its last mora held 2.5 s: the piece is on until it ends (life's upper bound is only a guard)
+        words = song(lines=[{"text": "空", "reading": "そら", "morae": [["そ", 2.0, 2.05, 2.2], ["ら", 2.2, 2.25, 4.7]]}],
+                     sections=[{"kind": "verse", "start": 0, "end": 60}])
+        p = [q for q in KT.plan_words(words, self.s) if q.role in ("sub", "column")][0]
+        self.assertAlmostEqual(p.end, 4.7 + self.s["hang"])
+
+    def test_a_sung_subtitle_goes_on_a_mark_in_its_tail(self):
+        # its words sung, it may go on a mark of the song structure up to END_SOONER s before its singing ended and up to
+        # END_LATER after it would go (the tail is its way to go: the picture changes or flashes there)
+        words = song()
+        sub = sorted((p for p in KT.plan_words(words, self.s) if p.role == "sub"), key=lambda p: p.start)[0]
+        sung_end = sub.end - self.s["hang"]
+        mark = on_frame(sung_end + 0.05, up=True)
+        got = {p.id: p for p in KT.plan_words(song(marks={"starts": [mark], "cuts": [], "sections": [mark], "hooks": []}), self.s)}
+        self.assertAlmostEqual(got[sub.id].end, mark)
+        self.assertAlmostEqual(got[sub.id].start, sub.start)
+
+    def test_the_interludes_title_comes_on_its_head_and_the_last_echo_goes_there(self):
+        # a chorus line sung up to 0.1 s before the interlude's head: its subtitle's tail and its large word's echo would lie
+        # across the head; the title comes on the head (the coordinator 2026-10-21: nothing came on the break's head),
+        # the subtitle goes there and no large word of the chorus is on after it
+        head = on_frame(12.0 + 0.2 * 20 - 0.1, up=True)
+        lines = [line_of(LONG[0], LONG[1], 12.0 - 0.2 * (len(LONG[1]) - 20))]
+        marks = {"starts": [head], "cuts": [], "sections": [head], "hooks": []}
+        # (without the interlude, a large word of the chorus is on across the head: what the rule takes off)
+        whole = KT.plan_words(song(lines=lines, sections=[{"kind": "chorus", "start": 0.0, "end": head + 14.0}], marks=marks,
+                                   credits=[]), self.s)
+        self.assertTrue([p for p in whole if p.role == "big" and p.end > head + 0.3])
+        words = song(lines=lines, marks=marks, credits=[],
+                     sections=[{"kind": "chorus", "start": 0.0, "end": head}, {"kind": "interlude", "start": head, "end": head + 8.0},
+                               {"kind": "end", "start": head + 8.0, "end": head + 14.0}])
+        pieces = KT.plan_words(words, self.s)
+        title = [p for p in pieces if p.role == "interlude"]
+        self.assertEqual(len(title), 1)
+        self.assertAlmostEqual(title[0].start, head)
+        self.assertFalse([p.id for p in pieces if p.role in ("sub", "column", "big") and p.end > head + 1e-6])
+
+    def test_a_sung_time_below_0_is_refused(self):
+        with self.assertRaises(ValueError) as caught:
+            KT.check_settings(dict(self.s, sung=-0.1))
+        self.assertIn("sung", str(caught.exception))
 
 
 def line_of(text, reading, t0, step=0.2):
@@ -409,7 +573,8 @@ class MarksTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.s = KT.default_settings()
+        # (the pieces cut by characters, as these tests were laid out for: the marks' rules do not depend on the cutting)
+        cls.s = dict(KT.default_settings(), sung=0.0, chars=7, chars_min=4, hang=0.0, life=[0.62, 0.77])
         cls.base = {p.id: p for p in KT.plan_words(song(), cls.s)}
 
     def plan(self, **marks):
@@ -461,6 +626,34 @@ class MarksTest(unittest.TestCase):
         self.assertAlmostEqual(h.start, at)
         self.assertEqual([round(t, 6) for t in h.char_times], [round(t, 6) for t in syllables])
         self.assertAlmostEqual(h.end - h.exit_s, section)          # it starts to go on the next section's mark
+
+    def test_a_title_word_of_the_table_off_its_singing_is_warned_of(self):
+        # (kinetic2 2026-10-21: version 2 of the song structure had the title word's syllables an eighth, 0.21 s, early, so its
+        # characters came before the singing; kinetic and kineticrev had checked them against the table only)
+        hook = [p for p in self.base.values() if p.role == "hook"][0]
+        vowels = [t + self.s["lead"] for t in hook.char_times]          # (without marks: each at its vowel, less the lead)
+
+        def words_with(shift):
+            syllables = [on_frame(v + shift) for v in vowels]
+            return song(marks={"starts": [], "cuts": [], "sections": [], "hooks": [{"at": syllables[0], "syllables": syllables}]})
+
+        for shift, warned in ((-0.21, 1), (0.0, 0), (0.07, 0), (0.15, 1)):
+            self.assertEqual(len(KT.hook_warnings(words_with(shift))), warned, shift)
+        early = words_with(-0.21)
+        self.assertIn("before", KT.hook_warnings(early)[0])
+        work = tempfile.mkdtemp()
+        try:
+            plan = KT.render_sequences(early, work, (320, 180), 30, span=(25.0, 25.1))
+            self.assertEqual([w for w in plan["warnings"] if "title word" in w], KT.hook_warnings(early))
+            path = os.path.join(work, "words.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(early, f, ensure_ascii=False)
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said):
+                self.assertEqual(KT.main(["sheet", path, os.path.join(work, "sheet.json")]), 0)
+            self.assertEqual([w for w in json.loads(said.getvalue())["warnings"] if "title word" in w], KT.hook_warnings(early))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
     def test_the_interludes_title_comes_and_goes_on_the_sections_marks(self):
         inter = [p for p in self.base.values() if p.role == "interlude"][0]
@@ -1194,7 +1387,8 @@ class LayerOrderTest(unittest.TestCase):
                 self.assertLessEqual(float(on[n][m["back_out"]].max()), 24.0, n)   # ... and so is the large word
                 counted["back"] += 1
             if m["front"].sum() >= 20:
-                self.assertGreater(float(on[n][m["front"]].mean()), 150.0, n)    # the front text is on the black
+                self.assertGreater(float(on[n][m["front"]].mean()), 100.0, n)    # the front text is on the black (an accent
+                                                                                 # colour, red 255 88 112, is 152 on average)
                 counted["front"] += 1
         self.assertTrue(all(v >= 3 for v in counted.values()), counted)
 
