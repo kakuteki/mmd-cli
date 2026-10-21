@@ -101,8 +101,11 @@ LANDMARKS = ("headtop", "eyes", "chin", "chest", "waist", "hips", "toes", "cente
 # lower body faces) and either toe (左つま先ＩＫ, 右つま先ＩＫ: with the hip joints, where her knees are about)
 HIP_LANDMARKS = ("lhip", "rhip", "pelvis_front", "ltoe", "rtoe")
 # and, for make_camera --song with --model (camsync2), the ankles: where the leg IK bones are (左足ＩＫ, 右足ＩＫ: the IK puts
-# the ankle there), so that a knee shot can keep them out of the picture and a full shot in it
-LEG_LANDMARKS = ("lankle", "rankle")
+# the ankle there), so that a knee shot can keep them out of the picture and a full shot in it, and the knees: the two bones
+# of the model's thigh and shin from the hip joint to the ankle, bent the way her lower body faces (two_bone_knee: on the
+# MV's dance 0.23-0.26 units from rig_skin's IK-solved knees at the median, 1.0-1.1 at the 95th percentile, their heights
+# within -0.16 to +0.23 at the 5th and 95th; bent the way the foot points, 0.7 and 4.1-4.4)
+LEG_LANDMARKS = ("lankle", "rankle", "lknee", "rknee")
 
 # sizes, from far to close.  cut: the share of the body (head top to toes) above the bottom edge; body: the body's share
 # of the picture height (whole-body sizes); room: the picture's share above the head top; fov: the lens; eye: the
@@ -287,6 +290,31 @@ HIPS_BELOW_WAIST = 12.225 - 10.658
 FK_BONES = ("頭", "左目", "右目", "上半身2", "下半身", "センター", "左つま先ＩＫ", "右つま先ＩＫ", "左腕", "右腕")
 HIP_BONES = ("左足", "右足")
 ANKLE_BONES = ("左足ＩＫ", "右足ＩＫ")
+LEG_BONES = (("左足", "左ひざ", "左足首"), ("右足", "右ひざ", "右足首"))   # the lengths of the thigh and the shin, at rest
+
+
+def two_bone_knee(hip, ankle, ahead, thigh, shin):
+    """the knee of a leg of `thigh` and `shin` from `hip` to `ankle`: on the circle the two lengths meet on, on the side
+    `ahead` lies (that point less the ankle, square to the leg; -Z when it lies along the leg); a leg stretched past its
+    length has it on the line, `thigh` from the hip"""
+    d = [a - h for a, h in zip(ankle, hip)]
+    n = math.sqrt(sum(v * v for v in d))
+    if n < 1e-9:
+        return tuple(hip)
+    u = [v / n for v in d]
+    if n >= thigh + shin:
+        return tuple(h + v * thigh for h, v in zip(hip, u))
+    x = (thigh * thigh - shin * shin + n * n) / (2.0 * n)
+    h = math.sqrt(max(thigh * thigh - x * x, 0.0))
+    for hint in ([t - a for t, a in zip(ahead, ankle)], [0.0, 0.0, -1.0]):
+        along = sum(a * b for a, b in zip(hint, u))
+        side = [a - along * b for a, b in zip(hint, u)]
+        m = math.sqrt(sum(v * v for v in side))
+        if m > 1e-6:
+            break
+    else:
+        side, m = [0.0, 0.0, 0.0], 1.0
+    return tuple(p + v * x + w / m * h for p, v, w in zip(hip, u, side))
 
 
 def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1, ankles=False):
@@ -294,13 +322,18 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1, 
     hip_joints also HIP_LANDMARKS (the hip joints are where 左足 and 右足 turn: the leg IK turns them, it does not move
     them, so the forward kinematics puts them right; a model without those bones is refused), with subframes n > 1
     the points guard looks down at (GUARD_POINTS) at every frame's subframes f + k/n from the dance's own curves, and
-    with ankles LEG_LANDMARKS (the leg IK bones; a model without them is refused)"""
+    with ankles LEG_LANDMARKS (the ankles from the leg IK bones, the knees solved from the model's leg lengths:
+    two_bone_knee; a model without those bones is refused)"""
     names = [b.name for b in model.bones]
+    lengths = None
     if ankles:
-        missing = [n for n in ANKLE_BONES if n not in names]
+        missing = [n for n in ANKLE_BONES + tuple(b for leg in LEG_BONES for b in leg) if n not in names]
         if missing:
-            raise ValueError("the model has no %s: the ankles are read from the leg IK bones" % ", ".join(missing))
-    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints else [])
+            raise ValueError("the model has no %s: the ankles are read from the leg IK bones, the knees from the legs' "
+                             "lengths" % ", ".join(missing))
+        rest = {b.name: b.position for b in model.bones}
+        lengths = [(math.dist(rest[a], rest[b]), math.dist(rest[b], rest[c])) for a, b, c in LEG_BONES]
+    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints or ankles else [])
                            + (list(ANKLE_BONES) if ankles else []), 0, last)
     n = len(track["頭"])
     sub = None
@@ -336,8 +369,12 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1, 
             out["ltoe"].append(lt)
             out["rtoe"].append(rt)
         if ankles:
-            out["lankle"].append(track["左足ＩＫ"][f][0])
-            out["rankle"].append(track["右足ＩＫ"][f][0])
+            la, ra = track["左足ＩＫ"][f][0], track["右足ＩＫ"][f][0]
+            out["lankle"].append(la)
+            out["rankle"].append(ra)
+            ahead = fk.rotate(track["下半身"][f][1], (0.0, 0.0, -1.0))      # the way her lower body faces
+            out["lknee"].append(two_bone_knee(track["左足"][f][0], la, tuple(a + b for a, b in zip(la, ahead)), *lengths[0]))
+            out["rknee"].append(two_bone_knee(track["右足"][f][0], ra, tuple(a + b for a, b in zip(ra, ahead)), *lengths[1]))
     return Dancer(out, sub)
 
 

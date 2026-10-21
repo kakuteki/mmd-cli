@@ -2008,7 +2008,9 @@ def rin_with_ankles():
              ("右腕", 3, (-0.91, 15.28, -0.25), NORMAL), ("左つま先ＩＫ", 0, (1.05, 0.1, -1.15), NORMAL | TRANSLATE),
              ("右つま先ＩＫ", 0, (-1.05, 0.1, -1.15), NORMAL | TRANSLATE), ("左足", 8, (0.90, 10.66, 0.007), NORMAL),
              ("右足", 8, (-0.90, 10.59, 0.007), NORMAL), ("左足ＩＫ", 0, (0.93, 1.75, 0.38), NORMAL | TRANSLATE),
-             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE)]
+             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE), ("左ひざ", 13, (0.92, 6.0, -0.30), NORMAL),
+             ("右ひざ", 14, (-0.92, 5.95, -0.30), NORMAL), ("左足首", 17, (0.93, 1.75, 0.38), NORMAL),
+             ("右足首", 18, (-0.93, 1.75, 0.38), NORMAL)]
     return w.build(name="rin-ankles", bones=[w.bone(n, parent=p, position=pos, flags=fl) for n, p, pos, fl in bones])
 
 
@@ -2057,6 +2059,44 @@ class SizeSpecAndAnklesTest(unittest.TestCase):
             f.write(rin_like_model())
         with self.assertRaises(ValueError):
             oc.dancer_from_motion(pmx.load(plain), motion, 10, hip_joints=True, ankles=True)
+
+    def test_her_knees_are_where_the_legs_of_her_length_reach_from_hip_to_ankle_bending_forward(self):
+        # (the forward kinematics has no IK, so the knees are solved as two bones of the model's lengths from the hip
+        # joint to the ankle, bending the way her lower body faces; the midpoint of hip and ankle missed a deep bend by up
+        # to 3.8 units on the MV's dance)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "rin.pmx")
+        with open(path, "wb") as f:
+            f.write(rin_with_ankles())
+        model = pmx.load(path)
+        rest = {b.name: b.position for b in model.bones}
+        thigh, shin = math.dist(rest["左足"], rest["左ひざ"]), math.dist(rest["左ひざ"], rest["左足首"])
+        motion = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左足ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左つま先ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左つま先ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY)])
+        dancer = oc.dancer_from_motion(model, motion, 10, hip_joints=True, ankles=True)
+        for f in (0, 5, 10):
+            hip, knee, ankle = dancer.at("lhip", f), dancer.at("lknee", f), dancer.at("lankle", f)
+            self.assertAlmostEqual(math.dist(hip, knee), thigh, places=6)
+            self.assertAlmostEqual(math.dist(knee, ankle), shin, places=6)
+            # in front of the line from her hip to her ankle (-Z, the way her lower body faces)
+            t = sum((k - h) * (a - h) for k, h, a in zip(knee, hip, ankle)) / math.dist(hip, ankle) ** 2
+            on_line = tuple(h + (a - h) * t for h, a in zip(hip, ankle))
+            self.assertLess(knee[2], on_line[2])
+        # at rest the solve gives the model's own knee (its lengths, its bend)
+        for a, b in zip(dancer.at("lknee", 0), rest["左ひざ"]):
+            self.assertAlmostEqual(a, b, delta=0.05)
+        # raised 4 and forward 2 the ankle comes 4.5 nearer her hip: the knee goes forward and up
+        self.assertLess(dancer.at("lknee", 10)[2], dancer.at("lknee", 0)[2] - 1.0)
+        self.assertGreater(dancer.at("lknee", 10)[1], dancer.at("lknee", 0)[1])
+        # a leg stretched past its length has the knee on the line at the thigh's length
+        far = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, -6.0, 0.0), fk.IDENTITY)])
+        d2 = oc.dancer_from_motion(model, far, 0, hip_joints=True, ankles=True)
+        hip, knee, ankle = d2.at("lhip", 0), d2.at("lknee", 0), d2.at("lankle", 0)
+        self.assertAlmostEqual(math.dist(hip, knee), thigh, places=6)
+        self.assertAlmostEqual(math.dist(hip, knee) + math.dist(knee, ankle), math.dist(hip, ankle), places=6)
 
 
 if __name__ == "__main__":

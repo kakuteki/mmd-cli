@@ -1619,6 +1619,8 @@ SPIN = (740, 770)             # frames: her shoulders and lower body turn twice 
 STEPS = (1078, 1197)          # frames: her feet step fast (chorus, bars 18-19)
 TURNED = (905, 1035)          # frames: she turns her face 60 degrees to her left and back (chorus, bars 15-17)
 NOTE = (18.2, 18.9)           # s: a sustained note (verse, bar 9)
+SQUAT = (300, 312)            # frames: she squats, her hips 5 units down at the deepest (verse, bar 5)
+THIGH, SHIN = 4.76, 4.15      # her legs (Sour's Rin: hip joint 10.66, knee 5.9, ankle 1.75)
 CONTACT = 29.0                # s: an eye contact wanted (chorus, bars 14-15)
 
 
@@ -1649,11 +1651,17 @@ def sized_dancer(motion):
         spin = 720.0 * (f - SPIN[0]) / 30.0 if SPIN[0] <= f <= SPIN[1] else 0.0
         a = math.radians(way + spin)
         step = 1.5 * math.sin(2.0 * math.pi * 3.0 * f / 30.0) if STEPS[0] <= f <= STEPS[1] else 0.0
+        down = 5.0 * math.sin(math.pi * (f - SQUAT[0]) / float(SQUAT[1] - SQUAT[0])) if SQUAT[0] <= f <= SQUAT[1] else 0.0
         for name in oc.LANDMARKS + ("lhip", "rhip", "ltoe", "rtoe", "lankle", "rankle"):
             s = SIDE.get(name, 0.0)
             dx = (step if name in ("ltoe", "lankle") else -step if name in ("rtoe", "rankle") else 0.0)
-            out[name].append((x + s * math.cos(a) + dx, REST[name], z + s * math.sin(a)))
-        out["pelvis_front"].append((x + math.sin(a), REST["waist"], z - math.cos(a)))
+            dy = 0.0 if name in ("ltoe", "rtoe", "lankle", "rankle", "toes") else -down
+            out[name].append((x + s * math.cos(a) + dx, REST[name] + dy, z + s * math.sin(a)))
+        out["pelvis_front"].append((x + math.sin(a), REST["waist"] - down, z - math.cos(a)))
+        for side, (hip, ankle, toe) in (("l", ("lhip", "lankle", "ltoe")), ("r", ("rhip", "rankle", "rtoe"))):
+            # the knee of her legs' lengths, bent the way she faces
+            ahead = tuple(v + w for v, w in zip(out[ankle][-1], (math.sin(a), 0.0, -math.cos(a))))
+            out[side + "knee"].append(oc.two_bone_knee(out[hip][-1], out[ankle][-1], ahead, THIGH, SHIN))
     return oc.Dancer(out)
 
 
@@ -1687,7 +1695,8 @@ class MusicSizesTest(unittest.TestCase):
 
     def shots(self):
         f = lambda n, kind, **kw: dict({"frames": n, "kind": kind, "chorus": kind == "chorus", "contact": False,
-                                       "note": False, "sung": 0.0, "wide": False, "calm": True, "pace": 5.0}, **kw)
+                                       "note": False, "sung": 0.0, "wide": False, "spin": False, "calm": True, "pace": 5.0},
+                                      **kw)
         return [f(240, "intro"), f(240, "verse", sung=1.0), f(240, "verse", sung=1.0, note=True),
                 f(120, "chorus", sung=1.0, wide=True), f(120, "chorus", sung=1.0, contact=True), f(60, "chorus", sung=1.0),
                 f(60, "chorus", sung=1.0, calm=False), f(120, "chorus", sung=1.0, wide=True), f(240, "break", wide=True),
@@ -1701,6 +1710,15 @@ class MusicSizesTest(unittest.TestCase):
         shots = self.shots()
         shots[3]["contact"] = True
         self.assertEqual(mc.music_sizes(shots)[3], "full")
+
+    def test_a_spin_is_never_close_and_may_be_knee(self):
+        shots = self.shots()
+        shots[2]["spin"] = True                         # the note's shot holds a fast turn
+        shots[4]["spin"] = True                         # and the contact's
+        sizes = mc.music_sizes(shots, share=dict(mc.MUSIC_SIZE_SHARE, knee=0.5), chorus_share=dict(mc.MUSIC_CHORUS_SHARE, knee=0.5))
+        self.assertNotIn(sizes[2], mc.MUSIC_CLOSE)
+        self.assertNotIn(sizes[4], mc.MUSIC_CLOSE)
+        self.assertIn("knee", (sizes[2], sizes[4]))
 
     def test_the_sustained_note_and_the_verse_lines_come_close_first_and_the_quiet_parts_never(self):
         sizes = mc.music_sizes(self.shots())
@@ -1749,16 +1767,26 @@ class MusicSizedPlanTest(unittest.TestCase):
         self.assertTrue(all(s.size is None and s.height is None and s.fov is None for s in plain))
 
     def test_every_frame_shows_its_size_and_her_head(self):
+        # her head under the row a punch's zoom leaves room for where it may zoom (round the title word and the parts'
+        # first frames), under the free row elsewhere; the size on `hold` of the frames and on both ends of the shot
+        song = sized_song()
+        zoom = mc.zoom_frames([mc.song_parts(song, LAST)[i][3] for i in range(len(mc.song_parts(song, LAST)))],
+                              [h["frame"] for h in song["hooks"]])
+        self.assertIn(song["hooks"][0]["frame"] + 5, zoom)
+        self.assertNotIn(song["hooks"][0]["frame"] + 40, zoom)
+        ends = mc.MUSIC_FRAME["ends"]
         for s in self.shots:
             cams = sized_cameras(s)
-            shown = [mc.size_shown(self.dancer, s.start + i, cam, s.size) for i, cam in enumerate(cams)]
+            rows = [mc.MUSIC_FRAME["head_row"] if s.start + i in zoom else mc.MUSIC_FRAME["head_free"] for i in range(len(cams))]
+            shown = [mc.size_shown(self.dancer, s.start + i, cam, s.size, rows[i]) for i, cam in enumerate(cams)]
             self.assertGreaterEqual(sum(shown) / float(len(shown)), mc.MUSIC_FRAME["hold"], (s.start, s.size))
+            self.assertTrue(all(shown[:ends]) and all(shown[-ends:]), (s.start, s.size))
             for i, cam in enumerate(cams):
                 f = s.start + i
                 for name in ("headtop", "eyes"):
                     u, v, depth = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, self.dancer.at(name, f))
                     self.assertGreater(depth, 0.0)
-                    self.assertLessEqual(v, mc.MUSIC_FRAME["head_row"] + 1e-9, (f, name, s.size))
+                    self.assertLessEqual(v, rows[i] + 1e-9, (f, name, s.size))
                     self.assertLessEqual(abs(u), mc.MUSIC_FRAME["side"] + 1e-9, (f, name, s.size))
 
     def test_a_close_shot_looks_down_at_her_hips_and_hip_joints_by_30_degrees(self):
@@ -1806,13 +1834,47 @@ class MusicSizedPlanTest(unittest.TestCase):
         chain = mc.facing_chain(self.motion)
         for seed in range(4):
             _, _, shots = sized_plan(seed=seed) if seed else (None, None, self.shots)
+            dancer = self.dancer
             for before, after in zip(shots, shots[1:]):
                 yaw_before = mc.music_shot_values(before)[-1]["yaw"]
                 yaw_after = after.base["yaw"]
-                self.assertTrue(before.size != after.size or angle_off(yaw_before, yaw_after) >= 30.0,
-                                (seed, after.start, before.size, after.size, yaw_before, yaw_after))
+                # the turn as the picture shows it: her center to the eye before and after the cut
+                az_before = mc.camera_azimuth(dancer, before.end, sized_cameras(before)[-1])
+                az_after = mc.camera_azimuth(dancer, after.start, sized_cameras(after)[0])
+                self.assertTrue(before.size != after.size or angle_off(az_before, az_after) >= 30.0,
+                                (seed, after.start, before.size, after.size, az_before, az_after))
+                if angle_off(az_before, az_after) < 30.0:
+                    # another size that turns less changes her height in the picture as a size does (not a jump cut)
+                    ratio = (mc.picture_height(dancer, after.start, sized_cameras(after)[0])
+                             / mc.picture_height(dancer, before.end, sized_cameras(before)[-1]))
+                    self.assertFalse(0.8 <= ratio <= 1.25, (seed, after.start, before.size, after.size, ratio))
                 self.assertFalse(mc.crosses_line(mc.facing_at(chain, after.start), yaw_before, yaw_after),
                                  (seed, after.start, yaw_before, yaw_after))
+
+    def test_a_knee_shot_keeps_both_her_knees_in_on_every_frame(self):
+        # (a frame of a knee shot without her knees reads as waist up, which asks the close look-down)
+        knee = [s for s in self.shots if s.size == "knee"]
+        self.assertTrue(knee)
+        for s in knee:
+            for i, cam in enumerate(sized_cameras(s)):
+                for p in mc._knees(self.dancer, s.start + i):
+                    v = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, p)[1]
+                    self.assertGreaterEqual(v, -1.0 + mc.MUSIC_FRAME["in"] - 1e-9, (s.start + i))
+
+    def test_a_window_is_planned_at_its_look_down(self):
+        # a window of 25 degrees over the break (a whole-body shot from about 5 degrees): the shot that holds it is planned
+        # from high enough, so guard has nothing to add there
+        window = [1250, 1280, 25.0]
+        _, _, shots = sized_plan(windows=[window])
+        held = [s for s in shots if s.start <= window[0] <= s.end][0]
+        plain = [s for s in self.shots if s.start == held.start][0]
+        for f in range(window[0], window[1] + 1):
+            cam = sized_cameras(held)[f - held.start]
+            points = [self.dancer.at(n, f) for n in ("hips", "lhip", "rhip")]
+            self.assertGreaterEqual(oc.look_down_at(cam.position, points), 25.0 - 1e-6, f)
+        f = window[0]
+        self.assertLess(oc.look_down_at(sized_cameras(plain)[f - plain.start].position,
+                                        [self.dancer.at(n, f) for n in ("hips", "lhip", "rhip")]), 25.0)
 
     def test_the_line_is_crossed_when_her_face_turns_from_one_side_of_the_picture_to_the_other(self):
         self.assertTrue(mc.crosses_line(0.0, -40.0, 40.0))
@@ -1889,7 +1951,9 @@ def sized_model():
              ("右腕", 3, (-0.91, 15.28, -0.25), NORMAL), ("左つま先ＩＫ", 0, (1.05, 0.1, -1.15), NORMAL | TRANSLATE),
              ("右つま先ＩＫ", 0, (-1.05, 0.1, -1.15), NORMAL | TRANSLATE), ("左足", 8, (0.90, 10.66, 0.007), NORMAL),
              ("右足", 8, (-0.90, 10.59, 0.007), NORMAL), ("左足ＩＫ", 0, (0.93, 1.75, 0.38), NORMAL | TRANSLATE),
-             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE)]
+             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE), ("左ひざ", 13, (0.92, 6.0, -0.30), NORMAL),
+             ("右ひざ", 14, (-0.92, 5.95, -0.30), NORMAL), ("左足首", 17, (0.93, 1.75, 0.38), NORMAL),
+             ("右足首", 18, (-0.93, 1.75, 0.38), NORMAL)]
     return w.build(name="rin-sized", bones=[w.bone(n, parent=p, position=pos, flags=fl) for n, p, pos, fl in bones])
 
 
