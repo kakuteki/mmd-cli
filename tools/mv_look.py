@@ -274,14 +274,20 @@ DEFAULT_LOOK = {
               "seed": 1,            # the choices (ways to come and go, places, faces) are fixed by this number
               # (the shares and seconds below were tuned until tools/typo_analyze.py read our text as it reads the references:
               # typorev's corrected targets, 2026-10-21, kinetic's NOTES)
-              "chars": 7,           # characters a piece (the references read 6 [5.3, 7.5]; ours read one fewer: the large
-              "chars_min": 4, "chars_max": 9,                # words in two rows), at least and at most (a word is not cut)
+              # a line is cut into pieces sung about `sung` s each (kinetic2 2026-10-21, the coordinator: the references' short
+              # life, 0.72 s, is reached by cutting by the time sung, at the words' borders; 0 cuts by `chars` as before)
+              "sung": 0.72,
+              "chars": 7,           # characters a piece when sung is 0 (the references read 6 [5.3, 7.5]; ours read one
+              "chars_min": 2, "chars_max": 9,                # fewer), at least and at most (a word is not cut)
               "lead": 0.03,         # s a piece comes before its first syllable ...
               "at_vowel": 1,        # ... 1: before its vowel (where the voice's onset is strongest), 0: before its consonant
               "enter": 0.34,        # s it takes to come (read 0.32 [0.26, 0.33])
               "exit": 0.28,         # s it takes to go (read 0.25 [0.23, 0.32])
-              "hang": 0.0,          # s it stays after its last syllable ends ...
-              "life": [0.62, 0.77],  # ... on the screen at least and at most this long in all (read 0.72 [0.68, 0.77])
+              # it stays until its words are sung (kinetic2: 92 of 94 went before, 0.8 s at the median): it is gone `hang` s
+              # after its last sound ends (its way to go comes after the voice), and on at least life[0] s; life[1] only
+              # guards a sound held very long
+              "hang": 0.28,
+              "life": [0.62, 4.0],
               "drift": 0.3,         # it drifts this many of its characters' heights a second all its life
               "stagger": 0.085,     # s between characters that come one after another (0.085 [0.065, 0.098])
               "glitch_frames": 3,   # frames of the song a glitch lasts
