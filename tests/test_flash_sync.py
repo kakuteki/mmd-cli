@@ -1285,6 +1285,43 @@ class ReportTest(unittest.TestCase):
 
 
 @unittest.skipUnless(FS, "needs numpy")
+class PunchRuleTest(unittest.TestCase):
+    """the punch rule of 2026-10-21 (each punch on the title word its flash stood for, as sung): what the look's notes and the
+    table say of it (punch_flash_action_said_move, fate_dropped_said_stays, fate_moment_left_out) and a punch with no title word
+    to go to (punch_no_title_kept)"""
+    MOMENTS = [{"kind": "title", "n": 1, "t": 9.893, "beat": 10.0}, {"kind": "section", "id": "inter1", "t": 11.29},
+               {"kind": "title", "n": 2, "t": 19.89, "beat": 20.0}]
+
+    def test_a_punch_with_no_title_word_as_sung_is_dropped(self):
+        out = FS.decide([flash(10.0), punch(10.0)], [{"kind": "section", "id": "inter1", "t": 11.29}], song_hits(strong=[11.3]),
+                        skirt=[])
+        f, p = out
+        self.assertEqual((f["action"], p["action"], p["frame"], p["why"]), ("move", "drop", None, "no_title"))
+        placed = FS.place({"flares": [], "mograph": {"on": 1, "events": [flash(10.0), punch(10.0)]}}, out)
+        self.assertEqual([e["kind"] for e in placed["mograph"]["events"]], ["flash"])
+
+    def test_the_punchs_note_says_what_became_of_its_flash(self):
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(10.0), punch(10.0, note="title word 1 (beat 23)"),
+                                                            flash(20.0), punch(20.0, note="title word 2 (beat 46)")]}}
+        out = FS.decide(look["mograph"]["events"], self.MOMENTS, song_hits(strong=[11.3]), skirt=[])
+        notes = {round(e["t"] * 30): e["note"] for e in FS.place(look, out)["mograph"]["events"] if e["kind"] == "punch"}
+        self.assertEqual(notes[FS.frame_of_moment(9.893)], "title word 1 (beat 23); flashsync: moved from 10.000 s, "
+                                                           "its flash goes to the head of inter1: on title word 1 as sung")
+        self.assertEqual(notes[FS.frame_of_moment(19.89)], "title word 2 (beat 46); flashsync: moved from 20.000 s, "
+                                                           "its flash is dropped: on title word 2 as sung")
+
+    def test_the_table_says_the_punch_marks_the_title_word_and_what_became_of_its_flash(self):
+        out = FS.decide([flash(10.0), punch(10.0), flash(20.0), punch(20.0)], self.MOMENTS, song_hits(strong=[11.3]), skirt=[])
+        for d in out:
+            d["at_old"] = {"backing": None, "mix": None, "voice": None}
+        moments = [dict(m, near={"backing": None, "mix": None, "voice": None}) for m in self.MOMENTS]
+        text = FS.table_md({"settings": {"fps": 30, "strong": 90.0, "near_frames": 1, "reach_frames": 2, "skirt_gap": 0.5},
+                            "moments": moments, "decisions": out})
+        self.assertIn("パンチは題名の語 1 の 1 音目を歌うコマへ（光は動かした）", text)
+        self.assertIn("パンチは題名の語 2 の 1 音目を歌うコマへ（光は削った）", text)
+
+
+@unittest.skipUnless(FS, "needs numpy")
 class MeasureReportTest(unittest.TestCase):
     def test_the_old_light_is_said_before_or_after_the_voice(self):
         # (old_from_voice_sign) measure writes how far the old light is from the title word's first syllable: negative = before
