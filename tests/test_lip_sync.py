@@ -461,7 +461,7 @@ class HiatusTest(unittest.TestCase):
         vowel("i", 0.24)
         cls.truth.append(("k", "i", c0, t))
         t += 0.24
-        # と: a closure, a short note
+        # ど: a closure, a short note (the lines here are made up, not the MV's)
         c0 = t
         closure(0.08)
         t += 0.08
@@ -474,7 +474,7 @@ class HiatusTest(unittest.TestCase):
         vowel("o", 0.13, f0=300.0)
         cls.truth.append(("", "o", t, t))
         t += 0.13
-        # と と: two more notes after closures
+        # ど ど: two more notes after closures
         for dur in (0.14, 0.24):
             c0 = t
             closure(0.11)
@@ -499,7 +499,7 @@ class HiatusTest(unittest.TestCase):
         cls.voice = os.path.join(cls.folder, "v.wav")
         write_wav(cls.voice, x.astype(np.float32))
         cls.lines = os.path.join(cls.folder, "l.tsv")
-        write_lines(cls.lines, [(0.8, end1 + 0.2, "ちと おこと"), (end1 + 0.45, t + 0.2, "かあ")])
+        write_lines(cls.lines, [(0.8, end1 + 0.2, "きど おどど"), (end1 + 0.45, t + 0.2, "かあ")])
         morphs = [vmd.MorphKey(n, 0, 0.0) for n in VOWEL_MORPHS] + [vmd.MorphKey("まばたき", 149, 0.0)]
         cls.face = os.path.join(cls.folder, "f.vmd")
         vmd.dump(vmd.Motion(model_name="Rin", morphs=morphs), cls.face)
@@ -516,7 +516,7 @@ class HiatusTest(unittest.TestCase):
 
     def test_each_syllable_starts_on_its_own_note(self):
         self.assertEqual(self.code, 0)
-        self.assertEqual([m["kana"] for m in self.morae], ["き", "と", "お", "と", "と", "か", "あ"])
+        self.assertEqual([m["kana"] for m in self.morae], ["き", "ど", "お", "ど", "ど", "か", "あ"])
         for m, (c, v, c0, v0) in zip(self.morae, self.truth):
             self.assertAlmostEqual(m["v0"], v0, delta=0.04, msg=m["kana"])
 

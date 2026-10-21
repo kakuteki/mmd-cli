@@ -573,6 +573,10 @@ def _ring(y, box, inner, outer):
     h = box["h"]
     x0, y0 = int(max(0, box["x0"] - outer * h)), int(max(0, box["y0"] - outer * h))
     x1, y1 = int(min(w_img, box["x1"] + outer * h)), int(min(h_img, box["y1"] + outer * h))
+    if x1 <= x0 or y1 <= y0:
+        # the box and its ring lie beyond the picture (a track followed through a punch carries its box past the edge):
+        # no ring (np.mgrid of a negative size was a ValueError, kinetic 2026-10-21)
+        return y[0:0, 0:0].ravel()
     sub = y[y0:y1, x0:x1]
     yy, xx = np.mgrid[y0:y1, x0:x1]
     out_in = ((xx < box["x0"] - inner * h) | (xx > box["x1"] + inner * h) |
@@ -590,6 +594,9 @@ def stroke_mask(y, box, chars):
     x1, y1 = int(min(w_img, math.ceil(box["x1"] + pad))), int(min(h_img, math.ceil(box["y1"] + pad)))
     ring = _ring(y, box, 0.3, 0.8)
     ground = float(np.median(ring)) if ring.size else float(np.median(y))
+    if x1 <= x0 or y1 <= y0:                                  # the box lies beyond the picture: no strokes
+        none = np.zeros(0, np.int64)
+        return none, none, 1.0, ground
     d = y[y0:y1, x0:x1] - ground
     # the side the text lies on: that of the pixels that differ most from the ground (not that of the characters'
     # middles: a hollow letter's middle is the ground)

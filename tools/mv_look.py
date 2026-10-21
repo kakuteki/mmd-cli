@@ -76,6 +76,20 @@ from PIL import Image, ImageDraw, ImageFilter
 
 _WORLD = []
 _LAYER = []
+_TEXT2 = []
+
+
+def text_tool():
+    """tools/kinetic_text.py (loaded from its file, once), only for a look that draws the kinetic text (text2.on 1)"""
+    if not _TEXT2:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinetic_text.py")
+        spec = importlib.util.spec_from_file_location("kinetic_text", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TEXT2.append(module)
+    return _TEXT2[0]
+
+
 _MOGRAPH = []
 
 
@@ -250,6 +264,73 @@ DEFAULT_LOOK = {
               "flicker_seed": 7,
               "core": 0.0},         # ... and their light past white spills into their other channels by this share (an
                                     # overexposed core goes white: the cores of neon and lamps); 0 none
+    # the kinetic typography of the lyrics (kinetic, 2026-10-21; tools/kinetic_text.py, which says how), after @PizaCG's
+    # (typoref measured nine of its videos): pieces of about five characters at the syllables of the voice, each on the
+    # screen about a second and never standing still, subtitles in front of the dancer and large words behind her, the
+    # title, a tag and the end credits.  on 0 keeps the text of tools/mv_text.py (--cues is then its cue file); with on 1
+    # --cues is a words file of tools/kinetic_text.py, drawn with these values.  Sizes are shares of the picture's height
+    # (of its width for x), times are seconds, colours r, g, b of 255
+    "text2": {"on": 0,
+              "seed": 1,            # the choices (ways to come and go, places, faces) are fixed by this number
+              # (the shares and seconds below were tuned until tools/typo_analyze.py read our text as it reads the references:
+              # typorev's corrected targets, 2026-10-21, kinetic's NOTES)
+              "chars": 7,           # characters a piece (the references read 6 [5.3, 7.5]; ours read one fewer: the large
+              "chars_min": 4, "chars_max": 9,                # words in two rows), at least and at most (a word is not cut)
+              "lead": 0.03,         # s a piece comes before its first syllable ...
+              "at_vowel": 1,        # ... 1: before its vowel (where the voice's onset is strongest), 0: before its consonant
+              "enter": 0.34,        # s it takes to come (read 0.32 [0.26, 0.33])
+              "exit": 0.28,         # s it takes to go (read 0.25 [0.23, 0.32])
+              "hang": 0.0,          # s it stays after its last syllable ends ...
+              "life": [0.62, 0.77],  # ... on the screen at least and at most this long in all (read 0.72 [0.68, 0.77])
+              "drift": 0.3,         # it drifts this many of its characters' heights a second all its life
+              "stagger": 0.085,     # s between characters that come one after another (0.085 [0.065, 0.098])
+              "glitch_frames": 3,   # frames of the song a glitch lasts
+              "sub_size": 0.037,    # subtitles: the characters' height (read 0.041 [0.041, 0.052])
+              "sub_x": 0.5,         # ... the middle of the line (half way through its life: it drifts)
+              "sub_rows": [0.7, 0.8],             # ... the rows the pieces of a line take in turn (y of their middle)
+              "tracking": 0.12,     # ... em between the characters
+              "column_share": 0.07,  # the share of the verses' lines set in a column at a side ...
+              "column_x": [0.1, 0.9], "column_y": 0.5,       # ... at these sides, the column's middle at this height
+              "mincho_share": 0.45,  # the share of lines set in Mincho (read 0.20 [0.13, 0.26]: thin Mincho is read so 1 in 3)
+              "bracket_share": 0.1,  # ... set in brackets
+              "outline_share": 0.6,  # ... with an outline, of the lines in Noto Sans (none round Mincho): 0.33 of all (read
+                                    # 0.33 [0.27, 0.35])
+              "shadow_share": 0.45,  # ... with a drop shadow (0.13 [0.08, 0.17]: read 1 in 3 to 1 in 6)
+              "weight": 550, "weight_mincho": 400,           # the faces' weight (Noto's weight axis, Shippori's file)
+              "big_per_line": 1.5,  # large words behind the dancer: how many a line of a chorus, the bridge or the outro
+              "big_size": 0.13,     # ... their height
+              "edge_size": 0.3,     # ... of the interludes' title, cut by the picture's edge
+              "edge_word": 0.26,    # ... of the hollow large words, upright, cut by the picture's edge
+              "tilt": -20.0,        # ... degrees the tilted ones lean (rising to the right)
+              "big_x": [0.3, 0.7],  # ... the two sides they take in turn,
+              "big_y": [0.46, 0.54],  # ... and the heights of their middle (each pair of sides at the next)
+              "big_alpha": 0.92, "edge_alpha": 0.55,         # ... how strongly they show
+              "push": 0.25,         # ... their size grows by this share a second
+              "hook_size": 0.2, "hook_y": 0.42,              # the title word sung in the hooks, one character a syllable, in
+                                                             # neon with its glow
+              "fill": [238.0, 239.0, 242.0],                 # the colour of the text (thin strokes read darker: L* 85 [80, 86])
+              "blue": [96.0, 176.0, 255.0], "red": [255.0, 88.0, 112.0],     # the two colours of the accented words
+              "outline": [36.0, 72.0, 160.0],                # the colour of the outlines (apart from the dark of the night)
+              "neon": [120.0, 220.0, 255.0],                 # the edge of the hollow words
+              "outline_px": 1.5,    # px of a 720 line picture
+              "glow": 0.3,          # a soft light round the text: its strength (read 0.073 [0.021, 0.139]) ...
+              "glow_radius": 5.0,   # ... and reach (px of a 720 line picture)
+              "neon_glow": 0.9,     # ... round the hollow words
+              "shadow": 0.6,        # the drop shadow's strength and where it falls (px right and down, of a 720 line picture)
+              "shadow_px": [2.0, 3.0],
+              # how often each way to come and to go is taken (weights in the order of ENTERS and EXITS of
+              # tools/kinetic_text.py), for the subtitles and for the large words (which grow all the while: none shrinks
+              # them).  The subtitles' are solved for the shares the references read (enter: fade 35, move 42, scale 12,
+              # blur 16, one character after another 10, cut 9, glitch 3 %; exit: fade 39, move 36, scale 9, cut 17, blur 13 %)
+              "enter_mix": [0.05, 0.12, 0.23, 0.04, 0.0, 0.07, 0.08, 0.02, 0.10, 0.035, 0.09, 0.165],
+              "exit_mix": [0.10, 0.05, 0.17, 0.10, 0.03, 0.05, 0.12, 0.04, 0.03, 0.20, 0.11],
+              "big_enter_mix": [0.0, 0.0, 0.3, 0.1, 0.1, 0.1, 0.1, 0.05, 0.0, 0.08, 0.0, 0.17],
+              "big_exit_mix": [0.1, 0.0, 0.0, 0.1, 0.25, 0.1, 0.2, 0.0, 0.05, 0.05, 0.15],
+              "title_size": 0.16,   # the opening title's characters
+              "tag_size": 0.022, "tag_alpha": 0.75,          # the small tag in a corner
+              "credit_size": 0.042,  # the end credits: the names ...
+              "role_size": 0.024,   # ... and what each did
+              "credit_fade": 0.35},  # ... s each card takes to come and to go
     # the motion graphics (mograph, 2026-10-21; tools/mograph_layer.py, which says how and holds the section's defaults):
     # punches, shakes, flashes, fades, dissolves and glitches at times of the song, and particles in the air of a stage in the
     # world.  on 0 draws nothing (the argv of before)
@@ -321,6 +402,7 @@ def merge_look(overrides):
     _check_lamps(look["lamps"], look["stage"])
     _check_rim(look["rim"])
     _check_layer(look["layer"], look["stage"], look["lamps"])
+    _check_text2(look["text2"])
     if look["light"]["flicker"] > 0 and not look["layer"]["on"]:
         raise ValueError("light.flicker makes the lit signs of the stage of a model flicker (tools/stage_layer.py): it needs "
                          "layer.on 1")
@@ -339,6 +421,18 @@ def merge_look(overrides):
     if look["mograph"]["on"]:
         mograph_tool().check_look(look)
     return look
+
+
+def _check_text2(text2):
+    """text2 draws the kinetic text of tools/kinetic_text.py (which checks its values) only with text2.on 1"""
+    if text2["on"] not in (0, 1):
+        raise ValueError("text2.on is 0 or 1, not %r" % (text2["on"],))
+    if not text2["on"]:
+        changed = sorted(k for k in text2 if k != "on" and text2[k] != DEFAULT_LOOK["text2"][k])
+        if changed:
+            raise ValueError("text2.%s draws the kinetic text of tools/kinetic_text.py: it needs text2.on 1" % changed[0])
+        return
+    text_tool().check_settings(text2)
 
 
 GRADE_RANGES = ("shadows", "mids", "highs")
@@ -1310,8 +1404,14 @@ def load_look(path):
         raise ValueError("the look %s is not JSON: %s" % (path, exc))
 
 
-def text_plan(cues_path, work, size, fps):
-    """the text sequences of tools/mv_text.py for this picture (it is loaded from its file: tools/ is no package)"""
+def text_plan(cues_path, work, size, fps, look=None, span=None):
+    """the text sequences of tools/mv_text.py for this picture (it is loaded from its file: tools/ is no package); with the
+    look's text2.on 1 those of tools/kinetic_text.py (--cues is then its words file), drawn for `span` (from, to: seconds
+    of the song) or for the whole song"""
+    if look is not None and look["text2"]["on"]:
+        forget_prepared(work)
+        return text_tool().render_sequences(cues_path, os.path.join(work, "text2"), size=size, fps=fps,
+                                            settings=look["text2"], span=span)
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mv_text.py")
     if not os.path.exists(path):
         raise ValueError("--cues needs tools/mv_text.py next to this tool")
@@ -1343,7 +1443,12 @@ def prepared_key(look, size, fps, cues_path, world=None):
     the bytes of the cue file, and the code that draws them (this tool, tools/mv_text.py and tools/mv_world.py).  For a
     stage in the world (`world`, see world_inputs) also the bytes of the camera motion and of the dancer's files, the code
     that reads them (mmd_cli/fk.py and the readers of vmd and pmx) and the shutter.  The fonts mv_text finds on the machine
-    are not in it (tools/mv_chunks.py -Resume does not see them either)"""
+    are not in it (tools/mv_chunks.py -Resume does not see them either).  A look whose text2 is the default (off) is noted
+    as before the section was (kinetic, 2026-10-21); with it on, the code of tools/kinetic_text.py is in the note too"""
+    text2 = look.get("text2")
+    kinetic = bool(text2 and text2.get("on"))
+    if text2 is not None and text2 == DEFAULT_LOOK["text2"]:
+        look = {k: v for k, v in look.items() if k != "text2"}
     values = {"look": look, "size": [int(size[0]), int(size[1])], "fps": fps}
     if world is not None:
         values["shutter"] = [int(world["subframes"]), float(world["shutter"])]
@@ -1352,6 +1457,8 @@ def prepared_key(look, size, fps, cues_path, world=None):
     files = [("cues", cues_path), ("mv_look", os.path.join(here, "mv_look.py")),
              ("mv_text", os.path.join(here, "mv_text.py")), ("mv_world", os.path.join(here, "mv_world.py")),
              ("mograph_layer", os.path.join(here, "mograph_layer.py"))]
+    if kinetic:
+        files.append(("kinetic_text", os.path.join(here, "kinetic_text.py")))
     if world is not None:
         package = os.path.join(os.path.dirname(here), "mmd_cli")
         files += [("camera", world["camera"]), ("model", world["model"])] + [("motion", m) for m in world["motions"]]
@@ -1409,7 +1516,7 @@ def prepare(look, work, size, fps, cues_path=None, world=None, spans=None):
             ranges = [(0, int(round((world["track"][1][-1] + 1) * fps / float(SONG_FPS))))]
     forget_prepared(work)
     layers = write_layers(look, work, size, fps)
-    plan = text_plan(cues_path, work, size, fps) if cues_path else None
+    plan = text_plan(cues_path, work, size, fps, look) if cues_path else None
     note = {"key": prepared_key(look, size, fps, cues_path, world), "work": _slashes(work), "layers": layers, "text": plan}
     if world is not None and "layer" in world:
         note["stage"] = layer_tool().write_stage(look, work, size, fps, world, None, None, spans=ranges)
@@ -1581,6 +1688,19 @@ def dancer_frames(fg):
         raise ValueError("cannot read how many frames %s has: give --to" % fg)
 
 
+def _text_span(look, fg, fps, args):
+    """the seconds of the song an excerpt shows, for the kinetic text (text2.on 1: it draws only those frames); None for
+    the text of tools/mv_text.py"""
+    if not look["text2"]["on"]:
+        return None
+    offset = float(args.offset or 0.0)
+    clip_start = float(args.start) if args.start is not None else offset
+    if args.to is not None:
+        return (clip_start, float(args.to))
+    count = dancer_frames(fg) // int(args.subframes) - int(round((clip_start - offset) * fps))
+    return (clip_start, clip_start + max(1, count) / float(fps))
+
+
 def render(args):
     fg = os.path.abspath(args.dancer)
     if not os.path.isfile(fg):
@@ -1638,7 +1758,7 @@ def render(args):
     else:
         work = os.path.abspath(args.work or out + ".work")
         layers = write_layers(look, work, size, fps)
-        plan = text_plan(args.cues, work, size, fps) if args.cues else None
+        plan = text_plan(args.cues, work, size, fps, look, _text_span(look, fg, fps, args)) if args.cues else None
         if world is not None and "layer" in world:
             stage = layer_tool().write_stage(look, work, size, fps, world, first, count)
         elif world is not None:
