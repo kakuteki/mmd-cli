@@ -1377,36 +1377,36 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FPS（引数 --out-fps） | 30 | frames | 83 | the frames of the song (MMD's): the cuts, the lead, the spans and the seconds count in them |  |  |  |  |  |  |  |  |
-| OUT_FPS | (30, 60) |  | 84 | the joined video: 30 to publish (the motion's terms), 60 to watch |  |  |  |  |  |  |  |  |
-| MMD_FPS | (30, 60, 120, 240, 480, 960) |  | 85 |  |  |  |  |  |  |  |  |  |
-| MIN_FRAMES | 3 | frames | 86 |  |  |  |  |  |  |  |  |  |
-| DISK_MARGIN | 2 * 1024 ** 3 |  | 95 |  |  |  |  |  |  |  |  |  |
-| MAX_BYTES_PER_PIXEL | 1e6 |  | 99 | no AVI comes near; it keeps the arithmetic finite |  |  |  |  |  |  |  |  |
-| MAX_WORKERS | 8 |  | 100 | each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions) |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 101 | MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ) |  |  |  |  |  |  |  |  |
-| STAGE_JOBS | 4 |  | 103 | the processes that draw a stage in the world ("world": true) unless stage_jobs says |  |  |  |  |  |  |  |  |
-| KEEP_FREE_GB | 30 |  | 106 | the free space kept on the disk of "out" (render12, 2026-10-21): 30 GB with a stage of a model (the rule of the render machine, _spike/out/stage6/COMMON.md: MMD starts o… |  |  |  |  |  |  |  |  |
-| GB | 1024 ** 3 |  | 107 |  |  |  |  |  |  |  |  |  |
-| PICTURE_BPP | 2.0 |  | 110 | MMD's picture of the stage, unpacked (RGBA PNG): 1.38 (stagecity), 1.69 (render12) |  |  |  |  |  |  |  |  |
-| LAYER_BPP | 2.0 |  | 111 | a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42, about 1.8 |  |  |  |  |  |  |  |  |
-| WORLD_BPP | 0.5 |  | 112 | a frame of the stage in the world (tools/mv_world.py, PNG): 0.41 |  |  |  |  |  |  |  |  |
-| MP4_BPP | 0.1 |  | 113 | a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song |  |  |  | ○ |  |  |  | dance |
-| MMD_POLL_S | 30 | s | 116 | "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render machine's rule, COMMON.md: 3), looking ever… |  |  |  |  |  |  |  |  |
-| MMD_WAIT_MIN | 60 |  | 117 |  |  |  |  |  |  |  |  |  |
-| avi_bytes(bytes_per_pixel) | 4 |  | 204 |  |  |  |  |  |  |  |  |  |
-| chunk_disk(workers) | 1 |  | 209 |  |  |  |  |  |  |  |  |  |
-| disk_summary(workers) | 1 |  | 229 |  |  |  |  |  |  |  |  |  |
-| _look_check(shutter) | 0.5 |  | 554 |  |  |  |  |  |  |  |  |  |
-| _look_check(subframes) | 1 |  | 554 |  |  |  |  |  |  |  |  |  |
-| _chunk_call(workers) | 1 |  | 924 |  |  |  |  |  |  |  |  |  |
-| write(workers) | 1 |  | 1299 |  |  |  |  |  |  |  |  |  |
-| --lead | 120 | frames | 1366 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
-| --fps | 240 |  | 1367 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
-| --shutter | 0.5 |  | 1371 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
-| --tag | "final" |  | 1374 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
-| --workers | 1 |  | 1375 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1377 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
+| FPS（引数 --out-fps） | 30 | frames | 84 | the frames of the song (MMD's): the cuts, the lead, the spans and the seconds count in them |  |  |  |  |  |  |  |  |
+| OUT_FPS | (30, 60) |  | 85 | the joined video: 30 to publish (the motion's terms), 60 to watch |  |  |  |  |  |  |  |  |
+| MMD_FPS | (30, 60, 120, 240, 480, 960) |  | 86 |  |  |  |  |  |  |  |  |  |
+| MIN_FRAMES | 3 | frames | 87 |  |  |  |  |  |  |  |  |  |
+| DISK_MARGIN | 2 * 1024 ** 3 |  | 96 |  |  |  |  |  |  |  |  |  |
+| MAX_BYTES_PER_PIXEL | 1e6 |  | 100 | no AVI comes near; it keeps the arithmetic finite |  |  |  |  |  |  |  |  |
+| MAX_WORKERS | 8 |  | 101 | each worker runs an MMD and an encoder (GeForce cards take up to 8 NVENC sessions) |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 102 | MMD steps its physics 60 times a second whatever --fps (tools/mv_look.py PHYSICS_HZ) |  |  |  |  |  |  |  |  |
+| STAGE_JOBS | 4 |  | 104 | the processes that draw a stage in the world ("world": true) unless stage_jobs says |  |  |  |  |  |  |  |  |
+| KEEP_FREE_GB | 30 |  | 107 | the free space kept on the disk of "out" (render12, 2026-10-21): 30 GB with a stage of a model (the rule of the render machine, _spike/out/stage6/COMMON.md: MMD starts o… |  |  |  |  |  |  |  |  |
+| GB | 1024 ** 3 |  | 108 |  |  |  |  |  |  |  |  |  |
+| PICTURE_BPP | 2.0 |  | 111 | MMD's picture of the stage, unpacked (RGBA PNG): 1.38 (stagecity), 1.69 (render12) |  |  |  |  |  |  |  |  |
+| LAYER_BPP | 2.0 |  | 112 | a frame of the stage of a model and its spill (tools/stage_layer.py, PNG): 1.42, about 1.8 |  |  |  |  |  |  |  |  |
+| WORLD_BPP | 0.5 |  | 113 | a frame of the stage in the world (tools/mv_world.py, PNG): 0.41 |  |  |  |  |  |  |  |  |
+| MP4_BPP | 0.1 |  | 114 | a frame of the folded video (libx264 crf 16): 0.04 over v7's whole song |  |  |  | ○ |  |  |  | dance |
+| MMD_POLL_S | 30 | s | 117 | "mmd_limit" (render12): before every MMD the driver waits while this many MikuMikuDance run on the machine (the shared render machine's rule, COMMON.md: 3), looking ever… |  |  |  |  |  |  |  |  |
+| MMD_WAIT_MIN | 60 |  | 118 |  |  |  |  |  |  |  |  |  |
+| avi_bytes(bytes_per_pixel) | 4 |  | 205 |  |  |  |  |  |  |  |  |  |
+| chunk_disk(workers) | 1 |  | 210 |  |  |  |  |  |  |  |  |  |
+| disk_summary(workers) | 1 |  | 230 |  |  |  |  |  |  |  |  |  |
+| _look_check(shutter) | 0.5 |  | 555 |  |  |  |  |  |  |  |  |  |
+| _look_check(subframes) | 1 |  | 555 |  |  |  |  |  |  |  |  |  |
+| _chunk_call(workers) | 1 |  | 934 |  |  |  |  |  |  |  |  |  |
+| write(workers) | 1 |  | 1309 |  |  |  |  |  |  |  |  |  |
+| --lead | 120 | frames | 1376 | frames rendered before each cut for the physics (default 120) | HANDOVER 2026-10-06: 物理の助走 120 フレーム（区間の境目はカメラのカット） |  |  |  |  |  |  |  |
+| --fps | 240 |  | 1377 | the rate MMD renders at: 30, 60, 120, 240, 480 or 960 (default 240) | HANDOVER 2026-10-06 ぼかしの決め: 240 fps で描き 8 枚中 4 枚の平均で 30 fps に畳む（本番の計画は 480 fps・16 枚中 8 枚） |  |  |  |  |  |  | dance |
+| --shutter | 0.5 |  | 1381 | share of each frame of the video blurred (default 0.5) |  |  |  |  |  |  |  |  |
+| --tag | "final" |  | 1384 | names the files of this run (default final) |  |  |  |  |  |  |  |  |
+| --workers | 1 |  | 1385 | "chunks rendered and folded at the same time, 1 to %d (default 1: one after the other)" % MAX_WORKERS |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1387 | x264 (libx264 crf 16, the default; the video to publish) or nvenc (h264_nvenc; the files get _nvenc) |  |  |  |  |  |  |  |  |
 
 ## mv_world.py（18. 描画と後処理、54）
 

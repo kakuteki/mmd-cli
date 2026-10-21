@@ -46,7 +46,8 @@ unpack into stage_pictures/<tag>_<NN>), folds the chunk with them in a work fold
 removes both once the chunk's mp4 has passed; without it stage_pictures holds MMD's pictures of every frame the chunks show,
 drawn before (and watched by -Resume).  "keep_free_gb" (30 with a stage of a model, none otherwise): the free space, in GB of
 1024^3 bytes, the driver keeps on the disk of OUT: before every MMD it measures, and a chunk that would leave less (its peak, see
-the summary's "disk") is not started (exit 3; -Resume goes on from it).
+the summary's "disk") is not started (exit 3; -Resume goes on from it); the recipe of a chunk notes its mp4's SHA-256 too, and
+-Resume keeps only those bytes (a crash can lose a page of an mp4 that had passed and leave its frames countable).
 
 --shots takes the shot list of tools/make_camera.py's report (of the run that wrote the camera, or of one with the same
 shots: --handheld does not move them); --cuts gives the first frame of every chunk after the first one, and --last
@@ -229,8 +230,8 @@ def chunk_disk(plan, chunk, fps, out_fps=FPS, workers=1):
 def disk_summary(plan, chunks, fps, out_fps=FPS, workers=1):
     """the summary's "disk" (with a free space kept): the space kept, every chunk's peak and its parts, and the free space to
     start the run with so that no chunk stops for the disk: the space kept, the mp4s of the chunks before, and the peaks of the
-    chunks under way at once (one; with --workers N the N largest, a bound); the join writes the whole video again beside its
-    chunks.  In GB of 1024^3 bytes, as keep_free_gb"""
+    chunks under way at once (one; with --workers N the N largest: no chunk then waits; with the largest peak and all the mp4s
+    the run still ends, its chunks waiting for each other); the join writes the video again beside its chunks.  GB of 1024^3"""
     gb = lambda n: round(n / float(GB), 3)
     disks = [chunk_disk(plan, c, fps, out_fps, workers) for c in chunks]
     peaks, mp4s = [d["peak"] for d in disks], [d["mp4"] for d in disks]
@@ -793,6 +794,13 @@ COUNT_FRAMES = ["function Count-Frames($path) {",
                 "    if (\"$n\" -match '^\\s*(\\d+)') { return [int]$Matches[1] }",
                 "    return -1",
                 "}"]
+# (keep_free_gb, render12rev) the line of the recipe that holds the bytes of the mp4 that passed: a crash can lose a written page
+# of an mp4 after its recipe was written, and the count of its frames does not always see it (hinata, a fold of the city with
+# 4 KiB zeroed in its frames: 240 frames in 9 of 20 places, 4 of them without an error of the decoder)
+SUM = ["function Sum($path) {",
+       "    if (-not (Test-Path -LiteralPath $path)) { return 'mp4 missing' }",
+       "    return 'mp4 ' + (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash",
+       "}"]
 
 
 def _run_chunk_lines(plan, workers):
@@ -878,13 +886,15 @@ def _run_chunk_lines(plan, workers):
     after = ["    foreach ($done in @($pics, $work)) {",
              "        try { Remove-Item -LiteralPath $done -Recurse -Force -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $done, $_ }",
              "    }"] if staged else []
+    # (keep_free_gb, render12rev) the recipe holds the mp4's SHA-256 too (Sum), and -Resume keeps only those bytes
+    noted = "(\"$made`n\" + (Sum $mp4))" if keep else "$made"
     return (_stop_launched_lines(plan) + _stop_stage_lines(plan) +
             [signature + ") {",
              "    $made = \"$recipe`n$stamp\"",
              "    $kept = ''",
              "    $raw = Get-Content -LiteralPath \"$mp4.recipe\" -Raw -ErrorAction SilentlyContinue",
              "    if ($raw) { $kept = $raw.Trim() }",
-             "    if ($Resume -and $kept -eq $made -and (Count-Frames $mp4) -eq $want) {",
+             "    if ($Resume -and $kept -eq %s -and (Count-Frames $mp4) -eq $want) {" % noted,
              "        Remove-Item -LiteralPath $avi -ErrorAction SilentlyContinue"]
             + cleared +
             ["        '{0} skipped: {1} has its {2} frames and was made from the same recipe and inputs' -f $name, $mp4, $want"]
@@ -916,7 +926,7 @@ def _run_chunk_lines(plan, workers):
              "    }",
              "    $n = Count-Frames $mp4",
              "    if ($n -ne $want) { '{0} STOP: {1} frames, want {2}; the AVI is kept: {3}' -f $name, $n, $want, $avi; exit 1 }",
-             "    Set-Content -LiteralPath \"$mp4.recipe\" -Value $made -Encoding UTF8",
+             "    Set-Content -LiteralPath \"$mp4.recipe\" -Value %s -Encoding UTF8" % noted,
              "    try { Remove-Item -LiteralPath $avi -ErrorAction Stop } catch { '{0}: could not delete {1}: {2}' -f $name, $avi, $_ }"]
             + after + finished + ["}"])
 
@@ -978,7 +988,7 @@ def driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps=FPS, enco
               "$sw = [Diagnostics.Stopwatch]::StartNew()"]
     lines += _helper_lines() + _stamp_lines()
     if plan.get("keep_free_gb") is not None:
-        lines += USED + NEED_FREE
+        lines += USED + NEED_FREE + SUM
     if plan.get("mmd_limit") is not None:
         lines += WAIT_MMD
     # the self shadow (with "self_shadow" in the plan), and the look at the rate the fold will draw it at
@@ -1055,7 +1065,7 @@ def workers_driver_text(plan, chunks, tag, fps, shutter, batch_hashes, out_fps, 
               "    }",
               "    return $lock",
               "}"]
-    lines += _floor_reserve_lines() if keep else _reserve_lines()
+    lines += _floor_reserve_lines() + SUM if keep else _reserve_lines()
     if plan.get("mmd_limit") is not None:
         lines += WAIT_MMD + LOCK_MMD
     lines += ["function Release($name) {",

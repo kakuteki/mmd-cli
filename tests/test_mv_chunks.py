@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -875,6 +876,19 @@ STUB_LAYERS_STAGE = (
     "        }\n")
 
 
+# (render12rev) somebody else's MMD starts while the stage of a chunk is drawn: with STUB_OTHER_MMD (a file name), the first
+# batch of a stage asks the test for it (STUB_OTHER_MMD.go) and goes on once the test has started it (its process id written to
+# STUB_OTHER_MMD.pid).  The test starts it itself, so that it holds none of the driver's handles (an output it held would keep
+# the test waiting for it)
+OTHER_MMD = r"""
+    if ($env:STUB_OTHER_MMD -and ($args[-1] -like '*_stage.txt') -and -not (Test-Path -LiteralPath ($env:STUB_OTHER_MMD + '.go'))) {
+        Set-Content -LiteralPath ($env:STUB_OTHER_MMD + '.go') -Value 'start one'
+        $asked = [Diagnostics.Stopwatch]::StartNew()
+        while (-not (Test-Path -LiteralPath ($env:STUB_OTHER_MMD + '.pid')) -and $asked.Elapsed.TotalSeconds -lt 20) { Start-Sleep -Milliseconds 50 }
+    }
+"""
+
+
 STUBS = STUB_HELPERS + r"""
 $log = $env:STUB_LOG
 function python {
@@ -882,6 +896,7 @@ function python {
     if ($args[0] -eq 'tools/mme_shadow.py') { '{"ok": true}'; $global:LASTEXITCODE = 0; return }
 """ + STAGE_STUB + r"""
     if ($args[0] -eq '-m') {
+""" + OTHER_MMD + r"""
         if ($env:STUB_BATCH_FAILS -and (($args -join ' ') -like ('*' + $env:STUB_BATCH_FAILS + '*'))) {
             # the answer of a batch that stopped at a window: its launch with the process id (STUB_BATCH_PID)
             if ($env:STUB_BATCH_PID) {
@@ -1501,6 +1516,12 @@ $log = $env:STUB_LOG + '.' + $PID
 Add-Content -LiteralPath $log -Value ('python ' + ($args -join ' ') + ' home=' + $env:MMD_CLI_HOME) -Encoding UTF8
 """ + STAGE_STUB + r"""
 if ($args[0] -eq '-m') {
+    if ($env:STUB_KILL_WORKER -and (($args -join ' ') -like ('*' + $env:STUB_KILL_WORKER + '*'))) {
+        # (render12rev) the worker dies in this batch (a script on PATH runs in the worker's own process), its locks held
+        Add-Content -LiteralPath $log -Value ('killed ' + $PID) -Encoding UTF8
+        Stop-Process -Id $PID -Force
+    }
+""" + OTHER_MMD + r"""
     if ($env:STUB_MMD_OVERLAP) {
         # (render12) the MMD batches of the run under way at once: a mark in the folder while this one runs; the marks are
         # counted when it starts and when it ends (two that overlap: one of them starts while the other's mark is there)
@@ -1876,6 +1897,58 @@ def needs_of(driver):
     return [int(n) for n in re.findall(r"Run-Chunk (?:'[^']*' ){7}\d+ (\d+) @\(", driver)]
 
 
+def shorten_the_wait(driver, minutes=0.05, poll=0.2):
+    """(render12rev) the written driver with Wait-Mmd's wait (60 minutes) and poll (30 s) shortened in its own lines, so that a
+    test sees the wait give up (the batches keep the hashes the driver checks)"""
+    with open(driver, encoding="utf-8-sig", newline="") as f:
+        text = f.read()
+    for old, new in (("$mmdWait = %d\r\n" % mv_chunks.MMD_WAIT_MIN, "$mmdWait = %s\r\n" % minutes),
+                     ("$mmdPoll = %d\r\n" % mv_chunks.MMD_POLL_S, "$mmdPoll = %s\r\n" % poll)):
+        assert text.count(old) == 1, old
+        text = text.replace(old, new)
+    with open(driver, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(text)
+
+
+def other_mmd(test):
+    """(render12rev) somebody else's MMD for STUB_OTHER_MMD: when a batch of the stage asks for it, a stand-in (ping copied to a
+    MikuMikuDance.exe) is started here and stopped when the test ends.  (the MikuMikuDance running before, env)"""
+    ping = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "PING.EXE")
+    if not os.path.isfile(ping):
+        test.skipTest("needs PING.EXE")
+    exe = os.path.join(test.tmp, "other", "MikuMikuDance.exe")
+    os.makedirs(os.path.dirname(exe), exist_ok=True)
+    shutil.copy2(ping, exe)
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    started, done = [], threading.Event()
+
+    def start_when_asked():
+        while not done.is_set():
+            if os.path.exists(exe + ".go"):
+                proc = subprocess.Popen([exe, "-n", "120", "127.0.0.1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        stdin=subprocess.DEVNULL, creationflags=flags)
+                started.append(proc)
+                time.sleep(0.5)                         # it runs before the batch that asked goes on
+                with open(exe + ".pid", "w") as f:
+                    f.write(str(proc.pid))
+                return
+            time.sleep(0.05)
+
+    def stop():
+        done.set()
+        watcher.join(10)
+        for proc in started:
+            proc.kill()
+            proc.wait(10)
+    watcher = threading.Thread(target=start_when_asked, daemon=True)
+    watcher.start()
+    test.addCleanup(stop)
+    running = sum(1 for line in subprocess.run(["tasklist", "/FI", "IMAGENAME eq MikuMikuDance.exe", "/FO", "CSV", "/NH"],
+                                               capture_output=True, creationflags=flags).stdout.decode("mbcs", "replace").splitlines()
+                  if line.startswith('"MikuMikuDance.exe"'))
+    return running, {"STUB_OTHER_MMD": exe}
+
+
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
 class StageDriverTest(unittest.TestCase):
     """The stage of a model drawn chunk by chunk ("stage_mmd" in the plan), the driver run for real with the stand-ins: before a
@@ -2133,6 +2206,73 @@ class StageDriverTest(unittest.TestCase):
         self.assertEqual(self.left(), [])
         self.assertFalse(os.path.exists(os.path.join(self.out, "t_02_stage.avi.mmdcli-failed")))
 
+    def test_a_wait_for_mmd_that_gives_up_before_her_mmd_stops_the_run_and_clears_the_chunks_pictures(self):
+        # (render12rev) mmd_limit: the stage's MMD went (fewer ran), then somebody else's MMD started while it drew; her MMD waits,
+        # and when the wait gives up (shortened here) the run stops (exit 3) and the chunk's pictures go (the next try draws them)
+        running, env = other_mmd(self)
+        self.write(mmd_limit=running + 1)
+        shorten_the_wait(self.summary["driver"])
+        code, text, calls = self.run_driver(**env)
+        self.assertEqual(code, 3, text)
+        self.assertIn("t_00 STOP: ", text)
+        self.assertIn("MikuMikuDance still run", text)
+        self.assertEqual(self.steps(calls), [("stage batch", "t_00"), ("stage mmd", "t_00"), ("unpack", "t_00")])
+        self.assertEqual(self.left(), [])
+
+    def test_resume_does_not_keep_an_mp4_whose_bytes_changed_after_it_passed(self):
+        # (render12rev) a crash can lose a written page of an mp4 that had passed (its recipe written): hinata's fold of the city
+        # (city_D_1260-1499.mp4) with 4 KiB zeroed in its frames kept its 240 frames in 9 of 20 places, so the count alone does not
+        # see it.  With a free space kept the recipe holds the mp4's SHA-256 too: an mp4 of the right count whose bytes changed
+        # is drawn again.  (The stand-in mp4 holds its frame count: "0150" counts 150 frames in other bytes)
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        self.put("out/t_01.mp4", "0150")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertIn("t_00 skipped", text)
+        self.assertIn("t_02 skipped", text)
+        self.assertEqual([c for s, c in self.steps(calls) if s == "mmd"], ["t_01"])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+        # nothing changed: everything is skipped again
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual((code, self.steps(calls)), (0, []), text)
+
+    def test_resume_after_her_mmd_failed_draws_that_chunk_again_from_its_stage(self):
+        # (render12rev) her batch fails in chunk 01: the run stops before folding (exit 1) and keeps the chunk's pictures to look
+        # at; -Resume draws chunk 01 again from its stage (the pictures of the failed try go first) and goes on
+        self.write()
+        code, text, calls = self.run_driver(STUB_BATCH_FAILS="chunk_t_01.txt")
+        self.assertEqual(code, 1, text)
+        self.assertIn("t_01 STOP: the MMD batch failed", text)
+        self.assertEqual(self.steps(calls)[-1], ("mmd", "t_01"))
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "pictures", "t_01")))
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertIn("t_01: removed", text)
+        self.assertEqual(self.steps(calls), [(s, "t_%02d" % i) for i in (1, 2)
+                                             for s in ("stage batch", "stage mmd", "unpack", "mmd", "fold")])
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_what_a_reboot_left_in_the_fold_of_a_chunk_goes_and_resume_goes_on_from_that_chunk(self):
+        # (render12rev) a reboot while chunk 01 folded: its recipe went when it started; her AVI, its pictures, its work folder,
+        # a part of its mp4 and the stage's AVI are left, chunk 02 not started.  -Resume skips 00 and draws 01 and 02, and the
+        # part of an mp4 is not used
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        os.remove(os.path.join(self.out, "t_01.mp4.recipe"))
+        for rel, text in (("out/t_01.avi", "240\n150"), ("out/t_01.mp4", "37"), ("pictures/t_01/mmd_00100.png", "picture"),
+                          ("out/look_work_t_01/stage/stage_00100.png", "a frame"), ("out/t_01_stage.avi", "30\n150")):
+            self.put(rel, text)
+        for name in ("t_02.mp4", "t_02.mp4.recipe", "t_02.mp4.look.json", "mv_t.mp4"):
+            os.remove(os.path.join(self.out, name))
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertIn("t_00 skipped", text)
+        self.assertEqual([c for s, c in self.steps(calls) if s == "mmd"], ["t_01", "t_02"])
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
     def test_pictures_drawn_before_are_read_as_they_are_and_watched(self):
         # without stage_mmd: the folder of the plan holds MMD's pictures of every frame the chunks show, drawn before (as now)
         for f in range(300):
@@ -2243,6 +2383,70 @@ class StageWorkersDriverTest(unittest.TestCase):
         self.assertEqual(self.steps(self.every(calls)), [])
         self.assertIn("STOP", text)
 
+    def test_a_worker_that_dies_holding_the_runs_lock_leaves_no_worker_waiting_and_resume_ends_the_run(self):
+        # (render12rev) the worker of chunk 00 dies in her MMD with mmd.lock held (killed, as by a reboot of its process or a
+        # hand): the lock is a handle, gone with the process, so the other worker takes it and finishes its chunk; the driver
+        # reports the failure and -Resume makes the rest.  The file mmd.lock stays and stops nothing
+        self.write(mmd_limit=99)
+        code, text, calls = self.run_driver(STUB_KILL_WORKER="chunk_t_00.txt", STUB_SLOW="chunk_t_01")
+        self.assertEqual(code, 1, text)
+        self.assertIn("a worker failed", text)
+        self.assertEqual(len([c for c in self.every(calls) if c.startswith("killed ")]), 1, calls)
+        self.assertIn("t_01 150 frames (want 150)", text)
+        self.assertTrue(os.path.exists(os.path.join(self.out, "run_t", "mmd.lock")))
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertIn("t_01 skipped", text)
+        resumed = [c for s, c in self.steps(self.every(calls)) if s == "mmd"]
+        self.assertIn("t_00", resumed)
+        self.assertNotIn("t_01", resumed)
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_a_wait_for_mmd_in_the_runs_lock_that_gives_up_stops_the_run_and_clears_the_pictures(self):
+        # (render12rev) --workers with mmd_limit: somebody else's MMD starts while a stage is drawn; the waits in the run's lock
+        # give up (shortened here), every worker stops (exit 3) before her MMD, and no chunk keeps its pictures
+        running, env = other_mmd(self)
+        self.write(mmd_limit=running + 1)
+        shorten_the_wait(self.summary["driver"])
+        code, text, calls = self.run_driver(**env)
+        self.assertEqual(code, 3, text)
+        self.assertIn("MikuMikuDance still run", text)
+        self.assertEqual([s for s, _ in self.steps(self.every(calls)) if s in ("mmd", "fold")], [])
+        self.assertEqual(self.left(), [])
+
+    def test_resume_does_not_keep_an_mp4_whose_bytes_changed_after_it_passed(self):
+        # (render12rev) the workers read the recipe's SHA-256 of the mp4 too (see StageDriverTest)
+        self.write()
+        self.assertEqual(self.run_driver()[0], 0)
+        self.put("out/t_01.mp4", "0150")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual([c for s, c in self.steps(self.every(calls)) if s == "mmd"], ["t_01"])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
+    def test_what_a_reboot_left_in_the_folder_of_the_run_and_of_a_chunk_does_not_stop_resume(self):
+        # (render12rev) a reboot while chunk 01 was drawn: the run's folder keeps its locks (no process holds them now), the
+        # claims, the busy note of chunk 01 (a need beyond any disk), a stop; the chunk keeps her AVI and its pictures
+        self.write(mmd_limit=99)
+        self.assertEqual(self.run_driver()[0], 0)
+        run = os.path.join(self.out, "run_t")
+        for name in ("mmd.lock", "disk.lock", "worker_1.lock", "worker_2.lock", "claim_t_00", "claim_t_01", "done_t_00", "stop",
+                     "started.txt", "stamp.txt"):
+            with open(os.path.join(run, name), "w") as f:
+                f.write("1")
+        with open(os.path.join(run, "busy_t_01"), "w") as f:
+            f.write("%d|%s/t_01.avi" % (10 ** 18, self.out))
+        os.remove(os.path.join(self.out, "t_01.mp4.recipe"))
+        self.put("out/t_01.avi", "240\n150")
+        self.put("pictures/t_01/mmd_00100.png", "picture")
+        self.put("out/look_work_t_01/stage/stage_00100.png", "a frame of the stage")
+        code, text, calls = self.run_driver("-Resume")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(sorted(c for s, c in self.steps(self.every(calls)) if s == "mmd"), ["t_01"])
+        self.assertEqual(self.left(), [])
+        self.assertEqual(self.frames("mv_t.mp4"), 300)
+
 
 class MmdLimitPlanTest(unittest.TestCase):
     """"mmd_limit" (render12): before every MMD the driver waits while that many MikuMikuDance (anyone's) run on the machine
@@ -2313,6 +2517,20 @@ class MmdLimitPlanTest(unittest.TestCase):
         for plan, workers in ((dict(PLAN, mmd_limit=3), 1), (dict(CITY_PLAN, mmd_limit=3), 1), (dict(CITY_PLAN), 2), (dict(PLAN), 2)):
             self.assertNotIn("Lock-Mmd", self.driver(plan, workers))
 
+    def test_the_workers_measure_the_disk_again_in_the_runs_lock_before_each_mmd(self):
+        # (render12rev) with a free space kept, a worker measures the disk once more when it has the run's lock (its wait there
+        # may be long, and somebody else may write meanwhile): before the stage's MMD, and before hers, where a stop clears the
+        # chunk's pictures
+        text = self.driver(dict(CITY_PLAN, mmd_limit=3), 2)
+        body = text[text.index("function Run-Chunk("):]
+        body = body[:body.index("\n}\n")]
+        lines = [l.strip() for l in body.splitlines()]
+        runs = [i for i, l in enumerate(lines) if " -m mmd_cli --out " in l]
+        self.assertEqual(len(runs), 2)
+        for i, clear in zip(runs, ("@()", "@($pics)")):
+            j = [n for n, l in enumerate(lines[:i]) if l.startswith("Lock-Mmd ")][-1]
+            self.assertIn("Need-Still $name %s" % clear, lines[j:i], lines[j:i + 1])
+
 
 @unittest.skipUnless(WINDOWS, "the driver is Windows PowerShell on the render machine")
 class WaitMmdTest(unittest.TestCase):
@@ -2368,7 +2586,9 @@ class WaitMmdTest(unittest.TestCase):
 
     def test_it_waits_while_as_many_run_and_goes_on_when_one_ends(self):
         mmd = self.fake_mmd(120)
-        code, text = self.wait(self.running(), 1, end_after=2.5, proc=mmd)
+        # (render12rev) the stand-in ends 3.5 s after PowerShell is started, whose own start (0.6 s, more on a busy machine:
+        # 1.9 s was seen against 2.5) is in it
+        code, text = self.wait(self.running(), 1, end_after=3.5, proc=mmd)
         self.assertEqual(code, 0, text)
         self.assertIn("t_01: waiting, ", text)
         went = float(re.search(r"went after ([\d.]+) s", text).group(1))
@@ -2471,6 +2691,23 @@ class FloorReserveTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("went True", text)
         self.assertTrue(noted)
+
+    def test_the_note_of_a_chunk_under_way_names_its_files_so_that_what_they_hold_comes_off(self):
+        # (render12rev) Reserve notes the chunk's need and its files and folders; what they hold later comes off what the chunk
+        # still owes (Owed, which every other worker's Reserve and Need-Still read)
+        avi, pics = self.run + "/t_02.avi", self.run + "/t_02_pictures"
+        code, text = self.call("$went = Reserve 't_02' 1000 @(%s, %s)\n'went {0}' -f $went" % (mv_chunks._ps(avi), mv_chunks._ps(pics)),
+                               free=1100)
+        self.assertEqual(code, 0, text)
+        self.assertIn("went True", text)
+        with open(avi, "wb") as f:
+            f.write(b"\0" * 300)
+        os.makedirs(pics)
+        with open(pics + "/mmd_00250.png", "wb") as f:
+            f.write(b"\0" * 200)
+        code, text = self.call("'owed {0}' -f (Owed)", free=0)
+        self.assertEqual(code, 0, text)
+        self.assertIn("owed 500", text)
 
     def test_before_mmd_draws_her_the_chunk_stops_if_somebody_took_the_room(self):
         # the chunk under way (this one) needs 2000 and holds 800: 1200 to go, and 1300 are free: 100 kept, it goes on
@@ -2812,6 +3049,41 @@ class StagePlanTest(unittest.TestCase):
         self.assertLess(one["start_free_gb"], 30 + peaks[0] + peaks[1])
         self.assertGreaterEqual(two["start_free_gb"], 30 + peaks[0] + peaks[1])
         self.assertEqual([c["peak_gb"] for c in two["chunks"]], [c["peak_gb"] for c in one["chunks"]])
+
+    def test_every_chunk_needs_in_its_driver_the_peak_its_summary_gives(self):
+        # (render12rev) the driver checks the free space against what the summary promises: with a free space kept, Run-Chunk's
+        # need is the chunk's peak, not its AVI and the margin of the plans of before (one worker and --workers)
+        for workers in (1, 2):
+            summary = self.written(CITY_PLAN, workers=workers)
+            with open(summary["driver"], encoding="utf-8-sig") as f:
+                needs = needs_of(f.read())
+            peaks = [c["peak_gb"] for c in summary["disk"]["chunks"]]
+            self.assertEqual(len(needs), 3, workers)
+            for need, peak in zip(needs, peaks):
+                self.assertAlmostEqual(need / float(GIB), peak, delta=0.0006, msg=(workers, needs, peaks))
+
+    def test_a_chunks_peak_grows_by_a_picture_a_frame_of_the_stage_and_of_the_mp4_for_every_frame_it_shows(self):
+        # (render12rev) what the fold holds at once (her AVI, the chunk's pictures, the frames of its stage and its mp4): every
+        # part but her AVI is the same bytes for every frame of the song the chunk shows, and the peak is all of them (the bytes
+        # of chunk_disk, before the summary rounds them)
+        plan = mv_chunks.check_plan(dict(CITY_PLAN))
+        a, b = (mv_chunks.chunk_disk(plan, mv_chunks.plan_chunks([span], 120)[0], 240) for span in ((1000, 1099), (1000, 1199)))
+        for part in ("pictures", "stage", "mp4", "stage_avi"):
+            self.assertGreater(a[part], 0, part)
+            self.assertAlmostEqual(b[part] / float(a[part]), 2.0, delta=1e-6, msg=part)        # 200 frames shown against 100
+        for d in (a, b):
+            self.assertEqual(d["peak"], d["avi"] + d["pictures"] + d["stage"] + d["mp4"])
+
+    def test_the_free_space_to_start_with_keeps_the_mp4s_made_before_and_the_joined_video(self):
+        # (render12rev) one worker: while a chunk is drawn the mp4s of the chunks before it lie on the disk too, and the join
+        # writes the whole video again beside them (it shows with AVIs that take little: a codec that packs them)
+        disk = self.written(CITY_PLAN)["disk"]
+        chunks = disk["chunks"]
+        for k, c in enumerate(chunks):
+            self.assertGreaterEqual(disk["start_free_gb"] + 0.002, 30 + c["peak_gb"] + sum(d["mp4_gb"] for d in chunks[:k]), k)
+        small = self.written(dict(PLAN, keep_free_gb=1, codec="x", avi_bytes_per_pixel=0.0001))["disk"]
+        self.assertGreater(small["mp4_gb"], 0.01)
+        self.assertGreaterEqual(small["start_free_gb"] + 0.002, 1 + 2 * small["mp4_gb"])
 
 
 class CliTest(unittest.TestCase):
