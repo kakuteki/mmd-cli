@@ -2,6 +2,8 @@
 
     python tools/make_camera.py DANCE.vmd OUT_camera.vmd [--analysis a.json] [--report r.json]
                                 [--seed N] [--min-shot 180] [--max-shot 480]
+    python tools/make_camera.py DANCE.vmd OUT_camera.vmd --song SONG.json [--onsets ONSETS.json] [--handheld 1]
+                                [--report r.json] [--seed N]       # cut and moved on the song (音ハメ)
 
 The distributed camera of a dance is often made for a hall and keeps the dancer small.  This tool
 writes a camera that keeps the dancer at a comfortable size and moves slowly once per shot (a push
@@ -73,18 +75,19 @@ How the shots are cut (cut_shots) and what each one does (plan_shots):
 """
 import argparse
 import bisect
+import collections
 import dataclasses
 import json
 import math
 import os
 import random
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from mmd_cli import motion_edit  # noqa: E402
+from mmd_cli import fk, motion_edit  # noqa: E402
 from mmd_cli.formats import vmd  # noqa: E402
 
 FPS = 30
@@ -763,6 +766,608 @@ def check_distinct(*paths):
         seen[key] = path
 
 
+# ---- --song: the camera cut and moved on the song -----------------------------------------------------------------------
+#
+# (2026-10-21, camsync: the requester asked for the camera's cuts and moves to keep time with the song, 音ハメ, and for
+# moving shots.)  The song's structure (the MV's song_structure.json: the beat grid, the bars, the sections, the title
+# words, the lead the references cut by) and its strong onsets (camera_rhythm.py onsets) are the input, so a new
+# recording of the song is a new run.
+
+MUSIC_SHOT_BARS = {"intro": (4, 4, 2), "band": (2,), "verse": (4,), "pre": (4, 2, 2), "chorus": (2, 2, 1, 1, 2),
+                   "inter": (2,), "bridge": (4,), "break": (0,), "outro": (4,), "last": (2,), "end": (0,)}
+# bars a shot lasts, by the part of the song, taken in turn over the part's bars (0: the whole part is one shot).  The
+# chorus cuts about 22 times a minute at 140 BPM (the references cut 24.6 [16.6, 26.3]: typorev), the verse and the
+# bridge 9 times, the quiet parts less
+MUSIC_PALETTE = {"intro": ("dolly_in", "crane_down", "orbit"), "band": ("orbit", "crane_up", "track"),
+                 "verse": ("dolly_in", "track", "dolly_out", "track"), "pre": ("crane_up", "dolly_in", "orbit"),
+                 "chorus": ("orbit", "dolly_in", "crane_up", "orbit", "dolly_out", "crane_down"),
+                 "inter": ("crane_up", "orbit", "crane_down", "orbit"), "bridge": ("track", "orbit", "dolly_out", "track"),
+                 "break": (), "outro": ("dolly_out", "crane_up", "orbit"), "last": ("dolly_in", "orbit"), "end": ()}
+# the moves of each part, drawn in turn (never the same twice in a row): slow dollies and tracks in the verse, orbits and
+# pushes in the chorus, cranes in the interlude; the break and the end hold still (the song stops there)
+MUSIC_ENERGY = {"intro": 0.6, "band": 0.9, "verse": 0.6, "pre": 0.8, "chorus": 1.0, "inter": 0.9, "bridge": 0.6,
+                "break": 0.0, "outro": 0.7, "last": 0.9, "end": 0.0}
+MUSIC_MOVES = ("dolly_in", "dolly_out", "orbit", "crane_up", "crane_down", "track")
+MUSIC_FULL = {"dolly": 9.0,      # units of distance at full energy
+              "orbit": 40.0,     # degrees of heading (the window's Y)
+              "crane": 12.0,     # degrees of the window's X (the camera rises or sinks round the look-at point)
+              "track": 8.0}      # units sideways (the look-at point and the camera together)
+# (the first sizes, 7, 30, 10 and 5, moved the picture 58 % of the song against the references' 81 % [80, 84] on the same
+# yardstick, camera_rhythm: a track of 5 units over 8 beats shifts the street behind her by about 30 px a second, the
+# threshold)
+MUSIC_RANGE = {"distance": (31.0, 52.0), "pitch": (4.0, 22.0), "yaw": (-65.0, 65.0), "track": (-5.0, 5.0)}
+MUSIC_HEIGHT = 13.0              # the look-at point's height (the picture covers 5 to 21 at the dancer within the ranges)
+MUSIC_DISTANCES = {"close": (33.0, 36.0, 39.0), "wide": (40.0, 44.0, 48.0)}
+MUSIC_WIDE = ("intro", "verse", "bridge", "outro", "break", "end")
+# the quiet parts are shot from further (from 46 or so her feet are in the picture; the first music camera, from 31 to
+# 42, showed them on 1.3 % of the frames against 25 % of the camera D before it)
+MUSIC_PITCHES = (6.0, 9.0, 12.0)
+MUSIC_YAWS = (0.0, 25.0, -25.0, 40.0, -40.0, 12.0, -12.0)
+MUSIC_STILL = ("break", "end")
+MOVE_BEATS = 8                   # beats a move lasts (4 in a shot of one bar)
+MOVE_LEAST = 0.3                 # of its full size: a move that has less room than this is drawn another way
+MOVE_TAIL = 2.0                  # beats: this many or more left after a shot's last whole move take one more move of 4
+                                 # beats that the next cut cuts into (the camera still moving at the cut), not a stop (the
+                                 # 10th build stood still about 51 frames at the end of 13 shots, after a move started on a
+                                 # strong onset: the picture moved 73 % of the song against the references' 81 %)
+MOVE_OVERRUN = 3                 # frames a move may run past its shot's end (the cut hides them: a cut moved onto a
+                                 # flash shortens its shot by 2, and a shot that starts on frame 0 or ends on a cut
+                                 # before the beat is a few frames short of its bars; both still move over all of them)
+ONSET_DELAY = 3                  # frames: a strong onset this far into the shot's first bar starts the move instead of the cut
+STRONG = 4.0                     # z: a strong onset (a04's)
+HOOK_REACH = 15                  # frames: no push in this near a title word (the motion graphics' punch is the zoom there)
+                                 # or a punch of --punch
+CUT_SNAP = 6                     # frames (under half a beat at 140 BPM): a planned cut this near a frame of --cut-on (the
+                                 # MV's light flashes: a cut on the flash is strong) moves onto it; farther, a cut is added
+                                 # there
+DEFAULT_CUT_LEAD = 0.077         # s before the beat a cut falls (the references: typorev, 2.3 frames)
+GUARD_RISE_LEAST = 1.0           # degrees: with --guard-report, no crane down where the guard's tilt rises more than this
+                                 # (the guard swings the camera up round the look-at point where she spins: a crane down
+                                 # there turned into a rise in the first music camera, 2 of 65 moves), and no crane up
+                                 # where it falls more than this from its height (after a window of the guard: a crane up
+                                 # of the music camera's 5th build ran down for 42 frames at 212.5 s)
+MUSIC_CONTACT_PITCHES = (4.0, 5.0)       # degrees the window looks down in a shot that holds an eye contact (--contacts):
+                                         # level with her eyes, and its Y on her face's way (facing_at), so that the camera
+                                         # stays within the reach of her eyes (eye_gaze's contact zone: 16 degrees sideways,
+                                         # 5.3 up and 8.9 down off her head's way, the eccentric wall 14.5) while she dances
+MUSIC_CONTACT_TURNS = (12.0, -12.0)      # degrees off her face's way a contact shot takes when its own way does not cut
+                                         # clearly from the shot before
+MUSIC_CONTACT_MOVES = ("dolly_in", "dolly_out")  # the moves of such a shot: a dolly does not turn the camera round her
+MUSIC_CONTACT_LEAST = 90         # frames a shot lasts at least to hold a contact (eye_gaze: a run of 48 frames within reach
+                                 # and none 2 frames before or 6 after a cut); the wanted time goes to the nearest such shot
+                                 # (the music camera without contacts held none of the 12 of the camera D before it)
+FACING_HOLD = 8.0                # degrees either side of its middle her face's way may wander over the frames a contact
+                                 # shot is aimed at (steady_facing): the camera on the middle stays within eye_gaze's reach
+                                 # (the eyes inside the eccentric wall 14.5 come within 4 of it), with room for her head's pitch
+CONTACT_RUN = 48                 # frames: eye_gaze makes a contact of a run within reach this long (its CONTACT_MIN)
+CONTACT_CLEAR = (6, 2)           # frames after a cut and before the next with no contact (eye_gaze's CUT_CLEAR, END_CLEAR)
+# (contact shots from the front at Y 0 or 12 held 4 of the 12 contacts: her head was 11 to 16 degrees off the camera at
+# the median in 7 of the 11 shots; on her mean way round the wanted time, 6: she turned within the shots)
+FACING_BONES = ("全ての親", "センター", "グルーブ", "腰", "上半身", "腰椎上部", "上半身2", "胸椎上部", "首", "頭")
+# the chain from the root to the head (MMD's standard bones, and the spine bones of the MV's model White_v11_spine,
+# 腰椎上部 under 上半身2 and 胸椎上部 under 首, which its dance keys; a bone the dance has no keys for rests): her face's
+# way is -Z turned by their key rotations, composed from the root (rotations alone, mmd_cli/fk.py's convention).  On the
+# MV's dance it is the way eye_gaze's forward kinematics with the model gives on every frame (0.0 degrees apart; without
+# the two spine bones 5.0 at the median and 14.6 at the 90th percentile)
+
+
+@dataclasses.dataclass
+class Move:
+    name: str
+    start: int
+    frames: int
+    shape: str                   # "drive": up to pace over a beat, even, and down over a beat; "glide": eases in and out
+                                 # over the whole move; "hit": at full pace from a strong onset, easing out
+    amount: float                # its size in its channel's unit (signed)
+    ramp: float = 0.0            # "drive": the share of the move each ramp takes (a beat)
+
+
+@dataclasses.dataclass
+class MusicShot:
+    index: int
+    start: int
+    end: int
+    section: str
+    kind: str
+    bars: int
+    base: Dict[str, float]       # distance, pitch, yaw, track at the cut
+    moves: List[Move]
+    centre: List[Tuple[float, float]]    # the dancer's smoothed x, z on every frame of the shot
+    contact: Optional[List[int]] = None  # a shot that holds a wanted eye contact: the frames her face holds its way over
+                                         # (steady_facing), the camera on it (MUSIC_CONTACT_*)
+
+
+def section_kind(section_id):
+    kind = str(section_id).rstrip("0123456789")
+    return kind if kind in MUSIC_SHOT_BARS else "verse"
+
+
+def song_beat_period(song):
+    beats = song.get("beats") or []
+    if len(beats) < 2:
+        raise ValueError("the song has no beat grid (beats)")
+    return _median([b - a for a, b in zip(beats, beats[1:])])
+
+
+def song_parts(song, last, fps=FPS):
+    """[(section id, kind, [bar head times in the part], first frame)] of the song up to frame `last`"""
+    sections = song.get("sections") or []
+    if not sections:
+        raise ValueError("the song has no sections")
+    lead = float(song.get("cut_lead", DEFAULT_CUT_LEAD))
+    heads = []
+    for s in sections:
+        t = float(s["t"]) if s.get("t") is not None else float(s["frame"]) / fps
+        heads.append((s["id"], t))
+    bars = [float(b) for b in (song.get("bars") or [])]
+    if not bars:
+        period = song_beat_period(song)
+        per = int(song.get("beat", {}).get("per_bar", 4)) if isinstance(song.get("beat"), dict) else 4
+        bars = [b for b in song["beats"][::per]]
+    out = []
+    for i, (sid, t0) in enumerate(heads):
+        t1 = heads[i + 1][1] if i + 1 < len(heads) else float("inf")
+        first = 0 if i == 0 else int(round((t0 - lead) * fps))
+        if first > last:
+            break
+        inside = [b for b in bars if t0 - 0.02 <= b < t1 - 0.02]
+        if not inside or abs(inside[0] - t0) > 0.02:
+            inside = [t0] + inside
+        out.append((sid, section_kind(sid), inside, first))
+    return out
+
+
+def _move_channel(name):
+    return {"dolly_in": "dolly", "dolly_out": "dolly", "orbit": "orbit", "crane_up": "crane", "crane_down": "crane",
+            "track": "track"}[name]
+
+
+def _shape(name, t, ramp=0.125):
+    """the share of a move done at the share t of its time: "hit" 1 - (1 - t)^3 (its pace highest at the start),
+    "glide" the smoothstep, "drive" a cosine ramp up over `ramp`, an even pace, a cosine ramp down over `ramp`"""
+    t = min(max(t, 0.0), 1.0)
+    if name == "hit":
+        return 1.0 - (1.0 - t) ** 3
+    if name == "glide":
+        return t * t * (3.0 - 2.0 * t)
+    r = min(max(ramp, 1e-6), 0.5)
+    v = 1.0 / (1.0 - r)
+
+    def up(u):
+        return v * (u / 2.0 - r / (2.0 * math.pi) * math.sin(math.pi * u / r))
+    if t <= r:
+        return up(t)
+    if t >= 1.0 - r:
+        return 1.0 - up(1.0 - t)
+    return v * (r / 2.0 + (t - r))
+
+
+def _room(name, values, energy, rng_sign):
+    """the signed amount a move can take from `values` within MUSIC_RANGE (its full size times the part's energy)"""
+    full = MUSIC_FULL[_move_channel(name)] * energy
+    if name == "dolly_in":
+        return -min(full, values["distance"] - MUSIC_RANGE["distance"][0])
+    if name == "dolly_out":
+        return min(full, MUSIC_RANGE["distance"][1] - values["distance"])
+    if name == "crane_up":
+        return min(full, MUSIC_RANGE["pitch"][1] - values["pitch"])
+    if name == "crane_down":
+        return -min(full, values["pitch"] - MUSIC_RANGE["pitch"][0])
+    if name == "orbit":
+        lo, hi = MUSIC_RANGE["yaw"]
+        room = hi - values["yaw"] if rng_sign > 0 else values["yaw"] - lo
+        if room < full * MOVE_LEAST:
+            rng_sign = -rng_sign
+            room = hi - values["yaw"] if rng_sign > 0 else values["yaw"] - lo
+        return rng_sign * min(full, room)
+    lo, hi = MUSIC_RANGE["track"]
+    room = hi - values["track"] if rng_sign > 0 else values["track"] - lo
+    if room < full * MOVE_LEAST:
+        rng_sign = -rng_sign
+        room = hi - values["track"] if rng_sign > 0 else values["track"] - lo
+    return rng_sign * min(full, room)
+
+
+def _apply(values, move, frame):
+    """the values at `frame` after `move` (values: at the move's start)"""
+    out = dict(values)
+    if frame <= move.start:
+        return out
+    k = _shape(move.shape, (frame - move.start) / float(move.frames), move.ramp)
+    channel = _move_channel(move.name)
+    key = {"dolly": "distance", "orbit": "yaw", "crane": "pitch", "track": "track"}[channel]
+    out[key] = values[key] + move.amount * k
+    return out
+
+
+def _end_values(values, move):
+    return _apply(values, move, move.start + move.frames)
+
+
+def _near_hook(start, frames, hooks):
+    return any(start - HOOK_REACH <= h <= start + frames + HOOK_REACH for h in hooks)
+
+
+def _against_guard(name, rising, start, frames):
+    """whether the guard's tilt of a first pass (degrees per frame) swings against a crane over its frames by more than
+    GUARD_RISE_LEAST: up from its lowest so far under a crane down, down from its highest so far under a crane up"""
+    if rising is None or name not in ("crane_up", "crane_down"):
+        return False
+    span = rising[max(0, start):min(len(rising), start + frames + 1)]
+    if not span:
+        return False
+    worst, low, high = 0.0, span[0], span[0]
+    for v in span:
+        low, high = min(low, v), max(high, v)
+        worst = max(worst, v - low if name == "crane_down" else high - v)
+    return worst > GUARD_RISE_LEAST
+
+
+def facing_chain(motion):
+    """the keys of FACING_BONES the dance has, root first, each as (keys sorted by frame, their frames)"""
+    tracks = fk.tracks_of(motion)
+    return [(tracks[n], [k.frame for k in tracks[n]]) for n in FACING_BONES if n in tracks]
+
+
+def facing_at(chain, frame):
+    """her face's way at `frame` as the window's Y of a camera on it (degrees; Y positive swings the camera to +X, her
+    left): -Z turned by the chain's key rotations as MMD shows them there (fk.sample), composed from the root"""
+    q = fk.IDENTITY
+    for keys, frames in chain:
+        q = fk.multiply(q, fk.applied(fk.sample(keys, frame, frames)[1]))
+    x, _, z = fk.rotate(q, (0.0, 0.0, -1.0))
+    return math.degrees(math.atan2(x, -z))
+
+
+def steady_facing(chain, first, last, wanted, hold=FACING_HOLD, least=CONTACT_RUN):
+    """(a, b, way): of the frames from `first` to `last`, the span over which her face's way stays within `hold` degrees
+    either side of its middle: of the spans `least` frames long or longer the one nearest a wanted frame (the longest
+    of those that hold one), else the longest; and her mean way over it (the window's Y of a camera on it)"""
+    if last < first:
+        raise ValueError("no frames to aim a contact shot at (%d to %d)" % (first, last))
+    ways = []
+    for f in range(first, last + 1):
+        v = facing_at(chain, f)
+        ways.append(v if not ways else ways[-1] + ((v - ways[-1] + 180.0) % 360.0 - 180.0))   # unwrapped
+    n = len(ways)
+    spans, lo, hi, j = [], collections.deque(), collections.deque(), 0
+    for i in range(n):
+        if j <= i:
+            j = i
+            lo.clear()
+            hi.clear()
+        while j < n:
+            low = min(ways[lo[0]], ways[j]) if lo else ways[j]
+            high = max(ways[hi[0]], ways[j]) if hi else ways[j]
+            if high - low > 2.0 * hold:
+                break
+            while lo and ways[lo[-1]] >= ways[j]:
+                lo.pop()
+            lo.append(j)
+            while hi and ways[hi[-1]] <= ways[j]:
+                hi.pop()
+            hi.append(j)
+            j += 1
+        spans.append((i, j - 1))
+        if lo and lo[0] == i:
+            lo.popleft()
+        if hi and hi[0] == i:
+            hi.popleft()
+
+    def gap(span):
+        a, b = first + span[0], first + span[1]
+        return min((0 if a <= w <= b else min(abs(w - a), abs(w - b))) for w in wanted) if wanted else 0
+    long_ = [s for s in spans if s[1] - s[0] + 1 >= least]
+    if long_:
+        a, b = min(long_, key=lambda s: (gap(s), s[0] - s[1], s[0]))
+    else:
+        a, b = min(spans, key=lambda s: (s[0] - s[1], s[0]))
+    way = sum(ways[a:b + 1]) / float(b - a + 1)
+    return first + a, first + b, (way + 180.0) % 360.0 - 180.0
+
+
+def contact_shots(spans, contacts, fps=FPS):
+    """{index: [the wanted frames it holds]} of the shots ((first, last) frames each) that hold the wanted eye contacts
+    (seconds): for each, the nearest shot of MUSIC_CONTACT_LEAST frames or more (the one it falls in when that one is
+    long enough)"""
+    held = {}
+    for t in contacts or []:
+        c = int(round(float(t) * fps))
+        best = None
+        for index, (a, b) in enumerate(spans):
+            if b - a + 1 < MUSIC_CONTACT_LEAST:
+                continue
+            gap = 0 if a <= c <= b else min(abs(c - a), abs(c - b))
+            if best is None or gap < best[0]:
+                best = (gap, index)
+        if best is not None:
+            held.setdefault(best[1], []).append(c)
+    return held
+
+
+def cuts_on(cuts, frames, last, bar_frames):
+    """the cuts ((frame, section id, kind, bars) each) with a cut on each of `frames` (the MV's light flashes): the
+    nearest cut within CUT_SNAP moves onto it, else the shot that holds it is split there (each part keeps its part
+    of the song and counts its own bars)"""
+    cuts = list(cuts)
+    for f in sorted({int(v) for v in frames or []}):
+        if not 0 < f <= last or not cuts:
+            continue
+        i = min(range(len(cuts)), key=lambda k: abs(cuts[k][0] - f))
+        if abs(cuts[i][0] - f) <= CUT_SNAP and (i == 0 or cuts[i - 1][0] < f) and (i + 1 == len(cuts) or f < cuts[i + 1][0]):
+            cuts[i] = (f,) + tuple(cuts[i][1:])
+            continue
+        j = max(k for k in range(len(cuts)) if cuts[k][0] < f)
+        frame, sid, kind, nbars = cuts[j]
+        end = cuts[j + 1][0] if j + 1 < len(cuts) else last + 1
+        first_bars = max(1, int(round((f - frame) / bar_frames)))
+        cuts[j] = (frame, sid, kind, first_bars)
+        cuts.insert(j + 1, (f, sid, kind, max(1, int(round((end - f) / bar_frames)))))
+    return cuts
+
+
+def plan_music_shots(motion, song, onsets, seed=0, last=None, strong=STRONG, rising=None, contacts=None, cut_on=None,
+                     punches=None):
+    """the shots of the camera on the song (see the module's docstring and MUSIC_*): cuts on the bars CUT_LEAD before
+    the beat, each shot moving in whole beats from its cut or from a strong onset in its first bars.  `rising`: the
+    tilt per frame operator_camera guard gave a first pass (degrees): no crane down where it rises.  `contacts`: the
+    times (seconds) an eye contact is wanted: the shot holding each looks at her from the front and level with her eyes,
+    and only dollies (MUSIC_CONTACT_*).  `cut_on`: frames a cut falls on (cuts_on); `punches`: frames of the motion
+    graphics' punches, no push in near them (HOOK_REACH, as the title words)"""
+    fps = float(song.get("fps", FPS))
+    if last is None:
+        last = max((k.frame for k in motion.bones), default=0)
+    lead = float(song.get("cut_lead", DEFAULT_CUT_LEAD))
+    period = song_beat_period(song)
+    beat_frames = period * fps
+    hooks = [int(h["frame"]) if h.get("frame") is not None else int(round(float(h["t"]) * fps)) for h in song.get("hooks") or []]
+    hooks += [int(p) for p in punches or []]
+    strong_frames = sorted(int(round(float(o["t"]) * fps)) for o in onsets or [] if float(o.get("z", 0.0)) >= strong)
+    centre = smoothed_center(center_track(motion), last)
+    rng = random.Random(seed)
+    parts = song_parts(song, last, fps)
+    # the cuts: each part's bars taken in turn by its pattern
+    cuts = []                                   # (frame, section id, kind, bars)
+    for (sid, kind, bars, first) in parts:
+        pattern = MUSIC_SHOT_BARS[kind]
+        i, k = 0, 0
+        while i < len(bars):
+            n = pattern[k % len(pattern)]
+            n = len(bars) - i if n == 0 else min(n, len(bars) - i)
+            frame = first if i == 0 else int(round((bars[i] - lead) * fps))
+            cuts.append((frame, sid, kind, n))
+            i += n
+            k += 1
+    cuts = cuts_on([c for c in cuts if c[0] <= last], cut_on, last, 4.0 * beat_frames)
+    spans = [(frame, cuts[index + 1][0] - 1 if index + 1 < len(cuts) else last) for index, (frame, _, _, _) in enumerate(cuts)]
+    held = contact_shots(spans, contacts, fps)
+    chain = facing_chain(motion) if held else []
+    shots, previous_end, palette_at = [], None, {}
+    for index, (frame, sid, kind, nbars) in enumerate(cuts):
+        end = spans[index][1]
+        if end < frame:
+            continue
+        contact = None
+        # the values at the cut: a clear change from the shot before (CLEAR_CUT), drawn with the seed
+        own = MUSIC_DISTANCES["wide" if kind in MUSIC_WIDE else "close"]
+        if index in held:
+            # on her face's way and level with her eyes; failing a clear cut, the other distances, then 12 degrees off
+            first, final = frame + CONTACT_CLEAR[0], end - CONTACT_CLEAR[1]
+            a, b, way = steady_facing(chain, *((first, final) if final >= first else (frame, end)), held[index])
+            contact, way = [a, b], round(_clamp(way, MUSIC_RANGE["yaw"]), 1)
+            other = MUSIC_DISTANCES["close" if kind in MUSIC_WIDE else "wide"]
+            turned = tuple(round(_clamp(way + t, MUSIC_RANGE["yaw"]), 1) for t in MUSIC_CONTACT_TURNS)
+            options = [(own, MUSIC_CONTACT_PITCHES, (way,)), (other, MUSIC_CONTACT_PITCHES, (way,)),
+                       (own + other, MUSIC_CONTACT_PITCHES, turned)]
+        else:
+            way = 0.0
+            options = [(own, MUSIC_PITCHES, MUSIC_YAWS)]
+        choices = []
+        for distances, pitches, yaws in options:
+            for d in distances:
+                for p in pitches:
+                    for y in yaws:
+                        base = {"distance": d, "pitch": p, "yaw": y, "track": 0.0}
+                        if previous_end is None or changes_clearly(
+                                (previous_end["distance"], MUSIC_HEIGHT, (previous_end["pitch"], previous_end["yaw"], 0.0)),
+                                (d, MUSIC_HEIGHT, (p, y, 0.0))):
+                            choices.append(base)
+            if choices:
+                break
+        fallback = {"distance": 36.0, "pitch": MUSIC_CONTACT_PITCHES[-1] if contact else 6.0, "yaw": way, "track": 0.0}
+        base = dict(choices[int(rng.random() * len(choices))] if choices else fallback)
+        moves = []
+        if kind not in MUSIC_STILL:
+            palette = MUSIC_CONTACT_MOVES if contact else MUSIC_PALETTE[kind]
+            energy = MUSIC_ENERGY[kind]
+            beats = MOVE_BEATS if nbars >= 2 else 4
+            frames_of = int(round(beats * beat_frames))
+            start = frame
+            shape = "hit" if (kind == "chorus" and nbars == 1) else "drive"
+            values = dict(base)
+            previous_name = None
+            while (start + int(round(4 * beat_frames)) <= end + MOVE_OVERRUN if not moves
+                   else (end + 1 + MOVE_OVERRUN - start) / beat_frames >= MOVE_TAIL):
+                if start + frames_of > end + MOVE_OVERRUN:
+                    frames_of = int(round(4 * beat_frames))
+                # a strong onset in the first two beats of the slot starts the move ("hit"), when the move still fits
+                for f in strong_frames:
+                    if not (start + ONSET_DELAY <= f < start + int(round(2 * beat_frames))):
+                        continue
+                    fitted = [b for b in (frames_of / beat_frames, 4) if f + int(round(b * beat_frames)) <= end + MOVE_OVERRUN]
+                    if fitted:
+                        start, frames_of, shape = f, int(round(fitted[0] * beat_frames)), "hit"
+                    break
+                turn = "contact" if contact else kind
+                order = palette_at.get(turn, 0)
+                chosen = None
+                for j in range(len(palette)):
+                    name = palette[(order + j) % len(palette)]
+                    if name == previous_name:
+                        continue
+                    if name == "dolly_in" and _near_hook(start, frames_of, hooks):
+                        continue
+                    if _against_guard(name, rising, start, frames_of):
+                        continue
+                    amount = _room(name, values, energy, 1 if rng.random() < 0.5 else -1)
+                    if abs(amount) >= MUSIC_FULL[_move_channel(name)] * energy * MOVE_LEAST:
+                        chosen = (name, amount)
+                        palette_at[turn] = order + j + 1
+                        break
+                if chosen is None:
+                    break
+                move = Move(chosen[0], start, frames_of, shape, round(chosen[1], 4), round(beat_frames / frames_of, 4))
+                moves.append(move)
+                values = _end_values(values, move)
+                previous_name = chosen[0]
+                # the next move from the next bar head after this one ends (on the beat)
+                nxt = start + frames_of
+                beats_left = (end + 1 + MOVE_OVERRUN - nxt) / beat_frames
+                if beats_left < MOVE_TAIL:
+                    break
+                start, shape = nxt, "drive"
+                frames_of = int(round((MOVE_BEATS if beats_left >= MOVE_BEATS else 4) * beat_frames))
+        track = [centre[f] for f in range(frame, end + 1)]
+        shot = MusicShot(len(shots), frame, end, sid, kind, nbars, base, moves, track, contact)
+        shots.append(shot)
+        previous_end = music_shot_values(shot)[-1]
+    return shots
+
+
+def music_shot_values(shot):
+    """the camera's window values on every frame of a shot: distance, pitch, yaw, track (and pos, rot, offset)"""
+    out = []
+    for f in range(shot.start, shot.end + 1):
+        values = dict(shot.base)
+        for m in shot.moves:
+            if f <= m.start:
+                break
+            values = _apply(values, m, min(f, m.start + m.frames))
+        yaw = math.radians(values["yaw"])
+        ox, oz = values["track"] * math.cos(yaw), values["track"] * math.sin(yaw)
+        cx, cz = shot.centre[f - shot.start]
+        values = dict(values, pos=(cx + ox, MUSIC_HEIGHT, cz + oz), rot=(values["pitch"], values["yaw"], 0.0),
+                      offset=(ox, oz))
+        out.append(values)
+    return out
+
+
+def music_values(shots, last):
+    out = []
+    for s in shots:
+        out += music_shot_values(s)
+    return out[:last + 1]
+
+
+def music_keys(shot, strength, seed):
+    step = _interpolation({c: CUT_CURVE for c in vmd.CAMERA_CHANNELS})
+    linear = _interpolation({c: vmd.LINEAR_CURVE for c in vmd.CAMERA_CHANNELS})
+    out = []
+    for i, v in enumerate(music_shot_values(shot)):
+        frame = shot.start + i
+        k = [sway(c, frame, seed) * strength for c in range(5)] if strength > 0 else [0.0] * 5
+        values = {"distance": v["distance"] + HANDHELD["distance"] * k[4],
+                  "pos": (v["pos"][0] + HANDHELD["look_at"] * k[2], v["pos"][1] + HANDHELD["look_at"] * k[3], v["pos"][2]),
+                  "rot": (v["rot"][0] + HANDHELD["angle"] * k[0], v["rot"][1] + HANDHELD["angle"] * k[1], 0.0),
+                  "fov": FOV, "perspective": True}
+        key = motion_edit.camera_key_from_ui(values, frame=frame)
+        out.append(dataclasses.replace(key, interpolation=step if frame == shot.start else linear))
+    return out
+
+
+def music_motion(shots, last, handheld=0.0, seed=0):
+    """the camera motion of the music shots: a key on every frame, the step on every cut, the sway with `handheld`"""
+    if handheld < 0:
+        raise ValueError("--handheld is a strength from 0 (none) up, not %r" % (handheld,))
+    keys = [k for s in shots for k in music_keys(s, handheld, seed) if k.frame <= last]
+    return vmd.Motion.for_camera(cameras=keys)
+
+
+def music_shot_json(shot):
+    frames = shot.end - shot.start + 1
+    values = music_shot_values(shot)
+    return {"index": shot.index, "start": shot.start, "end": shot.end, "frames": frames, "seconds": round(frames / float(FPS), 2),
+            "section": shot.section, "kind": shot.kind, "bars": shot.bars, "contact": shot.contact,
+            "base": {k: _r(v) for k, v in shot.base.items()},
+            "moves": [{"name": m.name, "start": m.start, "frames": m.frames, "shape": m.shape, "amount": _r(m.amount),
+                       "ramp": m.ramp} for m in shot.moves],
+            "picture": [[_r(v) for v in picture_span(values[i]["distance"], MUSIC_HEIGHT, values[i]["pitch"])] for i in (0, -1)]}
+
+
+def load_contacts(path, fps=FPS):
+    """the wanted eye contacts (seconds) from a JSON file: a list of seconds, {"contacts": [seconds]}, or the report of
+    eye_gaze (its contacts' first and last frames: the middle of each)"""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, dict):
+        data = data.get("contacts")
+        if isinstance(data, dict):
+            data = data.get("list")
+    if not isinstance(data, list):
+        raise ValueError("%s: no list of contacts (a list of seconds, {\"contacts\": [...]} or eye_gaze's report)" % path)
+    out = []
+    for c in data:
+        if isinstance(c, dict):
+            out.append((float(c["first"]) + float(c["last"])) / 2.0 / fps)
+        else:
+            out.append(float(c))
+    return out
+
+
+def run_music(dance_path, out_path, song_path, onsets_path=None, seed=0, handheld=0.0, report_path=None, strong=STRONG,
+              guard_report=None, contacts_path=None, cut_on=None, punches=None):
+    if handheld < 0:
+        raise ValueError("--handheld is a strength from 0 (none) up, not %r" % (handheld,))
+    dance_full, out_full = os.path.abspath(dance_path), os.path.abspath(out_path)
+    check_distinct(dance_full, out_full, song_path, onsets_path, report_path, guard_report, contacts_path)
+    contacts = load_contacts(contacts_path) if contacts_path else None
+    motion = vmd.load(dance_full)
+    with open(song_path, encoding="utf-8") as f:
+        song = json.load(f)
+    onsets = []
+    if onsets_path:
+        with open(onsets_path, encoding="utf-8") as f:
+            data = json.load(f)
+        onsets = data["onsets"] if isinstance(data, dict) else data
+    last = max((k.frame for k in motion.bones), default=0)
+    if last < 1:
+        raise ValueError("the dance has no bone keys")
+    rising = None
+    if guard_report:
+        with open(guard_report, encoding="utf-8") as f:
+            rising = [float(v) for v in json.load(f)["per_frame"]["tilt"]]
+    shots = plan_music_shots(motion, song, onsets, seed, last, strong, rising, contacts, cut_on, punches)
+    write_bytes(out_full, vmd.dumps(music_motion(shots, last, handheld, seed)))
+    back = vmd.load(out_full)
+    moves = [m for s in shots for m in s.moves]
+    result = {"in": dance_full, "out": out_full, "song": os.path.abspath(song_path), "seed": seed, "frames": [0, last],
+              "shots": len(shots), "keys": len(back.cameras), "moves": _count(m.name for m in moves),
+              "handheld": handheld, "cuts_per_min": round((len(shots) - 1) / ((last + 1) / float(FPS) / 60.0), 3),
+              "contact_shots": sum(1 for s in shots if s.contact)}
+    if report_path:
+        full = os.path.abspath(report_path)
+        write_json(full, {"in": dance_full, "out": out_full, "seed": seed, "fps": FPS, "fov": FOV, "handheld": handheld,
+                          "song": {"path": os.path.abspath(song_path), "cut_lead": float(song.get("cut_lead", DEFAULT_CUT_LEAD)),
+                                   "beat_period": _r(song_beat_period(song)), "onsets": os.path.abspath(onsets_path) if onsets_path else None,
+                                   "strong": strong, "hooks": [h.get("frame") for h in song.get("hooks") or []],
+                                   "version": song.get("version")},
+                          "cut_on": sorted(int(v) for v in cut_on or []), "cut_snap": CUT_SNAP,
+                          "punches": sorted(int(v) for v in punches or []),
+                          "shot_bars": {k: list(v) for k, v in MUSIC_SHOT_BARS.items()},
+                          "palette": {k: list(v) for k, v in MUSIC_PALETTE.items()}, "energy": MUSIC_ENERGY,
+                          "full": MUSIC_FULL, "range": {k: list(v) for k, v in MUSIC_RANGE.items()}, "move_beats": MOVE_BEATS,
+                          "distances": {k: list(v) for k, v in MUSIC_DISTANCES.items()}, "wide": list(MUSIC_WIDE),
+                          "hook_reach": HOOK_REACH, "moves": _count(m.name for m in moves),
+                          "contacts": {"path": os.path.abspath(contacts_path) if contacts_path else None,
+                                       "wanted": [_r(t) for t in contacts or []], "least": MUSIC_CONTACT_LEAST,
+                                       "pitches": list(MUSIC_CONTACT_PITCHES), "turns": list(MUSIC_CONTACT_TURNS),
+                                       "moves": list(MUSIC_CONTACT_MOVES), "hold": FACING_HOLD, "run": CONTACT_RUN, "clear": list(CONTACT_CLEAR),
+                                       "facing_bones": list(FACING_BONES), "shots": [s.index for s in shots if s.contact]},
+                          "shots": [music_shot_json(s) for s in shots]}, 1)
+        result["report"] = full
+    return result
+
+
 def run(dance_path, out_path, seed=0, min_shot=MIN_SHOT, max_shot=MAX_SHOT, analysis_path=None, report_path=None,
         handheld=0.0):
     """read the dance, plan, write the camera, read it back; the summary is what main prints"""
@@ -803,10 +1408,27 @@ def main(argv=None):
                    help="longest shot in frames (default %d; at least twice --min-shot)" % MAX_SHOT)
     p.add_argument("--handheld", type=float, default=0.0,
                    help="a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame")
+    p.add_argument("--song", help="cut and move on the song: its structure (beats, bars, sections, title words, cut_lead) "
+                                  "as the MV's song_structure.json; --min-shot, --max-shot and --analysis are not used")
+    p.add_argument("--onsets", help="with --song: the strong onsets (tools/camera_rhythm.py onsets) a move may start on")
+    p.add_argument("--strong", type=float, default=STRONG, help="with --song: the least z of a strong onset (default %g)" % STRONG)
+    p.add_argument("--guard-report", help="with --song: the report of operator_camera guard on a first pass: no crane down "
+                                          "where the guard raises the camera")
+    p.add_argument("--cut-on", type=int, nargs="+", default=[], metavar="FRAME",
+                   help="with --song: frames a cut falls on (the MV's light flashes): the nearest cut within %d frames moves "
+                        "onto each, else a cut is added there" % CUT_SNAP)
+    p.add_argument("--punch", type=int, nargs="+", default=[], metavar="FRAME",
+                   help="with --song: frames of the motion graphics' punches: no push in within %d frames of them" % HOOK_REACH)
+    p.add_argument("--contacts", help="with --song: the eye contacts wanted, a JSON list of seconds or the report of eye_gaze "
+                                      "(its contacts): the shot holding each looks at her from the front, level, and only dollies")
     args = p.parse_args(argv)
     try:
-        result = run(args.dance, args.out, args.seed, args.min_shot, args.max_shot, args.analysis, args.report,
-                     args.handheld)
+        if args.song:
+            result = run_music(args.dance, args.out, args.song, args.onsets, args.seed, args.handheld, args.report, args.strong,
+                               args.guard_report, args.contacts, args.cut_on, args.punch)
+        else:
+            result = run(args.dance, args.out, args.seed, args.min_shot, args.max_shot, args.analysis, args.report,
+                         args.handheld)
     except (ValueError, OSError) as e:
         print(json.dumps({"ok": False, "error": {"type": type(e).__name__, "message": str(e)}}, ensure_ascii=True))
         return 2
