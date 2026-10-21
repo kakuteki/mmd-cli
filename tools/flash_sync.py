@@ -356,9 +356,21 @@ def band_returns(hits, stop=STOP_S, quiet=QUIET_PCT, strong=STRONG):
     return out
 
 
+def on_the_grid(t, structure, fps=FPS):
+    """the time of the beat of the structure's grid within NEAR_FRAMES frame of `t`, or t itself (the grid is fitted to the
+    kick's attack over the whole song; a hit read alone lies a few ms after it)"""
+    beat = structure.get("beat", {})
+    if "first" not in beat or "period" not in beat:
+        return t
+    first, period = float(beat["first"]), float(beat["period"])
+    b = first + round((t - first) / period) * period
+    return b if abs(b - t) <= NEAR_FRAMES / float(fps) else t
+
+
 def moments_of(structure, syllables, returns):
     """the moments a flash may mean: the title words' first syllables as sung (syllables: {hook n: first_syllable or None}),
-    the heads of the sections after the first, the band's returns that are no section's head"""
+    the heads of the sections after the first (at their beats), the band's returns that are no section's head (at the beat of
+    the grid when the hit is on one: hit_t keeps where it was read)"""
     out = []
     for h in structure.get("hooks", []):
         s = syllables.get(h["n"])
@@ -370,7 +382,8 @@ def moments_of(structure, syllables, returns):
         out.append({"kind": "section", "id": s["id"], "t": float(s["t"]), "beat": s.get("beat")})
     for r in returns:
         if all(abs(r["t"] - h) > 0.05 for h in heads):
-            out.append({"kind": "return", "t": r["t"], "quiet_s": r["quiet_s"], "pct": r["pct"]})
+            out.append({"kind": "return", "t": round(on_the_grid(r["t"], structure), 4), "hit_t": r["t"], "quiet_s": r["quiet_s"],
+                        "pct": r["pct"]})
     return sorted(out, key=lambda m: m["t"])
 
 

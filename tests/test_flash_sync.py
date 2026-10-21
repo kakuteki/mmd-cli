@@ -200,6 +200,20 @@ class MomentTest(unittest.TestCase):
         self.assertEqual(FS.band_returns(FS.Hits(hits3)), [])
 
 
+    def test_a_return_on_a_beat_is_the_beat_of_the_grid(self):
+        # the grid of the song structure (fitted to the kick's attack over the whole song) is the time of a hit on a beat; one hit
+        # read alone comes a few ms after it (here 6 ms: beat 564 at 241.7302 s, frame 7251, read at 241.7362 s, frame 7252)
+        structure = {"beat": {"first": FIRST, "period": PERIOD, "per_bar": 4}, "sections": [{"id": "intro", "t": 0.016}],
+                     "hooks": []}
+        beat = FIRST + 564 * PERIOD
+        got = FS.moments_of(structure, {}, [{"t": beat + 0.006, "quiet_s": 1.7, "pct": 98.0}])
+        self.assertAlmostEqual(got[0]["t"], beat, places=4)
+        self.assertAlmostEqual(got[0]["hit_t"], beat + 0.006, places=4)
+        self.assertEqual(FS.frame_of_moment(got[0]["t"]), 7251)
+        off = FS.moments_of(structure, {}, [{"t": beat + 0.107, "quiet_s": 1.7, "pct": 98.0}])      # a sixteenth after: off the beat
+        self.assertAlmostEqual(off[0]["t"], beat + 0.107, places=4)
+
+
 # ---- the decision -------------------------------------------------------------------------------------------------
 
 def flash(t, **more):

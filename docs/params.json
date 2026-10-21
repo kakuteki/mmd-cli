@@ -14100,7 +14100,7 @@
    "tool": "flash_sync.py",
    "kind": "option",
    "name": "--lang",
-   "line": 800,
+   "line": 813,
    "comment": "",
    "above": "",
    "help": "",
