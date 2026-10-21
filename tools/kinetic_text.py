@@ -443,6 +443,10 @@ TIME_SLACK = 0.25                 # (a slow line is cut more: each piece comes w
 # times its square in units of SUNG_UNIT s, a mora of the song (140 bpm, two morae a beat): one unit costs as a character
 # did in the cutting by characters
 SUNG_UNIT = 0.2
+# ... and each piece costs PIECE_COST more: a long phrase is cut into more pieces only for a real gain in the time (the
+# meaning's borders first, the references' 0.72 s only what to near; kinetic3: by the time alone a noun of の and its
+# word were parted into two pieces of 2 characters, each nearer 0.72 s)
+PIECE_COST = 3.0
 # ... and a cut inside a word (hiragana after hiragana that is no particle, or after kanji: the ending of a verb or an
 # adjective; after katakana: a noun's particle or copula; kinetic3) costs INSIDE_WORD_COST, not CUT_COST's 6 or 2.5: a piece
 # sung up to about 2 s keeps its words whole (the time's cost of a piece sung 2.0 s is 20).  With 6, words8 of 2026-10-21 had
@@ -577,7 +581,7 @@ def _cut_atoms(chars, atoms, settings, by_time):
             sung = t1 - t0 if t1 > t0 else 0.0
             cut = _cut_cost(chars, atoms, a, by_time)
             if by_time > 0:
-                cost = LENGTH_COST * ((sung - by_time) / SUNG_UNIT) ** 2 + cut
+                cost = LENGTH_COST * ((sung - by_time) / SUNG_UNIT) ** 2 + cut + PIECE_COST
             else:
                 cost = LENGTH_COST * (size - target) ** 2 + cut + TIME_COST * max(0.0, sung - longest) ** 2
             if size > most:

@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2670（定数 2137・引数 139・関数の既定 394。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 452（retarget 271・rig 70・踊りだけ 123）、記録の出所つき 84。
+- 数: 全部 2671（定数 2138・引数 139・関数の既定 394。定数を既定にする引数 39 は定数の行に書き、数えない）、見直しの印 452（retarget 271・rig 70・踊りだけ 123）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -28,7 +28,7 @@
 | 15 | 表情 | face_life.py | 147 | 1 | 6 | 5 | （物差しなし） | - |
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
-| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・kinetic_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py | 593 | 16 | 15 | 43 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
+| 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・kinetic_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py | 594 | 16 | 15 | 43 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
 | 19 | カメラ（加賀さんの指示で後回し） | make_camera.py | 67 | 3 | 2 | 0 | （物差しなし） | - |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
@@ -1618,100 +1618,100 @@
 | DEFAULT_LOOK.text2.phrase | 1.5 |  | 281 | (the shares and seconds below were tuned until tools/typo_analyze.py read our text as it reads the references: typorev's corrected targets, 2026-10-21, kinetic's NOTES) … |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.text2.sung | 0.72 |  | 282 |  |  |  |  |  |  |  |  |  |
 | DEFAULT_LOOK.text2.chars | 7 |  | 283 | characters a piece when sung is 0 (the references read 6 [5.3, 7.5]; ours read one |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.chars_max | 9 |  | 284 | fewer), at least and at most (a word is not cut) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.chars_min | 2 |  | 284 | fewer), at least and at most (a word is not cut) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.lead | 0.03 | s | 285 | s a piece comes before its first syllable ... |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.at_vowel | 1 |  | 286 | ... 1: before its vowel (where the voice's onset is strongest), 0: before its consonant |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.enter | 0.34 | s | 287 | s it takes to come (read 0.32 [0.26, 0.33]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.exit | 0.28 | s | 288 | s it takes to go (read 0.25 [0.23, 0.32]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.hang | 0.28 |  | 292 | it stays until its words are sung (kinetic2: 92 of 94 went before, 0.8 s at the median): it is gone `hang` s after its last sound ends (its way to go comes after the voi… |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.life | [0.62, 4.0] |  | 293 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.drift | 0.3 |  | 294 | it drifts this many of its characters' heights a second all its life |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.stagger | 0.085 | s | 295 | s between characters that come one after another (0.085 [0.065, 0.098]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.glitch_frames | 3 | frames | 296 | frames of the song a glitch lasts |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.text2.sub_size | 0.037 |  | 297 | subtitles: the characters' height (read 0.041 [0.041, 0.052]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.sub_x | 0.5 |  | 298 | ... the middle of the line (half way through its life: it drifts) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.sub_rows | [0.7, 0.8] |  | 299 | ... the rows the pieces of a line take in turn (y of their middle) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.tracking | 0.12 |  | 300 | ... em between the characters |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.column_share | 0.07 |  | 301 | the share of the verses' lines set in a column at a side ... |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.column_x | [0.1, 0.9] |  | 302 | ... at these sides, the column's middle at this height |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.column_y | 0.5 |  | 302 | ... at these sides, the column's middle at this height |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.mincho_share | 0.45 |  | 303 | the share of lines set in Mincho (read 0.20 [0.13, 0.26]: thin Mincho is read so 1 in 3) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.bracket_share | 0.1 |  | 304 | ... set in brackets |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.outline_share | 0.6 |  | 305 | ... with an outline, of the lines in Noto Sans (none round Mincho): 0.33 of all (read 0.33 [0.27, 0.35]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.shadow_share | 0.45 |  | 307 | ... with a drop shadow (0.13 [0.08, 0.17]: read 1 in 3 to 1 in 6) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.weight | 550 |  | 308 | the faces' weight (Noto's weight axis, Shippori's file) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.weight_mincho | 400 |  | 308 | the faces' weight (Noto's weight axis, Shippori's file) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_per_line | 1.5 |  | 309 | large words behind the dancer: how many a line of a chorus, the bridge or the outro |  |  |  | ○ |  |  |  | dance |
-| DEFAULT_LOOK.text2.big_size | 0.13 |  | 310 | ... their height |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.edge_size | 0.3 |  | 311 | ... of the interludes' title, cut by the picture's edge |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.edge_word | 0.26 |  | 312 | ... of the hollow large words, upright, cut by the picture's edge |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.tilt | -20.0 | deg | 313 | ... degrees the tilted ones lean (rising to the right) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_x | [0.3, 0.7] |  | 314 | ... the two sides they take in turn, |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_y | [0.46, 0.54] |  | 315 | ... and the heights of their middle (each pair of sides at the next) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_alpha | 0.92 |  | 316 | ... how strongly they show |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.edge_alpha | 0.55 |  | 316 | ... how strongly they show |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.push | 0.25 |  | 317 | ... their size grows by this share a second |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.hook_size | 0.2 |  | 318 | the title word sung in the hooks, one character a syllable, in neon with its glow |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.hook_y | 0.42 |  | 318 | the title word sung in the hooks, one character a syllable, in neon with its glow |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.fill | [238.0, 239.0, 242.0] |  | 320 | the colour of the text (thin strokes read darker: L* 85 [80, 86]) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.blue | [96.0, 176.0, 255.0] |  | 321 | the two colours of the accented words |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.red | [255.0, 88.0, 112.0] |  | 321 | the two colours of the accented words |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.outline | [36.0, 72.0, 160.0] |  | 322 | the colour of the outlines (apart from the dark of the night) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.neon | [120.0, 220.0, 255.0] |  | 323 | the edge of the hollow words |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.outline_px | 1.5 | px | 324 | px of a 720 line picture |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.glow | 0.3 |  | 325 | a soft light round the text: its strength (read 0.073 [0.021, 0.139]) ... |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.glow_radius | 5.0 |  | 326 | ... and reach (px of a 720 line picture) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.neon_glow | 0.9 |  | 327 | ... round the hollow words |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.shadow | 0.6 |  | 328 | the drop shadow's strength and where it falls (px right and down, of a 720 line picture) |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.shadow_px | [2.0, 3.0] | px | 329 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.enter_mix | [0.05, 0.12, 0.23, 0.04, 0.0, 0.07, 0.08, 0.02, 0.10, 0.035… |  | 334 | how often each way to come and to go is taken (weights in the order of ENTERS and EXITS of tools/kinetic_text.py), for the subtitles and for the large words (which grow … |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.exit_mix | [0.10, 0.05, 0.17, 0.10, 0.03, 0.05, 0.12, 0.04, 0.03, 0.20… |  | 335 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_enter_mix | [0.0, 0.0, 0.3, 0.1, 0.1, 0.1, 0.1, 0.05, 0.0, 0.08, 0.0, 0… |  | 336 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.big_exit_mix | [0.1, 0.0, 0.0, 0.1, 0.25, 0.1, 0.2, 0.0, 0.05, 0.05, 0.15] |  | 337 |  |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.title_size | 0.16 |  | 338 | the opening title's characters |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.tag_alpha | 0.75 |  | 339 | the small tag in a corner |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.tag_size | 0.022 |  | 339 | the small tag in a corner |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.credit_size | 0.042 |  | 340 | the end credits: the names ... |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.role_size | 0.024 |  | 341 | ... and what each did |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.text2.credit_fade | 0.35 | s | 342 | ... s each card takes to come and to go |  |  |  |  |  |  |  |  |
-| DEFAULT_LOOK.mograph.on | 0 |  | 346 | the motion graphics (mograph, 2026-10-21; tools/mograph_layer.py, which says how and holds the section's defaults): punches, shakes, flashes, fades, dissolves and glitch… |  |  |  | ○ |  |  |  | dance |
-| REFERENCE_HEIGHT | 720.0 |  | 348 |  |  |  |  |  |  |  |  |  |
-| LIGHT_SCALE | 2 |  | 349 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
-| SONG_FPS | 30 | frames | 350 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
-| GRADE_AT | (0.25, 0.5, 0.75) |  | 448 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
-| GRADE_MOST | 0.2 |  | 449 | a shift is -this to this |  |  |  |  |  |  |  |  |
-| FLARE_HEIGHT | 0.42 |  | 734 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
-| ffmpeg_command(flare_frames) | 0 | frames | 854 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(offset) | 0.0 |  | 855 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(shutter) | 1.0 |  | 855 |  |  |  |  |  |  |  |  |  |
-| ffmpeg_command(subframes) | 1 |  | 855 |  |  |  |  |  |  |  |  |  |
-| PHYSICS_HZ | 60 | Hz | 1192 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
-| SCAN_WIDTH | 320 |  | 1193 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
-| MOVED | 8 |  | 1194 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
-| PHASE_WINDOW | 4 | frames | 1195 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
-| LONE_LEAST | 20 |  | 1196 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
-| CLEAR | 2.0 |  | 1197 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
-| dancer_input(offset) | 0.0 |  | 1238 |  |  |  |  |  |  |  |  |  |
-| measure_physics(offset) | 0.0 |  | 1325 |  |  |  |  |  |  |  |  |  |
-| _whole_sequence(first) | 0 |  | 1545 |  |  |  |  |  |  |  |  |  |
-| FLOOR_ALPHA | (226, 252) |  | 1601 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
-| FLOOR_SHARE | 0.05 |  | 1602 |  |  |  |  |  |  |  |  |  |
-| FLOOR_SAMPLES | 8 |  | 1603 |  |  |  |  |  |  |  |  |  |
-| world_inputs(jobs) | 1 |  | 1606 |  |  |  |  |  |  |  |  |  |
-| world_inputs(shutter) | 0.5 |  | 1606 |  |  |  |  |  |  |  |  |  |
-| world_inputs(subframes) | 1 |  | 1606 |  |  |  |  |  |  |  |  |  |
-| --jobs | 1 |  | 1881 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1896 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 | s | 1898 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
-| --subframes | 1 |  | 1900 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1902 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
-| --shutter | 0.5 |  | 1916 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
-| --offset | 0.0 |  | 1917 | as for render |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1927 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --encoder | "x264" |  | 1936 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
-| --subframes | 1 |  | 1938 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
-| --shutter | 0.5 |  | 1940 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.chars_max | 12 |  | 284 | fewer), at least and at most (a word is not cut: a word and what goes with it may run past 9, kinetic3) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.chars_min | 2 |  | 284 | fewer), at least and at most (a word is not cut: a word and what goes with it may run past 9, kinetic3) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.lead | 0.03 | s | 286 | s a piece comes before its first syllable ... |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.at_vowel | 1 |  | 287 | ... 1: before its vowel (where the voice's onset is strongest), 0: before its consonant |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.enter | 0.34 | s | 288 | s it takes to come (read 0.32 [0.26, 0.33]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.exit | 0.28 | s | 289 | s it takes to go (read 0.25 [0.23, 0.32]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.hang | 0.28 |  | 293 | it stays until its words are sung (kinetic2: 92 of 94 went before, 0.8 s at the median): it is gone `hang` s after its last sound ends (its way to go comes after the voi… |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.life | [0.62, 4.0] |  | 294 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.drift | 0.3 |  | 295 | it drifts this many of its characters' heights a second all its life |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.stagger | 0.085 | s | 296 | s between characters that come one after another (0.085 [0.065, 0.098]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.glitch_frames | 3 | frames | 297 | frames of the song a glitch lasts |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.text2.sub_size | 0.037 |  | 298 | subtitles: the characters' height (read 0.041 [0.041, 0.052]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.sub_x | 0.5 |  | 299 | ... the middle of the line (half way through its life: it drifts) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.sub_rows | [0.7, 0.8] |  | 300 | ... the rows the pieces of a line take in turn (y of their middle) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.tracking | 0.12 |  | 301 | ... em between the characters |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.column_share | 0.07 |  | 302 | the share of the verses' lines set in a column at a side ... |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.column_x | [0.1, 0.9] |  | 303 | ... at these sides, the column's middle at this height |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.column_y | 0.5 |  | 303 | ... at these sides, the column's middle at this height |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.mincho_share | 0.45 |  | 304 | the share of lines set in Mincho (read 0.20 [0.13, 0.26]: thin Mincho is read so 1 in 3) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.bracket_share | 0.1 |  | 305 | ... set in brackets |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.outline_share | 0.6 |  | 306 | ... with an outline, of the lines in Noto Sans (none round Mincho): 0.33 of all (read 0.33 [0.27, 0.35]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.shadow_share | 0.45 |  | 308 | ... with a drop shadow (0.13 [0.08, 0.17]: read 1 in 3 to 1 in 6) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.weight | 550 |  | 309 | the faces' weight (Noto's weight axis, Shippori's file) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.weight_mincho | 400 |  | 309 | the faces' weight (Noto's weight axis, Shippori's file) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_per_line | 1.5 |  | 310 | large words behind the dancer: how many a line of a chorus, the bridge or the outro |  |  |  | ○ |  |  |  | dance |
+| DEFAULT_LOOK.text2.big_size | 0.13 |  | 311 | ... their height |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.edge_size | 0.3 |  | 312 | ... of the interludes' title, cut by the picture's edge |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.edge_word | 0.26 |  | 313 | ... of the hollow large words, upright, cut by the picture's edge |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.tilt | -20.0 | deg | 314 | ... degrees the tilted ones lean (rising to the right) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_x | [0.3, 0.7] |  | 315 | ... the two sides they take in turn, |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_y | [0.46, 0.54] |  | 316 | ... and the heights of their middle (each pair of sides at the next) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_alpha | 0.92 |  | 317 | ... how strongly they show |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.edge_alpha | 0.55 |  | 317 | ... how strongly they show |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.push | 0.25 |  | 318 | ... their size grows by this share a second |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.hook_size | 0.2 |  | 319 | the title word sung in the hooks, one character a syllable, in neon with its glow |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.hook_y | 0.42 |  | 319 | the title word sung in the hooks, one character a syllable, in neon with its glow |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.fill | [238.0, 239.0, 242.0] |  | 321 | the colour of the text (thin strokes read darker: L* 85 [80, 86]) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.blue | [96.0, 176.0, 255.0] |  | 322 | the two colours of the accented words |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.red | [255.0, 88.0, 112.0] |  | 322 | the two colours of the accented words |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.outline | [36.0, 72.0, 160.0] |  | 323 | the colour of the outlines (apart from the dark of the night) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.neon | [120.0, 220.0, 255.0] |  | 324 | the edge of the hollow words |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.outline_px | 1.5 | px | 325 | px of a 720 line picture |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.glow | 0.3 |  | 326 | a soft light round the text: its strength (read 0.073 [0.021, 0.139]) ... |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.glow_radius | 5.0 |  | 327 | ... and reach (px of a 720 line picture) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.neon_glow | 0.9 |  | 328 | ... round the hollow words |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.shadow | 0.6 |  | 329 | the drop shadow's strength and where it falls (px right and down, of a 720 line picture) |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.shadow_px | [2.0, 3.0] | px | 330 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.enter_mix | [0.05, 0.12, 0.23, 0.04, 0.0, 0.07, 0.08, 0.02, 0.10, 0.035… |  | 335 | how often each way to come and to go is taken (weights in the order of ENTERS and EXITS of tools/kinetic_text.py), for the subtitles and for the large words (which grow … |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.exit_mix | [0.10, 0.05, 0.17, 0.10, 0.03, 0.05, 0.12, 0.04, 0.03, 0.20… |  | 336 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_enter_mix | [0.0, 0.0, 0.3, 0.1, 0.1, 0.1, 0.1, 0.05, 0.0, 0.08, 0.0, 0… |  | 337 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.big_exit_mix | [0.1, 0.0, 0.0, 0.1, 0.25, 0.1, 0.2, 0.0, 0.05, 0.05, 0.15] |  | 338 |  |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.title_size | 0.16 |  | 339 | the opening title's characters |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.tag_alpha | 0.75 |  | 340 | the small tag in a corner |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.tag_size | 0.022 |  | 340 | the small tag in a corner |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.credit_size | 0.042 |  | 341 | the end credits: the names ... |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.role_size | 0.024 |  | 342 | ... and what each did |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.text2.credit_fade | 0.35 | s | 343 | ... s each card takes to come and to go |  |  |  |  |  |  |  |  |
+| DEFAULT_LOOK.mograph.on | 0 |  | 347 | the motion graphics (mograph, 2026-10-21; tools/mograph_layer.py, which says how and holds the section's defaults): punches, shakes, flashes, fades, dissolves and glitch… |  |  |  | ○ |  |  |  | dance |
+| REFERENCE_HEIGHT | 720.0 |  | 349 |  |  |  |  |  |  |  |  |  |
+| LIGHT_SCALE | 2 |  | 350 | the light is drawn at half size: it is all blur |  |  |  |  |  |  |  |  |
+| SONG_FPS | 30 | frames | 351 | the frames the look counts in (flare.frames, camera.punch_frames): MMD's, of the song |  |  |  |  |  |  |  |  |
+| GRADE_AT | (0.25, 0.5, 0.75) |  | 449 | the coded values (0..1) whose shift each range of the grade gives |  |  |  |  |  |  |  |  |
+| GRADE_MOST | 0.2 |  | 450 | a shift is -this to this |  |  |  |  |  |  |  |  |
+| FLARE_HEIGHT | 0.42 |  | 735 | of the picture, from the top: about the dancer's chest in a full shot | 「全身のショットで胸のあたり」。adapt 10-17 の測り: 正面固定のカメラでリンの胸（上半身2）は絵の上から 0.43（中央値）、カメラ D で 0.48 |  |  | ○ |  |  |  | dance |
+| ffmpeg_command(flare_frames) | 0 | frames | 855 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(offset) | 0.0 |  | 856 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(shutter) | 1.0 |  | 856 |  |  |  |  |  |  |  |  |  |
+| ffmpeg_command(subframes) | 1 |  | 856 |  |  |  |  |  |  |  |  |  |
+| PHYSICS_HZ | 60 | Hz | 1193 | MMD steps its physics this many times a second, whatever the rate of the AVI |  |  |  |  |  |  |  |  |
+| SCAN_WIDTH | 320 |  | 1194 | the dancer is read at this width (area-scaled) to find the steps |  |  |  | ○ |  |  |  | dance |
+| MOVED | 8 |  | 1195 | of 255 in a channel: a pixel that changed by more has moved |  |  |  |  |  |  |  |  |
+| PHASE_WINDOW | 4 | frames | 1196 | frames of the song read together for the residue of the steps |  |  |  | ○ |  |  |  | dance |
+| LONE_LEAST | 20 |  | 1197 | lone pixels (at SCAN_WIDTH) a window needs to tell its residue |  |  |  |  |  |  |  |  |
+| CLEAR | 2.0 |  | 1198 | and as many times those of the next residue |  |  |  |  |  |  |  |  |
+| dancer_input(offset) | 0.0 |  | 1239 |  |  |  |  |  |  |  |  |  |
+| measure_physics(offset) | 0.0 |  | 1326 |  |  |  |  |  |  |  |  |  |
+| _whole_sequence(first) | 0 |  | 1546 |  |  |  |  |  |  |  |  |  |
+| FLOOR_ALPHA | (226, 252) |  | 1602 | the floor accessory of tools/make_stage.py in MMD's picture: its plane at alpha 235, its lines 246 and 251. A dancer's file with more of a picture than FLOOR_SHARE at th… |  |  |  | ○ |  |  |  | dance |
+| FLOOR_SHARE | 0.05 |  | 1603 |  |  |  |  |  |  |  |  |  |
+| FLOOR_SAMPLES | 8 |  | 1604 |  |  |  |  |  |  |  |  |  |
+| world_inputs(jobs) | 1 |  | 1607 |  |  |  |  |  |  |  |  |  |
+| world_inputs(shutter) | 0.5 |  | 1607 |  |  |  |  |  |  |  |  |  |
+| world_inputs(subframes) | 1 |  | 1607 |  |  |  |  |  |  |  |  |  |
+| --jobs | 1 |  | 1882 | a stage in the world: the processes that draw its frames (default 1; the pictures are the same) |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1897 | x264 (libx264 crf 16, the default) or nvenc (h264_nvenc on an NVIDIA GPU) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 | s | 1899 | the song time at the dancer's first frame, in seconds (a chunk rendered from a later frame) |  |  |  | ○ |  |  |  | dance |
+| --subframes | 1 |  | 1901 | the dancer was rendered at this many times the output rate: fold them into one frame (motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1903 | with --subframes: the share of a frame the shutter is open (default 0.5, the film standard) |  |  |  |  |  |  |  |  |
+| --shutter | 0.5 |  | 1917 | as for render (default 0.5) |  |  |  |  |  |  |  |  |
+| --offset | 0.0 |  | 1918 | as for render |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1928 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --encoder | "x264" |  | 1937 | nvenc: also check that h264_nvenc works here |  |  |  |  |  |  |  |  |
+| --subframes | 1 |  | 1939 | a stage in the world: the renders fold this many dancer frames into one (the floor's motion blur) |  |  |  | ○ |  |  |  | dance |
+| --shutter | 0.5 |  | 1941 | a stage in the world: the renders' --shutter |  |  |  |  |  |  |  |  |
 
 ## mv_text.py（18. 描画と後処理、51）
 
@@ -1769,7 +1769,7 @@
 | text(dx) | 0 |  | 880 |  |  |  |  |  |  |  |  |  |
 | text(dy) | 0 |  | 880 |  |  |  |  |  |  |  |  |  |
 
-## kinetic_text.py（18. 描画と後処理、90）
+## kinetic_text.py（18. 描画と後処理、91）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1836,33 +1836,34 @@
 | TIME_COST | 4.0 |  | 440 | a piece sung longer than the longest life + TIME_SLACK costs this a second squared |  |  |  |  |  |  |  |  |
 | TIME_SLACK | 0.25 |  | 441 | (a slow line is cut more: each piece comes when it is sung) |  |  |  |  |  |  |  |  |
 | SUNG_UNIT | 0.2 |  | 445 | cutting by the time sung (settings["sung"] above 0; kinetic2 2026-10-21): a piece's sung time off `sung` costs LENGTH_COST times its square in units of SUNG_UNIT s, a mo… |  |  |  | ○ |  |  |  | dance |
-| INSIDE_WORD_COST | 30.0 |  | 451 |  |  |  |  |  |  |  |  |  |
-| EDGE_X | (0.03, 0.97) |  | 604 | where the hollow large words stand: cut by the left or the right edge |  |  |  |  |  |  |  |  |
-| CUE_MEETS | 1.5 | s | 611 | s: a lyric cue and the line of the alignment it is meet within this |  |  |  |  |  |  |  |  |
-| MARK_EARLIER | 0.25 | s | 615 | s: a piece comes up to this much sooner, to come on a mark |  |  |  | ○ |  |  |  | dance |
-| MARK_LATER | 0.1 | s | 616 | s: ... or up to this much later |  |  |  |  |  |  |  |  |
-| END_SOONER | 0.15 | s | 617 | s: a piece goes up to this much sooner, to be gone on a mark or a cut |  |  |  |  |  |  |  |  |
-| END_LATER | 0.1 | s | 618 | s: ... or up to this much later |  |  |  |  |  |  |  |  |
-| HOOK_GOES | (0.2, 1.3) | s | 619 | s after the title word's last syllable: on a section's mark in this it starts to go |  |  |  |  |  |  |  |  |
-| HOOK_EXIT | 0.3 | s | 620 | s the title word takes to go (a glitch) |  |  |  |  |  |  |  |  |
-| INTERLUDE_COMES | (-0.5, 3.0) | s | 621 | s about an interlude's start: its title comes on the first section's mark in this |  |  |  |  |  |  |  |  |
-| INTERLUDE_GOES | (-1.0, 0.5) | s | 622 | s about the time its title would be gone: it is gone on a section's mark in this |  |  |  |  |  |  |  |  |
-| CARD_MARK | 0.5 | s | 623 | s: a credit card that would come this near a section's mark comes on it |  |  |  |  |  |  |  |  |
-| HOOK_NEAR | 0.6 | s | 788 | s: the song structure's title word this near the one a line sings is its mark |  |  |  | ○ |  |  |  | dance |
-| HOOK_OFF | 0.1 | s | 789 | s: ... and its syllables further than this from the vowels sung are warned of (kinetic2 2026-10-21: version 2 of the table had them an eighth, 0.21 s, early: the charact… |  |  |  |  |  |  |  |  |
-| plan_words(fps) | 30.0 |  | 1003 |  |  |  |  |  |  |  |  |  |
-| ROLE_STYLES.latin | ("sans", 700, 0.3, 0.5) |  | 1237 |  |  |  |  |  |  |  |  |  |
-| ROLE_STYLES.small | ("sans", 500, 0.17, 0.2) |  | 1237 |  |  |  |  |  |  |  |  |  |
-| ROLE_STYLES.title | ("mincho", 800, 1.0, 0.04) |  | 1237 |  |  |  |  |  |  |  |  |  |
-| CREDIT_ENTRY_GAP | 1.1 |  | 1238 | em of a role's row before it: the entries of a card stand apart |  |  |  |  |  |  |  |  |
-| CREDIT_NOTE | 0.7 |  | 1239 | a note's size against a name's |  |  |  |  |  |  |  |  |
-| back_out(overshoot) | 1.4 |  | 1313 |  |  |  |  |  |  |  |  |  |
-| MINCHO_FILES | {400: "ShipporiMincho-Regular.ttf", 500: "ShipporiMincho-Me… |  | 1430 |  |  |  |  |  |  |  |  |  |
-| glyph(stroke) | 0 |  | 1513 |  |  |  |  |  |  |  |  |  |
-| render_sequences(jobs) | 4 |  | 1907 |  |  |  |  |  |  |  |  |  |
-| --fps | 30.0 |  | 2104 |  |  |  |  |  |  |  |  |  |
-| --size | "1280x720" |  | 2109 |  |  |  |  |  |  |  |  |  |
-| --fps | 30.0 |  | 2110 |  |  |  |  |  |  |  |  |  |
+| PIECE_COST | 3.0 |  | 449 | ... and each piece costs PIECE_COST more: a long phrase is cut into more pieces only for a real gain in the time (the meaning's borders first, the references' 0.72 s onl… |  |  |  |  |  |  |  |  |
+| INSIDE_WORD_COST | 30.0 |  | 455 |  |  |  |  |  |  |  |  |  |
+| EDGE_X | (0.03, 0.97) |  | 608 | where the hollow large words stand: cut by the left or the right edge |  |  |  |  |  |  |  |  |
+| CUE_MEETS | 1.5 | s | 615 | s: a lyric cue and the line of the alignment it is meet within this |  |  |  |  |  |  |  |  |
+| MARK_EARLIER | 0.25 | s | 619 | s: a piece comes up to this much sooner, to come on a mark |  |  |  | ○ |  |  |  | dance |
+| MARK_LATER | 0.1 | s | 620 | s: ... or up to this much later |  |  |  |  |  |  |  |  |
+| END_SOONER | 0.15 | s | 621 | s: a piece goes up to this much sooner, to be gone on a mark or a cut |  |  |  |  |  |  |  |  |
+| END_LATER | 0.1 | s | 622 | s: ... or up to this much later |  |  |  |  |  |  |  |  |
+| HOOK_GOES | (0.2, 1.3) | s | 623 | s after the title word's last syllable: on a section's mark in this it starts to go |  |  |  |  |  |  |  |  |
+| HOOK_EXIT | 0.3 | s | 624 | s the title word takes to go (a glitch) |  |  |  |  |  |  |  |  |
+| INTERLUDE_COMES | (-0.5, 3.0) | s | 625 | s about an interlude's start: its title comes on the first section's mark in this |  |  |  |  |  |  |  |  |
+| INTERLUDE_GOES | (-1.0, 0.5) | s | 626 | s about the time its title would be gone: it is gone on a section's mark in this |  |  |  |  |  |  |  |  |
+| CARD_MARK | 0.5 | s | 627 | s: a credit card that would come this near a section's mark comes on it |  |  |  |  |  |  |  |  |
+| HOOK_NEAR | 0.6 | s | 792 | s: the song structure's title word this near the one a line sings is its mark |  |  |  | ○ |  |  |  | dance |
+| HOOK_OFF | 0.1 | s | 793 | s: ... and its syllables further than this from the vowels sung are warned of (kinetic2 2026-10-21: version 2 of the table had them an eighth, 0.21 s, early: the charact… |  |  |  |  |  |  |  |  |
+| plan_words(fps) | 30.0 |  | 1007 |  |  |  |  |  |  |  |  |  |
+| ROLE_STYLES.latin | ("sans", 700, 0.3, 0.5) |  | 1241 |  |  |  |  |  |  |  |  |  |
+| ROLE_STYLES.small | ("sans", 500, 0.17, 0.2) |  | 1241 |  |  |  |  |  |  |  |  |  |
+| ROLE_STYLES.title | ("mincho", 800, 1.0, 0.04) |  | 1241 |  |  |  |  |  |  |  |  |  |
+| CREDIT_ENTRY_GAP | 1.1 |  | 1242 | em of a role's row before it: the entries of a card stand apart |  |  |  |  |  |  |  |  |
+| CREDIT_NOTE | 0.7 |  | 1243 | a note's size against a name's |  |  |  |  |  |  |  |  |
+| back_out(overshoot) | 1.4 |  | 1317 |  |  |  |  |  |  |  |  |  |
+| MINCHO_FILES | {400: "ShipporiMincho-Regular.ttf", 500: "ShipporiMincho-Me… |  | 1434 |  |  |  |  |  |  |  |  |  |
+| glyph(stroke) | 0 |  | 1517 |  |  |  |  |  |  |  |  |  |
+| render_sequences(jobs) | 4 |  | 1911 |  |  |  |  |  |  |  |  |  |
+| --fps | 30.0 |  | 2108 |  |  |  |  |  |  |  |  |  |
+| --size | "1280x720" |  | 2113 |  |  |  |  |  |  |  |  |  |
+| --fps | 30.0 |  | 2114 |  |  |  |  |  |  |  |  |  |
 
 ## make_stage.py（18. 描画と後処理、13）
 

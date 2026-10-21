@@ -256,9 +256,10 @@ class SungTest(unittest.TestCase):
                 self.assertLessEqual(p.end, max(p.start + self.s["life"][0], t1 + self.s["hang"]) + 1e-6, (step, p.id))
 
     def test_a_line_sung_slowly_is_cut_into_more_pieces(self):
+        # (no more than its words allow: sung slowly, a piece a word; kinetic3)
         fast = self.plan_line(LONG, 0.12)[0]
         slow = self.plan_line(LONG, 0.35)[0]
-        self.assertGreater(len(slow), len(fast) + 1)
+        self.assertGreater(len(slow), len(fast))
 
     def test_a_piece_is_sung_about_as_long_as_asked_and_no_word_is_parted(self):
         for line in (LONG, WINDOW, SCHOOL, JUMP):
@@ -353,6 +354,20 @@ class SungTest(unittest.TestCase):
         self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["まどをあけて", "朝をまつ"])
         _, sung, cuts, chars = self.plan_line(line, 0.3)                           # 1.79 s and 1.49 s
         self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["まどを", "あけて", "朝をまつ"])
+
+    def test_a_long_phrase_is_cut_into_more_pieces_only_for_a_real_gain(self):
+        # 雪の花と夜の灯が揺れる, sung 2.8 s: by the time alone 雪の|花と|夜の灯が|揺れる (2 characters a piece, nearer 0.72 s);
+        # a piece more costs PIECE_COST (the meaning's borders first, the time what to near): 雪の花と|夜の灯が|揺れる
+        line = ("雪の花と夜の灯が揺れる", "ゆきのはなとよるのひがゆれる")              # (made up)
+        _, _, cuts, chars = self.plan_line(line, 0.2)
+        self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["雪の花と", "夜の灯が", "揺れる"])
+
+    def test_a_word_and_what_goes_with_it_may_run_past_nine_characters(self):
+        # カーニバルかしらねえ朝まで, sung 2.6 s: its only border is before 朝; with at most 9 characters a piece the first 10
+        # were cut inside (カーニバル|かしらねえ); chars_max is 12
+        line = ("カーニバルかしらねえ朝まで", "かーにばるかしらねえあさまで")          # (made up)
+        _, _, cuts, chars = self.plan_line(line, 0.2)
+        self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["カーニバルかしらねえ", "朝まで"])
 
     def test_a_compound_verb_is_not_parted(self):
         # 歩き出す: a kanji, one kana that is no particle and a kanji again is one word (a verb made of two: 歩き|出す read
