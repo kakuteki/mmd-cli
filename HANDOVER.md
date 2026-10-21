@@ -1341,7 +1341,9 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
     （前・後の前の所・後の直した所、各コマに声・伴奏・光・パンチの印）。
   - **試験**: `tests/test_flash_sync.py` 29 本（合成の音: 立ち上がりの時刻と強さ、歌声の引き、母音の並びで見つける題名の語〈前の語の音節を取らない・レガート・
     1 小節前の同じ語〉、コマ、止めの後の戻り、拍の格子、決め、パンチとスカート、フレア、look、measure から place・table・compare・figure まで、別の音源の
-    ずれと伴奏）。道具を 33 か所壊すと 33 で落ちる（手元 scratchpad の mutate.py）。全体の試験は hinata で d893f4f を起こした（結果は記録の次の項）。
+    ずれと伴奏）。道具を 33 か所壊すと 33 で落ちる（手元 scratchpad の mutate.py）。全体の試験（hinata、05fee70〈道具は d893f4f と同じ〉、main_suite の run_suite_td2.py の書く先だけ替えた写し `suite/run_suite_fs.py`、
+    `suite/suite_05fee70.log`。判定行は記録と別の手で読んだ）: `Ran 3008 tests in 1464.287s` / `OK (skipped=39, expected failures=1)`、SUITE EXIT 0
+    （main の 2979 本に 29 本、skip は前と同じ 39）。05fee70 の後に変えたのは HANDOVER だけ。
   - **決めてほしいこと**: (1) 組み立ての飾りを `look_city_mograph_flash_rin.json` の mograph にするか（鏡音リンの音で全曲を描くなら）。(2) **曲の構成の表の
     題名の語の音節を 8 分 1 つ遅らせるか**（version 2 は拍・+1・+2・+3 の 8 分、歌は +1〜+4。kinetic の題名の語の文字はこの表で 1 字ずつ出るので歌より 8 分
     早い。mographrev の「1 音目は拍の前」と kinetic の 1 字目の時刻はこの表に拠っていた）。(3) light3 の区間の色の変わり目（今は 59.999・86.166・154.733・240.433 秒
