@@ -648,6 +648,63 @@ class SourceTest(unittest.TestCase):
                 self.assertIn(want, text)
             self.assertLess(text.index("%.3f" % title(reps["ref"])), text.index("%.3f" % title(reps["new"])))
 
+    def test_a_new_source_measured_without_the_references_backing_is_warned_of(self):
+        # (review flashsyncrev) the second singer's pair measured on its own leaves its voice in the backing: the stop under the
+        # last title word has hits at the song's median (no band's return is found) and the flash on the return is dropped with
+        # nothing said (measured: Rin's pair without --backing-from drops 7213, the official pair's backing moves it to 7251).
+        # A new source (--reference another file) measured without --backing-from is warned of; with it, or the reference
+        # itself, or no reference, nothing is said
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(31)
+        seconds = 8.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        for b in range(16):
+            put(backing, FIRST + b * PERIOD, 0.15 * burst(int(0.1 * SR), rng))
+        voice = 0.0003 * rng.standard_normal(int(seconds * SR))
+        beat = FIRST + 8 * PERIOD
+        put(voice, beat - 0.107, tone(0.4, 262.0))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}],
+                     "hooks": [{"n": 1, "beat": 8, "t": beat}], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(ML.frame_time(ML.frame_of(beat, 30)))]}}
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            for name, x in (("mix0", backing + voice), ("voice0", voice), ("mix1", backing + voice), ("voice1", voice)):
+                files[name] = os.path.join(d, name + ".wav")
+                write_wav(files[name], x, scale)
+            for name, doc in (("structure", structure), ("look", look)):
+                files[name] = os.path.join(d, name + ".json")
+                with open(files[name], "w", encoding="utf-8") as f:
+                    json.dump(doc, f)
+            said = {}
+            for tag, mix, voice_path, extra in (
+                    ("new_alone", files["mix1"], files["voice1"], ["--reference", files["mix0"]]),
+                    ("new_with", files["mix1"], files["voice1"], ["--reference", files["mix0"], "--backing-from", files["mix0"],
+                                                                  files["voice0"]]),
+                    ("reference_itself", files["mix0"], files["voice0"], ["--reference", files["mix0"]]),
+                    ("no_reference", files["mix1"], files["voice1"], [])):
+                out = os.path.join(d, "measure_%s.json" % tag)
+                printed = io.StringIO()
+                with contextlib.redirect_stdout(printed):
+                    self.assertEqual(FS.main(["measure", mix, voice_path, files["structure"], files["look"], out] + extra), 0, tag)
+                with open(out, encoding="utf-8") as f:
+                    said[tag] = (json.load(f).get("warnings"), json.loads(printed.getvalue()).get("warnings"))
+            report, printed = said["new_alone"]
+            self.assertTrue(report and any("--backing-from" in w for w in report), report)
+            self.assertEqual(printed, report)                                  # said where it is run, too
+            for tag in ("new_with", "reference_itself", "no_reference"):
+                self.assertEqual(said[tag], ([], []), tag)
+            # and in the table a person reads
+            for tag, want in (("new_alone", True), ("new_with", False)):
+                table = os.path.join(d, "table_%s.md" % tag)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(FS.main(["table", os.path.join(d, "measure_%s.json" % tag), table]), 0)
+                with open(table, encoding="utf-8") as f:
+                    text = f.read()
+                self.assertEqual("測りの警告" in text and "--backing-from" in text, want, tag)
+
 
 @unittest.skipUnless(FS, "needs numpy")
 class TitleVowelsTest(unittest.TestCase):

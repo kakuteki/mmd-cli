@@ -9,7 +9,8 @@
         punch on a flash's frame.  --reference: the mix STRUCTURE was measured on (for a new source: its mix must lie on the
         reference's hits within a frame, mix_lag, or the measure stops).  --backing-from MIX0 VOICE0: the backing's hits from
         that pair (another singer over the same backing: the hits stay those of the source the structure was measured on, the
-        title words' first syllables are the new voice's)
+        title words' first syllables are the new voice's).  A new source (--reference another file) without --backing-from
+        is warned of ("warnings", and the table's head): its own separation leaves some of its voice in the backing
     python tools/flash_sync.py place LOOK.json MEASURE.json OUT.json
         LOOK with the decisions of MEASURE: those flashes, flares and punches moved or dropped, nothing else changed
     python tools/flash_sync.py table MEASURE.json OUT.md
@@ -665,6 +666,14 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
     word)"""
     mix, voice = read_sound(mix_path, sr), read_sound(voice_path, sr)
     checked = None
+    warnings = []
+    if reference and not backing_from and os.path.abspath(reference) != os.path.abspath(mix_path):
+        # (review flashsyncrev) another singer's pair measured on its own: its separation leaves some of its voice in the
+        # backing, so the stop under the last title word has hits at the song's median and no band's return is found (Rin's
+        # pair alone drops the flash 7213 that the official pair's backing moves to 7251), with nothing said
+        warnings.append("a new source measured without --backing-from: the backing's hits are this pair's own separation, "
+                        "whose voice left in the backing may hide a stop of the band (its return) or make hits that are not "
+                        "the backing's; give --backing-from the pair the song structure was measured on")
     if reference:
         lag_s, r = mix_lag(mix, read_sound(reference, sr), sr)
         checked = {"path": os.path.abspath(reference), "lag_ms": round(lag_s * 1000.0, 1), "r": round(r, 3)}
@@ -742,6 +751,7 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
                       "gain_used": 1.0},
             "reference": checked,
             "backing_from": took,
+            "warnings": warnings,
             "hits": {k: v.summary() for k, v in sets.items()},
             "syllables": {str(k): v for k, v in syllables.items()}, "returns": returns,
             "title_how": ("the run of the title word's vowels %s (title_start)" % title_vowels) if title_vowels else
@@ -796,6 +806,8 @@ def table_md(report):
              % (report["settings"]["strong"], report["settings"]["near_frames"]),
              "%% 点の列は、元のコマの ±%d コマの中で最も強い立ち上がりの、全曲の立ち上がりの中の %% 点（伴奏 / 全体 / 声）。"
              % report["settings"]["reach_frames"], ""]
+    for w in report.get("warnings") or []:
+        lines += ["**測りの警告**: %s" % w, ""]
     lines.append("| 種類 | 元の時刻（コマ） | 題名の語の 1 音目からの差 | 元の所の強さ（伴奏 / 全体 / 声） | 決め | 新しい時刻（コマ） | 意味の瞬間 | "
                  "新しい所の伴奏の強さ | 理由 |")
     lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
@@ -1034,7 +1046,8 @@ def main(argv=None):
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(rep, f, ensure_ascii=False, indent=1)
             print(json.dumps({"ok": True, "out": os.path.abspath(args.out), "lag_ms": rep["align"]["lag_ms"],
-                              "decisions": [[d["kind"], d["old_frame"], d["action"], d.get("frame")] for d in rep["decisions"]]}))
+                              "decisions": [[d["kind"], d["old_frame"], d["action"], d.get("frame")] for d in rep["decisions"]],
+                              "warnings": rep["warnings"]}))
             return 0
         if args.cmd == "place":
             look = _load(args.look)
