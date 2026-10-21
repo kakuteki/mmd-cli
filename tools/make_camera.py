@@ -2010,7 +2010,9 @@ def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, str
                             best = (shot, hits, turns, waive, left)
                         if best is not None and best[1] == 0:
                             break
-                    if best is not None:
+                    # her face off the words is a guard and the cut rule a target: with her face still on them the
+                    # rule's turn is waived next (then the line), for a way of seeing that keeps it off
+                    if best is not None and best[1] == 0:
                         break
                 if best is not None:
                     break

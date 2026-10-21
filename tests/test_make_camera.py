@@ -1882,6 +1882,27 @@ class MusicSizedPlanTest(unittest.TestCase):
         self.assertLess(oc.look_down_at(sized_cameras(plain)[f - plain.start].position,
                                         [self.dancer.at(n, f) for n in ("hips", "lhip", "rhip")]), 25.0)
 
+    def test_the_cut_rule_gives_way_before_her_face_is_left_on_the_words(self):
+        # (her face off the words is a guard, the cut rule a target): a shot whose ways that keep the rule all leave her face
+        # on the words takes one that waives the rule's turn and keeps her face off them
+        real = mc._sized_shot
+        target = [s for s in self.shots if s.kind == "verse"][0].start
+
+        def fake(dancer, size, index, frame, end, *rest, **kw):
+            shot, hits, turns, why = real(dancer, size, index, frame, end, *rest, **kw)
+            waive = rest[18] if len(rest) > 18 else kw.get("waive", 0)
+            if frame == target and shot is not None and not waive:
+                return shot, 5, turns, why                       # every way that keeps the rule: her face on the words
+            return shot, hits, turns, why
+        mc._sized_shot = fake
+        try:
+            _, _, shots = sized_plan()
+        finally:
+            mc._sized_shot = real
+        held = [s for s in shots if s.start == target][0]
+        self.assertEqual(held.features["face_hits"], 0)
+        self.assertEqual(held.features["rule_waived"], 1)
+
     def test_the_line_is_crossed_when_her_face_turns_from_one_side_of_the_picture_to_the_other(self):
         self.assertTrue(mc.crosses_line(0.0, -40.0, 40.0))
         self.assertFalse(mc.crosses_line(0.0, -40.0, -10.0))
