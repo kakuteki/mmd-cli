@@ -2225,26 +2225,26 @@
 | MUSIC_CONTACT_RUN | 54 |  | 927 | ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6), both measured off her head's way (facing_both: she looks down 5 degrees, the camera… |  |  |  |  |  |  |  |  |
 | MUSIC_CONTACT_SIDE | 12.0 |  | 930 | ... and at most this far round from it (eye_gaze's reach is 16 sideways) |  |  |  |  |  |  |  |  |
 | MUSIC_ROUNDS | 4 |  | 931 | times the song is planned again when a close shot has to be shot wider |  |  |  | ○ |  |  |  | dance |
-| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0) |  | 932 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_SHIFT | 0.25 |  | 937 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
-| FACE_RADIUS | 1.15 | units | 938 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
-| FACE_DOWN | 0.45 |  | 939 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
-| FACE_MARGIN | 0.02 |  | 940 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
-| MUSIC_CLOSE_WINDOW | 30 | frames | 1131 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
-| ZOOM_REACH | (2, 14) | frames | 1133 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
-| _shape(ramp) | 0.125 |  | 1231 |  |  |  |  |  |  |  |  |  |
-| plan_music_shots(seed) | 0 |  | 1420 |  |  |  |  |  |  |  |  |  |
-| frame_sized(shift) | 0.0 |  | 1562 |  |  |  |  |  |  |  |  |  |
-| _mean_way(step) | 5 |  | 1817 |  |  |  |  |  |  |  |  |  |
-| _sized_shot(waive) | 0 |  | 1842 |  |  |  |  |  |  |  |  |  |
-| music_motion(handheld) | 0.0 |  | 2078 |  |  |  |  |  |  |  |  |  |
-| music_motion(seed) | 0 |  | 2078 |  |  |  |  |  |  |  |  |  |
-| run_music(handheld) | 0.0 |  | 2170 |  |  |  |  |  |  |  |  |  |
-| run_music(seed) | 0 |  | 2170 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 2261 |  |  |  |  |  |  |  |  |  |
-| run(handheld) | 0.0 |  | 2262 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2295 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
-| --handheld | 0.0 |  | 2299 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
+| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25,… |  | 932 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_SHIFT | 0.25 |  | 938 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
+| FACE_RADIUS | 1.15 | units | 939 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
+| FACE_DOWN | 0.45 |  | 940 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
+| FACE_MARGIN | 0.02 |  | 941 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
+| MUSIC_CLOSE_WINDOW | 30 | frames | 1132 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
+| ZOOM_REACH | (2, 14) | frames | 1134 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
+| _shape(ramp) | 0.125 |  | 1232 |  |  |  |  |  |  |  |  |  |
+| plan_music_shots(seed) | 0 |  | 1421 |  |  |  |  |  |  |  |  |  |
+| frame_sized(shift) | 0.0 |  | 1563 |  |  |  |  |  |  |  |  |  |
+| _mean_way(step) | 5 |  | 1818 |  |  |  |  |  |  |  |  |  |
+| _sized_shot(waive) | 0 |  | 1843 |  |  |  |  |  |  |  |  |  |
+| music_motion(handheld) | 0.0 |  | 2079 |  |  |  |  |  |  |  |  |  |
+| music_motion(seed) | 0 |  | 2079 |  |  |  |  |  |  |  |  |  |
+| run_music(handheld) | 0.0 |  | 2171 |  |  |  |  |  |  |  |  |  |
+| run_music(seed) | 0 |  | 2171 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| run(handheld) | 0.0 |  | 2263 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2296 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
+| --handheld | 0.0 |  | 2300 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
 
 ## operator_camera.py（19. カメラ、111）
 

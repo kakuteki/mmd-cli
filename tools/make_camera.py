@@ -929,10 +929,11 @@ MUSIC_CONTACT_RUN = 54                   # ... on a run of this many frames of t
                                          # head's way (facing_both: she looks down 5 degrees, the camera may stand 5 lower) ...
 MUSIC_CONTACT_SIDE = 12.0                # ... and at most this far round from it (eye_gaze's reach is 16 sideways)
 MUSIC_ROUNDS = 4                         # times the song is planned again when a close shot has to be shot wider
-MUSIC_SHIFTS = (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0)
+MUSIC_SHIFTS = (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25, -1.25)
 # picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her
 # to keep her face off the words of --keep-clear: the base's track is this times the window's distance times the tangent
-# of half the field (a whole-body shot from 41 away moves her 11 units, a chest shot from 11 away 3), at most
+# of half the field (a whole-body shot from 41 away moves her 11 units, a chest shot from 11 away 3; 1.25 puts her face a
+# fifth of the way in from the side, past a large word that fills the other 70 % of the picture), at most
 # MUSIC_CONTACT_SHIFT for a contact (her eyes' reach)
 MUSIC_CONTACT_SHIFT = 0.25
 FACE_RADIUS = 1.15                       # units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure
