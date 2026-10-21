@@ -216,6 +216,30 @@ class SyllableTest(unittest.TestCase):
         # and a start one syllable late (the second i) matches fewer of the word's vowels: not taken
         self.assertGreaterEqual(len(got["run"]), 3)
 
+    def test_the_title_word_is_the_one_round_its_beat_not_the_same_word_a_bar_before(self):
+        beat = 2.2
+        rng = np.random.default_rng(7)
+        x = 0.003 * rng.standard_normal(int(4.0 * SR))
+        eighth = PERIOD / 2.0
+        for k, v in enumerate("iiae"):                                                  # the word sung once more, earlier
+            put(x, beat - 1.6 + k * eighth, vowel(eighth - 0.04, v))
+        for k, v in enumerate("iiae"):
+            put(x, beat + (k + 1) * eighth, vowel(eighth - 0.04, v))
+        got = FS.title_start(FS.syllables_of(x), beat, "iiae")
+        self.assertLess(abs(got["t"] - (beat + eighth)), 0.006, got)
+
+    def test_one_onset_a_syllable(self):
+        # a short voiced blip 40 ms before the vowel (a consonant's voicing, a slur): two rises, one syllable
+        rng = np.random.default_rng(8)
+        x = 0.003 * rng.standard_normal(int(2.0 * SR))
+        put(x, 0.80, vowel(0.015, "a"))
+        put(x, 0.84, vowel(0.25, "i"))
+        put(x, 1.30, vowel(0.25, "a"))
+        sy = FS.syllables_of(x)
+        times = [y["t"] for y in sy]
+        self.assertTrue(all(b - a >= FS.SYLLABLE_APART for a, b in zip(times, times[1:])), times)
+        self.assertEqual(len([t for t in times if 0.75 < t < 0.95]), 1, times)
+
     def test_no_title_word_where_no_run_has_its_vowels_in_order(self):
         beat = 1.2
         x = self.sung(beat, "aaii", before="a")
