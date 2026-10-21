@@ -20,9 +20,9 @@
         the whole song and each flash against the voice, the hits and the heads (needs matplotlib)
 
 Why (2026-10-21, flashsync): the request is that a flash in the MV mean something, or go.  The four flashes of the motion
-graphics (look_city_mograph_rv.json) stood on the title words' beats, where the first syllable has already been sung for 100 to
-160 ms (it comes in a sixteenth before the beat) and the backing has no hit of its own: a light three or more frames after the
-voice it should go with (a sound more than 45 ms before its picture is noticed, ITU-R BT.1359-1) and on nothing a viewer hears.
+graphics (look_city_mograph_rv.json) stood on the title words' beats, where nothing is sung (the title word comes in an eighth
+after the beat: its first vowel 204-236 ms after it, the onset 90-145 ms before the beat is the last syllable of the word before,
+an open vowel where the title word's first is a close one) and the backing has no hit of its own: on nothing a viewer hears.
 
 The rule (decide): a flash stands on a moment that means something in the song - a title word where its first syllable is
 sung, the head of a section, the band coming back after a stop - and only where the backing has a strong
@@ -41,10 +41,15 @@ middle of the song) and taken off it (the separated stems add up to the mix: the
 apart, of the spectral flux of the log magnitude (ONSET_BAND, windows of ONSET_WIN every ONSET_HOP samples) over its median,
 their times put back by the lead the same code reads on drum-like bursts (the flux of a window rises before its centre reaches
 the onset).  A hit's strength among the song's: the share of its hits that are weaker (percentile), and its height over the
-median of the hits within LOCAL seconds (local).  The first syllable of a title word: in SYLLABLE_SEARCH of its beat, the
-steepest rise of the voice's level in the voiced band (VOICED) that comes up by SYLLABLE_RISE_DB or more from the quietest of
-the SYLLABLE_BEFORE before it to the loudest of the SYLLABLE_AFTER after it (a breath of h before the vowel has little in that
-band), at the time its power first reaches half of that loudest (a Hann window centred on a step reads half of it there).
+median of the hits within LOCAL seconds (local).  A syllable's onset: a steepest rise of the voice's level in the voiced band
+(VOICED) that comes up by SYLLABLE_RISE_DB or more from the quietest of the SYLLABLE_BEFORE before it to the loudest of the
+SYLLABLE_AFTER after it (a breath of h before the vowel has little in that band), at the time its power first reaches half of
+that loudest (a Hann window centred on a step reads half of it there).  The first syllable of a title word (--title-vowels, the
+word's vowels in order): of the syllables round its beat (TITLE_SEARCH), the first of the run of as many whose vowels that
+should be open (e a o) are all more open than those that should be close (i u), OPEN = the level of 700-1500 Hz over 300-700 Hz
+over VOWEL_AFTER of the vowel (the run with the widest margin; the order, not a threshold, so that a voice's colour does not
+count).  Without the vowels, the syllable the voice comes in with nearest the beat (SYLLABLE_SEARCH): in this song that is the
+word before the title word.
 The band's return: a strong hit of the backing after a stop, STOP_S or more in which none of its hits reaches the QUIET_PCT
 percentile (the drums stop under the last title word and come back hard on the next bar; the bass plays on through it, so
 the low end alone does not show the stop).
@@ -72,6 +77,12 @@ SYLLABLE_SEARCH = (-0.25, 0.15)   # s from the title word's beat: its first syll
 SYLLABLE_RISE_DB = 12.0
 SYLLABLE_BEFORE, SYLLABLE_AFTER = 0.075, 0.05
 SYLLABLE_SMOOTH = 5               # rows the level is smoothed over for its slope
+SYLLABLE_APART = 0.06             # s: two syllables' onsets nearer than this are one (the larger rise)
+OPEN_BANDS = ((300.0, 700.0), (700.0, 1500.0))      # Hz: OPEN = the level of the second over the first (lip_check's)
+VOWEL_AFTER = (0.03, 0.13)        # s after a syllable's onset over which its vowel is read
+VOWEL_OPEN = {"i": -1, "u": -1, "e": 1, "a": 1, "o": 1}             # close (a low first formant) or open
+TITLE_SEARCH = (-0.35, 0.6)       # s from the title word's beat where its first syllable is looked for (by its vowels)
+WORD_GAP = 0.45                   # s: the syllables of one word lie closer than this
 STOP_S = 1.0                      # s without a hit at the song's median or over (more than two beats at 140 BPM): a stop
 QUIET_PCT = 50.0
 STRONG = 90.0                     # percentile of the song's hits: a strong hit (the request: "the top 10 % or so")
@@ -293,41 +304,125 @@ def voice_level(voice, sr=SR):
     return times, 10.0 * np.log10(power + 1e-20)
 
 
+def _onset(times, db, power, slope, j, rise_db, nb, na):
+    """the syllable whose voiced band rises steepest at row j: (onset time, rise dB, low row, peak dB), or None when it rises
+    less than rise_db from the quietest of the nb rows before to the loudest of the na rows after; the onset is where its power
+    first reaches half of that loudest (linear between the rows: a Hann window centred on a step reads half of it there)"""
+    step = float(times[1] - times[0])
+    lo_from = max(0, j - nb)
+    low = lo_from + int(np.argmin(db[lo_from:j + 1]))
+    peak = float(db[j:j + na + 1].max())
+    rise = peak - float(db[low])
+    if rise < rise_db:
+        return None
+    half = 0.5 * 10.0 ** (peak / 10.0)
+    r = low
+    while r < j + na and power[r] < half:
+        r += 1
+    if r > low and power[r] > power[r - 1]:
+        t = times[r - 1] + (half - power[r - 1]) / (power[r] - power[r - 1]) * step
+    else:
+        t = times[r]
+    return float(t), rise, low, peak
+
+
+def _slope(times, db):
+    k = np.ones(SYLLABLE_SMOOTH) / SYLLABLE_SMOOTH
+    return np.gradient(np.convolve(db, k, mode="same")) / float(times[1] - times[0])
+
+
 def first_syllable(times, db, beat, search=SYLLABLE_SEARCH, rise_db=SYLLABLE_RISE_DB, before=SYLLABLE_BEFORE,
                    after=SYLLABLE_AFTER):
-    """the onset of the first syllable of a word sung on `beat` (see the module's docstring): {"t", "rise_db", "slope_db_s",
-    "low_t", "peak_db"}, or None when the voice has no such rise in the search"""
+    """the onset of the syllable the voice comes in with near `beat` (the steepest qualified rise in `search`; see the module's
+    docstring): {"t", "rise_db", "slope_db_s", "low_t", "peak_db"}, or None when the voice has no such rise in the search.
+    This is the title word's first syllable only when the word starts there: title_start tells it by the word's vowels"""
     times = np.asarray(times, np.float64)
     db = np.asarray(db, np.float64)
     step = float(times[1] - times[0])
     rows = np.nonzero((times >= beat + search[0]) & (times <= beat + search[1]))[0]
     if not len(rows):
         return None
-    k = np.ones(SYLLABLE_SMOOTH) / SYLLABLE_SMOOTH
-    slope = np.gradient(np.convolve(db, k, mode="same")) / step
+    slope = _slope(times, db)
+    power = 10.0 ** (db / 10.0)
     nb, na = int(round(before / step)), int(round(after / step))
     for j in rows[np.argsort(slope[rows])[::-1]]:
         if slope[j] <= 0:
             break
-        lo_from = max(0, j - nb)
-        low = lo_from + int(np.argmin(db[lo_from:j + 1]))
-        peak = float(db[j:j + na + 1].max())
-        rise = peak - float(db[low])
-        if rise < rise_db:
+        got = _onset(times, db, power, slope, j, rise_db, nb, na)
+        if got is None:
             continue
-        # the onset: where the power first reaches half of the loudest after it (linear between the rows)
-        power = 10.0 ** (db / 10.0)
-        half = 0.5 * 10.0 ** (peak / 10.0)
-        r = low
-        while r < j + na and power[r] < half:
-            r += 1
-        if r > low and power[r] > power[r - 1]:
-            t = times[r - 1] + (half - power[r - 1]) / (power[r] - power[r - 1]) * step
-        else:
-            t = times[r]
-        return {"t": round(float(t), 4), "rise_db": round(rise, 1), "slope_db_s": round(float(slope[j]), 1),
+        t, rise, low, peak = got
+        return {"t": round(t, 4), "rise_db": round(rise, 1), "slope_db_s": round(float(slope[j]), 1),
                 "low_t": round(float(times[low]), 4), "peak_db": round(peak, 1)}
     return None
+
+
+def syllables_of(voice, sr=SR, rise_db=SYLLABLE_RISE_DB, before=SYLLABLE_BEFORE, after=SYLLABLE_AFTER):
+    """[{"t", "rise_db", "open"}]: every syllable the voice comes in with after a consonant or a rest (a steepest rise of the
+    voiced band of rise_db or more, its onset as first_syllable reads it; one within SYLLABLE_APART) and how open its vowel is:
+    OPEN, the level of 700-1500 Hz over 300-700 Hz (the first formant: high for a e o, low for i u; lip_check's) over
+    VOWEL_AFTER from its onset, dB.  A syllable sung legato makes no rise and is not here"""
+    times, mags = spectra(voice, sr, VOICE_WIN, VOICE_HOP, (OPEN_BANDS[0][0], max(VOICED[1], OPEN_BANDS[1][1])))
+    freqs = np.fft.rfftfreq(VOICE_WIN, 1.0 / sr)
+    freqs = freqs[(freqs >= OPEN_BANDS[0][0]) & (freqs < max(VOICED[1], OPEN_BANDS[1][1]))]
+    p = np.asarray(mags, np.float64) ** 2
+    lo = 10.0 * np.log10(p[:, (freqs >= OPEN_BANDS[0][0]) & (freqs < OPEN_BANDS[0][1])].sum(axis=1) + 1e-20)
+    hi = 10.0 * np.log10(p[:, (freqs >= OPEN_BANDS[1][0]) & (freqs < OPEN_BANDS[1][1])].sum(axis=1) + 1e-20)
+    vt, db = voice_level(voice, sr)
+    step = float(vt[1] - vt[0])
+    slope = _slope(vt, db)
+    power = 10.0 ** (db / 10.0)
+    nb, na = int(round(before / step)), int(round(after / step))
+    s = int(round(SYLLABLE_APART / step))
+    top = np.max(np.lib.stride_tricks.sliding_window_view(np.pad(slope, (s, s), mode="edge"), 2 * s + 1), axis=1)
+    out = []
+    for j in np.nonzero((slope >= top) & (slope > 0))[0]:
+        got = _onset(vt, db, power, slope, j, rise_db, nb, na)
+        if got is None:
+            continue
+        t, rise, _, _ = got
+        rows = (times >= t + VOWEL_AFTER[0]) & (times <= t + VOWEL_AFTER[1])
+        if not rows.any():
+            continue
+        if out and t - out[-1]["t"] < SYLLABLE_APART:
+            if rise > out[-1]["rise_db"]:
+                out[-1] = {"t": round(t, 4), "rise_db": round(rise, 1), "open": round(float(np.median(hi[rows] - lo[rows])), 2)}
+            continue
+        out.append({"t": round(t, 4), "rise_db": round(rise, 1), "open": round(float(np.median(hi[rows] - lo[rows])), 2)})
+    return out
+
+
+def title_start(syllables, beat, vowels, search=TITLE_SEARCH, gap=WORD_GAP):
+    """the title word's first syllable as sung, told by the word's vowels (`vowels`: its vowels in order, of i u e a o): the run
+    of as many syllables (one after the other, closer than `gap`), its first within `search` of `beat`, whose vowels that
+    should be open (e a o) are all more open than those that should be close (i u) - the order of the run, not a threshold,
+    so that a voice's own colour does not count - the run with the widest such margin.  {"t", "rise_db", "run", "open",
+    "margin"} or None"""
+    signs = []
+    for v in vowels:
+        if v not in VOWEL_OPEN:
+            raise ValueError("the title word's vowels are of i u e a o, not %r" % v)
+        signs.append(VOWEL_OPEN[v])
+    if len(set(signs)) < 2:
+        raise ValueError("the title word's vowels %r must hold close (i u) and open (e a o) ones to tell the word" % vowels)
+    n = len(signs)
+    best = None
+    for k in range(len(syllables) - n + 1):
+        run = syllables[k:k + n]
+        if not (beat + search[0] <= run[0]["t"] <= beat + search[1]):
+            continue
+        if any(b["t"] - a["t"] >= gap for a, b in zip(run, run[1:])):
+            continue
+        close = [y["open"] for y, sg in zip(run, signs) if sg < 0]
+        opened = [y["open"] for y, sg in zip(run, signs) if sg > 0]
+        margin = min(opened) - max(close)
+        if margin > 0 and (best is None or margin > best[0]):
+            best = (margin, run)
+    if best is None:
+        return None
+    margin, run = best
+    return {"t": run[0]["t"], "rise_db": run[0]["rise_db"], "run": [y["t"] for y in run], "open": [y["open"] for y in run],
+            "margin": round(margin, 2)}
 
 
 # ---- moments -------------------------------------------------------------------------------------------------------
@@ -524,12 +619,15 @@ def _strengths(t, sets, reach):
     return {name: h.strongest(t, reach) for name, h in sets.items()}
 
 
-def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference=None, backing_from=None):
+def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference=None, backing_from=None, title_vowels=None):
     """the report (see the module's docstring), and with `arrays` the envelopes and the voice's level as .npz.  `reference`:
     the mix the song structure was measured on; a mix of another source (another singer over the same backing) must lie on it
     within a frame, or the structure's beats are not where its hits are (ValueError).  `backing_from` (MIX0, VOICE0): the hits
     of the backing are those of that pair (the source the structure was measured on: the same backing, as its separation gave
-    it), the voice's first syllables are VOICE's; the new pair's own backing is measured beside it (backing_own)"""
+    it), the voice's first syllables are VOICE's; the new pair's own backing is measured beside it (backing_own).  `title_vowels`
+    (the title word's vowels in order, e.g. "iiae"): its first syllable is the first of the run of syllables with those vowels
+    (title_start); without them, where the voice comes in nearest the beat (first_syllable, which may be a syllable before the
+    word)"""
     mix, voice = read_sound(mix_path, sr), read_sound(voice_path, sr)
     checked = None
     if reference:
@@ -567,7 +665,11 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
         env[name] = (t, e)
         sets[name] = Hits(hits_of(t, e, span=within))
     vt, vdb = voice_level(voice_at, sr)
-    syllables = {h["n"]: first_syllable(vt, vdb, float(h["t"])) for h in structure.get("hooks", [])}
+    if title_vowels:
+        sung = syllables_of(voice_at, sr)
+        syllables = {h["n"]: title_start(sung, float(h["t"]), title_vowels) for h in structure.get("hooks", [])}
+    else:
+        syllables = {h["n"]: first_syllable(vt, vdb, float(h["t"])) for h in structure.get("hooks", [])}
     returns = band_returns(sets["backing"])
     moments = moments_of(structure, syllables, returns)
     near, reach = NEAR_FRAMES / float(FPS), REACH_FRAMES / float(FPS)
@@ -606,6 +708,8 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
             "backing_from": took,
             "hits": {k: v.summary() for k, v in sets.items()},
             "syllables": {str(k): v for k, v in syllables.items()}, "returns": returns,
+            "title_how": ("the run of the title word's vowels %s (title_start)" % title_vowels) if title_vowels else
+                         "where the voice comes in nearest the beat (first_syllable)",
             "moments": moments, "decisions": decisions}
 
 
@@ -865,6 +969,7 @@ def main(argv=None):
     p.add_argument("out")
     p.add_argument("--arrays")
     p.add_argument("--reference", help="the mix the song structure was measured on: another source's mix must lie on it")
+    p.add_argument("--title-vowels", help="the title word's vowels in order (i u e a o), e.g. iiae: its first syllable is told by them")
     p.add_argument("--backing-from", nargs=2, metavar=("MIX0", "VOICE0"),
                    help="the hits of the backing from this pair (the source the structure was measured on)")
     p = sub.add_parser("place")
@@ -888,7 +993,7 @@ def main(argv=None):
     try:
         if args.cmd == "measure":
             rep = measure(args.mix, args.voice, _load(args.structure), _load(args.look), args.arrays, reference=args.reference,
-                          backing_from=args.backing_from)
+                          backing_from=args.backing_from, title_vowels=args.title_vowels)
             rep["inputs"].update(structure=os.path.abspath(args.structure), look=os.path.abspath(args.look))
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(rep, f, ensure_ascii=False, indent=1)

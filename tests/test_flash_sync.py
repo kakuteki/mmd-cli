@@ -48,6 +48,22 @@ def tone(seconds, f0=220.0, sr=SR, attack=0.004):
     return x * env
 
 
+FORMANTS = {"i": (300.0, 2300.0), "u": (350.0, 1300.0), "e": (500.0, 1900.0), "a": (800.0, 1250.0), "o": (550.0, 900.0)}
+
+
+def vowel(seconds, kind, f0=200.0, sr=SR, attack=0.0005):
+    """a sung vowel of `kind` (i u e a o): a harmonic tone shaped by two formants, with a short attack"""
+    f1, f2 = FORMANTS[kind]
+    t = np.arange(int(seconds * sr)) / float(sr)
+    x = np.zeros_like(t)
+    for k in range(1, 20):
+        f = f0 * k
+        amp = np.exp(-((f - f1) / 150.0) ** 2) + 0.6 * np.exp(-((f - f2) / 250.0) ** 2) + 0.02
+        x += amp * np.sin(2 * np.pi * f * t)
+    env = np.minimum(1.0, t / attack) * np.minimum(1.0, (seconds - t) / 0.01)
+    return x * env
+
+
 def put(x, at, piece, sr=SR):
     i = int(round(at * sr))
     x[i:i + len(piece)] += piece[:max(0, len(x) - i)]
@@ -156,6 +172,38 @@ class SyllableTest(unittest.TestCase):
         t, db = FS.voice_level(x)
         got = FS.first_syllable(t, db, beat)
         self.assertLess(abs(got["t"] - (beat - 0.16)), 0.0015, got)
+
+    def sung(self, beat, word, before="a", lead=0.10, seconds=3.0):
+        """a syllable of the word before (its vowel `before`) a sixteenth and a bit before the beat, then the title word's vowels
+        one an eighth from the beat's eighth on (as the title words are sung in this song), a short stop before each"""
+        rng = np.random.default_rng(4)
+        x = 0.003 * rng.standard_normal(int(seconds * SR))
+        eighth = PERIOD / 2.0
+        put(x, beat - lead, vowel(lead + eighth - 0.04, before))
+        for k, v in enumerate(word):
+            put(x, beat + (k + 1) * eighth, vowel(eighth - 0.04, v))
+        return x
+
+    def test_the_title_word_is_the_run_of_its_vowels_not_the_syllable_before_it(self):
+        beat = 1.2
+        x = self.sung(beat, "iiae")
+        sy = FS.syllables_of(x)
+        got = FS.title_start(sy, beat, "iiae")
+        self.assertIsNotNone(got)
+        self.assertLess(abs(got["t"] - (beat + PERIOD / 2.0)), 0.006, got)          # the first i, an eighth after the beat
+        self.assertEqual(len(got["run"]), 4)
+        # the syllable before it (an open vowel just before the beat) is a syllable too, but not the word's first
+        self.assertTrue(any(abs(t - (beat - 0.10)) < 0.01 for t in [y["t"] for y in sy]))
+        # where the voice first comes in near the beat is that syllable: what the beat alone finds
+        rise = FS.first_syllable(*FS.voice_level(x), beat)
+        self.assertLess(abs(rise["t"] - (beat - 0.10)), 0.006)
+
+    def test_no_title_word_where_no_run_has_its_vowels_in_order(self):
+        beat = 1.2
+        x = self.sung(beat, "aaii", before="a")
+        self.assertIsNone(FS.title_start(FS.syllables_of(x), beat, "iiae"))
+        with self.assertRaises(ValueError):
+            FS.title_start(FS.syllables_of(x), beat, "iix")                           # not a vowel
 
     def test_no_syllable_without_a_rise(self):
         beat = 1.5
@@ -490,6 +538,54 @@ class SourceTest(unittest.TestCase):
             for want in ("| | first | second |", "%.3f" % title(reps["ref"]), "%.3f" % title(reps["new"])):
                 self.assertIn(want, text)
             self.assertLess(text.index("%.3f" % title(reps["ref"])), text.index("%.3f" % title(reps["new"])))
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class TitleVowelsTest(unittest.TestCase):
+    def test_measure_tells_the_title_word_by_its_vowels_and_the_punch_goes_there(self):
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(21)
+        seconds = 10.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(22):
+            put(backing, FIRST + b * PERIOD, 0.15 * hit)
+        beat = FIRST + 12 * PERIOD
+        eighth = PERIOD / 2.0
+        voice = 0.003 * rng.standard_normal(int(seconds * SR))
+        put(voice, beat - 0.10, vowel(0.10 + eighth - 0.04, "a"))                      # the word before: just before the beat
+        for k, v in enumerate("iiae"):
+            put(voice, beat + (k + 1) * eighth, vowel(eighth - 0.04, v))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}],
+                     "hooks": [{"n": 1, "beat": 12, "t": beat}], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(ML.frame_time(ML.frame_of(beat, 30))),
+                                                            punch(ML.frame_time(ML.frame_of(beat, 30)))]}}
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            for name, x in (("mix", backing + voice), ("voice", voice)):
+                files[name] = os.path.join(d, name + ".wav")
+                write_wav(files[name], x, scale)
+            for name, doc in (("structure", structure), ("look", look)):
+                files[name] = os.path.join(d, name + ".json")
+                with open(files[name], "w", encoding="utf-8") as f:
+                    json.dump(doc, f)
+            reps = {}
+            for tag, extra in (("rise", []), ("vowels", ["--title-vowels", "iiae"])):
+                out = os.path.join(d, "measure_%s.json" % tag)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(FS.main(["measure", files["mix"], files["voice"], files["structure"], files["look"], out]
+                                             + extra), 0, tag)
+                with open(out, encoding="utf-8") as f:
+                    reps[tag] = json.load(f)
+            t = {k: [m for m in r["moments"] if m["kind"] == "title"][0]["t"] for k, r in reps.items()}
+            self.assertLess(abs(t["vowels"] - (beat + eighth)), 0.006)                    # the title word's first syllable
+            self.assertLess(abs(t["rise"] - (beat - 0.10)), 0.006)                       # the voice's first rise: the word before
+            p = [x for x in reps["vowels"]["decisions"] if x["kind"] == "punch"][0]
+            self.assertEqual(p["frame"], FS.frame_of_moment(t["vowels"]))
+            self.assertIn("iiae", reps["vowels"]["title_how"])
 
 
 if __name__ == "__main__":
