@@ -2021,42 +2021,42 @@
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| SR | 22050 |  | 74 |  |  |  |  |  |  |  |  |  |
-| FPS | 30 | frames | 75 | frames of the song, MMD's (mograph_layer.SONG_FPS) |  |  |  |  |  |  |  |  |
-| ONSET_HOP | 110 |  | 76 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
-| ONSET_WIN | 1024 |  | 76 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
-| ONSET_BAND | (30.0, 8000.0) | Hz | 77 | Hz: the whole band of a drum kit and the band (a04_beat's full band) |  |  |  |  |  |  |  |  |
-| HIT_SPACING | 0.05 | s | 78 | s: a hit is the largest flux within this on each side |  |  |  |  |  |  |  |  |
-| VOICE_HOP | 55 |  | 79 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
-| VOICE_WIN | 512 |  | 79 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
-| VOICED | (150.0, 1500.0) | Hz | 80 | Hz: the voice's fundamental and first formant (review mographrev's hook_timing) |  |  |  |  |  |  |  |  |
-| SYLLABLE_SEARCH | (-0.25, 0.15) | s | 81 | s from the title word's beat where the voice's first rise near it is looked for (no vowels |  |  |  | ○ |  |  |  | dance |
-| SYLLABLE_RISE_DB | 12.0 |  | 83 | given: in this song the last syllable of the word before, 90-160 ms before the beat) |  |  |  | ○ |  |  |  | dance |
-| SYLLABLE_AFTER | 0.05 |  | 84 |  |  |  |  |  |  |  |  |  |
-| SYLLABLE_BEFORE | 0.075 |  | 84 |  |  |  |  |  |  |  |  |  |
-| SYLLABLE_SMOOTH | 5 |  | 85 | rows the level is smoothed over for its slope |  |  |  |  |  |  |  |  |
-| SYLLABLE_APART | 0.06 | s | 86 | s: a syllable's rise is the steepest within this each side (two nearer are one syllable) |  |  |  |  |  |  |  |  |
-| OPEN_BANDS | ((300.0, 700.0), (700.0, 1500.0)) | Hz | 87 | Hz: OPEN = the level of the second over the first (lip_check's) |  |  |  |  |  |  |  |  |
-| VOWEL_AFTER | (0.03, 0.13) | s | 88 | s after a syllable's onset over which its vowel is read |  |  |  |  |  |  |  |  |
-| VOWEL_OPEN.a | 1 |  | 89 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
-| VOWEL_OPEN.e | 1 |  | 89 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
-| VOWEL_OPEN.i | -1 |  | 89 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
-| VOWEL_OPEN.o | 1 |  | 89 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
-| VOWEL_OPEN.u | -1 |  | 89 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
-| TITLE_SEARCH | (-0.35, 0.6) | s | 90 | s from the title word's beat where its first syllable is looked for (by its vowels) |  |  |  | ○ |  |  |  | dance |
-| WORD_SYLLABLE | 0.25 | s | 91 | s: the title word's syllables lie within (its syllables - 1) x this of its first (an eighth at |  |  |  |  |  |  |  |  |
-| TITLE_STEP | 0.5 |  | 93 | beats from one of the title word's syllables to the next (it is sung on eighths): where its |  |  |  | ○ |  |  |  | dance |
-| STOP_S | 1.0 | s | 95 | s without a hit at the song's median or over (more than two beats at 140 BPM): a stop |  |  |  | ○ |  |  |  | dance |
-| QUIET_PCT | 50.0 | % | 96 |  |  |  |  |  |  |  |  |  |
-| STRONG | 90.0 |  | 97 | percentile of the song's hits: a strong hit (the request: "the top 10 % or so") |  |  |  | ○ |  |  |  | dance |
-| NEAR_FRAMES | 1 | frames | 98 | a strong hit within this of a moment is on it |  |  |  |  |  |  |  |  |
-| REACH_FRAMES | 2 | frames | 99 | the strongest hit within this of a flash is written (the request: +-2 frames) |  |  |  |  |  |  |  |  |
-| LOCAL | 2.0 | s | 100 | s each side: the hits a hit is told against for its local strength |  |  |  |  |  |  |  |  |
-| SKIRT_GAP | 0.5 | s | 101 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
-| ALIGN_MOST | 0.05 | s | 102 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
-| REFERENCE_MOST | 2.0 | s | 103 | s: a mix of another source is looked for this far either way in the reference mix |  |  |  |  |  |  |  |  |
-| --labels | "A,B" |  | 1034 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
-| --lang | "en" |  | 1039 |  |  |  |  |  |  |  |  |  |
+| SR | 22050 |  | 76 |  |  |  |  |  |  |  |  |  |
+| FPS | 30 | frames | 77 | frames of the song, MMD's (mograph_layer.SONG_FPS) |  |  |  |  |  |  |  |  |
+| ONSET_HOP | 110 |  | 78 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
+| ONSET_WIN | 1024 |  | 78 | samples: 46 ms windows every 5 ms |  |  |  |  |  |  |  |  |
+| ONSET_BAND | (30.0, 8000.0) | Hz | 79 | Hz: the whole band of a drum kit and the band (a04_beat's full band) |  |  |  |  |  |  |  |  |
+| HIT_SPACING | 0.05 | s | 80 | s: a hit is the largest flux within this on each side |  |  |  |  |  |  |  |  |
+| VOICE_HOP | 55 |  | 81 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
+| VOICE_WIN | 512 |  | 81 | samples: 23 ms windows every 2.5 ms |  |  |  |  |  |  |  |  |
+| VOICED | (150.0, 1500.0) | Hz | 82 | Hz: the voice's fundamental and first formant (review mographrev's hook_timing) |  |  |  |  |  |  |  |  |
+| SYLLABLE_SEARCH | (-0.25, 0.15) | s | 83 | s from the title word's beat where the voice's first rise near it is looked for (no vowels |  |  |  | ○ |  |  |  | dance |
+| SYLLABLE_RISE_DB | 12.0 |  | 85 | given: in this song the last syllable of the word before, 90-160 ms before the beat) |  |  |  | ○ |  |  |  | dance |
+| SYLLABLE_AFTER | 0.05 |  | 86 |  |  |  |  |  |  |  |  |  |
+| SYLLABLE_BEFORE | 0.075 |  | 86 |  |  |  |  |  |  |  |  |  |
+| SYLLABLE_SMOOTH | 5 |  | 87 | rows the level is smoothed over for its slope |  |  |  |  |  |  |  |  |
+| SYLLABLE_APART | 0.06 | s | 88 | s: a syllable's rise is the steepest within this each side (two nearer are one syllable) |  |  |  |  |  |  |  |  |
+| OPEN_BANDS | ((300.0, 700.0), (700.0, 1500.0)) | Hz | 89 | Hz: OPEN = the level of the second over the first (lip_check's) |  |  |  |  |  |  |  |  |
+| VOWEL_AFTER | (0.03, 0.13) | s | 90 | s after a syllable's onset over which its vowel is read |  |  |  |  |  |  |  |  |
+| VOWEL_OPEN.a | 1 |  | 91 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
+| VOWEL_OPEN.e | 1 |  | 91 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
+| VOWEL_OPEN.i | -1 |  | 91 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
+| VOWEL_OPEN.o | 1 |  | 91 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
+| VOWEL_OPEN.u | -1 |  | 91 | close (a low first formant) or open |  |  |  |  |  |  |  |  |
+| TITLE_SEARCH | (-0.35, 0.6) | s | 92 | s from the title word's beat where its first syllable is looked for (by its vowels) |  |  |  | ○ |  |  |  | dance |
+| WORD_SYLLABLE | 0.25 | s | 93 | s: the title word's syllables lie within (its syllables - 1) x this of its first (an eighth at |  |  |  |  |  |  |  |  |
+| TITLE_STEP | 0.5 |  | 95 | beats from one of the title word's syllables to the next (it is sung on eighths): where its |  |  |  | ○ |  |  |  | dance |
+| STOP_S | 1.0 | s | 97 | s without a hit at the song's median or over (more than two beats at 140 BPM): a stop |  |  |  | ○ |  |  |  | dance |
+| QUIET_PCT | 50.0 | % | 98 |  |  |  |  |  |  |  |  |  |
+| STRONG | 90.0 |  | 99 | percentile of the song's hits: a strong hit (the request: "the top 10 % or so") |  |  |  | ○ |  |  |  | dance |
+| NEAR_FRAMES | 1 | frames | 100 | a strong hit within this of a moment is on it |  |  |  |  |  |  |  |  |
+| REACH_FRAMES | 2 | frames | 101 | the strongest hit within this of a flash is written (the request: +-2 frames) |  |  |  |  |  |  |  |  |
+| LOCAL | 2.0 | s | 102 | s each side: the hits a hit is told against for its local strength |  |  |  |  |  |  |  |  |
+| SKIRT_GAP | 0.5 | s | 103 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
+| ALIGN_MOST | 0.05 | s | 104 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
+| REFERENCE_MOST | 2.0 | s | 105 | s: a mix of another source is looked for this far either way in the reference mix |  |  |  |  |  |  |  |  |
+| --labels | "A,B" |  | 1047 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
+| --lang | "en" |  | 1052 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 
