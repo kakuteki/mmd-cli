@@ -1886,8 +1886,8 @@
 | SKIRT_GAP | 0.5 | s | 100 | s: no punch's frames within this of where the skirt flares (mograph_layer.plan) |  |  |  |  |  |  |  |  |
 | ALIGN_MOST | 0.05 | s | 101 | s: the voice is looked for this far either way in the mix |  |  |  |  |  |  |  |  |
 | REFERENCE_MOST | 2.0 | s | 102 | s: a mix of another source is looked for this far either way in the reference mix |  |  |  |  |  |  |  |  |
-| --labels | "A,B" |  | 1012 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
-| --lang | "en" |  | 1017 |  |  |  |  |  |  |  |  |  |
+| --labels | "A,B" |  | 1022 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
+| --lang | "en" |  | 1027 |  |  |  |  |  |  |  |  |  |
 
 ## make_camera.py（19. カメラ（加賀さんの指示で後回し）、67）
 

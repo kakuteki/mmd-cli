@@ -488,6 +488,19 @@ def hook_beat(structure, hook):
     return float(hook["t"])
 
 
+def title_step(structure):
+    """s from one of a title word's syllables to the next on the structure's grid (TITLE_STEP of its beat), or None"""
+    grid = structure.get("beat", {})
+    return TITLE_STEP * float(grid["period"]) if isinstance(grid, dict) and grid.get("period") else None
+
+
+def titles_of(structure, sung, vowels):
+    """{hook n: title_start}: each title word of the structure in the voice's syllables (`sung`, syllables_of), looked for from
+    its beat on the grid (hook_beat), its syllables' places told by the grid's eighths where its vowels cannot tell them"""
+    step = title_step(structure)
+    return {h["n"]: title_start(sung, hook_beat(structure, h), vowels, step=step) for h in structure.get("hooks", [])}
+
+
 def moments_of(structure, syllables, returns):
     """the moments a flash may mean: the title words' first syllables as sung (syllables: {hook n: first_syllable or None}),
     the heads of the sections after the first (at their beats), the band's returns that are no section's head (at the beat of
@@ -687,12 +700,9 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
         env[name] = (t, e)
         sets[name] = Hits(hits_of(t, e, span=within))
     vt, vdb = voice_level(voice_at, sr)
-    grid = structure.get("beat", {})
-    step = TITLE_STEP * float(grid["period"]) if isinstance(grid, dict) and grid.get("period") else None
+    step = title_step(structure)
     if title_vowels:
-        sung = syllables_of(voice_at, sr)
-        syllables = {h["n"]: title_start(sung, hook_beat(structure, h), title_vowels, step=step)
-                     for h in structure.get("hooks", [])}
+        syllables = titles_of(structure, syllables_of(voice_at, sr), title_vowels)
     else:
         syllables = {h["n"]: first_syllable(vt, vdb, hook_beat(structure, h)) for h in structure.get("hooks", [])}
     returns = band_returns(sets["backing"])

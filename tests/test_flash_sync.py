@@ -275,6 +275,18 @@ class SyllableTest(unittest.TestCase):
         self.assertEqual(got["positions"], [0, 3], got)
         self.assertLess(abs(got["t"] - (beat + eighth)), 0.006, got)
 
+    def test_the_title_word_is_looked_for_from_its_beat_not_from_where_the_structure_writes_it(self):
+        # a voice that sings the word early, from 0.2 s before the beat (another singer may): it is looked for from the beat
+        # (TITLE_SEARCH), not from the hook's t, which version 3 of the song structure writes on the first eighth after the beat
+        beat = FIRST + 12 * PERIOD
+        eighth = PERIOD / 2.0
+        sung = [{"t": beat - 0.5, "rise_db": 20.0, "open": 8.0}]
+        sung += [{"t": beat - 0.2 + k * eighth, "rise_db": 20.0, "open": o} for k, o in enumerate((-15.0, -14.0, 5.0, 3.0))]
+        structure = {"beat": {"first": FIRST, "period": PERIOD, "per_bar": 4}, "hooks": [{"n": 1, "beat": 12, "t": beat + eighth}]}
+        got = FS.titles_of(structure, sung, "iiae")[1]
+        self.assertAlmostEqual(got["t"], beat - 0.2, places=6)
+        self.assertEqual(got["positions"], [0, 1, 2, 3])
+
     def test_the_next_word_past_the_title_words_length_is_not_its_syllables(self):
         # the title word sung with its middle run together, and the next word's close vowels soon after it
         beat = 1.2
