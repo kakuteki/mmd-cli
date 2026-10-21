@@ -648,13 +648,15 @@ def table_md(report):
 LABELS = {
     "en": {"voice": "voice level (150-1500 Hz)", "hits": "backing hits", "strong": "strong backing hit (>= p%g)",
            "old": "light before", "new": "light after", "punch_old": "punch before", "punch_new": "punch after",
-           "title": "title word %d sung", "return": "the band returns", "x": "seconds of the song (grey: beats, darker: bars)",
+           "title": "title word %d sung", "return": "the band returns",
+           "x": "seconds of the song (grey: beats, darker: bars; a moment's backing hit within a frame in brackets, percentile)",
            "overview": "the whole song: strong backing hits (red), section heads (black), title words sung (purple), "
                        "the light before (grey) and after (green)",
            "row": "%s at %.3f s (frame %d): %s"},
     "ja": {"voice": "声の強さ（150〜1500 Hz）", "hits": "伴奏の立ち上がり", "strong": "伴奏の強い立ち上がり（%g %% 点以上）",
            "old": "前の光", "new": "直した光", "punch_old": "前のパンチ", "punch_new": "直したパンチ",
-           "title": "題名の語 %d の 1 音目", "return": "伴奏が戻る", "x": "曲の秒（灰の線: 拍、濃い線: 小節の頭）",
+           "title": "題名の語 %d の 1 音目", "return": "伴奏が戻る",
+           "x": "曲の秒（灰の線: 拍、濃い線: 小節の頭。瞬間の名の後の括弧: その ±1 コマの伴奏の立ち上がりの % 点）",
            "overview": "全曲: 伴奏の強い立ち上がり（赤）、節の頭（黒）、題名の語の 1 音目（紫）、前の光（灰）と直した光（緑）",
            "row": "%s %.3f 秒（%d コマ）: %s"},
 }
@@ -713,7 +715,10 @@ def figure(report, arrays, out, lang="en"):
         title = d.get("title")
         if title:
             times.append(title["t"])
-        lo, hi = min(times) - 0.55, max(times) + 0.75
+        # and the moments it could have gone to (a bar of its place): what the decision looked at
+        reach = float(st.get("move_reach_s", 1.75))
+        times += [m["t"] for m in report["moments"] if abs(m["t"] - d["old_frame"] / float(fps)) <= reach]
+        lo, hi = min(times) - 0.45, max(times) + 0.6
         vt, vdb = a["voice_db_t"].astype(np.float64), a["voice_db"].astype(np.float64)
         m = (vt >= lo) & (vt <= hi)
         ref = float(np.percentile(vdb, 99))
@@ -734,6 +739,8 @@ def figure(report, arrays, out, lang="en"):
         for mo in report["moments"]:
             if lo <= mo["t"] <= hi:
                 text = (L["title"] % mo["n"]) if mo["kind"] == "title" else (mo["id"] if mo["kind"] == "section" else L["return"])
+                near = mo["near"]["backing"]
+                text += " (%s)" % ("-" if near is None else "%.0f" % near["pct"])
                 colour = {"section": "#000000", "title": "#6a3d9a", "return": "#e31a1c"}[mo["kind"]]
                 ax.axvline(mo["t"], color=colour, lw=1.0, ls=":")
                 ax.text(mo["t"], 1.22, text, fontsize=8, ha="center", color=colour)
@@ -750,13 +757,13 @@ def figure(report, arrays, out, lang="en"):
         ax.set_yticks([])
         what = A[d["action"]] % d["frame"] if d["action"] == "move" else A[d["action"]]
         ax.set_title(L["row"] % (K[d["kind"]], d["t"], d["old_frame"], what), fontsize=9)
-    handles, labels = axes[1, 0].get_legend_handles_labels()
     seen = {}
-    for h, lab in zip(handles, labels):
-        seen.setdefault(lab, h)
-    axes[1, 0].legend(list(seen.values()), list(seen.keys()), loc="upper left", fontsize=7, ncol=4, framealpha=0.85)
+    for ax in axes[1:, 0]:
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            seen.setdefault(lab, h)
+    fig.legend(list(seen.values()), list(seen.keys()), loc="lower center", fontsize=8, ncol=5, framealpha=0.9)
     axes[-1, 0].set_xlabel(L["x"])
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.045, 1, 1))
     fig.savefig(out, dpi=110)
     plt.close(fig)
 
