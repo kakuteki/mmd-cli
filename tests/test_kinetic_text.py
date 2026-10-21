@@ -226,6 +226,18 @@ class PiecesTest(unittest.TestCase):
         for chars in (2, 3, 4):
             self.assertIn("カメラマン", self.pieces(CAMERA, chars=chars), chars)
 
+    def test_the_cutting_by_characters_with_the_defaults_is_as_before(self):
+        # sung 0 cuts by characters as before (kinetic3rev 2026-10-21, the coordinator: what is not asked for gives the same
+        # output).  kinetic3's chars_max 12 for the cutting by the time let 星を数えて夜明けまで through whole here (before,
+        # 5 and 5: 7 of the MV's 48 lines were cut otherwise), and the rules of the cutting by the time are not its own
+        # (カーニバル|かしらねえ朝まで: a cut after katakana costs as before)
+        s = dict(KT.default_settings(), sung=0.0)
+        for (text, reading), want in ((("星を数えて夜明けまで", "ほしをかぞえてよあけまで"), ["星を数えて", "夜明けまで"]),
+                                      (("カーニバルかしらねえ朝まで", "かーにばるかしらねえあさまで"),
+                                       ["カーニバル", "かしらねえ朝まで"])):                       # (made up)
+            chars = KT.line_chars(text, reading, timed(reading, 2.0, 0.2))
+            self.assertEqual([text[a:b] for a, b in KT.cut_line(chars, s)], want)
+
 
 @unittest.skipUnless(KT, NEEDS)
 class SungTest(unittest.TestCase):
@@ -364,10 +376,25 @@ class SungTest(unittest.TestCase):
 
     def test_a_word_and_what_goes_with_it_may_run_past_nine_characters(self):
         # カーニバルかしらねえ朝まで, sung 2.6 s: its only border is before 朝; with at most 9 characters a piece the first 10
-        # were cut inside (カーニバル|かしらねえ); chars_max is 12
+        # were cut inside (カーニバル|かしらねえ); cut by the time a piece has at most sung_chars_max (12) characters
         line = ("カーニバルかしらねえ朝まで", "かーにばるかしらねえあさまで")          # (made up)
         _, _, cuts, chars = self.plan_line(line, 0.2)
         self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["カーニバルかしらねえ", "朝まで"])
+        _, _, cuts, chars = self.plan_line(line, 0.2, sung_chars_max=9)
+        self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["カーニバル", "かしらねえ", "朝まで"])
+
+    def test_the_most_characters_cut_by_the_time_is_a_whole_number_from_chars_min(self):
+        for bad in (1, 9.5):
+            with self.assertRaises(ValueError) as caught:
+                KT.check_settings(dict(self.s, sung_chars_max=bad))
+            self.assertIn("sung_chars_max", str(caught.exception))
+
+    def test_two_kana_between_kanji_are_two_words(self):
+        # the rule of a verb made of two takes one kana that is no particle between the kanji: with two (見ちゃ駄目, a
+        # contraction and a word of its own) they are two words, and sung slowly (2 s) the phrase is cut between them
+        line = ("見ちゃ駄目", "みちゃだめ")                                          # (made up)
+        _, _, cuts, chars = self.plan_line(line, 0.5)
+        self.assertEqual(["".join(c.ch for c in chars[a:b]) for a, b in cuts], ["見ちゃ", "駄目"])
 
     def test_a_compound_verb_is_not_parted(self):
         # 歩き出す: a kanji, one kana that is no particle and a kanji again is one word (a verb made of two: 歩き|出す read
@@ -389,6 +416,23 @@ class SungTest(unittest.TestCase):
                      sections=[{"kind": "verse", "start": 0, "end": 60}])
         p = [q for q in KT.plan_words(words, self.s) if q.role in ("sub", "column")][0]
         self.assertAlmostEqual(p.end, 4.7 + self.s["hang"])
+
+    def test_a_large_word_comes_and_goes_on_the_marks_its_subtitle_does(self):
+        # on with its subtitle (kinetic3): the subtitle comes on a mark up to MARK_EARLIER s sooner and, its words sung, goes
+        # on a mark in its tail (up to END_SOONER s before its singing ended); its large word comes and goes on the same
+        # marks (the MV's words file has them: 41 of 41 the same)
+        base = KT.plan_words(song(), self.s)
+        big = [p for p in base if p.role == "big"][0]
+        sub = [p for p in base if p.id == big.id.replace("b", "p")][0]
+        come = on_frame(sub.start - 0.1)
+        go = on_frame(sub.sung_end + 0.05, up=True)
+        self.assertGreater(sub.end - go, KT.END_SOONER)                 # (further from its end than a piece's own reach)
+        got = {p.id: p for p in KT.plan_words(song(marks={"starts": [come], "cuts": [go], "sections": [], "hooks": []}),
+                                              self.s)}
+        self.assertAlmostEqual(got[sub.id].start, come)
+        self.assertAlmostEqual(got[sub.id].end, go)
+        self.assertAlmostEqual(got[big.id].start, come)
+        self.assertAlmostEqual(got[big.id].end, go)
 
     def test_a_sung_subtitle_goes_on_a_mark_in_its_tail(self):
         # its words sung, it may go on a mark of the song structure up to END_SOONER s before its singing ended and up to
@@ -524,6 +568,37 @@ class PlanTest(unittest.TestCase):
             for q in self.pieces:
                 if q.role in ("sub", "column") and q.line is not None and q.line > big.line:
                     self.assertLessEqual(min(q.end, big.end) - max(q.start, big.start), self.s["hang"] + 1e-6, (big.id, q.id))
+
+    def test_a_large_word_that_is_not_hollow_stays_inside_the_picture(self):
+        # 週末の映画館へ, a phrase sung 1.3 s, is one piece: its large word (the first: tilted, on the left) grows by `push` all
+        # the while it is on, and at x 0.3 its first character was cut by the picture's edge (kinetic3rev 2026-10-21: three of
+        # the MV's tilted words of 7 characters, by up to 70 px of 720).  While whole (come and not yet going) its ink stays
+        # inside; a short one keeps its place, and the hollow ones are still cut by the edge (EDGE_X)
+        long_line = ("週末の映画館へ", "しゅうまつのえいがかんへ")                  # (made up)
+        for line, step, moved in ((long_line, 0.12, True), (("映画", "えいが"), 0.2, False)):
+            words = song(lines=[line_of(line[0], line[1], 2.0, step)], sections=[{"kind": "chorus", "start": 0.0, "end": 20.0}],
+                         credits=[])
+            drawer = KT.Drawer(words, (320, 180), 30, self.s)
+            big = [p for p in drawer.pieces if p.role == "big"]
+            self.assertEqual(len(big), 1)
+            p = big[0]
+            self.assertTrue(p.tilt and not p.hollow)
+            self.assertEqual(abs(p.x - self.s["big_x"][0]) > 1e-6, moved, (line[0], p.x))
+            enter_s, exit_s = KT._times(p)
+            frames = [n for n in range(int(math.ceil(p.start * 30)), int(math.ceil(p.end * 30)))
+                      if p.start + enter_s <= n / 30.0 < p.end - exit_s]
+            self.assertGreater(len(frames), 3)
+            for n in frames:
+                img = np.zeros((180, 320, 4), np.float32)
+                KT.draw_piece(img, drawer.layouts[p.id], KT.piece_state(p, n / 30.0, self.s), self.s)
+                a = img[..., 3]
+                edge = int((a[:, 0] > 0.1).sum() + (a[:, -1] > 0.1).sum() + (a[0, :] > 0.1).sum() + (a[-1, :] > 0.1).sum())
+                self.assertEqual(edge, 0, (line[0], n))
+        pieces = KT.plan_words(song(lines=[line_of(LONG[0], LONG[1], 2.0)], sections=[{"kind": "chorus", "start": 0.0, "end": 20.0}],
+                                    credits=[]), dict(self.s, big_per_line=4.0))
+        hollow = [p for p in pieces if p.role == "big" and p.hollow]
+        self.assertTrue(hollow)
+        self.assertTrue(all(p.x in KT.EDGE_X for p in hollow), [p.x for p in hollow])
 
     def test_the_title_word_comes_one_character_a_syllable(self):
         hooks = self.of("hook")

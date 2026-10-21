@@ -33,10 +33,12 @@ What is done:
 2. Reading (align_reading, line_chars): each character of a line is matched to its part of the reading: a kana reads as
    the same kana (hiragana and katakana alike), a run of kanji as the kana between the kana round it (one word, never
    cut), a space or a mark as nothing unless the reading has it there; so every character gets the times of its morae.
-3. Pieces (cut_line): the line cut into pieces each sung about `sung` s (kinetic2: the references' life; with sung 0, of
-   about `chars` characters), between `chars_min` and `chars_max` characters, where a cut costs least: at a space, then
-   before a word of kanji or katakana after hiragana; never through a run of kanji or of katakana, and never before a
-   small kana, the long mark, a closing mark or ん, nor after an opening one.
+3. Pieces (cut_line): the line cut into its phrases (the parts between its spaces; kinetic3), a phrase sung up to `phrase`
+   s a piece of its own and a longer one cut into pieces each sung about `sung` s (kinetic2: the references' life),
+   between `chars_min` and `sung_chars_max` characters; with sung 0, the line into pieces of about `chars` characters,
+   between `chars_min` and `chars_max`.  A cut goes where it costs least: at a space, then before a word of kanji or
+   katakana after hiragana; never through a run of kanji or of katakana, and never before a small kana, the long mark, a
+   closing mark or ん, nor after an opening one.
 4. The plan (plan_words): each piece of a sung line is a subtitle in front of the dancer, coming `lead` s before the
    consonant of its first syllable and on the screen while it is sung and `hang` s after, `life` s at least and at most;
    the pieces of a line take the rows of `sub_rows` in turn (from the first no subtitle is on as the line comes), a share
@@ -187,6 +189,8 @@ def check_settings(s):
     need(all(whole(s[k]) for k in ("chars", "chars_min", "chars_max")) and 1 <= s["chars_min"] <= s["chars"] <= s["chars_max"],
          "chars_min, chars and chars_max are whole numbers, 1 <= chars_min <= chars <= chars_max: not %r, %r, %r"
          % (s["chars_min"], s["chars"], s["chars_max"]))
+    need(whole(s["sung_chars_max"]) and s["sung_chars_max"] >= s["chars_min"],
+         "sung_chars_max is a whole number from chars_min (%r): not %r" % (s["chars_min"], s["sung_chars_max"]))
     for k in ("sung", "phrase", "lead", "hang", "drift", "stagger", "push", "outline_px", "glow", "glow_radius", "neon_glow",
               "shadow", "credit_fade"):
         need(math.isfinite(s[k]) and s[k] >= 0, "%s is from 0, not %r" % (k, s[k]))
@@ -522,14 +526,21 @@ def _atoms(chars, longest):
     return out
 
 
+def _most(settings, by_time):
+    """the most characters a piece has (more only where one word is longer): sung_chars_max cut by the time, chars_max cut
+    by characters (kinetic3rev 2026-10-21: one chars_max of 12 for the time's sake cut 7 of the MV's 48 lines otherwise with
+    sung 0, the cutting of before)"""
+    return int(settings["sung_chars_max"] if by_time > 0 else settings["chars_max"])
+
+
 def cut_line(chars, settings):
     """the pieces of a line: [(first, end)] indices into `chars` (no piece begins or ends with a space).  By the time
     (settings["sung"] above 0): each phrase (the parts between spaces) sung up to settings["phrase"] s is a piece, a longer
-    one is cut where the cuts cost least into pieces sung about settings["sung"] s (CUT_COST, INSIDE_WORD_COST; a piece's sung
-    time off it costs its square).  With sung 0 the line is cut as before kinetic2: pieces of about settings["chars"]
-    characters where the cuts cost least"""
+    one is cut where the cuts cost least into pieces sung about settings["sung"] s, of chars_min to sung_chars_max characters
+    (CUT_COST, INSIDE_WORD_COST; a piece's sung time off it costs its square).  With sung 0 the line is cut as before
+    kinetic2: pieces of about settings["chars"] characters, chars_min to chars_max, where the cuts cost least"""
     by_time = float(settings.get("sung", 0.0))
-    atoms = _atoms(chars, int(settings["chars_max"]))
+    atoms = _atoms(chars, _most(settings, by_time))
     if not atoms:
         return []
     if by_time <= 0:
@@ -564,7 +575,7 @@ def _cut_cost(chars, atoms, a, by_time):
 
 def _cut_atoms(chars, atoms, settings, by_time):
     """the cheapest cutting of a run of atoms (a line, or a phrase of one): [(first, end)] into `chars`"""
-    target, least, most = int(settings["chars"]), int(settings["chars_min"]), int(settings["chars_max"])
+    target, least, most = int(settings["chars"]), int(settings["chars_min"]), _most(settings, by_time)
     longest = float(settings["life"][1]) + TIME_SLACK
     total = sum(a.size for a in atoms)
     n = len(atoms)
@@ -1124,8 +1135,36 @@ def plan_words(words, settings, fps=30.0, aspect=16.0 / 9.0):
     pieces += _hooks(words, s, fps)
     _clear_for_hooks(pieces)
     pieces += _interludes(words, s, pieces)
+    for p in pieces:
+        if p.role == "big" and not p.hollow:
+            _keep_inside(p, aspect)
     pieces += _cards(words, s)
     return sorted(pieces, key=lambda p: (p.start, p.id))
+
+
+INSIDE_MARGIN = 0.01              # of the picture: a large word that is not hollow keeps this far inside its edges while whole
+
+
+def _keep_inside(p, aspect):
+    """a large word that is not hollow stays inside the picture while it is whole (kinetic3rev 2026-10-21: a large word grows
+    by `push` all the while it is on, and three of the MV's tilted words of 7 characters on the left were cut by the
+    picture's edge, by up to 70 px of 720; main had two).  Its middle moves in by what the em boxes of its rows, tilted,
+    grown as they are when it starts to go and drifted, would put outside (an em box holds the glyphs of the faces: the
+    estimate is on the safe side, and a word that fits keeps its place; one wider than the picture stands in its middle).
+    The hollow words are cut by the edge on purpose (EDGE_X)"""
+    _, exit_s = _times(p)
+    whole = max(0.0, (p.end - p.start) - exit_s)            # its age as it starts to go
+    grown = 1.0 + p.push * whole
+    w = max(len(r.text) * r.size * (1.0 + r.tracking) for r in p.rows)                # shares of the picture's height
+    h = sum(r.size for r in p.rows) + sum(r.gap * r.size for r in p.rows[1:])
+    a = math.radians(abs(p.tilt))
+    half_x = 0.5 * grown * (w * math.cos(a) + h * math.sin(a)) / aspect              # shares of the picture's width
+    half_y = 0.5 * grown * (w * math.sin(a) + h * math.cos(a))
+    drift = max(0.0, p.drift[0]) * p.rows[0].size * whole / aspect                   # (it drifts to the right)
+    lo, hi = INSIDE_MARGIN + half_x, 1.0 - INSIDE_MARGIN - half_x - drift
+    p.x = 0.5 if lo > hi else min(max(p.x, lo), hi)
+    lo, hi = INSIDE_MARGIN + half_y, 1.0 - INSIDE_MARGIN - half_y
+    p.y = 0.5 if lo > hi else min(max(p.y, lo), hi)
 
 
 def _split_two(text):

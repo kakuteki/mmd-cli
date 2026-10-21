@@ -280,9 +280,10 @@ DEFAULT_LOOK = {
               # line by `chars` as before kinetic2
               "phrase": 1.5,
               "sung": 0.72,
+              "sung_chars_max": 12,  # ... at most this many characters a piece cut by the time (a word and what goes with it
+                                     # may run past 9, kinetic3; chars_max is the cutting by characters' own, kinetic3rev)
               "chars": 7,           # characters a piece when sung is 0 (the references read 6 [5.3, 7.5]; ours read one
-              "chars_min": 2, "chars_max": 12,               # fewer), at least and at most (a word is not cut: a word and
-                                                             # what goes with it may run past 9, kinetic3)
+              "chars_min": 2, "chars_max": 9,                # fewer), at least and at most (a word is not cut)
               "lead": 0.03,         # s a piece comes before its first syllable ...
               "at_vowel": 1,        # ... 1: before its vowel (where the voice's onset is strongest), 0: before its consonant
               "enter": 0.34,        # s it takes to come (read 0.32 [0.26, 0.33])
