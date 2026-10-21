@@ -1,12 +1,13 @@
 """Flashes that mean something: the light of a look (the motion graphics' flashes, tools/mograph_layer.py events of kind
 "flash", and the look's flares) put on moments of the song a viewer hears, or dropped; the punch on a flash's frame with it.
 
-    python tools/flash_sync.py measure MIX VOICE STRUCTURE.json LOOK.json OUT.json [--arrays OUT.npz]
+    python tools/flash_sync.py measure MIX VOICE STRUCTURE.json LOOK.json OUT.json [--arrays OUT.npz] [--reference MIX0]
         the moments of the song: the title words' first syllable as sung (read from VOICE, the separated singing voice), the
         heads of the sections of STRUCTURE (looks/song_structure.json of the stage-6 work) and the band's returns after a
         stop (read from the backing: MIX less VOICE); the hits (onsets) of the backing, of the mix and of the
         voice and how strong each is among the song's own; and the decision for every flash and flare of LOOK and for the
-        punch on a flash's frame
+        punch on a flash's frame.  --reference: the mix STRUCTURE was measured on (for a new source: its mix must lie on the
+        reference's hits within a frame, mix_lag, or the measure stops)
     python tools/flash_sync.py place LOOK.json MEASURE.json OUT.json
         LOOK with the decisions of MEASURE: those flashes, flares and punches moved or dropped, nothing else changed
     python tools/flash_sync.py table MEASURE.json OUT.md
@@ -75,6 +76,7 @@ REACH_FRAMES = 2                  # the strongest hit within this of a flash is 
 LOCAL = 2.0                       # s each side: the hits a hit is told against for its local strength
 SKIRT_GAP = 0.5                   # s: no punch's frames within this of where the skirt flares (mograph_layer.plan)
 ALIGN_MOST = 0.05                 # s: the voice is looked for this far either way in the mix
+REFERENCE_MOST = 2.0              # s: a mix of another source is looked for this far either way in the reference mix
 _LAZY = {}
 
 
@@ -216,6 +218,30 @@ def hits_of(times, env, spacing=HIT_SPACING, span=None):
         if span is None or span[0] <= t <= span[1]:
             out.append({"t": t, "height": float(env[k])})
     return out
+
+
+def mix_lag(x, ref, sr=SR, most=REFERENCE_MOST):
+    """(lag in seconds, r): where the onsets of `ref` lie in those of `x` (positive: x later), the largest normalised
+    cross-correlation of the two onset envelopes within `most` seconds either way (a parabola through its top).  Two mixes over
+    one backing have its hits in common whatever voice sings over them"""
+    t1, e1 = onset_envelope(x, sr)
+    t2, e2 = onset_envelope(ref, sr)
+    n = min(len(e1), len(e2))
+    a, b = e1[:n] - e1[:n].mean(), e2[:n] - e2[:n].mean()
+    step = float(t1[1] - t1[0])
+    reach = min(int(round(most / step)), n // 2)
+    size = 1 << int(math.ceil(math.log2(2 * n)))
+    corr = np.fft.irfft(np.fft.rfft(a, size) * np.conj(np.fft.rfft(b, size)), size)
+    lags = np.concatenate([corr[:reach + 1], corr[-reach:]]) if reach else corr[:1]
+    order = np.concatenate([np.arange(0, reach + 1), np.arange(-reach, 0)]) if reach else np.zeros(1, int)
+    k = int(np.argmax(lags))
+    i = int(order[k])
+    # the parabola's top through the three around it (on the circular correlation)
+    y0, y1, y2 = corr[(i - 1) % size], corr[i % size], corr[(i + 1) % size]
+    den = y0 - 2.0 * y1 + y2
+    frac = float(np.clip(0.5 * (y0 - y2) / den, -0.5, 0.5)) if abs(den) > 1e-12 else 0.0
+    r = float(y1 / math.sqrt(float((a * a).sum() * (b * b).sum()) + 1e-30))
+    return (i + frac) * step, r
 
 
 class Hits:
@@ -481,9 +507,18 @@ def _strengths(t, sets, reach):
     return {name: h.strongest(t, reach) for name, h in sets.items()}
 
 
-def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR):
-    """the report (see the module's docstring), and with `arrays` the envelopes and the voice's level as .npz"""
+def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference=None):
+    """the report (see the module's docstring), and with `arrays` the envelopes and the voice's level as .npz.  `reference`:
+    the mix the song structure was measured on; a mix of another source (another singer over the same backing) must lie on it
+    within a frame, or the structure's beats are not where its hits are (ValueError)"""
     mix, voice = read_sound(mix_path, sr), read_sound(voice_path, sr)
+    checked = None
+    if reference:
+        lag_s, r = mix_lag(mix, read_sound(reference, sr), sr)
+        checked = {"path": os.path.abspath(reference), "lag_ms": round(lag_s * 1000.0, 1), "r": round(r, 3)}
+        if abs(lag_s) > 1.0 / FPS:
+            raise ValueError("the mix lies %.0f ms off the reference mix %s (r %.2f): the song structure's beats are not where "
+                             "its hits are; measure the structure again before placing the flashes" % (lag_s * 1000.0, reference, r))
     n = min(len(mix), len(voice))
     mix, voice = mix[:n], voice[:n]
     lag = align(mix, voice, sr)
@@ -535,6 +570,7 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR):
                          "beat_first": beat.get("first"), "beat_period": beat.get("period")},
             "align": {"lag_samples": lag, "lag_ms": round(lag * 1000.0 / sr, 2), "gain_least_squares": round(gain, 3),
                       "gain_used": 1.0},
+            "reference": checked,
             "hits": {k: v.summary() for k, v in sets.items()},
             "syllables": {str(k): v for k, v in syllables.items()}, "returns": returns,
             "moments": moments, "decisions": decisions}
@@ -742,6 +778,7 @@ def main(argv=None):
     p.add_argument("look")
     p.add_argument("out")
     p.add_argument("--arrays")
+    p.add_argument("--reference", help="the mix the song structure was measured on: another source's mix must lie on it")
     p = sub.add_parser("place")
     p.add_argument("look")
     p.add_argument("measure")
@@ -757,7 +794,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     try:
         if args.cmd == "measure":
-            rep = measure(args.mix, args.voice, _load(args.structure), _load(args.look), args.arrays)
+            rep = measure(args.mix, args.voice, _load(args.structure), _load(args.look), args.arrays, reference=args.reference)
             rep["inputs"].update(structure=os.path.abspath(args.structure), look=os.path.abspath(args.look))
             with open(args.out, "w", encoding="utf-8") as f:
                 json.dump(rep, f, ensure_ascii=False, indent=1)

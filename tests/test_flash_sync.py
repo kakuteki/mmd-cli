@@ -107,6 +107,22 @@ class HitTest(unittest.TestCase):
         self.assertLess(float(np.abs(out[100:-100] - backing[100:-100]).max()), 1e-9)
 
 
+    def test_a_mix_of_another_source_is_found_where_its_backing_lies(self):
+        # (another singer's version: the same backing, maybe a lead-in of its own) the lag of the mixes' onsets
+        rng = np.random.default_rng(9)
+        ref = 0.001 * rng.standard_normal(SR * 12)
+        hit = burst(int(0.1 * SR), rng)
+        for k in range(40):
+            put(ref, 0.5 + 0.27 * k + 0.05 * rng.random(), (0.1 + rng.random()) * hit)
+        same = ref + 0.02 * rng.standard_normal(len(ref))               # another voice over the same backing
+        lag, r = FS.mix_lag(same, ref)
+        self.assertLess(abs(lag), 0.008)                             # (a guard at a frame: a quarter of one)
+        self.assertGreater(r, 0.8)
+        later = np.concatenate([0.001 * rng.standard_normal(int(0.31 * SR)), ref])[:len(ref)]
+        lag, r = FS.mix_lag(later, ref)
+        self.assertLess(abs(lag - 0.31), 0.008)
+
+
 # ---- the voice ----------------------------------------------------------------------------------------------------
 
 @unittest.skipUnless(FS, "needs numpy")
@@ -348,6 +364,22 @@ class PlaceTest(unittest.TestCase):
                 placed = json.load(f)
             self.assertEqual(sorted(ML.frame_of(e["t"], 30) for e in placed["mograph"]["events"]),
                              [f0["frame"], f0["frame"]])
+            # another source's mix over the same backing is measured against the reference: on it, it goes on; a mix that lies
+            # 0.3 s off is refused (the song structure's beats would not be where its hits are)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(FS.main(["measure", mix_path, voice_path, paths["structure"], paths["look"], out,
+                                          "--reference", mix_path]), 0)
+            with open(out, encoding="utf-8") as f:
+                self.assertLess(abs(json.load(f)["reference"]["lag_ms"]), 8.0)
+            shifted_path = os.path.join(d, "shifted.wav")
+            write_wav(shifted_path, np.concatenate([np.zeros(int(0.3 * SR)), backing + voice]), scale)
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said):
+                code = FS.main(["measure", mix_path, voice_path, paths["structure"], paths["look"], os.path.join(d, "no.json"),
+                                "--reference", shifted_path])
+            self.assertEqual(code, 2)
+            self.assertIn("structure", said.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(d, "no.json")))
             table = os.path.join(d, "table.md")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(FS.main(["table", out, table]), 0)
