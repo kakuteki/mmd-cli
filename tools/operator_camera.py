@@ -1474,6 +1474,12 @@ CLOSE_LOOK_DOWN = 30.0            # degrees: a close picture (waist and closer: 
                                   # (COMMON.md 2026-10-17: legs drawn close from 8 and 15 degrees above showed the underwear
                                   # at 213.43 s; a viewpoint near the height of her hip joints is not used close either)
 CLOSE_SIZES = ("waist", "chest", "face")
+CHEST_HIPS_UNDER = 0.10           # half-heights (5 % of the picture's height): a chest picture whose hips and hip joints
+CHEST_EYES_DOWN = 0.0             # stay this far under its bottom edge on every subframe (her crotch, under them, further)
+                                  # and whose camera looks down at her eyes by this much or more (never up at them) need
+                                  # not look down at her hips by CLOSE_LOOK_DOWN (COMMON, 2026-10-22: the exception for the
+                                  # chest shots of the eye contacts; the general rule, MIN_LOOK_DOWN and FLARE_LOOK_DOWN in a
+                                  # fast turn, still holds there, and the underwear is counted at 480 fps on them)
 GUARD_POINTS = ("hips", "lhip", "rhip")    # where guard measures the look-down: the point between the hip joints at their
                                            # height (the hips every earlier check measured, and the look-down test was
                                            # drawn against) and either hip joint (the far one is the least looked down at)
@@ -1568,13 +1574,42 @@ def pelvis_spins(dancer):
     return out
 
 
-def close_frames(dancer, frames):
-    """per frame whether its picture (`frames`: CameraFrame per frame) shows her at a close size (CLOSE_SIZES: what is
-    seen of her from the head top down, classify)"""
+def chest_margins(dancer, frame, cam):
+    """(how far under the bottom edge of the picture of `cam` her hips and hip joints stay over the frame's subframes, in
+    half-heights: the least of them, minus infinity for a point not in front of the camera; the least degrees the camera
+    looks down at her eyes over the subframes)"""
+    under = math.inf
+    for p in hip_points_over(dancer, frame):
+        _, v, depth = project(cam.position, cam.yaw, cam.pitch, cam.roll, cam.fov, p)
+        under = min(under, -1.0 - v if depth > 0.0 and math.isfinite(v) else -math.inf)
+    return under, look_down_at(cam.position, dancer.over("eyes", frame))
+
+
+def chest_clear(dancer, frame, cam):
+    """whether a chest picture of `cam` is clear of the close look-down on `frame`: her hips and hip joints CHEST_HIPS_UNDER
+    or more under its bottom edge on every subframe, the camera looking down at her eyes by CHEST_EYES_DOWN or more"""
+    under, eyes = chest_margins(dancer, frame, cam)
+    return under >= CHEST_HIPS_UNDER - 1e-9 and eyes >= CHEST_EYES_DOWN - 1e-9
+
+
+def chest_clear_frames(dancer, frames):
+    """per frame whether its picture (`frames`: CameraFrame per frame) shows her chest up (classify) clear of the close
+    look-down (chest_clear)"""
     out = []
     for f, cam in enumerate(frames):
         s = seen(dancer, f, cam)
-        out.append(classify(s["visible"], s["body_share"]) in CLOSE_SIZES)
+        out.append(classify(s["visible"], s["body_share"]) == "chest" and chest_clear(dancer, f, cam))
+    return out
+
+
+def close_frames(dancer, frames):
+    """per frame whether its picture (`frames`: CameraFrame per frame) shows her at a close size (CLOSE_SIZES: what is
+    seen of her from the head top down, classify), but a chest picture clear of the close look-down (chest_clear)"""
+    out = []
+    for f, cam in enumerate(frames):
+        s = seen(dancer, f, cam)
+        size = classify(s["visible"], s["body_share"])
+        out.append(size in CLOSE_SIZES and not (size == "chest" and chest_clear(dancer, f, cam)))
     return out
 
 
@@ -1756,13 +1791,18 @@ def lift_aim(dancer, cams, tilts, base_tilts, cuts, windows):
     return [lifted(c, x) for c, x in zip(cams, lifts)], lifts, runs
 
 
-def guard_view(dancer, frames, need, fast, windows=(), close=None):
+def guard_view(dancer, frames, need, fast, windows=(), close=None, clear=None):
     """the measures of the low angle on a camera path, every frame counted over its subframes (hip_points_over): the
     least look-down at her hips and hip joints, the frames under what they need, the least over her fast turns, over the
-    close pictures (`close`: the frames the given camera frames her close) and over every window"""
+    close pictures (`close`: the frames the given camera frames her close), over every window, and over the chest
+    pictures clear of the close look-down (`clear`: chest_clear_frames of the given camera) with the least of their
+    margins on this path (chest_margins: her hips under the bottom edge as a share of the picture's height, the
+    look-down at her eyes)"""
     angles = [look_down_at(cam.position, hip_points_over(dancer, f)) for f, cam in enumerate(frames)]
     turning = [a for a, t in zip(angles, fast) if t]
     closing = [a for a, c in zip(angles, close or []) if c]
+    cleared = [f for f, c in enumerate(clear or []) if c and f < len(frames)]
+    margins = [chest_margins(dancer, f, frames[f]) for f in cleared]
     out = {"look_down_min": _r(min(angles), 2), "look_down_min_at": int(min(range(len(angles)), key=angles.__getitem__)),
            "short_frames": sum(1 for a, n in zip(angles, need) if a < n - 1e-6),
            "under_4_5_frames": sum(1 for a in angles if a < MIN_LOOK_DOWN - 1e-6),
@@ -1770,6 +1810,12 @@ def guard_view(dancer, frames, need, fast, windows=(), close=None):
            "fast_turn_under_15_frames": sum(1 for a, t in zip(angles, fast) if t and a < FLARE_LOOK_DOWN - 1e-6),
            "close_frames": len(closing), "close_min": _r(min(closing), 2) if closing else None,
            "close_under_30_frames": sum(1 for a in closing if a < CLOSE_LOOK_DOWN - 1e-6),
+           "chest_clear_frames": len(cleared),
+           "chest_clear_hips_under_min": _r(min(m[0] for m in margins) / 2.0, 4) if cleared else None,
+           "chest_clear_eyes_down_min": _r(min(m[1] for m in margins), 3) if cleared else None,
+           "chest_clear_look_down_min": _r(min(angles[f] for f in cleared), 2) if cleared else None,
+           "chest_clear_short_frames": sum(1 for f, m in zip(cleared, margins)
+                                           if m[0] < CHEST_HIPS_UNDER - 1e-9 or m[1] < CHEST_EYES_DOWN - 1e-9),
            "windows": [{"frames": [int(a), int(b)], "need": float(d),
                         "min": _r(min(angles[max(0, int(a)):int(b) + 1]), 2)} for a, b, d in windows]}
     return out, angles
@@ -1916,9 +1962,10 @@ def run_guard(dance_path, model_path, camera_path, out_path, report_path=None, l
     write_bytes(out_full, vmd.dumps(camera_motion(frames, [0] + cuts)))
     back = vmd.load(out_full)
     close = close_frames(dancer, before)
+    clear = chest_clear_frames(dancer, before)
     need, fast = guard_needs(dancer, last, windows, close)
-    view_before, angles_before = guard_view(dancer, before, need, fast, windows, close)
-    view_after, angles_after = guard_view(dancer, frames, need, fast, windows, close)
+    view_before, angles_before = guard_view(dancer, before, need, fast, windows, close, clear)
+    view_after, angles_after = guard_view(dancer, frames, need, fast, windows, close, clear)
     cut_set = set(cuts)
     steps = [abs(tilts[f + 1] - tilts[f]) for f in range(last) if f + 1 not in cut_set]
     tilted = [f for f, t in enumerate(tilts) if t > 0.0]

@@ -1971,10 +1971,11 @@ class CloseLookDownTest(unittest.TestCase):
         self.assertEqual(oc.CLOSE_LOOK_DOWN, 30.0)
 
     def test_guard_raises_a_close_picture_to_the_close_look_down(self):
-        # a chest shot from her eye height (it looks down at her hips by about 20 degrees): every frame and subframe of
-        # it is raised to look down at them by 30 or more
+        # a chest shot from a unit under her eyes (it looks down at her hips by about 20 degrees, and up at her eyes: not
+        # clear, ChestClearTest): every frame and subframe of it is raised to look down at them by 30 or more
         d = standing(90)
-        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30, height=REST["eyes"] - 1.0)
+        self.assertLess(look_down_at_her_hips(d, 0, cam.position), 30.0)
         frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
         self.assertGreater(min(tilts), 0.0)
         for f in range(90):
@@ -1994,6 +1995,101 @@ class CloseLookDownTest(unittest.TestCase):
         knee = oc.frame_size(d, 0, "knee", 0.0)
         waist = oc.frame_size(d, 0, "waist", 40.0, fov=30)
         self.assertEqual(oc.close_frames(d, [knee] * 60 + [waist] * 60), [False] * 60 + [True] * 60)
+
+
+def row_height(cam, x, z, row):
+    """the height a point at (x, z) on the floor plan stands at to fall on the picture's row `row` (v) of `cam`"""
+    lo, hi = -40.0, 60.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if oc.project(cam.position, cam.yaw, cam.pitch, cam.roll, cam.fov, (x, mid, z))[1] < row:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+class ChestClearTest(unittest.TestCase):
+    """the exception to the close look-down (COMMON, 2026-10-22): a chest picture need not look down at her hips by
+    CLOSE_LOOK_DOWN when her hips and hip joints stay CHEST_HIPS_UNDER (5 % of the picture's height) or more under its
+    bottom edge on every subframe (her crotch, under them, further) and the camera does not look up at her eyes; the
+    general rule (MIN_LOOK_DOWN, FLARE_LOOK_DOWN in a fast turn) still holds there"""
+
+    def test_the_margins_are_five_percent_of_the_picture_and_level_with_her_eyes(self):
+        self.assertEqual(oc.CHEST_HIPS_UNDER, 0.10)          # half-heights: 5 % of the picture's height
+        self.assertEqual(oc.CHEST_EYES_DOWN, 0.0)
+
+    def test_a_chest_picture_from_her_eye_height_is_clear_and_guard_leaves_it(self):
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)       # (the chest's eye height: hers)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "chest")
+        self.assertAlmostEqual(cam.position[1], REST["eyes"], places=6)
+        self.assertLess(look_down_at_her_hips(d, 0, cam.position), oc.CLOSE_LOOK_DOWN)
+        self.assertTrue(oc.chest_clear(d, 0, cam))
+        under, eyes = oc.chest_margins(d, 0, cam)
+        self.assertGreater(under, oc.CHEST_HIPS_UNDER)
+        self.assertAlmostEqual(eyes, 0.0, places=6)
+        self.assertEqual(oc.close_frames(d, [cam] * 90), [False] * 90)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertEqual(max(tilts), 0.0)
+
+    def test_a_chest_picture_from_under_her_eyes_is_close(self):
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30, height=REST["eyes"] - 0.05)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "chest")
+        self.assertFalse(oc.chest_clear(d, 0, cam))
+        self.assertEqual(oc.close_frames(d, [cam] * 30), [True] * 30)
+
+    def test_her_hips_near_the_bottom_edge_on_one_subframe_make_the_frame_close(self):
+        # the hip joints given at 16 subframes a frame (as guard reads the dance): on one subframe of frame 10 her left hip
+        # joint comes up to 4 % of the picture's height under the bottom edge (6 % on frame 20's)
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        sub = {name: [[d.at(name, f)] * 16 for f in range(30)] for name in oc.GUARD_POINTS}
+        x, _, z = d.at("lhip", 10)
+        sub["lhip"][10] = sub["lhip"][10][:7] + [(x, row_height(cam, x, z, -1.08), z)] + sub["lhip"][10][8:]
+        sub["lhip"][20] = sub["lhip"][20][:7] + [(x, row_height(cam, x, z, -1.12), z)] + sub["lhip"][20][8:]
+        tracks = {n: [d.at(n, f) for f in range(30)] for n in d.tracks}
+        d2 = oc.Dancer(tracks, sub)
+        self.assertTrue(oc.chest_clear(d2, 9, cam))
+        self.assertFalse(oc.chest_clear(d2, 10, cam))
+        self.assertTrue(oc.chest_clear(d2, 20, cam))
+        self.assertAlmostEqual(oc.chest_margins(d2, 10, cam)[0], 0.08, places=6)
+        close = oc.close_frames(d2, [cam] * 30)
+        self.assertEqual([f for f in range(30) if close[f]], [10])
+
+    def test_only_a_chest_picture_is_ever_clear(self):
+        # a waist picture from her eye height looks down at her hips by less than 30 degrees and is close
+        d = standing(30)
+        waist = oc.frame_size(d, 0, "waist", 0.0, fov=30, height=REST["eyes"])
+        s = oc.seen(d, 0, waist)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "waist")
+        self.assertEqual(oc.close_frames(d, [waist] * 30), [True] * 30)
+
+    def test_a_clear_chest_picture_still_looks_down_as_a_fast_turn_asks(self):
+        # her shoulders spinning: the general rule's 15 degrees (the chest from her eye height looks down about 22 already)
+        d = standing(60, turn=lambda f: 900.0 * f / FPS if 20 <= f <= 40 else (900.0 * 20 / FPS if f > 40 else 0.0))
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        close = oc.close_frames(d, [cam] * 60)
+        need, fast = oc.guard_needs(d, 59, (), close)
+        self.assertTrue(any(fast))
+        self.assertFalse(any(close))
+        self.assertEqual(max(need), oc.FLARE_LOOK_DOWN)
+
+    def test_the_guard_report_counts_the_clear_chest_frames(self):
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        close = oc.close_frames(d, [cam] * 30)
+        need, fast = oc.guard_needs(d, 29, (), close)
+        clear = oc.chest_clear_frames(d, [cam] * 30)
+        view, _ = oc.guard_view(d, [cam] * 30, need, fast, (), close, clear)
+        self.assertEqual(view["chest_clear_frames"], 30)
+        self.assertEqual(view["close_frames"], 0)
+        self.assertGreater(view["chest_clear_hips_under_min"], 0.05)          # a share of the picture's height
+        self.assertAlmostEqual(view["chest_clear_eyes_down_min"], 0.0, places=4)
+        self.assertGreater(view["chest_clear_look_down_min"], oc.MIN_LOOK_DOWN)
 
 
 def rin_with_ankles():

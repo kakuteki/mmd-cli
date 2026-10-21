@@ -1717,30 +1717,40 @@ def sized_centre(f):
     return 1.5 * math.sin(2.0 * math.pi * f / 900.0), 0.4 * math.sin(2.0 * math.pi * f / 1300.0)
 
 
-def sized_dance():
-    """センター walks a little side to side; her whole body turns (センター's Y) by TURNED's 60 degrees and back"""
+def sized_dance(more=()):
+    """センター walks a little side to side; her whole body turns (センター's Y) by TURNED's 60 degrees and back, and by
+    each of `more` (((first, last), degrees): turning on a cosine over 60 frames, holding, and back over the last 60;
+    keyed every 5 frames, no faster than a busy dance: 127 degrees in a second at most)"""
     keys = []
-    for f in list(range(0, LAST + 1, 15)) + [LAST]:
+    for f in sorted(set(list(range(0, LAST + 1, 15)) + [LAST] + [g for (a, b), _ in more for g in range(a, b + 1, 5)])):
         x, z = sized_centre(f)
         a = 0.0
         if TURNED[0] <= f <= TURNED[1]:
             a = 60.0 * math.sin(math.pi * (f - TURNED[0]) / float(TURNED[1] - TURNED[0])) ** 0.5
+        for (first, final), degrees in more:
+            if first <= f <= final:
+                a = degrees * (1.0 - math.cos(math.pi * min(1.0, (f - first) / 60.0, (final - f) / 60.0))) / 2.0
         keys.append(bone("センター", f, pos=(x, 0.0, z), rot=(0.0, a, 0.0)))
     return vmd.Motion(model_name="sized", bones=keys)
 
 
-def sized_dancer(motion):
+def sized_dancer(motion, spin=SPIN, crouch=None):
     """her landmarks over the sized dance: standing where センター is, facing where the dance turns her (facing_at), her
-    shoulders and lower body spinning over SPIN, her feet stepping over STEPS"""
+    shoulders and lower body spinning over `spin` (SPIN), her feet stepping over STEPS, and with `crouch` ((first, last),
+    units) her body lowering that far on a cosine over 60 frames, held, and back over the last 60 (her feet stay)"""
+    spin_first, spin_last = spin
     chain = mc.facing_chain(motion)
     out = {n: [] for n in oc.LANDMARKS + oc.HIP_LANDMARKS + oc.LEG_LANDMARKS}
     for f in range(LAST + 1):
         x, z = sized_centre(f)
         way = mc.facing_at(chain, f)
-        spin = 720.0 * (f - SPIN[0]) / 30.0 if SPIN[0] <= f <= SPIN[1] else 0.0
-        a = math.radians(way + spin)
+        turn = 720.0 * (f - spin_first) / 30.0 if spin_first <= f <= spin_last else 0.0
+        a = math.radians(way + turn)
         step = 1.5 * math.sin(2.0 * math.pi * 3.0 * f / 30.0) if STEPS[0] <= f <= STEPS[1] else 0.0
         down = 5.0 * math.sin(math.pi * (f - SQUAT[0]) / float(SQUAT[1] - SQUAT[0])) if SQUAT[0] <= f <= SQUAT[1] else 0.0
+        if crouch is not None and crouch[0][0] <= f <= crouch[0][1]:
+            (c0, c1), depth = crouch
+            down += depth * (1.0 - math.cos(math.pi * min(1.0, (f - c0) / 60.0, (c1 - f) / 60.0))) / 2.0
         for name in oc.LANDMARKS + ("lhip", "rhip", "ltoe", "rtoe", "lankle", "rankle"):
             s = SIDE.get(name, 0.0)
             dx = (step if name in ("ltoe", "lankle") else -step if name in ("rtoe", "rankle") else 0.0)
@@ -1760,9 +1770,10 @@ def sized_song():
     return song
 
 
-def sized_plan(seed=0, **kw):
-    motion = sized_dance()
-    dancer = sized_dancer(motion)
+def sized_plan(seed=0, more=(), spin=SPIN, head=(), crouch=None, **kw):
+    motion = sized_dance(more)
+    motion.bones.extend(head)                   # keys of 頭 (her head's pitch: facing_both)
+    dancer = sized_dancer(motion, spin, crouch)
     shots = mc.plan_music_shots(motion, sized_song(), ONSETS, seed=seed, contacts=[CONTACT], dancer=dancer,
                                 notes=[NOTE], **kw)
     return motion, dancer, shots
@@ -1825,6 +1836,62 @@ class MusicSizesTest(unittest.TestCase):
         shots[0]["contact"] = True
         self.assertEqual(mc.music_sizes(shots)[0], "chest")
 
+    def test_a_busy_verse_line_comes_close_but_never_a_fast_turn(self):
+        # (camsync2's last round: the A melody's sung lines come near, waist or knee, but for footwork, fast turns and the
+        # still parts; a busy dance is none of these)
+        shots = self.shots()
+        shots[1].update(spin=True, fast=False, calm=False)         # a busy verse line
+        shots[2].update(spin=True, fast=True)                      # the note's verse shot holds a fast turn
+        share = dict(mc.MUSIC_SIZE_SHARE, waist=0.5)
+        sizes = mc.music_sizes(shots, share=share, chorus_share=dict(mc.MUSIC_CHORUS_SHARE, waist=0.5))
+        self.assertEqual(sizes[1], "waist")
+        self.assertNotIn(sizes[2], mc.MUSIC_CLOSE)
+        # a busy chorus shot is still not close
+        shots = self.shots()
+        shots[5].update(spin=True, fast=False, calm=False)
+        shots[6].update(spin=True, fast=False, calm=False)
+        sizes = mc.music_sizes(shots, share=share, chorus_share=dict(mc.MUSIC_CHORUS_SHARE, waist=0.5))
+        self.assertNotIn(sizes[5], mc.MUSIC_CLOSE)
+        self.assertNotIn(sizes[6], mc.MUSIC_CLOSE)
+
+    def test_the_verse_lines_take_knee_before_the_calmer_shots(self):
+        # a verse line no close way of seeing holds (close_ok False) and a calmer chorus shot: room for one of them at
+        # knee, the verse's
+        shots = self.shots()
+        shots[1].update(close_ok=False, pace=15.0)
+        shots[5].update(pace=1.0, sung=0.0)
+        sizes = mc.music_sizes(shots, share=dict(mc.MUSIC_SIZE_SHARE, knee=0.1))
+        self.assertEqual(sizes[1], "knee")
+        self.assertNotEqual(sizes[5], "knee")
+        # a verse line in footwork is full
+        shots[1]["wide"] = True
+        self.assertEqual(mc.music_sizes(shots, share=dict(mc.MUSIC_SIZE_SHARE, knee=0.1))[1], "full")
+
+    def test_a_verse_line_with_a_fast_turn_is_not_brought_near(self):
+        # (the A melody's lines come near but where she turns fast: neither waist nor knee there, the half of the shot
+        # without the turn is cut apart for it, split_near)
+        shots = self.shots()
+        shots[1].update(spin=True, fast=True, calm=False)
+        sizes = mc.music_sizes(shots, share=dict(mc.MUSIC_SIZE_SHARE, knee=0.9, waist=0.9),
+                               chorus_share=dict(mc.MUSIC_CHORUS_SHARE, knee=0.9, waist=0.9))
+        self.assertEqual(sizes[1], "full")
+        # a chorus shot with a fast turn may still be knee
+        shots = self.shots()
+        shots[5].update(spin=True, fast=True, calm=False)
+        self.assertEqual(mc.music_sizes(shots, share=dict(mc.MUSIC_SIZE_SHARE, knee=0.9),
+                                        chorus_share=dict(mc.MUSIC_CHORUS_SHARE, knee=0.9))[5], "knee")
+
+    def test_a_shot_that_cannot_hold_knee_passes_its_share_on(self):
+        shots = self.shots()
+        sizes = mc.music_sizes(shots)
+        knee = [i for i, z in enumerate(sizes) if z == "knee"]
+        self.assertTrue(knee)
+        for i in knee:
+            shots[i]["knee_ok"] = False
+        again = mc.music_sizes(shots)
+        self.assertTrue(all(again[i] != "knee" for i in knee))
+        self.assertIn("knee", again)
+
     def test_each_share_comes_to_its_target_within_half_a_shot(self):
         shots = self.shots()
         sizes = mc.music_sizes(shots)
@@ -1879,12 +1946,38 @@ class MusicSizedPlanTest(unittest.TestCase):
                     self.assertLessEqual(abs(u), mc.MUSIC_FRAME["side"] + 1e-9, (f, name, s.size))
 
     def test_a_close_shot_looks_down_at_her_hips_and_hip_joints_by_30_degrees(self):
+        # but the chest shot of an eye contact, which keeps clear of that (COMMON 2026-10-22, operator_camera.chest_clear)
         close = [s for s in self.shots if s.size in mc.MUSIC_CLOSE]
         self.assertTrue(close)
+        self.assertTrue([s for s in close if not s.contact])
         for s in close:
             for i, cam in enumerate(sized_cameras(s)):
                 points = [self.dancer.at(n, s.start + i) for n in ("hips", "lhip", "rhip")]
+                if s.contact and s.size == "chest":
+                    self.assertTrue(oc.chest_clear(self.dancer, s.start + i, cam), s.start + i)
+                    continue
                 self.assertGreaterEqual(oc.look_down_at(cam.position, points), oc.CLOSE_LOOK_DOWN, (s.start + i, s.size))
+
+    def test_the_contact_chest_is_shot_from_her_eye_height_clear_of_the_close_look_down(self):
+        # (COMMON, 2026-10-22: a chest shot's look-down at her hips may stay under 30 degrees where her hips stay 5 % of the
+        # picture's height under its bottom edge on every subframe and the camera does not look up at her eyes) the
+        # contact's chest shot stands level with her eyes, at most a degree over them, on every frame, clear of the close
+        # look-down by the plan's margins, and looks down at her hips as the general rule asks
+        contact = [s for s in self.shots if s.contact and s.size == "chest"][0]
+        for i, cam in enumerate(sized_cameras(contact)):
+            f = contact.start + i
+            self.assertTrue(oc.chest_clear(self.dancer, f, cam), f)
+            under, eyes = oc.chest_margins(self.dancer, f, cam)
+            self.assertGreaterEqual(under, oc.CHEST_HIPS_UNDER + mc.MUSIC_CLEAR["hips"] - 1e-9, f)
+            self.assertGreaterEqual(eyes, 0.0, f)
+            self.assertLessEqual(mc.eyes_up(self.dancer, f, cam), 1.0, f)
+            s = oc.seen(self.dancer, f, cam)
+            self.assertEqual(oc.classify(s["visible"], s["body_share"]), "chest", f)
+            points = [self.dancer.at(n, f) for n in ("hips", "lhip", "rhip")]
+            self.assertGreaterEqual(oc.look_down_at(cam.position, points), oc.MIN_LOOK_DOWN, f)
+        # and guard leaves it: no frame of it is a close picture (close_frames counts the frames from 0)
+        cams = sized_cameras(contact)
+        self.assertFalse(any(oc.close_frames(self.dancer, [cams[0]] * contact.start + cams)[contact.start:]))
 
     def test_a_full_shot_shows_both_toes_and_a_little_floor(self):
         full = [s for s in self.shots if s.size == "full"]
@@ -2019,6 +2112,28 @@ class MusicSizedPlanTest(unittest.TestCase):
         self.assertEqual(held.features["face_hits"], 0)
         self.assertEqual(held.features["rule_waived"], 1)
 
+    def test_the_cut_rule_is_kept_when_waiving_it_leaves_her_face_on_the_words_still(self):
+        # (camsync2's last round: a whole-body shot waived the 30-degree turn to have her face on the words' boxes 4 frames
+        # instead of 5, a cut near a jump cut for nothing the drawn words showed) a waiver only for a way that keeps her
+        # face off them
+        real = mc._sized_shot
+        target = [s for s in self.shots if s.kind == "verse"][0].start
+
+        def fake(dancer, size, index, frame, end, *rest, **kw):
+            shot, hits, turns, why = real(dancer, size, index, frame, end, *rest, **kw)
+            waive = rest[18] if len(rest) > 18 else kw.get("waive", 0)
+            if frame == target and shot is not None:
+                return shot, (5 if not waive else 4), turns, why
+            return shot, hits, turns, why
+        mc._sized_shot = fake
+        try:
+            _, _, shots = sized_plan()
+        finally:
+            mc._sized_shot = real
+        held = [s for s in shots if s.start == target][0]
+        self.assertEqual(held.features["face_hits"], 5)
+        self.assertEqual(held.features["rule_waived"], 0)
+
     def test_the_line_is_crossed_when_her_face_turns_from_one_side_of_the_picture_to_the_other(self):
         self.assertTrue(mc.crosses_line(0.0, -40.0, 40.0))
         self.assertFalse(mc.crosses_line(0.0, -40.0, -10.0))
@@ -2099,6 +2214,252 @@ class MusicSizedPlanTest(unittest.TestCase):
         finally:
             mc.MUSIC_ROUNDS = rounds
         self.assertNotIn({s.start: s for s in once}[other.start].size, mc.MUSIC_CLOSE)
+
+
+def placed(dancer, frame, cam):
+    """(x, y, head whole): the middle of her eyes in the picture of `cam` (shares of it, x from the left, y from the top),
+    and whether her head (a disc of MUSIC_HEAD's half width round its height over her eyes) is inside the side edges"""
+    e = dancer.at("eyes", frame)
+    u, v, _ = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, e)
+    half, up = mc.MUSIC_HEAD
+    cu, _, depth = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, (e[0], e[1] + up, e[2]))
+    r = half / (depth * math.tan(math.radians(cam.fov / 2.0)))
+    return (u / oc.ASPECT + 1.0) / 2.0, (1.0 - v) / 2.0, abs(cu) + r <= oc.ASPECT
+
+
+def placed_share(dancer, shot, rows):
+    """the share of a shot's frames with the middle of her eyes in x 0.25-0.75 (and y 0.15-0.45 with `rows`) of the
+    picture and her head whole across"""
+    good = 0
+    cams = sized_cameras(shot)
+    for i, cam in enumerate(cams):
+        x, y, whole = placed(dancer, shot.start + i, cam)
+        good += 0.25 <= x <= 0.75 and (not rows or 0.15 <= y <= 0.45) and whole
+    return good / float(len(cams))
+
+
+class MusicCompositionTest(unittest.TestCase):
+    """camsync2's last round: a waist or chest shot keeps the middle of her eyes in x 0.25-0.75 and y 0.15-0.45 of the
+    picture and her head whole across on 95 % of its frames, and her face turned more than 90 degrees from the camera on
+    10 % at most, or it is shot wider; a whole-body or knee shot keeps her eyes in x 0.25-0.75 where a way of seeing that
+    keeps her face off the words does (v13: 3530 her eyes at 0.15-0.27 of the picture's width in a chest shot, 5966 at
+    0.78 in a whole-body one, 4884-5089 the back of her head in a chest shot); the A melody's sung lines come near, not
+    where she turns fast; the chest shot of an eye contact is shot level with her eyes (MusicSizedPlanTest)"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.motion, cls.dancer, cls.shots = sized_plan()
+
+    def test_the_box_and_the_head_are_the_requesters(self):
+        self.assertEqual(mc.MUSIC_EYES_BOX, {"x": (0.25, 0.75), "y": (0.15, 0.45)})
+        self.assertEqual(mc.MUSIC_EYES_HOLD, 0.95)
+        self.assertEqual((mc.MUSIC_BACK, mc.MUSIC_BACK_SHARE), (90.0, 0.10))
+
+    def test_a_close_shot_keeps_her_eyes_in_the_middle_and_her_head_whole(self):
+        # words over the middle 0.30-0.70 of the picture across the note's shot: a waist shot keeps her face off them only
+        # with her eyes at the picture's side (0.17-0.20 before the rule); it is shot wider, her face off the words
+        note = [s for s in self.shots if s.start <= int(NOTE[0] * 30) <= s.end][0]
+        self.assertIn(note.size, mc.MUSIC_CLOSE)
+        box = [note.start, note.end, 0.30, 0.0, 0.70, 1.0, "back"]
+        _, _, shots = sized_plan(keep_clear=[box])
+        for s in self.shots + shots:
+            if s.size in mc.MUSIC_CLOSE:
+                self.assertGreaterEqual(placed_share(self.dancer, s, True), mc.MUSIC_EYES_HOLD, (s.start, s.size))
+        held = [s for s in shots if s.start == note.start][0]
+        self.assertNotIn(held.size, mc.MUSIC_CLOSE)
+        self.assertEqual(held.features["face_hits"], 0)
+
+    def test_no_close_shot_shows_the_back_of_her_head(self):
+        # she turns her back to the front (180 degrees, not a fast turn nor a busy dance) over most of the note's shot: no
+        # way of seeing within MUSIC_RANGE's yaws keeps her face turned to it on 90 % of the frames; the shot is wider
+        note = [s for s in self.shots if s.start <= int(NOTE[0] * 30) <= s.end][0]
+        motion, dancer, shots = sized_plan(more=(((note.start + 20, note.end), 180.0),))
+        held = [s for s in shots if s.start == note.start][0]
+        self.assertFalse(held.features["spin"])
+        chain = mc.facing_chain(motion)
+        for s in shots:
+            if s.size not in mc.MUSIC_CLOSE:
+                continue
+            back = sum(1 for i, cam in enumerate(sized_cameras(s))
+                       if angle_off(mc.eyes_round(dancer, s.start + i, cam), mc.facing_both(chain, s.start + i)[0]) > 90.0)
+            self.assertLessEqual(back / float(s.end - s.start + 1), 0.10, (s.start, s.size))
+        self.assertNotIn(held.size, mc.MUSIC_CLOSE)
+
+    def test_a_whole_body_shot_keeps_her_eyes_in_the_middle_band_where_a_way_of_seeing_does(self):
+        # words over the left 0.72 of the picture on the verse shot's first frames and over its right 0.30 on its last (as
+        # MusicSizedPlanTest's track): the track that carries her face off them moves the picture no faster than
+        # MUSIC_TURN_PACE turns it and has her eyes in x 0.25-0.75 on 95 % of the frames (0.94 before)
+        verse = [s for s in self.shots if s.kind == "verse"][0]
+        boxes = [[verse.start, verse.start + 5, 0.0, 0.0, 0.72, 1.0, "back"],
+                 [verse.end - 29, verse.end, 0.70, 0.0, 1.0, 1.0, "back"]]
+        _, _, shots = sized_plan(keep_clear=boxes)
+        held = [s for s in shots if s.start == verse.start][0]
+        self.assertEqual(held.features["face_hits"], 0)
+        self.assertGreaterEqual(placed_share(self.dancer, held, False), mc.MUSIC_EYES_HOLD)
+        self.assertFalse(held.features["band_waived"])
+        track = held.moves[0]
+        self.assertEqual((track.name, track.start), ("track", held.start))
+        values = mc.music_shot_values(held)
+        for a, b in zip(values, values[1:]):
+            self.assertLessEqual(math.degrees(math.atan2(abs(b["track"] - a["track"]), a["distance"])),
+                                 mc.MUSIC_TURN_PACE + 1e-9)
+        # every whole-body and knee shot of the plan without words keeps her eyes in the band
+        for s in self.shots:
+            if s.size in ("full", "knee"):
+                self.assertGreaterEqual(placed_share(self.dancer, s, False), mc.MUSIC_EYES_HOLD, s.start)
+                self.assertFalse(s.features["band_waived"], s.start)
+
+    def contact_with_head(self, pitches):
+        """the plan with her head pitched (頭's X: `pitches` [(frame, degrees)]), the shot that holds the contact, and
+        facing_both"""
+        keys = [bone("頭", f, rot=(x, 0.0, 0.0)) for f, x in pitches]
+        motion, dancer, shots = sized_plan(head=keys)
+        chain = mc.facing_chain(motion)
+        held = [s for s in shots if s.start <= int(CONTACT * 30) <= s.end][0]
+        return held, chain, dancer
+
+    def test_the_reach_of_a_contact_is_eye_gazes(self):
+        # its contact zone 5.3 degrees up, 8.9 down, 16 sideways off her head's way, a frame in reach when the eyes there
+        # come within CONTACT_ERROR (4) of the camera, a contact a run of CONTACT_MIN (48) frames; the plan 1.5 inside
+        self.assertEqual((mc.MUSIC_CONTACT_UP, mc.MUSIC_CONTACT_DOWN, mc.MUSIC_CONTACT_SIDE), (7.8, 11.4, 18.5))
+        self.assertEqual(mc.MUSIC_CONTACT_RUN, 50)
+
+    def test_a_contact_she_nods_through_is_still_shot_chest_up_level_with_her_eyes(self):
+        # (camsync2's last round: with the camera level with her eyes a nod of 6 degrees put it 6 above her head's way,
+        # over the plan's 4.5 of before, and broke the run of every contact she nods through: none was shot chest up)
+        a, b = [s for s in self.shots if s.contact][0].contact
+        mid = (a + b) // 2
+        held, chain, dancer = self.contact_with_head([(0, 0.0), (mid - 14, 0.0), (mid - 8, -6.0), (mid + 8, -6.0),
+                                                      (mid + 14, 0.0)])
+        self.assertLess(mc.facing_both(chain, mid)[1], -5.5)               # she looks down
+        self.assertEqual(held.size, "chest")
+        run = best = 0
+        for i, cam in enumerate(sized_cameras(held)):
+            f = held.start + i
+            if not held.contact[0] <= f <= held.contact[1]:
+                continue
+            way, pitch = mc.facing_both(chain, f)
+            up = mc.eyes_up(dancer, f, cam) - pitch
+            within = -mc.MUSIC_CONTACT_DOWN <= up <= mc.MUSIC_CONTACT_UP and angle_off(mc.eyes_round(dancer, f, cam), way) <= mc.MUSIC_CONTACT_SIDE
+            run = run + 1 if within else 0
+            best = max(best, run)
+        self.assertGreaterEqual(best, min(mc.MUSIC_CONTACT_RUN, held.contact[1] - held.contact[0] + 1))
+
+    def test_a_contact_she_looks_far_up_through_is_out_of_reach_below(self):
+        # her head 40 degrees up over the whole contact: a camera not under her eyes and at most MUSIC_CONTACT_RISES over
+        # them is still more than 8.9 and the error 4 under her head's way: no chest shot (it would hold no contact)
+        held, chain, dancer = self.contact_with_head([(0, 0.0), (700, 0.0), (760, 40.0), (1000, 40.0), (1060, 0.0)])
+        a, b = held.contact
+        self.assertGreater(mc.facing_both(chain, (a + b) // 2)[1], 39.0)    # she looks up
+        self.assertNotEqual(held.size, "chest")
+
+    def test_a_contact_she_looks_up_through_is_shot_from_over_her_eyes(self):
+        # (camsync2's last round: at 240.9 s she looks up 9 degrees at the middle of the contact, up to 25: a camera level
+        # with her eyes was under eye_gaze's reach for 20 frames of the 48) her head 15 degrees up over the whole contact: the
+        # chest shot rises over her eyes (MUSIC_CONTACT_RISES) until it is within reach
+        held, chain, dancer = self.contact_with_head([(0, 0.0), (700, 0.0), (760, 15.0), (1000, 15.0), (1060, 0.0)])
+        self.assertEqual(held.size, "chest")
+        a, b = held.contact
+        ups = [mc.eyes_up(dancer, f, cam) for f, cam in zip(range(held.start, held.end + 1), sized_cameras(held)) if a <= f <= b]
+        self.assertGreater(min(ups), 15.0 - mc.MUSIC_CONTACT_DOWN)
+        self.assertEqual(mc.MUSIC_CONTACT_RISES, (0.0, 1.0, 2.0, 3.0))
+
+    def test_every_size_a_shot_lost_is_in_its_report(self):
+        # (she turns her back over the note's shot: planned waist in the first round, it loses it on the back of her head,
+        # and the reasons stay in its report)
+        note = [s for s in self.shots if s.start <= int(NOTE[0] * 30) <= s.end][0]
+        _, _, shots = sized_plan(more=(((note.start + 20, note.end), 180.0),))
+        held = [s for s in shots if s.start == note.start][0]
+        self.assertEqual(held.features["lost"][0]["planned"], "waist")
+        self.assertIn("back", held.features["lost"][0]["tried"]["waist"])
+        self.assertEqual([s.features["lost"] for s in self.shots], [[]] * len(self.shots))
+
+    def test_the_follow_takes_her_eyes_height_over_half_a_second(self):
+        # (camsync2's last round: averaged over a second the look-at point came down 2 frames late for a quick dip of her
+        # eyes from 16.9 to 14.3 at 1218, her knees out of a knee shot by 0.007 of the picture)
+        self.assertEqual(mc.MUSIC_FOLLOW_WINDOW, 15)
+        track = mc.upper_track(self.dancer, LAST)
+        expect = mc._centered_average([self.dancer.at("eyes", f)[1] for f in range(LAST + 1)], mc.MUSIC_FOLLOW_WINDOW)
+        for f in (100, 306, 900):
+            self.assertAlmostEqual(track[f][2], expect[f], places=9)
+
+    def test_a_knee_shot_may_cut_her_lower_down_to_keep_her_knees_in(self):
+        # (camsync2's last round: 1181-1283, her knees 0.007 out at the cut 0.84 on 2 frames of a crouch)
+        self.assertIn({"cut": 0.88}, mc.MUSIC_SIZE_FITS["knee"])
+
+    def test_a_follow_with_heights_carries_the_look_at_point_up_and_down(self):
+        # (x, z, dy) per frame: the look-at point at the shot's height plus dy (a close or knee shot follows her eyes)
+        shot = mc.MusicShot(0, 0, 2, "verse1", "verse", 4, {"distance": 20.0, "pitch": 20.0, "yaw": 0.0, "track": 0.0}, [],
+                            [(0.0, 0.0, 0.0), (0.5, 0.1, -1.0), (0.0, 0.0, 0.25)], None, "waist", 14.0, 30)
+        self.assertEqual([round(v["pos"][1], 9) for v in mc.music_shot_values(shot)], [14.0, 13.0, 14.25])
+        self.assertEqual(mc.music_shot_values(shot)[1]["pos"][0], 0.5)
+        flat = dataclasses.replace(shot, centre=[(0.0, 0.0)] * 3)
+        self.assertEqual([v["pos"][1] for v in mc.music_shot_values(flat)], [14.0] * 3)
+
+    def test_a_waist_shot_follows_her_down_as_she_crouches(self):
+        # (camsync2's last round: the verse lines failed the box's y as she crouched 2 to 2.7 units, her eyes at 0.30-0.58
+        # of the picture from a look-at point at one height) she lowers 2.7 units over the note's shot: its waist shot
+        # carries the look-at point down with her eyes (eyes_track) and keeps them in the box
+        note = [s for s in self.shots if s.start <= int(NOTE[0] * 30) <= s.end][0]
+        _, dancer, shots = sized_plan(crouch=((note.start + 20, note.end - 20), 2.7))
+        held = [s for s in shots if s.start == note.start][0]
+        self.assertEqual(held.size, "waist")
+        self.assertGreaterEqual(placed_share(dancer, held, True), mc.MUSIC_EYES_HOLD)
+        heights = [v["pos"][1] for v in mc.music_shot_values(held)]
+        self.assertGreater(max(heights) - min(heights), 1.5)
+        # a whole-body shot does not follow her up and down
+        for s in shots:
+            if s.size == "full":
+                self.assertEqual(len({round(v["pos"][1], 9) for v in mc.music_shot_values(s)}), 1, s.start)
+
+    def test_a_sized_drive_move_comes_up_to_its_pace_over_half_a_beat(self):
+        # (camsync2's last round, the rhythm: a small move of a sized shot, eased in over a whole beat, came up to
+        # camera_rhythm's threshold 5 to 6 frames after it started, after the beat: a dolly of 2 units over 103 frames;
+        # over half a beat it does within about 3, on the beat with the cut's lead)
+        self.assertEqual(mc.MUSIC_RAMP_BEATS, 0.5)
+        drives = [m for s in self.shots for m in s.moves if m.shape == "drive"]
+        self.assertTrue(drives)
+        for m in drives:
+            self.assertAlmostEqual(m.ramp * m.frames, mc.MUSIC_RAMP_BEATS * BEAT * 30.0, delta=0.05)
+
+    def test_a_verse_shot_with_a_fast_turn_in_one_half_is_cut_at_its_middle_bar_and_the_other_half_comes_near(self):
+        # her spin in the first half of the first verse shot (its bars 4-7): the shot is cut at its middle bar line (bar 6,
+        # the cut's lead before it), the half with the spin is full, the other waist or knee; the other cuts are the plain
+        # plan's
+        verse = [s for s in self.shots if s.kind == "verse"][0]
+        middle = frames_of_bar(6)
+        self.assertEqual((verse.start, verse.end), (frames_of_bar(4), frames_of_bar(8) - 1))
+        _, _, shots = sized_plan(spin=(verse.start + 15, verse.start + 45))
+        self.assertEqual([s.start for s in shots], sorted([s.start for s in self.shots] + [middle]))
+        first = [s for s in shots if s.start == verse.start][0]
+        second = [s for s in shots if s.start == middle][0]
+        self.assertEqual((first.end, second.end), (middle - 1, verse.end))
+        self.assertEqual((first.bars, second.bars), (2, 2))
+        self.assertEqual(first.size, "full")
+        self.assertIn(second.size, ("waist", "knee"))
+        # the spin in the chorus (as the plan without it): no verse shot is cut
+        self.assertEqual(len([s for s in self.shots if s.kind == "verse"]), 2)
+
+
+class WordBoxesTest(unittest.TestCase):
+    """the boxes of the words with an index by frame (camsync2's last round: the words cut into cells, text_face.py --cells,
+    are 98,659 boxes over the song; a shot looks up its own frames' boxes)"""
+
+    def test_the_boxes_of_a_frame_and_of_frames(self):
+        boxes = mc.WordBoxes([[10, 12, 0.1, 0.1, 0.2, 0.2, "back"], [12, 20, 0.5, 0.5, 0.6, 0.6, "front"],
+                              [30, 30, 0.0, 0.0, 1.0, 1.0, "back"]])
+        self.assertEqual(len(boxes), 3)
+        self.assertEqual(boxes.on(12), [boxes[0], boxes[1]])
+        self.assertEqual(boxes.on(25), [])
+        self.assertEqual(boxes.between(11, 29), [boxes[0], boxes[1]])
+        self.assertEqual(boxes.between(21, 29), [])
+
+    def test_a_shots_frames_on_the_words_are_the_same_through_the_index(self):
+        motion, dancer, shots = sized_plan()
+        verse = [s for s in shots if s.kind == "verse"][0]
+        plain = [[verse.start + 10 * k, verse.start + 10 * k + 2, 0.40 + 0.01 * k, 0.0, 0.62, 0.5, "back"] for k in range(12)]
+        self.assertGreater(mc.face_hits(dancer, verse, plain), 0)
+        self.assertEqual(mc.face_hits(dancer, verse, mc.WordBoxes(plain)), mc.face_hits(dancer, verse, plain))
 
 
 def sized_model():

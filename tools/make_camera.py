@@ -884,7 +884,7 @@ MUSIC_SIZE_SPEC = {"full": {"body": 0.84, "room": 0.06, "fov": FOV, "eye": -2.5}
 # it), so that the pose estimate of the references' classes (the hips seen, not the knees) reads it as waist
 MUSIC_SIZE_FITS = {"full": ({}, {"body": 0.80}, {"body": 0.76}, {"body": 0.72}),
                    "knee": ({}, {"cut": 0.76}, {"cut": 0.84}, {"room": 0.04}, {"room": 0.02}, {"cut": 0.76, "room": 0.02},
-                            {"cut": 0.72}),
+                            {"cut": 0.72}, {"cut": 0.88}),
                    "waist": ({}, {"cut": 0.53}, {"cut": 0.59}, {"room": 0.05}),
                    "chest": ({}, {"cut": 0.36, "room": 0.05}, {"cut": 0.31}, {"cut": 0.38, "room": 0.05})}
 # the framings (MUSIC_SIZE_SPEC's changed so) a sized shot is tried at in turn: until its frames show its size (her feet
@@ -930,16 +930,26 @@ MUSIC_SIZE_MOVES = {"full": MUSIC_MOVES, "knee": MUSIC_MOVES, "waist": ("dolly_i
 MUSIC_DOLLY_AT = 40.0                    # units: MUSIC_FULL's dolly is for a camera this far; a sized shot's dolly is the same
                                          # share of its own distance
 MUSIC_CLOSE_PITCH_TOP = 50.0             # degrees: the highest a close shot's crane up takes the window's X
+MUSIC_RAMP_BEATS = 0.5                   # beats a sized shot's "drive" move takes to come up to its pace and down from it (the
+                                         # plain plan's: one; camsync2's last round: a small move, a dolly of 2 units over 103
+                                         # frames, eased in over a beat came up to camera_rhythm's threshold 5 to 6 frames after
+                                         # it started, after the beat even with the cut's lead, and down from it as early before
+                                         # its end: over half a beat about 3)
 MUSIC_SCALES = (1.0, 0.7, 0.5, 0.35)     # of a move's size: smaller in turn until every frame shows the shot's size
 MUSIC_CONTACT_FOVS = (30, 32, 34, 36, 38, 40)   # the lenses a chest shot that holds an eye contact may take, the narrowest that ...
-MUSIC_CONTACT_UP = 4.5                   # ... keeps the camera at most this far above her eyes (degrees; eye_gaze's reach is
-                                         # 5.3 up off her head's way): looking down at her hips by 30 degrees, a lens of 30
-                                         # stands 1 unit over her eyes from 12.4 away (5 degrees) ...
-MUSIC_CONTACT_RUN = 54                   # ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6),
-                                         # both measured off her
-                                         # head's way (facing_both: she looks down 5 degrees, the camera may stand 5 lower) ...
-MUSIC_CONTACT_SIDE = 12.0                # ... and at most this far round from it (eye_gaze's reach is 16 sideways)
-MUSIC_ROUNDS = 4                         # times the song is planned again when a close shot has to be shot wider
+MUSIC_CONTACT_UP = 7.8                   # ... keeps the camera at most this far above her head's way (degrees; facing_both:
+MUSIC_CONTACT_DOWN = 11.4                # she looks down 5 degrees, the camera may stand 5 lower), at most this far under it
+MUSIC_CONTACT_SIDE = 18.5                # and round from it ...
+MUSIC_CONTACT_RISES = (0.0, 1.0, 2.0, 3.0)  # units over MUSIC_CLEAR's height the chest shot of a contact rises in turn when
+                                         # she looks up through the contact (240.9 s: 9 degrees at its middle, up to 25)
+MUSIC_CONTACT_RUN = 50                   # ... on a run of this many frames of the contact's: eye_gaze's reach, its contact zone
+                                         # 5.3 up, 8.9 down and 16 sideways off her head's way with a frame in reach when the
+                                         # eyes there come within CONTACT_ERROR (4) of the camera, 1.5 inside, and its contact
+                                         # a run of CONTACT_MIN (48) and 2.  (camsync2's last round: the plan's 4.5 up and 12
+                                         # round left out the error; level with her eyes, as the exception of COMMON 2026-10-22
+                                         # has a contact's chest shot, a nod of 6 degrees put the camera over it and broke
+                                         # every contact she nods through)
+MUSIC_ROUNDS = 6                         # times the song is planned again when a close (or knee) shot has to be shot wider
 MUSIC_SHIFTS = (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0, 1.25, -1.25)
 # picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her
 # to keep her face off the words of --keep-clear: the base's track is this times the window's distance times the tangent
@@ -952,6 +962,30 @@ MUSIC_WORDS_TRACK_BEATS = (4, 8)         # beats from the cut a track takes that
                                          # the cut, on the other later: v13 p5, the end of a big word over the left 0.03-0.70
                                          # of the picture on the chorus's first 2 frames and the next over the right 0.80-1.00
                                          # from 82 frames on)
+MUSIC_EYES_BOX = {"x": (0.25, 0.75), "y": (0.15, 0.45)}
+MUSIC_EYES_HOLD = 0.95
+MUSIC_HEAD = (1.4, 0.8)
+# (camsync2's last round, the requester's composition of a close shot: v13 had her eyes at 0.15-0.27 of the picture's
+# width in a chest shot, 3530, and at 0.85-0.90 in two waist shots, words kept off her face by a shift of 1 to 1.25) on
+# MUSIC_EYES_HOLD of a waist or chest shot's frames or more, the middle of her eyes inside the box (shares of the picture:
+# x from the left, y from the top) and her head whole across: a disc MUSIC_HEAD[0] units wide either side (half a head's
+# width round her nose is FACE_RADIUS, her hair at the sides a quarter unit more) round a point MUSIC_HEAD[1] over her eyes
+# inside the side edges.  A whole-body or knee shot keeps her eyes in the box's x where a way of seeing that keeps her
+# face off the words does (5966: at 0.78 while a track carried her back from the cut's words)
+MUSIC_BACK = 90.0                        # degrees: her face turned further than this from the camera shows the back of
+MUSIC_BACK_SHARE = 0.10                  # her head; a waist or chest shot shows it on this share of its frames at most
+                                         # (v13 4884-5089, a chest shot: 34 %; her head's way facing_both against the way
+                                         # to the camera from her eyes, eyes_round)
+MUSIC_CLEAR = {"hips": 0.05, "height": 0.05}
+# the chest shot of an eye contact is shot level with her eyes, clear of the close look-down (operator_camera.chest_clear,
+# COMMON 2026-10-22: her hips CHEST_HIPS_UNDER under the bottom edge on every subframe, the camera not under her eyes),
+# with the plan's margins over guard's: her hips and hip joints 0.05 half-heights more under the edge (the plan reads the
+# dance at frames, guard at 16 subframes), the camera 0.05 units over her highest eyes (0.2 degrees at a chest shot's 12
+# units); the general rule's look-down at her hips (4.5, 15 in a fast turn) is asked as of any shot
+MUSIC_NEAR_PARTS = ("verse",)
+# the A melody: its sung lines come near, waist (a busy dance may, not a fast turn) or else knee before any other shot, and
+# a shot of it whose fast turns lie in one half of its bars only is cut at its middle bar line when the other half is sung
+# and not footwork (split_near; v13: the two shots of verse1 each held one fast turn of 13 and 20 frames in 206)
 FACE_RADIUS = 1.15                      # units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure
 FACE_DOWN = 0.45                         # of the words over her face: half a head's width round her nose)
 FACE_MARGIN = 0.02                       # of the picture: the words' boxes grown by this when her face is kept off them
@@ -1031,6 +1065,40 @@ def crosses_line(facing, yaw_before, yaw_after, side=MUSIC_LINE_SIDE, facing_aft
     return a * b < 0.0 and min(abs(a), abs(b)) >= side
 
 
+class WordBoxes(list):
+    """the boxes of the words (load_boxes' form: [first, last, x0, y0, x1, y1, layer]) with an index by frame, so that a
+    shot looks up its own frames' boxes (camsync2's last round: the words cut into cells, text_face.py --cells, are about
+    a hundred thousand boxes over the song)"""
+
+    def __init__(self, boxes=()):
+        super().__init__(boxes)
+        self.by_frame = {}
+        for b in self:
+            for f in range(int(b[0]), int(b[1]) + 1):
+                self.by_frame.setdefault(f, []).append(b)
+
+    def on(self, frame):
+        """the boxes on `frame`"""
+        return self.by_frame.get(frame, [])
+
+    def between(self, first, last):
+        """the boxes on any of the frames `first` to `last`, each once, in their order"""
+        seen, out = set(), []
+        for f in range(first, last + 1):
+            for b in self.by_frame.get(f, ()):
+                if id(b) not in seen:
+                    seen.add(id(b))
+                    out.append(b)
+        return out
+
+
+def _words(boxes, first, last):
+    """the boxes on the frames `first` to `last` as WordBoxes (from WordBoxes by its index, from a list by looking)"""
+    if isinstance(boxes, WordBoxes):
+        return WordBoxes(boxes.between(first, last))
+    return WordBoxes([b for b in boxes if b[0] <= last and b[1] >= first])
+
+
 def face_on_boxes(dancer, frame, cam, boxes, margin=FACE_MARGIN):
     """whether her face (a disc of FACE_RADIUS round FACE_DOWN under her eyes, as the picture of `cam` shows it) meets one
     of `boxes` ([first, last, x0, y0, x1, y1, layer]: frames, and shares of the picture with y from the top) on `frame`"""
@@ -1056,11 +1124,14 @@ def music_sizes(shots, share=MUSIC_SIZE_SHARE, chorus_share=MUSIC_CHORUS_SHARE):
     contact (it holds an eye contact), note (a sustained note), sung (its share of frames in the song's lines), wide
     (footwork, or a part that holds still: her whole body), spin (a fast turn or a busy dance: no close size), calm and pace
     (her toes' 90th percentile), and close_ok (False: no close size, as when no close way of seeing keeps her face off the
-    words).  A wide shot is full; one that holds a contact chest; then a close size (the one further under its share, on a
-    tie chest for a calm shot) in turn to the shots with a sustained note, the sung lines of the verses (MUSIC_SUNG_PARTS)
-    and of the chorus, the calm first, each while it brings the song's share of that size (and in the chorus the chorus's)
-    nearer its target (`share`, `chorus_share`: within half the shot); no close shot in MUSIC_QUIET
-    but for a contact; then knee in the same way to the shots left, the calmest feet first; full the rest"""
+    words), knee_ok (False: no knee, as when no way of seeing holds her knees in).  A wide shot is full; one that holds a
+    contact chest; then a close size (the one further under its share, on a tie chest for a calm shot) in turn to the
+    shots with a sustained note, the sung lines of the verses (MUSIC_SUNG_PARTS) and of the chorus, the calm first, each
+    while it brings the song's share of that size (and in the chorus the chorus's) nearer its target (`share`,
+    `chorus_share`: within half the shot); no close shot in MUSIC_QUIET but for a contact, none with a spin but in
+    MUSIC_NEAR_PARTS, where only a fast turn (`fast`) keeps a shot from it (and from knee: the A melody comes near but
+    where she turns fast); then knee in the same way to the shots left, the sung lines of MUSIC_NEAR_PARTS first, then
+    the calmest feet; full the rest"""
     total = float(sum(s["frames"] for s in shots)) or 1.0
     chorus_total = float(sum(s["frames"] for s in shots if s["chorus"])) or 1.0
     sizes = [None] * len(shots)
@@ -1081,14 +1152,18 @@ def music_sizes(shots, share=MUSIC_SIZE_SHARE, chorus_share=MUSIC_CHORUS_SHARE):
             return False
         mark(i, size)
         return True
+
+    def turning(s):
+        """a spin keeps a shot from a close size; in MUSIC_NEAR_PARTS only a fast turn does (a busy dance may come near)"""
+        return s.get("fast", s.get("spin")) if s["kind"] in MUSIC_NEAR_PARTS else s.get("spin")
     for i, s in enumerate(shots):
         if s["wide"]:
             mark(i, "full")
-        elif s["contact"] and s.get("close_ok", True) and not s.get("spin"):
+        elif s["contact"] and s.get("close_ok", True) and not turning(s):
             mark(i, "chest")
     order = []
     for i, s in enumerate(shots):
-        if sizes[i] is not None or s["kind"] in MUSIC_QUIET or not s.get("close_ok", True) or s.get("spin"):
+        if sizes[i] is not None or s["kind"] in MUSIC_QUIET or not s.get("close_ok", True) or turning(s):
             continue
         if s["note"]:
             rank = 0
@@ -1104,7 +1179,10 @@ def music_sizes(shots, share=MUSIC_SIZE_SHARE, chorus_share=MUSIC_CHORUS_SHARE):
         for z in sorted(MUSIC_CLOSE, key=lambda z: (have[z] / max(share[z] * total, 1.0), (z == "chest") != shots[i]["calm"])):
             if take(i, z):
                 break
-    for _, i in sorted((shots[i]["pace"], i) for i in range(len(shots)) if sizes[i] is None):
+    near = [s["kind"] in MUSIC_NEAR_PARTS and s["sung"] >= MUSIC_SUNG for s in shots]
+    for *_, i in sorted((not near[i], shots[i]["pace"], i) for i in range(len(shots))
+                        if sizes[i] is None and shots[i].get("knee_ok", True)
+                        and not (shots[i]["kind"] in MUSIC_NEAR_PARTS and turning(shots[i]))):
         take(i, "knee")
     return [z or "full" for z in sizes]
 
@@ -1145,6 +1223,13 @@ def size_features(dancer, spans, cuts, song, held, notes, fps=FPS):
     return out
 
 
+MUSIC_FOLLOW_SIZES = ("knee", "waist", "chest")
+MUSIC_FOLLOW_WINDOW = 15
+# the sizes whose look-at point follows her eyes up and down as well (their height averaged over MUSIC_FOLLOW_WINDOW frames,
+# half a second: over a second it came down 2 frames late for a quick dip of her eyes from 16.9 to 14.3 at 1218):
+# the picture cuts her body, so it stays on her as she crouches and rises (camsync2's last round: from one height the verse
+# lines' waist shots had her eyes at 0.30-0.58 of the picture as she crouched 2 to 2.7 units, out of the box's 0.45, and the
+# knee shots lost her knees); a whole-body shot, with the floor in it, holds its height
 MUSIC_CLOSE_WINDOW = 30                  # frames: a close shot's look-at point follows her upper body averaged over this
                                          # (a second: averaged over three, she leant out of a waist shot's top on 3 frames)
 ZOOM_REACH = (2, 14)                     # frames before and after a punch's frame its zoom may move her head (rise 2, fall 10)
@@ -1162,11 +1247,12 @@ def zoom_frames(starts, punches, fps=FPS):
 
 
 def upper_track(dancer, last, window=MUSIC_CLOSE_WINDOW):
-    """her upper body's x, z (between her eyes and her chest, operator_camera's anchor of a close size) on every frame,
-    averaged over `window` frames as smoothed_center"""
+    """her upper body's x, z (between her eyes and her chest, operator_camera's anchor of a close size) averaged over
+    `window` frames as smoothed_center, and her eyes' height averaged over MUSIC_FOLLOW_WINDOW, on every frame"""
     xs = [(dancer.at("eyes", f)[0] + dancer.at("chest", f)[0]) / 2.0 for f in range(last + 1)]
     zs = [(dancer.at("eyes", f)[2] + dancer.at("chest", f)[2]) / 2.0 for f in range(last + 1)]
-    return list(zip(_centered_average(xs, window), _centered_average(zs, window)))
+    ys = [dancer.at("eyes", f)[1] for f in range(last + 1)]
+    return list(zip(_centered_average(xs, window), _centered_average(zs, window), _centered_average(ys, MUSIC_FOLLOW_WINDOW)))
 
 
 @dataclasses.dataclass
@@ -1335,6 +1421,26 @@ def paced(move):
     return dataclasses.replace(trial, amount=math.copysign(math.floor(abs(trial.amount) * k * 1e4) / 1e4, trial.amount))
 
 
+def track_turn(move, distance):
+    """(the most degrees a track `move` carries the look-at point sideways on one frame as seen from `distance`, over any
+    second): the angle its step makes at the camera, as an orbit turns the picture"""
+    done = [_shape(move.shape, i / float(move.frames), move.ramp, move.power) for i in range(move.frames + 1)]
+    steps = [math.degrees(math.atan2(abs(move.amount) * (b - a), distance)) for a, b in zip(done, done[1:])]
+    n = int(FPS)
+    return max(steps), max(sum(steps[i:i + n]) for i in range(max(1, len(steps) - n + 1)))
+
+
+def track_paced(move, distance):
+    """`move` (a track) at full pace from its start ("hit") at the steepest of MUSIC_HIT_POWERS that keeps within
+    MUSIC_TURN_PACE a frame and MUSIC_TURN_SECOND a second (track_turn); None when none does"""
+    for power in MUSIC_HIT_POWERS:
+        trial = dataclasses.replace(move, shape="hit", power=power)
+        peak, second = track_turn(trial, distance)
+        if peak <= MUSIC_TURN_PACE and second <= MUSIC_TURN_SECOND:
+            return trial
+    return None
+
+
 def _end_values(values, move):
     return _apply(values, move, move.start + move.frames)
 
@@ -1466,6 +1572,28 @@ def cuts_on(cuts, frames, last, bar_frames):
     return cuts
 
 
+def split_near(cuts, last, dancer, song, fps=FPS):
+    """the cuts ((frame, section id, kind, bars) each) with every shot of MUSIC_NEAR_PARTS of an even number of bars cut
+    at its middle bar line (the cut's lead before it) when her fast turns (guard's) lie in one half of it only and the
+    other half is sung (MUSIC_SUNG) and not footwork (size_features): that half can come near (music_sizes)"""
+    lead = float(song.get("cut_lead", DEFAULT_CUT_LEAD))
+    lines = [int(round((float(b) - lead) * fps)) for b in song.get("bars") or []]
+    out = []
+    for j, (frame, sid, kind, nbars) in enumerate(cuts):
+        end = cuts[j + 1][0] - 1 if j + 1 < len(cuts) else last
+        inner = sorted(f for f in lines if frame < f <= end)
+        if kind in MUSIC_NEAR_PARTS and nbars >= 2 and nbars % 2 == 0 and len(inner) >= nbars - 1:
+            middle = inner[nbars // 2 - 1]
+            halves = [(frame, sid, kind, nbars // 2), (middle, sid, kind, nbars - nbars // 2)]
+            feats = size_features(dancer, [(frame, middle - 1), (middle, end)], halves, song, {}, [], fps)
+            if feats[0]["fast"] != feats[1]["fast"] and any(not h["fast"] and not h["wide"] and h["sung"] >= MUSIC_SUNG
+                                                            for h in feats):
+                out += halves
+                continue
+        out.append((frame, sid, kind, nbars))
+    return out
+
+
 def plan_music_shots(motion, song, onsets, seed=0, last=None, strong=STRONG, rising=None, contacts=None, cut_on=None,
                      punches=None, dancer=None, notes=None, keep_clear=None, windows=None):
     """the shots of the camera on the song (see the module's docstring and MUSIC_*): cuts on the bars CUT_LEAD before
@@ -1502,6 +1630,8 @@ def plan_music_shots(motion, song, onsets, seed=0, last=None, strong=STRONG, ris
             i += n
             k += 1
     cuts = cuts_on([c for c in cuts if c[0] <= last], cut_on, last, 4.0 * beat_frames)
+    if dancer is not None:
+        cuts = split_near(cuts, last, dancer, song, fps)
     spans = [(frame, cuts[index + 1][0] - 1 if index + 1 < len(cuts) else last) for index, (frame, _, _, _) in enumerate(cuts)]
     held = contact_shots(spans, contacts, fps)
     chain = facing_chain(motion) if (held or dancer is not None) else []
@@ -1608,18 +1738,20 @@ def angle_off(a, b):
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
-def frame_sized(dancer, frames, size, yaw, fov, follow, look, shift=0.0, spec=None):
+def frame_sized(dancer, frames, size, yaw, fov, follow, look, shift=0.0, spec=None, floor=None):
     """(base values, look-at height) of a sized shot seen from `yaw` through `fov`: operator_camera.frame_size on the
     shot's heights (her head top at its highest over the shot, her lower toe at its lowest, her eyes at their median) with
-    MUSIC_SIZE_SPEC (or `spec`), from the lowest camera height that on every frame looks down at her hips and both hip
-    joints by `look` (degrees per frame) from where it stands then (the look-at point following her on `follow`, `shift`
-    units to the side: the base's track).  From higher up the size is framed from nearer, so the height is searched: up in
-    doubling steps from the size's own while the lens can still frame it, then halved between the last too low and the
-    first high enough; ValueError when no height can"""
+    MUSIC_SIZE_SPEC (or `spec`), from the lowest camera height (`floor` at least) that on every frame looks down at her
+    hips and both hip joints by `look` (degrees per frame) from where it stands then (the look-at point following her on
+    `follow`, `shift` units to the side: the base's track; a third value per frame of `follow` raises it that much, and
+    the heights are then hers less that: as the following camera sees her).  From higher up the size is framed from nearer, so the height
+    is searched: up in doubling steps from the size's own while the lens can still frame it, then halved between the last
+    too low and the first high enough; ValueError when no height can"""
     oc = _operator()
-    tops = sorted(dancer.at("headtop", f)[1] for f in frames)
-    toes = sorted(min(dancer.at("ltoe", f)[1], dancer.at("rtoe", f)[1]) for f in frames)
-    eyes = sorted(dancer.at("eyes", f)[1] for f in frames)
+    dys = [p[2] if len(p) > 2 else 0.0 for p in follow]
+    tops = sorted(dancer.at("headtop", f)[1] - d for f, d in zip(frames, dys))
+    toes = sorted(min(dancer.at("ltoe", f)[1], dancer.at("rtoe", f)[1]) - d for f, d in zip(frames, dys))
+    eyes = sorted(dancer.at("eyes", f)[1] - d for f, d in zip(frames, dys))
     heights = (tops[-1], toes[0], eyes[len(eyes) // 2])
     y = math.radians(yaw)
     ox, oz = shift * math.cos(y), shift * math.sin(y)
@@ -1636,7 +1768,7 @@ def frame_sized(dancer, frames, size, yaw, fov, follow, look, shift=0.0, spec=No
         height = cam.position[1] - cam.reach * math.sin(math.radians(cam.pitch))
         short = 0.0
         for i, f in enumerate(frames):
-            eye = oc.place_camera((follow[i][0] + ox, height, follow[i][1] + oz), yaw, cam.pitch, cam.reach)
+            eye = oc.place_camera((follow[i][0] + ox, height + dys[i], follow[i][1] + oz), yaw, cam.pitch, cam.reach)
             slope = math.tan(math.radians(look[i]))
             for name in ("hips", "lhip", "rhip"):
                 p = dancer.at(name, f)
@@ -1646,7 +1778,7 @@ def frame_sized(dancer, frames, size, yaw, fov, follow, look, shift=0.0, spec=No
     def result(got):
         cam, height, _ = got
         return {"distance": cam.reach, "pitch": cam.pitch, "yaw": float(yaw), "track": float(shift)}, height
-    got = framed(None)
+    got = framed(floor)
     if got is None:
         raise ValueError("no camera frames the %s shot from %d" % (size, frames[0]))
     if got[2] <= 1e-6:
@@ -1713,25 +1845,55 @@ def eyes_round(dancer, frame, cam):
     return math.degrees(math.atan2(cam.position[0] - e[0], -(cam.position[2] - e[2])))
 
 
-def sized_ok(dancer, shot, look, rows=None, head=None):
+def eyes_placed(dancer, frame, cam):
+    """(x, y, whole): where the middle of her eyes falls in the picture of `cam` on `frame` (shares of the picture, x from
+    the left, y from the top; None, None when it is not in front of the camera) and whether her head (MUSIC_HEAD) is
+    inside the picture's side edges"""
+    oc = _operator()
+    e = dancer.at("eyes", frame)
+    u, v, depth = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, e)
+    if not (depth > 0.0 and math.isfinite(u) and math.isfinite(v)):
+        return None, None, False
+    half, up = MUSIC_HEAD
+    cu, _, cd = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, cam.fov, (e[0], e[1] + up, e[2]))
+    whole = cd > 0.0 and abs(cu) + half / (cd * math.tan(math.radians(cam.fov / 2.0))) <= oc.ASPECT
+    return (u / oc.ASPECT + 1.0) / 2.0, (1.0 - v) / 2.0, whole
+
+
+def chest_cleared(shot):
+    """whether a sized shot is the chest shot of an eye contact, shot level with her eyes clear of the close look-down
+    (MUSIC_CLEAR)"""
+    return bool(shot.contact) and shot.size == "chest"
+
+
+def sized_ok(dancer, shot, look, rows=None, head=None, band=False):
     """whether a sized shot (its base and moves) holds on its frames (sized_why gives no reason against it)"""
-    return sized_why(dancer, shot, look, rows, head) is None
+    return sized_why(dancer, shot, look, rows, head, band) is None
 
 
-def sized_why(dancer, shot, look, rows=None, head=None):
-    """None when a sized shot (its base and moves) holds on its frames, else why not ("head", "knee", "low", "reach",
-    "size"): her head on every one (head_shown, under `rows`: per frame, MUSIC_FRAME's head_row unless given), a knee
-    shot's both knees MUSIC_FRAME's `in` over the bottom edge on every one (a frame without them reads as waist up, which
-    asks the close look-down), the look-down at her hips and hip joints `look` asks less MUSIC_FRAME's margin on every one,
-    a chest shot that holds an eye contact at most MUSIC_CONTACT_UP above and MUSIC_CONTACT_SIDE round from her head's way
-    (`head`: per frame of the song facing_both's way and pitch; without it, above her eyes, level) on a run of
-    MUSIC_CONTACT_RUN of its frames, and its size on MUSIC_FRAME's `hold` of them and on its first and last `ends`
-    (size_shown)"""
+def sized_why(dancer, shot, look, rows=None, head=None, band=False):
+    """None when a sized shot (its base and moves) holds on its frames, else why not ("head", "knee", "low", "clear",
+    "reach", "eyes", "back", "size"): her head on every one (head_shown, under `rows`: per frame, MUSIC_FRAME's head_row
+    unless given), a knee shot's both knees MUSIC_FRAME's `in` over the bottom edge on every one (a frame without them
+    reads as waist up, which asks the close look-down), the look-down at her hips and hip joints `look` asks less
+    MUSIC_FRAME's margin on every one, the chest shot of an eye contact clear of the close look-down on every one
+    (chest_cleared: operator_camera.chest_margins past CHEST_HIPS_UNDER by MUSIC_CLEAR's hips, the camera not under her
+    eyes, the picture chest up as guard classifies it) and at most MUSIC_CONTACT_UP above, MUSIC_CONTACT_DOWN under and
+    MUSIC_CONTACT_SIDE round from her head's way (`head`: per frame of the song facing_both's way and pitch; without it,
+    above her eyes, level) on a run of MUSIC_CONTACT_RUN of its frames, a close shot's eyes in MUSIC_EYES_BOX and her head
+    whole (eyes_placed) on MUSIC_EYES_HOLD of them and her face turned more than MUSIC_BACK from the camera on
+    MUSIC_BACK_SHARE at most (with `head`), a wider one's eyes in the box's x and her head whole on MUSIC_EYES_HOLD with
+    `band`, and its size on MUSIC_FRAME's `hold` of them and on its first and last `ends` (size_shown)"""
     oc = _operator()
     good, values = 0, music_shot_values(shot)
     ends = MUSIC_FRAME["ends"]
     reach = shot.contact if shot.contact and shot.size == "chest" else None
+    clear = chest_cleared(shot)
+    close = shot.size in MUSIC_CLOSE
+    boxed = close or band
     run = best_run = 0
+    placed = back = 0
+    (x0, x1), (y0, y1) = MUSIC_EYES_BOX["x"], MUSIC_EYES_BOX["y"]
     for i, v in enumerate(values):
         f = shot.start + i
         cam = sized_camera(v, shot.fov)
@@ -1746,29 +1908,46 @@ def sized_why(dancer, shot, look, rows=None, head=None):
         points = [dancer.at(n, f) for n in ("hips", "lhip", "rhip")]
         if oc.look_down_at(cam.position, points) < look[i] - MUSIC_FRAME["look_slack"] - 1e-9:
             return "low"
+        if clear:
+            under, eyes = oc.chest_margins(dancer, f, cam)
+            seen = oc.seen(dancer, f, cam)
+            if (under < oc.CHEST_HIPS_UNDER + MUSIC_CLEAR["hips"] - 1e-9 or eyes < oc.CHEST_EYES_DOWN - 1e-9
+                    or oc.classify(seen["visible"], seen["body_share"]) != "chest"):
+                return "clear"
         if reach is not None and reach[0] <= f <= reach[1]:
             way, pitch = head[f] if head is not None else (None, 0.0)
-            within = eyes_up(dancer, f, cam) - pitch <= MUSIC_CONTACT_UP + 1e-9
+            up = eyes_up(dancer, f, cam) - pitch
+            within = -MUSIC_CONTACT_DOWN - 1e-9 <= up <= MUSIC_CONTACT_UP + 1e-9
             if within and way is not None:
                 within = angle_off(eyes_round(dancer, f, cam), way) <= MUSIC_CONTACT_SIDE + 1e-9
             run = run + 1 if within else 0
             best_run = max(best_run, run)
+        if boxed:
+            x, y, whole = eyes_placed(dancer, f, cam)
+            placed += (x is not None and whole and x0 <= x <= x1 and (not close or y0 <= y <= y1))
+        if close and head is not None:
+            back += angle_off(eyes_round(dancer, f, cam), head[f][0]) > MUSIC_BACK
         shown = size_shown(dancer, f, cam, shot.size, row)
         if not shown and (i < ends or i >= len(values) - ends):
             return "size"
         good += shown
     if reach is not None and best_run < min(MUSIC_CONTACT_RUN, reach[1] - reach[0] + 1):
         return "reach"
+    if boxed and placed < MUSIC_EYES_HOLD * len(values) - 1e-9:
+        return "eyes"
+    if back > MUSIC_BACK_SHARE * len(values) + 1e-9:
+        return "back"
     return None if good >= MUSIC_FRAME["hold"] * len(values) - 1e-9 else "size"
 
 
 def face_hits(dancer, shot, boxes):
-    """the frames of a shot whose picture puts her face on one of `boxes` (face_on_boxes)"""
-    near = [b for b in boxes if b[0] <= shot.end and b[1] >= shot.start]
-    if not near:
+    """the frames of a shot whose picture puts her face on one of `boxes` (face_on_boxes; a list, or WordBoxes)"""
+    near = boxes if isinstance(boxes, WordBoxes) else _words(boxes, shot.start, shot.end)
+    if not any(near.on(f) for f in range(shot.start, shot.end + 1)):
         return 0
     return sum(1 for i, v in enumerate(music_shot_values(shot))
-               if face_on_boxes(dancer, shot.start + i, sized_camera(v, shot.fov), near))
+               if near.on(shot.start + i) and face_on_boxes(dancer, shot.start + i, sized_camera(v, shot.fov),
+                                                            near.on(shot.start + i)))
 
 
 def _sized_room(name, values, energy, rng_sign, size):
@@ -1788,12 +1967,12 @@ def _sized_room(name, values, energy, rng_sign, size):
 
 
 def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, rising, rng, palette_at, boxes=(), rows=None,
-                 head=None, lead=()):
+                 head=None, lead=(), band=False):
     """the moves of a sized shot: as the plain plan draws them (the part's palette in turn, whole beats from the cut or a
     strong onset, none against guard or into a title word), only the moves of its size (MUSIC_SIZE_MOVES), each at the
-    largest of MUSIC_SCALES of its full size that keeps the shot holding (sized_ok) and her face off the words (`boxes`)
-    on no more frames than before it; after the moves `lead` (a track that keeps her face off the words: _sized_shot)
-    when given"""
+    largest of MUSIC_SCALES of its full size that keeps the shot holding (sized_ok, with `band`) and her face off the
+    words (`boxes`) on no more frames than before it; after the moves `lead` (a track that keeps her face off the words:
+    _sized_shot) when given"""
     kind, contact, end, frame = shot.kind, shot.contact, shot.end, shot.start
     if kind in MUSIC_STILL:
         return list(lead)
@@ -1817,7 +1996,7 @@ def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, r
         if beats_left < MOVE_TAIL:
             return moves
         frames_of = int(round((MOVE_BEATS if beats_left >= MOVE_BEATS else 4) * beat_frames))
-    boxes = [b for b in boxes if b[0] <= end and b[1] >= frame]
+    boxes = _words(boxes, frame, end)
     hits = face_hits(dancer, dataclasses.replace(shot, moves=list(moves)), boxes) if boxes else 0
     while (start + int(round(4 * beat_frames)) <= end + MOVE_OVERRUN if not moves
            else (end + 1 + MOVE_OVERRUN - start) / beat_frames >= MOVE_TAIL):
@@ -1848,9 +2027,10 @@ def _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, r
             if abs(full) < least:
                 continue
             for scale in MUSIC_SCALES:
-                move = paced(Move(name, start, frames_of, shape, round(full * scale, 4), round(beat_frames / frames_of, 4)))
+                move = paced(Move(name, start, frames_of, shape, round(full * scale, 4),
+                                  round(MUSIC_RAMP_BEATS * beat_frames / frames_of, 4)))
                 trial = dataclasses.replace(shot, moves=moves + [move])
-                if sized_ok(dancer, trial, look, rows, head) and (not boxes or face_hits(dancer, trial, boxes) <= hits):
+                if sized_ok(dancer, trial, look, rows, head, band) and (not boxes or face_hits(dancer, trial, boxes) <= hits):
                     chosen = move
                     break
             if chosen is not None:
@@ -1898,23 +2078,33 @@ def camera_azimuth(dancer, frame, cam):
 
 def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way, previous, chain, centre, upper, need,
                 boxes, strong_frames, beat_frames, hooks, rising, rng, palette_at, count, waive=0, zoom=(), head=None,
-                avoid=None):
+                avoid=None, band=False):
     """(shot, frames her face is on the words, the palette's turns after it, why the others did not hold) of one sized
-    shot at `size`, (None, None, None, why) when no way of seeing her holds (sized_why) and cuts clearly from `previous`
-    (another size, or MUSIC_TURN round her: her center to the eye on the last frame before the cut and on the cut, and not
-    across the line of her face's way): the ways in turn (a contact's way and 12 degrees off it; else MUSIC_SIZED_YAWS in
-    an order drawn with the seed, a close shot's nearest her face's way first), the contact's lenses (MUSIC_CONTACT_FOVS),
-    the framings of MUSIC_SIZE_FITS, and with words on the screen the shifts of MUSIC_SHIFTS; the first with her face off
-    the words, else the one with her face on them the fewest frames.  `waive` (the last resorts, all the ways, the
-    farthest round from the shot before first): 1 the cut rule's turn is not asked, 2 neither the turn nor the line.
-    `head`: her head's way and pitch per frame (facing_both) for a contact's reach; `avoid`: the way the next shot holds
-    an eye contact on (this shot's ways MUSIC_TURN and more off it first, so that the contact can be aimed at her face and
-    still cut clearly)"""
+    shot at `size`, (None, None, None, why) when no way of seeing her holds (sized_why, with `band` for a whole-body or
+    knee shot) and cuts clearly from `previous` (another size, or MUSIC_TURN round her: her center to the eye on the last
+    frame before the cut and on the cut, and not across the line of her face's way): the ways in turn (a contact's way and
+    12 degrees off it; else MUSIC_SIZED_YAWS in an order drawn with the seed, a close shot's nearest her face's way first),
+    the contact's lenses (MUSIC_CONTACT_FOVS), the framings of MUSIC_SIZE_FITS, and with words on the screen the shifts of
+    MUSIC_SHIFTS; the first with her face off the words, else the one with her face on them the fewest frames.  `waive`
+    (the last resorts, all the ways, the farthest round from the shot before first): 1 the cut rule's turn is not asked,
+    2 neither the turn nor the line.  `head`: her head's way and pitch per frame (facing_both) for a contact's reach;
+    `avoid`: the way the next shot holds an eye contact on (this shot's ways MUSIC_TURN and more off it first, so that
+    the contact can be aimed at her face and still cut clearly).  The chest shot of an eye contact (chest_cleared) looks
+    down at her hips as `need` asks, from MUSIC_CLEAR's height over her highest eyes or higher"""
     oc = _operator()
     frames = list(range(frame, end + 1))
     close = size in MUSIC_CLOSE
-    follow = [upper[f] if close else centre[f] for f in frames]
-    look = [max(need[min(f, len(need) - 1)], oc.CLOSE_LOOK_DOWN if close else 0.0) + MUSIC_FRAME["look_down"] for f in frames]
+    clear = contact is not None and size == "chest"
+    boxed = close or band
+    follow = [(upper[f][0], upper[f][1]) if close else centre[f] for f in frames]
+    if size in MUSIC_FOLLOW_SIZES:
+        ey = [upper[f][2] for f in frames]
+        mid = sorted(ey)[len(ey) // 2]
+        follow = [(p[0], p[1], e - mid) for p, e in zip(follow, ey)]
+    look = [max(need[min(f, len(need) - 1)], oc.CLOSE_LOOK_DOWN if close and not clear else 0.0) + MUSIC_FRAME["look_down"]
+            for f in frames]
+    floor = (max(max(dancer.at("eyes", f)[1], dancer.at("eyes", f + 1)[1]) - (p[2] if len(p) > 2 else 0.0)
+                 for f, p in zip(frames, follow)) + MUSIC_CLEAR["height"] if clear else None)
     rows = [MUSIC_FRAME["head_row"] if f in zoom else MUSIC_FRAME["head_free"] for f in frames]
     if contact is not None:
         yaws = [round(_clamp(way, MUSIC_RANGE["yaw"]), 1)] + [round(_clamp(way + t, MUSIC_RANGE["yaw"]), 1)
@@ -1928,7 +2118,8 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
         if avoid is not None:
             yaws.sort(key=lambda y: angle_off(y, avoid) < MUSIC_TURN + 8.0)
     fovs = MUSIC_CONTACT_FOVS if (contact is not None and size == "chest") else (FOV,)
-    shifts = MUSIC_SHIFTS if any(b[0] <= end and b[1] >= frame for b in boxes) else (0.0,)
+    boxes = _words(boxes, frame, end)
+    shifts = MUSIC_SHIFTS if boxes else (0.0,)
     if contact is not None:
         shifts = tuple(x for x in shifts if abs(x) <= MUSIC_CONTACT_SHIFT + 1e-9)
     prev_yaw = prev_az = None
@@ -1947,7 +2138,8 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
 
     def consider(base, height, fov, lead=()):
         """(shot, hits, turns) of the way of seeing from `base` (its moves after `lead`), or None (`why` counts the
-        reason); the best so far kept in `best`"""
+        reason); the best so far kept in `best`.  With `lead` (a track) her face is off the words with it alone or it is
+        not looked at further"""
         shot = MusicShot(count, frame, end, sid, kind, nbars, base, list(lead), follow, contact, size, height, int(fov))
         if previous is not None and not waive:
             cam0 = sized_camera(music_shot_values(shot)[0], shot.fov)
@@ -1960,16 +2152,16 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
                     why["ratio"] += 1
                     return None
         hits = face_hits(dancer, shot, boxes)
-        if hits and best[0] is not None and hits >= best[0][0]:
+        if hits and ((best[0] is not None and hits >= best[0][0]) or lead):
             why["words"] += 1
             return None
-        reason = sized_why(dancer, shot, look, rows, head)
+        reason = sized_why(dancer, shot, look, rows, head, band)
         if reason is not None:
             why[reason] += 1
             return None
         turns = dict(palette_at)
         shot.moves = _sized_moves(dancer, shot, look, nbars, strong_frames, beat_frames, hooks, rising, rng, turns, boxes,
-                                  rows, head, lead)
+                                  rows, head, lead, band)
         hits = face_hits(dancer, shot, boxes)
         if hits:
             why["words"] += 1
@@ -1983,46 +2175,77 @@ def _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
                 and crosses_line(facing_before, prev_yaw, yaw, facing_after=facing)):
             why["line"] += 1
             continue
-        for fov in fovs:
-            for fit in MUSIC_SIZE_FITS[size]:
-                spec = dict(MUSIC_SIZE_SPEC[size], **fit)
-                try:
-                    base0, height0 = frame_sized(dancer, frames, size, yaw, fov, follow, look, 0.0, spec)
-                except ValueError:
-                    why["frame"] += 1
-                    continue
-                unit = base0["distance"] * math.tan(math.radians(fov / 2.0))
-                sides = {}
-                framed.append((yaw, fov, unit, sides))
-                for shift in shifts:
-                    if shift == 0.0:
-                        base, height = base0, height0
-                    else:
-                        try:
-                            base, height = frame_sized(dancer, frames, size, yaw, fov, follow, look, shift * unit, spec)
-                        except ValueError:
-                            why["frame"] += 1
-                            continue
-                    sides[shift] = (base, height)
-                    got = consider(base, height, fov)
-                    if got is not None and got[1] == 0:
-                        return got[0], 0, got[2], dict(why)
-    # her face on the words whatever fixed side holds it (words on one side at the cut, on the other later): a track from the
-    # cut that carries her from a side that keeps it off them to another (MUSIC_WORDS_TRACK_BEATS)
-    if best[0] is not None and len(shifts) > 1:
+        for rise in (MUSIC_CONTACT_RISES if clear else (0.0,)):
+            # (the contact's chest shot from her eye height first, then higher over it for a contact she looks up through)
+            low = floor + rise if floor is not None else None
+            for fov in fovs:
+                for fit in MUSIC_SIZE_FITS[size]:
+                    spec = dict(MUSIC_SIZE_SPEC[size], **fit)
+                    try:
+                        base0, height0 = frame_sized(dancer, frames, size, yaw, fov, follow, look, 0.0, spec, low)
+                    except ValueError:
+                        why["frame"] += 1
+                        continue
+                    unit = base0["distance"] * math.tan(math.radians(fov / 2.0))
+                    sides = {}
+                    framed.append((yaw, fov, unit, sides))
+                    for shift in shifts:
+                        if shift == 0.0:
+                            base, height = base0, height0
+                        else:
+                            try:
+                                base, height = frame_sized(dancer, frames, size, yaw, fov, follow, look, shift * unit,
+                                                           spec, low)
+                            except ValueError:
+                                why["frame"] += 1
+                                continue
+                        sides[shift] = (base, height)
+                        got = consider(base, height, fov)
+                        if got is not None and got[1] == 0:
+                            return got[0], 0, got[2], dict(why)
+    # her face on the words whatever fixed side holds it (words on one side at the cut, on the other later), or off them only
+    # with her eyes out of the box (MUSIC_EYES_BOX): a track from the cut that carries her from a side that keeps it off
+    # them to another (MUSIC_WORDS_TRACK_BEATS), within MUSIC_TURN_PACE as it moves the picture (track_turn); where the box
+    # is asked, to a side that keeps her eyes in it (a shift of `inside` or less), at full pace from the cut first
+    # (track_paced: her eyes come into it within a few frames), then easing in
+    if len(shifts) > 1 and (best[0] is not None or why.get("eyes")):
+        shapes = ("hit", "drive") if boxed else ("drive",)
+        inside = (MUSIC_EYES_BOX["x"][1] - 0.5) * 2.0 * oc.ASPECT
+
+        def words_at(values, height, fov, f):
+            """her face on the words on frame `f` seen with the window values `values` (at the look-at point's height)"""
+            yaw = math.radians(values["yaw"])
+            ox, oz = values["track"] * math.cos(yaw), values["track"] * math.sin(yaw)
+            c = follow[f - frame]
+            seen = dict(values, pos=(c[0] + ox, height + (c[2] if len(c) > 2 else 0.0), c[1] + oz))
+            return face_on_boxes(dancer, f, sized_camera(seen, fov), boxes.on(f))
         for yaw, fov, unit, sides in framed:
             for first, (base, height) in sides.items():
+                if words_at(base, height, fov, frame):
+                    continue                # on the words at the cut: no track from there keeps her face off them
                 for then in sides:
-                    if then == first:
+                    if then == first or (boxed and abs(then) > inside + 1e-9):
                         continue
                     for beats in MUSIC_WORDS_TRACK_BEATS:
                         n = int(round(beats * beat_frames))
                         if frame + n > end + MOVE_OVERRUN:
                             continue
-                        track = Move("track", frame, n, "drive", round((then - first) * unit, 4), round(beat_frames / n, 4))
-                        got = consider(base, height, fov, (track,))
-                        if got is not None and got[1] == 0:
-                            return got[0], 0, got[2], dict(why, tracked=1)
+                        amount = round((then - first) * unit, 4)
+                        for shape in shapes:
+                            if shape == "hit":
+                                track = track_paced(Move("track", frame, n, "hit", amount), base["distance"])
+                                if track is None:
+                                    continue
+                            else:
+                                track = Move("track", frame, n, "drive", amount, round(MUSIC_RAMP_BEATS * beat_frames / n, 4))
+                                peak, second = track_turn(track, base["distance"])
+                                if peak > MUSIC_TURN_PACE or second > MUSIC_TURN_SECOND:
+                                    continue
+                            if words_at(_apply(base, track, end), height, fov, end):
+                                continue            # on the words at the shot's end
+                            got = consider(base, height, fov, (track,))
+                            if got is not None and got[1] == 0:
+                                return got[0], 0, got[2], dict(why, tracked=1)
     if best[0] is None:
         return None, None, None, dict(why)
     return best[0][1], best[0][0], best[0][2], dict(why)
@@ -2045,7 +2268,7 @@ def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, str
     plain_need, _ = oc.guard_needs(dancer, last)
     head = [facing_both(chain, f) for f in range(last + 1)] if chain else None
     upper = upper_track(dancer, last)
-    boxes = [list(b) for b in keep_clear or []]
+    boxes = WordBoxes([list(b) for b in keep_clear or []])
     ways = {}
     for index, (frame, _, _, _) in enumerate(cuts):
         end = spans[index][1]
@@ -2055,13 +2278,14 @@ def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, str
             ways[index] = ([a, b], way)
     start = rng.getstate()
     close_ok = [True] * len(cuts)
+    knee_ok = [True] * len(cuts)
     lost = {}
     for _ in range(MUSIC_ROUNDS):
-        # a shot planned close that no close way of seeing holds with her face off the words is not drawn close again:
-        # its share goes to the next shot in turn (music_sizes), and the song is planned again from the same draw
+        # a shot planned close (or knee) that no close (knee) way of seeing holds with her face off the words is not drawn
+        # so again: its share goes to the next shot in turn (music_sizes), and the song is planned again from the same draw
         rng.setstate(start)
-        for f, ok in zip(features, close_ok):
-            f["close_ok"] = ok
+        for f, ok, kok in zip(features, close_ok, knee_ok):
+            f["close_ok"], f["knee_ok"] = ok, kok
         sizes = music_sizes(features)
         shots, previous, palette_at, by_index = [], None, {}, {}
         for index, (frame, sid, kind, nbars) in enumerate(cuts):
@@ -2084,15 +2308,27 @@ def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, str
             windowed = any(int(w[0]) <= end and int(w[1]) >= frame for w in windows or ())
             for asked, left in ((need, False), (plain_need, True)) if windowed else ((need, False),):
                 for waive in (0, 1, 2):
-                    for size in order:
-                        shot, hits, turns, why = _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact, way,
-                                                             previous, chain, centre, upper, asked, boxes, strong_frames,
-                                                             beat_frames, hooks, rising, rng, palette_at, len(shots),
-                                                             waive, zoom, head, avoid)
-                        tried[size + ("/guard" if left else "") + ("/waive%d" % waive if waive else "")] = (
-                            dict(why, words_frames=hits) if hits else why)
-                        if shot is not None and (best is None or hits < best[1]):
-                            best = (shot, hits, turns, waive, left)
+                    # her eyes in the box's x first (a whole-body or knee shot: MUSIC_EYES_BOX), then anywhere: the
+                    # composition gives way before the cut rule (a close shot keeps the box always)
+                    for band in (True, False):
+                        for size in order:
+                            if not band and size in MUSIC_CLOSE:
+                                continue
+                            shot, hits, turns, why = _sized_shot(dancer, size, index, frame, end, sid, kind, nbars, contact,
+                                                                 way, previous, chain, centre, upper, asked, boxes,
+                                                                 strong_frames, beat_frames, hooks, rising, rng, palette_at,
+                                                                 len(shots), waive, zoom, head, avoid, band)
+                            tried[size + ("/guard" if left else "") + ("/waive%d" % waive if waive else "")
+                                  + ("" if band or size in MUSIC_CLOSE else "/free")] = (
+                                dict(why, words_frames=hits) if hits else why)
+                            # a way that waives more (the window left to guard, the cut rule's turn and line, the
+                            # box for a whole-body or knee shot) only when it keeps her face off the words; among the ways
+                            # of one waiver, the size with the fewest frames on them
+                            level = (left, waive, band)
+                            if shot is not None and (best is None or hits == 0 or (hits < best[1] and level == best[6])):
+                                best = (shot, hits, turns, waive, left, not band and size not in MUSIC_CLOSE, level)
+                            if best is not None and best[1] == 0:
+                                break
                         if best is not None and best[1] == 0:
                             break
                     # her face off the words is a guard and the cut rule a target: with her face still on them the
@@ -2103,22 +2339,25 @@ def plan_sized_shots(motion, dancer, song, cuts, spans, held, chain, centre, str
                     break
             if best is None:
                 raise ValueError("no size frames her from %d to %d (%s)" % (frame, end, json.dumps(tried, sort_keys=True)))
-            shot, hits, turns, broken, left = best
+            shot, hits, turns, broken, left, free, _ = best
             palette_at.clear()
             palette_at.update(turns)
             shot.planned, shot.features = wanted, dict(features[index], face_hits=hits, rule_waived=broken, tried=tried,
-                                                       window_to_guard=left)
-            if index in lost:
-                shot.features["close_lost"] = lost[index]
+                                                       window_to_guard=left, band_waived=free)
+            shot.features["lost"] = list(lost.get(index, []))
             shots.append(shot)
             by_index[index] = shot
             previous = shot
         widened = [i for i, sh in by_index.items() if sh.planned in MUSIC_CLOSE and sh.size not in MUSIC_CLOSE and close_ok[i]]
-        if not widened:
+        unkneed = [i for i, sh in by_index.items() if sh.planned == "knee" and sh.size == "full" and knee_ok[i]]
+        if not widened and not unkneed:
             break
         for i in widened:
             close_ok[i] = False
-            lost[i] = {"planned": by_index[i].planned, "tried": by_index[i].features.get("tried")}
+            lost.setdefault(i, []).append({"planned": by_index[i].planned, "tried": by_index[i].features.get("tried")})
+        for i in unkneed:
+            knee_ok[i] = False
+            lost.setdefault(i, []).append({"planned": "knee", "tried": by_index[i].features.get("tried")})
     return shots
 
 
@@ -2133,8 +2372,9 @@ def music_shot_values(shot):
             values = _apply(values, m, min(f, m.start + m.frames))
         yaw = math.radians(values["yaw"])
         ox, oz = values["track"] * math.cos(yaw), values["track"] * math.sin(yaw)
-        cx, cz = shot.centre[f - shot.start]
-        values = dict(values, pos=(cx + ox, MUSIC_HEIGHT if shot.height is None else shot.height, cz + oz),
+        c = shot.centre[f - shot.start]
+        cx, cz, dy = c[0], c[1], (c[2] if len(c) > 2 else 0.0)
+        values = dict(values, pos=(cx + ox, (MUSIC_HEIGHT if shot.height is None else shot.height) + dy, cz + oz),
                       rot=(values["pitch"], values["yaw"], 0.0), offset=(ox, oz))
         out.append(values)
     return out
@@ -2339,6 +2579,12 @@ def run_music(dance_path, out_path, song_path, onsets_path=None, seed=0, handhel
                                    "moves": {k: list(v) for k, v in MUSIC_SIZE_MOVES.items()}, "dolly_at": MUSIC_DOLLY_AT,
                                    "close_pitch_top": MUSIC_CLOSE_PITCH_TOP, "scales": list(MUSIC_SCALES),
                                    "contact_fovs": list(MUSIC_CONTACT_FOVS), "contact_up": MUSIC_CONTACT_UP,
+                                   "contact_down": MUSIC_CONTACT_DOWN, "contact_side": MUSIC_CONTACT_SIDE,
+                                   "contact_run": MUSIC_CONTACT_RUN, "contact_clear": MUSIC_CLEAR,
+                                   "chest_hips_under": oc.CHEST_HIPS_UNDER, "chest_eyes_down": oc.CHEST_EYES_DOWN,
+                                   "eyes_box": MUSIC_EYES_BOX, "eyes_hold": MUSIC_EYES_HOLD, "head": list(MUSIC_HEAD),
+                                   "back": MUSIC_BACK, "back_share": MUSIC_BACK_SHARE, "near_parts": list(MUSIC_NEAR_PARTS),
+                                   "ramp_beats": MUSIC_RAMP_BEATS, "rounds": MUSIC_ROUNDS,
                                    "close_look_down": oc.CLOSE_LOOK_DOWN, "counts": result["sizes"],
                                    "frames": result["sizes_frames"]}})
             write_json(full, data, 1)
