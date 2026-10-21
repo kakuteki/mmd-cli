@@ -48,8 +48,11 @@ that loudest (a Hann window centred on a step reads half of it there).  The firs
 word's vowels in order): of the syllables round its beat (TITLE_SEARCH), the first of a run whose vowels that should be open
 (e a o) are all more open than those that should be close (i u), OPEN = the level of 700-1500 Hz over 300-700 Hz over
 VOWEL_AFTER of the vowel (the order, not a threshold, so that a voice's colour does not count; a syllable sung legato makes no
-onset and may be missing from the run, never the first; the run that places most of the word's vowels, then the widest margin).  Without the vowels, the syllable the voice comes in with nearest the beat (SYLLABLE_SEARCH): in this song that is the
-word before the title word.
+onset and may be missing from the run, never the first; the run that places most of the word's vowels, then the widest margin,
+then the one whose syllables lie nearest their eighths, TITLE_STEP of the structure's beat apart: the vowels read the same with
+a syllable at either of two places of one kind).  Without the vowels, the syllable the voice comes in with nearest the beat
+(SYLLABLE_SEARCH): in this song that is the word before the title word.  The title word's beat is its "beat" on the structure's
+grid (hook_beat: version 3 of the song structure writes the word's t on its first sung eighth, version 2 on that beat).
 The band's return: a strong hit of the backing after a stop, STOP_S or more in which none of its hits reaches the QUIET_PCT
 percentile (the drums stop under the last title word and come back hard on the next bar; the bass plays on through it, so
 the low end alone does not show the stop).
@@ -74,7 +77,8 @@ ONSET_BAND = (30.0, 8000.0)       # Hz: the whole band of a drum kit and the ban
 HIT_SPACING = 0.05                # s: a hit is the largest flux within this on each side
 VOICE_WIN, VOICE_HOP = 512, 55    # samples: 23 ms windows every 2.5 ms
 VOICED = (150.0, 1500.0)          # Hz: the voice's fundamental and first formant (review mographrev's hook_timing)
-SYLLABLE_SEARCH = (-0.25, 0.15)   # s from the title word's beat: its first syllable comes in 100-160 ms before it
+SYLLABLE_SEARCH = (-0.25, 0.15)   # s from the title word's beat where the voice's first rise near it is looked for (no vowels
+#                                   given: in this song the last syllable of the word before, 90-160 ms before the beat)
 SYLLABLE_RISE_DB = 12.0
 SYLLABLE_BEFORE, SYLLABLE_AFTER = 0.075, 0.05
 SYLLABLE_SMOOTH = 5               # rows the level is smoothed over for its slope
@@ -85,6 +89,8 @@ VOWEL_OPEN = {"i": -1, "u": -1, "e": 1, "a": 1, "o": 1}             # close (a l
 TITLE_SEARCH = (-0.35, 0.6)       # s from the title word's beat where its first syllable is looked for (by its vowels)
 WORD_SYLLABLE = 0.25              # s: the title word's syllables lie within (its syllables - 1) x this of its first (an eighth at
 #                                   140 BPM is 0.214 s)
+TITLE_STEP = 0.5                  # beats from one of the title word's syllables to the next (it is sung on eighths): where its
+#                                   vowels cannot tell a syllable's place (a syllable sung legato is missing), its time does
 STOP_S = 1.0                      # s without a hit at the song's median or over (more than two beats at 140 BPM): a stop
 QUIET_PCT = 50.0
 STRONG = 90.0                     # percentile of the song's hits: a strong hit (the request: "the top 10 % or so")
@@ -390,13 +396,15 @@ def syllables_of(voice, sr=SR, rise_db=SYLLABLE_RISE_DB, before=SYLLABLE_BEFORE,
     return out
 
 
-def title_start(syllables, beat, vowels, search=TITLE_SEARCH, per=WORD_SYLLABLE):
+def title_start(syllables, beat, vowels, search=TITLE_SEARCH, per=WORD_SYLLABLE, step=None):
     """the title word's first syllable as sung, told by the word's vowels (`vowels`: its vowels in order, of i u e a o): a
     syllable within `search` of `beat` taken as the word's first, and the syllables after it within the word's length (`per`
     a syllable) taken in order as later syllables of the word - a syllable sung legato makes no onset, so some may be missing,
     never the first - such that the vowels that should be open (e a o) are all more open than those that should be close
     (i u): the order of the run, not a threshold, so that a voice's own colour does not count.  Of those, the one that
-    places most of the word's vowels, then the widest margin.  {"t", "rise_db", "run", "open", "positions", "margin"} or None"""
+    places most of the word's vowels, then the widest margin, then (with `step`, s from one syllable to the next: the vowels
+    read the same with a syllable at either of two places of the same kind) the one whose syllables lie nearest their places
+    at that step from the first.  {"t", "rise_db", "run", "open", "positions", "margin"} or None"""
     signs = []
     for v in vowels:
         if v not in VOWEL_OPEN:
@@ -417,12 +425,13 @@ def title_start(syllables, beat, vowels, search=TITLE_SEARCH, per=WORD_SYLLABLE)
             if not close or not opened:
                 continue
             margin = min(opened) - max(close)
-            key = (len(matched), margin)
+            misfit = 0.0 if step is None else sum(abs(y["t"] - first["t"] - p * float(step)) for y, p in zip(after, places))
+            key = (len(matched), margin, -misfit)
             if margin > 0 and (best is None or key > best[0]):
                 best = (key, first, [y for y, _ in matched], (0,) + places)
     if best is None:
         return None
-    (_, margin), first, run, places = best
+    (_, margin, _), first, run, places = best
     return {"t": first["t"], "rise_db": first["rise_db"], "run": [y["t"] for y in run], "open": [y["open"] for y in run],
             "positions": list(places), "margin": round(margin, 2)}
 
@@ -468,6 +477,17 @@ def on_the_grid(t, structure, fps=FPS):
     return b if abs(b - t) <= NEAR_FRAMES / float(fps) else t
 
 
+def hook_beat(structure, hook):
+    """s: the beat a title word (a hook of the structure) comes in after, on the structure's grid (its "beat": version 3 of the
+    song structure writes the word's t on its first sung eighth, version 2 wrote it on this beat); with no grid or no beat,
+    its t"""
+    grid = structure.get("beat", {})
+    b = hook.get("beat")
+    if isinstance(grid, dict) and "first" in grid and "period" in grid and isinstance(b, int) and not isinstance(b, bool):
+        return float(grid["first"]) + b * float(grid["period"])
+    return float(hook["t"])
+
+
 def moments_of(structure, syllables, returns):
     """the moments a flash may mean: the title words' first syllables as sung (syllables: {hook n: first_syllable or None}),
     the heads of the sections after the first (at their beats), the band's returns that are no section's head (at the beat of
@@ -476,7 +496,7 @@ def moments_of(structure, syllables, returns):
     for h in structure.get("hooks", []):
         s = syllables.get(h["n"])
         if s is not None:
-            out.append({"kind": "title", "n": h["n"], "t": s["t"], "beat": h["t"], "rise_db": s["rise_db"]})
+            out.append({"kind": "title", "n": h["n"], "t": s["t"], "beat": hook_beat(structure, h), "rise_db": s["rise_db"]})
     heads = []
     for s in structure.get("sections", [])[1:]:
         heads.append(float(s["t"]))
@@ -667,11 +687,14 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
         env[name] = (t, e)
         sets[name] = Hits(hits_of(t, e, span=within))
     vt, vdb = voice_level(voice_at, sr)
+    grid = structure.get("beat", {})
+    step = TITLE_STEP * float(grid["period"]) if isinstance(grid, dict) and grid.get("period") else None
     if title_vowels:
         sung = syllables_of(voice_at, sr)
-        syllables = {h["n"]: title_start(sung, float(h["t"]), title_vowels) for h in structure.get("hooks", [])}
+        syllables = {h["n"]: title_start(sung, hook_beat(structure, h), title_vowels, step=step)
+                     for h in structure.get("hooks", [])}
     else:
-        syllables = {h["n"]: first_syllable(vt, vdb, float(h["t"])) for h in structure.get("hooks", [])}
+        syllables = {h["n"]: first_syllable(vt, vdb, hook_beat(structure, h)) for h in structure.get("hooks", [])}
     returns = band_returns(sets["backing"])
     moments = moments_of(structure, syllables, returns)
     near, reach = NEAR_FRAMES / float(FPS), REACH_FRAMES / float(FPS)
@@ -703,7 +726,8 @@ def measure(mix_path, voice_path, structure, look, arrays=None, sr=SR, reference
                          "strong": STRONG, "near_frames": NEAR_FRAMES, "reach_frames": REACH_FRAMES, "local": LOCAL,
                          "skirt_gap": SKIRT_GAP, "move_reach_s": round(reach_of(structure), 4),
                          "clock_lead_s": round(_clock_lead(sr, ONSET_WIN, ONSET_HOP, ONSET_BAND), 4),
-                         "beat_first": beat.get("first"), "beat_period": beat.get("period")},
+                         "beat_first": beat.get("first"), "beat_period": beat.get("period"),
+                         "title_step_s": None if step is None else round(step, 7)},
             "align": {"lag_samples": lag, "lag_ms": round(lag * 1000.0 / sr, 2), "gain_least_squares": round(gain, 3),
                       "gain_used": 1.0},
             "reference": checked,

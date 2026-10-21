@@ -263,6 +263,18 @@ class SyllableTest(unittest.TestCase):
         self.assertLess(abs(got["t"] - (beat + PERIOD / 2.0)), 0.006, got)
         self.assertEqual(got["positions"], [0, 2, 3])
 
+    def test_where_the_vowels_cannot_place_a_syllable_its_time_on_the_eighths_does(self):
+        # (the second singer's title words 1 and 2) the a sung on from the i before it, or the two middle syllables sung on from
+        # the first: the e that comes in is the word's fourth syllable, three eighths after its first - a close i then an open
+        # vowel reads the same at the third place and at the fourth
+        beat = 1.2
+        eighth = PERIOD / 2.0
+        got = FS.title_start(FS.syllables_of(self.legato(beat, [(1, "i"), (2, "ia"), (4, "e")])), beat, "iiae", step=eighth)
+        self.assertEqual(got["positions"], [0, 1, 3], got)
+        got = FS.title_start(FS.syllables_of(self.legato(beat, [(1, "iia"), (4, "e")])), beat, "iiae", step=eighth)
+        self.assertEqual(got["positions"], [0, 3], got)
+        self.assertLess(abs(got["t"] - (beat + eighth)), 0.006, got)
+
     def test_the_next_word_past_the_title_words_length_is_not_its_syllables(self):
         # the title word sung with its middle run together, and the next word's close vowels soon after it
         beat = 1.2
@@ -334,6 +346,17 @@ class MomentTest(unittest.TestCase):
         self.assertEqual(FS.frame_of_moment(got[0]["t"]), 7251)
         off = FS.moments_of(structure, {}, [{"t": beat + 0.107, "quiet_s": 1.7, "pct": 98.0}])      # a sixteenth after: off the beat
         self.assertAlmostEqual(off[0]["t"], beat + 0.107, places=4)
+
+    def test_a_title_word_is_told_from_its_beat_on_the_grid(self):
+        # version 3 of the song structure writes a title word's t on its first sung eighth, version 2 on the beat before it:
+        # the beat is the grid's (the word's "beat"); with no grid or no beat, its t
+        grid = {"beat": {"first": FIRST, "period": PERIOD, "per_bar": 4}}
+        self.assertAlmostEqual(FS.hook_beat(grid, {"n": 1, "beat": 201, "t": 86.373}), FIRST + 201 * PERIOD, places=9)
+        self.assertEqual(FS.hook_beat({}, {"n": 1, "beat": 201, "t": 86.373}), 86.373)
+        self.assertEqual(FS.hook_beat(grid, {"n": 1, "t": 86.373}), 86.373)
+        structure = dict(grid, sections=[{"id": "intro", "t": 0.016}], hooks=[{"n": 1, "beat": 201, "t": 86.373}])
+        got = FS.moments_of(structure, {1: {"t": 86.389, "rise_db": 28.0}}, [])
+        self.assertAlmostEqual(got[0]["beat"], FIRST + 201 * PERIOD, places=9)
 
 
 # ---- the decision -------------------------------------------------------------------------------------------------
@@ -660,6 +683,57 @@ class TitleVowelsTest(unittest.TestCase):
             p = [x for x in reps["vowels"]["decisions"] if x["kind"] == "punch"][0]
             self.assertEqual(p["frame"], FS.frame_of_moment(t["vowels"]))
             self.assertIn("iiae", reps["vowels"]["title_how"])
+
+    def test_a_structure_that_writes_the_title_word_on_its_sung_eighth_is_read_from_its_beat(self):
+        # (the song structure's version 3: the title word's t on its first sung eighth) the word sung partly legato, the a run on
+        # from the i before it: measure tells its places by the eighths of the structure's beat, and looks for its first syllable
+        # from the beat - as with version 2, which wrote t on the beat
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(23)
+        seconds = 10.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(22):
+            put(backing, FIRST + b * PERIOD, 0.15 * hit)
+        beat = FIRST + 12 * PERIOD
+        eighth = PERIOD / 2.0
+        voice = 0.003 * rng.standard_normal(int(seconds * SR))
+        put(voice, beat - 0.10, vowel(0.10 + eighth - 0.04, "a"))                      # the word before: just before the beat
+        put(voice, beat + eighth, vowel(eighth - 0.04, "i"))
+        put(voice, beat + 2 * eighth, np.concatenate([vowel(eighth, "i"), vowel(eighth - 0.04, "a", attack=0.01)]))
+        put(voice, beat + 4 * eighth, vowel(eighth - 0.04, "e"))
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(ML.frame_time(ML.frame_of(beat, 30))),
+                                                            punch(ML.frame_time(ML.frame_of(beat, 30)))]}}
+        with tempfile.TemporaryDirectory() as d:
+            files = {}
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            for name, x in (("mix", backing + voice), ("voice", voice)):
+                files[name] = os.path.join(d, name + ".wav")
+                write_wav(files[name], x, scale)
+            files["look"] = os.path.join(d, "look.json")
+            with open(files["look"], "w", encoding="utf-8") as f:
+                json.dump(look, f)
+            for version, t in ((2, beat), (3, beat + eighth)):
+                structure = {"version": version, "seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                             "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}],
+                             "hooks": [{"n": 1, "beat": 12, "t": t}], "skirt": []}
+                files["structure"] = os.path.join(d, "structure.json")
+                with open(files["structure"], "w", encoding="utf-8") as f:
+                    json.dump(structure, f)
+                reps = {}
+                for tag, extra in (("rise", []), ("vowels", ["--title-vowels", "iiae"])):
+                    out = os.path.join(d, "measure_%s.json" % tag)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(FS.main(["measure", files["mix"], files["voice"], files["structure"], files["look"], out]
+                                                 + extra), 0, tag)
+                    with open(out, encoding="utf-8") as f:
+                        reps[tag] = json.load(f)
+                title = {k: [m for m in r["moments"] if m["kind"] == "title"][0] for k, r in reps.items()}
+                self.assertLess(abs(title["vowels"]["t"] - (beat + eighth)), 0.006, version)
+                self.assertEqual(reps["vowels"]["syllables"]["1"]["positions"], [0, 1, 3], version)
+                self.assertLess(abs(title["rise"]["t"] - (beat - 0.10)), 0.006, version)    # from the beat, as before
+                self.assertAlmostEqual(title["vowels"]["beat"], beat, places=6)
 
 
 if __name__ == "__main__":
