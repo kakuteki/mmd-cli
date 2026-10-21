@@ -805,5 +805,494 @@ class TitleVowelsTest(unittest.TestCase):
                 self.assertAlmostEqual(title["vowels"]["beat"], beat, places=6)
 
 
+# ---- review flashsyncrev: what the tests above let through (tools/flash_sync.py broken one place at a time on hinata: 57 ways,
+# 36 passed them; these catch 35 of the 36, the last breaks nothing: two flashes on one frame get one decision) ----
+
+@unittest.skipUnless(FS, "needs numpy")
+class RuleEdgeTest(unittest.TestCase):
+    def test_a_hit_at_the_90th_percentile_is_strong(self):
+        # (strong_boundary) "90 % 点以上": 9 of the 10 hits weaker than the moment's -> percentile 90.0, strong
+        hits = FS.Hits([{"t": float(k), "height": float(k)} for k in range(1, 10)] + [{"t": 11.30, "height": 10.0}])
+        self.assertEqual(hits.strongest(11.30, 0.001)["pct"], 90.0)
+        out = FS.decide([flash(10.0)], [{"kind": "section", "id": "inter1", "t": 11.29}], hits, skirt=[])
+        self.assertEqual((out[0]["action"], out[0]["frame"]), ("move", FS.frame_of_moment(11.29)))
+
+    def test_a_return_at_the_90th_percentile_is_a_return(self):
+        # (returns_strong_boundary) 10 quiet hits, 8 loud ones (percentile 50: loud), a stop of 1.5 s, then a hit at exactly
+        # the 90th percentile; one stronger hit long after
+        hits = [{"t": 1.0 + 0.3 * k, "height": 5.0} for k in range(8)]
+        hits += [{"t": 3.4 + 0.25 * k, "height": 1.0} for k in range(4)] + [{"t": 5.0 + 0.3 * k, "height": 1.0} for k in range(6)]
+        hits += [{"t": 4.6, "height": 10.0}, {"t": 9.0, "height": 20.0}]
+        h = FS.Hits(hits)
+        self.assertEqual(h.percentile(10.0), 90.0)
+        self.assertIn(4.6, [r["t"] for r in FS.band_returns(h)])
+
+    def test_a_strong_hit_a_frame_and_a_half_off_the_moment_is_not_on_it(self):
+        # (near_frames_two, near_wider_in_place) the rule's +-1 frame: a strong hit 50 ms after the head is not on it
+        out = FS.decide([flash(10.0)], [{"kind": "section", "id": "inter1", "t": 11.29}], song_hits(strong=[11.34]), skirt=[])
+        self.assertEqual(out[0]["action"], "drop")
+
+    def test_a_return_fifty_ms_off_the_beat_keeps_its_time(self):
+        # (grid_two_frames, near_frames_two) only a hit within a frame of a beat is put on the grid
+        structure = {"beat": {"first": FIRST, "period": PERIOD, "per_bar": 4}, "sections": [{"id": "intro", "t": 0.016}], "hooks": []}
+        beat = FIRST + 564 * PERIOD
+        got = FS.moments_of(structure, {}, [{"t": beat + 0.050, "quiet_s": 1.7, "pct": 98.0}])
+        self.assertAlmostEqual(got[0]["t"], beat + 0.050, places=4)
+
+    def test_the_skirts_half_second_holds_on_both_sides_of_the_punch(self):
+        # (skirt_gap_small) the punch on the band's return (41.3 s, 12 frames to 41.7 s) is half a second from where the skirt
+        # flares: 0.4 s after its end, or 0.4 s before its start, is near; the punch goes to the title word as sung
+        moments = [{"kind": "title", "n": 4, "t": 39.89, "beat": 40.0}, {"kind": "return", "t": 41.3}]
+        for skirt in (42.1, 40.9):
+            out = FS.decide([flash(40.0), punch(40.0)], moments, song_hits(strong=[41.3]), skirt=[skirt])
+            p = [d for d in out if d["kind"] == "punch"][0]
+            self.assertEqual((p["action"], p["frame"]), ("move", FS.frame_of_moment(39.89)), skirt)
+
+    def test_a_flash_moves_at_most_a_bar_of_the_structures_beat(self):
+        # (reach_of_two_bars) measure's reach is a bar of the structure's beat (and a frame): in a song of three beats of 0.5 s
+        # to the bar, a head with a strong hit 1.45 s from the flash is reached, one 1.6 s from it is not (two bars would)
+        reach = FS.reach_of({"beat": {"per_bar": 3, "period": 0.5}})
+        for away, want in ((1.45, "move"), (1.6, "drop")):
+            out = FS.decide([flash(10.0)], [{"kind": "section", "id": "a", "t": 10.0 + away}], song_hits(strong=[10.0 + away]),
+                            skirt=[], reach=reach)
+            self.assertEqual(out[0]["action"], want, away)
+        out = FS.decide([flash(10.0)], [{"kind": "section", "id": "a", "t": 11.6}], song_hits(strong=[11.6]), skirt=[],
+                        reach=FS.reach_of({"beat": {"per_bar": 4, "period": PERIOD}}))
+        self.assertEqual(out[0]["action"], "move")                      # a bar of 140 BPM is 1.71 s
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class HitMoreTest(unittest.TestCase):
+    def test_a_sound_that_stops_short_is_no_hit_where_it_stops(self):
+        # (flux_both_ways) a hit is a sound coming in, not one going out: a noise faded in over 0.2 s that stops at once at
+        # 1.7 s makes no hit there to match the drum hit at 0.5 s
+        rng = np.random.default_rng(51)
+        x = 0.0005 * rng.standard_normal(SR * 3)
+        put(x, 0.5, 0.3 * burst(int(0.12 * SR), rng))
+        n = int(0.6 * SR)
+        put(x, 1.1, 0.3 * rng.standard_normal(n) * np.minimum(1.0, np.arange(n) / (0.2 * SR)))
+        hits = FS.hits_of(*FS.onset_envelope(x))
+        drum = max(h["height"] for h in hits if abs(h["t"] - 0.5) < 0.03)
+        at_stop = [(round(h["t"], 3), h["height"]) for h in hits if 1.65 < h["t"] < 1.8]       # (a window is 46 ms long)
+        self.assertTrue(all(h < 0.3 * drum for _, h in at_stop), (drum, at_stop))
+
+    def test_hits_lie_on_their_onsets_within_two_ms(self):
+        # (vertex_sign) the parabola's top puts a hit between the rows of the envelope (rows 5 ms apart)
+        rng = np.random.default_rng(52)
+        x = 0.0005 * rng.standard_normal(SR * 8)
+        hit = burst(int(0.12 * SR), rng)
+        onsets = [0.7311 + 0.6173 * k for k in range(11)]
+        for t0 in onsets:
+            put(x, t0, 0.3 * hit)
+        hits = FS.hits_of(*FS.onset_envelope(x))
+        errs = [min(abs(h["t"] - t0) for h in hits) for t0 in onsets]
+        self.assertLess(max(errs), 0.002, errs)
+
+    def test_two_unrelated_sounds_do_not_correlate(self):
+        # (lag_envelopes_not_centred) mix_lag's r is a correlation: two unrelated sounds (a steady noise, a few hits each) give a
+        # low one, the same sound a high one
+        rng = np.random.default_rng(53)
+        sounds = []
+        for _ in range(2):
+            x = 0.05 * rng.standard_normal(SR * 12)
+            hit = burst(int(0.1 * SR), rng)
+            for k in range(5):
+                put(x, 0.5 + 11.0 * rng.random(), 0.8 * hit)
+            sounds.append(x)
+        _, r = FS.mix_lag(sounds[0], sounds[1])
+        self.assertLess(r, 0.3)
+        _, same = FS.mix_lag(sounds[0], sounds[0] + 0.01 * rng.standard_normal(SR * 12))
+        self.assertGreater(same, 0.8)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class PunchAndKeepTest(unittest.TestCase):
+    def test_the_punch_of_a_dropped_flash_a_few_ms_off_its_beat_goes_to_the_title_word(self):
+        # (title_for_exact_beat) the look writes a flash on its frame's time (86.166 s for the beat at 86.159 s): its title word
+        # is still the one whose beat is nearest (here the beat at 19.993 s, the flash on frame 600 written 19.999 s)
+        moments = [{"kind": "title", "n": 2, "t": 20.22, "beat": 19.993}]
+        t = ML.frame_time(600)
+        out = FS.decide([flash(t), punch(t)], moments, song_hits(), skirt=[])
+        p = [d for d in out if d["kind"] == "punch"][0]
+        self.assertEqual((p["action"], p["frame"]), ("move", FS.frame_of_moment(20.22)))
+
+    def test_the_title_word_of_a_flash_is_told_by_its_beat(self):
+        # (title_for_on_t) of two title words in reach, the one whose beat the flash stands on, not the one sung nearest it
+        moments = [{"kind": "title", "n": 1, "t": 20.23, "beat": 20.0}, {"kind": "title", "n": 2, "t": 19.85, "beat": 18.8}]
+        out = FS.decide([flash(20.0), punch(20.0)], moments, song_hits(), skirt=[])
+        p = [d for d in out if d["kind"] == "punch"][0]
+        self.assertEqual((p["n"], p["frame"]), (1, FS.frame_of_moment(20.23)))
+
+    def test_a_flash_on_its_moment_is_kept_and_so_is_its_punch(self):
+        # (flash_keep_said_move, punch_keep_said_move) a strong hit at the head on the flash's own frame: nothing moves and the
+        # look is left as it was
+        t = ML.frame_time(300)
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(t), punch(t)]}}
+        out = FS.decide(look["mograph"]["events"], [{"kind": "section", "id": "a", "t": 10.0}], song_hits(strong=[10.0]), skirt=[])
+        self.assertEqual([(d["kind"], d["action"], d["frame"]) for d in out], [("flash", "keep", 300), ("punch", "keep", 300)])
+        placed = FS.place(look, out)
+        self.assertEqual(placed["mograph"]["events"], look["mograph"]["events"])
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class PlaceMoreTest(unittest.TestCase):
+    def test_flares_all_dropped_leave_none(self):
+        # (place_flares_left_when_all_dropped) a look whose flares are all dropped is written with flares [] (left as they were,
+        # light3's five flares would come back)
+        look = {"flares": [30.0, 44.467], "mograph": {"on": 1, "events": []}}
+        out = FS.decide([], [{"kind": "section", "id": "inter1", "t": 11.29}], song_hits(strong=[11.3]), skirt=[],
+                        flares=look["flares"])
+        self.assertEqual([d["action"] for d in out], ["drop", "drop"])
+        self.assertEqual(FS.place(look, out)["flares"], [])
+
+    def test_the_flares_come_out_in_time_order(self):
+        # (place_flares_unsorted) flares given out of order are written in time order
+        moments = [{"kind": "section", "id": "a", "t": 12.6}, {"kind": "section", "id": "b", "t": 10.0}]
+        out = FS.decide([], moments, song_hits(strong=[12.6, 10.0]), skirt=[], flares=[12.5, 10.2])
+        placed = FS.place({"flares": [12.5, 10.2]}, out)
+        self.assertEqual(placed["flares"], sorted(placed["flares"]))
+        self.assertEqual(placed["flares"], [FS.time_of_frame(300), FS.time_of_frame(378)])
+
+    def test_a_moved_event_keeps_its_note_and_is_written_on_its_frames_time(self):
+        # (place_note_replaced, place_time_plain) the note of the plan stays in front of flashsync's, and the time is
+        # mograph_layer.frame_time of the frame (round and ceil give the frame back)
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(10.0, note="title word 1 (beat 23)")]}}
+        out = FS.decide(look["mograph"]["events"], [{"kind": "section", "id": "inter1", "t": 11.29}], song_hits(strong=[11.3]),
+                        skirt=[])
+        e = FS.place(look, out)["mograph"]["events"][0]
+        self.assertTrue(e["note"].startswith("title word 1 (beat 23); flashsync: moved from"), e["note"])
+        self.assertEqual(e["t"], ML.frame_time(338))
+        self.assertEqual((int(round(e["t"] * 30)), int(math.ceil(e["t"] * 30))), (338, 338))
+
+    def test_a_look_the_motion_graphics_refuse_is_refused(self):
+        # (place_no_merge_check) place checks the section it writes: events with mograph.on 0 draw nothing
+        look = {"mograph": {"on": 0, "events": [{"kind": "shake", "t": 20.0, "note": "landing"}]}}
+        with self.assertRaises(ValueError):
+            FS.place(look, [])
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class MomentMoreTest(unittest.TestCase):
+    STRUCTURE = {"beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                 "sections": [{"id": "intro", "beat": 0, "t": FIRST}, {"id": "inter1", "beat": 19, "t": FIRST + 19 * PERIOD}],
+                 "hooks": []}
+
+    def test_the_first_section_is_no_moment_and_a_return_on_a_head_is_the_head(self):
+        # (moments_with_first_section, returns_at_heads_kept) the song's start is no moment; a return read on a section's
+        # head is that head, once
+        head = FIRST + 19 * PERIOD
+        got = FS.moments_of(self.STRUCTURE, {}, [{"t": head + 0.006, "quiet_s": 1.5, "pct": 97.0}])
+        self.assertEqual([(m["kind"], m.get("id")) for m in got], [("section", "inter1")])
+
+    def test_a_beat_written_as_true_is_no_beat(self):
+        # (hook_beat_bool_taken) JSON true is not beat 1
+        self.assertEqual(FS.hook_beat({"beat": {"first": FIRST, "period": PERIOD}}, {"n": 1, "beat": True, "t": 5.0}), 5.0)
+
+    def test_hits_given_out_of_order_are_told_in_time_order(self):
+        # (hits_unsorted) band_returns reads the hits in time order whatever order they come in: a loud hit 0.85 s before the
+        # hard one leaves no stop, also when the hits come last first
+        hits = [{"t": 1.0 + 0.2143 * k, "height": 45.0 + 10.0 * (k % 3)} for k in range(60)]
+        stop_from = hits[-1]["t"]
+        back = stop_from + 1.7
+        hits += [{"t": stop_from + 0.85, "height": 65.0}]
+        hits += [{"t": back, "height": 200.0}] + [{"t": back + 0.2143 * k, "height": 50.0} for k in range(1, 20)]
+        self.assertEqual(FS.band_returns(FS.Hits(hits)), [])
+        self.assertEqual(FS.band_returns(FS.Hits(list(reversed(hits)))), [])
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class TitleMoreTest(unittest.TestCase):
+    E = PERIOD / 2.0
+
+    def test_a_syllable_at_its_place_of_two_alike_goes_to_its_own(self):
+        # (misfit_signed) the a of the word at its eighth (the second i and the e missing): an open vowel reads the same at
+        # the a's place and the e's; its time puts it at the a's
+        b = 1.2
+        sung = [{"t": b + self.E, "rise_db": 20.0, "open": -15.0}, {"t": b + 3 * self.E, "rise_db": 20.0, "open": 4.0}]
+        got = FS.title_start(sung, b, "iiae", step=self.E)
+        self.assertEqual(got["positions"], [0, 2])
+
+    def test_the_widest_margin_places_the_syllables(self):
+        # (margin_smallest) the second i a little more open than the first (as the second singer's title word 1 reads: -12.5
+        # and -14.8): read as the a it would leave a margin of 2.3 dB, as the i one of 14.5: it is the i
+        b = 1.2
+        sung = [{"t": b + self.E, "rise_db": 20.0, "open": -14.8}, {"t": b + 2 * self.E, "rise_db": 20.0, "open": -12.5},
+                {"t": b + 4 * self.E, "rise_db": 20.0, "open": 1.9}]
+        got = FS.title_start(sung, b, "iiae", step=self.E)
+        self.assertEqual(got["positions"], [0, 1, 3])
+        self.assertAlmostEqual(got["margin"], 14.4, places=1)
+
+    def test_the_next_word_four_eighths_on_is_not_the_title_words(self):
+        # (title_span_n) the next word's open vowel 0.86 s after the first syllable (past the word's 0.75 s): not in its run
+        b = 1.2
+        sung = [{"t": b + self.E, "rise_db": 20.0, "open": -15.0}, {"t": b + 4 * self.E, "rise_db": 20.0, "open": 3.0},
+                {"t": b + 5 * self.E, "rise_db": 20.0, "open": 5.0}]
+        got = FS.title_start(sung, b, "iiae", step=self.E)
+        self.assertEqual(got["positions"], [0, 3])
+        self.assertEqual(len(got["run"]), 2)
+
+    def test_a_second_onset_in_the_last_syllable_does_not_lose_the_word(self):
+        # (title_after_n) four syllables, then a second onset in the last one 77 ms on (a re-attack): the run is the word's four
+        b = 1.2
+        sung = [{"t": b + k * self.E + self.E, "rise_db": 20.0, "open": o} for k, o in enumerate((-15.0, -14.0, 5.0, 3.0))]
+        sung.append({"t": b + 4 * self.E + 0.077, "rise_db": 14.0, "open": 3.0})
+        got = FS.title_start(sung, b, "iiae", step=self.E)
+        self.assertIsNotNone(got)
+        self.assertEqual((got["t"], got["positions"]), (b + self.E, [0, 1, 2, 3]))
+
+    def test_vowels_all_close_or_all_open_cannot_tell_the_word(self):
+        # (vowels_all_close_ok)
+        for v in ("iiii", "aeo"):
+            with self.assertRaises(ValueError):
+                FS.title_start([], 1.0, v)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class VoiceMoreTest(unittest.TestCase):
+    def test_the_vowel_is_read_after_its_glide_in(self):
+        # (vowel_read_early) a close vowel coming in through 25 ms of an open one (the consonant's glide): read close
+        rng = np.random.default_rng(31)
+        x = 0.003 * rng.standard_normal(int(1.5 * SR))
+        put(x, 0.5, np.concatenate([vowel(0.025, "a"), vowel(0.25, "i", attack=0.002)]))
+        sy = [y for y in FS.syllables_of(x) if 0.45 < y["t"] < 0.6]
+        self.assertEqual(len(sy), 1, sy)
+        self.assertLess(sy[0]["open"], -5.0, sy)
+
+    def test_a_vowel_soon_after_a_loud_note_has_its_own_onset(self):
+        # (onset_low_at_window_start) a note that ends 40 ms before the next vowel (a consonant's stop): the vowel's onset is
+        # read from the gap, not from the note before
+        rng = np.random.default_rng(32)
+        x = 0.003 * rng.standard_normal(int(2.0 * SR))
+        put(x, 0.6, tone(0.36, 262.0))                       # ends at 0.96 s
+        put(x, 1.0, tone(0.3, 294.0, attack=0.0005))
+        t, db = FS.voice_level(x)
+        got = FS.first_syllable(t, db, 1.05, search=(-0.1, 0.1))
+        self.assertIsNotNone(got)
+        self.assertLess(abs(got["t"] - 1.0), 0.002, got)
+
+    def test_a_dip_of_eight_db_in_a_held_vowel_is_no_syllable(self):
+        # (rise_db_low) a held vowel that dips by 8 dB for 40 ms and comes back: one syllable
+        rng = np.random.default_rng(33)
+        x = 0.003 * rng.standard_normal(int(2.0 * SR))
+        v = vowel(0.8, "a")
+        n0, n1 = int(0.35 * SR), int(0.39 * SR)
+        v[n0:n1] *= 10 ** (-8.0 / 20.0)
+        put(x, 0.5, v)
+        sy = [y["t"] for y in FS.syllables_of(x) if 0.4 < y["t"] < 1.4]
+        self.assertEqual(len(sy), 1, sy)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class MeasureMoreTest(unittest.TestCase):
+    def files(self, d, sounds, docs, scale):
+        out = {}
+        for name, x in sounds.items():
+            out[name] = os.path.join(d, name + ".wav")
+            write_wav(out[name], x, scale)
+        for name, doc in docs.items():
+            out[name] = os.path.join(d, name + ".json")
+            with open(out[name], "w", encoding="utf-8") as f:
+                json.dump(doc, f)
+        return out
+
+    def run_measure(self, args):
+        with contextlib.redirect_stdout(io.StringIO()) as said:
+            code = FS.main(["measure"] + args)
+        return code, said.getvalue()
+
+    def test_the_band_returns_on_the_backing_while_the_voice_sings_through_the_stop(self):
+        # (returns_from_mix) as under the last title word: the drums stop for four beats while the voice sings on, then come
+        # back hard; the mix has the voice's onsets in the stop, the backing has none
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(41)
+        seconds = 14.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(0, 20):
+            put(backing, FIRST + b * PERIOD, 0.2 * hit)
+        back = FIRST + 24 * PERIOD
+        backing[int((FIRST + 19 * PERIOD + 0.2) * SR):int(back * SR)] = 0.0          # the band stops (after beat 19's hit)
+        put(backing, back, 1.0 * burst(int(0.15 * SR), rng))                         # and comes back hard on beat 24
+        for b in range(25, 31):
+            put(backing, FIRST + b * PERIOD, 0.2 * hit)
+        voice = 0.0003 * rng.standard_normal(int(seconds * SR))
+        for k in range(8):                                                           # eighths through the stop
+            put(voice, FIRST + 20 * PERIOD + k * PERIOD / 2.0, 0.6 * tone(0.17, 262.0 + 20 * k, attack=0.0005))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "intro", "beat": 0, "t": FIRST}, {"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}],
+                     "hooks": [], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": []}}
+        with tempfile.TemporaryDirectory() as d:
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            f = self.files(d, {"mix": backing + voice, "voice": voice}, {"structure": structure, "look": look}, scale)
+            out = os.path.join(d, "m.json")
+            self.assertEqual(self.run_measure([f["mix"], f["voice"], f["structure"], f["look"], out])[0], 0)
+            with open(out, encoding="utf-8") as fh:
+                rep = json.load(fh)
+        self.assertTrue(any(abs(r["t"] - back) < 0.01 for r in rep["returns"]), rep["returns"])
+
+    def test_a_voice_file_that_lies_early_is_read_where_it_is_in_the_mix(self):
+        # (voice_not_shifted) the separated voice 20 ms ahead of the mix: the title word's first syllable is read in the mix's time
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(42)
+        seconds = 10.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(22):
+            put(backing, FIRST + b * PERIOD, 0.15 * hit)
+        beat = FIRST + 12 * PERIOD
+        voice = 0.003 * rng.standard_normal(int(seconds * SR))
+        put(voice, beat - 0.10, vowel(0.10 + PERIOD / 2.0 - 0.04, "a"))
+        for k, v in enumerate("iiae"):
+            put(voice, beat + (k + 1) * PERIOD / 2.0, vowel(PERIOD / 2.0 - 0.04, v))
+        early = FS.shifted(voice, -int(0.020 * SR))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}], "hooks": [{"n": 1, "beat": 12, "t": beat}],
+                     "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": []}}
+        with tempfile.TemporaryDirectory() as d:
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            f = self.files(d, {"mix": backing + voice, "voice": early}, {"structure": structure, "look": look}, scale)
+            out = os.path.join(d, "m.json")
+            self.assertEqual(self.run_measure([f["mix"], f["voice"], f["structure"], f["look"], out, "--title-vowels", "iiae"])[0], 0)
+            with open(out, encoding="utf-8") as fh:
+                rep = json.load(fh)
+        self.assertEqual(rep["align"]["lag_samples"], int(0.020 * SR))
+        title = [m for m in rep["moments"] if m["kind"] == "title"][0]
+        self.assertLess(abs(title["t"] - (beat + PERIOD / 2.0)), 0.006, title)
+
+    def test_another_sources_backing_hits_are_those_of_the_reference_measure(self):
+        # (backing_from_ref_of_new, span_whole_sound) --backing-from gives the very hits (and percentiles) the measure of that pair
+        # gives, whatever the new mix is
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(43)
+        seconds = 12.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(28):
+            put(backing, FIRST + b * PERIOD, (0.1 + 0.3 * rng.random()) * hit)
+        v0 = 0.0003 * rng.standard_normal(int(seconds * SR))
+        put(v0, 3.0, tone(0.5, 262.0))
+        v1 = 0.0003 * rng.standard_normal(int(seconds * SR))
+        put(v1, 3.0, 3.0 * tone(1.5, 330.0))                                          # a louder, longer voice
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}], "hooks": [], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": []}}
+        with tempfile.TemporaryDirectory() as d:
+            scale = 0.5 / max(np.abs(backing + v1).max(), 1e-9)
+            f = self.files(d, {"mix0": backing + v0, "voice0": v0, "mix1": np.concatenate([backing + v1, np.zeros(int(0.7 * SR))]),
+                               "voice1": np.concatenate([v1, np.zeros(int(0.7 * SR))])}, {"structure": structure, "look": look}, scale)
+            a, b = os.path.join(d, "a.json"), os.path.join(d, "b.json")
+            self.assertEqual(self.run_measure([f["mix0"], f["voice0"], f["structure"], f["look"], a])[0], 0)
+            self.assertEqual(self.run_measure([f["mix1"], f["voice1"], f["structure"], f["look"], b,
+                                               "--backing-from", f["mix0"], f["voice0"]])[0], 0)
+            reps = []
+            for p in (a, b):
+                with open(p, encoding="utf-8") as fh:
+                    reps.append(json.load(fh))
+        self.assertEqual(reps[1]["hits"]["backing"], reps[0]["hits"]["backing"])
+        self.assertNotEqual(reps[1]["hits"]["backing_own"], reps[0]["hits"]["backing"])
+
+    def test_a_reference_a_frame_and_a_half_off_is_refused(self):
+        # (reference_guard_two_frames) the guard is a frame: a mix 50 ms off the reference is refused
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(44)
+        seconds = 12.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for k in range(40):
+            put(backing, 0.5 + 0.27 * k + 0.05 * rng.random(), (0.1 + rng.random()) * hit)
+        voice = 0.0003 * rng.standard_normal(int(seconds * SR))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}], "hooks": [], "skirt": []}
+        look = {"flares": [], "mograph": {"on": 1, "events": []}}
+        with tempfile.TemporaryDirectory() as d:
+            scale = 0.8 / max(np.abs(backing).max(), 1e-9)
+            f = self.files(d, {"mix": backing + voice, "voice": voice,
+                               "ref": np.concatenate([np.zeros(int(0.050 * SR)), backing + voice])[:len(backing)]},
+                           {"structure": structure, "look": look}, scale)
+            code, said = self.run_measure([f["mix"], f["voice"], f["structure"], f["look"], os.path.join(d, "x.json"),
+                                           "--reference", f["ref"]])
+        self.assertEqual(code, 2, said)
+        self.assertIn("structure", said)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class ReportTest(unittest.TestCase):
+    def report(self):
+        moments = [{"kind": "title", "n": 1, "t": 10.23, "beat": 10.0}, {"kind": "section", "id": "inter1", "t": 11.29}]
+        for m in moments:
+            m["near"] = {"backing": {"pct": 91.0}, "mix": {"pct": 92.0}, "voice": None}
+        decisions = FS.decide([flash(ML.frame_time(300))], moments, song_hits(strong=[11.3]), skirt=[])
+        for d in decisions:
+            d["at_old"] = {"backing": {"pct": 58.0}, "mix": {"pct": 51.0}, "voice": None}
+            d["old_from_voice_ms"] = round((d["old_frame"] / 30.0 - d["title"]["t"]) * 1000.0, 1)
+        return {"settings": {"fps": 30, "strong": 90.0, "near_frames": 1, "reach_frames": 2, "skirt_gap": 0.5},
+                "moments": moments, "decisions": decisions}
+
+    def test_the_table_writes_backing_then_mix_then_voice(self):
+        # (table_columns_swapped)
+        text = FS.table_md(self.report())
+        self.assertIn("| 58 / 51 / - |", text)
+        self.assertIn("| -230 ms |", text)
+
+    def test_compare_writes_b_less_a_and_the_decisions_in_order(self):
+        # (compare_diff_sign, compare_decisions_swapped) B sings 43 ms earlier than A; B drops the flash A moves
+        a = self.report()
+        b = self.report()
+        b["moments"][0] = dict(b["moments"][0], t=10.187)
+        b["decisions"][0] = dict(b["decisions"][0], action="drop", frame=None)
+        for rep in (a, b):
+            rep["inputs"] = {"mix": "mix.wav", "voice": "voice.wav"}
+        text = FS.compare_md(a, b, ["A", "B"])
+        self.assertIn("| -43 ms |", text)
+        self.assertIn("| 動かす → 338 | 削る |", text)
+
+
+@unittest.skipUnless(FS, "needs numpy")
+class MeasureReportTest(unittest.TestCase):
+    def test_the_old_light_is_said_before_or_after_the_voice(self):
+        # (old_from_voice_sign) measure writes how far the old light is from the title word's first syllable: negative = before
+        if not FFMPEG:
+            self.skipTest("needs ffmpeg")
+        rng = np.random.default_rng(45)
+        seconds = 10.0
+        backing = 0.002 * rng.standard_normal(int(seconds * SR))
+        hit = burst(int(0.1 * SR), rng)
+        for b in range(22):
+            put(backing, FIRST + b * PERIOD, 0.15 * hit)
+        beat = FIRST + 12 * PERIOD
+        voice = 0.003 * rng.standard_normal(int(seconds * SR))
+        for k, v in enumerate("iiae"):
+            put(voice, beat + (k + 1) * PERIOD / 2.0, vowel(PERIOD / 2.0 - 0.04, v))
+        structure = {"seconds": seconds, "beat": {"first": FIRST, "period": PERIOD, "per_bar": 4},
+                     "sections": [{"id": "chorus1", "beat": 4, "t": FIRST + 4 * PERIOD}], "hooks": [{"n": 1, "beat": 12, "t": beat}],
+                     "skirt": []}
+        t = ML.frame_time(ML.frame_of(beat, 30))
+        look = {"flares": [], "mograph": {"on": 1, "events": [flash(t), punch(t)]}}
+        with tempfile.TemporaryDirectory() as d:
+            paths = {}
+            scale = 0.8 / max(np.abs(backing + voice).max(), 1e-9)
+            for name, x in (("mix", backing + voice), ("voice", voice)):
+                paths[name] = os.path.join(d, name + ".wav")
+                write_wav(paths[name], x, scale)
+            for name, doc in (("structure", structure), ("look", look)):
+                paths[name] = os.path.join(d, name + ".json")
+                with open(paths[name], "w", encoding="utf-8") as fh:
+                    json.dump(doc, fh)
+            out = os.path.join(d, "m.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(FS.main(["measure", paths["mix"], paths["voice"], paths["structure"], paths["look"], out,
+                                          "--title-vowels", "iiae"]), 0)
+            with open(out, encoding="utf-8") as fh:
+                rep = json.load(fh)
+        f0 = [x for x in rep["decisions"] if x["kind"] == "flash"][0]
+        self.assertLess(f0["old_from_voice_ms"], -150.0, f0)
+
+
 if __name__ == "__main__":
     unittest.main()
