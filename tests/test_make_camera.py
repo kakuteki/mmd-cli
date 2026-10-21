@@ -1816,14 +1816,20 @@ class MusicSizedPlanTest(unittest.TestCase):
         self.assertTrue(contact.contact)
         a, b = contact.contact
         chain = mc.facing_chain(self.motion)
+        run = best = 0
         for i, cam in enumerate(sized_cameras(contact)):
             f = contact.start + i
             if not a <= f <= b:
                 continue
-            eyes = self.dancer.at("eyes", f)
-            up = math.degrees(math.atan2(cam.position[1] - eyes[1], math.hypot(cam.position[0] - eyes[0], cam.position[2] - eyes[2])))
-            self.assertLessEqual(up, mc.MUSIC_CONTACT_UP + 1e-6, f)
+            # within reach of her eyes, off her head's way (its pitch taken away): up to MUSIC_CONTACT_UP above it, up to
+            # MUSIC_CONTACT_SIDE round from it, on a run of MUSIC_CONTACT_RUN frames
+            way, pitch = mc.facing_both(chain, f)
+            within = (mc.eyes_up(self.dancer, f, cam) - pitch <= mc.MUSIC_CONTACT_UP + 1e-6
+                      and angle_off(mc.eyes_round(self.dancer, f, cam), way) <= mc.MUSIC_CONTACT_SIDE + 1e-6)
+            run = run + 1 if within else 0
+            best = max(best, run)
             self.assertLessEqual(angle_off(cam.yaw, mc.facing_at(chain, f)), 16.0, f)
+        self.assertGreaterEqual(best, min(mc.MUSIC_CONTACT_RUN, b - a + 1))
         # the note's shot is close, and the quiet parts are not
         self.assertIn(holding(int(NOTE[0] * 30)).size, mc.MUSIC_CLOSE)
         for s in self.shots:

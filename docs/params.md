@@ -5,7 +5,7 @@
 - 単位・依存・見直しはコードの名と注釈の言葉から推した目安（印 ○）。単位の読めない長さ（SWING_MIN_H 0.2 単位など）には印が付かないので、印が無いことは見直さなくてよいことではない。「記録」の欄は `docs/params_notes.json`（HANDOVER などの記録から手で付けた出所）。
 - 依存: 体 = cm・mm・m・単位の長さ・速さ・加速度（体と踊りの大きさで変わる）／重 = 重力に結んだ値／踊 = 曲・踊り・トレース・拍・版で測った値／模 = リンのモデル（White.pmx・骨・モーフ・材質・物理）で測った値／人 = 人の測りから／文 = 文献から。
 - 見直し: retarget（体・重）、rig（模）、dance（踊りだけ。組み直しの後に物差しで測り直す）。
-- 数: 全部 2968（定数 2405・引数 147・関数の既定 416。定数を既定にする引数 42 は定数の行に書き、数えない）、見直しの印 504（retarget 281・rig 72・踊りだけ 163）、記録の出所つき 84。
+- 数: 全部 2969（定数 2406・引数 147・関数の既定 416。定数を既定にする引数 42 は定数の行に書き、数えない）、見直しの印 504（retarget 281・rig 72・踊りだけ 163）、記録の出所つき 84。
 
 ## v11 の組み直しで見直す順番（上流から）
 
@@ -29,7 +29,7 @@
 | 16 | 口 | lip_sync.py・lip_timing.py | 84 | 0 | 1 | 1 | mouth.lag_median_ms、mouth.lag_open_ms、mouth.late_pct、mouth.late_open_pct、mouth.early_open_pct、mouth.shut_singing_pct | lip_check.py |
 | 17 | 目の光と寄り | eye_optics.py | 88 | 13 | 3 | 0 | （物差しなし） | - |
 | 18 | 描画と後処理 | mv_chunks.py・mv_world.py・stage_layer.py・mv_look.py・mv_text.py・kinetic_text.py・make_stage.py・mme_shadow.py・pmm_gravity.py・mograph_layer.py・flash_sync.py | 632 | 16 | 15 | 49 | pixels.pants_frames、pixels.shadow_rough、pixels.shadow_total_rough | shadow_check.py・shadow_measure.py・selfshadow_check.py・look_analyze.py・typo_analyze.py・mograph_analyze.py |
-| 19 | カメラ | make_camera.py・operator_camera.py | 291 | 9 | 4 | 34 | （物差しなし） | camera_rhythm.py |
+| 19 | カメラ | make_camera.py・operator_camera.py | 292 | 9 | 4 | 34 | （物差しなし） | camera_rhythm.py |
 
 各段は、その段より上流をすべて直してから測る（下流の層は上流の出力を読む）。ただしカメラ（19）と look（18）は視線（14）と目の光（17）が入力に読むので、変えたら 14〜17 を作り直す。物差しは `mv_inspect.py measure`（既定の --size hip の「股関節の高さでそろえた」値も見る）と `compare`。
 
@@ -2060,7 +2060,7 @@
 | --labels | "A,B" |  | 1047 | the names of the two sources, A,B |  |  |  |  |  |  |  |  |
 | --lang | "en" |  | 1052 |  |  |  |  |  |  |  |  |  |
 
-## make_camera.py（19. カメラ、180）
+## make_camera.py（19. カメラ、181）
 
 | 名前 | 値 | 単位 | 行 | どう決めたか（コードの注釈） | 記録 | 体 | 重 | 踊 | 模 | 人 | 文 | 見直し |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -2222,28 +2222,29 @@
 | MUSIC_SCALES | (1.0, 0.7, 0.5, 0.35) |  | 922 | of a move's size: smaller in turn until every frame shows the shot's size |  |  |  |  |  |  |  |  |
 | MUSIC_CONTACT_FOVS | (30, 32, 34, 36, 38, 40) |  | 923 | the lenses a chest shot that holds an eye contact may take, the narrowest that ... |  |  |  |  |  |  |  |  |
 | MUSIC_CONTACT_UP | 4.5 | deg | 924 | ... keeps the camera at most this far above her eyes (degrees; eye_gaze's reach is 5.3 up off her head's way): looking down at her hips by 30 degrees, a lens of 30 stand… |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_RUN | 54 |  | 927 | ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6) |  |  |  |  |  |  |  |  |
-| MUSIC_ROUNDS | 4 |  | 928 | times the song is planned again when a close shot has to be shot wider |  |  |  | ○ |  |  |  | dance |
-| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0) |  | 929 |  |  |  |  |  |  |  |  |  |
-| MUSIC_CONTACT_SHIFT | 0.25 |  | 934 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
-| FACE_RADIUS | 1.15 | units | 935 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
-| FACE_DOWN | 0.45 |  | 936 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
-| FACE_MARGIN | 0.02 |  | 937 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
-| MUSIC_CLOSE_WINDOW | 30 | frames | 1128 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
-| ZOOM_REACH | (2, 14) | frames | 1130 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
-| _shape(ramp) | 0.125 |  | 1228 |  |  |  |  |  |  |  |  |  |
-| plan_music_shots(seed) | 0 |  | 1412 |  |  |  |  |  |  |  |  |  |
-| frame_sized(shift) | 0.0 |  | 1554 |  |  |  |  |  |  |  |  |  |
-| _mean_way(step) | 5 |  | 1796 |  |  |  |  |  |  |  |  |  |
-| _sized_shot(waive) | 0 |  | 1821 |  |  |  |  |  |  |  |  |  |
-| music_motion(handheld) | 0.0 |  | 2049 |  |  |  |  |  |  |  |  |  |
-| music_motion(seed) | 0 |  | 2049 |  |  |  |  |  |  |  |  |  |
-| run_music(handheld) | 0.0 |  | 2141 |  |  |  |  |  |  |  |  |  |
-| run_music(seed) | 0 |  | 2141 |  |  |  |  |  |  |  |  |  |
-| run(seed) | 0 |  | 2232 |  |  |  |  |  |  |  |  |  |
-| run(handheld) | 0.0 |  | 2233 |  |  |  |  |  |  |  |  |  |
-| --seed | 0 |  | 2266 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
-| --handheld | 0.0 |  | 2270 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_RUN | 54 |  | 927 | ... on a run of this many frames of the contact's (eye_gaze's CONTACT_MIN 48, and 6), both measured off her head's way (facing_both: she looks down 5 degrees, the camera… |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_SIDE | 12.0 |  | 930 | ... and at most this far round from it (eye_gaze's reach is 16 sideways) |  |  |  |  |  |  |  |  |
+| MUSIC_ROUNDS | 4 |  | 931 | times the song is planned again when a close shot has to be shot wider |  |  |  | ○ |  |  |  | dance |
+| MUSIC_SHIFTS | (0.0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1.0, -1.0) |  | 932 |  |  |  |  |  |  |  |  |  |
+| MUSIC_CONTACT_SHIFT | 0.25 |  | 937 | picture half-heights (the unit of the picture's rows; the side edges at 16/9) sideways the look-at point stands off her to keep her face off the words of --keep-clear: t… |  |  |  |  |  |  |  |  |
+| FACE_RADIUS | 1.15 | units | 938 | units round the middle of her face, FACE_DOWN under her eyes (kineticrev's measure |  | ○ |  |  |  |  |  | retarget |
+| FACE_DOWN | 0.45 |  | 939 | of the words over her face: half a head's width round her nose) |  |  |  |  |  |  |  |  |
+| FACE_MARGIN | 0.02 |  | 940 | of the picture: the words' boxes grown by this when her face is kept off them |  |  |  |  |  |  |  |  |
+| MUSIC_CLOSE_WINDOW | 30 | frames | 1131 | frames: a close shot's look-at point follows her upper body averaged over this (a second: averaged over three, she leant out of a waist shot's top on 3 frames) |  |  |  |  |  |  |  |  |
+| ZOOM_REACH | (2, 14) | frames | 1133 | frames before and after a punch's frame its zoom may move her head (rise 2, fall 10) |  |  |  |  |  |  |  |  |
+| _shape(ramp) | 0.125 |  | 1231 |  |  |  |  |  |  |  |  |  |
+| plan_music_shots(seed) | 0 |  | 1420 |  |  |  |  |  |  |  |  |  |
+| frame_sized(shift) | 0.0 |  | 1562 |  |  |  |  |  |  |  |  |  |
+| _mean_way(step) | 5 |  | 1817 |  |  |  |  |  |  |  |  |  |
+| _sized_shot(waive) | 0 |  | 1842 |  |  |  |  |  |  |  |  |  |
+| music_motion(handheld) | 0.0 |  | 2078 |  |  |  |  |  |  |  |  |  |
+| music_motion(seed) | 0 |  | 2078 |  |  |  |  |  |  |  |  |  |
+| run_music(handheld) | 0.0 |  | 2170 |  |  |  |  |  |  |  |  |  |
+| run_music(seed) | 0 |  | 2170 |  |  |  |  |  |  |  |  |  |
+| run(seed) | 0 |  | 2261 |  |  |  |  |  |  |  |  |  |
+| run(handheld) | 0.0 |  | 2262 |  |  |  |  |  |  |  |  |  |
+| --seed | 0 |  | 2295 | the draw of the shot kinds (default 0) |  |  |  |  |  |  |  |  |
+| --handheld | 0.0 |  | 2299 | a slow handheld sway: 0 none (default), 1 about 0.3 degrees, keys on every frame |  |  |  |  |  |  |  |  |
 
 ## operator_camera.py（19. カメラ、111）
 
