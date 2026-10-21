@@ -391,6 +391,88 @@ python tools/mv_text.py frames cues.json WORK [--size WxH] [--fps N]
 1 ffmpeg の失敗 / 2 引数や合図ファイルの誤り。ただし引数の書式の誤り（必要な引数が無い・知らないオプション・知らないコマンド）は
 `mmd` 本体と同じく argparse が扱い、usage を標準エラーに出して終了コード 2 で終わる（標準出力は空）。
 
+### 歌詞を動く文字にする（`tools/kinetic_text.py`、MMD なし）
+
+歌詞を歌声の音節の時刻で 7 字ほど（4〜9 字。道具の読みで 6 字）のかたまりに切り、かたまりごとに入って・わずかに流れて・出る（0.62〜0.77 秒）。字幕は人物の前、
+サビ・Cメロ・終わりの大きな言葉と題名の語（合いの手）と間奏の題名と題字は人物の後ろ。隅の印・終わりのクレジットも描く。参考は @PizaCG の
+動画で、研究 typoref が `tools/typo_analyze.py` で測り、査読 typorev が直した狙いの数（`_spike/out/stage6/typorev/targets_corrected.md`: 道具の
+読みで、見えている 0.72 [0.68, 0.77] 秒、1 つのかたまり 6 [5.3, 7.5] 字、止まって全部見える 0.05 秒、入り 0.32・出 0.25 秒、字の高さ 0.041、
+縦の置き場 0.744、下 1/3 の行 67 %、真ん中 70 %、大きな文字 31 %）。値は道具の読みどうしで比べて決めた（道具は入りと出を実際の 0.4〜0.8 倍に
+短く読むので、設定の秒に狙いの秒を写さない）。Pillow・numpy・OpenCV と ffmpeg を使う。
+
+```
+python tools/kinetic_text.py words OUT.json --cues CUES.json --lines LINES.tsv --align ALIGN.json [--structure S.json] [--credits C.json]
+                                          [--marks SONG_STRUCTURE.json]
+python tools/kinetic_text.py sheet WORDS.json OUT.json [--look LOOK.json] [--fps N]
+python tools/kinetic_text.py frames WORDS.json WORK [--look LOOK.json] [--size WxH] [--fps N] [--from 秒 --to 秒]
+python tools/kinetic_text.py preview WORDS.json OUT.png --at 秒 [--over 絵] [--look LOOK.json] [--size WxH]
+python tools/kinetic_text.py over 動画か静止画 WORDS.json OUT.mp4 [--look LOOK.json] [--from 秒] [--to 秒] [--fps N]
+```
+
+- `words`: 言葉のファイル（歌詞を含むので配らない。曲の材料と同じ所に置く）を作る。行の文面は MV の合図ファイル（`tools/mv_text.py`）の
+  style lyric の合図を始まりの順に、読みは LINES.tsv（始まり・終わり・かなの行、タブ区切り）、音節の時刻は `tools/lip_sync.py --align-out`
+  （モーラごとの子音の始まり c0・母音の始まり v0・終わり v1）。合図と行の始まりが 1.5 秒より離れていれば別の行として断る。合図の無い
+  読みの行（歌詞に無い合いの手）は文面なしで、題名の語だけを描く。`--structure` は曲の区切り（sections: intro・verse・chorus・bridge・
+  outro・interlude・end と始まり・終わり）・題名の語（hook: 読みと文面）・差し色の言葉（accents: blue・red の言葉の一覧）・題字（title）・
+  印（tag）・間奏の題名（interlude）・終わり（end）・歌い手（vocal）、`--credits` はクレジットのカード（cards: 始まり・終わり・置き場・行の role・name・note、
+  name の size と face）、`--marks` は MV の共有の曲の構成の表（`tools/mograph_layer.py` の飾りが使う version 2: 節の頭のコマ `frame`・
+  切り替えのコマ `change_frame`・サビの半ば・題名の語のコマと音節）で、言葉のファイルの `marks`（秒）になる。
+- 歌い手は 1 か所（言葉のファイルの `vocal`: `latin` は題字と印の書き方〈ローマ字〉、`name` はクレジットの書き方）で決める。題字の行・印・
+  カードの行の文に `{vocal.latin}`・`{vocal.name}` と書いた所に入る（音源の歌い手が替わったら `vocal` だけを直す。2026-10-21 kineticrev:
+  題字は鏡音リン、クレジットは初音ミクと、2 つのファイルの 3 つの文に分かれていた）。`vocal` の無い言葉のファイルに差し込みがあれば断り、
+  2 つの書き方が別の歌い手（知っている 4 人: 初音ミク・鏡音リン・鏡音レン・巡音ルカ）なら `warnings` に出す。
+- 題字（title）は人物の後ろの層（`layer`、既定 back。front と書けば前）。2026-10-21 kineticrev: 前の層では、最後のカメラ D で冒頭の題字が
+  人物の顔に 200 コマ中 198 コマかかり、英字の行が目の上を横切っていた。後ろへ回しても真ん中に置けば人物の頭が字を隠すので、置き場（x・y・align）は
+  人物のいない所に（冒頭の人物は横 0.40〜0.59: 左揃えで x 0.03）。
+- 印（`marks` があるときだけ。無ければ前と同じ計画）: 飾りの白い光とパンチは節の頭と題名の語のコマから始まるので、文字の出入りをそこへ合わせる。
+  字幕と大きな言葉は、出る時刻の 0.25 秒前〜0.1 秒後に始まりの印があればそのコマに出て、消える時刻の 0.15 秒前〜0.1 秒後に始まりの印か
+  切り替えがあればそこで消える（0.3 秒より短くなるなら動かさない）。題名の語は印のコマに出て、表の音節ごとに 1 字、最後の音節の 0.2〜1.3 秒後の
+  節の頭から消え始める。間奏の題名は間奏の始まりの −0.5〜+3.0 秒の節の頭のうち、字幕・大きな言葉が出ておらず題名の語を歌い終えた後の最初に出て、
+  消える時刻の −1.0〜+0.5 秒の節の頭で消える。クレジットのカードは始まりの ±0.5 秒に節の頭があればそこに出る。
+- `sheet`: かたまりの一覧（役・層・時刻・置き場・大きさ・入りと出）を JSON に。`frames`: 2 つの層を描いて計画を出す。`preview`: 1 枚。
+  `over`: 2 つの層を動画か静止画の上に重ねて、MV と同じ作り（libx264 crf 16、BT.709 の印 4 つ）で書く（typo_analyze で測るため。静止画の上なら
+  PNG を経ずに numpy で重ねて ffmpeg へ渡す: PNG を通した絵との差は 8 ビットの丸めだけ）。
+- 読み: 行の字ごとに読みの範囲を当てる（かなは同じかな、ひらがなとカタカナは同じ音。漢字の続きはまわりのかなの間を読む: 1 字に 1〜4、
+  2 から離れるほど少し費用。読みの空白をまたぐ漢字の続きは費用 10 で最後の手）。その範囲のモーラの c0・v0・v1 が字の時刻。
+- かたまり（cut_line）: `chars` 字を狙い `chars_min`〜`chars_max` 字。切れ目の費用はひらがな→漢字・カタカナ 1、助詞（は が を に へ と で
+  も の や）→ひらがな 2、ひらがな→ひらがな・漢字→ひらがな 6（動詞の語尾の中: 「書|く」を避ける）、空白 0、長さのずれ 0.5×二乗、
+  歌う長さが `life` の上限 + 0.25 秒を越える分 4×二乗（遅い行は細かく切って、それぞれ歌うときに出す）。漢字の続きとカタカナの続きは
+  切らない。小さいかな・ー・閉じ括弧・読点では始めず、開き括弧で終えない。
+- 時刻: かたまりは最初の音節の母音の始まり（`at_vowel` 1。0 なら子音の始まり）の `lead` 秒前に出始め、`enter` 秒で入り、最後の音節の後
+  `hang` 秒まで、全部で `life` の範囲で出て、`exit` 秒で出る（入りと出の合計より短いかたまりは両方を同じ比で縮める）。
+- 置き場: 字幕は行のかたまりが段 `sub_rows` を交互に、真ん中 `sub_x`（右へ流れるので、出ている間の半分の所で真ん中に来るよう左から始める）。
+  Aメロ（verse）の行の `column_share` は左右（`column_x`）の縦組み（「」・、。は縦の字形、ー〜…は 90 度回す）。サビ・Cメロ・終わり
+  （chorus・bridge・outro）の行は `big_per_line` 個（端数は行ごとに: 1.5 なら 1 つと 2 つを交互）の大きな言葉（`big_size`。傾け `tilt` 度・
+  中抜きのネオンの縁・傾け・縦 2 段の明朝を順に。中抜きは傾けず、画面の左右の縁で切れる `edge_word` の大きさ。ほかは `big_x` の左右を交互に、
+  高さは `big_y` を 2 つごとに）を人物の後ろへ。大きな言葉は元の字幕が消える 0.15 秒前に出て、字幕より 0.35 秒長く出る（言葉を後ろで
+  繰り返す。字幕と同時に出すと、歌っている間に字が出ている時間が延びない）。題名の語は
+  音節ごとに 1 字ずつ（`hook_size`、塗りのネオンとグロー、後ろ）、その行には大きな言葉を足さない。間奏は間奏の題名の中抜きが `edge_size`
+  （画面の縁で切れる大きさ）で後ろを横切る。差し色の言葉は blue・red の色。行ごとに `mincho_share` を明朝（Shippori Mincho の太さに近い
+  ファイル、無ければ Noto Serif JP）、`bracket_share` を「」で括り、Noto の行の `outline_share` に縁取り（明朝には付けない: 720 行で 2 px の縁は明朝の細い画と同じ幅で、
+  画を縁の色に埋める）、`shadow_share` に落ち影。
+- 動き: 入りは ENTERS の 12 通り（rise 下から・slide 左から＋ぼかし・drop 上から行き過ぎて戻る・zoom 小さくから・zoomrise・zoomblur・
+  blurin・fadein・type 1 字ずつ・glitch・cut・pop 2 コマで出る）、出は EXITS の 11 通り（lift・sink・slideout・flyout・zoomout・shrink・
+  fadeout・untype・glitchout・cutout・popout）を look の割合（字幕 `enter_mix`・`exit_mix`、大きな言葉 `big_enter_mix`・`big_exit_mix`）で、
+  大きい余りの順に配って種で並べる。字幕は出ている間ずっと右へ `drift`（字の高さ/秒）流れ（cut・pop の隣の 0.25 秒は止まる: 流れていると
+  道具は 1 コマで出ても切り替えと読まない）、大きな言葉は `push`（1 秒の割合）ずつ大きくなる（入りの拡大は小さくから大きくする向きだけ）。
+  横の移動は右向きだけで、流れと打ち消し合わない。止まるのは入りと出の間だけ（試験で全部の組み合わせを確かめる）。フェードは両端が
+  なめらか（最初のコマは 0、最後のコマはほぼ 0）。ぼかしは等速で消える。グリッチは歌のコマで `glitch_frames` 枚、赤と青を左右にずらし、
+  行の帯を裂き、2 枚目を消す。
+- 絵: Pillow で字を描き、numpy と OpenCV で 1 コマずつ、前乗算の色で（移動・拡大・傾けを 1 回のアフィン、ぼかし、グロー
+  `glow`・`glow_radius`、縁取り `outline`・`outline_px`・ネオンの縁、落ち影 `shadow`・`shadow_px`、グリッチ）。層は back（大きな言葉・題名の語・
+  間奏の題名・題字）と front（字幕・印・クレジット）の 2 つの全画面の RGBA PNG の連番で、範囲の最初のコマから 0 番（描いた箱の中だけを直の
+  アルファへ、PNG は 4 本のスレッドで書く）。
+- 書体: Noto Sans JP・Noto Serif JP（可変、太さは軸で）・Shippori Mincho（太さごとのファイル）。どれも SIL Open Font License 1.1（作った
+  動画には条件が付かない。書体のファイルを配るなら著作権の表示とライセンスを付ける）。`MMD_CLI_FONTS`（パス区切りで複数）のフォルダ、次に
+  Windows の書体のフォルダを探す。Shippori Mincho が無ければ Noto Serif JP で描いて `warnings` に出す。hinata では
+  `MMD_CLI_FONTS=C:/work/hibikase/stage6/kinetic/fonts`（Regular・Bold と OFL 1.1 の全文 `ShipporiMincho-OFL.txt`）。描くのは Noto Sans JP と
+  Shippori Mincho の Regular・Bold だけ（Noto Serif JP は Shippori Mincho が無いときの代わり）。
+
+`tools/mv_look.py` で使うときは look に `"text2": {"on": 1}` を書き、`--cues` に言葉のファイルを渡す（値はすべて look の `text2` の節。
+既定は DEFAULT_LOOK にあり、書かなければ今までの mv_text の文字のまま、準備の印も前と同じ）。mv_look は back を舞台と人物の間に、
+front を周辺減光の後に重ねる（mv_text の "back"・"front" の合図と同じ順）。`render` は抜粋（`--from`〜`--to`、無ければ人物のファイルの
+終わりまで）のコマだけを描く。
+
 ### 人物に舞台・光・グローを付ける（`tools/mv_look.py`、MMD なし）
 
 MMD は背景黒化（メニュー 282、`mmd menu set 282 on`）を入れると、`render image` の PNG と `render avi --codec 未圧縮` の AVI を
@@ -2528,7 +2610,7 @@ python tools/lip_sync.py face.vmd vocals.flac out.vmd --lines lines.tsv [--dance
 - 母音だけの音節の前の切れ（v11、2026-10-17、記録は `_spike/out/stage6/v11face/NOTES.md`）: 行の中で、ほかの音節の後に来る母音だけの
   音節（「と お」の お）の前には、短い休みの代わりに任意の切れ（単位 BR。子音と同じ見方で、声の落ち込みか静けさ。`STAY`・`SHORTEST` は
   子音と同じ 0.6・2）を置く。前は、声が一度落ちてから新しい音で歌う母音の前の落ち込みを受ける単位が無く、次の音節の子音が取った
-  （85.2〜85.9 秒「と お と」: と・お を 1 音目に 50・60 ms で詰め、次の と を 2 音にまたがせた）。切れの間の口は、声が鳴る所で母音の形の
+  （85.2〜85.9 秒の 3 つのモーラ: 1 つ目と母音だけの 2 つ目を 1 音目に 50・60 ms で詰め、 3 つ目を 2 音にまたがせた）。切れの間の口は、声が鳴る所で母音の形の
   `BREAK_SHARE`（0.6）倍、静かな所で閉じる。曲で切れは 49 か所。
 - 行の外の保ち（v11）: 行の外で `face.vmd` の手打ちの口が閉じても、声が `HOLD_DB`（−20 dB、lip_check の「はっきり鳴る」）より大きいまま
   続く間は、その続きで手打ちの口が最後に見せた母音を声の大きさで保つ（233.2 秒で閉じていた長い声の終わりが 233.5 秒まで開く）。

@@ -294,6 +294,35 @@ def ease_out(t):
 
 
 @unittest.skipUnless(TA, NEEDS)
+class EdgeBoxTest(unittest.TestCase):
+    """a box beyond the picture: a track followed through a punch (the picture zoomed) carries its box past the edge, and the
+    ring round it was cut out with np.mgrid of a negative size (kinetic 2026-10-21: track stopped on the preview v3_P2 with
+    ValueError, negative dimensions).  The ring of such a box is empty (its callers then take the ground they had), its
+    strokes none; a box across the edge keeps the part of its ring inside the picture"""
+
+    def setUp(self):
+        self.y = np.random.default_rng(1).random((90, 160))
+
+    def test_a_box_beyond_the_picture_has_no_ring_and_no_strokes(self):
+        for box in ({"x0": 170.0, "x1": 200.0, "y0": 10.0, "y1": 20.0, "h": 10.0},      # right of it
+                    {"x0": -60.0, "x1": -30.0, "y0": 10.0, "y1": 20.0, "h": 10.0},      # left
+                    {"x0": 10.0, "x1": 40.0, "y0": 120.0, "y1": 130.0, "h": 10.0},      # below
+                    {"x0": 10.0, "x1": 40.0, "y0": -50.0, "y1": -30.0, "h": 10.0}):     # above
+            self.assertEqual(TA._ring(self.y, box, 0.3, 0.8).size, 0, box)
+            ys, xs, sign, ground = TA.stroke_mask(self.y, box, [])
+            self.assertEqual((len(ys), len(xs)), (0, 0), box)
+            self.assertTrue(np.isfinite(ground), box)
+
+    def test_a_box_across_the_edge_keeps_its_ring_inside_the_picture(self):
+        box = {"x0": 150.0, "x1": 175.0, "y0": 40.0, "y1": 50.0, "h": 10.0}
+        ring = TA._ring(self.y, box, 0.3, 0.8)
+        y = self.y.copy()
+        y[32:59, 142:148] = 7.0                                   # the ring's left part (x 142 to 147), inside the picture
+        self.assertGreater(ring.size, 0)
+        self.assertIn(7.0, set(TA._ring(y, box, 0.3, 0.8).tolist()))
+
+
+@unittest.skipUnless(TA, NEEDS)
 class TrackMeasureTest(unittest.TestCase):
     fps = 30.0
 
