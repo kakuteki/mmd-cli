@@ -1936,5 +1936,264 @@ class GuardCommandLiftTest(unittest.TestCase):
             if run["lift_max"] > 0.0:
                 self.assertLess(run["top_edge_max_after"], run["top_edge_max_before"], run)
 
+
+class CloseLookDownTest(unittest.TestCase):
+    """the close sizes (waist and closer) look down at her hips by 30 degrees or more (COMMON.md, 2026-10-17: legs drawn
+    close from 8 and 15 degrees above showed the underwear at 213.43 s; a viewpoint near the height of her hip joints is
+    not used close either): frame_size frames a size from as high as a look-down asks, and guard holds the close pictures
+    of another camera to it (camsync2: the camera D had no close size at all)"""
+
+    def test_a_close_size_is_framed_from_as_high_as_its_look_down_asks(self):
+        d = standing(10)
+        for size in ("waist", "chest"):
+            plain = oc.frame_size(d, 0, size, 0.0, fov=30)
+            self.assertLess(look_down_at_her_hips(d, 0, plain.position), 30.0, size)
+            cam = oc.frame_size(d, 0, size, 0.0, fov=30, look_down=30.5)
+            self.assertGreaterEqual(look_down_at_her_hips(d, 0, cam.position), 30.5 - 1e-6, size)
+            # still that size: her head top on the size's row, the picture's bottom edge at its cut
+            s = oc.seen(d, 0, cam)
+            self.assertAlmostEqual(s["headtop_v"], 1.0 - 2.0 * oc.SIZE_SPEC[size]["room"], places=3)
+            self.assertEqual(oc.classify(s["visible"], s["body_share"]), size)
+            self.assertGreater(cam.position[1], plain.position[1], size)
+
+    def test_without_a_look_down_the_frame_is_the_one_before(self):
+        d = standing(10)
+        for size in oc.SIZES:
+            self.assertEqual(oc.frame_size(d, 0, size, 25.0), oc.frame_size(d, 0, size, 25.0, look_down=None))
+
+    def test_the_needs_of_the_close_frames_are_the_close_look_down(self):
+        d = standing(60)
+        close = [20 <= f < 40 for f in range(60)]
+        need, _ = oc.guard_needs(d, 59, (), close)
+        self.assertEqual(need[:20], [oc.MIN_LOOK_DOWN] * 20)
+        self.assertEqual(need[20:40], [oc.CLOSE_LOOK_DOWN] * 20)
+        self.assertEqual(need[40:], [oc.MIN_LOOK_DOWN] * 20)
+        self.assertEqual(oc.CLOSE_LOOK_DOWN, 30.0)
+
+    def test_guard_raises_a_close_picture_to_the_close_look_down(self):
+        # a chest shot from a unit under her eyes (it looks down at her hips by about 20 degrees, and up at her eyes: not
+        # clear, ChestClearTest): every frame and subframe of it is raised to look down at them by 30 or more
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30, height=REST["eyes"] - 1.0)
+        self.assertLess(look_down_at_her_hips(d, 0, cam.position), 30.0)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertGreater(min(tilts), 0.0)
+        for f in range(90):
+            points = [between_frames(d, n, f, k) for n in ("hips", "lhip", "rhip") for k in range(16)]
+            self.assertGreaterEqual(look_down_at_points(frames[f].position, points), 30.0 - 1e-6, f)
+
+    def test_guard_leaves_a_knee_picture_to_the_usual_rule(self):
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "knee", 0.0)
+        self.assertGreater(look_down_at_her_hips(d, 0, cam.position), oc.MIN_LOOK_DOWN)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertEqual(max(tilts), 0.0)
+
+    def test_a_close_shot_is_judged_on_the_camera_it_is_given(self):
+        # a knee shot and a waist shot after a cut: only the waist shot's frames ask the close look-down
+        d = standing(120)
+        knee = oc.frame_size(d, 0, "knee", 0.0)
+        waist = oc.frame_size(d, 0, "waist", 40.0, fov=30)
+        self.assertEqual(oc.close_frames(d, [knee] * 60 + [waist] * 60), [False] * 60 + [True] * 60)
+
+
+def row_height(cam, x, z, row):
+    """the height a point at (x, z) on the floor plan stands at to fall on the picture's row `row` (v) of `cam`"""
+    lo, hi = -40.0, 60.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if oc.project(cam.position, cam.yaw, cam.pitch, cam.roll, cam.fov, (x, mid, z))[1] < row:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+class ChestClearTest(unittest.TestCase):
+    """the exception to the close look-down (COMMON, 2026-10-22): a chest picture need not look down at her hips by
+    CLOSE_LOOK_DOWN when her hips and hip joints stay CHEST_HIPS_UNDER (5 % of the picture's height) or more under its
+    bottom edge on every subframe (her crotch, under them, further) and the camera does not look up at her eyes; the
+    general rule (MIN_LOOK_DOWN, FLARE_LOOK_DOWN in a fast turn) still holds there"""
+
+    def test_the_margins_are_five_percent_of_the_picture_and_level_with_her_eyes(self):
+        self.assertEqual(oc.CHEST_HIPS_UNDER, 0.10)          # half-heights: 5 % of the picture's height
+        self.assertEqual(oc.CHEST_EYES_DOWN, 0.0)
+
+    def test_a_chest_picture_from_her_eye_height_is_clear_and_guard_leaves_it(self):
+        d = standing(90)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)       # (the chest's eye height: hers)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "chest")
+        self.assertAlmostEqual(cam.position[1], REST["eyes"], places=6)
+        self.assertLess(look_down_at_her_hips(d, 0, cam.position), oc.CLOSE_LOOK_DOWN)
+        self.assertTrue(oc.chest_clear(d, 0, cam))
+        under, eyes = oc.chest_margins(d, 0, cam)
+        self.assertGreater(under, oc.CHEST_HIPS_UNDER)
+        self.assertAlmostEqual(eyes, 0.0, places=6)
+        self.assertEqual(oc.close_frames(d, [cam] * 90), [False] * 90)
+        frames, cuts, tilts = oc.guard_camera(d, keys_of([cam] * 90), 89)
+        self.assertEqual(max(tilts), 0.0)
+
+    def test_a_chest_picture_from_under_her_eyes_is_close(self):
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30, height=REST["eyes"] - 0.05)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "chest")
+        self.assertFalse(oc.chest_clear(d, 0, cam))
+        self.assertEqual(oc.close_frames(d, [cam] * 30), [True] * 30)
+
+    def test_her_hips_near_the_bottom_edge_on_one_subframe_make_the_frame_close(self):
+        # the hip joints given at 16 subframes a frame (as guard reads the dance): on one subframe of frame 10 her left hip
+        # joint comes up to 4 % of the picture's height under the bottom edge (6 % on frame 20's)
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        sub = {name: [[d.at(name, f)] * 16 for f in range(30)] for name in oc.GUARD_POINTS}
+        x, _, z = d.at("lhip", 10)
+        sub["lhip"][10] = sub["lhip"][10][:7] + [(x, row_height(cam, x, z, -1.08), z)] + sub["lhip"][10][8:]
+        sub["lhip"][20] = sub["lhip"][20][:7] + [(x, row_height(cam, x, z, -1.12), z)] + sub["lhip"][20][8:]
+        tracks = {n: [d.at(n, f) for f in range(30)] for n in d.tracks}
+        d2 = oc.Dancer(tracks, sub)
+        self.assertTrue(oc.chest_clear(d2, 9, cam))
+        self.assertFalse(oc.chest_clear(d2, 10, cam))
+        self.assertTrue(oc.chest_clear(d2, 20, cam))
+        self.assertAlmostEqual(oc.chest_margins(d2, 10, cam)[0], 0.08, places=6)
+        close = oc.close_frames(d2, [cam] * 30)
+        self.assertEqual([f for f in range(30) if close[f]], [10])
+
+    def test_only_a_chest_picture_is_ever_clear(self):
+        # a waist picture from her eye height looks down at her hips by less than 30 degrees and is close
+        d = standing(30)
+        waist = oc.frame_size(d, 0, "waist", 0.0, fov=30, height=REST["eyes"])
+        s = oc.seen(d, 0, waist)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "waist")
+        self.assertEqual(oc.close_frames(d, [waist] * 30), [True] * 30)
+
+    def test_a_clear_chest_picture_still_looks_down_as_a_fast_turn_asks(self):
+        # her shoulders spinning: the general rule's 15 degrees (the chest from her eye height looks down about 22 already)
+        d = standing(60, turn=lambda f: 900.0 * f / FPS if 20 <= f <= 40 else (900.0 * 20 / FPS if f > 40 else 0.0))
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        close = oc.close_frames(d, [cam] * 60)
+        need, fast = oc.guard_needs(d, 59, (), close)
+        self.assertTrue(any(fast))
+        self.assertFalse(any(close))
+        self.assertEqual(max(need), oc.FLARE_LOOK_DOWN)
+
+    def test_the_guard_report_counts_the_clear_chest_frames(self):
+        d = standing(30)
+        cam = oc.frame_size(d, 0, "chest", 0.0, fov=30)
+        close = oc.close_frames(d, [cam] * 30)
+        need, fast = oc.guard_needs(d, 29, (), close)
+        clear = oc.chest_clear_frames(d, [cam] * 30)
+        view, _ = oc.guard_view(d, [cam] * 30, need, fast, (), close, clear)
+        self.assertEqual(view["chest_clear_frames"], 30)
+        self.assertEqual(view["close_frames"], 0)
+        self.assertGreater(view["chest_clear_hips_under_min"], 0.05)          # a share of the picture's height
+        self.assertAlmostEqual(view["chest_clear_eyes_down_min"], 0.0, places=4)
+        self.assertGreater(view["chest_clear_look_down_min"], oc.MIN_LOOK_DOWN)
+
+
+def rin_with_ankles():
+    """rin_like_model with the leg IK bones (左足ＩＫ, 右足ＩＫ: at the ankles, as on Sour's Rin)"""
+    from tests.test_pmx import NORMAL, TRANSLATE, Writer
+    w = Writer(bone=2)
+    bones = [("全ての親", -1, (0.0, 0.0, 0.0), NORMAL | TRANSLATE), ("センター", 0, (0.0, 7.85, 0.0), NORMAL | TRANSLATE),
+             ("上半身", 1, (0.0, 12.23, -0.65), NORMAL), ("上半身2", 2, (0.0, 13.8, -0.68), NORMAL),
+             ("首", 3, (0.0, 15.65, -0.13), NORMAL), ("頭", 4, (0.0, 16.24, 0.0), NORMAL),
+             ("左目", 5, (0.41, 17.21, -0.56), NORMAL), ("右目", 5, (-0.41, 17.21, -0.56), NORMAL),
+             ("下半身", 1, (0.0, 12.23, -0.65), NORMAL), ("左腕", 3, (0.91, 15.28, -0.25), NORMAL),
+             ("右腕", 3, (-0.91, 15.28, -0.25), NORMAL), ("左つま先ＩＫ", 0, (1.05, 0.1, -1.15), NORMAL | TRANSLATE),
+             ("右つま先ＩＫ", 0, (-1.05, 0.1, -1.15), NORMAL | TRANSLATE), ("左足", 8, (0.90, 10.66, 0.007), NORMAL),
+             ("右足", 8, (-0.90, 10.59, 0.007), NORMAL), ("左足ＩＫ", 0, (0.93, 1.75, 0.38), NORMAL | TRANSLATE),
+             ("右足ＩＫ", 0, (-0.93, 1.75, 0.38), NORMAL | TRANSLATE), ("左ひざ", 13, (0.92, 6.0, -0.30), NORMAL),
+             ("右ひざ", 14, (-0.92, 5.95, -0.30), NORMAL), ("左足首", 17, (0.93, 1.75, 0.38), NORMAL),
+             ("右足首", 18, (-0.93, 1.75, 0.38), NORMAL)]
+    return w.build(name="rin-ankles", bones=[w.bone(n, parent=p, position=pos, flags=fl) for n, p, pos, fl in bones])
+
+
+class SizeSpecAndAnklesTest(unittest.TestCase):
+    """camsync2: make_camera --song frames its sizes with operator_camera.frame_size and its own cut of a size (a waist shot
+    with her hip joints well inside the picture), and checks a knee shot by her ankles: frame_size and picture_span take a
+    size's spec, and dancer_from_motion reads the ankles (the leg IK bones) on request"""
+
+    def test_a_size_is_framed_by_the_spec_it_is_given(self):
+        d = standing(10)
+        spec = {"cut": 0.56, "room": 0.08, "fov": 30, "eye": -0.5}
+        cam = oc.frame_size(d, 0, "waist", 0.0, fov=30, spec=spec)
+        body = REST["headtop"] - REST["toes"]
+        bottom, top, row = oc.picture_span("waist", REST["headtop"], REST["toes"], spec=spec)
+        self.assertAlmostEqual(bottom, REST["headtop"] - 0.56 * body, places=9)
+        self.assertAlmostEqual(row, 1.0 - 2.0 * 0.08, places=9)
+        ax, az = oc.anchor(d, 0, "waist")
+        v_bottom = oc.project(cam.position, cam.yaw, cam.pitch, 0.0, 30, (ax, bottom, az))[1]
+        self.assertAlmostEqual(v_bottom, -1.0, places=3)
+        s = oc.seen(d, 0, cam)
+        self.assertEqual(oc.classify(s["visible"], s["body_share"]), "waist")
+        # without a spec, the size's own (SIZE_SPEC): the same as before
+        self.assertEqual(oc.frame_size(d, 0, "waist", 0.0, fov=30, spec=None), oc.frame_size(d, 0, "waist", 0.0, fov=30))
+        self.assertEqual(oc.picture_span("knee", 19.5, 0.1), oc.picture_span("knee", 19.5, 0.1, spec=oc.SIZE_SPEC["knee"]))
+
+    def test_a_dancer_read_with_ankles_has_them_at_the_leg_ik_bones(self):
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "rin.pmx")
+        with open(path, "wb") as f:
+            f.write(rin_with_ankles())
+        model = pmx.load(path)
+        motion = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左足ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY)])
+        dancer = oc.dancer_from_motion(model, motion, 10, hip_joints=True, ankles=True)
+        track = fk.world_track(model, motion, ["左足ＩＫ", "右足ＩＫ"], 0, 10)
+        for f in (0, 5, 10):
+            for name, bone_name in (("lankle", "左足ＩＫ"), ("rankle", "右足ＩＫ")):
+                for a, b in zip(dancer.at(name, f), track[bone_name][f][0]):
+                    self.assertAlmostEqual(a, b, places=6)
+        self.assertAlmostEqual(dancer.at("lankle", 10)[1], 1.75 + 4.0, places=6)
+        # read without them, the dancer has none; a model without the leg IK bones is refused when they are asked for
+        self.assertFalse(oc.dancer_from_motion(model, motion, 10, hip_joints=True).has("lankle"))
+        plain = os.path.join(folder, "plain.pmx")
+        with open(plain, "wb") as f:
+            f.write(rin_like_model())
+        with self.assertRaises(ValueError):
+            oc.dancer_from_motion(pmx.load(plain), motion, 10, hip_joints=True, ankles=True)
+
+    def test_her_knees_are_where_the_legs_of_her_length_reach_from_hip_to_ankle_bending_forward(self):
+        # (the forward kinematics has no IK, so the knees are solved as two bones of the model's lengths from the hip
+        # joint to the ankle, bending the way her lower body faces; the midpoint of hip and ankle missed a deep bend by up
+        # to 3.8 units on the MV's dance)
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "rin.pmx")
+        with open(path, "wb") as f:
+            f.write(rin_with_ankles())
+        model = pmx.load(path)
+        rest = {b.name: b.position for b in model.bones}
+        thigh, shin = math.dist(rest["左足"], rest["左ひざ"]), math.dist(rest["左ひざ"], rest["左足首"])
+        motion = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左足ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左つま先ＩＫ", 0, (0.0, 0.0, 0.0), fk.IDENTITY),
+                                                   vmd.BoneKey("左つま先ＩＫ", 10, (0.0, 4.0, -2.0), fk.IDENTITY)])
+        dancer = oc.dancer_from_motion(model, motion, 10, hip_joints=True, ankles=True)
+        for f in (0, 5, 10):
+            hip, knee, ankle = dancer.at("lhip", f), dancer.at("lknee", f), dancer.at("lankle", f)
+            self.assertAlmostEqual(math.dist(hip, knee), thigh, places=6)
+            self.assertAlmostEqual(math.dist(knee, ankle), shin, places=6)
+            # in front of the line from her hip to her ankle (-Z, the way her lower body faces)
+            t = sum((k - h) * (a - h) for k, h, a in zip(knee, hip, ankle)) / math.dist(hip, ankle) ** 2
+            on_line = tuple(h + (a - h) * t for h, a in zip(hip, ankle))
+            self.assertLess(knee[2], on_line[2])
+        # at rest the solve gives the model's own knee (its lengths, its bend)
+        for a, b in zip(dancer.at("lknee", 0), rest["左ひざ"]):
+            self.assertAlmostEqual(a, b, delta=0.05)
+        # raised 4 and forward 2 the ankle comes 4.5 nearer her hip: the knee goes forward and up
+        self.assertLess(dancer.at("lknee", 10)[2], dancer.at("lknee", 0)[2] - 1.0)
+        self.assertGreater(dancer.at("lknee", 10)[1], dancer.at("lknee", 0)[1])
+        # a leg stretched past its length has the knee on the line at the thigh's length
+        far = vmd.Motion(model_name="d", bones=[vmd.BoneKey("左足ＩＫ", 0, (0.0, -6.0, 0.0), fk.IDENTITY)])
+        d2 = oc.dancer_from_motion(model, far, 0, hip_joints=True, ankles=True)
+        hip, knee, ankle = d2.at("lhip", 0), d2.at("lknee", 0), d2.at("lankle", 0)
+        self.assertAlmostEqual(math.dist(hip, knee), thigh, places=6)
+        self.assertAlmostEqual(math.dist(hip, knee) + math.dist(knee, ankle), math.dist(hip, ankle), places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

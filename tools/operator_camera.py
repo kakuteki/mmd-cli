@@ -100,6 +100,12 @@ LANDMARKS = ("headtop", "eyes", "chin", "chest", "waist", "hips", "toes", "cente
 # and, for guard, the hip joints (左足, 右足), a point a unit in front of 下半身 (its -Z turned with it: the way the
 # lower body faces) and either toe (左つま先ＩＫ, 右つま先ＩＫ: with the hip joints, where her knees are about)
 HIP_LANDMARKS = ("lhip", "rhip", "pelvis_front", "ltoe", "rtoe")
+# and, for make_camera --song with --model (camsync2), the ankles: where the leg IK bones are (左足ＩＫ, 右足ＩＫ: the IK puts
+# the ankle there), so that a knee shot can keep them out of the picture and a full shot in it, and the knees: the two bones
+# of the model's thigh and shin from the hip joint to the ankle, bent the way her lower body faces (two_bone_knee: on the
+# MV's dance 0.23-0.26 units from rig_skin's IK-solved knees at the median, 1.0-1.1 at the 95th percentile, their heights
+# within -0.16 to +0.23 at the 5th and 95th; bent the way the foot points, 0.7 and 4.1-4.4)
+LEG_LANDMARKS = ("lankle", "rankle", "lknee", "rknee")
 
 # sizes, from far to close.  cut: the share of the body (head top to toes) above the bottom edge; body: the body's share
 # of the picture height (whole-body sizes); room: the picture's share above the head top; fov: the lens; eye: the
@@ -247,7 +253,7 @@ class Dancer:
         missing = [n for n in LANDMARKS if n not in tracks]
         if missing:
             raise ValueError("the dancer lacks %s" % ", ".join(missing))
-        names = list(LANDMARKS) + [n for n in HIP_LANDMARKS if n in tracks]
+        names = list(LANDMARKS) + [n for n in HIP_LANDMARKS + LEG_LANDMARKS if n in tracks]
         self.tracks = {n: [tuple(float(v) for v in p) for p in tracks[n]] for n in names}
         self.frames = len(self.tracks["headtop"])
         if any(len(t) != self.frames for t in self.tracks.values()):
@@ -283,14 +289,52 @@ HEAD_TOP_ABOVE_HEAD = 19.5 - 16.243
 HIPS_BELOW_WAIST = 12.225 - 10.658
 FK_BONES = ("頭", "左目", "右目", "上半身2", "下半身", "センター", "左つま先ＩＫ", "右つま先ＩＫ", "左腕", "右腕")
 HIP_BONES = ("左足", "右足")
+ANKLE_BONES = ("左足ＩＫ", "右足ＩＫ")
+LEG_BONES = (("左足", "左ひざ", "左足首"), ("右足", "右ひざ", "右足首"))   # the lengths of the thigh and the shin, at rest
 
 
-def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
+def two_bone_knee(hip, ankle, ahead, thigh, shin):
+    """the knee of a leg of `thigh` and `shin` from `hip` to `ankle`: on the circle the two lengths meet on, on the side
+    `ahead` lies (that point less the ankle, square to the leg; -Z when it lies along the leg); a leg stretched past its
+    length has it on the line, `thigh` from the hip"""
+    d = [a - h for a, h in zip(ankle, hip)]
+    n = math.sqrt(sum(v * v for v in d))
+    if n < 1e-9:
+        return tuple(hip)
+    u = [v / n for v in d]
+    if n >= thigh + shin:
+        return tuple(h + v * thigh for h, v in zip(hip, u))
+    x = (thigh * thigh - shin * shin + n * n) / (2.0 * n)
+    h = math.sqrt(max(thigh * thigh - x * x, 0.0))
+    for hint in ([t - a for t, a in zip(ahead, ankle)], [0.0, 0.0, -1.0]):
+        along = sum(a * b for a, b in zip(hint, u))
+        side = [a - along * b for a, b in zip(hint, u)]
+        m = math.sqrt(sum(v * v for v in side))
+        if m > 1e-6:
+            break
+    else:
+        side, m = [0.0, 0.0, 0.0], 1.0
+    return tuple(p + v * x + w / m * h for p, v, w in zip(hip, u, side))
+
+
+def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1, ankles=False):
     """the landmarks through the forward kinematics of mmd_cli/fk.py (no IK: the feet come from the IK bones); with
     hip_joints also HIP_LANDMARKS (the hip joints are where 左足 and 右足 turn: the leg IK turns them, it does not move
-    them, so the forward kinematics puts them right; a model without those bones is refused), and with subframes n > 1
-    the points guard looks down at (GUARD_POINTS) at every frame's subframes f + k/n from the dance's own curves"""
-    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints else []), 0, last)
+    them, so the forward kinematics puts them right; a model without those bones is refused), with subframes n > 1
+    the points guard looks down at (GUARD_POINTS) at every frame's subframes f + k/n from the dance's own curves, and
+    with ankles LEG_LANDMARKS (the ankles from the leg IK bones, the knees solved from the model's leg lengths:
+    two_bone_knee; a model without those bones is refused)"""
+    names = [b.name for b in model.bones]
+    lengths = None
+    if ankles:
+        missing = [n for n in ANKLE_BONES + tuple(b for leg in LEG_BONES for b in leg) if n not in names]
+        if missing:
+            raise ValueError("the model has no %s: the ankles are read from the leg IK bones, the knees from the legs' "
+                             "lengths" % ", ".join(missing))
+        rest = {b.name: b.position for b in model.bones}
+        lengths = [(math.dist(rest[a], rest[b]), math.dist(rest[b], rest[c])) for a, b, c in LEG_BONES]
+    track = fk.world_track(model, motion, list(FK_BONES) + (list(HIP_BONES) if hip_joints or ankles else [])
+                           + (list(ANKLE_BONES) if ankles else []), 0, last)
     n = len(track["頭"])
     sub = None
     if hip_joints and subframes > 1:
@@ -301,7 +345,7 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
             sub["hips"].append([(w["下半身"][0][0], w["下半身"][0][1] - HIPS_BELOW_WAIST, w["下半身"][0][2]) for w in worlds])
             sub["lhip"].append([w["左足"][0] for w in worlds])
             sub["rhip"].append([w["右足"][0] for w in worlds])
-    out = {k: [] for k in LANDMARKS + (HIP_LANDMARKS if hip_joints else ())}
+    out = {k: [] for k in LANDMARKS + (HIP_LANDMARKS if hip_joints else ()) + (LEG_LANDMARKS if ankles else ())}
     for f in range(n):
         head = track["頭"][f][0]
         left, right = track["左目"][f][0], track["右目"][f][0]
@@ -324,6 +368,13 @@ def dancer_from_motion(model, motion, last=None, hip_joints=False, subframes=1):
             out["pelvis_front"].append(tuple(a + b for a, b in zip(lower, front)))
             out["ltoe"].append(lt)
             out["rtoe"].append(rt)
+        if ankles:
+            la, ra = track["左足ＩＫ"][f][0], track["右足ＩＫ"][f][0]
+            out["lankle"].append(la)
+            out["rankle"].append(ra)
+            ahead = fk.rotate(track["下半身"][f][1], (0.0, 0.0, -1.0))      # the way her lower body faces
+            out["lknee"].append(two_bone_knee(track["左足"][f][0], la, tuple(a + b for a, b in zip(la, ahead)), *lengths[0]))
+            out["rknee"].append(two_bone_knee(track["右足"][f][0], ra, tuple(a + b for a, b in zip(ra, ahead)), *lengths[1]))
     return Dancer(out, sub)
 
 
@@ -351,9 +402,10 @@ def seen(dancer, frame, cam):
     return {"visible": visible, "body_share": span / 2.0, "headtop_v": top[1], "eyes_u": eyes[0], "eyes_v": eyes[1]}
 
 
-def picture_span(size, headtop, toes):
-    """(bottom, top, head row): the heights the picture covers at the dancer for `size`, and the row (v) of her head top"""
-    spec = SIZE_SPEC[size]
+def picture_span(size, headtop, toes, spec=None):
+    """(bottom, top, head row): the heights the picture covers at the dancer for `size` (its SIZE_SPEC, or `spec` in that
+    form), and the row (v) of her head top"""
+    spec = SIZE_SPEC[size] if spec is None else spec
     body = headtop - toes
     if "body" in spec:
         height = body / spec["body"]
@@ -456,18 +508,20 @@ def hips_look_down(dancer, frame, cam):
 
 
 def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, frames=None, heights=None, look_reach=1.0,
-               at_least=None):
+               at_least=None, look_down=None, spec=None):
     """the camera that frames the dancer at `frame` as `size` from the direction `yaw` (the window's Y angle):
     at the size's eye height (or `height`, or above her head when `high`), never below lowest_height over `frames`
     (default: the frame itself) nor below `at_least`, and for a size that shows her hips high enough to look down at
-    them by MIN_LOOK_DOWN from its distance times `look_reach` (the farthest the shot's move takes it).  `heights`
-    (head top, toes, eyes) replaces the frame's own (a steadier reading)"""
-    spec = SIZE_SPEC[size]
+    them by MIN_LOOK_DOWN from its distance times `look_reach` (the farthest the shot's move takes it); with
+    `look_down` (degrees), any size high enough to look down at her hips by that much (and by MIN_LOOK_DOWN at least for
+    a size that shows them: a close size asks CLOSE_LOOK_DOWN).  `heights` (head top, toes, eyes) replaces the frame's own
+    (a steadier reading); `spec` (in SIZE_SPEC's form) replaces the size's own cut, room, lens and eye height"""
+    spec = SIZE_SPEC[size] if spec is None else spec
     fov = int(fov if fov is not None else spec["fov"])
     if heights is None:
         heights = (dancer.at("headtop", frame)[1], dancer.at("toes", frame)[1], dancer.at("eyes", frame)[1])
     headtop, toes, eyes = heights
-    bottom, top, top_row = picture_span(size, headtop, min(toes, headtop - 1.0))
+    bottom, top, top_row = picture_span(size, headtop, min(toes, headtop - 1.0), spec)
     if height is None:
         height = headtop + HIGH_RISE[size] if high else eyes + spec["eye"]
     # never steeper than the size's view from above (a traced camera may stand far up), never below her hips; a height
@@ -488,11 +542,14 @@ def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, fram
         solved = solve_distance(headtop, bottom, height, top_row, fov)
     if solved is None:
         raise ValueError("no camera height frames %s with a field of %d degrees" % (size, fov))
-    if size in SHOWS_HIPS:
-        # the skirt: up until the hips are seen from MIN_LOOK_DOWN above at the farthest distance of the shot (the solve
-        # moves the camera back a little as it rises, so a few rounds)
+    angle = MIN_LOOK_DOWN if size in SHOWS_HIPS else None
+    if look_down is not None:
+        angle = float(look_down) if angle is None else max(angle, float(look_down))
+    if angle is not None:
+        # the skirt: up until the hips are seen from `angle` above at the farthest distance of the shot (the solve moves
+        # the camera back a little as it rises, so a few rounds)
         hips_top = max(dancer.at("hips", f)[1] for f in (frames if frames is not None else [frame]))
-        slope = math.tan(math.radians(MIN_LOOK_DOWN))
+        slope = math.tan(math.radians(angle))
         for _ in range(12):
             need = hips_top + solved[0] * look_reach * slope
             if height >= need - 1e-6:
@@ -502,6 +559,9 @@ def frame_size(dancer, frame, size, yaw, high=False, fov=None, height=None, fram
                 raise ValueError("no camera height frames %s with a field of %d degrees looking down at the hips"
                                  % (size, fov))
             height, solved = need + 1e-3, raised
+        if look_down is not None and height < hips_top + solved[0] * look_reach * slope - 1e-6:
+            raise ValueError("no camera height frames %s with a field of %d degrees looking down at the hips by %g"
+                             % (size, fov, angle))
     r, pitch = solved
     ax, az = anchor(dancer, frame, size)
     position = (ax + r * math.sin(math.radians(yaw)), height, az - r * math.cos(math.radians(yaw)))
@@ -1410,6 +1470,16 @@ def shot_json(shot, music):
 
 # ---- guarding another camera ------------------------------------------------------------------------------------
 
+CLOSE_LOOK_DOWN = 30.0            # degrees: a close picture (waist and closer: CLOSE_SIZES) looks down at her hips this much
+                                  # (COMMON.md 2026-10-17: legs drawn close from 8 and 15 degrees above showed the underwear
+                                  # at 213.43 s; a viewpoint near the height of her hip joints is not used close either)
+CLOSE_SIZES = ("waist", "chest", "face")
+CHEST_HIPS_UNDER = 0.10           # half-heights (5 % of the picture's height): a chest picture whose hips and hip joints
+CHEST_EYES_DOWN = 0.0             # stay this far under its bottom edge on every subframe (her crotch, under them, further)
+                                  # and whose camera looks down at her eyes by this much or more (never up at them) need
+                                  # not look down at her hips by CLOSE_LOOK_DOWN (COMMON, 2026-10-22: the exception for the
+                                  # chest shots of the eye contacts; the general rule, MIN_LOOK_DOWN and FLARE_LOOK_DOWN in a
+                                  # fast turn, still holds there, and the underwear is counted at 480 fps on them)
 GUARD_POINTS = ("hips", "lhip", "rhip")    # where guard measures the look-down: the point between the hip joints at their
                                            # height (the hips every earlier check measured, and the look-down test was
                                            # drawn against) and either hip joint (the far one is the least looked down at)
@@ -1504,13 +1574,56 @@ def pelvis_spins(dancer):
     return out
 
 
-def guard_needs(dancer, last, windows=()):
+def chest_margins(dancer, frame, cam):
+    """(how far under the bottom edge of the picture of `cam` her hips and hip joints stay over the frame's subframes, in
+    half-heights: the least of them, minus infinity for a point not in front of the camera; the least degrees the camera
+    looks down at her eyes over the subframes)"""
+    under = math.inf
+    for p in hip_points_over(dancer, frame):
+        _, v, depth = project(cam.position, cam.yaw, cam.pitch, cam.roll, cam.fov, p)
+        under = min(under, -1.0 - v if depth > 0.0 and math.isfinite(v) else -math.inf)
+    return under, look_down_at(cam.position, dancer.over("eyes", frame))
+
+
+def chest_clear(dancer, frame, cam):
+    """whether a chest picture of `cam` is clear of the close look-down on `frame`: her hips and hip joints CHEST_HIPS_UNDER
+    or more under its bottom edge on every subframe, the camera looking down at her eyes by CHEST_EYES_DOWN or more"""
+    under, eyes = chest_margins(dancer, frame, cam)
+    return under >= CHEST_HIPS_UNDER - 1e-9 and eyes >= CHEST_EYES_DOWN - 1e-9
+
+
+def chest_clear_frames(dancer, frames):
+    """per frame whether its picture (`frames`: CameraFrame per frame) shows her chest up (classify) clear of the close
+    look-down (chest_clear)"""
+    out = []
+    for f, cam in enumerate(frames):
+        s = seen(dancer, f, cam)
+        out.append(classify(s["visible"], s["body_share"]) == "chest" and chest_clear(dancer, f, cam))
+    return out
+
+
+def close_frames(dancer, frames):
+    """per frame whether its picture (`frames`: CameraFrame per frame) shows her at a close size (CLOSE_SIZES: what is
+    seen of her from the head top down, classify), but a chest picture clear of the close look-down (chest_clear)"""
+    out = []
+    for f, cam in enumerate(frames):
+        s = seen(dancer, f, cam)
+        size = classify(s["visible"], s["body_share"])
+        out.append(size in CLOSE_SIZES and not (size == "chest" and chest_clear(dancer, f, cam)))
+    return out
+
+
+def guard_needs(dancer, last, windows=(), close=None):
     """the look-down every frame up to `last` needs (degrees): MIN_LOOK_DOWN, FLARE_LOOK_DOWN while her shoulders
-    (flare_frames) or her lower body (pelvis_spins) turn fast, and what a window (first, last, degrees) asks over its
-    frames when that is more; with the frames of the fast turns"""
+    (flare_frames) or her lower body (pelvis_spins) turn fast, CLOSE_LOOK_DOWN on the frames `close` marks (a close
+    picture: close_frames), and what a window (first, last, degrees) asks over its frames when that is more; with the
+    frames of the fast turns"""
     flare, spin = flare_frames(dancer), pelvis_spins(dancer)
     fast = [flare[min(f, dancer.frames - 1)] or spin[min(f, dancer.frames - 1)] for f in range(last + 1)]
     need = [FLARE_LOOK_DOWN if fast[f] else MIN_LOOK_DOWN for f in range(last + 1)]
+    for f, c in enumerate(close or []):
+        if c and f <= last:
+            need[f] = max(need[f], CLOSE_LOOK_DOWN)
     for a, b, degrees in windows:
         for f in range(max(0, int(a)), min(last, int(b)) + 1):
             need[f] = max(need[f], float(degrees))
@@ -1582,7 +1695,8 @@ def guard_profile(asked, bounds):
 def guard_camera(dancer, keys, last, windows=()):
     """another camera (keys of a camera motion, up to frame `last`) kept from the low angle: where a frame looks down at
     her hips or either hip joint over its subframes (hip_points_over) less than it needs (guard_needs: 4.5 degrees, 15
-    while she turns fast, what a window asks), the camera swings up round its own look-at point, so the picture keeps
+    while she turns fast, 30 where the given camera frames her close, what a window asks), the camera swings up round its
+    own look-at point, so the picture keeps
     its subject, its size and the way it is seen from, and only tilts; the tilt rises before and settles after inside
     the shot (guard_profile, step_cuts).  The rest of the frames are the input's.  Returns (CameraFrame per frame, the
     cuts, the tilt per frame in degrees)"""
@@ -1590,7 +1704,7 @@ def guard_camera(dancer, keys, last, windows=()):
     states = [fk.camera_at(keys, f, frames_of_keys) for f in range(last + 1)]
     cuts = [c for c in step_cuts(keys) if c <= last]
     bounds = [0] + cuts + [last + 1]
-    need, _ = guard_needs(dancer, last, windows)
+    need, _ = guard_needs(dancer, last, windows, close_frames(dancer, [_window_frame(s) for s in states]))
     points = [hip_points_over(dancer, f) for f in range(last + 1)]
     asked = [0.0] * (last + 1)
     for f, s in enumerate(states):
@@ -1677,17 +1791,31 @@ def lift_aim(dancer, cams, tilts, base_tilts, cuts, windows):
     return [lifted(c, x) for c, x in zip(cams, lifts)], lifts, runs
 
 
-def guard_view(dancer, frames, need, fast, windows=()):
+def guard_view(dancer, frames, need, fast, windows=(), close=None, clear=None):
     """the measures of the low angle on a camera path, every frame counted over its subframes (hip_points_over): the
-    least look-down at her hips and hip joints, the frames under what they need, the least over her fast turns, and over
-    every window"""
+    least look-down at her hips and hip joints, the frames under what they need, the least over her fast turns, over the
+    close pictures (`close`: the frames the given camera frames her close), over every window, and over the chest
+    pictures clear of the close look-down (`clear`: chest_clear_frames of the given camera) with the least of their
+    margins on this path (chest_margins: her hips under the bottom edge as a share of the picture's height, the
+    look-down at her eyes)"""
     angles = [look_down_at(cam.position, hip_points_over(dancer, f)) for f, cam in enumerate(frames)]
     turning = [a for a, t in zip(angles, fast) if t]
+    closing = [a for a, c in zip(angles, close or []) if c]
+    cleared = [f for f, c in enumerate(clear or []) if c and f < len(frames)]
+    margins = [chest_margins(dancer, f, frames[f]) for f in cleared]
     out = {"look_down_min": _r(min(angles), 2), "look_down_min_at": int(min(range(len(angles)), key=angles.__getitem__)),
            "short_frames": sum(1 for a, n in zip(angles, need) if a < n - 1e-6),
            "under_4_5_frames": sum(1 for a in angles if a < MIN_LOOK_DOWN - 1e-6),
            "fast_turn_min": _r(min(turning), 2) if turning else None,
            "fast_turn_under_15_frames": sum(1 for a, t in zip(angles, fast) if t and a < FLARE_LOOK_DOWN - 1e-6),
+           "close_frames": len(closing), "close_min": _r(min(closing), 2) if closing else None,
+           "close_under_30_frames": sum(1 for a in closing if a < CLOSE_LOOK_DOWN - 1e-6),
+           "chest_clear_frames": len(cleared),
+           "chest_clear_hips_under_min": _r(min(m[0] for m in margins) / 2.0, 4) if cleared else None,
+           "chest_clear_eyes_down_min": _r(min(m[1] for m in margins), 3) if cleared else None,
+           "chest_clear_look_down_min": _r(min(angles[f] for f in cleared), 2) if cleared else None,
+           "chest_clear_short_frames": sum(1 for f, m in zip(cleared, margins)
+                                           if m[0] < CHEST_HIPS_UNDER - 1e-9 or m[1] < CHEST_EYES_DOWN - 1e-9),
            "windows": [{"frames": [int(a), int(b)], "need": float(d),
                         "min": _r(min(angles[max(0, int(a)):int(b) + 1]), 2)} for a, b, d in windows]}
     return out, angles
@@ -1833,9 +1961,11 @@ def run_guard(dance_path, model_path, camera_path, out_path, report_path=None, l
     out_full = os.path.abspath(out_path)
     write_bytes(out_full, vmd.dumps(camera_motion(frames, [0] + cuts)))
     back = vmd.load(out_full)
-    need, fast = guard_needs(dancer, last, windows)
-    view_before, angles_before = guard_view(dancer, before, need, fast, windows)
-    view_after, angles_after = guard_view(dancer, frames, need, fast, windows)
+    close = close_frames(dancer, before)
+    clear = chest_clear_frames(dancer, before)
+    need, fast = guard_needs(dancer, last, windows, close)
+    view_before, angles_before = guard_view(dancer, before, need, fast, windows, close, clear)
+    view_after, angles_after = guard_view(dancer, frames, need, fast, windows, close, clear)
     cut_set = set(cuts)
     steps = [abs(tilts[f + 1] - tilts[f]) for f in range(last) if f + 1 not in cut_set]
     tilted = [f for f, t in enumerate(tilts) if t > 0.0]
@@ -1849,7 +1979,8 @@ def run_guard(dance_path, model_path, camera_path, out_path, report_path=None, l
         spans = guard_spans(dancer, before, frames, tilts, cuts, angles_before, angles_after, need)
         report = dict(result, dance=os.path.abspath(dance_path), model=os.path.abspath(model_path),
                       camera=os.path.abspath(camera_path), windows=[[a, b, d] for a, b, d in windows],
-                      min_look_down=MIN_LOOK_DOWN, flare_look_down=FLARE_LOOK_DOWN, flare_spin=FLARE_SPIN,
+                      min_look_down=MIN_LOOK_DOWN, flare_look_down=FLARE_LOOK_DOWN, close_look_down=CLOSE_LOOK_DOWN,
+                      flare_spin=FLARE_SPIN,
                       flare_hold=FLARE_HOLD, pelvis_spin=PELVIS_SPIN, pelvis_frames=[PELVIS_BEFORE, PELVIS_AFTER],
                       points=list(GUARD_POINTS), subframes=GUARD_SUBFRAMES, rate=GUARD_RATE, ramp=GUARD_RAMP,
                       hold=GUARD_HOLD, smooth=GUARD_SMOOTH, close=GUARD_CLOSE, margin=GUARD_MARGIN,
