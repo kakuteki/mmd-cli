@@ -68,7 +68,7 @@ MMD を実測した事実は `docs/spike-result-20261004.md`、査読は `docs/r
 | 書体 | Noto Sans JP（可変、Version 2.04。太さ 500〜900 を軸で） | Adobe（ファイルの name 表の著作権「© 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.」） | Windows の書体のフォルダ `C:/Windows/Fonts/NotoSansJP-VF.ttf`（この PC と hinata、hinata の SHA-256 5113756f8a3b5d01…） | SIL Open Font License 1.1（ファイルの name 表「This Font Software is licensed under the SIL Open Font License, Version 1.1.」）。前文「The OFL allows the licensed fonts to be used, studied, modified and redistributed freely as long as they are not sold by themselves.」「The requirement for fonts to remain under this license does not apply to any document created using the fonts or their derivatives.」、条件 5「The requirement for fonts to remain under this license does not apply to any document created using the Font Software.」: 字を焼き込んだ動画は「document created using the Font Software」で、条件も表記の求めも付かない。条件が付くのは書体のファイルを配るとき（条件 1「may be sold by itself」の禁止、条件 2「each copy contains the above copyright notice and this license」）で、私たちは配らない | （無し。字幕の 6 割・傾けと中抜きの大きな言葉・題名の語・間奏の題名・題字の英字の 2 行・印・クレジットの役と名前。2026-10-21 kineticrev が全曲の計画で数えた） |
 | 書体 | Shippori Mincho（Regular・Bold、Version 3.110） | The Shippori Mincho Project Authors（FONTDASU。同梱の OFL の 1 行目「Copyright 2021 The Shippori Mincho Project Authors (https://github.com/fontdasu/ShipporiMincho)」） | Google Fonts（typoref が取得。hinata `stage6/kinetic/fonts/` に `ShipporiMincho-OFL.txt`〈OFL 1.1 の全文、SHA-256 41fba056…〉、Regular 769b5269…、Bold 63bc4edd…） | 同じ OFL 1.1（同梱の全文とファイルの name 表「This Font Software is licensed under the SIL Open Font License, Version 1.1.」。条件は上の行と同じ） | （無し。明朝の字幕〈Regular〉・縦 2 段の大きな言葉・題字「ヒビカセ」・クレジットの題名〈Bold〉） |
 | 書体（描かない） | Noto Serif JP（可変、Version 2.02） | Adobe（name 表「© 2017-2023 Adobe (http://www.adobe.com/).」） | Windows の書体のフォルダ | 同じ OFL 1.1 | 描かない（Shippori Mincho が見つからないときの代わりだけ。hinata は `MMD_CLI_FONTS=C:/work/hibikase/stage6/kinetic/fonts` で Shippori を読む: 全曲の計画の 150 個に Noto Serif JP の行は 0） |
-| 作り | mmd-cli | （この案件） | github.com/kakuteki/mmd-cli（MIT） | — | MADE WITH mmd-cli / MADE WITH mmd-cli |
+| 作り | mmd-cli | （この案件） | github.com/kakuteki/mmd-cli（MIT） | — | **載せない**（2026-10-22 加賀さんの指示「mmd-cliに関するクレジットはなくして」。v13b から終わりのカードの行を消した。v13 までは MADE WITH mmd-cli） |
 
 注: この表で条件を読んでいない物は、楽曲（ヒビカセ）の使い方の条件と、今の mv_text の書体 Y1（YUTAONE の RevForge・Vectura・Cybanin3000 Glitch: 公開するならフォローが要る。
 kinetic の文字は Y1 を使わず、OFL の上の 3 つだけ）。
@@ -2247,3 +2247,17 @@ kinetic の文字は Y1 を使わず、OFL の上の 3 つだけ）。
   - 協調役の確かめ: md5 が記録と同じ。ffprobe で H.264 1280x720 30 fps 7,950 パケット・AAC 48 kHz 2 ch 265.000 秒（480p は 854x480・7,950 パケット）。
   - v12 の担当が自分で見つけて直した手落ち: 動画からコマを取るとき、秒を小数 4 桁で `-ss` に渡すと、3 つに 1 つの割合で 1 つ後のコマが出た（半コマ前の時刻で取るように
     直し、渡す絵は全部作り直した）。覆う割合の段の台本の写し忘れ（写してその段だけ走らせ直した）。
+- 2026-10-22 **v13b（終わりを直した版）の届け**（加賀さんの指示「クレジットに入る前に2,3秒の間があっていいと思う。mmd-cliに関するクレジットはなくして」）
+  - 協調役の決め: 間は 2.5 秒（256.0 秒で黒になってから 258.5 秒まで黒だけ・文字なし・無音。音は 255.70 秒で終わるので、音が消えてからは 2.8 秒）。終わりのカード 3 枚を
+    2.5 秒後ろへずらし（長さと出入りは同じ）、動画を 267.5 秒・8,025 コマに延ばした。最後のカードの MADE WITH mmd-cli の行を消した（借物表の行も「載せない」にした）。
+    0〜7679 コマは絵も音も v13 のまま。v13 は消さずに残した。
+  - 作り（v12 の担当、hinata `stage6/v13/` の NOTES の「v13b」の節）: 言葉のファイルはクレジットのカードだけを替えた words10（3362738937B96917F4268CF0A849EFBF、
+    hinata だけ。カードの外は words9 と同じ）。描き直すと同じカメラでも絵が少し変わる（q4x で測った）ので、v13 の区間 19 を圧縮データのまま 7680（最初の真っ黒のコマ）の
+    後ろで切り、新しく描いた 7681〜8024 を継いだ（framemd5 で 0〜7680 は v13 と同じ）。音は v12 の m4a と同じ ffmpeg 8.1.2（この PC）で作り直した: hinata の ffmpeg 8.0 では
+    AAC が 5.12 秒から v12 と別の物になる。v12 の AAC の 12,423 パケットはそのままで、後ろに無音 2.5 秒（m4a 56540ce9…）。
+  - 届けた物: デスクトップ `ヒビカセMV_20261005/hibikase_mv_v13b_音あり_20261022.mp4`（9167b92145fe9f64ea35e93dbc982461）と
+    `hibikase_mv_v13b_音_鏡音リン_攻_267.5秒_20261022.flac`（d7932b685ca02a727696de710cd03f4f）、FINAL.md の頭に v13b の節（使うなら v13b）。Discord の mmd チャンネルに
+    480p（ba3f8b24…）と終わりの絵 2 枚（歌詞の字なし）。
+  - 確かめ: v13 との差は長さの 3 行だけ（コマ数・黒と止まりの数・1 分あたりの切れ目）。明滅は全曲で 1 秒に最多 5 回・赤 0（終わりの黒とカードは最多 1 回）、
+    256.0〜258.5 秒に明るさ 16 を越える画素 0、カードの文字が光るのは v13 のちょうど 75 コマ後ろ。協調役: md5 が記録と同じ、ffprobe で 8,025 パケット・267.5 秒、
+    hinata で全部のコマをデコードして誤り 0。
